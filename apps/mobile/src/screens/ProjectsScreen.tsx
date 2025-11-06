@@ -243,7 +243,7 @@ export function ProjectsScreen(): JSX.Element {
         <View style={{ paddingHorizontal: spacing.lg, gap: spacing.lg }}>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
           <ThemedText variant="caption" style={{ flex: 1 }}>
-            Select a workspace to open the chat timeline.
+            Select a workspace to open the chat.
           </ThemedText>
           <IconButton
             icon={<Ionicons name="settings-outline" size={20} color={theme.colors.foregroundPrimary} />}
