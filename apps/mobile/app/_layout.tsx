@@ -36,7 +36,7 @@ function AppFrame(): JSX.Element {
           <Stack.Screen 
             name="workspace/[id]" 
             options={{ 
-              title: "Workspace",
+              title: "", // Title set dynamically by WorkspaceScreen
               headerBackTitle: "", // Just show <, no text
             }} 
           />
