@@ -179,9 +179,6 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   const [isSending, setIsSending] = useState(false);
   const wsRef = useRef<{ close: () => void } | null>(null);
   const flatListRef = useRef<FlatList<TimelineEntry> | null>(null);
-  
-  // Track if we've done initial scroll (for animation control)
-  const hasInitiallyScrolledRef = useRef(false);
 
   useEffect(() => {
     expanderRef.current = createChatEventExpander();
@@ -219,25 +216,8 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
     };
   }, [api, workspaceId]);
 
-  // Scroll to bottom on initial load (instant jump)
-  // Only trigger once when messages first arrive
+  // Reset timeline when workspace changes
   useEffect(() => {
-    if (timeline.length > 0 && !hasInitiallyScrolledRef.current) {
-      // scrollToEnd doesn't support duration parameter in React Native
-      // Use a very small timeout to let layout settle, then scroll instantly
-      const timer = setTimeout(() => {
-        if (flatListRef.current) {
-          flatListRef.current.scrollToEnd({ animated: false });
-          hasInitiallyScrolledRef.current = true;
-        }
-      }, 0); // 0ms timeout = next tick, effectively instant
-      return () => clearTimeout(timer);
-    }
-  }, [timeline.length > 0, timeline.length]);
-  
-  // Reset scroll tracking when workspace changes
-  useEffect(() => {
-    hasInitiallyScrolledRef.current = false;
     setTimeline([]);
   }, [workspaceId]);
 
@@ -264,7 +244,8 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
     setInput("");
   }, [api, input, defaultMode, defaultReasoningLevel, workspaceId]);
 
-  const listData = useMemo(() => timeline, [timeline]);
+  // Reverse timeline for inverted FlatList (chat messages bottom-to-top)
+  const listData = useMemo(() => [...timeline].reverse(), [timeline]);
   const keyExtractor = useCallback((item: TimelineEntry) => item.key, []);
 
   const renderItem = useCallback(
@@ -343,6 +324,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
               data={listData}
               keyExtractor={keyExtractor}
               renderItem={renderItem}
+              inverted
               contentContainerStyle={{ paddingHorizontal: spacing.md, paddingVertical: spacing.sm }}
               initialNumToRender={20}
               maxToRenderPerBatch={12}
@@ -350,12 +332,6 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
               updateCellsBatchingPeriod={32}
               removeClippedSubviews
               keyboardShouldPersistTaps="handled"
-              onContentSizeChange={() => {
-                // Auto-scroll when new messages arrive (animated if we've already scrolled)
-                if (timeline.length > 0 && hasInitiallyScrolledRef.current) {
-                  flatListRef.current?.scrollToEnd({ animated: true });
-                }
-              }}
             />
           )}
         </View>
