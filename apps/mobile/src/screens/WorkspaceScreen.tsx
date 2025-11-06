@@ -244,6 +244,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
         Array.isArray((payload.args as { todos?: unknown }).todos)
       ) {
         const todos = (payload.args as { todos: TodoItem[] }).todos;
+        console.log('[DEBUG] Received todo_write event with todos:', todos);
         setCurrentTodos(todos);
         setTodoCardVisible(true); // Re-show card on new todos
       }
