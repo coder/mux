@@ -13,7 +13,6 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { useTheme } from "../theme";
-import { Surface } from "../components/Surface";
 import { ThemedText } from "../components/ThemedText";
 import { IconButton } from "../components/IconButton";
 import { useApiClient } from "../hooks/useApiClient";
@@ -250,22 +249,26 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       keyboardVerticalOffset={80}
     >
-      <View style={{ flex: 1, padding: spacing.lg, gap: spacing.lg }}>
-        <Surface variant="plain" padding={spacing.lg}>
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <View style={{ flex: 1 }}>
-              <ThemedText variant="caption" weight="medium">
-                {metadata ? metadata.projectName : "Loading project"}
-              </ThemedText>
-              <ThemedText variant="titleMedium" weight="bold" style={{ marginTop: spacing.xs }}>
-                {metadata ? metadata.name : "Workspace"}
-              </ThemedText>
-              <ThemedText variant="caption" style={{ marginTop: spacing.xs }}>
-                {title}
-              </ThemedText>
-            </View>
+      <View style={{ flex: 1 }}>
+        {/* Header */}
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            paddingHorizontal: spacing.md,
+            paddingVertical: spacing.sm,
+            backgroundColor: theme.colors.surfaceSecondary,
+            borderBottomWidth: 1,
+            borderBottomColor: theme.colors.border,
+          }}
+        >
+          <ThemedText variant="titleSmall" weight="semibold" numberOfLines={1} style={{ flex: 1 }}>
+            {metadata ? `${metadata.projectName} › ${metadata.name}` : "Loading..."}
+          </ThemedText>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
             <IconButton
-              icon={<Ionicons name="terminal-outline" size={20} color={theme.colors.foregroundPrimary} />}
+              icon={<Ionicons name="terminal-outline" size={22} color={theme.colors.foregroundPrimary} />}
               accessibilityLabel="Open terminal"
               variant="ghost"
               onPress={() => {
@@ -277,9 +280,8 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
                 );
               }}
             />
-            <View style={{ width: spacing.sm }} />
             <IconButton
-              icon={<Ionicons name="key-outline" size={20} color={theme.colors.foregroundPrimary} />}
+              icon={<Ionicons name="key-outline" size={22} color={theme.colors.foregroundPrimary} />}
               accessibilityLabel="Manage secrets"
               variant="ghost"
               onPress={() => {
@@ -291,17 +293,17 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
                 );
               }}
             />
-            <View style={{ width: spacing.sm }} />
             <IconButton
-              icon={<Ionicons name="settings-outline" size={20} color={theme.colors.foregroundPrimary} />}
+              icon={<Ionicons name="settings-outline" size={22} color={theme.colors.foregroundPrimary} />}
               accessibilityLabel="Open settings"
               variant="ghost"
               onPress={() => router.push("/settings")}
             />
           </View>
-        </Surface>
+        </View>
 
-        <Surface variant="sunken" style={{ flex: 1 }}>
+        {/* Chat area */}
+        <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
           {metadataQuery.isLoading && timeline.length === 0 ? (
             <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
               <ActivityIndicator color={theme.colors.accent} />
@@ -311,7 +313,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
               data={listData}
               keyExtractor={keyExtractor}
               renderItem={renderItem}
-              contentContainerStyle={{ padding: spacing.md }}
+              contentContainerStyle={{ paddingHorizontal: spacing.md, paddingVertical: spacing.sm }}
               initialNumToRender={20}
               maxToRenderPerBatch={12}
               windowSize={5}
@@ -320,51 +322,70 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
               keyboardShouldPersistTaps="handled"
             />
           )}
-        </Surface>
+        </View>
 
-        <Surface variant="plain" padding={spacing.md}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+        {/* Input area */}
+        <View
+          style={{
+            paddingHorizontal: spacing.md,
+            paddingVertical: spacing.sm,
+            backgroundColor: theme.colors.surfaceSecondary,
+            borderTopWidth: 1,
+            borderTopColor: theme.colors.border,
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "flex-end", gap: spacing.sm }}>
             <TextInput
               value={input}
               onChangeText={setInput}
-              placeholder="Send a message"
+              placeholder="Message"
               placeholderTextColor={theme.colors.foregroundMuted}
               style={{
                 flex: 1,
-                paddingVertical: spacing.sm,
+                minHeight: 38,
+                maxHeight: 100,
+                paddingVertical: spacing.xs,
                 paddingHorizontal: spacing.md,
-                borderRadius: theme.radii.sm,
+                borderRadius: 20,
                 backgroundColor: theme.colors.inputBackground,
                 color: theme.colors.foregroundPrimary,
                 borderWidth: 1,
                 borderColor: theme.colors.inputBorder,
+                fontSize: 16,
               }}
               multiline
-              textAlignVertical="top"
               autoCorrect={false}
               autoCapitalize="sentences"
             />
             <Pressable
               onPress={onSend}
-              disabled={isSending}
+              disabled={isSending || !input.trim()}
               style={({ pressed }) => ({
-                backgroundColor: pressed ? theme.colors.accentHover : theme.colors.accent,
-                paddingHorizontal: spacing.lg,
-                paddingVertical: spacing.sm,
-                borderRadius: theme.radii.sm,
-                opacity: isSending ? 0.7 : 1,
+                backgroundColor:
+                  isSending || !input.trim()
+                    ? theme.colors.inputBorder
+                    : pressed
+                      ? theme.colors.accentHover
+                      : theme.colors.accent,
+                width: 38,
+                height: 38,
+                borderRadius: 19,
+                justifyContent: "center",
+                alignItems: "center",
               })}
             >
-              {isSending ? (
-                <ActivityIndicator color={theme.colors.foregroundInverted} />
-              ) : (
-                <ThemedText style={{ color: theme.colors.foregroundInverted }} weight="semibold">
-                  Send
-                </ThemedText>
-              )}
+              <Ionicons
+                name="arrow-up"
+                size={24}
+                color={
+                  isSending || !input.trim()
+                    ? theme.colors.foregroundMuted
+                    : theme.colors.foregroundInverted
+                }
+              />
             </Pressable>
           </View>
-        </Surface>
+        </View>
       </View>
     </KeyboardAvoidingView>
   );
