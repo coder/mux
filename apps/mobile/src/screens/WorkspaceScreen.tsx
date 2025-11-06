@@ -350,6 +350,22 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
           }}
         >
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+            {/* DEBUG: Test button to manually trigger todos */}
+            <IconButton
+              icon={<Ionicons name="bug" size={22} color={theme.colors.warning} />}
+              accessibilityLabel="Test todos"
+              variant="ghost"
+              onPress={() => {
+                const testTodos: TodoItem[] = [
+                  { content: "Test todo button visibility", status: "completed" },
+                  { content: "Validate floating card appears", status: "in_progress" },
+                  { content: "Check styling and colors", status: "pending" },
+                ];
+                setCurrentTodos(testTodos);
+                setTodoCardVisible(true);
+              }}
+            />
+            
             {/* Show/hide todo list toggle (only visible when todos exist) */}
             {currentTodos.length > 0 && (
               <IconButton
