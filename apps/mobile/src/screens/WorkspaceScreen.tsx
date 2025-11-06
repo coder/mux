@@ -563,7 +563,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
             borderTopColor: theme.colors.border,
           }}
         >
-          <View style={{ flexDirection: "row", alignItems: "flex-end", gap: spacing.sm }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
             <TextInput
               value={input}
               onChangeText={setInput}
@@ -591,7 +591,9 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
               disabled={!isStreaming && (isSending || !input.trim())}
               style={({ pressed }) => ({
                 backgroundColor: isStreaming
-                  ? theme.colors.danger
+                  ? pressed
+                    ? theme.colors.accentHover
+                    : theme.colors.accent
                   : isSending || !input.trim()
                     ? theme.colors.inputBorder
                     : pressed
