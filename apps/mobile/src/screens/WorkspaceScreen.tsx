@@ -219,22 +219,25 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
     };
   }, [api, workspaceId]);
 
-  // Scroll to bottom on initial load (instant, no animation)
+  // Scroll to bottom on initial load (instant jump)
   // Only trigger once when messages first arrive
   useEffect(() => {
     if (timeline.length > 0 && !hasInitiallyScrolledRef.current) {
-      // Use requestAnimationFrame to ensure FlatList layout is ready
-      requestAnimationFrame(() => {
-        flatListRef.current?.scrollToEnd({ animated: false });
-        hasInitiallyScrolledRef.current = true;
-      });
+      // scrollToEnd doesn't support duration parameter in React Native
+      // Use a very small timeout to let layout settle, then scroll instantly
+      const timer = setTimeout(() => {
+        if (flatListRef.current) {
+          flatListRef.current.scrollToEnd({ animated: false });
+          hasInitiallyScrolledRef.current = true;
+        }
+      }, 0); // 0ms timeout = next tick, effectively instant
+      return () => clearTimeout(timer);
     }
-  }, [timeline.length > 0]); // Only trigger when timeline goes from empty to non-empty
+  }, [timeline.length > 0, timeline.length]);
   
   // Reset scroll tracking when workspace changes
   useEffect(() => {
     hasInitiallyScrolledRef.current = false;
-    // Clear timeline to ensure fresh start
     setTimeline([]);
   }, [workspaceId]);
 
