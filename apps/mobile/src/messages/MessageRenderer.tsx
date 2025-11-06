@@ -223,6 +223,15 @@ function ReasoningMessageCard({
 }): JSX.Element {
   const theme = useTheme();
   const isStreaming = 'isStreaming' in message && (message as any).isStreaming === true;
+  const [isExpanded, setIsExpanded] = useState(isStreaming);
+
+  // Auto-collapse when streaming ends (like desktop)
+  useEffect(() => {
+    if (!isStreaming) {
+      setIsExpanded(false);
+    }
+  }, [isStreaming]);
+
   return (
     <Surface
       variant="plain"
@@ -233,13 +242,36 @@ function ReasoningMessageCard({
         marginBottom: theme.spacing.md,
       }}
     >
-      <ThemedText variant="label" style={{ color: theme.colors.accent }}>
-        Reasoning
-      </ThemedText>
-      <View style={{ flexDirection: "row", alignItems: "flex-end", marginTop: theme.spacing.sm }}>
-        <ThemedText style={{ flex: 1 }}>{message.content || "(Thinking…)"}</ThemedText>
-        {isStreaming && <StreamingCursor />}
-      </View>
+      <Pressable
+        onPress={() => !isStreaming && setIsExpanded(!isExpanded)}
+        style={{ flexDirection: "row", alignItems: "center", gap: theme.spacing.xs }}
+      >
+        <Text style={{ fontSize: 16 }}>💭</Text>
+        <ThemedText variant="label" style={{ color: theme.colors.accent, flex: 1 }}>
+          Thinking
+        </ThemedText>
+        {!isStreaming && (
+          <Ionicons
+            name={isExpanded ? "chevron-down" : "chevron-forward"}
+            size={16}
+            color={theme.colors.accent}
+          />
+        )}
+        {isStreaming && (
+          <ThemedText variant="caption" style={{ color: theme.colors.accent }}>
+            ⟳
+          </ThemedText>
+        )}
+      </Pressable>
+      
+      {isExpanded && (
+        <View style={{ flexDirection: "row", alignItems: "flex-end", marginTop: theme.spacing.sm }}>
+          <ThemedText style={{ flex: 1, fontStyle: "italic", color: theme.colors.foregroundSecondary }}>
+            {message.content || "(Thinking…)"}
+          </ThemedText>
+          {isStreaming && <StreamingCursor />}
+        </View>
+      )}
     </Surface>
   );
 }
