@@ -21,6 +21,7 @@ export interface CmuxMobileClientConfig {
 const IPC_CHANNELS = {
   WORKSPACE_LIST: "workspace:list",
   WORKSPACE_SEND_MESSAGE: "workspace:sendMessage",
+  WORKSPACE_INTERRUPT_STREAM: "workspace:interruptStream",
   WORKSPACE_GET_INFO: "workspace:getInfo",
   PROJECT_LIST: "project:list",
   WORKSPACE_CHAT_PREFIX: "workspace:chat:",
@@ -148,6 +149,15 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
         invoke(IPC_CHANNELS.WORKSPACE_LIST),
       getInfo: async (workspaceId: string): Promise<FrontendWorkspaceMetadata | null> =>
         invoke(IPC_CHANNELS.WORKSPACE_GET_INFO, [ensureWorkspaceId(workspaceId)]),
+      interruptStream: async (workspaceId: string): Promise<Result<void, string>> => {
+        try {
+          await invoke(IPC_CHANNELS.WORKSPACE_INTERRUPT_STREAM, [ensureWorkspaceId(workspaceId)]);
+          return { success: true, data: undefined };
+        } catch (error) {
+          const err = error instanceof Error ? error.message : String(error);
+          return { success: false, error: err };
+        }
+      },
       sendMessage: async (
         workspaceId: string,
         message: string,

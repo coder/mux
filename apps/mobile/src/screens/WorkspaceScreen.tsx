@@ -390,6 +390,10 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
     setIsSending(false);
   }, [api, input, defaultMode, defaultReasoningLevel, workspaceId]);
 
+  const onCancelStream = useCallback(async () => {
+    await api.workspace.interruptStream(workspaceId);
+  }, [api, workspaceId]);
+
   // Reverse timeline for inverted FlatList (chat messages bottom-to-top)
   const listData = useMemo(() => [...timeline].reverse(), [timeline]);
   const keyExtractor = useCallback((item: TimelineEntry) => item.key, []);
@@ -583,31 +587,36 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
               autoCapitalize="sentences"
             />
             <Pressable
-              onPress={onSend}
-              disabled={isSending || !input.trim()}
+              onPress={isStreaming ? onCancelStream : onSend}
+              disabled={!isStreaming && (isSending || !input.trim())}
               style={({ pressed }) => ({
-                backgroundColor:
-                  isSending || !input.trim()
+                backgroundColor: isStreaming
+                  ? theme.colors.danger
+                  : isSending || !input.trim()
                     ? theme.colors.inputBorder
                     : pressed
                       ? theme.colors.accentHover
                       : theme.colors.accent,
                 width: 38,
                 height: 38,
-                borderRadius: 19,
+                borderRadius: isStreaming ? 8 : 19, // Square when streaming, circle when not
                 justifyContent: "center",
                 alignItems: "center",
               })}
             >
-              <Ionicons
-                name="arrow-up"
-                size={24}
-                color={
-                  isSending || !input.trim()
-                    ? theme.colors.foregroundMuted
-                    : theme.colors.foregroundInverted
-                }
-              />
+              {isStreaming ? (
+                <Ionicons name="stop" size={20} color={theme.colors.foregroundInverted} />
+              ) : (
+                <Ionicons
+                  name="arrow-up"
+                  size={24}
+                  color={
+                    isSending || !input.trim()
+                      ? theme.colors.foregroundMuted
+                      : theme.colors.foregroundInverted
+                  }
+                />
+              )}
             </Pressable>
           </View>
         </View>
