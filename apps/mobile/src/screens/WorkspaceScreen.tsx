@@ -178,6 +178,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [isSending, setIsSending] = useState(false);
   const wsRef = useRef<{ close: () => void } | null>(null);
+  const flatListRef = useRef<FlatList<TimelineEntry> | null>(null);
 
   useEffect(() => {
     expanderRef.current = createChatEventExpander();
@@ -214,6 +215,16 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
       wsRef.current = null;
     };
   }, [api, workspaceId]);
+
+  // Scroll to bottom when timeline loads initially
+  useEffect(() => {
+    if (timeline.length > 0 && flatListRef.current) {
+      // Small delay to ensure FlatList has rendered
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: false });
+      }, 100);
+    }
+  }, [timeline.length]);
 
   const metadata = metadataQuery.data ?? null;
   const title = formatProjectBreadcrumb(metadata);
@@ -313,6 +324,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
             </View>
           ) : (
             <FlatList
+              ref={flatListRef}
               data={listData}
               keyExtractor={keyExtractor}
               renderItem={renderItem}
@@ -323,6 +335,12 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
               updateCellsBatchingPeriod={32}
               removeClippedSubviews
               keyboardShouldPersistTaps="handled"
+              onContentSizeChange={() => {
+                // Auto-scroll when new messages arrive
+                if (timeline.length > 0) {
+                  flatListRef.current?.scrollToEnd({ animated: true });
+                }
+              }}
             />
           )}
         </View>
