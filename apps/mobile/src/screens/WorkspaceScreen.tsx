@@ -18,14 +18,11 @@ import { ThemedText } from "../components/ThemedText";
 import { IconButton } from "../components/IconButton";
 import { useApiClient } from "../hooks/useApiClient";
 import { MessageRenderer } from "../messages/MessageRenderer";
-import { ReasoningControl } from "../components/ReasoningControl";
 import { ThinkingProvider, useThinkingLevel } from "../contexts/ThinkingContext";
+import { useWorkspaceDefaults, type WorkspaceMode } from "../hooks/useWorkspaceDefaults";
 import { createChatEventExpander, DISPLAYABLE_MESSAGE_TYPES } from "../messages/normalizeChatEvent";
 import type { DisplayedMessage, FrontendWorkspaceMetadata, WorkspaceChatEvent } from "../types";
 import type { Result } from "../api/client";
-
-const MODE_TABS = ["plan", "exec"] as const;
-type WorkspaceMode = (typeof MODE_TABS)[number];
 type ThemeSpacing = ReturnType<typeof useTheme>["spacing"];
 
 type TimelineEntry =
@@ -174,7 +171,8 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   const router = useRouter();
   const expanderRef = useRef(createChatEventExpander());
   const api = useApiClient();
-  const [mode, setMode] = useState<WorkspaceMode>("plan");
+  const { defaultMode, defaultReasoningLevel } = useWorkspaceDefaults();
+  const [mode] = useState<WorkspaceMode>(defaultMode);
   const [input, setInput] = useState("");
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [isSending, setIsSending] = useState(false);
@@ -228,8 +226,8 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
     setIsSending(true);
     const result: Result<void, string> = await api.workspace.sendMessage(workspaceId, trimmed, {
       model: "default",
-      mode,
-      thinkingLevel,
+      mode: defaultMode,
+      thinkingLevel: defaultReasoningLevel,
     });
     if (!result.success) {
       setTimeline((current) =>
@@ -238,7 +236,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
     }
     setIsSending(false);
     setInput("");
-  }, [api, input, mode, thinkingLevel, workspaceId]);
+  }, [api, input, defaultMode, defaultReasoningLevel, workspaceId]);
 
   const listData = useMemo(() => timeline, [timeline]);
   const keyExtractor = useCallback((item: TimelineEntry) => item.key, []);
@@ -247,10 +245,6 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
     ({ item }: { item: TimelineEntry }) => <TimelineRow item={item} spacing={spacing} />,
     [spacing]
   );
-
-  const handleModePress = (nextMode: WorkspaceMode) => {
-    setMode(nextMode);
-  };
 
   return (
     <KeyboardAvoidingView
@@ -299,51 +293,13 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
                 );
               }}
             />
-          </View>
-
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              marginTop: spacing.lg,
-              backgroundColor: theme.colors.surfaceSunken,
-              padding: spacing.xs,
-              borderRadius: theme.radii.pill,
-            }}
-          >
-            {MODE_TABS.map((tab) => {
-              const selected = tab === mode;
-              return (
-                <Pressable
-                  key={tab}
-                  onPress={() => handleModePress(tab)}
-                  style={({ pressed }) => ({
-                    flex: 1,
-                    paddingVertical: spacing.sm,
-                    borderRadius: theme.radii.pill,
-                    backgroundColor: selected
-                      ? theme.colors.accent
-                      : pressed
-                      ? theme.colors.accentMuted
-                      : "transparent",
-                  })}
-                >
-                  <ThemedText
-                    align="center"
-                    weight={selected ? "semibold" : "regular"}
-                    style={{
-                      color: selected ? theme.colors.foregroundInverted : theme.colors.foregroundSecondary,
-                    }}
-                  >
-                    {tab.toUpperCase()}
-                  </ThemedText>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          <View style={{ marginTop: spacing.md }}>
-            <ReasoningControl disabled={isSending} />
+            <View style={{ width: spacing.sm }} />
+            <IconButton
+              icon={<Ionicons name="settings-outline" size={20} color={theme.colors.foregroundPrimary} />}
+              accessibilityLabel="Open settings"
+              variant="ghost"
+              onPress={() => router.push("/settings")}
+            />
           </View>
         </Surface>
 
