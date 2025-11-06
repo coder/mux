@@ -185,7 +185,13 @@ export function ProjectsScreen(): JSX.Element {
       <Pressable
         key={metadata.id}
         onPress={() =>
-          router.push({ pathname: "/workspace/[id]", params: { id: metadata.id } })
+          router.push({ 
+            pathname: "/workspace/[id]", 
+            params: { 
+              id: metadata.id,
+              title: `${metadata.projectName} › ${metadata.name}`,
+            } 
+          })
         }
         style={({ pressed }) => [
           {

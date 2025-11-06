@@ -9,7 +9,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useLocalSearchParams, useRouter, useNavigation } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -200,7 +200,6 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   const spacing = theme.spacing;
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const navigation = useNavigation();
   const expanderRef = useRef(createChatEventExpander());
   const api = useApiClient();
   const { defaultMode, defaultReasoningLevel } = useWorkspaceDefaults();
@@ -226,15 +225,6 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   });
 
   const metadata = metadataQuery.data ?? null;
-
-  // Update Expo Router header title with workspace name
-  useEffect(() => {
-    if (metadata) {
-      navigation.setOptions({
-        title: `${metadata.projectName} › ${metadata.name}`,
-      });
-    }
-  }, [metadata, navigation]);
 
   useEffect(() => {
     const expander = expanderRef.current;
