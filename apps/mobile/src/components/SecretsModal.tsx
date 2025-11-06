@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../theme";
 import { ThemedText } from "./ThemedText";
 import { Surface } from "./Surface";
@@ -35,6 +36,7 @@ export function SecretsModal({
 }: SecretsModalProps): JSX.Element {
   const theme = useTheme();
   const spacing = theme.spacing;
+  const insets = useSafeAreaInsets();
 
   const [secrets, setSecrets] = useState<Secret[]>(initialSecrets);
   const [visibleSecrets, setVisibleSecrets] = useState<Set<number>>(new Set());
@@ -114,12 +116,12 @@ export function SecretsModal({
           style={{
             flex: 1,
             backgroundColor: theme.colors.background,
+            paddingTop: insets.top,
           }}
         >
           <View
             style={{
               flex: 1,
-              paddingTop: spacing.xl,
             }}
           >
             {/* Header */}
@@ -129,6 +131,7 @@ export function SecretsModal({
                 alignItems: "center",
                 justifyContent: "space-between",
                 paddingHorizontal: spacing.lg,
+                paddingTop: spacing.md,
                 paddingBottom: spacing.md,
                 borderBottomWidth: 1,
                 borderBottomColor: theme.colors.borderSubtle,
@@ -172,7 +175,10 @@ export function SecretsModal({
             {/* Secrets list */}
             <ScrollView
               style={{ flex: 1 }}
-              contentContainerStyle={{ padding: spacing.lg }}
+              contentContainerStyle={{ 
+                padding: spacing.lg,
+                paddingBottom: Math.max(spacing.lg, insets.bottom),
+              }}
             >
               {secrets.length === 0 ? (
                 <View style={{ paddingVertical: spacing.xxl, alignItems: "center" }}>
