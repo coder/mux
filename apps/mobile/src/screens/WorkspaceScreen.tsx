@@ -81,14 +81,53 @@ function applyChatEvent(current: TimelineEntry[], event: WorkspaceChatEvent): Ti
   }
 
   if (isDisplayedMessageEvent(event)) {
+    // Check if message already exists (deduplicate)
+    const existingIndex = current.findIndex(
+      (item) => item.kind === "displayed" && item.message.id === event.id
+    );
+    
+    if (existingIndex >= 0) {
+      // Message already exists - check if it's an update (streaming delta)
+      const existingMessage = (current[existingIndex] as Extract<TimelineEntry, { kind: "displayed" }>).message;
+      const isUpdate = 
+        existingMessage.historySequence === event.historySequence &&
+        'isStreaming' in event &&
+        (event as any).isStreaming === true;
+      
+      if (isUpdate) {
+        // Update in place (streaming delta)
+        const updated = [...current];
+        updated[existingIndex] = {
+          kind: "displayed",
+          key: `displayed-${event.id}`,
+          message: event,
+        };
+        return updated;
+      }
+      
+      // Same message, skip (already processed)
+      return current;
+    }
+    
+    // New message - add and sort only if needed
     const entry: TimelineEntry = {
       kind: "displayed",
       key: `displayed-${event.id}`,
       message: event,
     };
-    const withoutExisting = current.filter(
-      (item) => item.kind !== "displayed" || item.message.id !== event.id
-    );
+    
+    // Check if we need to sort (is new message out of order?)
+    const lastDisplayed = [...current]
+      .reverse()
+      .find((item): item is Extract<TimelineEntry, { kind: "displayed" }> => item.kind === "displayed");
+    
+    if (!lastDisplayed || compareDisplayedMessages(lastDisplayed.message, event) <= 0) {
+      // New message is in order - just append (no sort needed)
+      return [...current, entry];
+    }
+    
+    // Out of order - need to sort
+    const withoutExisting = current.filter((item) => item.kind !== "displayed" || item.message.id !== event.id);
     const displayed = withoutExisting
       .filter((item): item is Extract<TimelineEntry, { kind: "displayed" }> => item.kind === "displayed")
       .concat(entry)
