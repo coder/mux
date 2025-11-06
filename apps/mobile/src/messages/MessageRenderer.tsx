@@ -5,6 +5,7 @@ import { useMemo, useState, useEffect, useRef } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { Surface } from "../components/Surface";
 import { ThemedText } from "../components/ThemedText";
+import { ProposePlanCard } from "../components/ProposePlanCard";
 import { useTheme } from "../theme";
 import type { DisplayedMessage } from "../types";
 import { assert } from "../utils/assert";
@@ -429,11 +430,39 @@ function WorkspaceInitMessageCard({
   );
 }
 
+/**
+ * Type guard for propose_plan tool
+ */
+function isProposePlanTool(
+  message: DisplayedMessage & { type: "tool" }
+): message is DisplayedMessage & {
+  type: "tool";
+  args: { title: string; plan: string };
+} {
+  return (
+    message.toolName === "propose_plan" &&
+    message.args !== null &&
+    typeof message.args === "object" &&
+    "title" in message.args &&
+    "plan" in message.args &&
+    typeof message.args.title === "string" &&
+    typeof message.args.plan === "string"
+  );
+}
+
 function ToolMessageCard({
   message,
 }: {
   message: DisplayedMessage & { type: "tool" };
 }): JSX.Element {
+  // Special handling for propose_plan tool
+  if (isProposePlanTool(message)) {
+    return (
+      <ProposePlanCard title={message.args.title} plan={message.args.plan} status={message.status} />
+    );
+  }
+
+  // Generic tool rendering for all other tools
   const theme = useTheme();
   const [isExpanded, setIsExpanded] = useState(false);
 
