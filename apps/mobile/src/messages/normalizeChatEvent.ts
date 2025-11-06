@@ -272,6 +272,9 @@ function transformCmuxToDisplayed(message: CmuxMessage): DisplayedMessage[] {
 export function createChatEventExpander(): ChatEventExpander {
   const processor = createChatEventProcessor();
   const unsupportedTypesLogged = new Set<string>();
+  
+  // Track active streams for real-time emission
+  const activeStreams = new Set<string>();
 
   const emitInitMessage = (): DisplayedMessage[] => {
     const initState = processor.getInitState();
@@ -290,6 +293,31 @@ export function createChatEventExpander(): ChatEventExpander {
         timestamp: initState.timestamp,
       },
     ];
+  };
+  
+  /**
+   * Emit partial messages for active stream.
+   * Called during streaming to show real-time updates.
+   */
+  const emitPartialMessages = (messageId: string): WorkspaceChatEvent[] => {
+    const message = processor.getMessageById(messageId);
+    if (!message) {
+      return [];
+    }
+    
+    const displayed = transformCmuxToDisplayed(message);
+    
+    // Mark all displayed parts as streaming
+    displayed.forEach((msg) => {
+      if ('isStreaming' in msg) {
+        (msg as any).isStreaming = true;
+      }
+      if ('isPartial' in msg) {
+        (msg as any).isPartial = true;
+      }
+    });
+    
+    return displayed;
   };
 
   const expandSingle = (payload: IncomingEvent | undefined): WorkspaceChatEvent[] => {
@@ -327,30 +355,70 @@ export function createChatEventExpander(): ChatEventExpander {
         return emitInitMessage();
       }
 
-      // Handle streaming events (processed but not emitted until stream-end)
-      if (
-        type === "stream-start" ||
-        type === "stream-delta" ||
-        type === "stream-abort" ||
-        type === "reasoning-delta" ||
-        type === "reasoning-end" ||
-        type === "tool-call-start" ||
-        type === "tool-call-delta" ||
-        type === "tool-call-end"
-      ) {
+      // Stream start: mark as active and emit initial partial message
+      if (type === "stream-start") {
+        processor.handleEvent(payload as WorkspaceChatEvent);
+        const messageId = (payload as { messageId: string }).messageId;
+        activeStreams.add(messageId);
+        return emitPartialMessages(messageId);
+      }
+      
+      // Stream delta: emit partial message with accumulated content
+      if (type === "stream-delta") {
+        processor.handleEvent(payload as WorkspaceChatEvent);
+        const messageId = (payload as { messageId: string }).messageId;
+        return emitPartialMessages(messageId);
+      }
+      
+      // Reasoning delta: emit partial reasoning message
+      if (type === "reasoning-delta") {
+        processor.handleEvent(payload as WorkspaceChatEvent);
+        const messageId = (payload as { messageId: string }).messageId;
+        return emitPartialMessages(messageId);
+      }
+      
+      // Tool call events: emit partial messages to show tool progress
+      if (type === "tool-call-start" || type === "tool-call-delta" || type === "tool-call-end") {
+        processor.handleEvent(payload as WorkspaceChatEvent);
+        const messageId = (payload as { messageId: string }).messageId;
+        return emitPartialMessages(messageId);
+      }
+      
+      // Reasoning end: just process, next delta will emit
+      if (type === "reasoning-end") {
         processor.handleEvent(payload as WorkspaceChatEvent);
         return [];
       }
 
-      // Emit accumulated messages on stream completion
+      // Stream end: emit final complete message and clear streaming state
       if (type === "stream-end") {
         processor.handleEvent(payload as WorkspaceChatEvent);
-        const messages = processor.getMessages();
-        const result: WorkspaceChatEvent[] = [];
-        for (const msg of messages) {
-          result.push(...transformCmuxToDisplayed(msg));
+        const messageId = (payload as { messageId: string }).messageId;
+        activeStreams.delete(messageId);
+        
+        const message = processor.getMessageById(messageId);
+        if (message) {
+          const displayed = transformCmuxToDisplayed(message);
+          // Mark as complete (not streaming)
+          displayed.forEach((msg) => {
+            if ('isStreaming' in msg) {
+              (msg as any).isStreaming = false;
+            }
+            if ('isPartial' in msg) {
+              (msg as any).isPartial = false;
+            }
+          });
+          return displayed;
         }
-        return result;
+        return [];
+      }
+      
+      // Stream abort: emit partial message marked as interrupted
+      if (type === "stream-abort") {
+        processor.handleEvent(payload as WorkspaceChatEvent);
+        const messageId = (payload as { messageId: string }).messageId;
+        activeStreams.delete(messageId);
+        return emitPartialMessages(messageId);
       }
 
       // Pass through certain event types unchanged

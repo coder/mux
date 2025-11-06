@@ -179,6 +179,9 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   const [isSending, setIsSending] = useState(false);
   const wsRef = useRef<{ close: () => void } | null>(null);
   const flatListRef = useRef<FlatList<TimelineEntry> | null>(null);
+  
+  // Track if we've done initial scroll (for animation control)
+  const hasInitiallyScrolledRef = useRef(false);
 
   useEffect(() => {
     expanderRef.current = createChatEventExpander();
@@ -216,15 +219,21 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
     };
   }, [api, workspaceId]);
 
-  // Scroll to bottom when timeline loads initially
+  // Scroll to bottom on initial load (no animation)
   useEffect(() => {
-    if (timeline.length > 0 && flatListRef.current) {
+    if (timeline.length > 0 && flatListRef.current && !hasInitiallyScrolledRef.current) {
       // Small delay to ensure FlatList has rendered
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: false });
+        hasInitiallyScrolledRef.current = true;
       }, 100);
     }
   }, [timeline.length]);
+  
+  // Reset scroll tracking when workspace changes
+  useEffect(() => {
+    hasInitiallyScrolledRef.current = false;
+  }, [workspaceId]);
 
   const metadata = metadataQuery.data ?? null;
   const title = formatProjectBreadcrumb(metadata);
@@ -336,8 +345,8 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
               removeClippedSubviews
               keyboardShouldPersistTaps="handled"
               onContentSizeChange={() => {
-                // Auto-scroll when new messages arrive
-                if (timeline.length > 0) {
+                // Auto-scroll when new messages arrive (animated if we've already scrolled)
+                if (timeline.length > 0 && hasInitiallyScrolledRef.current) {
                   flatListRef.current?.scrollToEnd({ animated: true });
                 }
               }}

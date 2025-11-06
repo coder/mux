@@ -1,13 +1,52 @@
 import type { JSX } from "react";
 import Markdown from "react-native-markdown-display";
-import { Image, View, ActivityIndicator, StyleSheet, ScrollView, Text, Pressable } from "react-native";
-import { useMemo, useState } from "react";
+import { Image, View, ActivityIndicator, StyleSheet, ScrollView, Text, Pressable, Animated } from "react-native";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { Surface } from "../components/Surface";
 import { ThemedText } from "../components/ThemedText";
 import { useTheme } from "../theme";
 import type { DisplayedMessage } from "../types";
 import { assert } from "../utils/assert";
+
+/**
+ * Streaming cursor component - pulsing animation
+ */
+function StreamingCursor(): JSX.Element {
+  const theme = useTheme();
+  const opacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, {
+          toValue: 0.3,
+          duration: 530,
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: 530,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [opacity]);
+
+  return (
+    <Animated.View
+      style={{
+        width: 2,
+        height: 16,
+        backgroundColor: theme.colors.accent,
+        marginLeft: 2,
+        opacity,
+      }}
+    />
+  );
+}
 
 export interface MessageRendererProps {
   message: DisplayedMessage;
@@ -42,6 +81,7 @@ function AssistantMessageCard({
   message: DisplayedMessage & { type: "assistant" };
 }): JSX.Element {
   const theme = useTheme();
+  const isStreaming = 'isStreaming' in message && (message as any).isStreaming === true;
   const markdownStyles = useMemo(
     () => ({
       body: {
@@ -118,19 +158,16 @@ function AssistantMessageCard({
           </Surface>
         ) : null}
       </View>
-      {Boolean(message.content) ? (
-        <Markdown style={markdownStyles}>{message.content}</Markdown>
-      ) : (
-        <ThemedText variant="muted">(No content)</ThemedText>
-      )}
-      {message.isStreaming ? (
-        <View style={{ flexDirection: "row", alignItems: "center", marginTop: theme.spacing.sm }}>
-          <ActivityIndicator size="small" color={theme.colors.accent} />
-          <ThemedText variant="caption" style={{ marginLeft: theme.spacing.xs }}>
-            Generating…
-          </ThemedText>
+      <View style={{ flexDirection: "row", alignItems: "flex-end" }}>
+        <View style={{ flex: 1 }}>
+          {Boolean(message.content) ? (
+            <Markdown style={markdownStyles}>{message.content}</Markdown>
+          ) : (
+            <ThemedText variant="muted">(No content)</ThemedText>
+          )}
         </View>
-      ) : null}
+        {isStreaming && <StreamingCursor />}
+      </View>
     </Surface>
   );
 }
@@ -182,6 +219,7 @@ function ReasoningMessageCard({
   message: DisplayedMessage & { type: "reasoning" };
 }): JSX.Element {
   const theme = useTheme();
+  const isStreaming = 'isStreaming' in message && (message as any).isStreaming === true;
   return (
     <Surface
       variant="plain"
@@ -195,15 +233,10 @@ function ReasoningMessageCard({
       <ThemedText variant="label" style={{ color: theme.colors.accent }}>
         Reasoning
       </ThemedText>
-      <ThemedText style={{ marginTop: theme.spacing.sm }}>{message.content || "(Thinking…)"}</ThemedText>
-      {message.isStreaming ? (
-        <View style={{ flexDirection: "row", alignItems: "center", marginTop: theme.spacing.xs }}>
-          <ActivityIndicator size="small" color={theme.colors.accent} />
-          <ThemedText variant="caption" style={{ marginLeft: theme.spacing.xs }}>
-            Thinking…
-          </ThemedText>
-        </View>
-      ) : null}
+      <View style={{ flexDirection: "row", alignItems: "flex-end", marginTop: theme.spacing.sm }}>
+        <ThemedText style={{ flex: 1 }}>{message.content || "(Thinking…)"}</ThemedText>
+        {isStreaming && <StreamingCursor />}
+      </View>
     </Surface>
   );
 }
