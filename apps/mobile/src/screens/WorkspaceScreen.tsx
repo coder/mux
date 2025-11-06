@@ -256,8 +256,10 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   // Track streaming state for indicator
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingModel, setStreamingModel] = useState<string | null>(null);
-  const [streamTokens, setStreamTokens] = useState(0);
-  const [streamStartTime, setStreamStartTime] = useState<number | null>(null);
+  
+  // Track deltas with timestamps for accurate TPS calculation (60s window like desktop)
+  const deltasRef = useRef<Array<{ tokens: number; timestamp: number }>>([]);
+  const [tokenDisplay, setTokenDisplay] = useState({ total: 0, tps: 0 });
 
   useEffect(() => {
     expanderRef.current = createChatEventExpander();
@@ -299,22 +301,53 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
         setTodoCardVisible(true); // Re-show card on new todos
       }
 
-      // Track streaming state and tokens
+      // Track streaming state and tokens (60s trailing window like desktop)
       if (payload && typeof payload === "object" && "type" in payload) {
         if (payload.type === "stream-start" && "model" in payload) {
           setIsStreaming(true);
           setStreamingModel(typeof payload.model === "string" ? payload.model : null);
-          setStreamTokens(0);
-          setStreamStartTime(Date.now());
-        } else if (payload.type === "stream-delta" && "tokens" in payload) {
-          setStreamTokens((prev) => prev + (typeof payload.tokens === "number" ? payload.tokens : 0));
-        } else if (payload.type === "reasoning-delta" && "tokens" in payload) {
-          setStreamTokens((prev) => prev + (typeof payload.tokens === "number" ? payload.tokens : 0));
+          deltasRef.current = [];
+          setTokenDisplay({ total: 0, tps: 0 });
+        } else if (
+          (payload.type === "stream-delta" || 
+           payload.type === "reasoning-delta" ||
+           payload.type === "tool-call-start") &&
+          "tokens" in payload &&
+          typeof payload.tokens === "number" &&
+          payload.tokens > 0
+        ) {
+          const tokens = payload.tokens;
+          const timestamp = "timestamp" in payload && typeof payload.timestamp === "number" 
+            ? payload.timestamp 
+            : Date.now();
+          
+          // Add delta with timestamp
+          deltasRef.current.push({ tokens, timestamp });
+          
+          // Calculate with 60-second trailing window (like desktop)
+          const now = Date.now();
+          const windowStart = now - 60000; // 60 seconds
+          const recentDeltas = deltasRef.current.filter((d) => d.timestamp >= windowStart);
+          
+          // Calculate total tokens and TPS
+          const total = deltasRef.current.reduce((sum, d) => sum + d.tokens, 0);
+          let tps = 0;
+          
+          if (recentDeltas.length > 0) {
+            const recentTokens = recentDeltas.reduce((sum, d) => sum + d.tokens, 0);
+            const timeSpanMs = now - recentDeltas[0].timestamp;
+            const timeSpanSec = timeSpanMs / 1000;
+            if (timeSpanSec > 0) {
+              tps = Math.round(recentTokens / timeSpanSec);
+            }
+          }
+          
+          setTokenDisplay({ total, tps });
         } else if (payload.type === "stream-end" || payload.type === "stream-abort") {
           setIsStreaming(false);
           setStreamingModel(null);
-          setStreamTokens(0);
-          setStreamStartTime(null);
+          deltasRef.current = [];
+          setTokenDisplay({ total: 0, tps: 0 });
         }
       }
 
@@ -533,20 +566,16 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
             <ThemedText variant="caption" style={{ color: theme.colors.accent }}>
               {streamingModel} streaming...
             </ThemedText>
-            {streamTokens > 0 && (
+            {tokenDisplay.total > 0 && (
               <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
                 <ThemedText variant="caption" style={{ color: theme.colors.accent }}>
-                  ~{streamTokens.toLocaleString()} tokens
+                  ~{tokenDisplay.total.toLocaleString()} tokens
                 </ThemedText>
-                {streamStartTime && (() => {
-                  const elapsed = (Date.now() - streamStartTime) / 1000;
-                  const tps = elapsed > 0 ? Math.round(streamTokens / elapsed) : 0;
-                  return tps > 0 ? (
-                    <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted }}>
-                      @ {tps} t/s
-                    </ThemedText>
-                  ) : null;
-                })()}
+                {tokenDisplay.tps > 0 && (
+                  <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted }}>
+                    @ {tokenDisplay.tps} t/s
+                  </ThemedText>
+                )}
               </View>
             )}
           </View>
