@@ -252,6 +252,12 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   // Track current todos for floating card (during streaming)
   const [currentTodos, setCurrentTodos] = useState<TodoItem[]>([]);
   const [todoCardVisible, setTodoCardVisible] = useState(true);
+  
+  // Track streaming state for indicator
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamingModel, setStreamingModel] = useState<string | null>(null);
+  const [streamTokens, setStreamTokens] = useState(0);
+  const [streamStartTime, setStreamStartTime] = useState<number | null>(null);
 
   useEffect(() => {
     expanderRef.current = createChatEventExpander();
@@ -291,6 +297,25 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
         console.log('[DEBUG] Received todo_write event with todos:', todos);
         setCurrentTodos(todos);
         setTodoCardVisible(true); // Re-show card on new todos
+      }
+
+      // Track streaming state and tokens
+      if (payload && typeof payload === "object" && "type" in payload) {
+        if (payload.type === "stream-start" && "model" in payload) {
+          setIsStreaming(true);
+          setStreamingModel(typeof payload.model === "string" ? payload.model : null);
+          setStreamTokens(0);
+          setStreamStartTime(Date.now());
+        } else if (payload.type === "stream-delta" && "tokens" in payload) {
+          setStreamTokens((prev) => prev + (typeof payload.tokens === "number" ? payload.tokens : 0));
+        } else if (payload.type === "reasoning-delta" && "tokens" in payload) {
+          setStreamTokens((prev) => prev + (typeof payload.tokens === "number" ? payload.tokens : 0));
+        } else if (payload.type === "stream-end" || payload.type === "stream-abort") {
+          setIsStreaming(false);
+          setStreamingModel(null);
+          setStreamTokens(0);
+          setStreamStartTime(null);
+        }
       }
 
       // Clear todos when stream ends
@@ -335,18 +360,32 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
       return;
     }
     setIsSending(true);
-    const result: Result<void, string> = await api.workspace.sendMessage(workspaceId, trimmed, {
-      model: "default",
-      mode: defaultMode,
-      thinkingLevel: defaultReasoningLevel,
-    });
-    if (!result.success) {
+    
+    try {
+      const result: Result<void, string> = await api.workspace.sendMessage(workspaceId, trimmed, {
+        model: "default",
+        mode: defaultMode,
+        thinkingLevel: defaultReasoningLevel,
+      });
+      
+      // Only show error if the result explicitly indicates failure
+      if (!result.success) {
+        console.error('[sendMessage] Failed:', result.error);
+        setTimeline((current) =>
+          applyChatEvent(current, { type: "error", error: result.error } as WorkspaceChatEvent)
+        );
+      }
+    } catch (error) {
+      // Catch any unexpected errors
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('[sendMessage] Exception:', errorMessage);
       setTimeline((current) =>
-        applyChatEvent(current, { type: "error", error: result.error } as WorkspaceChatEvent)
+        applyChatEvent(current, { type: "error", error: errorMessage } as WorkspaceChatEvent)
       );
+    } finally {
+      setIsSending(false);
+      setInput("");
     }
-    setIsSending(false);
-    setInput("");
   }, [api, input, defaultMode, defaultReasoningLevel, workspaceId]);
 
   // Reverse timeline for inverted FlatList (chat messages bottom-to-top)
@@ -469,6 +508,42 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
         {/* Floating Todo Card */}
         {currentTodos.length > 0 && todoCardVisible && (
           <FloatingTodoCard todos={currentTodos} onDismiss={() => setTodoCardVisible(false)} />
+        )}
+
+        {/* Streaming Indicator */}
+        {isStreaming && streamingModel && (
+          <View
+            style={{
+              paddingVertical: spacing.xs,
+              paddingHorizontal: spacing.md,
+              backgroundColor: theme.colors.surfaceSecondary,
+              borderTopWidth: 1,
+              borderTopColor: theme.colors.border,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <ThemedText variant="caption" style={{ color: theme.colors.accent }}>
+              {streamingModel} streaming...
+            </ThemedText>
+            {streamTokens > 0 && (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                <ThemedText variant="caption" style={{ color: theme.colors.accent }}>
+                  ~{streamTokens.toLocaleString()} tokens
+                </ThemedText>
+                {streamStartTime && (() => {
+                  const elapsed = (Date.now() - streamStartTime) / 1000;
+                  const tps = elapsed > 0 ? Math.round(streamTokens / elapsed) : 0;
+                  return tps > 0 ? (
+                    <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted }}>
+                      @ {tps} t/s
+                    </ThemedText>
+                  ) : null;
+                })()}
+              </View>
+            )}
+          </View>
         )}
 
         {/* Input area */}
