@@ -27,9 +27,26 @@ function AppFrame(): JSX.Element {
             contentStyle: { backgroundColor: theme.colors.background },
           }}
         >
-          <Stack.Screen name="index" options={{ headerShown: false }} />
-          <Stack.Screen name="workspace/[id]" options={{ title: "Workspace" }} />
-          <Stack.Screen name="settings" options={{ title: "Settings" }} />
+          <Stack.Screen 
+            name="index" 
+            options={{ 
+              headerShown: false,
+              title: "", // Ensure no title for back button reference
+            }} 
+          />
+          <Stack.Screen 
+            name="workspace/[id]" 
+            options={{ 
+              headerShown: false, // Use custom header in WorkspaceScreen
+            }} 
+          />
+          <Stack.Screen 
+            name="settings" 
+            options={{ 
+              title: "Settings",
+              headerBackTitle: "", // Hide back button text, show only <
+            }} 
+          />
         </Stack>
       </View>
     </>
