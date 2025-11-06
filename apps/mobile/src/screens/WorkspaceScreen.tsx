@@ -87,15 +87,24 @@ function applyChatEvent(current: TimelineEntry[], event: WorkspaceChatEvent): Ti
     );
     
     if (existingIndex >= 0) {
-      // Message already exists - check if it's an update (streaming delta)
+      // Message already exists - check if it's an update
       const existingMessage = (current[existingIndex] as Extract<TimelineEntry, { kind: "displayed" }>).message;
-      const isUpdate = 
+      
+      // Check if it's a streaming update
+      const isStreamingUpdate = 
         existingMessage.historySequence === event.historySequence &&
         'isStreaming' in event &&
         (event as any).isStreaming === true;
       
-      if (isUpdate) {
-        // Update in place (streaming delta)
+      // Check if it's a tool status change (executing → completed/failed)
+      const isToolStatusChange =
+        existingMessage.type === 'tool' &&
+        event.type === 'tool' &&
+        existingMessage.historySequence === event.historySequence &&
+        (existingMessage as any).status !== (event as any).status;
+      
+      if (isStreamingUpdate || isToolStatusChange) {
+        // Update in place
         const updated = [...current];
         updated[existingIndex] = {
           kind: "displayed",
@@ -251,7 +260,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   
   // Track current todos for floating card (during streaming)
   const [currentTodos, setCurrentTodos] = useState<TodoItem[]>([]);
-  const [todoCardVisible, setTodoCardVisible] = useState(true);
+  const [todoCardVisible, setTodoCardVisible] = useState(false);
   
   // Track streaming state for indicator
   const [isStreaming, setIsStreaming] = useState(false);
@@ -273,34 +282,38 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
 
   const metadata = metadataQuery.data ?? null;
 
+  // Extract most recent todos from timeline (timeline-based approach)
+  useEffect(() => {
+    // Find the most recent completed todo_write tool in timeline
+    const toolMessages = timeline
+      .filter((entry): entry is Extract<TimelineEntry, { kind: "displayed" }> => 
+        entry.kind === "displayed"
+      )
+      .map(entry => entry.message)
+      .filter((msg): msg is DisplayedMessage & { type: "tool" } => 
+        msg.type === "tool"
+      )
+      .filter(msg => msg.toolName === "todo_write");
+    
+    // Get the most recent one (timeline is already sorted)
+    const latestTodoTool = toolMessages[toolMessages.length - 1];
+    
+    if (latestTodoTool && 
+        latestTodoTool.args && 
+        typeof latestTodoTool.args === "object" &&
+        "todos" in latestTodoTool.args &&
+        Array.isArray(latestTodoTool.args.todos)) {
+      setCurrentTodos(latestTodoTool.args.todos as TodoItem[]);
+      // Don't auto-show - user controls visibility with toggle button
+    } else if (toolMessages.length === 0) {
+      // Only clear if no todo_write tools exist at all
+      setCurrentTodos([]);
+    }
+  }, [timeline]);
+
   useEffect(() => {
     const expander = expanderRef.current;
     const subscription = api.workspace.subscribeChat(workspaceId, (payload) => {
-      // DEBUG: Log all events to see what's arriving
-      if (payload && typeof payload === "object" && "type" in payload) {
-        console.log('[DEBUG] Event received:', payload.type, payload);
-      }
-      
-      // Track todos from tool-call-end events
-      if (
-        payload &&
-        typeof payload === "object" &&
-        "type" in payload &&
-        payload.type === "tool-call-end" &&
-        "toolName" in payload &&
-        payload.toolName === "todo_write" &&
-        "args" in payload &&
-        payload.args !== null &&
-        typeof payload.args === "object" &&
-        "todos" in payload.args &&
-        Array.isArray((payload.args as { todos?: unknown }).todos)
-      ) {
-        const todos = (payload.args as { todos: TodoItem[] }).todos;
-        console.log('[DEBUG] Received todo_write event with todos:', todos);
-        setCurrentTodos(todos);
-        setTodoCardVisible(true); // Re-show card on new todos
-      }
-
       // Track streaming state and tokens (60s trailing window like desktop)
       if (payload && typeof payload === "object" && "type" in payload) {
         if (payload.type === "stream-start" && "model" in payload) {
@@ -352,12 +365,6 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
         }
       }
 
-      // Clear todos when stream ends
-      if (payload && typeof payload === "object" && "type" in payload && payload.type === "stream-end") {
-        setCurrentTodos([]);
-        setTodoCardVisible(true);
-      }
-
       const expanded = expander.expand(payload);
       
       // If expander returns [], it means the event was handled but nothing to display yet
@@ -392,7 +399,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   useEffect(() => {
     setTimeline([]);
     setCurrentTodos([]);
-    setTodoCardVisible(true);
+    setTodoCardVisible(false);
   }, [workspaceId]);
 
   const onSend = useCallback(async () => {
@@ -468,22 +475,6 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
           }}
         >
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
-            {/* DEBUG: Test button to manually trigger todos */}
-            <IconButton
-              icon={<Ionicons name="bug" size={22} color={theme.colors.warning} />}
-              accessibilityLabel="Test todos"
-              variant="ghost"
-              onPress={() => {
-                const testTodos: TodoItem[] = [
-                  { content: "Test todo button visibility", status: "completed" },
-                  { content: "Validate floating card appears", status: "in_progress" },
-                  { content: "Check styling and colors", status: "pending" },
-                ];
-                setCurrentTodos(testTodos);
-                setTodoCardVisible(true);
-              }}
-            />
-            
             {/* Show/hide todo list toggle (only visible when todos exist) */}
             {currentTodos.length > 0 && (
               <IconButton
@@ -514,9 +505,9 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
             />
             <IconButton
               icon={<Ionicons name="settings-outline" size={22} color={theme.colors.foregroundPrimary} />}
-              accessibilityLabel="Open settings"
+              accessibilityLabel="Open workspace settings"
               variant="ghost"
-              onPress={() => router.push("/settings")}
+              onPress={() => router.push("/workspace-settings")}
             />
           </View>
         </View>

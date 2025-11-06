@@ -283,7 +283,7 @@ export function SecretsModal({
             </TouchableOpacity>
 
             {/* Action buttons */}
-            <View style={{ flexDirection: "row", gap: spacing.md }}>
+            <View style={{ flexDirection: "row" }}>
               <TouchableOpacity
                 onPress={handleCancel}
                 disabled={isLoading}
@@ -294,6 +294,7 @@ export function SecretsModal({
                   borderWidth: 1,
                   borderColor: theme.colors.border,
                   alignItems: "center",
+                  marginRight: spacing.md,
                 }}
               >
                 <ThemedText style={{ fontSize: 14 }}>Cancel</ThemedText>

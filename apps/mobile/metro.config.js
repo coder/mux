@@ -21,4 +21,23 @@ config.resolver.extraNodeModules = {
   '@shared': path.resolve(__dirname, '../../src'),
 };
 
+// Enhance resolver to properly handle @shared alias with TypeScript extensions
+// This ensures Metro's early resolver phase applies extensions to aliased imports
+config.resolver.resolverMainFields = ['react-native', 'browser', 'main'];
+config.resolver.platforms = ['ios', 'android'];
+
+// Explicitly set source extensions order (TypeScript first)
+// This helps Metro's resolver find .ts/.tsx files for @shared imports
+if (!config.resolver.sourceExts) {
+  config.resolver.sourceExts = [];
+}
+// Ensure .ts and .tsx are prioritized
+const sourceExts = config.resolver.sourceExts;
+if (!sourceExts.includes('ts')) {
+  sourceExts.unshift('ts');
+}
+if (!sourceExts.includes('tsx')) {
+  sourceExts.unshift('tsx');
+}
+
 module.exports = config;

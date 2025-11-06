@@ -1,7 +1,7 @@
 import type { DisplayedMessage, WorkspaceChatEvent } from "../types";
-import type { CmuxMessage, CmuxTextPart, CmuxReasoningPart, CmuxImagePart } from "@shared/types/message";
-import type { DynamicToolPart } from "@shared/types/toolParts";
-import { createChatEventProcessor, type ChatEventProcessor } from "@shared/utils/messages/ChatEventProcessor";
+import type { CmuxMessage, CmuxTextPart, CmuxReasoningPart, CmuxImagePart } from "@shared/types/message.ts";
+import type { DynamicToolPart } from "@shared/types/toolParts.ts";
+import { createChatEventProcessor, type ChatEventProcessor } from "@shared/utils/messages/ChatEventProcessor.ts";
 
 interface CmuxMessageLike {
   id?: string;
@@ -307,8 +307,17 @@ export function createChatEventExpander(): ChatEventExpander {
     
     const displayed = transformCmuxToDisplayed(message);
     
-    // Mark all displayed parts as streaming
+    // Mark displayed parts as streaming (except completed/failed tools)
     displayed.forEach((msg) => {
+      // Don't mark completed or failed tools as streaming
+      if (msg.type === 'tool') {
+        const toolMsg = msg as DisplayedMessage & { type: 'tool'; status: string };
+        if (toolMsg.status === 'completed' || toolMsg.status === 'failed') {
+          // Tool is done, don't mark as streaming
+          return;
+        }
+      }
+      
       if ('isStreaming' in msg) {
         (msg as any).isStreaming = true;
       }

@@ -101,6 +101,8 @@ function AssistantMessageCard({
         borderColor: theme.colors.separator,
         padding: theme.spacing.sm,
         fontFamily: theme.typography.familyMono,
+        fontSize: theme.typography.sizes.caption,
+        color: theme.colors.foregroundPrimary,
       },
       code_inline: {
         fontFamily: theme.typography.familyMono,
@@ -108,9 +110,29 @@ function AssistantMessageCard({
         paddingHorizontal: theme.spacing.xs,
         paddingVertical: 1,
         borderRadius: theme.radii.xs,
+        color: theme.colors.foregroundPrimary,
+        fontSize: theme.typography.sizes.caption,
       },
       fence: {
+        backgroundColor: theme.colors.surfaceSunken,
+        borderRadius: theme.radii.sm,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.colors.separator,
+        padding: theme.spacing.sm,
+        marginVertical: theme.spacing.xs,
+      },
+      pre: {
+        backgroundColor: theme.colors.surfaceSunken,
+        borderRadius: theme.radii.sm,
+        padding: theme.spacing.sm,
         fontFamily: theme.typography.familyMono,
+        fontSize: theme.typography.sizes.caption,
+        color: theme.colors.foregroundPrimary,
+      },
+      text: {
+        fontFamily: theme.typography.familyMono,
+        fontSize: theme.typography.sizes.caption,
+        color: theme.colors.foregroundPrimary,
       },
       bullet_list: {
         marginVertical: theme.spacing.xs,
@@ -126,12 +148,21 @@ function AssistantMessageCard({
       },
       heading1: {
         color: theme.colors.foregroundPrimary,
+        fontSize: theme.typography.sizes.titleLarge,
+        fontWeight: theme.typography.weights.bold,
+        marginVertical: theme.spacing.sm,
       },
       heading2: {
         color: theme.colors.foregroundPrimary,
+        fontSize: theme.typography.sizes.titleMedium,
+        fontWeight: theme.typography.weights.semibold,
+        marginVertical: theme.spacing.sm,
       },
       heading3: {
         color: theme.colors.foregroundPrimary,
+        fontSize: theme.typography.sizes.titleSmall,
+        fontWeight: theme.typography.weights.semibold,
+        marginVertical: theme.spacing.xs,
       },
     }),
     [theme]
@@ -267,25 +298,89 @@ function StreamErrorMessageCard({
   message: DisplayedMessage & { type: "stream-error" };
 }): JSX.Element {
   const theme = useTheme();
+  const showCount = message.errorCount !== undefined && message.errorCount > 1;
+  
   return (
     <Surface
       variant="plain"
       style={{
+        backgroundColor: theme.colors.danger + "15", // 15% opacity background
+        borderWidth: 1,
+        borderColor: theme.colors.danger,
+        borderRadius: theme.radii.sm,
         padding: theme.spacing.md,
         marginBottom: theme.spacing.md,
-        borderColor: theme.colors.danger,
       }}
       accessibilityRole="alert"
     >
-      <ThemedText variant="label" style={{ color: theme.colors.danger }}>
-        Error
+      {/* Header with error type and count */}
+      <View style={{ flexDirection: "row", alignItems: "center", gap: theme.spacing.sm, marginBottom: theme.spacing.sm, flexWrap: "wrap" }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: theme.spacing.xs }}>
+          <ThemedText style={{ color: theme.colors.danger, fontSize: 16, lineHeight: 16 }}>
+            ●
+          </ThemedText>
+          <ThemedText variant="label" weight="semibold" style={{ color: theme.colors.danger }}>
+            Stream Error
+          </ThemedText>
+        </View>
+        
+        {/* Error type badge */}
+        <View
+          style={{
+            backgroundColor: "rgba(0, 0, 0, 0.4)",
+            paddingHorizontal: theme.spacing.sm,
+            paddingVertical: theme.spacing.xs,
+            borderRadius: theme.radii.xs,
+          }}
+        >
+          <ThemedText
+            style={{
+              fontFamily: theme.typography.familyMono,
+              fontSize: 10,
+              color: theme.colors.foregroundSecondary,
+              textTransform: "uppercase",
+            }}
+          >
+            {message.errorType}
+          </ThemedText>
+        </View>
+        
+        {/* Error count badge */}
+        {showCount && (
+          <View
+            style={{
+              backgroundColor: "rgba(244, 67, 54, 0.15)", // danger color with 15% opacity
+              paddingHorizontal: theme.spacing.sm,
+              paddingVertical: theme.spacing.xs,
+              borderRadius: theme.radii.xs,
+              marginLeft: "auto",
+            }}
+          >
+            <ThemedText
+              style={{
+                fontFamily: theme.typography.familyMono,
+                fontSize: 10,
+                fontWeight: theme.typography.weights.semibold,
+                color: theme.colors.danger,
+              }}
+            >
+              ×{message.errorCount}
+            </ThemedText>
+          </View>
+        )}
+      </View>
+      
+      {/* Error message */}
+      <ThemedText
+        style={{
+          fontFamily: theme.typography.familyMono,
+          fontSize: theme.typography.sizes.caption,
+          lineHeight: theme.typography.lineHeights.relaxed,
+          color: theme.colors.foregroundPrimary,
+        }}
+      >
+        {message.error}
       </ThemedText>
-      <ThemedText style={{ marginTop: theme.spacing.sm }}>{message.error}</ThemedText>
-      {message.errorCount && message.errorCount > 1 ? (
-        <ThemedText variant="caption" style={{ marginTop: theme.spacing.xs }}>
-          Repeated {message.errorCount} times
-        </ThemedText>
-      ) : null}
     </Surface>
   );
 }
