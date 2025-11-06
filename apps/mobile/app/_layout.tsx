@@ -30,7 +30,7 @@ function AppFrame(): JSX.Element {
           <Stack.Screen 
             name="index" 
             options={{ 
-              title: "Workspaces",
+              headerShown: false, // Use custom layout in ProjectsScreen
             }} 
           />
           <Stack.Screen 
