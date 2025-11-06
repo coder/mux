@@ -188,9 +188,7 @@ export function ProjectsScreen(): JSX.Element {
 
   const handleOpenSecrets = async (projectPath: string, projectName: string) => {
     try {
-      console.log("[ProjectsScreen] Loading secrets for:", projectPath);
       const secrets = await client.projects.secrets.get(projectPath);
-      console.log("[ProjectsScreen] Loaded secrets:", secrets);
       setSecretsModalState({
         visible: true,
         projectPath,
