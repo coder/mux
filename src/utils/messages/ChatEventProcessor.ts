@@ -73,6 +73,12 @@ export interface ChatEventProcessor {
    * Reset processor state (clear all messages and init state).
    */
   reset(): void;
+
+  /**
+   * Delete messages by historySequence numbers.
+   * Used for history truncation and compaction.
+   */
+  deleteByHistorySequence(sequences: number[]): void;
 }
 
 /**
@@ -351,11 +357,30 @@ export function createChatEventProcessor(): ChatEventProcessor {
     initState = null;
   };
 
+  const deleteByHistorySequence = (sequences: number[]): void => {
+    const sequencesToDelete = new Set(sequences);
+    const messagesToRemove: string[] = [];
+
+    // Find all messages with matching historySequence
+    for (const [messageId, message] of messages.entries()) {
+      const historySeq = message.metadata?.historySequence;
+      if (historySeq !== undefined && sequencesToDelete.has(historySeq)) {
+        messagesToRemove.push(messageId);
+      }
+    }
+
+    // Delete found messages
+    for (const messageId of messagesToRemove) {
+      messages.delete(messageId);
+    }
+  };
+
   return {
     handleEvent,
     getMessages,
     getMessageById,
     getInitState,
     reset,
+    deleteByHistorySequence,
   };
 }
