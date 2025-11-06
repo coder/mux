@@ -157,11 +157,6 @@ export function NewWorkspaceModal({
     }
   };
 
-  const workspacePath =
-    runtimeMode === RUNTIME_MODE.SSH
-      ? `${sshHost || "<host>"}:~/cmux/${branchName || "<branch-name>"}`
-      : `~/.cmux/src/${projectName}/${branchName || "<branch-name>"}`;
-
   return (
     <Modal
       visible={visible}
@@ -450,29 +445,6 @@ export function NewWorkspaceModal({
                 </ThemedText>
               </View>
             )}
-
-            {/* Workspace Path Info */}
-            <View
-              style={{
-                backgroundColor: theme.colors.surfaceSunken,
-                borderRadius: 8,
-                padding: spacing.md,
-                marginTop: spacing.sm,
-              }}
-            >
-              <ThemedText style={{ fontSize: 13, opacity: 0.7, marginBottom: spacing.xs }}>
-                Workspace will be created at:
-              </ThemedText>
-              <ThemedText
-                style={{
-                  fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-                  fontSize: 12,
-                  color: theme.colors.foregroundSecondary,
-                }}
-              >
-                {workspacePath}
-              </ThemedText>
-            </View>
 
             {/* Loading indicator */}
             {isLoading && (
