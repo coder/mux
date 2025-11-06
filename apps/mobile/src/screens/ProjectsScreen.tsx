@@ -18,7 +18,9 @@ import { useTheme } from "../theme";
 import { ThemedText } from "../components/ThemedText";
 import { Surface } from "../components/Surface";
 import { IconButton } from "../components/IconButton";
-import type { FrontendWorkspaceMetadata } from "../types";
+import { SecretsModal } from "../components/SecretsModal";
+import { createClient } from "../api/client";
+import type { FrontendWorkspaceMetadata, Secret } from "../types";
 
 interface WorkspaceListItem {
   metadata: FrontendWorkspaceMetadata;
@@ -83,6 +85,14 @@ export function ProjectsScreen(): JSX.Element {
   const insets = useSafeAreaInsets();
   const { projectsQuery, workspacesQuery } = useProjectsData();
   const [search, setSearch] = useState("");
+  const [secretsModalState, setSecretsModalState] = useState<{
+    visible: boolean;
+    projectPath: string;
+    projectName: string;
+    secrets: Secret[];
+  } | null>(null);
+
+  const client = createClient();
 
   const groupedProjects = useMemo((): ProjectGroup[] => {
     const projects = projectsQuery.data ?? [];
@@ -174,6 +184,39 @@ export function ProjectsScreen(): JSX.Element {
 
   const onRefresh = () => {
     void Promise.all([projectsQuery.refetch(), workspacesQuery.refetch()]);
+  };
+
+  const handleOpenSecrets = async (projectPath: string, projectName: string) => {
+    try {
+      const secrets = await client.projects.secrets.get(projectPath);
+      setSecretsModalState({
+        visible: true,
+        projectPath,
+        projectName,
+        secrets,
+      });
+    } catch (error) {
+      Alert.alert("Error", "Failed to load secrets");
+      console.error("Failed to load secrets:", error);
+    }
+  };
+
+  const handleSaveSecrets = async (secrets: Secret[]) => {
+    if (!secretsModalState) return;
+
+    try {
+      const result = await client.projects.secrets.update(secretsModalState.projectPath, secrets);
+
+      if (!result.success) {
+        Alert.alert("Error", result.error);
+        return;
+      }
+
+      setSecretsModalState(null);
+    } catch (error) {
+      Alert.alert("Error", "Failed to save secrets");
+      console.error("Failed to save secrets:", error);
+    }
   };
 
   const renderWorkspaceRow = (item: WorkspaceListItem) => {
@@ -338,6 +381,14 @@ export function ProjectsScreen(): JSX.Element {
                     {group.path}
                   </ThemedText>
                 </View>
+                <View style={{ marginRight: spacing.xs }}>
+                  <IconButton
+                    icon={<Ionicons name="key-outline" size={16} color={theme.colors.foregroundMuted} />}
+                    onPress={() => void handleOpenSecrets(group.path, group.displayName)}
+                    size="sm"
+                    variant="ghost"
+                  />
+                </View>
                 <View
                   style={{
                     paddingHorizontal: spacing.sm,
@@ -383,6 +434,17 @@ export function ProjectsScreen(): JSX.Element {
       >
         <Ionicons name="add" size={26} color={theme.colors.foregroundInverted} />
       </Pressable>
+
+      {secretsModalState && (
+        <SecretsModal
+          visible={secretsModalState.visible}
+          projectPath={secretsModalState.projectPath}
+          projectName={secretsModalState.projectName}
+          initialSecrets={secretsModalState.secrets}
+          onClose={() => setSecretsModalState(null)}
+          onSave={handleSaveSecrets}
+        />
+      )}
     </View>
   );
 }

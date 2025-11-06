@@ -4,6 +4,7 @@ import type {
   FrontendWorkspaceMetadata,
   ProjectsListResponse,
   WorkspaceChatEvent,
+  Secret,
 } from "../types";
 
 export type Result<T, E = string> = { success: true; data: T } | { success: false; error: E };
@@ -24,6 +25,8 @@ const IPC_CHANNELS = {
   WORKSPACE_INTERRUPT_STREAM: "workspace:interruptStream",
   WORKSPACE_GET_INFO: "workspace:getInfo",
   PROJECT_LIST: "project:list",
+  PROJECT_SECRETS_GET: "project:secrets:get",
+  PROJECT_SECRETS_UPDATE: "project:secrets:update",
   WORKSPACE_CHAT_PREFIX: "workspace:chat:",
   WORKSPACE_CHAT_SUBSCRIBE: "workspace:chat",
   WORKSPACE_METADATA: "workspace:metadata",
@@ -143,6 +146,19 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
   return {
     projects: {
       list: async (): Promise<ProjectsListResponse> => invoke(IPC_CHANNELS.PROJECT_LIST),
+      secrets: {
+        get: async (projectPath: string): Promise<Secret[]> =>
+          invoke(IPC_CHANNELS.PROJECT_SECRETS_GET, [projectPath]),
+        update: async (projectPath: string, secrets: Secret[]): Promise<Result<void, string>> => {
+          try {
+            await invoke(IPC_CHANNELS.PROJECT_SECRETS_UPDATE, [projectPath, secrets]);
+            return { success: true, data: undefined };
+          } catch (error) {
+            const err = error instanceof Error ? error.message : String(error);
+            return { success: false, error: err };
+          }
+        },
+      },
     },
     workspace: {
       list: async (): Promise<FrontendWorkspaceMetadata[]> =>
