@@ -168,12 +168,13 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
           
           // Fire and forget - don't wait for response
           // The stream-start event will arrive via WebSocket if successful
+          // Errors will come via stream-error WebSocket events, not HTTP response
           void invoke<unknown>(
             IPC_CHANNELS.WORKSPACE_SEND_MESSAGE,
             [ensureWorkspaceId(workspaceId), message, options]
-          ).catch((error) => {
-            // Log errors but don't block
-            console.error('[sendMessage] Async error (ignored):', error);
+          ).catch(() => {
+            // Silently ignore HTTP errors - stream-error events handle actual failures
+            // The server may return before stream completes, causing spurious errors
           });
           
           // Immediately return success - actual errors will come via stream-error events
