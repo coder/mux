@@ -345,19 +345,6 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
         >
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
             <IconButton
-              icon={<Ionicons name="terminal-outline" size={22} color={theme.colors.foregroundPrimary} />}
-              accessibilityLabel="Open terminal"
-              variant="ghost"
-              onPress={() => {
-                setTimeline((current) =>
-                  applyChatEvent(current, {
-                    type: "status",
-                    status: "Terminal action not yet implemented",
-                  } as WorkspaceChatEvent)
-                );
-              }}
-            />
-            <IconButton
               icon={<Ionicons name="key-outline" size={22} color={theme.colors.foregroundPrimary} />}
               accessibilityLabel="Manage secrets"
               variant="ghost"
