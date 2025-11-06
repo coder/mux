@@ -126,14 +126,18 @@ export function SecretsModal({
                 flexDirection: "row",
                 alignItems: "center",
                 justifyContent: "space-between",
-                paddingHorizontal: spacing.lg,
+                paddingHorizontal: spacing.md,
                 paddingTop: spacing.lg,
                 paddingBottom: spacing.lg,
                 borderBottomWidth: 1,
                 borderBottomColor: theme.colors.borderSubtle,
               }}
             >
-              <TouchableOpacity onPress={handleCancel} disabled={isLoading}>
+              <TouchableOpacity 
+                onPress={handleCancel} 
+                disabled={isLoading}
+                style={{ paddingHorizontal: spacing.sm }}
+              >
                 <ThemedText style={{ fontSize: 17, color: theme.colors.accent }}>
                   Cancel
                 </ThemedText>
@@ -141,7 +145,11 @@ export function SecretsModal({
               <ThemedText style={{ fontSize: 17, fontWeight: "600" }}>
                 Secrets
               </ThemedText>
-              <TouchableOpacity onPress={() => void handleSave()} disabled={isLoading}>
+              <TouchableOpacity 
+                onPress={() => void handleSave()} 
+                disabled={isLoading}
+                style={{ paddingHorizontal: spacing.sm }}
+              >
                 <ThemedText
                   style={{
                     fontSize: 17,
