@@ -1,0 +1,33 @@
+{
+  "name": "@coder/cmux-mobile",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Expo app for cmux (connects to cmux server over HTTP/WS)",
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web"
+  },
+  "dependencies": {
+    "@react-native-community/slider": "5.0.1",
+    "@tanstack/react-query": "^5.59.0",
+    "expo": "^54.0.22",
+    "expo-constants": "~18.0.10",
+    "expo-router": "~6.0.14",
+    "expo-secure-store": "~15.0.7",
+    "expo-status-bar": "^3.0.8",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-markdown-display": "^7.0.2",
+    "react-native-safe-area-context": "~5.6.0",
+    "react-native-screens": "~4.16.0"
+  },
+  "devDependencies": {
+    "@types/react": "~19.1.10",
+    "@types/react-native": "~0.73.0",
+    "babel-plugin-module-resolver": "^5.0.2",
+    "typescript": "^5.3.3"
+  }
+}

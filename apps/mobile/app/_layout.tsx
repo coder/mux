@@ -1,0 +1,62 @@
+import type { JSX } from "react";
+import { Stack } from "expo-router";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
+import { View } from "react-native";
+import { ThemeProvider, useTheme } from "../src/theme";
+
+function AppFrame(): JSX.Element {
+  const theme = useTheme();
+
+  return (
+    <>
+      <StatusBar style={theme.statusBarStyle} animated />
+      <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
+        <Stack
+          screenOptions={{
+            headerStyle: { backgroundColor: theme.colors.surfaceSunken },
+            headerTintColor: theme.colors.foregroundPrimary,
+            headerTitleStyle: {
+              fontWeight: theme.typography.weights.semibold,
+              fontSize: theme.typography.sizes.titleSmall,
+              color: theme.colors.foregroundPrimary,
+            },
+            headerShadowVisible: false,
+            contentStyle: { backgroundColor: theme.colors.background },
+          }}
+        >
+          <Stack.Screen name="index" options={{ headerShown: false }} />
+          <Stack.Screen name="workspace/[id]" options={{ title: "Workspace" }} />
+          <Stack.Screen name="settings" options={{ title: "Settings" }} />
+        </Stack>
+      </View>
+    </>
+  );
+}
+
+export default function RootLayout(): JSX.Element {
+  const client = useMemo(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            staleTime: 30_000,
+            refetchOnWindowFocus: false,
+          },
+        },
+      }),
+    []
+  );
+
+  return (
+    <QueryClientProvider client={client}>
+      <SafeAreaProvider>
+        <ThemeProvider>
+          <AppFrame />
+        </ThemeProvider>
+      </SafeAreaProvider>
+    </QueryClientProvider>
+  );
+}

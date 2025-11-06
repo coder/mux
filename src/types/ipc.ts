@@ -2,10 +2,10 @@ import type { Result } from "./result";
 import type { FrontendWorkspaceMetadata, WorkspaceMetadata } from "./workspace";
 import type { MuxMessage, MuxFrontendMetadata } from "./message";
 import type { ChatStats } from "./chatStats";
-import type { ProjectConfig } from "@/config";
+import type { ProjectConfig } from "../config";
 import type { SendMessageError, StreamErrorType } from "./errors";
 import type { ThinkingLevel } from "./thinking";
-import type { ToolPolicy } from "@/utils/tools/toolPolicy";
+import type { ToolPolicy } from "../utils/tools/toolPolicy";
 import type { BashToolResult } from "./tools";
 import type { Secret } from "./secrets";
 import type { MuxProviderOptions } from "./providerOptions";
@@ -23,7 +23,7 @@ import type {
 } from "./stream";
 
 // Import constants from constants module (single source of truth)
-import { IPC_CHANNELS, getChatChannel } from "@/constants/ipc-constants";
+import { IPC_CHANNELS, getChatChannel } from "../constants/ipc-constants";
 
 // Re-export for TypeScript consumers
 export { IPC_CHANNELS, getChatChannel };

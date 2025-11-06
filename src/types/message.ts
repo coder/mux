@@ -1,7 +1,7 @@
 import type { UIMessage } from "ai";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { StreamErrorType } from "./errors";
-import type { ToolPolicy } from "@/utils/tools/toolPolicy";
+import type { ToolPolicy } from "../utils/tools/toolPolicy";
 
 // Parsed compaction request data (shared type for consistency)
 export interface CompactionRequestData {

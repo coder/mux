@@ -1,0 +1,468 @@
+import type { JSX } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  FlatList,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  TextInput,
+  View,
+} from "react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { useQuery } from "@tanstack/react-query";
+import { useTheme } from "../theme";
+import { Surface } from "../components/Surface";
+import { ThemedText } from "../components/ThemedText";
+import { IconButton } from "../components/IconButton";
+import { useApiClient } from "../hooks/useApiClient";
+import { MessageRenderer } from "../messages/MessageRenderer";
+import { ReasoningControl } from "../components/ReasoningControl";
+import { ThinkingProvider, useThinkingLevel } from "../contexts/ThinkingContext";
+import { createChatEventExpander, DISPLAYABLE_MESSAGE_TYPES } from "../messages/normalizeChatEvent";
+import type { DisplayedMessage, FrontendWorkspaceMetadata, WorkspaceChatEvent } from "../types";
+import type { Result } from "../api/client";
+
+const MODE_TABS = ["plan", "exec"] as const;
+type WorkspaceMode = (typeof MODE_TABS)[number];
+type ThemeSpacing = ReturnType<typeof useTheme>["spacing"];
+
+type TimelineEntry =
+  | { kind: "displayed"; key: string; message: DisplayedMessage }
+  | { kind: "raw"; key: string; payload: WorkspaceChatEvent };
+
+function isDisplayedMessageEvent(event: WorkspaceChatEvent): event is DisplayedMessage {
+  if (!event || typeof event !== "object") {
+    return false;
+  }
+  const maybeType = (event as { type?: unknown }).type;
+  if (typeof maybeType !== "string") {
+    return false;
+  }
+  if (!DISPLAYABLE_MESSAGE_TYPES.has(maybeType as DisplayedMessage["type"])) {
+    return false;
+  }
+  if (!("historySequence" in event)) {
+    return false;
+  }
+  const sequence = (event as { historySequence?: unknown }).historySequence;
+  return typeof sequence === "number" && Number.isFinite(sequence);
+}
+
+function isDeleteEvent(
+  event: WorkspaceChatEvent
+): event is { type: "delete"; historySequences: number[] } {
+  return (
+    typeof event === "object" &&
+    event !== null &&
+    "type" in event &&
+    (event as { type: unknown }).type === "delete" &&
+    Array.isArray((event as { historySequences?: unknown }).historySequences)
+  );
+}
+
+function compareDisplayedMessages(a: DisplayedMessage, b: DisplayedMessage): number {
+  if (a.historySequence !== b.historySequence) {
+    return a.historySequence - b.historySequence;
+  }
+  const seqA = "streamSequence" in a && typeof a.streamSequence === "number" ? a.streamSequence : 0;
+  const seqB = "streamSequence" in b && typeof b.streamSequence === "number" ? b.streamSequence : 0;
+  return seqA - seqB;
+}
+
+function applyChatEvent(current: TimelineEntry[], event: WorkspaceChatEvent): TimelineEntry[] {
+  if (isDeleteEvent(event)) {
+    const sequences = new Set(event.historySequences);
+    return current.filter((entry) => {
+      if (entry.kind !== "displayed") {
+        return true;
+      }
+      return !sequences.has(entry.message.historySequence);
+    });
+  }
+
+  if (isDisplayedMessageEvent(event)) {
+    const entry: TimelineEntry = {
+      kind: "displayed",
+      key: `displayed-${event.id}`,
+      message: event,
+    };
+    const withoutExisting = current.filter(
+      (item) => item.kind !== "displayed" || item.message.id !== event.id
+    );
+    const displayed = withoutExisting
+      .filter((item): item is Extract<TimelineEntry, { kind: "displayed" }> => item.kind === "displayed")
+      .concat(entry)
+      .sort((left, right) => compareDisplayedMessages(left.message, right.message));
+    const raw = withoutExisting.filter(
+      (item): item is Extract<TimelineEntry, { kind: "raw" }> => item.kind === "raw"
+    );
+    return [...displayed, ...raw];
+  }
+
+  if (
+    typeof event === "object" &&
+    event !== null &&
+    "type" in event &&
+    ((event as { type: unknown }).type === "caught-up" || (event as { type: unknown }).type === "stream-start")
+  ) {
+    return current;
+  }
+
+  const rawEntry: TimelineEntry = {
+    kind: "raw",
+    key: `raw-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    payload: event,
+  };
+  return [...current, rawEntry];
+}
+
+function formatProjectBreadcrumb(metadata: FrontendWorkspaceMetadata | null): string {
+  if (!metadata) {
+    return "Workspace";
+  }
+  return `${metadata.projectName} › ${metadata.name}`;
+}
+
+function RawEventCard({ payload }: { payload: WorkspaceChatEvent }): JSX.Element {
+  if (payload && typeof payload === "object" && "type" in payload) {
+    const typed = payload as { type: unknown; [key: string]: unknown };
+    if (typed.type === "status" && typeof typed.status === "string") {
+      return <ThemedText variant="caption">{typed.status}</ThemedText>;
+    }
+    if (typed.type === "error" && typeof typed.error === "string") {
+      return <ThemedText variant="muted">⚠️ {typed.error}</ThemedText>;
+    }
+  }
+  if (typeof payload === "string") {
+    return <ThemedText>{payload}</ThemedText>;
+  }
+  return <ThemedText variant="caption">{JSON.stringify(payload, null, 2)}</ThemedText>;
+}
+
+const TimelineRow = memo(
+  ({ item, spacing }: { item: TimelineEntry; spacing: ThemeSpacing }) => {
+    if (item.kind === "displayed") {
+      return <MessageRenderer message={item.message} />;
+    }
+    return (
+      <Surface
+        variant="plain"
+        style={{
+          paddingVertical: spacing.sm,
+          paddingHorizontal: spacing.md,
+          marginBottom: spacing.sm,
+        }}
+      >
+        <RawEventCard payload={item.payload} />
+      </Surface>
+    );
+  },
+  (prev, next) => prev.item === next.item && prev.spacing === next.spacing
+);
+
+TimelineRow.displayName = "TimelineRow";
+
+interface WorkspaceScreenInnerProps {
+  workspaceId: string;
+}
+
+function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.Element {
+  const theme = useTheme();
+  const spacing = theme.spacing;
+  const router = useRouter();
+  const expanderRef = useRef(createChatEventExpander());
+  const api = useApiClient();
+  const [mode, setMode] = useState<WorkspaceMode>("plan");
+  const [input, setInput] = useState("");
+  const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
+  const [isSending, setIsSending] = useState(false);
+  const wsRef = useRef<{ close: () => void } | null>(null);
+  const [thinkingLevel] = useThinkingLevel();
+
+  useEffect(() => {
+    expanderRef.current = createChatEventExpander();
+  }, [workspaceId]);
+
+  const metadataQuery = useQuery({
+    queryKey: ["workspace", workspaceId],
+    queryFn: () => api.workspace.getInfo(workspaceId),
+    staleTime: 15_000,
+  });
+
+  useEffect(() => {
+    const expander = expanderRef.current;
+    const subscription = api.workspace.subscribeChat(workspaceId, (payload) => {
+      const expanded = expander.expand(payload);
+      
+      // If expander returns [], it means the event was handled but nothing to display yet
+      // (e.g., streaming deltas accumulating). Do NOT fall back to raw display.
+      if (expanded.length === 0) {
+        return;
+      }
+
+      setTimeline((current) => {
+        let next = current;
+        for (const event of expanded) {
+          next = applyChatEvent(next, event);
+        }
+        return next;
+      });
+    });
+    wsRef.current = subscription;
+    return () => {
+      subscription.close();
+      wsRef.current = null;
+    };
+  }, [api, workspaceId]);
+
+  const metadata = metadataQuery.data ?? null;
+  const title = formatProjectBreadcrumb(metadata);
+
+  const onSend = useCallback(async () => {
+    const trimmed = input.trim();
+    if (!trimmed) {
+      return;
+    }
+    setIsSending(true);
+    const result: Result<void, string> = await api.workspace.sendMessage(workspaceId, trimmed, {
+      model: "default",
+      mode,
+      thinkingLevel,
+    });
+    if (!result.success) {
+      setTimeline((current) =>
+        applyChatEvent(current, { type: "error", error: result.error } as WorkspaceChatEvent)
+      );
+    }
+    setIsSending(false);
+    setInput("");
+  }, [api, input, mode, thinkingLevel, workspaceId]);
+
+  const listData = useMemo(() => timeline, [timeline]);
+  const keyExtractor = useCallback((item: TimelineEntry) => item.key, []);
+
+  const renderItem = useCallback(
+    ({ item }: { item: TimelineEntry }) => <TimelineRow item={item} spacing={spacing} />,
+    [spacing]
+  );
+
+  const handleModePress = (nextMode: WorkspaceMode) => {
+    setMode(nextMode);
+  };
+
+  return (
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: theme.colors.background }}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      keyboardVerticalOffset={80}
+    >
+      <View style={{ flex: 1, padding: spacing.lg, gap: spacing.lg }}>
+        <Surface variant="plain" padding={spacing.lg}>
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            <View style={{ flex: 1 }}>
+              <ThemedText variant="caption" weight="medium">
+                {metadata ? metadata.projectName : "Loading project"}
+              </ThemedText>
+              <ThemedText variant="titleMedium" weight="bold" style={{ marginTop: spacing.xs }}>
+                {metadata ? metadata.name : "Workspace"}
+              </ThemedText>
+              <ThemedText variant="caption" style={{ marginTop: spacing.xs }}>
+                {title}
+              </ThemedText>
+            </View>
+            <IconButton
+              icon={<Ionicons name="terminal-outline" size={20} color={theme.colors.foregroundPrimary} />}
+              accessibilityLabel="Open terminal"
+              variant="ghost"
+              onPress={() => {
+                setTimeline((current) =>
+                  applyChatEvent(current, {
+                    type: "status",
+                    status: "Terminal action not yet implemented",
+                  } as WorkspaceChatEvent)
+                );
+              }}
+            />
+            <View style={{ width: spacing.sm }} />
+            <IconButton
+              icon={<Ionicons name="key-outline" size={20} color={theme.colors.foregroundPrimary} />}
+              accessibilityLabel="Manage secrets"
+              variant="ghost"
+              onPress={() => {
+                setTimeline((current) =>
+                  applyChatEvent(current, {
+                    type: "status",
+                    status: "Secrets management coming soon",
+                  } as WorkspaceChatEvent)
+                );
+              }}
+            />
+          </View>
+
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              marginTop: spacing.lg,
+              backgroundColor: theme.colors.surfaceSunken,
+              padding: spacing.xs,
+              borderRadius: theme.radii.pill,
+            }}
+          >
+            {MODE_TABS.map((tab) => {
+              const selected = tab === mode;
+              return (
+                <Pressable
+                  key={tab}
+                  onPress={() => handleModePress(tab)}
+                  style={({ pressed }) => ({
+                    flex: 1,
+                    paddingVertical: spacing.sm,
+                    borderRadius: theme.radii.pill,
+                    backgroundColor: selected
+                      ? theme.colors.accent
+                      : pressed
+                      ? theme.colors.accentMuted
+                      : "transparent",
+                  })}
+                >
+                  <ThemedText
+                    align="center"
+                    weight={selected ? "semibold" : "regular"}
+                    style={{
+                      color: selected ? theme.colors.foregroundInverted : theme.colors.foregroundSecondary,
+                    }}
+                  >
+                    {tab.toUpperCase()}
+                  </ThemedText>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <View style={{ marginTop: spacing.md }}>
+            <ReasoningControl disabled={isSending} />
+          </View>
+        </Surface>
+
+        <Surface variant="sunken" style={{ flex: 1 }}>
+          {metadataQuery.isLoading && timeline.length === 0 ? (
+            <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+              <ActivityIndicator color={theme.colors.accent} />
+            </View>
+          ) : (
+            <FlatList
+              data={listData}
+              keyExtractor={keyExtractor}
+              renderItem={renderItem}
+              contentContainerStyle={{ padding: spacing.md }}
+              initialNumToRender={20}
+              maxToRenderPerBatch={12}
+              windowSize={5}
+              updateCellsBatchingPeriod={32}
+              removeClippedSubviews
+              keyboardShouldPersistTaps="handled"
+            />
+          )}
+        </Surface>
+
+        <Surface variant="plain" padding={spacing.md}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+            <TextInput
+              value={input}
+              onChangeText={setInput}
+              placeholder="Send a message"
+              placeholderTextColor={theme.colors.foregroundMuted}
+              style={{
+                flex: 1,
+                paddingVertical: spacing.sm,
+                paddingHorizontal: spacing.md,
+                borderRadius: theme.radii.sm,
+                backgroundColor: theme.colors.inputBackground,
+                color: theme.colors.foregroundPrimary,
+                borderWidth: 1,
+                borderColor: theme.colors.inputBorder,
+              }}
+              multiline
+              textAlignVertical="top"
+              autoCorrect={false}
+              autoCapitalize="sentences"
+            />
+            <Pressable
+              onPress={onSend}
+              disabled={isSending}
+              style={({ pressed }) => ({
+                backgroundColor: pressed ? theme.colors.accentHover : theme.colors.accent,
+                paddingHorizontal: spacing.lg,
+                paddingVertical: spacing.sm,
+                borderRadius: theme.radii.sm,
+                opacity: isSending ? 0.7 : 1,
+              })}
+            >
+              {isSending ? (
+                <ActivityIndicator color={theme.colors.foregroundInverted} />
+              ) : (
+                <ThemedText style={{ color: theme.colors.foregroundInverted }} weight="semibold">
+                  Send
+                </ThemedText>
+              )}
+            </Pressable>
+          </View>
+        </Surface>
+      </View>
+    </KeyboardAvoidingView>
+  );
+}
+
+export function WorkspaceScreen(): JSX.Element {
+  const theme = useTheme();
+  const spacing = theme.spacing;
+  const router = useRouter();
+  const params = useLocalSearchParams<{ id?: string }>();
+  const workspaceId = params.id ? String(params.id) : "";
+
+  if (!workspaceId) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: theme.colors.background,
+          padding: spacing.lg,
+        }}
+      >
+        <ThemedText variant="titleMedium" weight="semibold">
+          Workspace not found
+        </ThemedText>
+        <ThemedText variant="caption" style={{ marginTop: spacing.sm }}>
+          Try opening this workspace from the Projects screen.
+        </ThemedText>
+        <Pressable
+          onPress={() => router.back()}
+          style={({ pressed }) => ({
+            marginTop: spacing.md,
+            paddingHorizontal: spacing.lg,
+            paddingVertical: spacing.sm,
+            borderRadius: theme.radii.sm,
+            backgroundColor: pressed ? theme.colors.accentHover : theme.colors.accent,
+          })}
+        >
+          <ThemedText style={{ color: theme.colors.foregroundInverted }} weight="semibold">
+            Go back
+          </ThemedText>
+        </Pressable>
+      </View>
+    );
+  }
+
+  return (
+    <ThinkingProvider workspaceId={workspaceId}>
+      <WorkspaceScreenInner workspaceId={workspaceId} />
+    </ThinkingProvider>
+  );
+}
+
+export default WorkspaceScreen;

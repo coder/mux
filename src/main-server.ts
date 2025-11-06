@@ -15,6 +15,8 @@ import type { RawData } from "ws";
 import { WebSocket, WebSocketServer } from "ws";
 import { Command } from "commander";
 import { validateProjectPath } from "./utils/pathUtils";
+import { z } from "zod";
+import { createAuthMiddleware, isWsAuthorized } from "./server/auth";
 
 // Parse command line arguments
 const program = new Command();
@@ -25,12 +27,14 @@ program
   .option("-h, --host <host>", "bind to specific host", "localhost")
   .option("-p, --port <port>", "bind to specific port", "3000")
   .option("--add-project <path>", "add and open project at the specified path (idempotent)")
+  .option("--auth-token <token>", "optional bearer token for HTTP/WS auth")
   .parse(process.argv);
 
 const options = program.opts();
 const HOST = options.host as string;
 const PORT = parseInt(options.port as string, 10);
 const ADD_PROJECT_PATH = options.addProject as string | undefined;
+const AUTH_TOKEN = (options.authToken as string | undefined) ?? process.env.CMUX_SERVER_AUTH_TOKEN;
 
 // Track the launch project path for initial navigation
 let launchProjectPath: string | null = null;
@@ -55,7 +59,8 @@ class HttpIpcMainAdapter {
     // Create HTTP endpoint for this handler
     this.app.post(`/ipc/${encodeURIComponent(channel)}`, async (req, res) => {
       try {
-        const body = req.body as { args?: unknown[] };
+        const schema = z.object({ args: z.array(z.unknown()).optional() });
+        const body = schema.parse(req.body);
         const args: unknown[] = body.args ?? [];
         const result = await handler(null, ...args);
 
@@ -152,6 +157,11 @@ const httpIpcMain = new HttpIpcMainAdapter(app);
   const ipcMainService = new IpcMain(config);
   await ipcMainService.initialize();
 
+  // Protect all /ipc/* routes if AUTH_TOKEN is set
+  if (AUTH_TOKEN && AUTH_TOKEN.trim().length > 0) {
+    app.use("/ipc", createAuthMiddleware({ token: AUTH_TOKEN }));
+  }
+
   // Register IPC handlers
   ipcMainService.register(
     httpIpcMain as unknown as ElectronIpcMain,
@@ -163,13 +173,21 @@ const httpIpcMain = new HttpIpcMainAdapter(app);
     return Promise.resolve(launchProjectPath);
   });
 
-  // Serve static files from dist directory (built renderer)
-  app.use(express.static(path.join(__dirname, ".")));
-
   // Health check endpoint
   app.get("/health", (req, res) => {
     res.json({ status: "ok" });
   });
+
+  // Version endpoint
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { VERSION } = require("./version");
+    app.get("/version", (_req, res) => {
+      res.json({ ...VERSION, mode: "server" });
+    });
+  } catch {
+    // no-op if version is unavailable during dev
+  }
 
   // Fallback to index.html for SPA routes (use middleware instead of deprecated wildcard)
   app.use((req, res, next) => {
@@ -186,7 +204,14 @@ const httpIpcMain = new HttpIpcMainAdapter(app);
   // Create WebSocket server
   const wss = new WebSocketServer({ server, path: "/ws" });
 
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, req) => {
+    // Authorization check (no-op if AUTH_TOKEN not set)
+    if (!isWsAuthorized(req, { token: AUTH_TOKEN })) {
+      try {
+        ws.close(1008, "Unauthorized"); // Policy Violation
+      } catch {}
+      return;
+    }
     console.log("Client connected");
 
     // Initialize client tracking

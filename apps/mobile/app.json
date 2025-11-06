@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "cmux-mobile",
+    "slug": "cmux-mobile",
+    "version": "0.0.1",
+    "scheme": "cmux",
+    "orientation": "portrait",
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "newArchEnabled": true,
+    "jsEngine": "hermes",
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "cmux": {
+        "baseUrl": "http://100.114.78.86:3000",
+        "authToken": ""
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store"
+    ]
+  }
+}
