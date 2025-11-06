@@ -12,6 +12,7 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../theme";
 import { ThemedText } from "../components/ThemedText";
 import { IconButton } from "../components/IconButton";
@@ -167,6 +168,7 @@ interface WorkspaceScreenInnerProps {
 function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.Element {
   const theme = useTheme();
   const spacing = theme.spacing;
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const expanderRef = useRef(createChatEventExpander());
   const api = useApiClient();
@@ -329,7 +331,8 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
         <View
           style={{
             paddingHorizontal: spacing.md,
-            paddingVertical: spacing.sm,
+            paddingTop: spacing.sm,
+            paddingBottom: Math.max(spacing.sm, insets.bottom),
             backgroundColor: theme.colors.surfaceSecondary,
             borderTopWidth: 1,
             borderTopColor: theme.colors.border,
