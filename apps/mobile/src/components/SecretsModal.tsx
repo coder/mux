@@ -106,6 +106,7 @@ export function SecretsModal({
       animationType="slide"
       transparent={true}
       onRequestClose={handleCancel}
+      presentationStyle="pageSheet"
     >
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -114,58 +115,89 @@ export function SecretsModal({
         <View
           style={{
             flex: 1,
-            justifyContent: "center",
-            alignItems: "center",
-            backgroundColor: "rgba(0, 0, 0, 0.5)",
-            padding: spacing.lg,
+            backgroundColor: theme.colors.background,
           }}
         >
-          <Surface
+          <View
             style={{
-              width: "100%",
-              maxWidth: 500,
-              maxHeight: "80%",
-              borderRadius: spacing.md,
-              padding: spacing.lg,
+              flex: 1,
+              paddingTop: spacing.xl,
             }}
           >
             {/* Header */}
-            <View style={{ marginBottom: spacing.md }}>
-              <ThemedText style={{ fontSize: 20, fontWeight: "bold", marginBottom: spacing.xs }}>
-                Manage Secrets
-              </ThemedText>
-              <ThemedText style={{ fontSize: 14, opacity: 0.7 }}>
-                Project: {projectName}
-              </ThemedText>
-            </View>
-
-            {/* Info */}
             <View
               style={{
-                backgroundColor: theme.colors.surface,
-                padding: spacing.md,
-                borderRadius: spacing.sm,
-                marginBottom: spacing.md,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+                paddingHorizontal: spacing.lg,
+                paddingBottom: spacing.md,
+                borderBottomWidth: 1,
+                borderBottomColor: theme.colors.borderSubtle,
               }}
             >
-              <ThemedText style={{ fontSize: 12, opacity: 0.8 }}>
-                Secrets are stored in ~/.cmux/secrets.json (kept away from source code) but
-                namespaced per project.
+              <TouchableOpacity onPress={handleCancel} disabled={isLoading}>
+                <ThemedText style={{ fontSize: 17, color: theme.colors.accent }}>
+                  Cancel
+                </ThemedText>
+              </TouchableOpacity>
+              <ThemedText style={{ fontSize: 17, fontWeight: "600" }}>
+                Secrets
               </ThemedText>
-              <ThemedText style={{ fontSize: 12, opacity: 0.8, marginTop: spacing.xs }}>
-                Secrets are injected as environment variables to compute commands (e.g. Bash).
+              <TouchableOpacity onPress={() => void handleSave()} disabled={isLoading}>
+                <ThemedText
+                  style={{
+                    fontSize: 17,
+                    color: isLoading ? theme.colors.foregroundMuted : theme.colors.accent,
+                    fontWeight: "600",
+                  }}
+                >
+                  {isLoading ? "Saving..." : "Done"}
+                </ThemedText>
+              </TouchableOpacity>
+            </View>
+
+            {/* Project name */}
+            <View
+              style={{
+                paddingHorizontal: spacing.lg,
+                paddingVertical: spacing.md,
+                backgroundColor: theme.colors.surfaceSunken,
+              }}
+            >
+              <ThemedText style={{ fontSize: 13, opacity: 0.7, marginBottom: 2 }}>
+                PROJECT
               </ThemedText>
+              <ThemedText style={{ fontSize: 15 }}>{projectName}</ThemedText>
             </View>
 
             {/* Secrets list */}
             <ScrollView
-              style={{ maxHeight: 400, marginBottom: spacing.md }}
-              contentContainerStyle={{ paddingBottom: spacing.md }}
+              style={{ flex: 1 }}
+              contentContainerStyle={{ padding: spacing.lg }}
             >
               {secrets.length === 0 ? (
-                <View style={{ padding: spacing.xl, alignItems: "center" }}>
-                  <ThemedText style={{ fontSize: 13, opacity: 0.6 }}>
-                    No secrets configured
+                <View style={{ paddingVertical: spacing.xxl, alignItems: "center" }}>
+                  <Ionicons name="key-outline" size={48} color={theme.colors.foregroundMuted} />
+                  <ThemedText
+                    style={{
+                      fontSize: 15,
+                      opacity: 0.6,
+                      marginTop: spacing.md,
+                      textAlign: "center",
+                    }}
+                  >
+                    No secrets yet
+                  </ThemedText>
+                  <ThemedText
+                    style={{
+                      fontSize: 13,
+                      opacity: 0.5,
+                      marginTop: spacing.xs,
+                      textAlign: "center",
+                    }}
+                  >
+                    Secrets are injected as environment variables
                   </ThemedText>
                 </View>
               ) : (
@@ -173,48 +205,65 @@ export function SecretsModal({
                   <View
                     key={index}
                     style={{
-                      marginBottom: spacing.md,
-                      padding: spacing.md,
+                      marginBottom: spacing.lg,
                       backgroundColor: theme.colors.surface,
-                      borderRadius: spacing.sm,
+                      borderRadius: 12,
+                      padding: spacing.md,
+                      borderWidth: 1,
+                      borderColor: theme.colors.borderSubtle,
                     }}
                   >
                     {/* Key input */}
-                    <ThemedText style={{ fontSize: 11, opacity: 0.7, marginBottom: spacing.xs }}>
-                      Key
-                    </ThemedText>
-                    <TextInput
-                      value={secret.key}
-                      onChangeText={(value) => updateSecret(index, "key", value)}
-                      placeholder="SECRET_NAME"
-                      placeholderTextColor={theme.colors.foregroundMuted}
-                      editable={!isLoading}
-                      style={{
-                        backgroundColor: theme.colors.background,
-                        borderWidth: 1,
-                        borderColor: theme.colors.border,
-                        borderRadius: spacing.sm,
-                        paddingHorizontal: spacing.md,
-                        paddingVertical: spacing.sm,
-                        fontFamily: Platform.OS === "ios" ? "Courier" : "monospace",
-                        fontSize: 13,
-                        color: theme.colors.foregroundPrimary,
-                        marginBottom: spacing.sm,
-                      }}
-                    />
+                    <View style={{ marginBottom: spacing.md }}>
+                      <ThemedText
+                        style={{
+                          fontSize: 12,
+                          opacity: 0.6,
+                          marginBottom: spacing.xs,
+                          textTransform: "uppercase",
+                          letterSpacing: 0.5,
+                        }}
+                      >
+                        Key
+                      </ThemedText>
+                      <TextInput
+                        value={secret.key}
+                        onChangeText={(value) => updateSecret(index, "key", value)}
+                        placeholder="API_KEY"
+                        placeholderTextColor={theme.colors.foregroundMuted}
+                        editable={!isLoading}
+                        style={{
+                          backgroundColor: theme.colors.background,
+                          borderWidth: 1,
+                          borderColor: theme.colors.border,
+                          borderRadius: 8,
+                          paddingHorizontal: spacing.md,
+                          paddingVertical: 12,
+                          fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+                          fontSize: 14,
+                          color: theme.colors.foregroundPrimary,
+                        }}
+                      />
+                    </View>
 
-                    {/* Value input with visibility toggle */}
-                    <View style={{ flexDirection: "row", alignItems: "center" }}>
-                      <View style={{ flex: 1 }}>
-                        <ThemedText
-                          style={{ fontSize: 11, opacity: 0.7, marginBottom: spacing.xs }}
-                        >
-                          Value
-                        </ThemedText>
+                    {/* Value input with controls */}
+                    <View style={{ marginBottom: spacing.sm }}>
+                      <ThemedText
+                        style={{
+                          fontSize: 12,
+                          opacity: 0.6,
+                          marginBottom: spacing.xs,
+                          textTransform: "uppercase",
+                          letterSpacing: 0.5,
+                        }}
+                      >
+                        Value
+                      </ThemedText>
+                      <View style={{ position: "relative" }}>
                         <TextInput
                           value={secret.value}
                           onChangeText={(value) => updateSecret(index, "value", value)}
-                          placeholder="secret value"
+                          placeholder="secret_value"
                           placeholderTextColor={theme.colors.foregroundMuted}
                           secureTextEntry={!visibleSecrets.has(index)}
                           editable={!isLoading}
@@ -222,105 +271,92 @@ export function SecretsModal({
                             backgroundColor: theme.colors.background,
                             borderWidth: 1,
                             borderColor: theme.colors.border,
-                            borderRadius: spacing.sm,
+                            borderRadius: 8,
                             paddingHorizontal: spacing.md,
-                            paddingVertical: spacing.sm,
-                            fontFamily: Platform.OS === "ios" ? "Courier" : "monospace",
-                            fontSize: 13,
+                            paddingVertical: 12,
+                            paddingRight: 48,
+                            fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+                            fontSize: 14,
                             color: theme.colors.foregroundPrimary,
                           }}
                         />
+                        {/* Visibility toggle - positioned inside input */}
+                        <TouchableOpacity
+                          onPress={() => toggleVisibility(index)}
+                          disabled={isLoading}
+                          style={{
+                            position: "absolute",
+                            right: 12,
+                            top: 0,
+                            bottom: 0,
+                            justifyContent: "center",
+                          }}
+                        >
+                          <Ionicons
+                            name={visibleSecrets.has(index) ? "eye-off-outline" : "eye-outline"}
+                            size={22}
+                            color={theme.colors.foregroundMuted}
+                          />
+                        </TouchableOpacity>
                       </View>
-
-                      {/* Visibility toggle */}
-                      <TouchableOpacity
-                        onPress={() => toggleVisibility(index)}
-                        disabled={isLoading}
-                        style={{
-                          marginLeft: spacing.sm,
-                          padding: spacing.sm,
-                          alignSelf: "flex-end",
-                        }}
-                      >
-                        <Ionicons
-                          name={visibleSecrets.has(index) ? "eye-off" : "eye"}
-                          size={20}
-                          color={theme.colors.foregroundMuted}
-                        />
-                      </TouchableOpacity>
-
-                      {/* Remove button */}
-                      <TouchableOpacity
-                        onPress={() => removeSecret(index)}
-                        disabled={isLoading}
-                        style={{
-                          marginLeft: spacing.xs,
-                          padding: spacing.sm,
-                          alignSelf: "flex-end",
-                        }}
-                      >
-                        <Ionicons name="trash-outline" size={20} color={theme.colors.danger} />
-                      </TouchableOpacity>
                     </View>
+
+                    {/* Delete button */}
+                    <TouchableOpacity
+                      onPress={() => removeSecret(index)}
+                      disabled={isLoading}
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        paddingVertical: spacing.sm,
+                        marginTop: spacing.xs,
+                      }}
+                    >
+                      <Ionicons name="trash-outline" size={16} color={theme.colors.danger} />
+                      <ThemedText
+                        style={{
+                          fontSize: 14,
+                          color: theme.colors.danger,
+                          marginLeft: spacing.xs,
+                        }}
+                      >
+                        Remove
+                      </ThemedText>
+                    </TouchableOpacity>
                   </View>
                 ))
               )}
+
+              {/* Add secret button */}
+              <TouchableOpacity
+                onPress={addSecret}
+                disabled={isLoading}
+                style={{
+                  backgroundColor: theme.colors.surface,
+                  borderWidth: 2,
+                  borderColor: theme.colors.accent,
+                  borderStyle: "dashed",
+                  borderRadius: 12,
+                  paddingVertical: spacing.lg,
+                  alignItems: "center",
+                  marginTop: secrets.length > 0 ? spacing.sm : 0,
+                }}
+              >
+                <Ionicons name="add-circle-outline" size={24} color={theme.colors.accent} />
+                <ThemedText
+                  style={{
+                    fontSize: 15,
+                    color: theme.colors.accent,
+                    marginTop: spacing.xs,
+                    fontWeight: "500",
+                  }}
+                >
+                  Add Secret
+                </ThemedText>
+              </TouchableOpacity>
             </ScrollView>
-
-            {/* Add secret button */}
-            <TouchableOpacity
-              onPress={addSecret}
-              disabled={isLoading}
-              style={{
-                borderWidth: 1,
-                borderColor: theme.colors.border,
-                borderStyle: "dashed",
-                borderRadius: spacing.sm,
-                padding: spacing.md,
-                alignItems: "center",
-                marginBottom: spacing.md,
-              }}
-            >
-              <ThemedText style={{ fontSize: 13 }}>+ Add Secret</ThemedText>
-            </TouchableOpacity>
-
-            {/* Action buttons */}
-            <View style={{ flexDirection: "row" }}>
-              <TouchableOpacity
-                onPress={handleCancel}
-                disabled={isLoading}
-                style={{
-                  flex: 1,
-                  padding: spacing.md,
-                  borderRadius: spacing.sm,
-                  borderWidth: 1,
-                  borderColor: theme.colors.border,
-                  alignItems: "center",
-                  marginRight: spacing.md,
-                }}
-              >
-                <ThemedText style={{ fontSize: 14 }}>Cancel</ThemedText>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => void handleSave()}
-                disabled={isLoading}
-                style={{
-                  flex: 1,
-                  padding: spacing.md,
-                  borderRadius: spacing.sm,
-                  backgroundColor: theme.colors.accent,
-                  alignItems: "center",
-                }}
-              >
-                {isLoading ? (
-                  <ActivityIndicator color={theme.colors.foregroundInverted} />
-                ) : (
-                  <ThemedText style={{ fontSize: 14, fontWeight: "600", color: theme.colors.foregroundInverted }}>Save</ThemedText>
-                )}
-              </TouchableOpacity>
-            </View>
-          </Surface>
+          </View>
         </View>
       </KeyboardAvoidingView>
     </Modal>

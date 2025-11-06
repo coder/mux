@@ -491,17 +491,10 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
               />
             )}
             <IconButton
-              icon={<Ionicons name="key-outline" size={22} color={theme.colors.foregroundPrimary} />}
-              accessibilityLabel="Manage secrets"
+              icon={<Ionicons name="settings-outline" size={22} color={theme.colors.foregroundPrimary} />}
+              accessibilityLabel="Open workspace settings"
               variant="ghost"
-              onPress={() => {
-                setTimeline((current) =>
-                  applyChatEvent(current, {
-                    type: "status",
-                    status: "Secrets management coming soon",
-                  } as WorkspaceChatEvent)
-                );
-              }}
+              onPress={() => router.push("/workspace-settings")}
             />
           </View>
         </View>
