@@ -7,6 +7,7 @@ import { Surface } from "../components/Surface";
 import { ThemedText } from "../components/ThemedText";
 import { ProposePlanCard } from "../components/ProposePlanCard";
 import { TodoToolCard } from "../components/TodoToolCard";
+import { StatusSetToolCard } from "../components/StatusSetToolCard";
 import type { TodoItem } from "../components/TodoItemView";
 import { useTheme } from "../theme";
 import type { DisplayedMessage } from "../types";
@@ -486,6 +487,26 @@ function isTodoWriteTool(
   );
 }
 
+/**
+ * Type guard for status_set tool
+ */
+function isStatusSetTool(
+  message: DisplayedMessage & { type: "tool" }
+): message is DisplayedMessage & {
+  type: "tool";
+  args: { emoji: string; message: string; url?: string };
+} {
+  return (
+    message.toolName === "status_set" &&
+    message.args !== null &&
+    typeof message.args === "object" &&
+    "emoji" in message.args &&
+    "message" in message.args &&
+    typeof message.args.emoji === "string" &&
+    typeof message.args.message === "string"
+  );
+}
+
 function ToolMessageCard({
   message,
 }: {
@@ -501,6 +522,18 @@ function ToolMessageCard({
   // Special handling for todo_write tool
   if (isTodoWriteTool(message)) {
     return <TodoToolCard todos={message.args.todos} status={message.status} />;
+  }
+
+  // Special handling for status_set tool
+  if (isStatusSetTool(message)) {
+    return (
+      <StatusSetToolCard
+        emoji={message.args.emoji}
+        message={message.args.message}
+        url={message.args.url}
+        status={message.status}
+      />
+    );
   }
 
   // Generic tool rendering for all other tools
