@@ -223,9 +223,9 @@ function ReasoningMessageCard({
 }): JSX.Element {
   const theme = useTheme();
   const isStreaming = 'isStreaming' in message && (message as any).isStreaming === true;
-  const [isExpanded, setIsExpanded] = useState(isStreaming);
+  const [isExpanded, setIsExpanded] = useState(true); // Default expanded
 
-  // Auto-collapse when streaming ends (like desktop)
+  // Auto-collapse when reasoning finishes (isStreaming becomes false)
   useEffect(() => {
     if (!isStreaming) {
       setIsExpanded(false);
@@ -242,26 +242,10 @@ function ReasoningMessageCard({
         marginBottom: theme.spacing.md,
       }}
     >
-      <Pressable
-        onPress={() => !isStreaming && setIsExpanded(!isExpanded)}
-        style={{ flexDirection: "row", alignItems: "center", gap: theme.spacing.xs }}
-      >
-        <Text style={{ fontSize: 16 }}>💭</Text>
-        <ThemedText variant="label" style={{ color: theme.colors.accent, flex: 1 }}>
+      <Pressable onPress={() => setIsExpanded(!isExpanded)}>
+        <ThemedText variant="label" style={{ color: theme.colors.accent }}>
           Thinking
         </ThemedText>
-        {!isStreaming && (
-          <Ionicons
-            name={isExpanded ? "chevron-down" : "chevron-forward"}
-            size={16}
-            color={theme.colors.accent}
-          />
-        )}
-        {isStreaming && (
-          <ThemedText variant="caption" style={{ color: theme.colors.accent }}>
-            ⟳
-          </ThemedText>
-        )}
       </Pressable>
       
       {isExpanded && (
