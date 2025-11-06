@@ -22,6 +22,8 @@ export interface CmuxMobileClientConfig {
 const IPC_CHANNELS = {
   WORKSPACE_LIST: "workspace:list",
   WORKSPACE_CREATE: "workspace:create",
+  WORKSPACE_REMOVE: "workspace:remove",
+  WORKSPACE_RENAME: "workspace:rename",
   WORKSPACE_SEND_MESSAGE: "workspace:sendMessage",
   WORKSPACE_INTERRUPT_STREAM: "workspace:interruptStream",
   WORKSPACE_GET_INFO: "workspace:getInfo",
@@ -191,6 +193,40 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
       },
       getInfo: async (workspaceId: string): Promise<FrontendWorkspaceMetadata | null> =>
         invoke(IPC_CHANNELS.WORKSPACE_GET_INFO, [ensureWorkspaceId(workspaceId)]),
+      remove: async (
+        workspaceId: string,
+        options?: { force?: boolean }
+      ): Promise<Result<void, string>> => {
+        try {
+          await invoke(IPC_CHANNELS.WORKSPACE_REMOVE, [
+            ensureWorkspaceId(workspaceId),
+            options,
+          ]);
+          return { success: true, data: undefined };
+        } catch (error) {
+          const err = error instanceof Error ? error.message : String(error);
+          return { success: false, error: err };
+        }
+      },
+      rename: async (
+        workspaceId: string,
+        newName: string
+      ): Promise<Result<{ newWorkspaceId: string }, string>> => {
+        try {
+          assert(
+            typeof newName === "string" && newName.trim().length > 0,
+            "newName required"
+          );
+          const result = await invoke<{ newWorkspaceId: string }>(
+            IPC_CHANNELS.WORKSPACE_RENAME,
+            [ensureWorkspaceId(workspaceId), newName.trim()]
+          );
+          return { success: true, data: result };
+        } catch (error) {
+          const err = error instanceof Error ? error.message : String(error);
+          return { success: false, error: err };
+        }
+      },
       interruptStream: async (workspaceId: string): Promise<Result<void, string>> => {
         try {
           await invoke(IPC_CHANNELS.WORKSPACE_INTERRUPT_STREAM, [ensureWorkspaceId(workspaceId)]);
@@ -262,7 +298,10 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
         return subscription;
       },
       subscribeMetadata: (
-        onMetadata: (payload: { workspaceId: string; metadata: FrontendWorkspaceMetadata }) => void
+        onMetadata: (payload: {
+          workspaceId: string;
+          metadata: FrontendWorkspaceMetadata | null;
+        }) => void
       ): WebSocketSubscription =>
         subscribe(
           { type: "subscribe", channel: IPC_CHANNELS.WORKSPACE_METADATA_SUBSCRIBE },
@@ -277,8 +316,18 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
             }
             const workspaceId =
               typeof firstArg.workspaceId === "string" ? firstArg.workspaceId : null;
+            if (!workspaceId) {
+              return;
+            }
+
+            // Handle deletion event (metadata is null)
+            if (firstArg.metadata === null) {
+              onMetadata({ workspaceId, metadata: null });
+              return;
+            }
+
             const metadataRaw = isJsonRecord(firstArg.metadata) ? firstArg.metadata : null;
-            if (!workspaceId || !metadataRaw) {
+            if (!metadataRaw) {
               return;
             }
             const metadata: FrontendWorkspaceMetadata = {

@@ -30,10 +30,19 @@ export function useProjectsData() {
           if (!existing || existing.length === 0) {
             return existing;
           }
+
+          // Handle deletion (null metadata)
+          if (metadata === null) {
+            return existing.filter((w) => w.id !== workspaceId);
+          }
+
+          // Handle update/rename
           const index = existing.findIndex((workspace) => workspace.id === workspaceId);
           if (index === -1) {
-            return existing;
+            // New workspace - add it
+            return [...existing, metadata];
           }
+
           const next = existing.slice();
           next[index] = { ...next[index], ...metadata };
           return next;

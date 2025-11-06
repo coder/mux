@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -86,7 +86,7 @@ export function ProjectsScreen(): JSX.Element {
   const spacing = theme.spacing;
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { projectsQuery, workspacesQuery } = useProjectsData();
+  const { api, projectsQuery, workspacesQuery } = useProjectsData();
   const [search, setSearch] = useState("");
   const [secretsModalState, setSecretsModalState] = useState<{
     visible: boolean;
@@ -336,6 +336,78 @@ export function ProjectsScreen(): JSX.Element {
     }
   };
 
+  const handleDeleteWorkspace = useCallback(
+    (metadata: FrontendWorkspaceMetadata) => {
+      // Show confirmation dialog
+      Alert.alert(
+        "Delete Workspace?",
+        `This will permanently remove "${metadata.name}" from ${metadata.projectName}.\n\nThis action cannot be undone.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Delete",
+            style: "destructive",
+            onPress: async () => {
+              const result = await api.workspace.remove(metadata.id);
+
+              if (!result.success) {
+                // Check if it's a "dirty workspace" error
+                const isDirtyError =
+                  result.error.toLowerCase().includes("uncommitted") ||
+                  result.error.toLowerCase().includes("unpushed");
+
+                if (isDirtyError) {
+                  // Show force delete option
+                  Alert.alert(
+                    "Workspace Has Changes",
+                    `${result.error}\n\nForce delete will discard these changes permanently.`,
+                    [
+                      { text: "Cancel", style: "cancel" },
+                      {
+                        text: "Force Delete",
+                        style: "destructive",
+                        onPress: async () => {
+                          const forceResult = await api.workspace.remove(metadata.id, {
+                            force: true,
+                          });
+                          if (!forceResult.success) {
+                            Alert.alert("Error", forceResult.error);
+                          } else {
+                            await workspacesQuery.refetch();
+                          }
+                        },
+                      },
+                    ]
+                  );
+                } else {
+                  // Generic error
+                  Alert.alert("Error", result.error);
+                }
+              } else {
+                // Success - refetch to update UI
+                await workspacesQuery.refetch();
+              }
+            },
+          },
+        ]
+      );
+    },
+    [api, workspacesQuery]
+  );
+
+  const handleRenameWorkspace = useCallback(
+    (metadata: FrontendWorkspaceMetadata) => {
+      // TODO: Implement rename dialog with TextInput
+      // For now, just show a placeholder
+      Alert.alert(
+        "Rename Workspace",
+        "Rename functionality will be implemented in a future update.",
+        [{ text: "OK" }]
+      );
+    },
+    []
+  );
+
   const renderWorkspaceRow = (item: WorkspaceListItem) => {
     const { metadata, lastActive, isOld } = item;
     const accentWidth = 3;
@@ -353,6 +425,29 @@ export function ProjectsScreen(): JSX.Element {
             },
           })
         }
+        onLongPress={() => {
+          // Show platform-native action sheet
+          Alert.alert(
+            metadata.name,
+            `Project: ${metadata.projectName}`,
+            [
+              {
+                text: "Rename",
+                onPress: () => handleRenameWorkspace(metadata),
+              },
+              {
+                text: "Delete",
+                onPress: () => handleDeleteWorkspace(metadata),
+                style: "destructive",
+              },
+              {
+                text: "Cancel",
+                style: "cancel",
+              },
+            ],
+            { cancelable: true }
+          );
+        }}
         style={({ pressed }) => [
           {
             flexDirection: "row",
