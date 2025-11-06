@@ -19,8 +19,11 @@ import { ThemedText } from "../components/ThemedText";
 import { Surface } from "../components/Surface";
 import { IconButton } from "../components/IconButton";
 import { SecretsModal } from "../components/SecretsModal";
+import { NewWorkspaceModal } from "../components/NewWorkspaceModal";
 import { createClient } from "../api/client";
 import type { FrontendWorkspaceMetadata, Secret } from "../types";
+import { loadRuntimePreference, saveRuntimePreference } from "../utils/workspacePreferences";
+import { parseRuntimeModeAndHost } from "../types/runtime";
 
 interface WorkspaceListItem {
   metadata: FrontendWorkspaceMetadata;
@@ -90,6 +93,15 @@ export function ProjectsScreen(): JSX.Element {
     projectPath: string;
     projectName: string;
     secrets: Secret[];
+  } | null>(null);
+
+  const [workspaceModalState, setWorkspaceModalState] = useState<{
+    visible: boolean;
+    projectPath: string;
+    projectName: string;
+    branches: string[];
+    defaultTrunk?: string;
+    loadError?: string;
   } | null>(null);
 
   const client = createClient();
@@ -173,7 +185,9 @@ export function ProjectsScreen(): JSX.Element {
         const hasWorkspaceMatch = group.workspaces.length > 0;
         return haystack.includes(normalizedSearch) || hasWorkspaceMatch;
       })
-      .sort((a, b) => a.displayName.localeCompare(b.displayName, undefined, { sensitivity: "base" }));
+      .sort((a, b) =>
+        a.displayName.localeCompare(b.displayName, undefined, { sensitivity: "base" })
+      );
 
     return results;
   }, [projectsQuery.data, workspacesQuery.data, search]);
@@ -219,6 +233,109 @@ export function ProjectsScreen(): JSX.Element {
     }
   };
 
+  const handleOpenNewWorkspace = async (projectPath: string, projectName: string) => {
+    // Initialize modal with loading state
+    setWorkspaceModalState({
+      visible: true,
+      projectPath,
+      projectName,
+      branches: [],
+      defaultTrunk: undefined,
+      loadError: undefined,
+    });
+
+    // Fetch branches asynchronously
+    try {
+      const branchResult = await client.projects.listBranches(projectPath);
+      const sanitizedBranches = Array.isArray(branchResult?.branches)
+        ? branchResult.branches.filter((branch): branch is string => typeof branch === "string")
+        : [];
+
+      const recommended =
+        typeof branchResult?.recommendedTrunk === "string" &&
+        sanitizedBranches.includes(branchResult.recommendedTrunk)
+          ? branchResult.recommendedTrunk
+          : sanitizedBranches[0];
+
+      setWorkspaceModalState((prev) => {
+        if (!prev || prev.projectPath !== projectPath) {
+          return prev; // Guard against race condition
+        }
+        return {
+          ...prev,
+          branches: sanitizedBranches,
+          defaultTrunk: recommended,
+          loadError: undefined,
+        };
+      });
+    } catch (err) {
+      console.error("Failed to load branches for modal:", err);
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setWorkspaceModalState((prev) => {
+        if (!prev || prev.projectPath !== projectPath) {
+          return prev;
+        }
+        return {
+          ...prev,
+          loadError: `Unable to load branches automatically: ${message}. You can still enter the trunk branch manually.`,
+        };
+      });
+    }
+  };
+
+  const handleCreateWorkspace = async (
+    branchName: string,
+    trunkBranch: string,
+    runtime?: string
+  ) => {
+    if (!workspaceModalState) return;
+
+    try {
+      // Parse runtime config if provided
+      let runtimeConfig: Record<string, unknown> | undefined;
+      if (runtime) {
+        const parsed = parseRuntimeModeAndHost(runtime);
+        if (parsed.mode === "ssh") {
+          runtimeConfig = {
+            type: "ssh",
+            host: parsed.host,
+            srcBaseDir: "~/cmux",
+          };
+        } else {
+          runtimeConfig = undefined; // Local is default
+        }
+      }
+
+      const result = await client.workspace.create(
+        workspaceModalState.projectPath,
+        branchName,
+        trunkBranch,
+        runtimeConfig
+      );
+
+      if (result.success) {
+        // Save runtime preference for this project if provided
+        if (runtime) {
+          await saveRuntimePreference(workspaceModalState.projectPath, runtime);
+        }
+
+        // Navigate to new workspace
+        router.push(`/workspace/${result.metadata.id}`);
+
+        // Refresh workspace list
+        await workspacesQuery.refetch();
+
+        setWorkspaceModalState(null);
+      } else {
+        Alert.alert("Error", result.error);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to create workspace";
+      Alert.alert("Error", message);
+      console.error("Failed to create workspace:", error);
+    }
+  };
+
   const renderWorkspaceRow = (item: WorkspaceListItem) => {
     const { metadata, lastActive, isOld } = item;
     const accentWidth = 3;
@@ -228,12 +345,12 @@ export function ProjectsScreen(): JSX.Element {
       <Pressable
         key={metadata.id}
         onPress={() =>
-          router.push({ 
-            pathname: "/workspace/[id]", 
-            params: { 
+          router.push({
+            pathname: "/workspace/[id]",
+            params: {
               id: metadata.id,
               title: `${metadata.projectName} › ${metadata.name}`,
-            } 
+            },
           })
         }
         style={({ pressed }) => [
@@ -276,140 +393,177 @@ export function ProjectsScreen(): JSX.Element {
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ 
+        contentContainerStyle={{
           paddingTop: spacing.md, // Expo Router header handles safe area
           paddingBottom: spacing.lg,
         }}
-        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={theme.colors.accent} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={onRefresh}
+            tintColor={theme.colors.accent}
+          />
+        }
         keyboardShouldPersistTaps="handled"
       >
         <View style={{ paddingHorizontal: spacing.lg, gap: spacing.lg }}>
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-          <ThemedText variant="caption" style={{ flex: 1 }}>
-            Select a workspace to open the chat.
-          </ThemedText>
-          <IconButton
-            icon={<Ionicons name="settings-outline" size={20} color={theme.colors.foregroundPrimary} />}
-            accessibilityLabel="Open settings"
-            variant="ghost"
-            onPress={() => router.push("/settings")}
-          />
-        </View>
-
-        <View
-          style={{
-            backgroundColor: theme.colors.surface,
-            borderRadius: theme.radii.md,
-            borderWidth: 1,
-            borderColor: theme.colors.border,
-            flexDirection: "row",
-            alignItems: "center",
-            paddingHorizontal: spacing.md,
-          }}
-        >
-          <Ionicons
-            name="search"
-            size={18}
-            color={theme.colors.foregroundMuted}
-            style={{ marginRight: spacing.sm }}
-          />
-          <TextInput
-            value={search}
-            onChangeText={setSearch}
-            placeholder="Search projects or workspaces"
-            placeholderTextColor={theme.colors.foregroundMuted}
-            style={{
-              flex: 1,
-              color: theme.colors.foregroundPrimary,
-              paddingVertical: Platform.select({ ios: spacing.md, android: 0, default: spacing.md }),
-            }}
-            autoCorrect={false}
-            autoCapitalize="none"
-            clearButtonMode="while-editing"
-          />
-        </View>
-
-        {isLoading ? (
-          <View style={{ paddingVertical: spacing.xxl, alignItems: "center" }}>
-            <ActivityIndicator size="large" color={theme.colors.accent} />
-            <ThemedText variant="caption" style={{ marginTop: spacing.sm }}>
-              Loading workspaces…
+          <View
+            style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}
+          >
+            <ThemedText variant="caption" style={{ flex: 1 }}>
+              Select a workspace to open the chat.
             </ThemedText>
+            <IconButton
+              icon={
+                <Ionicons
+                  name="settings-outline"
+                  size={20}
+                  color={theme.colors.foregroundPrimary}
+                />
+              }
+              accessibilityLabel="Open settings"
+              variant="ghost"
+              onPress={() => router.push("/settings")}
+            />
           </View>
-        ) : hasError ? (
-          <Surface variant="raised" style={{ padding: spacing.lg }}>
-            <ThemedText variant="titleSmall" weight="semibold">
-              Unable to load data
-            </ThemedText>
-            <ThemedText variant="caption" style={{ marginTop: spacing.xs }}>
-              Please check your connection and try again.
-            </ThemedText>
-            <Pressable
-              onPress={onRefresh}
-              style={({ pressed }) => ({
-                marginTop: spacing.md,
-                paddingVertical: spacing.sm,
-                paddingHorizontal: spacing.lg,
-                alignSelf: "flex-start",
-                borderRadius: theme.radii.sm,
-                backgroundColor: pressed ? theme.colors.accentHover : theme.colors.accent,
-              })}
-            >
-              <ThemedText style={{ color: theme.colors.foregroundInverted }} weight="semibold">
-                Retry
-              </ThemedText>
-            </Pressable>
-          </Surface>
-        ) : groupedProjects.length === 0 ? (
-          <Surface variant="plain" style={{ padding: spacing.lg }}>
-            <ThemedText variant="titleSmall" weight="semibold">
-              No workspaces yet
-            </ThemedText>
-            <ThemedText variant="caption" style={{ marginTop: spacing.xs }}>
-              Create a workspace from the desktop app, then pull to refresh.
-            </ThemedText>
-          </Surface>
-        ) : (
-          groupedProjects.map((group) => (
-            <Surface key={group.path} variant="plain" style={{ padding: spacing.lg }}>
-              <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.md }}>
-                <View style={{ flex: 1 }}>
-                  <ThemedText variant="titleSmall" weight="semibold">
-                    {group.displayName}
-                  </ThemedText>
-                  <ThemedText variant="monoMuted" numberOfLines={1}>
-                    {group.path}
-                  </ThemedText>
-                </View>
-                <View style={{ marginRight: spacing.xs }}>
-                  <IconButton
-                    icon={<Ionicons name="key-outline" size={16} color={theme.colors.foregroundMuted} />}
-                    onPress={() => void handleOpenSecrets(group.path, group.displayName)}
-                    size="sm"
-                    variant="ghost"
-                  />
-                </View>
-                <View
-                  style={{
-                    paddingHorizontal: spacing.sm,
-                    paddingVertical: spacing.xs,
-                    borderRadius: theme.radii.pill,
-                    backgroundColor: theme.colors.chipBackground,
-                    borderWidth: 1,
-                    borderColor: theme.colors.chipBorder,
-                  }}
-                >
-                  <ThemedText variant="caption" weight="medium">
-                    {group.workspaces.length} {group.workspaces.length === 1 ? "workspace" : "workspaces"}
-                  </ThemedText>
-                </View>
-              </View>
 
-              {group.workspaces.map(renderWorkspaceRow)}
+          <View
+            style={{
+              backgroundColor: theme.colors.surface,
+              borderRadius: theme.radii.md,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+              flexDirection: "row",
+              alignItems: "center",
+              paddingHorizontal: spacing.md,
+            }}
+          >
+            <Ionicons
+              name="search"
+              size={18}
+              color={theme.colors.foregroundMuted}
+              style={{ marginRight: spacing.sm }}
+            />
+            <TextInput
+              value={search}
+              onChangeText={setSearch}
+              placeholder="Search projects or workspaces"
+              placeholderTextColor={theme.colors.foregroundMuted}
+              style={{
+                flex: 1,
+                color: theme.colors.foregroundPrimary,
+                paddingVertical: Platform.select({
+                  ios: spacing.md,
+                  android: 0,
+                  default: spacing.md,
+                }),
+              }}
+              autoCorrect={false}
+              autoCapitalize="none"
+              clearButtonMode="while-editing"
+            />
+          </View>
+
+          {isLoading ? (
+            <View style={{ paddingVertical: spacing.xxl, alignItems: "center" }}>
+              <ActivityIndicator size="large" color={theme.colors.accent} />
+              <ThemedText variant="caption" style={{ marginTop: spacing.sm }}>
+                Loading workspaces…
+              </ThemedText>
+            </View>
+          ) : hasError ? (
+            <Surface variant="raised" style={{ padding: spacing.lg }}>
+              <ThemedText variant="titleSmall" weight="semibold">
+                Unable to load data
+              </ThemedText>
+              <ThemedText variant="caption" style={{ marginTop: spacing.xs }}>
+                Please check your connection and try again.
+              </ThemedText>
+              <Pressable
+                onPress={onRefresh}
+                style={({ pressed }) => ({
+                  marginTop: spacing.md,
+                  paddingVertical: spacing.sm,
+                  paddingHorizontal: spacing.lg,
+                  alignSelf: "flex-start",
+                  borderRadius: theme.radii.sm,
+                  backgroundColor: pressed ? theme.colors.accentHover : theme.colors.accent,
+                })}
+              >
+                <ThemedText style={{ color: theme.colors.foregroundInverted }} weight="semibold">
+                  Retry
+                </ThemedText>
+              </Pressable>
             </Surface>
-          ))
-        )}
-      </View>
+          ) : groupedProjects.length === 0 ? (
+            <Surface variant="plain" style={{ padding: spacing.lg }}>
+              <ThemedText variant="titleSmall" weight="semibold">
+                No workspaces yet
+              </ThemedText>
+              <ThemedText variant="caption" style={{ marginTop: spacing.xs }}>
+                Create a workspace from the desktop app, then pull to refresh.
+              </ThemedText>
+            </Surface>
+          ) : (
+            groupedProjects.map((group) => (
+              <Surface key={group.path} variant="plain" style={{ padding: spacing.lg }}>
+                <View
+                  style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.md }}
+                >
+                  <View style={{ flex: 1 }}>
+                    <ThemedText variant="titleSmall" weight="semibold">
+                      {group.displayName}
+                    </ThemedText>
+                    <ThemedText variant="monoMuted" numberOfLines={1}>
+                      {group.path}
+                    </ThemedText>
+                  </View>
+                  <View style={{ marginRight: spacing.xs }}>
+                    <IconButton
+                      icon={
+                        <Ionicons name="add-circle-outline" size={16} color={theme.colors.accent} />
+                      }
+                      onPress={() => void handleOpenNewWorkspace(group.path, group.displayName)}
+                      size="sm"
+                      variant="ghost"
+                    />
+                  </View>
+                  <View style={{ marginRight: spacing.xs }}>
+                    <IconButton
+                      icon={
+                        <Ionicons
+                          name="key-outline"
+                          size={16}
+                          color={theme.colors.foregroundMuted}
+                        />
+                      }
+                      onPress={() => void handleOpenSecrets(group.path, group.displayName)}
+                      size="sm"
+                      variant="ghost"
+                    />
+                  </View>
+                  <View
+                    style={{
+                      paddingHorizontal: spacing.sm,
+                      paddingVertical: spacing.xs,
+                      borderRadius: theme.radii.pill,
+                      backgroundColor: theme.colors.chipBackground,
+                      borderWidth: 1,
+                      borderColor: theme.colors.chipBorder,
+                    }}
+                  >
+                    <ThemedText variant="caption" weight="medium">
+                      {group.workspaces.length}{" "}
+                      {group.workspaces.length === 1 ? "workspace" : "workspaces"}
+                    </ThemedText>
+                  </View>
+                </View>
+
+                {group.workspaces.map(renderWorkspaceRow)}
+              </Surface>
+            ))
+          )}
+        </View>
       </ScrollView>
       <Pressable
         accessibilityRole="button"
@@ -443,6 +597,19 @@ export function ProjectsScreen(): JSX.Element {
           initialSecrets={secretsModalState.secrets}
           onClose={() => setSecretsModalState(null)}
           onSave={handleSaveSecrets}
+        />
+      )}
+
+      {workspaceModalState && (
+        <NewWorkspaceModal
+          visible={workspaceModalState.visible}
+          projectPath={workspaceModalState.projectPath}
+          projectName={workspaceModalState.projectName}
+          branches={workspaceModalState.branches}
+          defaultTrunk={workspaceModalState.defaultTrunk}
+          loadError={workspaceModalState.loadError}
+          onClose={() => setWorkspaceModalState(null)}
+          onCreate={handleCreateWorkspace}
         />
       )}
     </View>

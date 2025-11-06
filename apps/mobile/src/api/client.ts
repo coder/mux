@@ -21,10 +21,12 @@ export interface CmuxMobileClientConfig {
 
 const IPC_CHANNELS = {
   WORKSPACE_LIST: "workspace:list",
+  WORKSPACE_CREATE: "workspace:create",
   WORKSPACE_SEND_MESSAGE: "workspace:sendMessage",
   WORKSPACE_INTERRUPT_STREAM: "workspace:interruptStream",
   WORKSPACE_GET_INFO: "workspace:getInfo",
   PROJECT_LIST: "project:list",
+  PROJECT_LIST_BRANCHES: "project:listBranches",
   PROJECT_SECRETS_GET: "project:secrets:get",
   PROJECT_SECRETS_UPDATE: "project:secrets:update",
   WORKSPACE_CHAT_PREFIX: "workspace:chat:",
@@ -146,6 +148,10 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
   return {
     projects: {
       list: async (): Promise<ProjectsListResponse> => invoke(IPC_CHANNELS.PROJECT_LIST),
+      listBranches: async (
+        projectPath: string
+      ): Promise<{ branches: string[]; recommendedTrunk: string }> =>
+        invoke(IPC_CHANNELS.PROJECT_LIST_BRANCHES, [projectPath]),
       secrets: {
         get: async (projectPath: string): Promise<Secret[]> =>
           invoke(IPC_CHANNELS.PROJECT_SECRETS_GET, [projectPath]),
@@ -161,8 +167,28 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
       },
     },
     workspace: {
-      list: async (): Promise<FrontendWorkspaceMetadata[]> =>
-        invoke(IPC_CHANNELS.WORKSPACE_LIST),
+      list: async (): Promise<FrontendWorkspaceMetadata[]> => invoke(IPC_CHANNELS.WORKSPACE_LIST),
+      create: async (
+        projectPath: string,
+        branchName: string,
+        trunkBranch: string,
+        runtimeConfig?: Record<string, unknown>
+      ): Promise<
+        { success: true; metadata: FrontendWorkspaceMetadata } | { success: false; error: string }
+      > => {
+        try {
+          const result = await invoke<{ success: true; metadata: FrontendWorkspaceMetadata }>(
+            IPC_CHANNELS.WORKSPACE_CREATE,
+            [projectPath, branchName, trunkBranch, runtimeConfig]
+          );
+          return result;
+        } catch (error) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
       getInfo: async (workspaceId: string): Promise<FrontendWorkspaceMetadata | null> =>
         invoke(IPC_CHANNELS.WORKSPACE_GET_INFO, [ensureWorkspaceId(workspaceId)]),
       interruptStream: async (workspaceId: string): Promise<Result<void, string>> => {
@@ -181,23 +207,24 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
       ): Promise<Result<void, string>> => {
         try {
           assert(typeof message === "string" && message.trim().length > 0, "message required");
-          
+
           // Fire and forget - don't wait for response
           // The stream-start event will arrive via WebSocket if successful
           // Errors will come via stream-error WebSocket events, not HTTP response
-          void invoke<unknown>(
-            IPC_CHANNELS.WORKSPACE_SEND_MESSAGE,
-            [ensureWorkspaceId(workspaceId), message, options]
-          ).catch(() => {
+          void invoke<unknown>(IPC_CHANNELS.WORKSPACE_SEND_MESSAGE, [
+            ensureWorkspaceId(workspaceId),
+            message,
+            options,
+          ]).catch(() => {
             // Silently ignore HTTP errors - stream-error events handle actual failures
             // The server may return before stream completes, causing spurious errors
           });
-          
+
           // Immediately return success - actual errors will come via stream-error events
           return { success: true, data: undefined };
         } catch (error) {
           const err = error instanceof Error ? error.message : String(error);
-          console.error('[sendMessage] Validation error:', err);
+          console.error("[sendMessage] Validation error:", err);
           return { success: false, error: err };
         }
       },
@@ -248,7 +275,8 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
             if (!isJsonRecord(firstArg)) {
               return;
             }
-            const workspaceId = typeof firstArg.workspaceId === "string" ? firstArg.workspaceId : null;
+            const workspaceId =
+              typeof firstArg.workspaceId === "string" ? firstArg.workspaceId : null;
             const metadataRaw = isJsonRecord(firstArg.metadata) ? firstArg.metadata : null;
             if (!workspaceId || !metadataRaw) {
               return;
@@ -256,15 +284,18 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
             const metadata: FrontendWorkspaceMetadata = {
               id: typeof metadataRaw.id === "string" ? metadataRaw.id : workspaceId,
               name: typeof metadataRaw.name === "string" ? metadataRaw.name : workspaceId,
-              projectName: typeof metadataRaw.projectName === "string" ? metadataRaw.projectName : "",
-              projectPath: typeof metadataRaw.projectPath === "string" ? metadataRaw.projectPath : "",
+              projectName:
+                typeof metadataRaw.projectName === "string" ? metadataRaw.projectName : "",
+              projectPath:
+                typeof metadataRaw.projectPath === "string" ? metadataRaw.projectPath : "",
               namedWorkspacePath:
                 typeof metadataRaw.namedWorkspacePath === "string"
                   ? metadataRaw.namedWorkspacePath
                   : typeof metadataRaw.workspacePath === "string"
-                  ? metadataRaw.workspacePath
-                  : "",
-              createdAt: typeof metadataRaw.createdAt === "string" ? metadataRaw.createdAt : undefined,
+                    ? metadataRaw.workspacePath
+                    : "",
+              createdAt:
+                typeof metadataRaw.createdAt === "string" ? metadataRaw.createdAt : undefined,
               runtimeConfig: isJsonRecord(metadataRaw.runtimeConfig)
                 ? (metadataRaw.runtimeConfig as Record<string, unknown>)
                 : undefined,
