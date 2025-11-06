@@ -311,7 +311,8 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
         } else if (
           (payload.type === "stream-delta" || 
            payload.type === "reasoning-delta" ||
-           payload.type === "tool-call-start") &&
+           payload.type === "tool-call-start" ||
+           payload.type === "tool-call-delta") &&
           "tokens" in payload &&
           typeof payload.tokens === "number" &&
           payload.tokens > 0
