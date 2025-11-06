@@ -590,6 +590,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
                 borderColor: theme.colors.inputBorder,
                 fontSize: 16,
               }}
+              textAlignVertical="center"
               multiline
               autoCorrect={false}
               autoCapitalize="sentences"
