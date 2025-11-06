@@ -19,6 +19,8 @@ import { IconButton } from "../components/IconButton";
 import { useApiClient } from "../hooks/useApiClient";
 import { MessageRenderer } from "../messages/MessageRenderer";
 import { useWorkspaceDefaults, type WorkspaceMode } from "../hooks/useWorkspaceDefaults";
+import { FloatingTodoCard } from "../components/FloatingTodoCard";
+import type { TodoItem } from "../components/TodoItemView";
 import { createChatEventExpander, DISPLAYABLE_MESSAGE_TYPES } from "../messages/normalizeChatEvent";
 import type { DisplayedMessage, FrontendWorkspaceMetadata, WorkspaceChatEvent } from "../types";
 import type { Result } from "../api/client";
@@ -207,6 +209,10 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   const [isSending, setIsSending] = useState(false);
   const wsRef = useRef<{ close: () => void } | null>(null);
   const flatListRef = useRef<FlatList<TimelineEntry> | null>(null);
+  
+  // Track current todos for floating card (during streaming)
+  const [currentTodos, setCurrentTodos] = useState<TodoItem[]>([]);
+  const [todoCardDismissed, setTodoCardDismissed] = useState(false);
 
   useEffect(() => {
     expanderRef.current = createChatEventExpander();
@@ -221,6 +227,31 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   useEffect(() => {
     const expander = expanderRef.current;
     const subscription = api.workspace.subscribeChat(workspaceId, (payload) => {
+      // Track todos from tool-call-end events
+      if (
+        payload &&
+        typeof payload === "object" &&
+        "type" in payload &&
+        payload.type === "tool-call-end" &&
+        "toolName" in payload &&
+        payload.toolName === "todo_write" &&
+        "args" in payload &&
+        payload.args !== null &&
+        typeof payload.args === "object" &&
+        "todos" in payload.args &&
+        Array.isArray((payload.args as { todos?: unknown }).todos)
+      ) {
+        const todos = (payload.args as { todos: TodoItem[] }).todos;
+        setCurrentTodos(todos);
+        setTodoCardDismissed(false); // Re-show card on new todos
+      }
+
+      // Clear todos when stream ends
+      if (payload && typeof payload === "object" && "type" in payload && payload.type === "stream-end") {
+        setCurrentTodos([]);
+        setTodoCardDismissed(false);
+      }
+
       const expanded = expander.expand(payload);
       
       // If expander returns [], it means the event was handled but nothing to display yet
@@ -244,9 +275,11 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
     };
   }, [api, workspaceId]);
 
-  // Reset timeline when workspace changes
+  // Reset timeline and todos when workspace changes
   useEffect(() => {
     setTimeline([]);
+    setCurrentTodos([]);
+    setTodoCardDismissed(false);
   }, [workspaceId]);
 
   const metadata = metadataQuery.data ?? null;
@@ -373,6 +406,11 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
             />
           )}
         </View>
+
+        {/* Floating Todo Card */}
+        {currentTodos.length > 0 && !todoCardDismissed && (
+          <FloatingTodoCard todos={currentTodos} onDismiss={() => setTodoCardDismissed(true)} />
+        )}
 
         {/* Input area */}
         <View

@@ -6,6 +6,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { Surface } from "../components/Surface";
 import { ThemedText } from "../components/ThemedText";
 import { ProposePlanCard } from "../components/ProposePlanCard";
+import { TodoToolCard } from "../components/TodoToolCard";
+import type { TodoItem } from "../components/TodoItemView";
 import { useTheme } from "../theme";
 import type { DisplayedMessage } from "../types";
 import { assert } from "../utils/assert";
@@ -450,6 +452,24 @@ function isProposePlanTool(
   );
 }
 
+/**
+ * Type guard for todo_write tool
+ */
+function isTodoWriteTool(
+  message: DisplayedMessage & { type: "tool" }
+): message is DisplayedMessage & {
+  type: "tool";
+  args: { todos: TodoItem[] };
+} {
+  return (
+    message.toolName === "todo_write" &&
+    message.args !== null &&
+    typeof message.args === "object" &&
+    "todos" in message.args &&
+    Array.isArray((message.args as { todos?: unknown }).todos)
+  );
+}
+
 function ToolMessageCard({
   message,
 }: {
@@ -460,6 +480,11 @@ function ToolMessageCard({
     return (
       <ProposePlanCard title={message.args.title} plan={message.args.plan} status={message.status} />
     );
+  }
+
+  // Special handling for todo_write tool
+  if (isTodoWriteTool(message)) {
+    return <TodoToolCard todos={message.args.todos} status={message.status} />;
   }
 
   // Generic tool rendering for all other tools
