@@ -514,9 +514,6 @@ export function ProjectsScreen(): JSX.Element {
                     <ThemedText variant="titleSmall" weight="semibold">
                       {group.displayName}
                     </ThemedText>
-                    <ThemedText variant="monoMuted" numberOfLines={1}>
-                      {group.path}
-                    </ThemedText>
                   </View>
                   <View style={{ marginRight: spacing.xs }}>
                     <IconButton
@@ -565,29 +562,6 @@ export function ProjectsScreen(): JSX.Element {
           )}
         </View>
       </ScrollView>
-      <Pressable
-        accessibilityRole="button"
-        onPress={() =>
-          Alert.alert(
-            "Add workspace",
-            "Workspace creation from mobile is coming soon. Use the desktop app in the meantime."
-          )
-        }
-        style={({ pressed }) => ({
-          position: "absolute",
-          bottom: spacing.xxl,
-          right: spacing.lg,
-          backgroundColor: pressed ? theme.colors.accentHover : theme.colors.accent,
-          width: 56,
-          height: 56,
-          borderRadius: theme.radii.pill,
-          alignItems: "center",
-          justifyContent: "center",
-          ...theme.shadows.subtle,
-        })}
-      >
-        <Ionicons name="add" size={26} color={theme.colors.foregroundInverted} />
-      </Pressable>
 
       {secretsModalState && (
         <SecretsModal
