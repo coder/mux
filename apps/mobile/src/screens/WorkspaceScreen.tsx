@@ -18,7 +18,6 @@ import { ThemedText } from "../components/ThemedText";
 import { IconButton } from "../components/IconButton";
 import { useApiClient } from "../hooks/useApiClient";
 import { MessageRenderer } from "../messages/MessageRenderer";
-import { ThinkingProvider, useThinkingLevel } from "../contexts/ThinkingContext";
 import { useWorkspaceDefaults, type WorkspaceMode } from "../hooks/useWorkspaceDefaults";
 import { createChatEventExpander, DISPLAYABLE_MESSAGE_TYPES } from "../messages/normalizeChatEvent";
 import type { DisplayedMessage, FrontendWorkspaceMetadata, WorkspaceChatEvent } from "../types";
@@ -177,7 +176,6 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [isSending, setIsSending] = useState(false);
   const wsRef = useRef<{ close: () => void } | null>(null);
-  const [thinkingLevel] = useThinkingLevel();
 
   useEffect(() => {
     expanderRef.current = createChatEventExpander();
@@ -414,11 +412,7 @@ export function WorkspaceScreen(): JSX.Element {
     );
   }
 
-  return (
-    <ThinkingProvider workspaceId={workspaceId}>
-      <WorkspaceScreenInner workspaceId={workspaceId} />
-    </ThinkingProvider>
-  );
+  return <WorkspaceScreenInner workspaceId={workspaceId} />;
 }
 
 export default WorkspaceScreen;

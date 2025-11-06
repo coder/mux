@@ -15,6 +15,15 @@ const ThinkingContext = createContext<ThinkingContextValue | null>(null);
 
 const STORAGE_NAMESPACE = "cmux.thinking-level";
 
+/**
+ * Sanitize workspace ID to be compatible with SecureStore key requirements.
+ * SecureStore keys must contain only alphanumeric characters, ".", "-", and "_".
+ */
+function sanitizeWorkspaceId(workspaceId: string): string {
+  // Replace slashes and other invalid chars with underscores
+  return workspaceId.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
 async function readThinkingLevel(storageKey: string): Promise<ThinkingLevel | null> {
   try {
     const value = await SecureStore.getItemAsync(storageKey);
@@ -45,7 +54,10 @@ export interface ThinkingProviderProps extends PropsWithChildren {
 }
 
 export function ThinkingProvider({ workspaceId, children }: ThinkingProviderProps): JSX.Element {
-  const storageKey = useMemo(() => `${STORAGE_NAMESPACE}:${workspaceId}`, [workspaceId]);
+  const storageKey = useMemo(
+    () => `${STORAGE_NAMESPACE}.${sanitizeWorkspaceId(workspaceId)}`,
+    [workspaceId]
+  );
   const [thinkingLevel, setThinkingLevelState] = useState<ThinkingLevel>("off");
 
   useEffect(() => {
