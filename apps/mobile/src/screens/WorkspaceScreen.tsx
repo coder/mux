@@ -219,20 +219,23 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
     };
   }, [api, workspaceId]);
 
-  // Scroll to bottom on initial load (no animation)
+  // Scroll to bottom on initial load (instant, no animation)
+  // Only trigger once when messages first arrive
   useEffect(() => {
-    if (timeline.length > 0 && flatListRef.current && !hasInitiallyScrolledRef.current) {
-      // Small delay to ensure FlatList has rendered
-      setTimeout(() => {
+    if (timeline.length > 0 && !hasInitiallyScrolledRef.current) {
+      // Use requestAnimationFrame to ensure FlatList layout is ready
+      requestAnimationFrame(() => {
         flatListRef.current?.scrollToEnd({ animated: false });
         hasInitiallyScrolledRef.current = true;
-      }, 100);
+      });
     }
-  }, [timeline.length]);
+  }, [timeline.length > 0]); // Only trigger when timeline goes from empty to non-empty
   
   // Reset scroll tracking when workspace changes
   useEffect(() => {
     hasInitiallyScrolledRef.current = false;
+    // Clear timeline to ensure fresh start
+    setTimeline([]);
   }, [workspaceId]);
 
   const metadata = metadataQuery.data ?? null;
