@@ -212,7 +212,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   
   // Track current todos for floating card (during streaming)
   const [currentTodos, setCurrentTodos] = useState<TodoItem[]>([]);
-  const [todoCardDismissed, setTodoCardDismissed] = useState(false);
+  const [todoCardVisible, setTodoCardVisible] = useState(true);
 
   useEffect(() => {
     expanderRef.current = createChatEventExpander();
@@ -245,13 +245,13 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
       ) {
         const todos = (payload.args as { todos: TodoItem[] }).todos;
         setCurrentTodos(todos);
-        setTodoCardDismissed(false); // Re-show card on new todos
+        setTodoCardVisible(true); // Re-show card on new todos
       }
 
       // Clear todos when stream ends
       if (payload && typeof payload === "object" && "type" in payload && payload.type === "stream-end") {
         setCurrentTodos([]);
-        setTodoCardDismissed(false);
+        setTodoCardVisible(true);
       }
 
       const expanded = expander.expand(payload);
@@ -281,7 +281,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   useEffect(() => {
     setTimeline([]);
     setCurrentTodos([]);
-    setTodoCardDismissed(false);
+    setTodoCardVisible(true);
   }, [workspaceId]);
 
   const onSend = useCallback(async () => {
@@ -344,6 +344,21 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
           }}
         >
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+            {/* Show/hide todo list toggle (only visible when todos exist) */}
+            {currentTodos.length > 0 && (
+              <IconButton
+                icon={
+                  <Ionicons
+                    name={todoCardVisible ? "list" : "list-outline"}
+                    size={22}
+                    color={todoCardVisible ? theme.colors.accent : theme.colors.foregroundPrimary}
+                  />
+                }
+                accessibilityLabel={todoCardVisible ? "Hide todo list" : "Show todo list"}
+                variant="ghost"
+                onPress={() => setTodoCardVisible(!todoCardVisible)}
+              />
+            )}
             <IconButton
               icon={<Ionicons name="key-outline" size={22} color={theme.colors.foregroundPrimary} />}
               accessibilityLabel="Manage secrets"
@@ -391,8 +406,8 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
         </View>
 
         {/* Floating Todo Card */}
-        {currentTodos.length > 0 && !todoCardDismissed && (
-          <FloatingTodoCard todos={currentTodos} onDismiss={() => setTodoCardDismissed(true)} />
+        {currentTodos.length > 0 && todoCardVisible && (
+          <FloatingTodoCard todos={currentTodos} onDismiss={() => setTodoCardVisible(false)} />
         )}
 
         {/* Input area */}
