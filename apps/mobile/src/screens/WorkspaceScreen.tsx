@@ -121,14 +121,34 @@ function formatProjectBreadcrumb(metadata: FrontendWorkspaceMetadata | null): st
   return `${metadata.projectName} › ${metadata.name}`;
 }
 
-function RawEventCard({ payload }: { payload: WorkspaceChatEvent }): JSX.Element {
+function RawEventCard({
+  payload,
+  onDismiss,
+}: {
+  payload: WorkspaceChatEvent;
+  onDismiss?: () => void;
+}): JSX.Element {
+  const theme = useTheme();
+  const spacing = theme.spacing;
+
   if (payload && typeof payload === "object" && "type" in payload) {
     const typed = payload as { type: unknown; [key: string]: unknown };
     if (typed.type === "status" && typeof typed.status === "string") {
       return <ThemedText variant="caption">{typed.status}</ThemedText>;
     }
     if (typed.type === "error" && typeof typed.error === "string") {
-      return <ThemedText variant="muted">⚠️ {typed.error}</ThemedText>;
+      return (
+        <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
+          <ThemedText variant="muted" style={{ flex: 1, color: theme.colors.danger }}>
+            ⚠️ {typed.error}
+          </ThemedText>
+          {onDismiss && (
+            <Pressable onPress={onDismiss} hitSlop={8}>
+              <Ionicons name="close" size={18} color={theme.colors.foregroundMuted} />
+            </Pressable>
+          )}
+        </View>
+      );
     }
   }
   if (typeof payload === "string") {
@@ -138,7 +158,15 @@ function RawEventCard({ payload }: { payload: WorkspaceChatEvent }): JSX.Element
 }
 
 const TimelineRow = memo(
-  ({ item, spacing }: { item: TimelineEntry; spacing: ThemeSpacing }) => {
+  ({
+    item,
+    spacing,
+    onDismiss,
+  }: {
+    item: TimelineEntry;
+    spacing: ThemeSpacing;
+    onDismiss?: () => void;
+  }) => {
     if (item.kind === "displayed") {
       return <MessageRenderer message={item.message} />;
     }
@@ -152,11 +180,11 @@ const TimelineRow = memo(
           borderRadius: 8,
         }}
       >
-        <RawEventCard payload={item.payload} />
+        <RawEventCard payload={item.payload} onDismiss={onDismiss} />
       </View>
     );
   },
-  (prev, next) => prev.item === next.item && prev.spacing === next.spacing
+  (prev, next) => prev.item === next.item && prev.spacing === next.spacing && prev.onDismiss === next.onDismiss
 );
 
 TimelineRow.displayName = "TimelineRow";
@@ -248,9 +276,19 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   const listData = useMemo(() => [...timeline].reverse(), [timeline]);
   const keyExtractor = useCallback((item: TimelineEntry) => item.key, []);
 
+  const handleDismissRawEvent = useCallback((key: string) => {
+    setTimeline((current) => current.filter((item) => item.key !== key));
+  }, []);
+
   const renderItem = useCallback(
-    ({ item }: { item: TimelineEntry }) => <TimelineRow item={item} spacing={spacing} />,
-    [spacing]
+    ({ item }: { item: TimelineEntry }) => (
+      <TimelineRow
+        item={item}
+        spacing={spacing}
+        onDismiss={item.kind === "raw" ? () => handleDismissRawEvent(item.key) : undefined}
+      />
+    ),
+    [spacing, handleDismissRawEvent]
   );
 
   return (

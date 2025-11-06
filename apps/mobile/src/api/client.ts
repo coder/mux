@@ -155,11 +155,19 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
       ): Promise<Result<void, string>> => {
         try {
           assert(typeof message === "string" && message.trim().length > 0, "message required");
-          await invoke(IPC_CHANNELS.WORKSPACE_SEND_MESSAGE, [
-            ensureWorkspaceId(workspaceId),
-            message,
-            options,
-          ]);
+          const result = await invoke<{ success: boolean; error?: string }>(
+            IPC_CHANNELS.WORKSPACE_SEND_MESSAGE,
+            [ensureWorkspaceId(workspaceId), message, options]
+          );
+          
+          // Server returns Result type directly (not wrapped)
+          // Check if the actual sendMessage operation succeeded
+          if (typeof result === "object" && result !== null && "success" in result) {
+            if (result.success === false) {
+              return { success: false, error: result.error ?? "Send message failed" };
+            }
+          }
+          
           return { success: true, data: undefined };
         } catch (error) {
           const err = error instanceof Error ? error.message : String(error);
