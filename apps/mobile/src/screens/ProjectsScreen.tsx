@@ -228,7 +228,7 @@ export function ProjectsScreen(): JSX.Element {
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{ 
-          paddingTop: insets.top + spacing.lg,
+          paddingTop: spacing.md, // Expo Router header handles safe area
           paddingBottom: spacing.lg,
         }}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={theme.colors.accent} />}
