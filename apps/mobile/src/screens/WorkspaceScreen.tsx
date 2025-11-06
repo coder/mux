@@ -229,6 +229,11 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   useEffect(() => {
     const expander = expanderRef.current;
     const subscription = api.workspace.subscribeChat(workspaceId, (payload) => {
+      // DEBUG: Log all events to see what's arriving
+      if (payload && typeof payload === "object" && "type" in payload) {
+        console.log('[DEBUG] Event received:', payload.type, payload);
+      }
+      
       // Track todos from tool-call-end events
       if (
         payload &&
