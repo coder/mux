@@ -31,20 +31,20 @@ function AppFrame(): JSX.Element {
             name="index" 
             options={{ 
               headerShown: false,
-              title: "", // Ensure no title for back button reference
             }} 
           />
           <Stack.Screen 
             name="workspace/[id]" 
             options={{ 
-              headerShown: false, // Use custom header in WorkspaceScreen
+              title: "Workspace",
+              headerBackTitle: "", // Just show <, no text
             }} 
           />
           <Stack.Screen 
             name="settings" 
             options={{ 
               title: "Settings",
-              headerBackTitle: "", // Hide back button text, show only <
+              headerBackTitle: "", // Just show <, no text
             }} 
           />
         </Stack>

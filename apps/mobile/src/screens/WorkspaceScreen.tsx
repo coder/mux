@@ -331,29 +331,19 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
       keyboardVerticalOffset={80}
     >
       <View style={{ flex: 1 }}>
-        {/* Header */}
+        {/* Custom header with workspace info and action icons */}
         <View
           style={{
             flexDirection: "row",
             alignItems: "center",
             justifyContent: "space-between",
-            paddingTop: Math.max(spacing.sm, insets.top),
-            paddingBottom: spacing.sm,
+            paddingVertical: spacing.sm,
             paddingHorizontal: spacing.md,
             backgroundColor: theme.colors.surfaceSecondary,
             borderBottomWidth: 1,
             borderBottomColor: theme.colors.border,
           }}
         >
-          {/* Back button */}
-          <Pressable
-            onPress={() => router.back()}
-            hitSlop={8}
-            style={{ marginRight: spacing.sm }}
-          >
-            <Ionicons name="chevron-back" size={28} color={theme.colors.foregroundPrimary} />
-          </Pressable>
-
           <ThemedText variant="titleSmall" weight="semibold" numberOfLines={1} style={{ flex: 1 }}>
             {metadata ? `${metadata.projectName} › ${metadata.name}` : "Loading..."}
           </ThemedText>
