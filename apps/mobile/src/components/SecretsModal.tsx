@@ -104,7 +104,6 @@ export function SecretsModal({
     <Modal
       visible={visible}
       animationType="slide"
-      transparent={true}
       onRequestClose={handleCancel}
       presentationStyle="pageSheet"
     >
