@@ -334,10 +334,17 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
 
       setTimeline((current) => {
         let next = current;
+        let changed = false;
         for (const event of expanded) {
-          next = applyChatEvent(next, event);
+          const updated = applyChatEvent(next, event);
+          if (updated !== next) {
+            changed = true;
+            next = updated;
+          }
         }
-        return next;
+        
+        // Only return new array if actually changed (prevents FlatList re-render)
+        return changed ? next : current;
       });
     });
     wsRef.current = subscription;
