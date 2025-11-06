@@ -155,39 +155,22 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
       ): Promise<Result<void, string>> => {
         try {
           assert(typeof message === "string" && message.trim().length > 0, "message required");
-          const result = await invoke<unknown>(
+          
+          // Fire and forget - don't wait for response
+          // The stream-start event will arrive via WebSocket if successful
+          void invoke<unknown>(
             IPC_CHANNELS.WORKSPACE_SEND_MESSAGE,
             [ensureWorkspaceId(workspaceId), message, options]
-          );
+          ).catch((error) => {
+            // Log errors but don't block
+            console.error('[sendMessage] Async error (ignored):', error);
+          });
           
-          console.log('[sendMessage] Server response:', result);
-          
-          // Server may return Result type or just undefined on success
-          // Check multiple possible response formats
-          if (result === undefined || result === null) {
-            // Success (void return)
-            return { success: true, data: undefined };
-          }
-          
-          if (typeof result === "object" && "success" in result) {
-            // Result type { success: boolean; error?: string }
-            if ((result as { success: boolean }).success === false) {
-              const error = "error" in result && typeof result.error === "string" 
-                ? result.error 
-                : "Send message failed";
-              console.error('[sendMessage] Server returned failure:', error);
-              return { success: false, error };
-            }
-            // success: true
-            return { success: true, data: undefined };
-          }
-          
-          // Unknown response format - assume success if no error thrown
-          console.warn('[sendMessage] Unexpected response format:', result);
+          // Immediately return success - actual errors will come via stream-error events
           return { success: true, data: undefined };
         } catch (error) {
           const err = error instanceof Error ? error.message : String(error);
-          console.error('[sendMessage] Exception caught:', err);
+          console.error('[sendMessage] Validation error:', err);
           return { success: false, error: err };
         }
       },

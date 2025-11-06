@@ -366,33 +366,28 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
     if (!trimmed) {
       return;
     }
+    
+    // Clear input immediately for better UX
+    setInput("");
     setIsSending(true);
     
-    try {
-      const result: Result<void, string> = await api.workspace.sendMessage(workspaceId, trimmed, {
-        model: "default",
-        mode: defaultMode,
-        thinkingLevel: defaultReasoningLevel,
-      });
-      
-      // Only show error if the result explicitly indicates failure
-      if (!result.success) {
-        console.error('[sendMessage] Failed:', result.error);
-        setTimeline((current) =>
-          applyChatEvent(current, { type: "error", error: result.error } as WorkspaceChatEvent)
-        );
-      }
-    } catch (error) {
-      // Catch any unexpected errors
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('[sendMessage] Exception:', errorMessage);
+    // Send message - fire and forget
+    // Actual errors will come via stream-error events from WebSocket
+    const result = await api.workspace.sendMessage(workspaceId, trimmed, {
+      model: "default",
+      mode: defaultMode,
+      thinkingLevel: defaultReasoningLevel,
+    });
+    
+    // Only show error for validation failures (not stream errors)
+    if (!result.success) {
+      console.error('[sendMessage] Validation failed:', result.error);
       setTimeline((current) =>
-        applyChatEvent(current, { type: "error", error: errorMessage } as WorkspaceChatEvent)
+        applyChatEvent(current, { type: "error", error: result.error } as WorkspaceChatEvent)
       );
-    } finally {
-      setIsSending(false);
-      setInput("");
     }
+    
+    setIsSending(false);
   }, [api, input, defaultMode, defaultReasoningLevel, workspaceId]);
 
   // Reverse timeline for inverted FlatList (chat messages bottom-to-top)
