@@ -1,6 +1,7 @@
 export const colors = {
   background: "#1f1f1f", // matches --color-background
   surface: "#252526", // sidebar background
+  surfaceSecondary: "#2a2a2b", // header/footer backgrounds
   surfaceElevated: "#2a2a2b", // hover/raised surfaces
   surfaceSunken: "#161616", // deeper backgrounds
   border: "#3e3e42",

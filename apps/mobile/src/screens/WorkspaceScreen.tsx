@@ -142,16 +142,17 @@ const TimelineRow = memo(
       return <MessageRenderer message={item.message} />;
     }
     return (
-      <Surface
-        variant="plain"
+      <View
         style={{
           paddingVertical: spacing.sm,
           paddingHorizontal: spacing.md,
           marginBottom: spacing.sm,
+          backgroundColor: "#252526",
+          borderRadius: 8,
         }}
       >
         <RawEventCard payload={item.payload} />
-      </Surface>
+      </View>
     );
   },
   (prev, next) => prev.item === next.item && prev.spacing === next.spacing
