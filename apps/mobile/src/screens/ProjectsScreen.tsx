@@ -242,12 +242,9 @@ export function ProjectsScreen(): JSX.Element {
       >
         <View style={{ paddingHorizontal: spacing.lg, gap: spacing.lg }}>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-          <View style={{ flex: 1 }}>
-            <ThemedText variant="titleLarge" weight="bold">
-              Workspaces
-            </ThemedText>
-            <ThemedText variant="caption">Select a workspace to open the chat timeline.</ThemedText>
-          </View>
+          <ThemedText variant="caption" style={{ flex: 1 }}>
+            Select a workspace to open the chat timeline.
+          </ThemedText>
           <IconButton
             icon={<Ionicons name="settings-outline" size={20} color={theme.colors.foregroundPrimary} />}
             accessibilityLabel="Open settings"
