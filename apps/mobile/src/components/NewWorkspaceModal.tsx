@@ -35,7 +35,7 @@ interface NewWorkspaceModalProps {
 
 export function NewWorkspaceModal({
   visible,
-  projectPath: _projectPath,
+  projectPath,
   projectName,
   branches,
   defaultTrunk,
