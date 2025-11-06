@@ -127,8 +127,8 @@ export function SecretsModal({
                 alignItems: "center",
                 justifyContent: "space-between",
                 paddingHorizontal: spacing.lg,
-                paddingTop: spacing.md,
-                paddingBottom: spacing.md,
+                paddingTop: spacing.lg,
+                paddingBottom: spacing.lg,
                 borderBottomWidth: 1,
                 borderBottomColor: theme.colors.borderSubtle,
               }}
