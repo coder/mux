@@ -43,6 +43,7 @@ export function SecretsModal({
   // Reset state when modal opens with new secrets
   useEffect(() => {
     if (visible) {
+      console.log("[SecretsModal] Modal opened with secrets:", initialSecrets);
       setSecrets(initialSecrets);
       setVisibleSecrets(new Set());
     }
@@ -69,6 +70,7 @@ export function SecretsModal({
   };
 
   const addSecret = () => {
+    console.log("[SecretsModal] Adding new secret. Current count:", secrets.length);
     setSecrets([...secrets, { key: "", value: "" }]);
   };
 
@@ -157,7 +159,7 @@ export function SecretsModal({
 
             {/* Secrets list */}
             <ScrollView
-              style={{ flex: 1, marginBottom: spacing.md }}
+              style={{ maxHeight: 400, marginBottom: spacing.md }}
               contentContainerStyle={{ paddingBottom: spacing.md }}
             >
               {secrets.length === 0 ? (

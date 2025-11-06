@@ -503,12 +503,6 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
                 );
               }}
             />
-            <IconButton
-              icon={<Ionicons name="settings-outline" size={22} color={theme.colors.foregroundPrimary} />}
-              accessibilityLabel="Open workspace settings"
-              variant="ghost"
-              onPress={() => router.push("/workspace-settings")}
-            />
           </View>
         </View>
 
