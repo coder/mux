@@ -17,6 +17,8 @@ import { useTheme } from "../theme";
 import { ThemedText } from "../components/ThemedText";
 import { useApiClient } from "../hooks/useApiClient";
 import { useWorkspaceActions } from "../contexts/WorkspaceActionsContext";
+import { useWorkspaceCost } from "../contexts/WorkspaceCostContext";
+import type { StreamAbortEvent, StreamEndEvent } from "@shared/types/stream.ts";
 import { MessageRenderer } from "../messages/MessageRenderer";
 import { useWorkspaceDefaults, type WorkspaceMode } from "../hooks/useWorkspaceDefaults";
 import { FloatingTodoCard } from "../components/FloatingTodoCard";
@@ -254,6 +256,7 @@ interface WorkspaceScreenInnerProps {
 }
 
 function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.Element {
+  const { recordStreamUsage } = useWorkspaceCost();
   const theme = useTheme();
   const spacing = theme.spacing;
   const insets = useSafeAreaInsets();
@@ -330,6 +333,11 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
     const subscription = api.workspace.subscribeChat(workspaceId, (payload) => {
       // Track streaming state and tokens (60s trailing window like desktop)
       if (payload && typeof payload === "object" && "type" in payload) {
+        const typedEvent = payload as StreamEndEvent | StreamAbortEvent | { type: string };
+        if (typedEvent.type === "stream-end" || typedEvent.type === "stream-abort") {
+          recordStreamUsage(typedEvent as StreamEndEvent | StreamAbortEvent);
+        }
+
         if (payload.type === "stream-start" && "model" in payload) {
           setIsStreaming(true);
           setStreamingModel(typeof payload.model === "string" ? payload.model : null);
@@ -407,7 +415,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
       subscription.close();
       wsRef.current = null;
     };
-  }, [api, workspaceId]);
+  }, [api, workspaceId, recordStreamUsage]);
 
   // Reset timeline and todos when workspace changes
   useEffect(() => {

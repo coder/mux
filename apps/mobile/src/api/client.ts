@@ -1,5 +1,7 @@
 import Constants from "expo-constants";
 import { assert } from "../utils/assert";
+import type { ChatStats } from "@shared/types/chatStats.ts";
+import type { CmuxMessage } from "@shared/types/message.ts";
 import type {
   FrontendWorkspaceMetadata,
   ProjectsListResponse,
@@ -28,15 +30,20 @@ const IPC_CHANNELS = {
   WORKSPACE_INTERRUPT_STREAM: "workspace:interruptStream",
   WORKSPACE_GET_INFO: "workspace:getInfo",
   WORKSPACE_EXECUTE_BASH: "workspace:executeBash",
+  WORKSPACE_CHAT_PREFIX: "workspace:chat:",
+  WORKSPACE_CHAT_SUBSCRIBE: "workspace:chat",
+  WORKSPACE_CHAT_GET_HISTORY: "workspace:chat:getHistory",
+  WORKSPACE_CHAT_GET_FULL_REPLAY: "workspace:chat:getFullReplay",
   PROJECT_LIST: "project:list",
   PROJECT_LIST_BRANCHES: "project:listBranches",
   PROJECT_SECRETS_GET: "project:secrets:get",
   PROJECT_SECRETS_UPDATE: "project:secrets:update",
-  WORKSPACE_CHAT_PREFIX: "workspace:chat:",
-  WORKSPACE_CHAT_SUBSCRIBE: "workspace:chat",
   WORKSPACE_METADATA: "workspace:metadata",
   WORKSPACE_METADATA_SUBSCRIBE: "workspace:metadata",
   WORKSPACE_METADATA_ACK: "workspace:metadata:subscribe",
+  TOKENIZER_CALCULATE_STATS: "tokenizer:calculateStats",
+  TOKENIZER_COUNT_TOKENS: "tokenizer:countTokens",
+  TOKENIZER_COUNT_TOKENS_BATCH: "tokenizer:countTokensBatch",
 } as const;
 
 type InvokeResponse<T> = { success: true; data: T } | { success: false; error: string };
@@ -194,6 +201,14 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
       },
       getInfo: async (workspaceId: string): Promise<FrontendWorkspaceMetadata | null> =>
         invoke(IPC_CHANNELS.WORKSPACE_GET_INFO, [ensureWorkspaceId(workspaceId)]),
+      getHistory: async (
+        workspaceId: string
+      ): Promise<WorkspaceChatEvent[]> =>
+        invoke(IPC_CHANNELS.WORKSPACE_CHAT_GET_HISTORY, [ensureWorkspaceId(workspaceId)]),
+      getFullReplay: async (
+        workspaceId: string
+      ): Promise<WorkspaceChatEvent[]> =>
+        invoke(IPC_CHANNELS.WORKSPACE_CHAT_GET_FULL_REPLAY, [ensureWorkspaceId(workspaceId)]),
       remove: async (
         workspaceId: string,
         options?: { force?: boolean }
@@ -423,6 +438,17 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
             onMetadata({ workspaceId, metadata });
           }
         ),
+    },
+    tokenizer: {
+      calculateStats: async (
+        messages: CmuxMessage[],
+        model: string
+      ): Promise<ChatStats> =>
+        invoke(IPC_CHANNELS.TOKENIZER_CALCULATE_STATS, [messages, model]),
+      countTokens: async (model: string, text: string): Promise<number> =>
+        invoke(IPC_CHANNELS.TOKENIZER_COUNT_TOKENS, [model, text]),
+      countTokensBatch: async (model: string, texts: string[]): Promise<number[]> =>
+        invoke(IPC_CHANNELS.TOKENIZER_COUNT_TOKENS_BATCH, [model, texts]),
     },
   } as const;
 }

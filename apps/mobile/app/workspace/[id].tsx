@@ -5,10 +5,12 @@ import { Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import WorkspaceScreen from "../../src/screens/WorkspaceScreen";
 import { WorkspaceActionSheet } from "../../src/components/WorkspaceActionSheet";
+import { CostUsageSheet } from "../../src/components/CostUsageSheet";
 import {
   WorkspaceActionsProvider,
   useWorkspaceActions,
 } from "../../src/contexts/WorkspaceActionsContext";
+import { WorkspaceCostProvider } from "../../src/contexts/WorkspaceCostContext";
 
 function WorkspaceContent(): JSX.Element {
   const params = useLocalSearchParams();
@@ -17,9 +19,19 @@ function WorkspaceContent(): JSX.Element {
   const id = typeof params.id === "string" ? params.id : "";
 
   const [showActionSheet, setShowActionSheet] = useState(false);
+  const [showCostSheet, setShowCostSheet] = useState(false);
   const { toggleTodoCard, hasTodos } = useWorkspaceActions();
 
   const actionItems = [
+    {
+      id: "cost",
+      label: "Cost & Usage",
+      icon: "analytics-outline" as const,
+      onPress: () => {
+        setShowActionSheet(false);
+        setShowCostSheet(true);
+      },
+    },
     {
       id: "review",
       label: "Code Review",
@@ -46,29 +58,36 @@ function WorkspaceContent(): JSX.Element {
     },
   ];
 
+  if (!id) {
+    return null;
+  }
+
   return (
-    <>
-      <Stack.Screen
-        options={{
-          title,
-          headerRight: () => (
-            <Pressable
-              onPress={() => setShowActionSheet(true)}
-              style={{ paddingHorizontal: 12 }}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <Ionicons name="ellipsis-horizontal-circle" size={24} color="#fff" />
-            </Pressable>
-          ),
-        }}
-      />
-      <WorkspaceScreen />
-      <WorkspaceActionSheet
-        visible={showActionSheet}
-        onClose={() => setShowActionSheet(false)}
-        items={actionItems}
-      />
-    </>
+    <WorkspaceCostProvider workspaceId={id}>
+      <>
+        <Stack.Screen
+          options={{
+            title,
+            headerRight: () => (
+              <Pressable
+                onPress={() => setShowActionSheet(true)}
+                style={{ paddingHorizontal: 12 }}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="ellipsis-horizontal-circle" size={24} color="#fff" />
+              </Pressable>
+            ),
+          }}
+        />
+        <WorkspaceScreen />
+        <WorkspaceActionSheet
+          visible={showActionSheet}
+          onClose={() => setShowActionSheet(false)}
+          items={actionItems}
+        />
+        <CostUsageSheet visible={showCostSheet} onClose={() => setShowCostSheet(false)} />
+      </>
+    </WorkspaceCostProvider>
   );
 }
 

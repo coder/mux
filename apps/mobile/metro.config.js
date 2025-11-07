@@ -18,6 +18,11 @@ config.resolver.nodeModulesPaths = [
 
 // Add alias support for @shared imports
 config.resolver.extraNodeModules = {
+  ...(config.resolver.extraNodeModules ?? {}),
+  '@shared': path.resolve(__dirname, '../../src'),
+};
+config.resolver.alias = {
+  ...(config.resolver.alias ?? {}),
   '@shared': path.resolve(__dirname, '../../src'),
 };
 
