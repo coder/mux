@@ -27,6 +27,7 @@ const IPC_CHANNELS = {
   WORKSPACE_SEND_MESSAGE: "workspace:sendMessage",
   WORKSPACE_INTERRUPT_STREAM: "workspace:interruptStream",
   WORKSPACE_GET_INFO: "workspace:getInfo",
+  WORKSPACE_EXECUTE_BASH: "workspace:executeBash",
   PROJECT_LIST: "project:list",
   PROJECT_LIST_BRANCHES: "project:listBranches",
   PROJECT_SECRETS_GET: "project:secrets:get",
@@ -284,6 +285,44 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
         } catch (error) {
           const err = error instanceof Error ? error.message : String(error);
           console.error("[sendMessage] Validation error:", err);
+          return { success: false, error: err };
+        }
+      },
+      executeBash: async (
+        workspaceId: string,
+        command: string,
+        options?: { timeout_secs?: number; niceness?: number }
+      ): Promise<
+        Result<
+          { success: true; output: string; truncated?: { reason: string } } | { success: false; error: string }
+        >
+      > => {
+        try {
+          // Validate inputs before calling trim()
+          if (typeof workspaceId !== "string" || !workspaceId) {
+            return { success: false, error: "workspaceId is required" };
+          }
+          if (typeof command !== "string" || !command) {
+            return { success: false, error: "command is required" };
+          }
+
+          const trimmedId = workspaceId.trim();
+          const trimmedCommand = command.trim();
+
+          if (trimmedId.length === 0) {
+            return { success: false, error: "workspaceId must not be empty" };
+          }
+          if (trimmedCommand.length === 0) {
+            return { success: false, error: "command must not be empty" };
+          }
+
+          const result = await invoke<
+            { success: true; output: string; truncated?: { reason: string } } | { success: false; error: string }
+          >(IPC_CHANNELS.WORKSPACE_EXECUTE_BASH, [trimmedId, trimmedCommand, options ?? {}]);
+
+          return { success: true, data: result };
+        } catch (error) {
+          const err = error instanceof Error ? error.message : String(error);
           return { success: false, error: err };
         }
       },

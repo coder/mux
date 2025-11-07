@@ -235,7 +235,7 @@ export function RenameWorkspaceModal({
                   style={{
                     marginTop: spacing.sm,
                     padding: spacing.sm,
-                    backgroundColor: theme.colors.errorBg,
+                    backgroundColor: theme.colors.errorBackground,
                     borderRadius: theme.radii.xs,
                     borderWidth: 1,
                     borderColor: theme.colors.error,
