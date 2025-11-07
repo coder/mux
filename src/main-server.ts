@@ -46,10 +46,10 @@ class HttpIpcMainAdapter {
 
   constructor(private readonly app: express.Application) {}
 
-  // Public method to get a handler (for internal use)
-  getHandler(
-    channel: string
-  ): ((event: unknown, ...args: unknown[]) => Promise<unknown>) | undefined {
+  /**
+   * Get a handler for direct invocation (used by WebSocket subscriptions)
+   */
+  getHandler(channel: string): ((event: unknown, ...args: unknown[]) => Promise<unknown>) | undefined {
     return this.handlers.get(channel);
   }
 

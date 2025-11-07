@@ -559,6 +559,14 @@ export class IpcMain {
       }
     );
 
+    // Get chat history for a workspace (no broadcast side effects)
+    ipcMain.handle(
+      IPC_CHANNELS.WORKSPACE_CHAT_GET_HISTORY,
+      async (_event, workspaceId: string) => {
+        return await this.getWorkspaceChatHistory(workspaceId);
+      }
+    );
+
     ipcMain.handle(
       IPC_CHANNELS.WORKSPACE_REMOVE,
       async (_event, workspaceId: string, options?: { force?: boolean }) => {
@@ -1458,6 +1466,26 @@ export class IpcMain {
     );
   }
 
+
+  /**
+   * Get chat history for a workspace
+   * Returns array of historical messages without triggering broadcasts
+   * 
+   * NOTE: This only returns persisted chat history (from chat.jsonl).
+   * For full replay including interrupted streams and init state, use
+   * the workspace:chat:subscribe event handler which calls session.replayHistory().
+   * 
+   * Used by WebSocket server to send history directly to subscribing clients.
+   */
+  private async getWorkspaceChatHistory(
+    workspaceId: string
+  ): Promise<import("@/types/ipc").WorkspaceChatMessage[]> {
+    const historyResult = await this.historyService.getHistory(workspaceId);
+    if (historyResult.success) {
+      return historyResult.data;
+    }
+    return [];
+  }
   private registerSubscriptionHandlers(ipcMain: ElectronIpcMain): void {
     // Handle subscription events for chat history
     ipcMain.on(`workspace:chat:subscribe`, (_event, workspaceId: string) => {
