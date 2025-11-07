@@ -17,6 +17,7 @@ import { useProjectsData } from "../hooks/useProjectsData";
 import { useTheme } from "../theme";
 import { ThemedText } from "../components/ThemedText";
 import { Surface } from "../components/Surface";
+import { IconButton } from "../components/IconButton";
 import { SecretsModal } from "../components/SecretsModal";
 import { NewWorkspaceModal } from "../components/NewWorkspaceModal";
 import { RenameWorkspaceModal } from "../components/RenameWorkspaceModal";
