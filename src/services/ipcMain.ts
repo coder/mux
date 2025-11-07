@@ -567,6 +567,15 @@ export class IpcMain {
       }
     );
 
+    // Get full replay events for a workspace (history + active streams + partial + init + caught-up)
+    // Used by WebSocket server to replay to a specific client without broadcasting
+    ipcMain.handle(
+      IPC_CHANNELS.WORKSPACE_CHAT_GET_FULL_REPLAY,
+      async (_event, workspaceId: string) => {
+        return await this.getFullReplayEvents(workspaceId);
+      }
+    );
+
     ipcMain.handle(
       IPC_CHANNELS.WORKSPACE_REMOVE,
       async (_event, workspaceId: string, options?: { force?: boolean }) => {
@@ -1473,7 +1482,7 @@ export class IpcMain {
    * 
    * NOTE: This only returns persisted chat history (from chat.jsonl).
    * For full replay including interrupted streams and init state, use
-   * the workspace:chat:subscribe event handler which calls session.replayHistory().
+   * getFullReplayEvents() instead.
    * 
    * Used by WebSocket server to send history directly to subscribing clients.
    */
@@ -1485,6 +1494,28 @@ export class IpcMain {
       return historyResult.data;
     }
     return [];
+  }
+
+  /**
+   * Get full replay events for a workspace (history + active streams + partial + init + caught-up)
+   * Returns array of all replay events without triggering any broadcasts
+   * 
+   * This replicates the behavior of session.replayHistory() but collects events
+   * into an array instead of broadcasting them. Used by WebSocket server to send
+   * replay to a specific client without affecting other connected clients.
+   */
+  private async getFullReplayEvents(
+    workspaceId: string
+  ): Promise<import("@/types/ipc").WorkspaceChatMessage[]> {
+    const session = this.getOrCreateSession(workspaceId);
+    const events: import("@/types/ipc").WorkspaceChatMessage[] = [];
+    
+    // Collect all replay events without broadcasting
+    await session.replayHistory((event) => {
+      events.push(event.message);
+    });
+    
+    return events;
   }
   private registerSubscriptionHandlers(ipcMain: ElectronIpcMain): void {
     // Handle subscription events for chat history

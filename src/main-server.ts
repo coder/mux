@@ -224,6 +224,118 @@ const httpIpcMain = new HttpIpcMainAdapter(app);
       try {
         // WebSocket data can be Buffer, ArrayBuffer, or string - convert to string
         let dataStr: string;
+        if (Buffer.isBuffer(rawData)) {
+          dataStr = rawData.toString("utf8");
+        } else if (rawData instanceof ArrayBuffer) {
+          dataStr = Buffer.from(rawData).toString("utf8");
+        } else if (Array.isArray(rawData)) {
+          dataStr = Buffer.concat(rawData).toString("utf8");
+        } else {
+          dataStr = String(rawData);
+        }
+
+        const message = JSON.parse(dataStr) as {
+          type: string;
+          channel?: string;
+          workspaceId?: string;
+        };
+        const { type, channel, workspaceId } = message;
+        const clientInfo = clients.get(ws);
+        if (!clientInfo) return;
+
+      if (type === "subscribe") {
+        if (channel === "workspace:chat" && workspaceId) {
+          console.log(`[WS] Client subscribed to workspace chat: ${workspaceId}`);
+          clientInfo.chatSubscriptions.add(workspaceId);
+          console.log(
+            `[WS] Subscription added. Current subscriptions:`,
+            Array.from(clientInfo.chatSubscriptions)
+          );
+
+          // Replay full history including active streams, partial messages, and init state
+          // This fetches all replay events without broadcasting to other clients
+          void (async () => {
+            try {
+              const chatChannel = `${IPC_CHANNELS.WORKSPACE_CHAT_PREFIX}${workspaceId}`;
+              const handler = httpIpcMain.getHandler(IPC_CHANNELS.WORKSPACE_CHAT_GET_FULL_REPLAY);
+              if (!handler) {
+                console.error(`[WS] Handler not found: ${IPC_CHANNELS.WORKSPACE_CHAT_GET_FULL_REPLAY}`);
+                return;
+              }
+
+              // Get full replay events (history + active streams + partial + init + caught-up)
+              // This does NOT broadcast to any clients - just returns the array
+              const replayEvents = (await handler(null, workspaceId)) as Array<unknown>;
+              console.log(`[WS] Sending ${replayEvents.length} replay events to client`);
+
+              // Send all events directly to this client only
+              for (const event of replayEvents) {
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify({ channel: chatChannel, args: [event] }));
+                }
+              }
+            } catch (error) {
+              console.error(`[WS] Failed to replay history for ${workspaceId}:`, error);
+            }
+          })();
+        } else if (channel === "workspace:metadata") {
+          console.log("[WS] Client subscribed to workspace metadata");
+          clientInfo.metadataSubscription = true;
+
+          // Send subscription acknowledgment
+          httpIpcMain.send("workspace:metadata:subscribe");
+        }
+      } else if (type === "unsubscribe") {
+        if (channel === "workspace:chat" && workspaceId) {
+          console.log(`Client unsubscribed from workspace chat: ${workspaceId}`);
+          clientInfo.chatSubscriptions.delete(workspaceId);
+
+          // Send unsubscription acknowledgment
+          httpIpcMain.send("workspace:chat:unsubscribe", workspaceId);
+        } else if (channel === "workspace:metadata") {
+          console.log("Client unsubscribed from workspace metadata");
+          clientInfo.metadataSubscription = false;
+
+          // Send unsubscription acknowledgment
+          httpIpcMain.send("workspace:metadata:unsubscribe");
+        }
+      } else if (type === "invoke") {
+        // Handle direct IPC invocations over WebSocket (for streaming responses)
+        // This is not currently used but could be useful for future enhancements
+        console.log(`WebSocket invoke: ${channel}`);
+      }
+    } catch (error) {
+      console.error("Error handling WebSocket message:", error);
+>>>>>>> e095a09b (🤖 fix: prevent replay broadcast to existing WebSocket clients)
+    }
+  });
+
+  // Create HTTP server
+  const server = http.createServer(app);
+
+  // Create WebSocket server
+  const wss = new WebSocketServer({ server, path: "/ws" });
+
+  wss.on("connection", (ws, req) => {
+    // Authorization check (no-op if AUTH_TOKEN not set)
+    if (!isWsAuthorized(req, { token: AUTH_TOKEN })) {
+      try {
+        ws.close(1008, "Unauthorized"); // Policy Violation
+      } catch {}
+      return;
+    }
+    console.log("Client connected");
+
+    // Initialize client tracking
+    clients.set(ws, {
+      chatSubscriptions: new Set(),
+      metadataSubscription: false,
+    });
+
+    ws.on("message", (rawData: RawData) => {
+      try {
+        // WebSocket data can be Buffer, ArrayBuffer, or string - convert to string
+        let dataStr: string;
         if (typeof rawData === "string") {
           dataStr = rawData;
         } else if (Buffer.isBuffer(rawData)) {

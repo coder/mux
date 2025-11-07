@@ -53,6 +53,7 @@ export const IPC_CHANNELS = {
   // Dynamic channel prefixes
   WORKSPACE_CHAT_PREFIX: "workspace:chat:",
   WORKSPACE_CHAT_GET_HISTORY: "workspace:chat:getHistory",
+  WORKSPACE_CHAT_GET_FULL_REPLAY: "workspace:chat:getFullReplay",
   WORKSPACE_METADATA: "workspace:metadata",
   WORKSPACE_METADATA_SUBSCRIBE: "workspace:metadata:subscribe",
 } as const;
