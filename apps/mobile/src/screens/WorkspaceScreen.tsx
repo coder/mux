@@ -24,6 +24,7 @@ import type { TodoItem } from "../components/TodoItemView";
 import { createChatEventExpander, DISPLAYABLE_MESSAGE_TYPES } from "../messages/normalizeChatEvent";
 import type { DisplayedMessage, FrontendWorkspaceMetadata, WorkspaceChatEvent } from "../types";
 import type { Result } from "../api/client";
+import { createCompactedMessage } from "../utils/messageHelpers";
 type ThemeSpacing = ReturnType<typeof useTheme>["spacing"];
 
 type TimelineEntry =
@@ -212,13 +213,17 @@ const TimelineRow = memo(
     item,
     spacing,
     onDismiss,
+    workspaceId,
+    onStartHere,
   }: {
     item: TimelineEntry;
     spacing: ThemeSpacing;
     onDismiss?: () => void;
+    workspaceId?: string;
+    onStartHere?: (content: string) => Promise<void>;
   }) => {
     if (item.kind === "displayed") {
-      return <MessageRenderer message={item.message} />;
+      return <MessageRenderer message={item.message} workspaceId={workspaceId} onStartHere={onStartHere} />;
     }
     return (
       <View
@@ -234,7 +239,12 @@ const TimelineRow = memo(
       </View>
     );
   },
-  (prev, next) => prev.item === next.item && prev.spacing === next.spacing && prev.onDismiss === next.onDismiss
+  (prev, next) =>
+    prev.item === next.item &&
+    prev.spacing === next.spacing &&
+    prev.onDismiss === next.onDismiss &&
+    prev.workspaceId === next.workspaceId &&
+    prev.onStartHere === next.onStartHere
 );
 
 TimelineRow.displayName = "TimelineRow";
@@ -435,6 +445,21 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
     await api.workspace.interruptStream(workspaceId);
   }, [api, workspaceId]);
 
+  const handleStartHere = useCallback(
+    async (content: string) => {
+      const message = createCompactedMessage(content);
+      const result = await api.workspace.replaceChatHistory(workspaceId, message);
+
+      if (!result.success) {
+        console.error("Failed to start here:", result.error);
+        // Consider adding toast notification in future
+      }
+      // Success case: backend will send delete + new message via WebSocket
+      // UI will update automatically via subscription
+    },
+    [api, workspaceId]
+  );
+
   // Reverse timeline for inverted FlatList (chat messages bottom-to-top)
   const listData = useMemo(() => [...timeline].reverse(), [timeline]);
   const keyExtractor = useCallback((item: TimelineEntry) => item.key, []);
@@ -449,9 +474,11 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
         item={item}
         spacing={spacing}
         onDismiss={item.kind === "raw" ? () => handleDismissRawEvent(item.key) : undefined}
+        workspaceId={workspaceId}
+        onStartHere={handleStartHere}
       />
     ),
-    [spacing, handleDismissRawEvent]
+    [spacing, handleDismissRawEvent, workspaceId, handleStartHere]
   );
 
   return (

@@ -6,23 +6,48 @@ import Markdown from "react-native-markdown-display";
 import { Surface } from "./Surface";
 import { ThemedText } from "./ThemedText";
 import { useTheme } from "../theme";
+import { StartHereModal } from "./StartHereModal";
 
 interface ProposePlanCardProps {
   title: string;
   plan: string;
   status: "pending" | "executing" | "completed" | "failed" | "interrupted";
+  workspaceId?: string;
+  onStartHere?: () => Promise<void>;
 }
 
-export function ProposePlanCard({ title, plan, status }: ProposePlanCardProps): JSX.Element {
+export function ProposePlanCard({
+  title,
+  plan,
+  status,
+  workspaceId,
+  onStartHere,
+}: ProposePlanCardProps): JSX.Element {
   const theme = useTheme();
   const spacing = theme.spacing;
   const [showRaw, setShowRaw] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showModal, setShowModal] = useState(false);
+  const [isStartingHere, setIsStartingHere] = useState(false);
 
   const handleCopy = async () => {
     await Clipboard.setStringAsync(plan);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleStartHere = async () => {
+    if (!onStartHere || isStartingHere) return;
+
+    setIsStartingHere(true);
+    try {
+      await onStartHere();
+      setShowModal(false);
+    } catch (error) {
+      console.error("Start here error:", error);
+    } finally {
+      setIsStartingHere(false);
+    }
   };
 
   const buttonStyle = (active: boolean) => ({
@@ -80,6 +105,13 @@ export function ProposePlanCard({ title, plan, status }: ProposePlanCardProps): 
             {showRaw ? "Show Markdown" : "Show Text"}
           </ThemedText>
         </Pressable>
+        {workspaceId && onStartHere && (
+          <Pressable onPress={() => setShowModal(true)} style={buttonStyle(false)}>
+            <ThemedText variant="caption" weight="medium" style={{ color: "#a78bfa" }}>
+              📦 Start Here
+            </ThemedText>
+          </Pressable>
+        )}
       </View>
 
       {/* Plan Content */}
@@ -187,6 +219,13 @@ export function ProposePlanCard({ title, plan, status }: ProposePlanCardProps): 
           💡 Respond with revisions or ask to implement in Exec mode
         </ThemedText>
       )}
+
+      <StartHereModal
+        visible={showModal}
+        onConfirm={handleStartHere}
+        onCancel={() => setShowModal(false)}
+        isExecuting={isStartingHere}
+      />
     </Surface>
   );
 }

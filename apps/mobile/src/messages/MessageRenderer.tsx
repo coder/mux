@@ -54,9 +54,11 @@ function StreamingCursor(): JSX.Element {
 
 export interface MessageRendererProps {
   message: DisplayedMessage;
+  workspaceId?: string;
+  onStartHere?: (content: string) => Promise<void>;
 }
 
-export function MessageRenderer({ message }: MessageRendererProps): JSX.Element | null {
+export function MessageRenderer({ message, workspaceId, onStartHere }: MessageRendererProps): JSX.Element | null {
   switch (message.type) {
     case "assistant":
       return <AssistantMessageCard message={message} />;
@@ -71,7 +73,7 @@ export function MessageRenderer({ message }: MessageRendererProps): JSX.Element 
     case "workspace-init":
       return <WorkspaceInitMessageCard message={message} />;
     case "tool":
-      return <ToolMessageCard message={message} />;
+      return <ToolMessageCard message={message} workspaceId={workspaceId} onStartHere={onStartHere} />;
     default:
       // Exhaustiveness check
       assert(false, `Unsupported message type: ${(message as DisplayedMessage).type}`);
@@ -175,7 +177,31 @@ function AssistantMessageCard({
       accessibilityRole="summary"
     >
       <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: theme.spacing.sm }}>
-        <ThemedText variant="label">Assistant</ThemedText>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: theme.spacing.sm }}>
+          <ThemedText variant="label">Assistant</ThemedText>
+          {message.isCompacted && (
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 4,
+                paddingHorizontal: theme.spacing.sm,
+                paddingVertical: theme.spacing.xs,
+                backgroundColor: "rgba(139, 92, 246, 0.15)",
+                borderRadius: theme.radii.sm,
+              }}
+            >
+              <Text style={{ fontSize: 12 }}>📦</Text>
+              <ThemedText
+                variant="caption"
+                weight="semibold"
+                style={{ color: "#a78bfa", textTransform: "uppercase" }}
+              >
+                Compacted
+              </ThemedText>
+            </View>
+          )}
+        </View>
         {message.model ? (
           <Surface
             variant="ghost"
@@ -604,13 +630,30 @@ function isStatusSetTool(
 
 function ToolMessageCard({
   message,
+  workspaceId,
+  onStartHere,
 }: {
   message: DisplayedMessage & { type: "tool" };
+  workspaceId?: string;
+  onStartHere?: (content: string) => Promise<void>;
 }): JSX.Element {
   // Special handling for propose_plan tool
   if (isProposePlanTool(message)) {
+    const handleStartHereWithPlan = onStartHere
+      ? async () => {
+          const fullContent = `# ${message.args.title}\n\n${message.args.plan}`;
+          await onStartHere(fullContent);
+        }
+      : undefined;
+
     return (
-      <ProposePlanCard title={message.args.title} plan={message.args.plan} status={message.status} />
+      <ProposePlanCard
+        title={message.args.title}
+        plan={message.args.plan}
+        status={message.status}
+        workspaceId={workspaceId}
+        onStartHere={handleStartHereWithPlan}
+      />
     );
   }
 

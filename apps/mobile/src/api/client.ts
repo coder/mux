@@ -236,6 +236,29 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
           return { success: false, error: err };
         }
       },
+      replaceChatHistory: async (
+        workspaceId: string,
+        summaryMessage: {
+          id: string;
+          role: "assistant";
+          parts: Array<{ type: "text"; text: string; state: "done" }>;
+          metadata: {
+            timestamp: number;
+            compacted: true;
+          };
+        }
+      ): Promise<Result<void, string>> => {
+        try {
+          await invoke("workspace:replaceHistory", [
+            ensureWorkspaceId(workspaceId),
+            summaryMessage,
+          ]);
+          return { success: true, data: undefined };
+        } catch (error) {
+          const err = error instanceof Error ? error.message : String(error);
+          return { success: false, error: err };
+        }
+      },
       sendMessage: async (
         workspaceId: string,
         message: string,
