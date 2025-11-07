@@ -20,6 +20,7 @@ import { Surface } from "../components/Surface";
 import { IconButton } from "../components/IconButton";
 import { SecretsModal } from "../components/SecretsModal";
 import { NewWorkspaceModal } from "../components/NewWorkspaceModal";
+import { RenameWorkspaceModal } from "../components/RenameWorkspaceModal";
 import { createClient } from "../api/client";
 import type { FrontendWorkspaceMetadata, Secret } from "../types";
 import { loadRuntimePreference, saveRuntimePreference } from "../utils/workspacePreferences";
@@ -102,6 +103,13 @@ export function ProjectsScreen(): JSX.Element {
     branches: string[];
     defaultTrunk?: string;
     loadError?: string;
+  } | null>(null);
+
+  const [renameModalState, setRenameModalState] = useState<{
+    visible: boolean;
+    workspaceId: string;
+    currentName: string;
+    projectName: string;
   } | null>(null);
 
   const client = createClient();
@@ -397,15 +405,29 @@ export function ProjectsScreen(): JSX.Element {
 
   const handleRenameWorkspace = useCallback(
     (metadata: FrontendWorkspaceMetadata) => {
-      // TODO: Implement rename dialog with TextInput
-      // For now, just show a placeholder
-      Alert.alert(
-        "Rename Workspace",
-        "Rename functionality will be implemented in a future update.",
-        [{ text: "OK" }]
-      );
+      setRenameModalState({
+        visible: true,
+        workspaceId: metadata.id,
+        currentName: metadata.name,
+        projectName: metadata.projectName,
+      });
     },
     []
+  );
+
+  const executeRename = useCallback(
+    async (workspaceId: string, newName: string): Promise<void> => {
+      const result = await api.workspace.rename(workspaceId, newName);
+
+      if (!result.success) {
+        // Show error - modal will display it
+        throw new Error(result.error);
+      }
+
+      // Success - refetch workspace list
+      await workspacesQuery.refetch();
+    },
+    [api, workspacesQuery]
   );
 
   const renderWorkspaceRow = (item: WorkspaceListItem) => {
@@ -679,6 +701,17 @@ export function ProjectsScreen(): JSX.Element {
           loadError={workspaceModalState.loadError}
           onClose={() => setWorkspaceModalState(null)}
           onCreate={handleCreateWorkspace}
+        />
+      )}
+
+      {renameModalState && (
+        <RenameWorkspaceModal
+          visible={renameModalState.visible}
+          currentName={renameModalState.currentName}
+          workspaceId={renameModalState.workspaceId}
+          projectName={renameModalState.projectName}
+          onClose={() => setRenameModalState(null)}
+          onRename={executeRename}
         />
       )}
     </View>
