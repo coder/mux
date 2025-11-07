@@ -23,6 +23,9 @@
     "plugins": [
       "expo-router",
       "expo-secure-store"
-    ]
+    ],
+    "ios": {
+      "bundleIdentifier": "com.anonymous.cmux-mobile"
+    }
   }
 }

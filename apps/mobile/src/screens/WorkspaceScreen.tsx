@@ -15,8 +15,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../theme";
 import { ThemedText } from "../components/ThemedText";
-import { IconButton } from "../components/IconButton";
 import { useApiClient } from "../hooks/useApiClient";
+import { useWorkspaceActions } from "../contexts/WorkspaceActionsContext";
 import { MessageRenderer } from "../messages/MessageRenderer";
 import { useWorkspaceDefaults, type WorkspaceMode } from "../hooks/useWorkspaceDefaults";
 import { FloatingTodoCard } from "../components/FloatingTodoCard";
@@ -270,7 +270,9 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   
   // Track current todos for floating card (during streaming)
   const [currentTodos, setCurrentTodos] = useState<TodoItem[]>([]);
-  const [todoCardVisible, setTodoCardVisible] = useState(false);
+  
+  // Use context for todo card visibility
+  const { todoCardVisible, toggleTodoCard, setHasTodos } = useWorkspaceActions();
   
   // Track streaming state for indicator
   const [isStreaming, setIsStreaming] = useState(false);
@@ -313,13 +315,15 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
         typeof latestTodoTool.args === "object" &&
         "todos" in latestTodoTool.args &&
         Array.isArray(latestTodoTool.args.todos)) {
-      setCurrentTodos(latestTodoTool.args.todos as TodoItem[]);
-      // Don't auto-show - user controls visibility with toggle button
+      const todos = latestTodoTool.args.todos as TodoItem[];
+      setCurrentTodos(todos);
+      setHasTodos(todos.length > 0);
     } else if (toolMessages.length === 0) {
       // Only clear if no todo_write tools exist at all
       setCurrentTodos([]);
+      setHasTodos(false);
     }
-  }, [timeline]);
+  }, [timeline, setHasTodos]);
 
   useEffect(() => {
     const expander = expanderRef.current;
@@ -409,8 +413,8 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   useEffect(() => {
     setTimeline([]);
     setCurrentTodos([]);
-    setTodoCardVisible(false);
-  }, [workspaceId]);
+    setHasTodos(false);
+  }, [workspaceId, setHasTodos]);
 
   const onSend = useCallback(async () => {
     const trimmed = input.trim();
@@ -488,45 +492,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
       keyboardVerticalOffset={80}
     >
       <View style={{ flex: 1 }}>
-        {/* Action icons bar */}
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "flex-end",
-            paddingVertical: spacing.sm,
-            paddingHorizontal: spacing.md,
-            backgroundColor: theme.colors.surfaceSecondary,
-            borderBottomWidth: 1,
-            borderBottomColor: theme.colors.border,
-          }}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
-            {/* Show/hide todo list toggle (only visible when todos exist) */}
-            {currentTodos.length > 0 && (
-              <IconButton
-                icon={
-                  <Ionicons
-                    name={todoCardVisible ? "list" : "list-outline"}
-                    size={22}
-                    color={todoCardVisible ? theme.colors.accent : theme.colors.foregroundPrimary}
-                  />
-                }
-                accessibilityLabel={todoCardVisible ? "Hide todo list" : "Show todo list"}
-                variant="ghost"
-                onPress={() => setTodoCardVisible(!todoCardVisible)}
-              />
-            )}
-            <IconButton
-              icon={<Ionicons name="settings-outline" size={22} color={theme.colors.foregroundPrimary} />}
-              accessibilityLabel="Open workspace settings"
-              variant="ghost"
-              onPress={() => router.push("/workspace-settings")}
-            />
-          </View>
-        </View>
-
-        {/* Chat area */}
+        {/* Chat area - header bar removed, all actions now in action sheet menu */}
         <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
           {metadataQuery.isLoading && timeline.length === 0 ? (
             <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
@@ -552,7 +518,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
 
         {/* Floating Todo Card */}
         {currentTodos.length > 0 && todoCardVisible && (
-          <FloatingTodoCard todos={currentTodos} onDismiss={() => setTodoCardVisible(false)} />
+          <FloatingTodoCard todos={currentTodos} onDismiss={toggleTodoCard} />
         )}
 
         {/* Streaming Indicator */}
