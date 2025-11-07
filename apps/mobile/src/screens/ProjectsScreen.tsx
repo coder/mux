@@ -17,7 +17,6 @@ import { useProjectsData } from "../hooks/useProjectsData";
 import { useTheme } from "../theme";
 import { ThemedText } from "../components/ThemedText";
 import { Surface } from "../components/Surface";
-import { IconButton } from "../components/IconButton";
 import { SecretsModal } from "../components/SecretsModal";
 import { NewWorkspaceModal } from "../components/NewWorkspaceModal";
 import { RenameWorkspaceModal } from "../components/RenameWorkspaceModal";
@@ -524,26 +523,6 @@ export function ProjectsScreen(): JSX.Element {
         keyboardShouldPersistTaps="handled"
       >
         <View style={{ paddingHorizontal: spacing.lg, gap: spacing.lg }}>
-          <View
-            style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}
-          >
-            <ThemedText variant="caption" style={{ flex: 1 }}>
-              Select a workspace to open the chat.
-            </ThemedText>
-            <IconButton
-              icon={
-                <Ionicons
-                  name="settings-outline"
-                  size={20}
-                  color={theme.colors.foregroundPrimary}
-                />
-              }
-              accessibilityLabel="Open settings"
-              variant="ghost"
-              onPress={() => router.push("/settings")}
-            />
-          </View>
-
           <View
             style={{
               backgroundColor: theme.colors.surface,
