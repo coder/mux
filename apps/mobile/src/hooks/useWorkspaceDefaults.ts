@@ -1,121 +1,171 @@
 import { useCallback, useEffect, useState } from "react";
 import * as SecureStore from "expo-secure-store";
-import type { ThinkingLevel } from "../contexts/ThinkingContext";
+import type { ThinkingLevel, WorkspaceMode } from "../types/settings";
 
-export type WorkspaceMode = "plan" | "exec";
-
-export interface WorkspaceDefaults {
+export interface GlobalDefaults {
   defaultMode: WorkspaceMode;
   defaultReasoningLevel: ThinkingLevel;
+  defaultModel: string;
+  default1MContext: boolean;
 }
 
-const STORAGE_KEY_MODE = "cmux.workspace-defaults.mode";
-const STORAGE_KEY_REASONING = "cmux.workspace-defaults.reasoning";
-const STORAGE_KEY_MODEL = "cmux.workspace-defaults.model";
-const STORAGE_KEY_1M_CONTEXT = "cmux.workspace-defaults.use1MContext";
+// New storage keys for global defaults (new tier 2 in the fallback)
+const STORAGE_KEY_MODE = "cmux.defaults.mode";
+const STORAGE_KEY_REASONING = "cmux.defaults.reasoning";
+const STORAGE_KEY_MODEL = "cmux.defaults.model";
+const STORAGE_KEY_1M_CONTEXT = "cmux.defaults.use1MContext";
+
+// Legacy keys for migration
+const LEGACY_KEY_MODE = "cmux.workspace-defaults.mode";
+const LEGACY_KEY_REASONING = "cmux.workspace-defaults.reasoning";
+const LEGACY_KEY_MODEL = "cmux.workspace-defaults.model";
+const LEGACY_KEY_1M_CONTEXT = "cmux.workspace-defaults.use1MContext";
 
 const DEFAULT_MODE: WorkspaceMode = "plan";
 const DEFAULT_REASONING: ThinkingLevel = "off";
 const DEFAULT_MODEL = "anthropic:claude-sonnet-4-5";
 const DEFAULT_1M_CONTEXT = false;
 
-async function readWorkspaceMode(): Promise<WorkspaceMode> {
+async function readGlobalMode(): Promise<WorkspaceMode> {
   try {
-    const value = await SecureStore.getItemAsync(STORAGE_KEY_MODE);
+    // Try new key first
+    let value = await SecureStore.getItemAsync(STORAGE_KEY_MODE);
     if (value === "plan" || value === "exec") {
       return value;
     }
+
+    // Try legacy key and migrate
+    value = await SecureStore.getItemAsync(LEGACY_KEY_MODE);
+    if (value === "plan" || value === "exec") {
+      // Migrate to new key
+      await SecureStore.setItemAsync(STORAGE_KEY_MODE, value);
+      return value;
+    }
+
     return DEFAULT_MODE;
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
-      console.warn("Failed to read workspace mode", error);
+      console.warn("Failed to read global default mode", error);
     }
     return DEFAULT_MODE;
   }
 }
 
-async function writeWorkspaceMode(mode: WorkspaceMode): Promise<void> {
+async function writeGlobalMode(mode: WorkspaceMode): Promise<void> {
   try {
     await SecureStore.setItemAsync(STORAGE_KEY_MODE, mode);
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
-      console.warn("Failed to persist workspace mode", error);
+      console.warn("Failed to persist global default mode", error);
     }
   }
 }
 
-async function readReasoningLevel(): Promise<ThinkingLevel> {
+async function readGlobalReasoning(): Promise<ThinkingLevel> {
   try {
-    const value = await SecureStore.getItemAsync(STORAGE_KEY_REASONING);
+    // Try new key first
+    let value = await SecureStore.getItemAsync(STORAGE_KEY_REASONING);
     if (value === "off" || value === "low" || value === "medium" || value === "high") {
       return value;
     }
+
+    // Try legacy key and migrate
+    value = await SecureStore.getItemAsync(LEGACY_KEY_REASONING);
+    if (value === "off" || value === "low" || value === "medium" || value === "high") {
+      await SecureStore.setItemAsync(STORAGE_KEY_REASONING, value);
+      return value;
+    }
+
     return DEFAULT_REASONING;
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
-      console.warn("Failed to read reasoning level", error);
+      console.warn("Failed to read global default reasoning level", error);
     }
     return DEFAULT_REASONING;
   }
 }
 
-async function writeReasoningLevel(level: ThinkingLevel): Promise<void> {
+async function writeGlobalReasoning(level: ThinkingLevel): Promise<void> {
   try {
     await SecureStore.setItemAsync(STORAGE_KEY_REASONING, level);
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
-      console.warn("Failed to persist reasoning level", error);
+      console.warn("Failed to persist global default reasoning level", error);
     }
   }
 }
 
-async function readModel(): Promise<string> {
+async function readGlobalModel(): Promise<string> {
   try {
-    const value = await SecureStore.getItemAsync(STORAGE_KEY_MODEL);
-    return value || DEFAULT_MODEL;
+    // Try new key first
+    let value = await SecureStore.getItemAsync(STORAGE_KEY_MODEL);
+    if (value) return value;
+
+    // Try legacy key and migrate
+    value = await SecureStore.getItemAsync(LEGACY_KEY_MODEL);
+    if (value) {
+      await SecureStore.setItemAsync(STORAGE_KEY_MODEL, value);
+      return value;
+    }
+
+    return DEFAULT_MODEL;
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
-      console.warn("Failed to read model", error);
+      console.warn("Failed to read global default model", error);
     }
     return DEFAULT_MODEL;
   }
 }
 
-async function writeModel(model: string): Promise<void> {
+async function writeGlobalModel(model: string): Promise<void> {
   try {
     await SecureStore.setItemAsync(STORAGE_KEY_MODEL, model);
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
-      console.warn("Failed to persist model", error);
+      console.warn("Failed to persist global default model", error);
     }
   }
 }
 
-async function read1MContext(): Promise<boolean> {
+async function readGlobal1MContext(): Promise<boolean> {
   try {
-    const value = await SecureStore.getItemAsync(STORAGE_KEY_1M_CONTEXT);
-    return value === "true";
+    // Try new key first
+    let value = await SecureStore.getItemAsync(STORAGE_KEY_1M_CONTEXT);
+    if (value !== null) {
+      return value === "true";
+    }
+
+    // Try legacy key and migrate
+    value = await SecureStore.getItemAsync(LEGACY_KEY_1M_CONTEXT);
+    if (value !== null) {
+      await SecureStore.setItemAsync(STORAGE_KEY_1M_CONTEXT, value);
+      return value === "true";
+    }
+
+    return DEFAULT_1M_CONTEXT;
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
-      console.warn("Failed to read 1M context setting", error);
+      console.warn("Failed to read global default 1M context setting", error);
     }
     return DEFAULT_1M_CONTEXT;
   }
 }
 
-async function write1MContext(enabled: boolean): Promise<void> {
+async function writeGlobal1MContext(enabled: boolean): Promise<void> {
   try {
     await SecureStore.setItemAsync(STORAGE_KEY_1M_CONTEXT, enabled ? "true" : "false");
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
-      console.warn("Failed to persist 1M context setting", error);
+      console.warn("Failed to persist global default 1M context setting", error);
     }
   }
 }
 
 /**
- * Hook to manage workspace defaults (mode, reasoning level, model, and 1M context).
- * These defaults are applied globally to all workspaces.
+ * Hook to manage global defaults (mode, reasoning level, model, and 1M context).
+ * These defaults serve as fallback values when workspaces don't have their own settings.
+ *
+ * Note: Individual workspaces can override these defaults using useWorkspaceSettings.
  */
 export function useWorkspaceDefaults(): {
   defaultMode: WorkspaceMode;
@@ -138,10 +188,14 @@ export function useWorkspaceDefaults(): {
   // Load defaults on mount
   useEffect(() => {
     let cancelled = false;
-    Promise.all([readWorkspaceMode(), readReasoningLevel(), readModel(), read1MContext()]).then(
-      ([mode, reasoning, model, context1M]) => {
-        if (!cancelled) {
-          setDefaultModeState(mode);
+    Promise.all([
+      readGlobalMode(),
+      readGlobalReasoning(),
+      readGlobalModel(),
+      readGlobal1MContext(),
+    ]).then(([mode, reasoning, model, context1M]) => {
+      if (!cancelled) {
+        setDefaultModeState(mode);
           setDefaultReasoningLevelState(reasoning);
           setDefaultModelState(model);
           setUse1MContextState(context1M);
@@ -156,22 +210,22 @@ export function useWorkspaceDefaults(): {
 
   const setDefaultMode = useCallback((mode: WorkspaceMode) => {
     setDefaultModeState(mode);
-    void writeWorkspaceMode(mode);
+    void writeGlobalMode(mode);
   }, []);
 
   const setDefaultReasoningLevel = useCallback((level: ThinkingLevel) => {
     setDefaultReasoningLevelState(level);
-    void writeReasoningLevel(level);
+    void writeGlobalReasoning(level);
   }, []);
 
   const setDefaultModel = useCallback((model: string) => {
     setDefaultModelState(model);
-    void writeModel(model);
+    void writeGlobalModel(model);
   }, []);
 
   const setUse1MContext = useCallback((enabled: boolean) => {
     setUse1MContextState(enabled);
-    void write1MContext(enabled);
+    void writeGlobal1MContext(enabled);
   }, []);
 
   return {

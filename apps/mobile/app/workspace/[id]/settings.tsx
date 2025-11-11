@@ -1,17 +1,16 @@
 import type { JSX } from "react";
 import { useEffect } from "react";
 import { Pressable, ScrollView, View } from "react-native";
-import { Stack } from "expo-router";
+import { Stack, useLocalSearchParams } from "expo-router";
 import Slider from "@react-native-community/slider";
 import { Picker } from "@react-native-picker/picker";
-import { useTheme } from "../src/theme";
-import { Surface } from "../src/components/Surface";
-import { ThemedText } from "../src/components/ThemedText";
-import { useWorkspaceDefaults } from "../src/hooks/useWorkspaceDefaults";
-import type { ThinkingLevel, WorkspaceMode } from "../src/types/settings";
-import { supports1MContext } from "../../../src/utils/ai/models";
+import { useTheme } from "../../../src/theme";
+import { Surface } from "../../../src/components/Surface";
+import { ThemedText } from "../../../src/components/ThemedText";
+import { useWorkspaceSettings } from "../../../src/hooks/useWorkspaceSettings";
+import type { ThinkingLevel } from "../../../src/types/settings";
+import { supports1MContext } from "../../../../../src/utils/ai/models";
 
-const MODE_TABS: WorkspaceMode[] = ["plan", "exec"];
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high"];
 
 // Common models from MODEL_ABBREVIATIONS
@@ -34,23 +33,24 @@ function valueToThinkingLevel(value: number): ThinkingLevel {
   return THINKING_LEVELS[index] ?? "off";
 }
 
-export default function WorkspaceSettings(): JSX.Element {
+export default function WorkspaceSettingsScreen(): JSX.Element {
   const theme = useTheme();
   const spacing = theme.spacing;
+  const { id: workspaceId } = useLocalSearchParams<{ id: string }>();
 
   const {
-    defaultMode,
-    defaultReasoningLevel,
-    defaultModel,
+    mode,
+    thinkingLevel,
+    model,
     use1MContext,
-    setDefaultMode,
-    setDefaultReasoningLevel,
-    setDefaultModel,
+    setMode,
+    setThinkingLevel,
+    setModel,
     setUse1MContext,
-    isLoading: defaultsLoading,
-  } = useWorkspaceDefaults();
+    isLoading,
+  } = useWorkspaceSettings(workspaceId);
 
-  const modelSupports1M = supports1MContext(defaultModel);
+  const modelSupports1M = supports1MContext(model);
 
   // Auto-disable 1M context if model doesn't support it
   useEffect(() => {
@@ -61,18 +61,17 @@ export default function WorkspaceSettings(): JSX.Element {
 
   return (
     <>
-      <Stack.Screen options={{ title: "Workspace Defaults", headerBackTitle: "" }} />
+      <Stack.Screen options={{ title: "Workspace Settings", headerBackTitle: "" }} />
       <ScrollView
         style={{ flex: 1, backgroundColor: theme.colors.background }}
         contentContainerStyle={{ padding: spacing.lg }}
       >
         <Surface variant="plain" padding={spacing.lg}>
           <ThemedText variant="titleMedium" weight="bold">
-            Default Settings
+            Workspace Settings
           </ThemedText>
           <ThemedText variant="caption" style={{ marginTop: spacing.xs }}>
-            Set default preferences for new workspaces. Change settings per workspace via the ⋯
-            menu.
+            Configure settings for this workspace.
           </ThemedText>
 
           {/* Model Selection */}
@@ -91,7 +90,7 @@ export default function WorkspaceSettings(): JSX.Element {
 
           <View style={{ marginTop: spacing.md }}>
             <ThemedText variant="label" style={{ marginBottom: spacing.sm }}>
-              Default Model
+              Model
             </ThemedText>
             <View
               style={{
@@ -103,18 +102,19 @@ export default function WorkspaceSettings(): JSX.Element {
               }}
             >
               <Picker
-                selectedValue={defaultModel}
-                onValueChange={(value) => void setDefaultModel(value)}
+                selectedValue={model}
+                onValueChange={(value) => void setModel(value)}
                 style={{
                   color: theme.colors.foregroundPrimary,
                 }}
                 dropdownIconColor={theme.colors.foregroundPrimary}
+                enabled={!isLoading}
               >
-                {AVAILABLE_MODELS.map((model) => (
+                {AVAILABLE_MODELS.map((m) => (
                   <Picker.Item
-                    key={model.value}
-                    label={model.label}
-                    value={model.value}
+                    key={m.value}
+                    label={m.label}
+                    value={m.value}
                     color={theme.colors.foregroundPrimary}
                   />
                 ))}
@@ -125,8 +125,12 @@ export default function WorkspaceSettings(): JSX.Element {
           {/* 1M Context Toggle */}
           {modelSupports1M && (
             <View style={{ marginTop: spacing.md }}>
+              <ThemedText variant="label" style={{ marginBottom: spacing.xs }}>
+                Use 1M Context
+              </ThemedText>
               <Pressable
                 onPress={() => void setUse1MContext(!use1MContext)}
+                disabled={isLoading}
                 style={{
                   flexDirection: "row",
                   alignItems: "center",
@@ -135,7 +139,6 @@ export default function WorkspaceSettings(): JSX.Element {
                 }}
               >
                 <View style={{ flex: 1 }}>
-                  <ThemedText variant="label">Use 1M Context</ThemedText>
                   <ThemedText
                     variant="caption"
                     style={{ marginTop: spacing.xs, color: theme.colors.foregroundMuted }}
@@ -183,7 +186,7 @@ export default function WorkspaceSettings(): JSX.Element {
 
           <View style={{ marginTop: spacing.md }}>
             <ThemedText variant="label" style={{ marginBottom: spacing.sm }}>
-              Default Mode
+              Mode
             </ThemedText>
             <View
               style={{
@@ -194,13 +197,13 @@ export default function WorkspaceSettings(): JSX.Element {
                 borderRadius: theme.radii.pill,
               }}
             >
-              {MODE_TABS.map((tab) => {
-                const selected = tab === defaultMode;
+              {(["plan", "exec"] as const).map((tab) => {
+                const selected = tab === mode;
                 return (
                   <Pressable
                     key={tab}
-                    onPress={() => setDefaultMode(tab)}
-                    disabled={defaultsLoading}
+                    onPress={() => void setMode(tab)}
+                    disabled={isLoading}
                     style={({ pressed }) => ({
                       flex: 1,
                       paddingVertical: spacing.sm,
@@ -258,13 +261,13 @@ export default function WorkspaceSettings(): JSX.Element {
                 marginBottom: spacing.sm,
               }}
             >
-              <ThemedText variant="label">Default Reasoning Level</ThemedText>
+              <ThemedText variant="label">Reasoning Level</ThemedText>
               <ThemedText
                 variant="caption"
                 weight="medium"
                 style={{ textTransform: "uppercase" }}
               >
-                {defaultReasoningLevel}
+                {thinkingLevel}
               </ThemedText>
             </View>
             <View
@@ -280,14 +283,12 @@ export default function WorkspaceSettings(): JSX.Element {
                 minimumValue={0}
                 maximumValue={THINKING_LEVELS.length - 1}
                 step={1}
-                value={thinkingLevelToValue(defaultReasoningLevel)}
-                onValueChange={(value) =>
-                  setDefaultReasoningLevel(valueToThinkingLevel(value))
-                }
+                value={thinkingLevelToValue(thinkingLevel)}
+                onValueChange={(value) => void setThinkingLevel(valueToThinkingLevel(value))}
                 minimumTrackTintColor={theme.colors.accent}
                 maximumTrackTintColor={theme.colors.border}
                 thumbTintColor={theme.colors.accent}
-                disabled={defaultsLoading}
+                disabled={isLoading}
                 style={{ marginTop: spacing.xs }}
               />
               <View
@@ -315,6 +316,8 @@ export default function WorkspaceSettings(): JSX.Element {
               Higher reasoning levels use extended thinking for complex tasks.
             </ThemedText>
           </View>
+
+
         </Surface>
       </ScrollView>
     </>

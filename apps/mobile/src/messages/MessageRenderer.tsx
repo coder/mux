@@ -1,6 +1,6 @@
 import type { JSX } from "react";
 import Markdown from "react-native-markdown-display";
-import { Image, View, ActivityIndicator, StyleSheet, ScrollView, Text, Pressable, Animated } from "react-native";
+import { Image, View, ActivityIndicator, StyleSheet, ScrollView, Text, Pressable, Animated, ActionSheetIOS, Platform, Modal, TouchableOpacity } from "react-native";
 import { useMemo, useState, useEffect, useRef } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { Surface } from "../components/Surface";
@@ -56,14 +56,16 @@ export interface MessageRendererProps {
   message: DisplayedMessage;
   workspaceId?: string;
   onStartHere?: (content: string) => Promise<void>;
+  onEditMessage?: (messageId: string, content: string) => void;
+  canEdit?: boolean;
 }
 
-export function MessageRenderer({ message, workspaceId, onStartHere }: MessageRendererProps): JSX.Element | null {
+export function MessageRenderer({ message, workspaceId, onStartHere, onEditMessage, canEdit }: MessageRendererProps): JSX.Element | null {
   switch (message.type) {
     case "assistant":
       return <AssistantMessageCard message={message} />;
     case "user":
-      return <UserMessageCard message={message} />;
+      return <UserMessageCard message={message} onEditMessage={onEditMessage} canEdit={canEdit} />;
     case "reasoning":
       return <ReasoningMessageCard message={message} />;
     case "stream-error":
@@ -235,18 +237,76 @@ function AssistantMessageCard({
 
 function UserMessageCard({
   message,
+  onEditMessage,
+  canEdit,
 }: {
   message: DisplayedMessage & { type: "user" };
+  onEditMessage?: (messageId: string, content: string) => void;
+  canEdit?: boolean;
 }): JSX.Element {
   const theme = useTheme();
+  const [menuVisible, setMenuVisible] = useState(false);
+  
+  const handleLongPress = async () => {
+    // Import haptics dynamically to handle on press
+    const Haptics = await import('expo-haptics');
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    
+    // Use native ActionSheet on iOS, custom modal on Android
+    if (Platform.OS === 'ios') {
+      const options = ['Copy Message'];
+      if (canEdit && onEditMessage) {
+        options.unshift('Edit Message'); // Add Edit as first option
+      }
+      options.push('Cancel');
+      
+      const cancelButtonIndex = options.length - 1;
+      
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options,
+          cancelButtonIndex,
+        },
+        async (buttonIndex) => {
+          if (canEdit && onEditMessage && buttonIndex === 0) {
+            // Edit Message (only if canEdit)
+            onEditMessage(message.historyId, message.content);
+          } else if (buttonIndex === (canEdit && onEditMessage ? 1 : 0)) {
+            // Copy Message
+            await handleCopy();
+          }
+        }
+      );
+    } else {
+      setMenuVisible(true);
+    }
+  };
+  
+  const handleEdit = () => {
+    setMenuVisible(false);
+    if (onEditMessage) {
+      onEditMessage(message.historyId, message.content);
+    }
+  };
+  
+  const handleCopy = async () => {
+    setMenuVisible(false);
+    const Clipboard = await import('expo-clipboard');
+    await Clipboard.setStringAsync(message.content);
+  };
+  
   return (
-    <Surface
-      variant="plain"
-      style={{ padding: theme.spacing.md, marginBottom: theme.spacing.md }}
-      accessibilityRole="text"
+    <Pressable
+      onLongPress={handleLongPress}
+      delayLongPress={500}
     >
-      <ThemedText variant="label">You</ThemedText>
-      <ThemedText style={{ marginTop: theme.spacing.sm }}>{message.content || "(No content)"}</ThemedText>
+      <Surface
+        variant="plain"
+        style={{ padding: theme.spacing.md, marginBottom: theme.spacing.md }}
+        accessibilityRole="text"
+      >
+        <ThemedText variant="label">You</ThemedText>
+        <ThemedText style={{ marginTop: theme.spacing.sm }}>{message.content || "(No content)"}</ThemedText>
       {message.imageParts && message.imageParts.length > 0 ? (
         <ScrollView
           horizontal
@@ -271,6 +331,63 @@ function UserMessageCard({
         </ScrollView>
       ) : null}
     </Surface>
+    
+    {/* Android context menu modal */}
+    {Platform.OS === 'android' && (
+      <Modal
+        visible={menuVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMenuVisible(false)}
+      >
+        <TouchableOpacity
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            justifyContent: 'center',
+            alignItems: 'center',
+          }}
+          activeOpacity={1}
+          onPress={() => setMenuVisible(false)}
+        >
+          <View
+            style={{
+              backgroundColor: theme.colors.surfaceSecondary,
+              borderRadius: theme.radii.lg,
+              padding: theme.spacing.md,
+              minWidth: 200,
+              elevation: 5,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.25,
+              shadowRadius: 4,
+            }}
+          >
+            {canEdit && onEditMessage && (
+              <TouchableOpacity
+                onPress={handleEdit}
+                style={{
+                  paddingVertical: theme.spacing.md,
+                  paddingHorizontal: theme.spacing.sm,
+                }}
+              >
+                <ThemedText>✏️ Edit Message</ThemedText>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              onPress={handleCopy}
+              style={{
+                paddingVertical: theme.spacing.md,
+                paddingHorizontal: theme.spacing.sm,
+              }}
+            >
+              <ThemedText>📋 Copy Message</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    )}
+  </Pressable>
   );
 }
 

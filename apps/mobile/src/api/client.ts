@@ -13,6 +13,7 @@ export type Result<T, E = string> = { success: true; data: T } | { success: fals
 
 export interface SendMessageOptions {
   model: string;
+  editMessageId?: string; // When provided, truncates history after this message
   [key: string]: unknown;
 }
 

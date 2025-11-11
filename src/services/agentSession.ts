@@ -267,6 +267,15 @@ export class AgentSession {
       if (!truncateResult.success) {
         return Err(createUnknownSendMessageError(truncateResult.error));
       }
+      
+      // Send delete event to frontend for truncated messages
+      const deletedSequences = truncateResult.data;
+      if (deletedSequences.length > 0) {
+        this.emitChatEvent({
+          type: "delete",
+          historySequences: deletedSequences,
+        });
+      }
     }
 
     const messageId = `user-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;

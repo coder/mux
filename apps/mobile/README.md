@@ -70,6 +70,15 @@ The mobile app will:
 - Call APIs via POST `/ipc/<channel>` with `Authorization: Bearer <token>`
 - Subscribe to workspace events via WebSocket `/ws?token=<token>`
 
+## Features
+
+- Real-time chat interface with streaming responses
+- **Message editing**: Long press user messages to edit (truncates history after edited message)
+- Provider configuration (Anthropic, OpenAI, etc.)
+- Project and workspace management
+- Secure credential storage
+
+
 ## Architecture
 
 - **expo-router** for file-based routing

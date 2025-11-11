@@ -20,7 +20,7 @@ import { useWorkspaceActions } from "../contexts/WorkspaceActionsContext";
 import { useWorkspaceCost } from "../contexts/WorkspaceCostContext";
 import type { StreamAbortEvent, StreamEndEvent } from "@shared/types/stream.ts";
 import { MessageRenderer } from "../messages/MessageRenderer";
-import { useWorkspaceDefaults, type WorkspaceMode } from "../hooks/useWorkspaceDefaults";
+import { useWorkspaceSettings } from "../hooks/useWorkspaceSettings";
 import { FloatingTodoCard } from "../components/FloatingTodoCard";
 import type { TodoItem } from "../components/TodoItemView";
 import { createChatEventExpander, DISPLAYABLE_MESSAGE_TYPES } from "../messages/normalizeChatEvent";
@@ -217,15 +217,27 @@ const TimelineRow = memo(
     onDismiss,
     workspaceId,
     onStartHere,
+    onEditMessage,
+    canEditMessage,
   }: {
     item: TimelineEntry;
     spacing: ThemeSpacing;
     onDismiss?: () => void;
     workspaceId?: string;
     onStartHere?: (content: string) => Promise<void>;
+    onEditMessage?: (messageId: string, content: string) => void;
+    canEditMessage?: (message: DisplayedMessage) => boolean;
   }) => {
     if (item.kind === "displayed") {
-      return <MessageRenderer message={item.message} workspaceId={workspaceId} onStartHere={onStartHere} />;
+      return (
+        <MessageRenderer 
+          message={item.message} 
+          workspaceId={workspaceId} 
+          onStartHere={onStartHere}
+          onEditMessage={onEditMessage}
+          canEdit={canEditMessage ? canEditMessage(item.message) : false}
+        />
+      );
     }
     return (
       <View
@@ -246,6 +258,8 @@ const TimelineRow = memo(
     prev.spacing === next.spacing &&
     prev.onDismiss === next.onDismiss &&
     prev.workspaceId === next.workspaceId &&
+    prev.onEditMessage === next.onEditMessage &&
+    prev.canEditMessage === next.canEditMessage &&
     prev.onStartHere === next.onStartHere
 );
 
@@ -263,13 +277,16 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   const router = useRouter();
   const expanderRef = useRef(createChatEventExpander());
   const api = useApiClient();
-  const { defaultMode, defaultReasoningLevel } = useWorkspaceDefaults();
-  const [mode] = useState<WorkspaceMode>(defaultMode);
+  const { mode, thinkingLevel, model, use1MContext, isLoading: settingsLoading } = useWorkspaceSettings(workspaceId);
   const [input, setInput] = useState("");
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [isSending, setIsSending] = useState(false);
   const wsRef = useRef<{ close: () => void } | null>(null);
   const flatListRef = useRef<FlatList<TimelineEntry> | null>(null);
+  const inputRef = useRef<TextInput>(null);
+  
+  // Editing state - tracks message being edited
+  const [editingMessage, setEditingMessage] = useState<{ id: string; content: string } | undefined>(undefined);
   
   // Track current todos for floating card (during streaming)
   const [currentTodos, setCurrentTodos] = useState<TodoItem[]>([]);
@@ -417,11 +434,13 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
     };
   }, [api, workspaceId, recordStreamUsage]);
 
-  // Reset timeline and todos when workspace changes
+  // Reset timeline, todos, and editing state when workspace changes
   useEffect(() => {
     setTimeline([]);
     setCurrentTodos([]);
     setHasTodos(false);
+    setEditingMessage(undefined);
+    setInput("");
   }, [workspaceId, setHasTodos]);
 
   const onSend = useCallback(async () => {
@@ -430,6 +449,9 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
       return;
     }
     
+    const wasEditing = !!editingMessage;
+    const originalContent = input;
+    
     // Clear input immediately for better UX
     setInput("");
     setIsSending(true);
@@ -437,9 +459,15 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
     // Send message - fire and forget
     // Actual errors will come via stream-error events from WebSocket
     const result = await api.workspace.sendMessage(workspaceId, trimmed, {
-      model: "default",
-      mode: defaultMode,
-      thinkingLevel: defaultReasoningLevel,
+      model,
+      mode,
+      thinkingLevel,
+      editMessageId: editingMessage?.id, // Pass editMessageId if editing
+      providerOptions: {
+        anthropic: {
+          use1MContext,
+        },
+      },
     });
     
     // Only show error for validation failures (not stream errors)
@@ -448,10 +476,21 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
       setTimeline((current) =>
         applyChatEvent(current, { type: "error", error: result.error } as WorkspaceChatEvent)
       );
+      
+      // Restore edit state on error
+      if (wasEditing) {
+        setEditingMessage(editingMessage);
+        setInput(originalContent);
+      }
+    } else {
+      // Clear editing state on success
+      if (wasEditing) {
+        setEditingMessage(undefined);
+      }
     }
     
     setIsSending(false);
-  }, [api, input, defaultMode, defaultReasoningLevel, workspaceId]);
+  }, [api, input, mode, thinkingLevel, model, use1MContext, workspaceId, editingMessage]);
 
   const onCancelStream = useCallback(async () => {
     await api.workspace.interruptStream(workspaceId);
@@ -471,6 +510,32 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
     },
     [api, workspaceId]
   );
+  
+  // Edit message handlers
+  const handleStartEdit = useCallback((messageId: string, content: string) => {
+    setEditingMessage({ id: messageId, content });
+    setInput(content);
+    // Focus input after a short delay to ensure keyboard opens
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 100);
+  }, []);
+  
+  const handleCancelEdit = useCallback(() => {
+    setEditingMessage(undefined);
+    setInput("");
+  }, []);
+  
+  // Validation: check if message can be edited
+  const canEditMessage = useCallback((message: DisplayedMessage): boolean => {
+    // Cannot edit during streaming
+    if (isStreaming) return false;
+    
+    // Only user messages can be edited
+    if (message.type !== 'user') return false;
+    
+    return true;
+  }, [isStreaming]);
 
   // Reverse timeline for inverted FlatList (chat messages bottom-to-top)
   const listData = useMemo(() => [...timeline].reverse(), [timeline]);
@@ -481,16 +546,57 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   }, []);
 
   const renderItem = useCallback(
-    ({ item }: { item: TimelineEntry }) => (
-      <TimelineRow
-        item={item}
-        spacing={spacing}
-        onDismiss={item.kind === "raw" ? () => handleDismissRawEvent(item.key) : undefined}
-        workspaceId={workspaceId}
-        onStartHere={handleStartHere}
-      />
-    ),
-    [spacing, handleDismissRawEvent, workspaceId, handleStartHere]
+    ({ item }: { item: TimelineEntry }) => {
+      // Check if this is the cutoff message
+      const isEditCutoff = 
+        editingMessage && 
+        item.kind === "displayed" && 
+        item.message.type !== "history-hidden" &&
+        item.message.type !== "workspace-init" &&
+        item.message.historyId === editingMessage.id;
+      
+      return (
+        <>
+          <TimelineRow
+            item={item}
+            spacing={spacing}
+            onDismiss={item.kind === "raw" ? () => handleDismissRawEvent(item.key) : undefined}
+            workspaceId={workspaceId}
+            onStartHere={handleStartHere}
+            onEditMessage={handleStartEdit}
+            canEditMessage={canEditMessage}
+          />
+          
+          {/* Cutoff warning banner (inverted list, so appears below the message) */}
+          {isEditCutoff && (
+            <View
+              style={{
+                backgroundColor: '#FEF3C7',
+                borderBottomWidth: 3,
+                borderBottomColor: '#F59E0B',
+                paddingVertical: 12,
+                paddingHorizontal: 16,
+                marginVertical: 16,
+                marginHorizontal: spacing.md,
+                borderRadius: 8,
+              }}
+            >
+              <ThemedText
+                style={{
+                  color: '#92400E',
+                  fontSize: 12,
+                  textAlign: 'center',
+                  fontWeight: '600',
+                }}
+              >
+                ⚠️ Messages below this line will be removed when you submit the edit
+              </ThemedText>
+            </View>
+          )}
+        </>
+      );
+    },
+    [spacing, handleDismissRawEvent, workspaceId, handleStartHere, handleStartEdit, canEditMessage, editingMessage]
   );
 
   return (
@@ -572,11 +678,37 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
             borderTopColor: theme.colors.border,
           }}
         >
+          {/* Editing banner */}
+          {editingMessage && (
+            <View
+              style={{
+                flexDirection: 'row',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                backgroundColor: '#FFF4E6',
+                paddingVertical: spacing.sm,
+                paddingHorizontal: spacing.md,
+                borderRadius: 8,
+                marginBottom: spacing.sm,
+              }}
+            >
+              <ThemedText style={{ color: '#B45309', fontSize: 14, fontWeight: '600' }}>
+                ✏️ Editing message
+              </ThemedText>
+              <Pressable onPress={handleCancelEdit}>
+                <ThemedText style={{ color: '#1E40AF', fontSize: 14, fontWeight: '600' }}>
+                  Cancel
+                </ThemedText>
+              </Pressable>
+            </View>
+          )}
+          
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
             <TextInput
+              ref={inputRef}
               value={input}
               onChangeText={setInput}
-              placeholder="Message"
+              placeholder={editingMessage ? "Edit your message..." : "Message"}
               placeholderTextColor={theme.colors.foregroundMuted}
               style={{
                 flex: 1,
@@ -587,8 +719,8 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
                 borderRadius: 20,
                 backgroundColor: theme.colors.inputBackground,
                 color: theme.colors.foregroundPrimary,
-                borderWidth: 1,
-                borderColor: theme.colors.inputBorder,
+                borderWidth: editingMessage ? 2 : 1,
+                borderColor: editingMessage ? '#F59E0B' : theme.colors.inputBorder,
                 fontSize: 16,
               }}
               textAlignVertical="center"
@@ -607,8 +739,8 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
                   : isSending || !input.trim()
                     ? theme.colors.inputBorder
                     : pressed
-                      ? theme.colors.accentHover
-                      : theme.colors.accent,
+                      ? editingMessage ? '#D97706' : theme.colors.accentHover
+                      : editingMessage ? '#F59E0B' : theme.colors.accent,
                 width: 38,
                 height: 38,
                 borderRadius: isStreaming ? 8 : 19, // Square when streaming, circle when not
@@ -618,6 +750,16 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
             >
               {isStreaming ? (
                 <Ionicons name="stop" size={20} color={theme.colors.foregroundInverted} />
+              ) : editingMessage ? (
+                <Ionicons
+                  name="checkmark"
+                  size={24}
+                  color={
+                    isSending || !input.trim()
+                      ? theme.colors.foregroundMuted
+                      : theme.colors.foregroundInverted
+                  }
+                />
               ) : (
                 <Ionicons
                   name="arrow-up"
