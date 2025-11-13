@@ -277,14 +277,40 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
         }
       },
       sendMessage: async (
-        workspaceId: string,
+        workspaceId: string | null,
         message: string,
-        options: SendMessageOptions
-      ): Promise<Result<void, string>> => {
+        options: SendMessageOptions & {
+          projectPath?: string;
+          trunkBranch?: string;
+          runtimeConfig?: Record<string, unknown>;
+        }
+      ): Promise<
+        | Result<void, string>
+        | { success: true; workspaceId: string; metadata: FrontendWorkspaceMetadata }
+      > => {
         try {
           assert(typeof message === "string" && message.trim().length > 0, "message required");
 
-          // Fire and forget - don't wait for response
+          // If workspaceId is null, we're creating a new workspace
+          // In this case, we need to wait for the response to get the metadata
+          if (workspaceId === null) {
+            if (!options.projectPath) {
+              return { success: false, error: "projectPath is required when workspaceId is null" };
+            }
+
+            const result = await invoke<
+              | { success: true; workspaceId: string; metadata: FrontendWorkspaceMetadata }
+              | { success: false; error: string }
+            >(IPC_CHANNELS.WORKSPACE_SEND_MESSAGE, [null, message, options]);
+
+            if (!result.success) {
+              return result;
+            }
+
+            return result;
+          }
+
+          // Normal path: workspace exists, fire and forget
           // The stream-start event will arrive via WebSocket if successful
           // Errors will come via stream-error WebSocket events, not HTTP response
           void invoke<unknown>(IPC_CHANNELS.WORKSPACE_SEND_MESSAGE, [

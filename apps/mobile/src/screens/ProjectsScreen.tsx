@@ -19,11 +19,12 @@ import { Surface } from "../components/Surface";
 import { IconButton } from "../components/IconButton";
 import { SecretsModal } from "../components/SecretsModal";
 import { NewWorkspaceModal } from "../components/NewWorkspaceModal";
+import { FirstMessageModal } from "../components/FirstMessageModal";
 import { RenameWorkspaceModal } from "../components/RenameWorkspaceModal";
 import { createClient } from "../api/client";
 import type { FrontendWorkspaceMetadata, Secret } from "../types";
 import { saveRuntimePreference } from "../utils/workspacePreferences";
-import { parseRuntimeModeAndHost } from "../types/runtime";
+import { parseRuntimeModeAndHost } from "@shared/types/runtime";
 
 interface WorkspaceListItem {
   metadata: FrontendWorkspaceMetadata;
@@ -95,6 +96,15 @@ export function ProjectsScreen(): JSX.Element {
   } | null>(null);
 
   const [workspaceModalState, setWorkspaceModalState] = useState<{
+    visible: boolean;
+    projectPath: string;
+    projectName: string;
+    branches: string[];
+    defaultTrunk?: string;
+    loadError?: string;
+  } | null>(null);
+
+  const [firstMessageModalState, setFirstMessageModalState] = useState<{
     visible: boolean;
     projectPath: string;
     projectName: string;
@@ -286,6 +296,114 @@ export function ProjectsScreen(): JSX.Element {
           loadError: `Unable to load branches automatically: ${message}. You can still enter the trunk branch manually.`,
         };
       });
+    }
+  };
+
+  const handleOpenFirstMessage = async (projectPath: string, projectName: string) => {
+    // Initialize modal with loading state
+    setFirstMessageModalState({
+      visible: true,
+      projectPath,
+      projectName,
+      branches: [],
+      defaultTrunk: undefined,
+      loadError: undefined,
+    });
+
+    // Fetch branches asynchronously
+    try {
+      const branchResult = await client.projects.listBranches(projectPath);
+      const sanitizedBranches = Array.isArray(branchResult?.branches)
+        ? branchResult.branches.filter((branch): branch is string => typeof branch === "string")
+        : [];
+
+      const recommended =
+        typeof branchResult?.recommendedTrunk === "string" &&
+          sanitizedBranches.includes(branchResult.recommendedTrunk)
+          ? branchResult.recommendedTrunk
+          : sanitizedBranches[0];
+
+      setFirstMessageModalState((prev) => {
+        if (!prev || prev.projectPath !== projectPath) {
+          return prev; // Guard against race condition
+        }
+        return {
+          ...prev,
+          branches: sanitizedBranches,
+          defaultTrunk: recommended,
+          loadError: undefined,
+        };
+      });
+    } catch (err) {
+      console.error("Failed to load branches for first message modal:", err);
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setFirstMessageModalState((prev) => {
+        if (!prev || prev.projectPath !== projectPath) {
+          return prev;
+        }
+        return {
+          ...prev,
+          loadError: `Unable to load branches automatically: ${message}. You can still enter the trunk branch manually.`,
+        };
+      });
+    }
+  };
+
+  const handleSendFirstMessage = async (
+    message: string,
+    trunkBranch: string,
+    runtime?: string
+  ): Promise<FrontendWorkspaceMetadata | null> => {
+    if (!firstMessageModalState) return null;
+
+    try {
+      // Parse runtime config if provided
+      let runtimeConfig: Record<string, unknown> | undefined;
+      if (runtime) {
+        const parsed = parseRuntimeModeAndHost(runtime);
+        if (parsed.mode === "ssh") {
+          runtimeConfig = {
+            type: "ssh",
+            host: parsed.host,
+            srcBaseDir: "~/cmux",
+          };
+        } else {
+          runtimeConfig = undefined; // Local is default
+        }
+      }
+
+      const result = await client.workspace.sendMessage(null, message, {
+        model: "anthropic:claude-3-5-sonnet-20241022", // Default model, can be made configurable
+        projectPath: firstMessageModalState.projectPath,
+        trunkBranch,
+        runtimeConfig,
+      });
+
+      if ("metadata" in result && result.metadata) {
+        // Save runtime preference for this project if provided
+        if (runtime) {
+          await saveRuntimePreference(firstMessageModalState.projectPath, runtime);
+        }
+
+        // Navigate to new workspace
+        router.push(`/workspace/${result.metadata.id}`);
+
+        // Refresh workspace list
+        await workspacesQuery.refetch();
+
+        setFirstMessageModalState(null);
+        return result.metadata;
+      } else if (!result.success) {
+        Alert.alert("Error", result.error);
+        return null;
+      }
+
+      return null;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to create workspace";
+      Alert.alert("Error", message);
+      console.error("Failed to send first message:", error);
+      return null;
     }
   };
 
@@ -613,6 +731,16 @@ export function ProjectsScreen(): JSX.Element {
                   <View style={{ marginRight: spacing.xs }}>
                     <IconButton
                       icon={
+                        <Ionicons name="flash-outline" size={16} color={theme.colors.accent} />
+                      }
+                      onPress={() => void handleOpenFirstMessage(group.path, group.displayName)}
+                      size="sm"
+                      variant="ghost"
+                    />
+                  </View>
+                  <View style={{ marginRight: spacing.xs }}>
+                    <IconButton
+                      icon={
                         <Ionicons name="add-circle-outline" size={16} color={theme.colors.accent} />
                       }
                       onPress={() => void handleOpenNewWorkspace(group.path, group.displayName)}
@@ -679,6 +807,19 @@ export function ProjectsScreen(): JSX.Element {
           loadError={workspaceModalState.loadError}
           onClose={() => setWorkspaceModalState(null)}
           onCreate={handleCreateWorkspace}
+        />
+      )}
+
+      {firstMessageModalState && (
+        <FirstMessageModal
+          visible={firstMessageModalState.visible}
+          projectPath={firstMessageModalState.projectPath}
+          projectName={firstMessageModalState.projectName}
+          branches={firstMessageModalState.branches}
+          defaultTrunk={firstMessageModalState.defaultTrunk}
+          loadError={firstMessageModalState.loadError}
+          onClose={() => setFirstMessageModalState(null)}
+          onSendFirstMessage={handleSendFirstMessage}
         />
       )}
 

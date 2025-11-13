@@ -16,7 +16,8 @@
     "skipLibCheck": true,
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["../../src/*"]
+      "@shared/*": ["../../src/*"],
+      "@/*": ["../../src/*"]
     }
   },
   "include": [
