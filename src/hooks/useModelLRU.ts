@@ -1,7 +1,7 @@
 import { useCallback, useEffect } from "react";
 import { usePersistedState, readPersistedState, updatePersistedState } from "./usePersistedState";
 import { MODEL_ABBREVIATIONS } from "@/utils/slashCommands/registry";
-import { defaultModel } from "@/utils/ai/models";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 const MAX_LRU_SIZE = 8;
 const LRU_KEY = "model-lru";
@@ -34,11 +34,11 @@ export function evictModelFromLRU(model: string): void {
  * Get the default model from LRU (non-hook version for use outside React)
  * This is the ONLY place that reads from LRU outside of the hook.
  *
- * @returns The most recently used model, or defaultModel if LRU is empty
+ * @returns The most recently used model, or WORKSPACE_DEFAULTS.model if LRU is empty
  */
 export function getDefaultModelFromLRU(): string {
   const lru = readPersistedState<string[]>(LRU_KEY, DEFAULT_MODELS.slice(0, MAX_LRU_SIZE));
-  return lru[0] ?? defaultModel;
+  return lru[0] ?? WORKSPACE_DEFAULTS.model;
 }
 
 /**

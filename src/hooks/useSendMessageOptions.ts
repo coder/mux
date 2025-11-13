@@ -10,6 +10,7 @@ import type { UIMode } from "@/types/mode";
 import type { ThinkingLevel } from "@/types/thinking";
 import { getSendOptionsFromStorage } from "@/utils/messages/sendOptions";
 import { enforceThinkingPolicy } from "@/utils/thinking/policy";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 /**
  * Construct SendMessageOptions from raw values
@@ -62,11 +63,11 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptions {
   const { recentModels } = useModelLRU();
   const [preferredModel] = usePersistedState<string>(
     getModelKey(workspaceId),
-    recentModels[0], // Most recently used model (LRU is never empty)
+    WORKSPACE_DEFAULTS.model, // Hard-coded default (LRU is UI convenience)
     { listener: true } // Listen for changes from ModelSelector and other sources
   );
 
-  return constructSendMessageOptions(mode, thinkingLevel, preferredModel, use1M, recentModels[0]);
+  return constructSendMessageOptions(mode, thinkingLevel, preferredModel, use1M, WORKSPACE_DEFAULTS.model);
 }
 
 /**
