@@ -89,7 +89,38 @@ function AssistantMessageCard({
   message: DisplayedMessage & { type: "assistant" };
 }): JSX.Element {
   const theme = useTheme();
+  const [menuVisible, setMenuVisible] = useState(false);
   const isStreaming = 'isStreaming' in message && (message as any).isStreaming === true;
+
+  const handleLongPress = async () => {
+    // Import haptics dynamically to handle on press
+    const Haptics = await import('expo-haptics');
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    // Use native ActionSheet on iOS, custom modal on Android
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ['Copy Message', 'Cancel'],
+          cancelButtonIndex: 1,
+        },
+        async (buttonIndex) => {
+          if (buttonIndex === 0) {
+            await handleCopy();
+          }
+        }
+      );
+    } else {
+      setMenuVisible(true);
+    }
+  };
+
+  const handleCopy = async () => {
+    setMenuVisible(false);
+    const Clipboard = await import('expo-clipboard');
+    await Clipboard.setStringAsync(message.content);
+  };
+
   const markdownStyles = useMemo(
     () => ({
       body: {
@@ -173,11 +204,15 @@ function AssistantMessageCard({
   );
 
   return (
-    <Surface
-      variant="plain"
-      style={{ padding: theme.spacing.md, marginBottom: theme.spacing.md }}
-      accessibilityRole="summary"
+    <Pressable
+      onLongPress={handleLongPress}
+      delayLongPress={500}
     >
+      <Surface
+        variant="plain"
+        style={{ padding: theme.spacing.md, marginBottom: theme.spacing.md }}
+        accessibilityRole="summary"
+      >
       <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: theme.spacing.sm }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: theme.spacing.sm }}>
           <ThemedText variant="label">Assistant</ThemedText>
@@ -232,6 +267,47 @@ function AssistantMessageCard({
         {isStreaming && <StreamingCursor />}
       </View>
     </Surface>
+
+    {/* Android context menu modal */}
+    {Platform.OS === 'android' && (
+      <Modal
+        visible={menuVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMenuVisible(false)}
+      >
+        <Pressable
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            justifyContent: 'flex-end',
+          }}
+          onPress={() => setMenuVisible(false)}
+        >
+          <View
+            style={{
+              backgroundColor: theme.colors.surfaceElevated,
+              borderTopLeftRadius: theme.radii.lg,
+              borderTopRightRadius: theme.radii.lg,
+              paddingBottom: theme.spacing.xl,
+            }}
+          >
+            <Pressable
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: theme.spacing.md,
+                padding: theme.spacing.md,
+              }}
+              onPress={handleCopy}
+            >
+              <ThemedText>📋 Copy Message</ThemedText>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
+    )}
+  </Pressable>
   );
 }
 
