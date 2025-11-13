@@ -267,7 +267,7 @@ export class AgentSession {
       if (!truncateResult.success) {
         return Err(createUnknownSendMessageError(truncateResult.error));
       }
-      
+
       // Send delete event to frontend for truncated messages
       const deletedSequences = truncateResult.data;
       if (deletedSequences.length > 0) {

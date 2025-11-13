@@ -1,15 +1,15 @@
 /**
  * Platform-agnostic chat event processor for streaming message accumulation.
- * 
+ *
  * This module handles the core logic of accumulating streaming events into coherent
  * CmuxMessage objects. It's shared between desktop and mobile implementations.
- * 
+ *
  * Responsibilities:
  * - Accumulate streaming deltas (text, reasoning, tool calls) by messageId
  * - Handle init lifecycle events (init-start, init-output, init-end)
  * - Merge adjacent parts of the same type
  * - Maintain message ordering and metadata
- * 
+ *
  * NOT responsible for:
  * - UI state management (todos, agent status, recency)
  * - DisplayedMessage transformation (platform-specific)
@@ -90,9 +90,7 @@ function createCmuxMessage(
   content: string,
   metadata?: CmuxMetadata
 ): CmuxMessage {
-  const parts: CmuxMessage["parts"] = content
-    ? [{ type: "text" as const, text: content }]
-    : [];
+  const parts: CmuxMessage["parts"] = content ? [{ type: "text" as const, text: content }] : [];
 
   return {
     id,
@@ -289,8 +287,7 @@ export function createChatEventProcessor(): ChatEventProcessor {
       // Check for duplicates
       const existingToolPart = message.parts.find(
         (part): part is DynamicToolPart =>
-          part.type === "dynamic-tool" &&
-          (part as DynamicToolPart).toolCallId === event.toolCallId
+          part.type === "dynamic-tool" && (part as DynamicToolPart).toolCallId === event.toolCallId
       );
 
       if (existingToolPart) {

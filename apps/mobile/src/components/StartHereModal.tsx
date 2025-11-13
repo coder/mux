@@ -1,4 +1,3 @@
-import React from "react";
 import { Modal, View, Pressable, ActivityIndicator } from "react-native";
 import { Surface } from "./Surface";
 import { ThemedText } from "./ThemedText";

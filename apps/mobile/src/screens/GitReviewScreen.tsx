@@ -1,21 +1,21 @@
 import type { JSX } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 import { useLocalSearchParams } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme";
 import { useApiClient } from "../hooks/useApiClient";
 import { parseDiff, extractAllHunks } from "../utils/git/diffParser";
 import { parseNumstat, buildFileTree } from "../utils/git/numstatParser";
 import { buildGitDiffCommand } from "../utils/git/gitCommands";
-import type { DiffHunk, FileDiff } from "../types/review";
+import type { DiffHunk } from "../types/review";
 import type { FileTreeNode } from "../utils/git/numstatParser";
 import { DiffHunkView } from "../components/git/DiffHunkView";
 import { ReviewFilters } from "../components/git/ReviewFilters";
@@ -31,10 +31,12 @@ export default function GitReviewScreen(): JSX.Element {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
+  const [truncationWarning, setTruncationWarning] = useState<string | null>(null);
+
   // Filters - default to "main" to show changes since branching
   const [diffBase, setDiffBase] = useState("main");
   const [includeUncommitted, setIncludeUncommitted] = useState(true);
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
 
   const loadGitData = useCallback(async () => {
     if (!workspaceId) {
@@ -45,6 +47,7 @@ export default function GitReviewScreen(): JSX.Element {
 
     try {
       setError(null);
+      setTruncationWarning(null);
 
       // Fetch file tree (numstat)
       const numstatCommand = buildGitDiffCommand(diffBase, includeUncommitted, "", "numstat");
@@ -74,8 +77,9 @@ export default function GitReviewScreen(): JSX.Element {
       const tree = buildFileTree(fileStats);
       setFileTree(tree);
 
-      // Fetch diff hunks
-      const diffCommand = buildGitDiffCommand(diffBase, includeUncommitted, "", "diff");
+      // Fetch diff hunks (with optional path filter for truncation workaround)
+      const pathFilter = selectedFilePath ? ` -- "${selectedFilePath}"` : "";
+      const diffCommand = buildGitDiffCommand(diffBase, includeUncommitted, pathFilter, "diff");
       const diffResult = await api.workspace.executeBash(workspaceId, diffCommand, {
         timeout_secs: 30,
       });
@@ -98,8 +102,18 @@ export default function GitReviewScreen(): JSX.Element {
 
       // Ensure output exists and is a string
       const diffOutput = diffBashResult.output ?? "";
+      const truncationInfo = diffBashResult.truncated;
+
       const fileDiffs = parseDiff(diffOutput);
       const allHunks = extractAllHunks(fileDiffs);
+
+      // Set truncation warning only when not filtering by path
+      if (truncationInfo && !selectedFilePath) {
+        setTruncationWarning(
+          `Diff truncated (${truncationInfo.reason}). Tap a file below to see its changes.`
+        );
+      }
+
       setHunks(allHunks);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -108,7 +122,7 @@ export default function GitReviewScreen(): JSX.Element {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [workspaceId, diffBase, includeUncommitted, api]);
+  }, [workspaceId, diffBase, includeUncommitted, selectedFilePath, api]);
 
   useEffect(() => {
     void loadGitData();
@@ -132,9 +146,35 @@ export default function GitReviewScreen(): JSX.Element {
       <ReviewFilters
         diffBase={diffBase}
         includeUncommitted={includeUncommitted}
+        selectedFilePath={selectedFilePath}
+        fileTree={fileTree}
         onChangeDiffBase={setDiffBase}
         onChangeIncludeUncommitted={setIncludeUncommitted}
+        onChangeSelectedFile={setSelectedFilePath}
       />
+
+      {/* Truncation warning banner */}
+      {truncationWarning && (
+        <View
+          style={[
+            styles.warningBanner,
+            {
+              backgroundColor: '#FEF3C7',
+              borderBottomColor: '#F59E0B',
+            },
+          ]}
+        >
+          <Ionicons name="warning" size={18} color="#F59E0B" />
+          <Text
+            style={[
+              styles.warningText,
+              { color: '#92400E' },
+            ]}
+          >
+            {truncationWarning}
+          </Text>
+        </View>
+      )}
 
       {/* Show appropriate content based on state */}
       {isLoading ? (
@@ -206,5 +246,18 @@ const styles = StyleSheet.create({
   },
   listContent: {
     padding: 12,
+  },
+  warningBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    gap: 8,
+    borderBottomWidth: 2,
+  },
+  warningText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

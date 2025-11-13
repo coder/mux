@@ -19,7 +19,7 @@ function AppFrame(): JSX.Element {
             headerStyle: { backgroundColor: theme.colors.surfaceSunken },
             headerTintColor: theme.colors.foregroundPrimary,
             headerTitleStyle: {
-              fontWeight: theme.typography.weights.semibold,
+              fontWeight: theme.typography.weights.semibold as any,
               fontSize: theme.typography.sizes.titleSmall,
               color: theme.colors.foregroundPrimary,
             },
@@ -27,25 +27,25 @@ function AppFrame(): JSX.Element {
             contentStyle: { backgroundColor: theme.colors.background },
           }}
         >
-          <Stack.Screen 
-            name="index" 
-            options={{ 
+          <Stack.Screen
+            name="index"
+            options={{
               title: "Workspaces",
-            }} 
+            }}
           />
-          <Stack.Screen 
-            name="workspace/[id]" 
-            options={{ 
+          <Stack.Screen
+            name="workspace/[id]"
+            options={{
               title: "", // Title set dynamically by WorkspaceScreen
               headerBackTitle: "", // Just show <, no text
-            }} 
+            }}
           />
-          <Stack.Screen 
-            name="settings" 
-            options={{ 
+          <Stack.Screen
+            name="settings"
+            options={{
               title: "Settings",
               headerBackTitle: "", // Just show <, no text
-            }} 
+            }}
           />
         </Stack>
       </View>

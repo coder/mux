@@ -12,7 +12,6 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useProjectsData } from "../hooks/useProjectsData";
 import { useTheme } from "../theme";
 import { ThemedText } from "../components/ThemedText";
@@ -23,7 +22,7 @@ import { NewWorkspaceModal } from "../components/NewWorkspaceModal";
 import { RenameWorkspaceModal } from "../components/RenameWorkspaceModal";
 import { createClient } from "../api/client";
 import type { FrontendWorkspaceMetadata, Secret } from "../types";
-import { loadRuntimePreference, saveRuntimePreference } from "../utils/workspacePreferences";
+import { saveRuntimePreference } from "../utils/workspacePreferences";
 import { parseRuntimeModeAndHost } from "../types/runtime";
 
 interface WorkspaceListItem {
@@ -86,7 +85,6 @@ export function ProjectsScreen(): JSX.Element {
   const theme = useTheme();
   const spacing = theme.spacing;
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const { api, projectsQuery, workspacesQuery } = useProjectsData();
   const [search, setSearch] = useState("");
   const [secretsModalState, setSecretsModalState] = useState<{
@@ -261,7 +259,7 @@ export function ProjectsScreen(): JSX.Element {
 
       const recommended =
         typeof branchResult?.recommendedTrunk === "string" &&
-        sanitizedBranches.includes(branchResult.recommendedTrunk)
+          sanitizedBranches.includes(branchResult.recommendedTrunk)
           ? branchResult.recommendedTrunk
           : sanitizedBranches[0];
 

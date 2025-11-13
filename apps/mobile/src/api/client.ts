@@ -18,7 +18,7 @@ export interface SendMessageOptions {
 }
 
 export interface CmuxMobileClientConfig {
-  baseUrl?: string; // http://host:3000
+  baseUrl?: string;
   authToken?: string;
 }
 

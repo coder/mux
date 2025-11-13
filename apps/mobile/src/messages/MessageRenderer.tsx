@@ -1,6 +1,6 @@
 import type { JSX } from "react";
 import Markdown from "react-native-markdown-display";
-import { Image, View, ActivityIndicator, StyleSheet, ScrollView, Text, Pressable, Animated, ActionSheetIOS, Platform, Modal, TouchableOpacity } from "react-native";
+import { Image, View, StyleSheet, ScrollView, Text, Pressable, Animated, ActionSheetIOS, Platform, Modal, TouchableOpacity } from "react-native";
 import { useMemo, useState, useEffect, useRef } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { Surface } from "../components/Surface";
@@ -246,12 +246,12 @@ function UserMessageCard({
 }): JSX.Element {
   const theme = useTheme();
   const [menuVisible, setMenuVisible] = useState(false);
-  
+
   const handleLongPress = async () => {
     // Import haptics dynamically to handle on press
     const Haptics = await import('expo-haptics');
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    
+
     // Use native ActionSheet on iOS, custom modal on Android
     if (Platform.OS === 'ios') {
       const options = ['Copy Message'];
@@ -259,9 +259,9 @@ function UserMessageCard({
         options.unshift('Edit Message'); // Add Edit as first option
       }
       options.push('Cancel');
-      
+
       const cancelButtonIndex = options.length - 1;
-      
+
       ActionSheetIOS.showActionSheetWithOptions(
         {
           options,
@@ -281,20 +281,20 @@ function UserMessageCard({
       setMenuVisible(true);
     }
   };
-  
+
   const handleEdit = () => {
     setMenuVisible(false);
     if (onEditMessage) {
       onEditMessage(message.historyId, message.content);
     }
   };
-  
+
   const handleCopy = async () => {
     setMenuVisible(false);
     const Clipboard = await import('expo-clipboard');
     await Clipboard.setStringAsync(message.content);
   };
-  
+
   return (
     <Pressable
       onLongPress={handleLongPress}
@@ -307,87 +307,87 @@ function UserMessageCard({
       >
         <ThemedText variant="label">You</ThemedText>
         <ThemedText style={{ marginTop: theme.spacing.sm }}>{message.content || "(No content)"}</ThemedText>
-      {message.imageParts && message.imageParts.length > 0 ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ marginTop: theme.spacing.md, gap: theme.spacing.sm }}
-        >
-          {message.imageParts.map((image, index) => (
-            <Image
-              key={`${message.id}-image-${index}`}
-              source={{ uri: image.url }}
-              style={{
-                width: 160,
-                height: 120,
-                borderRadius: theme.radii.sm,
-                borderWidth: StyleSheet.hairlineWidth,
-                borderColor: theme.colors.border,
-                backgroundColor: theme.colors.surfaceSunken,
-              }}
-              resizeMode="cover"
-            />
-          ))}
-        </ScrollView>
-      ) : null}
-    </Surface>
-    
-    {/* Android context menu modal */}
-    {Platform.OS === 'android' && (
-      <Modal
-        visible={menuVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setMenuVisible(false)}
-      >
-        <TouchableOpacity
-          style={{
-            flex: 1,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            justifyContent: 'center',
-            alignItems: 'center',
-          }}
-          activeOpacity={1}
-          onPress={() => setMenuVisible(false)}
-        >
-          <View
-            style={{
-              backgroundColor: theme.colors.surfaceSecondary,
-              borderRadius: theme.radii.lg,
-              padding: theme.spacing.md,
-              minWidth: 200,
-              elevation: 5,
-              shadowColor: '#000',
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.25,
-              shadowRadius: 4,
-            }}
+        {message.imageParts && message.imageParts.length > 0 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ marginTop: theme.spacing.md, gap: theme.spacing.sm }}
           >
-            {canEdit && onEditMessage && (
+            {message.imageParts.map((image, index) => (
+              <Image
+                key={`${message.id}-image-${index}`}
+                source={{ uri: image.url }}
+                style={{
+                  width: 160,
+                  height: 120,
+                  borderRadius: theme.radii.sm,
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.surfaceSunken,
+                }}
+                resizeMode="cover"
+              />
+            ))}
+          </ScrollView>
+        ) : null}
+      </Surface>
+
+      {/* Android context menu modal */}
+      {Platform.OS === 'android' && (
+        <Modal
+          visible={menuVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setMenuVisible(false)}
+        >
+          <TouchableOpacity
+            style={{
+              flex: 1,
+              backgroundColor: 'rgba(0, 0, 0, 0.5)',
+              justifyContent: 'center',
+              alignItems: 'center',
+            }}
+            activeOpacity={1}
+            onPress={() => setMenuVisible(false)}
+          >
+            <View
+              style={{
+                backgroundColor: theme.colors.surfaceSecondary,
+                borderRadius: theme.radii.lg,
+                padding: theme.spacing.md,
+                minWidth: 200,
+                elevation: 5,
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.25,
+                shadowRadius: 4,
+              }}
+            >
+              {canEdit && onEditMessage && (
+                <TouchableOpacity
+                  onPress={handleEdit}
+                  style={{
+                    paddingVertical: theme.spacing.md,
+                    paddingHorizontal: theme.spacing.sm,
+                  }}
+                >
+                  <ThemedText>✏️ Edit Message</ThemedText>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity
-                onPress={handleEdit}
+                onPress={handleCopy}
                 style={{
                   paddingVertical: theme.spacing.md,
                   paddingHorizontal: theme.spacing.sm,
                 }}
               >
-                <ThemedText>✏️ Edit Message</ThemedText>
+                <ThemedText>📋 Copy Message</ThemedText>
               </TouchableOpacity>
-            )}
-            <TouchableOpacity
-              onPress={handleCopy}
-              style={{
-                paddingVertical: theme.spacing.md,
-                paddingHorizontal: theme.spacing.sm,
-              }}
-            >
-              <ThemedText>📋 Copy Message</ThemedText>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      </Modal>
-    )}
-  </Pressable>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+      )}
+    </Pressable>
   );
 }
 
@@ -422,7 +422,7 @@ function ReasoningMessageCard({
           Thinking
         </ThemedText>
       </Pressable>
-      
+
       {isExpanded && (
         <View style={{ flexDirection: "row", alignItems: "flex-end", marginTop: theme.spacing.sm }}>
           <ThemedText style={{ flex: 1, fontStyle: "italic", color: theme.colors.foregroundSecondary }}>
@@ -442,7 +442,7 @@ function StreamErrorMessageCard({
 }): JSX.Element {
   const theme = useTheme();
   const showCount = message.errorCount !== undefined && message.errorCount > 1;
-  
+
   return (
     <Surface
       variant="plain"
@@ -466,7 +466,7 @@ function StreamErrorMessageCard({
             Stream Error
           </ThemedText>
         </View>
-        
+
         {/* Error type badge */}
         <View
           style={{
@@ -487,7 +487,7 @@ function StreamErrorMessageCard({
             {message.errorType}
           </ThemedText>
         </View>
-        
+
         {/* Error count badge */}
         {showCount && (
           <View
@@ -512,7 +512,7 @@ function StreamErrorMessageCard({
           </View>
         )}
       </View>
-      
+
       {/* Error message */}
       <ThemedText
         style={{
@@ -758,9 +758,9 @@ function ToolMessageCard({
   if (isProposePlanTool(message)) {
     const handleStartHereWithPlan = onStartHere
       ? async () => {
-          const fullContent = `# ${message.args.title}\n\n${message.args.plan}`;
-          await onStartHere(fullContent);
-        }
+        const fullContent = `# ${message.args.title}\n\n${message.args.plan}`;
+        await onStartHere(fullContent);
+      }
       : undefined;
 
     return (

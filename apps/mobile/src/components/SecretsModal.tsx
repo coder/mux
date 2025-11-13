@@ -8,12 +8,10 @@ import {
   TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
-  ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme";
 import { ThemedText } from "./ThemedText";
-import { Surface } from "./Surface";
 import type { Secret } from "../types";
 
 interface SecretsModalProps {
@@ -133,8 +131,8 @@ export function SecretsModal({
                 borderBottomColor: theme.colors.borderSubtle,
               }}
             >
-              <TouchableOpacity 
-                onPress={handleCancel} 
+              <TouchableOpacity
+                onPress={handleCancel}
                 disabled={isLoading}
                 style={{ paddingHorizontal: spacing.sm }}
               >
@@ -145,8 +143,8 @@ export function SecretsModal({
               <ThemedText style={{ fontSize: 17, fontWeight: "600" }}>
                 Secrets
               </ThemedText>
-              <TouchableOpacity 
-                onPress={() => void handleSave()} 
+              <TouchableOpacity
+                onPress={() => void handleSave()}
                 disabled={isLoading}
                 style={{ paddingHorizontal: spacing.sm }}
               >
@@ -179,7 +177,7 @@ export function SecretsModal({
             {/* Secrets list */}
             <ScrollView
               style={{ flex: 1 }}
-              contentContainerStyle={{ 
+              contentContainerStyle={{
                 padding: spacing.lg,
               }}
             >

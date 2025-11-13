@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import React, {
+import {
   createContext,
   useCallback,
   useContext,
@@ -9,15 +9,15 @@ import React, {
   useState,
 } from "react";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
-import type { ChatUsageDisplay } from "@shared/utils/tokens/usageAggregator.ts";
-import { sumUsageHistory } from "@shared/utils/tokens/usageAggregator.ts";
-import { createDisplayUsage } from "@shared/utils/tokens/displayUsage.ts";
+import type { ChatUsageDisplay } from "@shared/utils/tokens/usageAggregator";
+import { sumUsageHistory } from "@shared/utils/tokens/usageAggregator";
+import { createDisplayUsage } from "@shared/utils/tokens/displayUsage";
 import type { ChatStats } from "@shared/types/chatStats.ts";
 import type { CmuxMessage } from "@shared/types/message.ts";
 import {
   isCmuxMessage,
   isStreamEnd,
-} from "@shared/types/ipc.ts";
+} from "@shared/types/ipc";
 import type { StreamEndEvent, StreamAbortEvent } from "@shared/types/stream.ts";
 
 import type { WorkspaceChatEvent } from "../types";

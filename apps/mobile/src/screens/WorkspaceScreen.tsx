@@ -25,7 +25,6 @@ import { FloatingTodoCard } from "../components/FloatingTodoCard";
 import type { TodoItem } from "../components/TodoItemView";
 import { createChatEventExpander, DISPLAYABLE_MESSAGE_TYPES } from "../messages/normalizeChatEvent";
 import type { DisplayedMessage, FrontendWorkspaceMetadata, WorkspaceChatEvent } from "../types";
-import type { Result } from "../api/client";
 import { createCompactedMessage } from "../utils/messageHelpers";
 type ThemeSpacing = ReturnType<typeof useTheme>["spacing"];
 
@@ -88,24 +87,24 @@ function applyChatEvent(current: TimelineEntry[], event: WorkspaceChatEvent): Ti
     const existingIndex = current.findIndex(
       (item) => item.kind === "displayed" && item.message.id === event.id
     );
-    
+
     if (existingIndex >= 0) {
       // Message already exists - check if it's an update
       const existingMessage = (current[existingIndex] as Extract<TimelineEntry, { kind: "displayed" }>).message;
-      
+
       // Check if it's a streaming update
-      const isStreamingUpdate = 
+      const isStreamingUpdate =
         existingMessage.historySequence === event.historySequence &&
         'isStreaming' in event &&
         (event as any).isStreaming === true;
-      
+
       // Check if it's a tool status change (executing → completed/failed)
       const isToolStatusChange =
         existingMessage.type === 'tool' &&
         event.type === 'tool' &&
         existingMessage.historySequence === event.historySequence &&
         (existingMessage as any).status !== (event as any).status;
-      
+
       if (isStreamingUpdate || isToolStatusChange) {
         // Update in place
         const updated = [...current];
@@ -116,28 +115,28 @@ function applyChatEvent(current: TimelineEntry[], event: WorkspaceChatEvent): Ti
         };
         return updated;
       }
-      
+
       // Same message, skip (already processed)
       return current;
     }
-    
+
     // New message - add and sort only if needed
     const entry: TimelineEntry = {
       kind: "displayed",
       key: `displayed-${event.id}`,
       message: event,
     };
-    
+
     // Check if we need to sort (is new message out of order?)
     const lastDisplayed = [...current]
       .reverse()
       .find((item): item is Extract<TimelineEntry, { kind: "displayed" }> => item.kind === "displayed");
-    
+
     if (!lastDisplayed || compareDisplayedMessages(lastDisplayed.message, event) <= 0) {
       // New message is in order - just append (no sort needed)
       return [...current, entry];
     }
-    
+
     // Out of order - need to sort
     const withoutExisting = current.filter((item) => item.kind !== "displayed" || item.message.id !== event.id);
     const displayed = withoutExisting
@@ -185,7 +184,7 @@ function RawEventCard({
   const spacing = theme.spacing;
 
   if (payload && typeof payload === "object" && "type" in payload) {
-    const typed = payload as { type: unknown; [key: string]: unknown };
+    const typed = payload as { type: unknown;[key: string]: unknown };
     if (typed.type === "status" && typeof typed.status === "string") {
       return <ThemedText variant="caption">{typed.status}</ThemedText>;
     }
@@ -230,9 +229,9 @@ const TimelineRow = memo(
   }) => {
     if (item.kind === "displayed") {
       return (
-        <MessageRenderer 
-          message={item.message} 
-          workspaceId={workspaceId} 
+        <MessageRenderer
+          message={item.message}
+          workspaceId={workspaceId}
           onStartHere={onStartHere}
           onEditMessage={onEditMessage}
           canEdit={canEditMessage ? canEditMessage(item.message) : false}
@@ -274,7 +273,6 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   const theme = useTheme();
   const spacing = theme.spacing;
   const insets = useSafeAreaInsets();
-  const router = useRouter();
   const expanderRef = useRef(createChatEventExpander());
   const api = useApiClient();
   const { mode, thinkingLevel, model, use1MContext, isLoading: settingsLoading } = useWorkspaceSettings(workspaceId);
@@ -284,20 +282,20 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   const wsRef = useRef<{ close: () => void } | null>(null);
   const flatListRef = useRef<FlatList<TimelineEntry> | null>(null);
   const inputRef = useRef<TextInput>(null);
-  
+
   // Editing state - tracks message being edited
   const [editingMessage, setEditingMessage] = useState<{ id: string; content: string } | undefined>(undefined);
-  
+
   // Track current todos for floating card (during streaming)
   const [currentTodos, setCurrentTodos] = useState<TodoItem[]>([]);
-  
+
   // Use context for todo card visibility
   const { todoCardVisible, toggleTodoCard, setHasTodos } = useWorkspaceActions();
-  
+
   // Track streaming state for indicator
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingModel, setStreamingModel] = useState<string | null>(null);
-  
+
   // Track deltas with timestamps for accurate TPS calculation (60s window like desktop)
   const deltasRef = useRef<Array<{ tokens: number; timestamp: number }>>([]);
   const [tokenDisplay, setTokenDisplay] = useState({ total: 0, tps: 0 });
@@ -318,23 +316,23 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   useEffect(() => {
     // Find the most recent completed todo_write tool in timeline
     const toolMessages = timeline
-      .filter((entry): entry is Extract<TimelineEntry, { kind: "displayed" }> => 
+      .filter((entry): entry is Extract<TimelineEntry, { kind: "displayed" }> =>
         entry.kind === "displayed"
       )
       .map(entry => entry.message)
-      .filter((msg): msg is DisplayedMessage & { type: "tool" } => 
+      .filter((msg): msg is DisplayedMessage & { type: "tool" } =>
         msg.type === "tool"
       )
       .filter(msg => msg.toolName === "todo_write");
-    
+
     // Get the most recent one (timeline is already sorted)
     const latestTodoTool = toolMessages[toolMessages.length - 1];
-    
-    if (latestTodoTool && 
-        latestTodoTool.args && 
-        typeof latestTodoTool.args === "object" &&
-        "todos" in latestTodoTool.args &&
-        Array.isArray(latestTodoTool.args.todos)) {
+
+    if (latestTodoTool &&
+      latestTodoTool.args &&
+      typeof latestTodoTool.args === "object" &&
+      "todos" in latestTodoTool.args &&
+      Array.isArray(latestTodoTool.args.todos)) {
       const todos = latestTodoTool.args.todos as TodoItem[];
       setCurrentTodos(todos);
       setHasTodos(todos.length > 0);
@@ -361,31 +359,31 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
           deltasRef.current = [];
           setTokenDisplay({ total: 0, tps: 0 });
         } else if (
-          (payload.type === "stream-delta" || 
-           payload.type === "reasoning-delta" ||
-           payload.type === "tool-call-start" ||
-           payload.type === "tool-call-delta") &&
+          (payload.type === "stream-delta" ||
+            payload.type === "reasoning-delta" ||
+            payload.type === "tool-call-start" ||
+            payload.type === "tool-call-delta") &&
           "tokens" in payload &&
           typeof payload.tokens === "number" &&
           payload.tokens > 0
         ) {
           const tokens = payload.tokens;
-          const timestamp = "timestamp" in payload && typeof payload.timestamp === "number" 
-            ? payload.timestamp 
+          const timestamp = "timestamp" in payload && typeof payload.timestamp === "number"
+            ? payload.timestamp
             : Date.now();
-          
+
           // Add delta with timestamp
           deltasRef.current.push({ tokens, timestamp });
-          
+
           // Calculate with 60-second trailing window (like desktop)
           const now = Date.now();
           const windowStart = now - 60000; // 60 seconds
           const recentDeltas = deltasRef.current.filter((d) => d.timestamp >= windowStart);
-          
+
           // Calculate total tokens and TPS
           const total = deltasRef.current.reduce((sum, d) => sum + d.tokens, 0);
           let tps = 0;
-          
+
           if (recentDeltas.length > 0) {
             const recentTokens = recentDeltas.reduce((sum, d) => sum + d.tokens, 0);
             const timeSpanMs = now - recentDeltas[0].timestamp;
@@ -394,7 +392,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
               tps = Math.round(recentTokens / timeSpanSec);
             }
           }
-          
+
           setTokenDisplay({ total, tps });
         } else if (payload.type === "stream-end" || payload.type === "stream-abort") {
           setIsStreaming(false);
@@ -405,7 +403,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
       }
 
       const expanded = expander.expand(payload);
-      
+
       // If expander returns [], it means the event was handled but nothing to display yet
       // (e.g., streaming deltas accumulating). Do NOT fall back to raw display.
       if (expanded.length === 0) {
@@ -422,7 +420,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
             next = updated;
           }
         }
-        
+
         // Only return new array if actually changed (prevents FlatList re-render)
         return changed ? next : current;
       });
@@ -448,14 +446,14 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
     if (!trimmed) {
       return;
     }
-    
+
     const wasEditing = !!editingMessage;
     const originalContent = input;
-    
+
     // Clear input immediately for better UX
     setInput("");
     setIsSending(true);
-    
+
     // Send message - fire and forget
     // Actual errors will come via stream-error events from WebSocket
     const result = await api.workspace.sendMessage(workspaceId, trimmed, {
@@ -469,14 +467,14 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
         },
       },
     });
-    
+
     // Only show error for validation failures (not stream errors)
     if (!result.success) {
       console.error('[sendMessage] Validation failed:', result.error);
       setTimeline((current) =>
         applyChatEvent(current, { type: "error", error: result.error } as WorkspaceChatEvent)
       );
-      
+
       // Restore edit state on error
       if (wasEditing) {
         setEditingMessage(editingMessage);
@@ -488,7 +486,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
         setEditingMessage(undefined);
       }
     }
-    
+
     setIsSending(false);
   }, [api, input, mode, thinkingLevel, model, use1MContext, workspaceId, editingMessage]);
 
@@ -510,7 +508,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
     },
     [api, workspaceId]
   );
-  
+
   // Edit message handlers
   const handleStartEdit = useCallback((messageId: string, content: string) => {
     setEditingMessage({ id: messageId, content });
@@ -520,20 +518,20 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
       inputRef.current?.focus();
     }, 100);
   }, []);
-  
+
   const handleCancelEdit = useCallback(() => {
     setEditingMessage(undefined);
     setInput("");
   }, []);
-  
+
   // Validation: check if message can be edited
   const canEditMessage = useCallback((message: DisplayedMessage): boolean => {
     // Cannot edit during streaming
     if (isStreaming) return false;
-    
+
     // Only user messages can be edited
     if (message.type !== 'user') return false;
-    
+
     return true;
   }, [isStreaming]);
 
@@ -548,13 +546,13 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   const renderItem = useCallback(
     ({ item }: { item: TimelineEntry }) => {
       // Check if this is the cutoff message
-      const isEditCutoff = 
-        editingMessage && 
-        item.kind === "displayed" && 
+      const isEditCutoff =
+        editingMessage &&
+        item.kind === "displayed" &&
         item.message.type !== "history-hidden" &&
         item.message.type !== "workspace-init" &&
         item.message.historyId === editingMessage.id;
-      
+
       return (
         <>
           <TimelineRow
@@ -566,7 +564,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
             onEditMessage={handleStartEdit}
             canEditMessage={canEditMessage}
           />
-          
+
           {/* Cutoff warning banner (inverted list, so appears below the message) */}
           {isEditCutoff && (
             <View
@@ -702,7 +700,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
               </Pressable>
             </View>
           )}
-          
+
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
             <TextInput
               ref={inputRef}

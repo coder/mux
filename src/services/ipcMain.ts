@@ -560,12 +560,9 @@ export class IpcMain {
     );
 
     // Get chat history for a workspace (no broadcast side effects)
-    ipcMain.handle(
-      IPC_CHANNELS.WORKSPACE_CHAT_GET_HISTORY,
-      async (_event, workspaceId: string) => {
-        return await this.getWorkspaceChatHistory(workspaceId);
-      }
-    );
+    ipcMain.handle(IPC_CHANNELS.WORKSPACE_CHAT_GET_HISTORY, async (_event, workspaceId: string) => {
+      return await this.getWorkspaceChatHistory(workspaceId);
+    });
 
     // Get full replay events for a workspace (history + active streams + partial + init + caught-up)
     // Used by WebSocket server to replay to a specific client without broadcasting
@@ -1475,20 +1472,19 @@ export class IpcMain {
     );
   }
 
-
   /**
    * Get chat history for a workspace
    * Returns array of historical messages without triggering broadcasts
-   * 
+   *
    * NOTE: This only returns persisted chat history (from chat.jsonl).
    * For full replay including interrupted streams and init state, use
    * getFullReplayEvents() instead.
-   * 
+   *
    * Used by WebSocket server to send history directly to subscribing clients.
    */
   private async getWorkspaceChatHistory(
     workspaceId: string
-  ): Promise<import("@/types/ipc").WorkspaceChatMessage[]> {
+  ): Promise<Array<import("@/types/ipc").WorkspaceChatMessage>> {
     const historyResult = await this.historyService.getHistory(workspaceId);
     if (historyResult.success) {
       return historyResult.data;
@@ -1499,22 +1495,22 @@ export class IpcMain {
   /**
    * Get full replay events for a workspace (history + active streams + partial + init + caught-up)
    * Returns array of all replay events without triggering any broadcasts
-   * 
+   *
    * This replicates the behavior of session.replayHistory() but collects events
    * into an array instead of broadcasting them. Used by WebSocket server to send
    * replay to a specific client without affecting other connected clients.
    */
   private async getFullReplayEvents(
     workspaceId: string
-  ): Promise<import("@/types/ipc").WorkspaceChatMessage[]> {
+  ): Promise<Array<import("@/types/ipc").WorkspaceChatMessage>> {
     const session = this.getOrCreateSession(workspaceId);
-    const events: import("@/types/ipc").WorkspaceChatMessage[] = [];
-    
+    const events: Array<import("@/types/ipc").WorkspaceChatMessage> = [];
+
     // Collect all replay events without broadcasting
     await session.replayHistory((event) => {
       events.push(event.message);
     });
-    
+
     return events;
   }
   private registerSubscriptionHandlers(ipcMain: ElectronIpcMain): void {

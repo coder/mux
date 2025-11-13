@@ -25,7 +25,7 @@
       "expo-secure-store"
     ],
     "ios": {
-      "bundleIdentifier": "com.anonymous.cmux-mobile"
+      "bundleIdentifier": "com.coder.cmux-mobile"
     }
   }
 }

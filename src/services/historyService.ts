@@ -247,7 +247,10 @@ export class HistoryService {
    * Truncate history after a specific message ID
    * Removes the message with the given ID and all subsequent messages
    */
-  async truncateAfterMessage(workspaceId: string, messageId: string): Promise<Result<number[], string>> {
+  async truncateAfterMessage(
+    workspaceId: string,
+    messageId: string
+  ): Promise<Result<number[], string>> {
     return this.fileLocks.withLock(workspaceId, async () => {
       try {
         const historyResult = await this.getHistory(workspaceId);
@@ -264,7 +267,7 @@ export class HistoryService {
 
         // Keep only messages before the target message
         const truncatedMessages = messages.slice(0, messageIndex);
-        
+
         // Collect historySequence numbers of deleted messages (everything from messageIndex onwards)
         const deletedSequences = messages
           .slice(messageIndex)

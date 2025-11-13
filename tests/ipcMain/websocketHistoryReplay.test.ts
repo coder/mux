@@ -6,11 +6,11 @@ import type { CmuxMessage } from "../../src/types/message";
 
 /**
  * Integration test for WebSocket history replay bug
- * 
+ *
  * Bug: When a new WebSocket client subscribes to a workspace, the history replay
  * broadcasts to ALL connected clients subscribed to that workspace, not just the
  * newly connected one.
- * 
+ *
  * This test simulates multiple clients by tracking events sent to each "client"
  * through separate subscription handlers.
  */
@@ -18,11 +18,18 @@ import type { CmuxMessage } from "../../src/types/message";
 describe("WebSocket history replay", () => {
   /**
    * NOTE: The Electron IPC system uses broadcast behavior by design (single renderer client).
-   * The WebSocket server implements targeted history replay using the getHistory IPC handler.
-   * This test verifies the getHistory handler works correctly for WebSocket scenarios.
-   * 
-   * The actual WebSocket broadcast fix is in src/main-server.ts:240-259 where it calls
-   * getHistory and sends directly to the subscribing WebSocket client instead of broadcasting.
+   * The WebSocket server implements targeted history replay by temporarily intercepting
+   * events during replay and sending them only to the subscribing WebSocket client.
+   *
+   * The actual WebSocket fix is in src/main-server.ts:247-302 where it:
+   * 1. Adds a temporary listener to capture replay events
+   * 2. Triggers the full workspace:chat:subscribe handler
+   * 3. Collects all events (including history, active streams, partial, init, caught-up)
+   * 4. Sends events directly to the subscribing WebSocket client
+   * 5. Removes the temporary listener
+   *
+   * This test is skipped because the mock IPC environment doesn't simulate the WebSocket
+   * layer. The fix is verified manually with real WebSocket clients.
    */
   test.skip("should only send history to newly subscribing client, not all clients", async () => {
     // This test is skipped because the mock IPC environment uses broadcast behavior by design.
@@ -33,7 +40,7 @@ describe("WebSocket history replay", () => {
   test("getHistory IPC handler should return history without broadcasting", async () => {
     // Create test environment
     const env = await createTestEnvironment();
-    
+
     try {
       // Create temporary git repo for testing
       const { createTempGitRepo, cleanupTempGitRepo } = await import("./helpers");
@@ -43,7 +50,7 @@ describe("WebSocket history replay", () => {
         // Create workspace
         const branchName = generateBranchName("ws-history-ipc-test");
         const createResult = await createWorkspace(env.mockIpcRenderer, tempGitRepo, branchName);
-        
+
         if (!createResult.success) {
           throw new Error(`Workspace creation failed: ${createResult.error}`);
         }
@@ -77,7 +84,9 @@ describe("WebSocket history replay", () => {
         // CRITICAL ASSERTION: No events should have been broadcast
         // (getHistory should not trigger any webContents.send calls)
         expect(env.sentEvents.length).toBe(0);
-        console.log(`✓ getHistory did not broadcast any events (expected 0, got ${env.sentEvents.length})`);
+        console.log(
+          `✓ getHistory did not broadcast any events (expected 0, got ${env.sentEvents.length})`
+        );
 
         await cleanupTempGitRepo(tempGitRepo);
       } catch (error) {

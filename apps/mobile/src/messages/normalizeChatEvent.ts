@@ -1,7 +1,7 @@
 import type { DisplayedMessage, WorkspaceChatEvent } from "../types";
-import type { CmuxMessage, CmuxTextPart, CmuxReasoningPart, CmuxImagePart } from "@shared/types/message.ts";
-import type { DynamicToolPart } from "@shared/types/toolParts.ts";
-import { createChatEventProcessor, type ChatEventProcessor } from "@shared/utils/messages/ChatEventProcessor.ts";
+import type { CmuxMessage, CmuxTextPart, CmuxImagePart } from "@shared/types/message";
+import type { DynamicToolPart } from "@shared/types/toolParts";
+import { createChatEventProcessor } from "@shared/utils/messages/ChatEventProcessor";
 
 interface CmuxMessageLike {
   id?: string;
@@ -94,7 +94,7 @@ function buildDisplayedMessagesFromCmux(message: CmuxMessageLike): DisplayedMess
   const historySequence = getMetadataNumber(metadata, "historySequence") ?? Date.now();
   const timestamp = getMetadataNumber(metadata, "createdAt") ?? getMetadataNumber(metadata, "timestamp");
   const model = typeof metadata?.model === "string" ? metadata.model : undefined;
-  
+
   const cmuxMessage: CmuxMessage = {
     id: message.id ?? `msg-${historySequence}`,
     role: (typeof message.role === "string" ? message.role : "assistant") as "user" | "assistant",
@@ -222,7 +222,7 @@ function transformCmuxToDisplayed(message: CmuxMessage): DisplayedMessage[] {
       } else if (part.type === "dynamic-tool") {
         const toolPart = part as DynamicToolPart;
         let status: "pending" | "executing" | "completed" | "failed" | "interrupted";
-        
+
         if (toolPart.state === "output-available") {
           status = hasFailureResult(toolPart.output) ? "failed" : "completed";
         } else if (toolPart.state === "input-available" && message.metadata?.partial) {
@@ -272,7 +272,7 @@ function transformCmuxToDisplayed(message: CmuxMessage): DisplayedMessage[] {
 export function createChatEventExpander(): ChatEventExpander {
   const processor = createChatEventProcessor();
   const unsupportedTypesLogged = new Set<string>();
-  
+
   // Track active streams for real-time emission
   const activeStreams = new Set<string>();
 
@@ -294,7 +294,7 @@ export function createChatEventExpander(): ChatEventExpander {
       },
     ];
   };
-  
+
   /**
    * Emit partial messages for active stream.
    * Called during streaming to show real-time updates.
@@ -304,9 +304,9 @@ export function createChatEventExpander(): ChatEventExpander {
     if (!message) {
       return [];
     }
-    
+
     const displayed = transformCmuxToDisplayed(message);
-    
+
     // Mark displayed parts as streaming (except completed/failed tools)
     displayed.forEach((msg) => {
       // Don't mark completed or failed tools as streaming
@@ -317,7 +317,7 @@ export function createChatEventExpander(): ChatEventExpander {
           return;
         }
       }
-      
+
       if ('isStreaming' in msg) {
         (msg as any).isStreaming = true;
       }
@@ -325,7 +325,7 @@ export function createChatEventExpander(): ChatEventExpander {
         (msg as any).isPartial = true;
       }
     });
-    
+
     return displayed;
   };
 
@@ -371,28 +371,28 @@ export function createChatEventExpander(): ChatEventExpander {
         activeStreams.add(messageId);
         return emitPartialMessages(messageId);
       }
-      
+
       // Stream delta: emit partial message with accumulated content
       if (type === "stream-delta") {
         processor.handleEvent(payload as WorkspaceChatEvent);
         const messageId = (payload as { messageId: string }).messageId;
         return emitPartialMessages(messageId);
       }
-      
+
       // Reasoning delta: emit partial reasoning message
       if (type === "reasoning-delta") {
         processor.handleEvent(payload as WorkspaceChatEvent);
         const messageId = (payload as { messageId: string }).messageId;
         return emitPartialMessages(messageId);
       }
-      
+
       // Tool call events: emit partial messages to show tool progress
       if (type === "tool-call-start" || type === "tool-call-delta" || type === "tool-call-end") {
         processor.handleEvent(payload as WorkspaceChatEvent);
         const messageId = (payload as { messageId: string }).messageId;
         return emitPartialMessages(messageId);
       }
-      
+
       // Reasoning end: just process, next delta will emit
       if (type === "reasoning-end") {
         processor.handleEvent(payload as WorkspaceChatEvent);
@@ -404,7 +404,7 @@ export function createChatEventExpander(): ChatEventExpander {
         processor.handleEvent(payload as WorkspaceChatEvent);
         const messageId = (payload as { messageId: string }).messageId;
         activeStreams.delete(messageId);
-        
+
         const message = processor.getMessageById(messageId);
         if (message) {
           const displayed = transformCmuxToDisplayed(message);
@@ -421,7 +421,7 @@ export function createChatEventExpander(): ChatEventExpander {
         }
         return [];
       }
-      
+
       // Stream abort: emit partial message marked as interrupted
       if (type === "stream-abort") {
         processor.handleEvent(payload as WorkspaceChatEvent);

@@ -30,10 +30,11 @@ export function createAuthMiddleware(config: AuthConfig) {
     // Skip health check and static assets by convention
     if (req.path === "/health" || req.path === "/version") return next();
 
-    const header = req.headers["authorization"]; // e.g. "Bearer <token>"
-    const candidate = typeof header === "string" && header.toLowerCase().startsWith("bearer ")
-      ? header.slice("bearer ".length)
-      : undefined;
+    const header = req.headers.authorization; // e.g. "Bearer <token>"
+    const candidate =
+      typeof header === "string" && header.toLowerCase().startsWith("bearer ")
+        ? header.slice("bearer ".length)
+        : undefined;
 
     if (candidate && safeEq(candidate.trim(), token)) return next();
 
@@ -52,7 +53,7 @@ export function extractWsToken(req: IncomingMessage): string | null {
   }
 
   // 2) Authorization header
-  const header = req.headers["authorization"];
+  const header = req.headers.authorization;
   if (typeof header === "string" && header.toLowerCase().startsWith("bearer ")) {
     const v = header.slice("bearer ".length).trim();
     if (v.length > 0) return v;
@@ -61,7 +62,10 @@ export function extractWsToken(req: IncomingMessage): string | null {
   // 3) Sec-WebSocket-Protocol: use first comma-separated value as token
   const proto = req.headers["sec-websocket-protocol"];
   if (typeof proto === "string") {
-    const first = proto.split(",").map((s) => s.trim()).find((s) => s.length > 0);
+    const first = proto
+      .split(",")
+      .map((s) => s.trim())
+      .find((s) => s.length > 0);
     if (first) return first;
   }
 

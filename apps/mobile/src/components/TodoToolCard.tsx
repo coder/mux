@@ -1,6 +1,6 @@
 import type { JSX } from "react";
 import { useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Surface } from "./Surface";
 import { ThemedText } from "./ThemedText";

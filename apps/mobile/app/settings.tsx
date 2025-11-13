@@ -7,8 +7,8 @@ import { useTheme } from "../src/theme";
 import { Surface } from "../src/components/Surface";
 import { ThemedText } from "../src/components/ThemedText";
 
-const STORAGE_KEY_BASE_URL = "cmux.app-settings.baseUrl";
-const STORAGE_KEY_AUTH_TOKEN = "cmux.app-settings.authToken";
+const STORAGE_KEY_BASE_URL = "com.coder.cmux.app-settings.baseUrl";
+const STORAGE_KEY_AUTH_TOKEN = "com.coder.cmux.app-settings.authToken";
 
 function getDefaultBaseUrl(): string {
   const extra = (Constants.expoConfig?.extra as any)?.cmux;

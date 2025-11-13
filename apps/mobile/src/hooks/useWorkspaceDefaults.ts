@@ -10,18 +10,12 @@ export interface GlobalDefaults {
 }
 
 // New storage keys for global defaults (new tier 2 in the fallback)
-const STORAGE_KEY_MODE = "cmux.defaults.mode";
-const STORAGE_KEY_REASONING = "cmux.defaults.reasoning";
-const STORAGE_KEY_MODEL = "cmux.defaults.model";
-const STORAGE_KEY_1M_CONTEXT = "cmux.defaults.use1MContext";
+const STORAGE_KEY_MODE = "com.coder.cmux.defaults.mode";
+const STORAGE_KEY_REASONING = "com.coder.cmux.defaults.reasoning";
+const STORAGE_KEY_MODEL = "com.coder.cmux.defaults.model";
+const STORAGE_KEY_1M_CONTEXT = "com.coder.cmux.defaults.use1MContext";
 
-// Legacy keys for migration
-const LEGACY_KEY_MODE = "cmux.workspace-defaults.mode";
-const LEGACY_KEY_REASONING = "cmux.workspace-defaults.reasoning";
-const LEGACY_KEY_MODEL = "cmux.workspace-defaults.model";
-const LEGACY_KEY_1M_CONTEXT = "cmux.workspace-defaults.use1MContext";
-
-const DEFAULT_MODE: WorkspaceMode = "plan";
+const DEFAULT_MODE: WorkspaceMode = "exec";
 const DEFAULT_REASONING: ThinkingLevel = "off";
 const DEFAULT_MODEL = "anthropic:claude-sonnet-4-5";
 const DEFAULT_1M_CONTEXT = false;
@@ -31,14 +25,6 @@ async function readGlobalMode(): Promise<WorkspaceMode> {
     // Try new key first
     let value = await SecureStore.getItemAsync(STORAGE_KEY_MODE);
     if (value === "plan" || value === "exec") {
-      return value;
-    }
-
-    // Try legacy key and migrate
-    value = await SecureStore.getItemAsync(LEGACY_KEY_MODE);
-    if (value === "plan" || value === "exec") {
-      // Migrate to new key
-      await SecureStore.setItemAsync(STORAGE_KEY_MODE, value);
       return value;
     }
 
@@ -69,13 +55,6 @@ async function readGlobalReasoning(): Promise<ThinkingLevel> {
       return value;
     }
 
-    // Try legacy key and migrate
-    value = await SecureStore.getItemAsync(LEGACY_KEY_REASONING);
-    if (value === "off" || value === "low" || value === "medium" || value === "high") {
-      await SecureStore.setItemAsync(STORAGE_KEY_REASONING, value);
-      return value;
-    }
-
     return DEFAULT_REASONING;
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
@@ -101,13 +80,6 @@ async function readGlobalModel(): Promise<string> {
     let value = await SecureStore.getItemAsync(STORAGE_KEY_MODEL);
     if (value) return value;
 
-    // Try legacy key and migrate
-    value = await SecureStore.getItemAsync(LEGACY_KEY_MODEL);
-    if (value) {
-      await SecureStore.setItemAsync(STORAGE_KEY_MODEL, value);
-      return value;
-    }
-
     return DEFAULT_MODEL;
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
@@ -132,13 +104,6 @@ async function readGlobal1MContext(): Promise<boolean> {
     // Try new key first
     let value = await SecureStore.getItemAsync(STORAGE_KEY_1M_CONTEXT);
     if (value !== null) {
-      return value === "true";
-    }
-
-    // Try legacy key and migrate
-    value = await SecureStore.getItemAsync(LEGACY_KEY_1M_CONTEXT);
-    if (value !== null) {
-      await SecureStore.setItemAsync(STORAGE_KEY_1M_CONTEXT, value);
       return value === "true";
     }
 
@@ -196,12 +161,12 @@ export function useWorkspaceDefaults(): {
     ]).then(([mode, reasoning, model, context1M]) => {
       if (!cancelled) {
         setDefaultModeState(mode);
-          setDefaultReasoningLevelState(reasoning);
-          setDefaultModelState(model);
-          setUse1MContextState(context1M);
-          setIsLoading(false);
-        }
+        setDefaultReasoningLevelState(reasoning);
+        setDefaultModelState(model);
+        setUse1MContextState(context1M);
+        setIsLoading(false);
       }
+    }
     );
     return () => {
       cancelled = true;

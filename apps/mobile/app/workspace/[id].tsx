@@ -42,13 +42,13 @@ function WorkspaceContent(): JSX.Element {
     // Only show todo item if there are todos
     ...(hasTodos
       ? [
-          {
-            id: "todo",
-            label: "Todo List",
-            icon: "list-outline" as const,
-            onPress: toggleTodoCard,
-          },
-        ]
+        {
+          id: "todo",
+          label: "Todo List",
+          icon: "list-outline" as const,
+          onPress: toggleTodoCard,
+        },
+      ]
       : []),
     {
       id: "settings",

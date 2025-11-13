@@ -1,4 +1,3 @@
-import type { JSX } from "react";
 import { memo, useCallback, useEffect, useRef } from "react";
 import {
   Animated,
@@ -88,7 +87,7 @@ export const WorkspaceActionSheet = memo<WorkspaceActionSheetProps>(
           <Animated.View
             style={[
               styles.sheetWrapper,
-              { 
+              {
                 transform: [{ translateY: slideAnim }],
                 paddingBottom: insets.bottom || 8,
               }
