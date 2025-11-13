@@ -54,9 +54,9 @@ export function ProposePlanCard({
     paddingVertical: spacing.xs,
     paddingHorizontal: spacing.md,
     borderRadius: theme.radii.sm,
-    backgroundColor: active ? "rgba(139, 92, 246, 0.2)" : "rgba(139, 92, 246, 0.1)",
+    backgroundColor: active ? "rgba(31, 107, 184, 0.2)" : theme.colors.planModeAlpha,
     borderWidth: 1,
-    borderColor: active ? "#8b5cf6" : "rgba(139, 92, 246, 0.3)",
+    borderColor: active ? theme.colors.planMode : "rgba(31, 107, 184, 0.3)",
   });
 
   return (
@@ -65,9 +65,9 @@ export function ProposePlanCard({
       style={{
         padding: spacing.md,
         marginBottom: spacing.md,
-        backgroundColor: "rgba(139, 92, 246, 0.08)",
+        backgroundColor: "rgba(31, 107, 184, 0.08)",
         borderLeftWidth: 3,
-        borderLeftColor: "#8b5cf6",
+        borderLeftColor: theme.colors.planMode,
       }}
       accessibilityRole="summary"
     >
@@ -81,7 +81,7 @@ export function ProposePlanCard({
         }}
       >
         <Text style={{ fontSize: 20 }}>📋</Text>
-        <ThemedText variant="titleSmall" weight="bold" style={{ flex: 1, color: "#a78bfa" }}>
+        <ThemedText variant="titleSmall" weight="bold" style={{ flex: 1, color: theme.colors.planModeLight }}>
           {title}
         </ThemedText>
       </View>
@@ -96,19 +96,19 @@ export function ProposePlanCard({
         }}
       >
         <Pressable onPress={handleCopy} style={buttonStyle(copied)}>
-          <ThemedText variant="caption" weight="medium" style={{ color: "#a78bfa" }}>
+          <ThemedText variant="caption" weight="medium" style={{ color: theme.colors.planModeLight }}>
             {copied ? "✓ Copied" : "Copy"}
           </ThemedText>
         </Pressable>
         <Pressable onPress={() => setShowRaw(!showRaw)} style={buttonStyle(showRaw)}>
-          <ThemedText variant="caption" weight="medium" style={{ color: "#a78bfa" }}>
+          <ThemedText variant="caption" weight="medium" style={{ color: theme.colors.planModeLight }}>
             {showRaw ? "Show Markdown" : "Show Text"}
           </ThemedText>
         </Pressable>
         {workspaceId && onStartHere && (
           <Pressable onPress={() => setShowModal(true)} style={buttonStyle(false)}>
-            <ThemedText variant="caption" weight="medium" style={{ color: "#a78bfa" }}>
-              📦 Start Here
+            <ThemedText variant="caption" weight="medium" style={{ color: theme.colors.planModeLight }}>
+              Start Here
             </ThemedText>
           </Pressable>
         )}
@@ -146,14 +146,14 @@ export function ProposePlanCard({
                   lineHeight: 20,
                 },
                 heading1: {
-                  color: "#a78bfa",
+                  color: theme.colors.planModeLight,
                   fontSize: 18,
                   fontWeight: "bold",
                   marginTop: spacing.sm,
                   marginBottom: spacing.xs,
                 },
                 heading2: {
-                  color: "#a78bfa",
+                  color: theme.colors.planModeLight,
                   fontSize: 16,
                   fontWeight: "600",
                   marginTop: spacing.sm,
@@ -171,8 +171,8 @@ export function ProposePlanCard({
                   marginBottom: spacing.sm,
                 },
                 code_inline: {
-                  backgroundColor: "rgba(139, 92, 246, 0.15)",
-                  color: "#c4b5fd",
+                  backgroundColor: "rgba(31, 107, 184, 0.15)",
+                  color: theme.colors.planModeLight,
                   fontSize: 12,
                   paddingHorizontal: 4,
                   paddingVertical: 2,

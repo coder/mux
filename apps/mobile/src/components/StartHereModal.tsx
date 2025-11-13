@@ -65,7 +65,7 @@ export function StartHereModal({
                 flex: 1,
                 padding: theme.spacing.md,
                 borderRadius: theme.radii.md,
-                backgroundColor: "#8b5cf6",
+                backgroundColor: theme.colors.planMode,
                 alignItems: "center",
               }}
             >

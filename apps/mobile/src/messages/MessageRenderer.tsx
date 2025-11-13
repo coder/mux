@@ -224,7 +224,7 @@ function AssistantMessageCard({
                 gap: 4,
                 paddingHorizontal: theme.spacing.sm,
                 paddingVertical: theme.spacing.xs,
-                backgroundColor: "rgba(139, 92, 246, 0.15)",
+                backgroundColor: "rgba(31, 107, 184, 0.15)",
                 borderRadius: theme.radii.sm,
               }}
             >
@@ -232,7 +232,7 @@ function AssistantMessageCard({
               <ThemedText
                 variant="caption"
                 weight="semibold"
-                style={{ color: "#a78bfa", textTransform: "uppercase" }}
+                style={{ color: theme.colors.planModeLight, textTransform: "uppercase" }}
               >
                 Compacted
               </ThemedText>
@@ -488,13 +488,13 @@ function ReasoningMessageCard({
       variant="plain"
       style={{
         borderLeftWidth: 3,
-        borderLeftColor: theme.colors.accent,
+        borderLeftColor: theme.colors.thinkingMode,
         padding: theme.spacing.md,
         marginBottom: theme.spacing.md,
       }}
     >
       <Pressable onPress={() => setIsExpanded(!isExpanded)}>
-        <ThemedText variant="label" style={{ color: theme.colors.accent }}>
+        <ThemedText variant="label" style={{ color: theme.colors.thinkingMode }}>
           Thinking
         </ThemedText>
       </Pressable>
