@@ -131,7 +131,7 @@ function AppInner() {
       // Update window title with workspace name
       const metadata = workspaceMetadata.get(selectedWorkspace.workspaceId);
       const workspaceName = metadata?.name ?? selectedWorkspace.workspaceId;
-      const title = `${workspaceName} - ${selectedWorkspace.projectName} - cmux`;
+      const title = `${workspaceName} - ${selectedWorkspace.projectName} - mux`;
       void window.api.window.setTitle(title);
     } else {
       // Clear hash when no workspace selected

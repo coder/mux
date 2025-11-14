@@ -18,12 +18,12 @@ describe("PlatformPaths", () => {
 
   describe("parse", () => {
     test("parses absolute path on current platform", () => {
-      const testPath = path.join("/", "home", "user", "projects", "cmux");
+      const testPath = path.join("/", "home", "user", "projects", "mux");
       const result = PlatformPaths.parse(testPath);
       expect(result.segments).toContain("home");
       expect(result.segments).toContain("user");
       expect(result.segments).toContain("projects");
-      expect(result.basename).toBe("cmux");
+      expect(result.basename).toBe("mux");
     });
 
     test("parses relative path", () => {
@@ -40,11 +40,11 @@ describe("PlatformPaths", () => {
 
   describe("abbreviate", () => {
     test("abbreviates path", () => {
-      const testPath = path.join("/", "home", "user", "Projects", "coder", "cmux");
+      const testPath = path.join("/", "home", "user", "Projects", "coder", "mux");
       const result = PlatformPaths.abbreviate(testPath);
 
       // Should end with the full basename
-      expect(result.endsWith("cmux")).toBe(true);
+      expect(result.endsWith("mux")).toBe(true);
 
       // Should be shorter than original (segments abbreviated)
       expect(result.length).toBeLessThan(testPath.length);
@@ -64,9 +64,9 @@ describe("PlatformPaths", () => {
 
   describe("splitAbbreviated", () => {
     test("splits abbreviated path", () => {
-      const testPath = path.join("/", "h", "u", "P", "c", "cmux");
+      const testPath = path.join("/", "h", "u", "P", "c", "mux");
       const result = PlatformPaths.splitAbbreviated(testPath);
-      expect(result.basename).toBe("cmux");
+      expect(result.basename).toBe("mux");
       expect(result.dirPath.endsWith(path.sep)).toBe(true);
     });
 
@@ -80,12 +80,12 @@ describe("PlatformPaths", () => {
   describe("formatHome", () => {
     test("replaces home directory with tilde on Unix", () => {
       const home = os.homedir();
-      const testPath = path.join(home, "projects", "cmux");
+      const testPath = path.join(home, "projects", "mux");
       const result = PlatformPaths.formatHome(testPath);
 
       // On Unix-like systems, should use tilde
       if (process.platform !== "win32") {
-        expect(result).toBe("~/projects/cmux");
+        expect(result).toBe("~/projects/mux");
       } else {
         // On Windows, should keep full path
         expect(result).toContain(home);
@@ -107,8 +107,8 @@ describe("PlatformPaths", () => {
     test("expands tilde with path", () => {
       const home = os.homedir();
       const sep = path.sep;
-      const result = PlatformPaths.expandHome(`~${sep}projects${sep}cmux`);
-      expect(result).toBe(path.join(home, "projects", "cmux"));
+      const result = PlatformPaths.expandHome(`~${sep}projects${sep}mux`);
+      expect(result).toBe(path.join(home, "projects", "mux"));
     });
 
     test("leaves absolute paths unchanged", () => {
@@ -123,12 +123,12 @@ describe("PlatformPaths", () => {
 
   describe("getProjectName", () => {
     test("extracts project name from path", () => {
-      const testPath = path.join("/", "home", "user", "projects", "cmux");
-      expect(PlatformPaths.getProjectName(testPath)).toBe("cmux");
+      const testPath = path.join("/", "home", "user", "projects", "mux");
+      expect(PlatformPaths.getProjectName(testPath)).toBe("mux");
     });
 
     test("handles relative paths", () => {
-      expect(PlatformPaths.getProjectName("projects/cmux")).toBe("cmux");
+      expect(PlatformPaths.getProjectName("projects/mux")).toBe("mux");
     });
 
     test("returns 'unknown' for empty path", () => {

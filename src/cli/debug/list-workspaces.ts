@@ -32,7 +32,7 @@ export function listWorkspacesCommand() {
   console.log("\n=== Testing findWorkspace ===\n");
 
   // Test finding specific workspaces by ID
-  const testCases = ["cmux-colors", "cmux-main", "cmux-fix", "cmux-markdown"];
+  const testCases = ["mux-colors", "mux-main", "mux-fix", "mux-markdown"];
 
   for (const workspaceId of testCases) {
     const result = defaultConfig.findWorkspace(workspaceId);

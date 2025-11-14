@@ -45,7 +45,7 @@ describe("pathUtils", () => {
 
     beforeEach(() => {
       // Create a temporary directory for testing
-      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmux-path-test-"));
+      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-path-test-"));
     });
 
     afterEach(() => {
@@ -65,7 +65,7 @@ describe("pathUtils", () => {
 
     it("should expand tilde and validate", async () => {
       // Create a test directory in home with .git
-      const testDir = path.join(os.homedir(), `cmux-test-git-${Date.now()}`);
+      const testDir = path.join(os.homedir(), `mux-test-git-${Date.now()}`);
       // eslint-disable-next-line local/no-sync-fs-methods -- Test setup only
       fs.mkdirSync(testDir, { recursive: true });
       // eslint-disable-next-line local/no-sync-fs-methods -- Test setup only
@@ -81,7 +81,7 @@ describe("pathUtils", () => {
     });
 
     it("should return error for non-existent path", async () => {
-      const nonExistentPath = "/this/path/definitely/does/not/exist/cmux-test-12345";
+      const nonExistentPath = "/this/path/definitely/does/not/exist/mux-test-12345";
       const result = await validateProjectPath(nonExistentPath);
       expect(result.valid).toBe(false);
       expect(result.error).toContain("does not exist");
@@ -98,7 +98,7 @@ describe("pathUtils", () => {
     });
 
     it("should handle tilde path to non-existent directory", async () => {
-      const nonExistentTildePath = "~/this-directory-should-not-exist-cmux-test-12345";
+      const nonExistentTildePath = "~/this-directory-should-not-exist-mux-test-12345";
       const result = await validateProjectPath(nonExistentTildePath);
       expect(result.valid).toBe(false);
       expect(result.error).toContain("does not exist");

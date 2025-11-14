@@ -69,8 +69,8 @@ export function CreationControls(props: CreationControlsProps) {
           <Tooltip className="tooltip" align="center" width="wide">
             <strong>Runtime:</strong>
             <br />
-            • Local: git worktree in ~/.cmux/src
-            <br />• SSH: remote clone in ~/cmux on SSH host
+            • Local: git worktree in ~/.mux/src
+            <br />• SSH: remote clone in ~/mux on SSH host
           </Tooltip>
         </TooltipWrapper>
       </div>

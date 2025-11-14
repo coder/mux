@@ -351,7 +351,7 @@ export class StreamingMessageAggregator {
     // Detect if this stream is compacting by checking if last user message is a compaction-request
     const messages = this.getAllMessages();
     const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
-    const isCompacting = lastUserMsg?.metadata?.cmuxMetadata?.type === "compaction-request";
+    const isCompacting = lastUserMsg?.metadata?.muxMetadata?.type === "compaction-request";
 
     const context: StreamingContext = {
       startTime: Date.now(),
@@ -755,12 +755,12 @@ export class StreamingMessageAggregator {
             }));
 
           // Check if this is a compaction request message
-          const cmuxMeta = message.metadata?.cmuxMetadata;
+          const muxMeta = message.metadata?.muxMetadata;
           const compactionRequest =
-            cmuxMeta?.type === "compaction-request"
+            muxMeta?.type === "compaction-request"
               ? {
-                  rawCommand: cmuxMeta.rawCommand,
-                  parsed: cmuxMeta.parsed,
+                  rawCommand: muxMeta.rawCommand,
+                  parsed: muxMeta.parsed,
                 }
               : undefined;
 

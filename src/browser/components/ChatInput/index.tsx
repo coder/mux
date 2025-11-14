@@ -665,7 +665,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
 
         // When editing a /compact command, regenerate the actual summarization request
         let actualMessageText = messageText;
-        let cmuxMetadata: MuxFrontendMetadata | undefined;
+        let muxMetadata: MuxFrontendMetadata | undefined;
         let compactionOptions = {};
 
         if (editingMessage && messageText.startsWith("/")) {
@@ -683,7 +683,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
               sendMessageOptions,
             });
             actualMessageText = regeneratedText;
-            cmuxMetadata = metadata;
+            muxMetadata = metadata;
             compactionOptions = sendOptions;
           }
         }
@@ -705,7 +705,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             ...compactionOptions,
             editMessageId: editingMessage?.id,
             imageParts: imageParts.length > 0 ? imageParts : undefined,
-            cmuxMetadata,
+            muxMetadata,
           }
         );
 

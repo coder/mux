@@ -194,7 +194,7 @@ async function main(): Promise<void> {
 
   // Log model selection for terminal-bench verification
   if (!suppressHumanOutput) {
-    console.error(`[cmux-cli] Using model: ${model}`);
+    console.error(`[mux-cli] Using model: ${model}`);
   }
 
   const humanStream = process.stdout;

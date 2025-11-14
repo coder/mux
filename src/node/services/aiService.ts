@@ -252,7 +252,7 @@ export class AIService extends EventEmitter {
    */
   private async createModel(
     modelString: string,
-    cmuxProviderOptions?: MuxProviderOptions
+    muxProviderOptions?: MuxProviderOptions
   ): Promise<Result<LanguageModel, SendMessageError>> {
     try {
       // Parse model string (format: "provider:model-id")
@@ -296,7 +296,7 @@ export class AIService extends EventEmitter {
         }
 
         // Add 1M context beta header if requested
-        const use1MContext = cmuxProviderOptions?.anthropic?.use1MContext;
+        const use1MContext = muxProviderOptions?.anthropic?.use1MContext;
         const existingHeaders = providerConfig.headers as Record<string, string> | undefined;
         const headers =
           use1MContext && existingHeaders
@@ -325,8 +325,8 @@ export class AIService extends EventEmitter {
         // This is a temporary override until @ai-sdk/openai supports passing
         // truncation via providerOptions. Safe because it only targets the
         // OpenAI Responses endpoint and leaves other providers untouched.
-        // Can be disabled via cmuxProviderOptions for testing purposes.
-        const disableAutoTruncation = cmuxProviderOptions?.openai?.disableAutoTruncation ?? false;
+        // Can be disabled via muxProviderOptions for testing purposes.
+        const disableAutoTruncation = muxProviderOptions?.openai?.disableAutoTruncation ?? false;
         const fetchWithOpenAITruncation = Object.assign(
           async (
             input: Parameters<typeof fetch>[0],
@@ -501,7 +501,7 @@ export class AIService extends EventEmitter {
    * @param abortSignal Optional signal to abort the stream
    * @param additionalSystemInstructions Optional additional system instructions to append
    * @param maxOutputTokens Optional maximum tokens for model output
-   * @param cmuxProviderOptions Optional provider-specific options
+   * @param muxProviderOptions Optional provider-specific options
    * @param mode Optional mode name - affects system message via Mode: sections in AGENTS.md
    * @returns Promise that resolves when streaming completes or fails
    */
@@ -514,7 +514,7 @@ export class AIService extends EventEmitter {
     abortSignal?: AbortSignal,
     additionalSystemInstructions?: string,
     maxOutputTokens?: number,
-    cmuxProviderOptions?: MuxProviderOptions,
+    muxProviderOptions?: MuxProviderOptions,
     mode?: string
   ): Promise<Result<void, SendMessageError>> {
     try {
@@ -533,7 +533,7 @@ export class AIService extends EventEmitter {
       await this.partialService.commitToHistory(workspaceId);
 
       // Create model instance with early API key validation
-      const modelResult = await this.createModel(modelString, cmuxProviderOptions);
+      const modelResult = await this.createModel(modelString, muxProviderOptions);
       if (!modelResult.success) {
         return Err(modelResult.error);
       }
@@ -711,10 +711,10 @@ export class AIService extends EventEmitter {
 
       const forceContextLimitError =
         modelString.startsWith("openai:") &&
-        cmuxProviderOptions?.openai?.forceContextLimitError === true;
+        muxProviderOptions?.openai?.forceContextLimitError === true;
       const simulateToolPolicyNoop =
         modelString.startsWith("openai:") &&
-        cmuxProviderOptions?.openai?.simulateToolPolicyNoop === true;
+        muxProviderOptions?.openai?.simulateToolPolicyNoop === true;
 
       if (forceContextLimitError) {
         const errorMessage =

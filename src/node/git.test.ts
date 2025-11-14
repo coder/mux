@@ -17,7 +17,7 @@ describe("createWorktree", () => {
 
   beforeAll(async () => {
     // Create a temporary git repository for testing
-    tempGitRepo = await fs.mkdtemp(path.join(os.tmpdir(), "cmux-git-test-"));
+    tempGitRepo = await fs.mkdtemp(path.join(os.tmpdir(), "mux-git-test-"));
     await execAsync(`git init`, { cwd: tempGitRepo });
     await execAsync(`git config user.email "test@example.com"`, { cwd: tempGitRepo });
     await execAsync(`git config user.name "Test User"`, { cwd: tempGitRepo });

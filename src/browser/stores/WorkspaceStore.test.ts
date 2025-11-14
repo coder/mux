@@ -256,7 +256,7 @@ describe("WorkspaceStore", () => {
         canInterrupt: false,
         isCompacting: false,
         loading: true, // loading because not caught up
-        cmuxMessages: [],
+        muxMessages: [],
         currentModel: null,
       });
       // Should have recency based on createdAt

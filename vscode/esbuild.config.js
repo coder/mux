@@ -1,14 +1,14 @@
 const esbuild = require("esbuild");
 const path = require("path");
 
-// Plugin to resolve cmux/* imports from parent directory
+// Plugin to resolve mux/* imports from parent directory
 // and resolve npm dependencies from main app's node_modules
-const cmuxResolverPlugin = {
-  name: "cmux-resolver",
+const muxResolverPlugin = {
+  name: "mux-resolver",
   setup(build) {
-    // Resolve cmux/* imports to parent src directory
-    build.onResolve({ filter: /^cmux\// }, (args) => {
-      const subpath = args.path.replace(/^cmux\//, "");
+    // Resolve mux/* imports to parent src directory
+    build.onResolve({ filter: /^mux\// }, (args) => {
+      const subpath = args.path.replace(/^mux\//, "");
       return {
         path: path.resolve(__dirname, "..", "src", subpath + ".ts"),
       };
@@ -27,7 +27,7 @@ esbuild
     format: "cjs",
     minify: true,
     sourcemap: true,
-    plugins: [cmuxResolverPlugin],
+    plugins: [muxResolverPlugin],
     // Resolve @ alias from main app to relative paths
     alias: {
       "@": path.resolve(__dirname, "../src"),

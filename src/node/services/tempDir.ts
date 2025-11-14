@@ -9,7 +9,7 @@ import * as os from "os";
 export class DisposableTempDir implements Disposable {
   public readonly path: string;
 
-  constructor(prefix = "cmux-temp") {
+  constructor(prefix = "mux-temp") {
     // Create unique temp directory
     const id = Math.random().toString(16).substring(2, 10);
     this.path = path.join(os.tmpdir(), `${prefix}-${id}`);

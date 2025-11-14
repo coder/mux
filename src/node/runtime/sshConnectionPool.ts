@@ -31,7 +31,7 @@ import type { SSHRuntimeConfig } from "./SSHRuntime";
 export function getControlPath(config: SSHRuntimeConfig): string {
   const key = makeConnectionKey(config);
   const hash = hashKey(key);
-  return path.join(os.tmpdir(), `cmux-ssh-${hash}`);
+  return path.join(os.tmpdir(), `mux-ssh-${hash}`);
 }
 
 /**

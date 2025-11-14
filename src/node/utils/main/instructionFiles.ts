@@ -157,7 +157,7 @@ export async function readInstructionSetFromRuntime(
  * All found instruction sets are returned as separate segments.
  *
  * This allows for layered instructions where:
- * - Global instructions (~/.cmux/AGENTS.md) apply to all projects
+ * - Global instructions (~/.mux/AGENTS.md) apply to all projects
  * - Project instructions (workspace/AGENTS.md) add project-specific context
  *
  * @param directories - List of directories to search, in priority order

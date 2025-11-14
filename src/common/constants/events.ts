@@ -12,19 +12,19 @@ export const CUSTOM_EVENTS = {
    * Event to show a toast notification when thinking level changes
    * Detail: { workspaceId: string, level: ThinkingLevel }
    */
-  THINKING_LEVEL_TOAST: "cmux:thinkingLevelToast",
+  THINKING_LEVEL_TOAST: "mux:thinkingLevelToast",
 
   /**
    * Event to insert text into the chat input
    * Detail: { text: string }
    */
-  INSERT_TO_CHAT_INPUT: "cmux:insertToChatInput",
+  INSERT_TO_CHAT_INPUT: "mux:insertToChatInput",
 
   /**
    * Event to open the model selector
    * No detail
    */
-  OPEN_MODEL_SELECTOR: "cmux:openModelSelector",
+  OPEN_MODEL_SELECTOR: "mux:openModelSelector",
 
   /**
    * Event to trigger resume check for a workspace
@@ -37,24 +37,28 @@ export const CUSTOM_EVENTS = {
    *
    * useResumeManager handles this idempotently - safe to emit multiple times
    */
-  RESUME_CHECK_REQUESTED: "cmux:resumeCheckRequested",
+  RESUME_CHECK_REQUESTED: "mux:resumeCheckRequested",
 
   /**
    * Event to switch to a different workspace after fork
    * Detail: { workspaceId: string, projectPath: string, projectName: string, workspacePath: string, branch: string }
    */
-  WORKSPACE_FORK_SWITCH: "cmux:workspaceForkSwitch",
+  WORKSPACE_FORK_SWITCH: "mux:workspaceForkSwitch",
 
   /**
    * Event to execute a command from the command palette
    * Detail: { commandId: string }
    */
-  EXECUTE_COMMAND: "cmux:executeCommand",
+<<<<<<< HEAD
+  EXECUTE_COMMAND: "mux:executeCommand",
   /**
    * Event to enter the chat-based workspace creation experience.
    * Detail: { projectPath: string, startMessage?: string, model?: string, trunkBranch?: string, runtime?: string }
    */
-  START_WORKSPACE_CREATION: "cmux:startWorkspaceCreation",
+  START_WORKSPACE_CREATION: "mux:startWorkspaceCreation",
+=======
+  EXECUTE_COMMAND: "mux:executeCommand",
+>>>>>>> a3cb9358 (🤖 chore: rename cmux refs to mux)
 } as const;
 
 /**

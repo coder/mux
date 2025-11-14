@@ -188,7 +188,7 @@ export interface SendMessageOptions {
   maxOutputTokens?: number;
   providerOptions?: MuxProviderOptions;
   mode?: string; // Mode name - frontend narrows to specific values, backend accepts any string
-  cmuxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
+  muxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
 }
 
 // API method signatures (shared between main and preload)

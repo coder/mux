@@ -383,7 +383,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
                   <p className="mt-5 text-xs text-[#888]">
                     💡 Tip: Add a{" "}
                     <code className="rounded-[3px] bg-[#2d2d30] px-1.5 py-0.5 font-mono text-[11px] text-[#d7ba7d]">
-                      .cmux/init
+                      .mux/init
                     </code>{" "}
                     hook to your project to run setup commands
                     <br />
@@ -398,6 +398,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
                       msg.type !== "history-hidden" &&
                       msg.type !== "workspace-init" &&
                       msg.historyId === editCutoffHistoryId;
+
 
                     return (
                       <React.Fragment key={msg.id}>

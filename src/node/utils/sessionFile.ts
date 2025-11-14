@@ -10,7 +10,7 @@ import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks"
  * Provides consistent file locking, error handling, and path resolution.
  *
  * Used by PartialService, InitStateManager, and other services that need
- * to persist state to ~/.cmux/sessions/{workspaceId}/.
+ * to persist state to ~/.mux/sessions/{workspaceId}/.
  */
 export class SessionFileManager<T> {
   private readonly config: Config;

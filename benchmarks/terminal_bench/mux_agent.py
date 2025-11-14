@@ -17,12 +17,12 @@ from .mux_payload import build_app_archive, stage_payload
 
 class MuxAgent(AbstractInstalledAgent):
     """
-    Minimal Terminal-Bench adapter that installs cmux into the task container and
-    forwards the benchmark instruction to the cmux headless runner.
+    Minimal Terminal-Bench adapter that installs mux into the task container and
+    forwards the benchmark instruction to the mux headless runner.
     """
 
-    _ARCHIVE_NAME = "cmux-app.tar.gz"
-    _RUNNER_NAME = "cmux-run.sh"
+    _ARCHIVE_NAME = "mux-app.tar.gz"
+    _RUNNER_NAME = "mux-run.sh"
     _DEFAULT_TRUNK = "main"
     _DEFAULT_MODEL = "anthropic:claude-sonnet-4-5"
     _DEFAULT_PROJECT_CANDIDATES = "/workspace:/app:/workspaces:/root/project"
@@ -50,18 +50,18 @@ class MuxAgent(AbstractInstalledAgent):
     )
 
     _CONFIG_ENV_KEYS: Sequence[str] = (
-        "CMUX_AGENT_GIT_URL",
-        "CMUX_BUN_INSTALL_URL",
-        "CMUX_PROJECT_PATH",
-        "CMUX_PROJECT_CANDIDATES",
-        "CMUX_TRUNK",
-        "CMUX_MODEL",
-        "CMUX_TIMEOUT_MS",
-        "CMUX_THINKING_LEVEL",
-        "CMUX_CONFIG_ROOT",
-        "CMUX_APP_ROOT",
-        "CMUX_WORKSPACE_ID",
-        "CMUX_MODE",
+        "MUX_AGENT_GIT_URL",
+        "MUX_BUN_INSTALL_URL",
+        "MUX_PROJECT_PATH",
+        "MUX_PROJECT_CANDIDATES",
+        "MUX_TRUNK",
+        "MUX_MODEL",
+        "MUX_TIMEOUT_MS",
+        "MUX_THINKING_LEVEL",
+        "MUX_CONFIG_ROOT",
+        "MUX_APP_ROOT",
+        "MUX_WORKSPACE_ID",
+        "MUX_MODE",
     )
 
     def __init__(
@@ -72,18 +72,18 @@ class MuxAgent(AbstractInstalledAgent):
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
-        repo_root_env = os.environ.get("CMUX_AGENT_REPO_ROOT")
+        repo_root_env = os.environ.get("MUX_AGENT_REPO_ROOT")
         repo_root = (
             Path(repo_root_env).resolve()
             if repo_root_env
             else Path(__file__).resolve().parents[2]
         )
         if not repo_root.exists():
-            raise RuntimeError(f"cmux repo root {repo_root} does not exist")
+            raise RuntimeError(f"mux repo root {repo_root} does not exist")
 
         runner_path = Path(__file__).with_name(self._RUNNER_NAME)
         if not runner_path.is_file():
-            raise RuntimeError(f"cmux runner script missing at {runner_path}")
+            raise RuntimeError(f"mux runner script missing at {runner_path}")
 
         self._runner_path = runner_path
         self._repo_root = repo_root
@@ -95,7 +95,7 @@ class MuxAgent(AbstractInstalledAgent):
 
     @staticmethod
     def name() -> str:
-        return "cmux"
+        return "mux"
 
     @property
     def _env(self) -> dict[str, str]:
@@ -106,63 +106,61 @@ class MuxAgent(AbstractInstalledAgent):
             if value:
                 env[key] = value
 
-        env.setdefault("CMUX_TRUNK", self._DEFAULT_TRUNK)
-        env.setdefault("CMUX_MODEL", self._DEFAULT_MODEL)
-        env.setdefault("CMUX_CONFIG_ROOT", "/root/.cmux")
-        env.setdefault("CMUX_APP_ROOT", "/opt/cmux-app")
-        env.setdefault("CMUX_WORKSPACE_ID", "cmux-bench")
-        env.setdefault("CMUX_THINKING_LEVEL", "high")
-        env.setdefault("CMUX_MODE", "exec")
-        env.setdefault("CMUX_PROJECT_CANDIDATES", self._DEFAULT_PROJECT_CANDIDATES)
+        env.setdefault("MUX_TRUNK", self._DEFAULT_TRUNK)
+        env.setdefault("MUX_MODEL", self._DEFAULT_MODEL)
+        env.setdefault("MUX_CONFIG_ROOT", "/root/.mux")
+        env.setdefault("MUX_APP_ROOT", "/opt/mux-app")
+        env.setdefault("MUX_WORKSPACE_ID", "mux-bench")
+        env.setdefault("MUX_THINKING_LEVEL", "high")
+        env.setdefault("MUX_MODE", "exec")
+        env.setdefault("MUX_PROJECT_CANDIDATES", self._DEFAULT_PROJECT_CANDIDATES)
 
-        model_value = self._model_name or env["CMUX_MODEL"]
+        model_value = self._model_name or env["MUX_MODEL"]
         model_value = model_value.strip()
         if not model_value:
-            raise ValueError("CMUX_MODEL must be a non-empty string")
+            raise ValueError("MUX_MODEL must be a non-empty string")
         if "/" in model_value and ":" not in model_value:
             provider, model_name = model_value.split("/", 1)
             model_value = f"{provider}:{model_name}"
-        env["CMUX_MODEL"] = model_value
+        env["MUX_MODEL"] = model_value
 
-        thinking_value = self._thinking_level or env["CMUX_THINKING_LEVEL"]
+        thinking_value = self._thinking_level or env["MUX_THINKING_LEVEL"]
         normalized_thinking = thinking_value.strip().lower()
         if normalized_thinking not in {"off", "low", "medium", "high"}:
-            raise ValueError(
-                "CMUX_THINKING_LEVEL must be one of off, low, medium, high"
-            )
-        env["CMUX_THINKING_LEVEL"] = normalized_thinking
+            raise ValueError("MUX_THINKING_LEVEL must be one of off, low, medium, high")
+        env["MUX_THINKING_LEVEL"] = normalized_thinking
 
-        mode_value = self._mode or env["CMUX_MODE"]
+        mode_value = self._mode or env["MUX_MODE"]
         normalized_mode = mode_value.strip().lower()
         if normalized_mode in {"exec", "execute"}:
-            env["CMUX_MODE"] = "exec"
+            env["MUX_MODE"] = "exec"
         elif normalized_mode == "plan":
-            env["CMUX_MODE"] = "plan"
+            env["MUX_MODE"] = "plan"
         else:
-            raise ValueError("CMUX_MODE must be one of plan, exec, or execute")
+            raise ValueError("MUX_MODE must be one of plan, exec, or execute")
 
         # These env vars are all set with defaults above, no need to validate
         for key in (
-            "CMUX_CONFIG_ROOT",
-            "CMUX_APP_ROOT",
-            "CMUX_WORKSPACE_ID",
-            "CMUX_PROJECT_CANDIDATES",
+            "MUX_CONFIG_ROOT",
+            "MUX_APP_ROOT",
+            "MUX_WORKSPACE_ID",
+            "MUX_PROJECT_CANDIDATES",
         ):
             env[key] = env[key].strip()
 
-        if timeout_value := env.get("CMUX_TIMEOUT_MS"):
+        if timeout_value := env.get("MUX_TIMEOUT_MS"):
             if not timeout_value.strip().isdigit():
-                raise ValueError("CMUX_TIMEOUT_MS must be an integer")
+                raise ValueError("MUX_TIMEOUT_MS must be an integer")
 
-        if project_path := env.get("CMUX_PROJECT_PATH"):
+        if project_path := env.get("MUX_PROJECT_PATH"):
             if not project_path.strip():
-                raise ValueError("CMUX_PROJECT_PATH must be non-empty when provided")
+                raise ValueError("MUX_PROJECT_PATH must be non-empty when provided")
 
         return env
 
     @property
     def _install_agent_script_path(self) -> Path:
-        return self._get_templated_script_path("cmux_setup.sh.j2")
+        return self._get_templated_script_path("mux_setup.sh.j2")
 
     def perform_task(
         self,

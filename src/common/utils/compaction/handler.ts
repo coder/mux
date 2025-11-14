@@ -20,7 +20,7 @@ import { getCancelledCompactionKey } from "@/common/constants/storage";
 export function isCompactingStream(aggregator: StreamingMessageAggregator): boolean {
   const messages = aggregator.getAllMessages();
   const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
-  return lastUserMsg?.metadata?.cmuxMetadata?.type === "compaction-request";
+  return lastUserMsg?.metadata?.muxMetadata?.type === "compaction-request";
 }
 
 /**
@@ -33,7 +33,7 @@ export function findCompactionRequestMessage(
   return (
     [...messages]
       .reverse()
-      .find((m) => m.role === "user" && m.metadata?.cmuxMetadata?.type === "compaction-request") ??
+      .find((m) => m.role === "user" && m.metadata?.muxMetadata?.type === "compaction-request") ??
     null
   );
 }
@@ -45,10 +45,10 @@ export function getCompactionCommand(aggregator: StreamingMessageAggregator): st
   const compactionMsg = findCompactionRequestMessage(aggregator);
   if (!compactionMsg) return null;
 
-  const cmuxMeta = compactionMsg.metadata?.cmuxMetadata;
-  if (cmuxMeta?.type !== "compaction-request") return null;
+  const muxMeta = compactionMsg.metadata?.muxMetadata;
+  if (muxMeta?.type !== "compaction-request") return null;
 
-  return cmuxMeta.rawCommand ?? null;
+  return muxMeta.rawCommand ?? null;
 }
 
 /**

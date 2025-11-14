@@ -14,11 +14,12 @@ import {
 } from "electron";
 import * as fs from "fs";
 import * as path from "path";
+<<<<<<< HEAD:src/desktop/main.ts
 import type { Config } from "@/node/config";
 import type { IpcMain } from "@/node/services/ipcMain";
 import { VERSION } from "@/version";
 import { IPC_CHANNELS } from "@/common/constants/ipc-constants";
-import { getMuxHome, migrateCmuxToMux } from "@/common/constants/paths";
+import { getMuxHome, migrateLegacyMuxHome } from "@/common/constants/paths";
 import { log } from "@/node/services/log";
 import { parseDebugUpdater } from "@/common/utils/env";
 import assert from "@/common/utils/assert";
@@ -369,7 +370,7 @@ function createWindow() {
       contextIsolation: true,
       preload: path.join(__dirname, "../preload.js"),
     },
-    title: "cmux - coder multiplexer",
+    title: "mux - coder multiplexer",
     // Hide menu bar on Linux by default (like VS Code)
     // User can press Alt to toggle it
     autoHideMenuBar: process.platform === "linux",
@@ -493,7 +494,7 @@ if (gotTheLock) {
       console.log("App ready, creating window...");
 
       // Migrate from .cmux to .mux directory structure if needed
-      migrateCmuxToMux();
+      migrateLegacyMuxHome();
 
       // Install React DevTools in development
       if (!app.isPackaged && installExtension && REACT_DEVELOPER_TOOLS) {

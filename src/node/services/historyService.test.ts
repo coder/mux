@@ -13,7 +13,7 @@ describe("HistoryService", () => {
 
   beforeEach(async () => {
     // Create a temporary directory for test files
-    tempDir = path.join(os.tmpdir(), `cmux-test-${Date.now()}-${Math.random()}`);
+    tempDir = path.join(os.tmpdir(), `mux-test-${Date.now()}-${Math.random()}`);
     await fs.mkdir(tempDir, { recursive: true });
 
     // Create a Config with the temp directory

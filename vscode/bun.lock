@@ -2,7 +2,7 @@
   "lockfileVersion": 1,
   "workspaces": {
     "": {
-      "name": "cmux",
+      "name": "mux",
       "devDependencies": {
         "@types/node": "^20.0.0",
         "@types/vscode": "^1.85.0",

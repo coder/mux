@@ -9,7 +9,7 @@ describe("Config", () => {
 
   beforeEach(() => {
     // Create a temporary directory for each test
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmux-test-"));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-test-"));
     config = new Config(tempDir);
   });
 

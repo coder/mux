@@ -42,11 +42,11 @@ export function useAutoCompactContinue() {
     for (const [workspaceId, state] of newStates) {
       // Detect if workspace is in "single compacted message" state
       // Skip workspace-init messages since they're UI-only metadata
-      const cmuxMessages = state.messages.filter((m) => m.type !== "workspace-init");
+      const muxMessages = state.messages.filter((m) => m.type !== "workspace-init");
       const isSingleCompacted =
-        cmuxMessages.length === 1 &&
-        cmuxMessages[0]?.type === "assistant" &&
-        cmuxMessages[0].isCompacted === true;
+        muxMessages.length === 1 &&
+        muxMessages[0]?.type === "assistant" &&
+        muxMessages[0].isCompacted === true;
 
       if (!isSingleCompacted) {
         // Workspace no longer in compacted state - no action needed
@@ -57,17 +57,17 @@ export function useAutoCompactContinue() {
 
       // After compaction, history is replaced with a single summary message
       // The summary message has compaction-result metadata with the continueMessage
-      const summaryMessage = state.cmuxMessages[0]; // Single compacted message
-      const cmuxMeta = summaryMessage?.metadata?.cmuxMetadata;
+      const summaryMessage = state.muxMessages[0]; // Single compacted message
+      const muxMeta = summaryMessage?.metadata?.muxMetadata;
       const continueMessage =
-        cmuxMeta?.type === "compaction-result" ? cmuxMeta.continueMessage : undefined;
+        muxMeta?.type === "compaction-result" ? muxMeta.continueMessage : undefined;
 
       if (!continueMessage) continue;
 
       // Prefer compaction-request ID for idempotency; fall back to summary message ID
       const idForGuard =
-        cmuxMeta?.type === "compaction-result" && cmuxMeta.requestId
-          ? `req:${cmuxMeta.requestId}`
+        muxMeta?.type === "compaction-result" && muxMeta.requestId
+          ? `req:${muxMeta.requestId}`
           : `msg:${summaryMessage.id}`;
 
       // Have we already processed this specific compaction result?

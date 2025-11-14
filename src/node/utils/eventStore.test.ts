@@ -51,7 +51,7 @@ describe("EventStore", () => {
     }
 
     mockConfig = {
-      cmuxDir: path.join(__dirname, "../.."),
+      muxDir: path.join(__dirname, "../.."),
       sessionsDir: testSessionDir,
       getSessionDir: (workspaceId: string) => path.join(testSessionDir, workspaceId),
     } as unknown as Config;

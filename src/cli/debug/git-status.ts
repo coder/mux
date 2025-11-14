@@ -17,12 +17,12 @@ import { getMuxSrcDir } from "@/common/constants/paths";
 
 function findWorkspaces(): Array<{ id: string; path: string }> {
   const workspaces: Array<{ id: string; path: string }> = [];
-  const cmuxSrcDir = getMuxSrcDir();
+  const muxSrcDir = getMuxSrcDir();
 
   try {
-    const projects = readdirSync(cmuxSrcDir);
+    const projects = readdirSync(muxSrcDir);
     for (const project of projects) {
-      const projectPath = join(cmuxSrcDir, project);
+      const projectPath = join(muxSrcDir, project);
       if (!statSync(projectPath).isDirectory()) continue;
 
       const branches = readdirSync(projectPath);
@@ -122,16 +122,16 @@ function testGitStatus(workspaceId: string, workspacePath: string) {
 }
 
 export function gitStatusCommand(workspaceId?: string) {
-  const cmuxSrcDir = getMuxSrcDir();
+  const muxSrcDir = getMuxSrcDir();
   console.log("🔍 Git Status Debug Tool");
-  console.log("Finding workspaces in:", cmuxSrcDir);
+  console.log("Finding workspaces in:", muxSrcDir);
   console.log();
 
   const workspaces = findWorkspaces();
   console.log(`Found ${workspaces.length} workspaces\n`);
 
   if (workspaces.length === 0) {
-    console.log("No workspaces found! Check that ~/.cmux/src/ contains workspace directories.");
+    console.log("No workspaces found! Check that ~/.mux/src/ contains workspace directories.");
     process.exit(1);
   }
 

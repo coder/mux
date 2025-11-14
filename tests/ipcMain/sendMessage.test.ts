@@ -1459,7 +1459,7 @@ These are general instructions that apply to all modes.
           "Test message with metadata",
           {
             model: "openai:gpt-4", // Valid format but provider not configured - will fail after storing message
-            cmuxMetadata: testMetadata,
+            muxMetadata: testMetadata,
           }
         );
 
@@ -1486,14 +1486,14 @@ These are general instructions that apply to all modes.
         // Verify metadata was preserved exactly as sent (black-box)
         expect(userMessage).toHaveProperty("metadata");
         const metadata = (userMessage as any).metadata;
-        expect(metadata).toHaveProperty("cmuxMetadata");
-        expect(metadata.cmuxMetadata).toEqual(testMetadata);
+        expect(metadata).toHaveProperty("muxMetadata");
+        expect(metadata.muxMetadata).toEqual(testMetadata);
 
         // Verify structured fields are accessible
-        expect(metadata.cmuxMetadata.type).toBe("compaction-request");
-        expect(metadata.cmuxMetadata.rawCommand).toBe("/compact -c continue working");
-        expect(metadata.cmuxMetadata.parsed.continueMessage).toBe("continue working");
-        expect(metadata.cmuxMetadata.parsed.maxOutputTokens).toBe(5000);
+        expect(metadata.muxMetadata.type).toBe("compaction-request");
+        expect(metadata.muxMetadata.rawCommand).toBe("/compact -c continue working");
+        expect(metadata.muxMetadata.parsed.continueMessage).toBe("continue working");
+        expect(metadata.muxMetadata.parsed.maxOutputTokens).toBe(5000);
       } finally {
         await cleanup();
       }

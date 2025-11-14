@@ -13,7 +13,7 @@ import { trackEvent, getBaseTelemetryProperties } from "./index";
  */
 function checkFirstLaunch(): boolean {
   const key = "mux_first_launch_complete";
-  const legacyKey = "cmux_first_launch_complete";
+  const legacyKey = "mux_first_launch_complete";
 
   // Check new key first
   const hasLaunchedBefore = localStorage.getItem(key);

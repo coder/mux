@@ -1,5 +1,5 @@
 /**
- * Browser API client. Used when running cmux in server mode.
+ * Browser API client. Used when running mux in server mode.
  */
 import { IPC_CHANNELS, getChatChannel } from "@/common/constants/ipc-constants";
 import type { IPCApi } from "@/common/types/ipc";

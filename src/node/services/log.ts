@@ -1,5 +1,5 @@
 /**
- * Pipe-safe logging utilities for cmux
+ * Pipe-safe logging utilities for mux
  *
  * These functions wrap console.log/error with EPIPE protection to prevent
  * crashes when stdout/stderr pipes are closed (e.g., when piping to head/tail).
@@ -74,7 +74,7 @@ function getCallerLocation(): string {
     if (match) {
       const [, filePath, lineNum] = match;
       // Strip the full path to just show relative path from project root
-      const relativePath = filePath.replace(/^.*\/cmux\//, "");
+      const relativePath = filePath.replace(/^.*\/mux\//, "");
       return `${relativePath}:${lineNum}`;
     }
   }
@@ -212,7 +212,7 @@ export const log = {
 
   /**
    * Dump an object to a JSON file for debugging (only when MUX_DEBUG is set)
-   * Files are written to ~/.cmux/debug_obj/
+   * Files are written to ~/.mux/debug_obj/
    *
    * @param filename - Name of the file (e.g., "model_messages.json" or "workspace/data.json")
    * @param obj - Object to serialize and dump

@@ -13,8 +13,8 @@
  * PATH TERMINOLOGY & HIERARCHY
  *
  * srcBaseDir (base directory for all workspaces):
- *   - Where cmux stores ALL workspace directories
- *   - Local: ~/.cmux/src (tilde expanded to full path by LocalRuntime)
+ *   - Where mux stores ALL workspace directories
+ *   - Local: ~/.mux/src (tilde expanded to full path by LocalRuntime)
  *   - SSH: /home/user/workspace (must be absolute path, no tilde allowed)
  *
  * Workspace Path Computation:
@@ -27,11 +27,11 @@
  *     Example: "feature-123" or "main"
  *
  * Full Example (Local):
- *   srcBaseDir:    ~/.cmux/src (expanded to /home/user/.cmux/src)
+ *   srcBaseDir:    ~/.mux/src (expanded to /home/user/.mux/src)
  *   projectPath:   /Users/me/git/my-project (local git repo)
  *   projectName:   my-project (extracted)
  *   workspaceName: feature-123
- *   → Workspace:   /home/user/.cmux/src/my-project/feature-123
+ *   → Workspace:   /home/user/.mux/src/my-project/feature-123
  *
  * Full Example (SSH):
  *   srcBaseDir:    /home/user/workspace (absolute path required)
@@ -248,11 +248,11 @@ export interface Runtime {
    *
    * @example
    * // LocalRuntime
-   * await runtime.resolvePath("~/cmux")      // => "/home/user/cmux"
+   * await runtime.resolvePath("~/mux")      // => "/home/user/mux"
    * await runtime.resolvePath("./relative")  // => "/current/dir/relative"
    *
    * // SSHRuntime
-   * await runtime.resolvePath("~/cmux")      // => "/home/user/cmux" (via SSH shell expansion)
+   * await runtime.resolvePath("~/mux")      // => "/home/user/mux" (via SSH shell expansion)
    */
   resolvePath(path: string): Promise<string>;
 

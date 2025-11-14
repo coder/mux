@@ -15,7 +15,7 @@ PR_NUMBER="$1"
 # Query for unresolved review threads
 UNRESOLVED=$(gh api graphql -f query="
 {
-  repository(owner: \"coder\", name: \"cmux\") {
+  repository(owner: \"coder\", name: \"mux\") {
     pullRequest(number: $PR_NUMBER) {
       reviewThreads(first: 100) {
         nodes {
@@ -42,7 +42,7 @@ if [ -n "$UNRESOLVED" ]; then
   echo "To resolve a comment thread, use:"
   echo "$UNRESOLVED" | jq -r '"  ./scripts/resolve_pr_comment.sh \(.thread_id)"'
   echo ""
-  echo "View PR: https://github.com/coder/cmux/pull/$PR_NUMBER"
+  echo "View PR: https://github.com/coder/mux/pull/$PR_NUMBER"
   exit 1
 fi
 

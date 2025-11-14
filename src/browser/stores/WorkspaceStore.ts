@@ -35,7 +35,7 @@ export interface WorkspaceState {
   canInterrupt: boolean;
   isCompacting: boolean;
   loading: boolean;
-  cmuxMessages: MuxMessage[];
+  muxMessages: MuxMessage[];
   currentModel: string | null;
   recencyTimestamp: number | null;
   todos: TodoItem[];
@@ -308,7 +308,7 @@ export class WorkspaceStore {
         canInterrupt: activeStreams.length > 0,
         isCompacting: aggregator.isCompacting(),
         loading: !hasMessages && !isCaughtUp,
-        cmuxMessages: messages,
+        muxMessages: messages,
         currentModel: aggregator.getCurrentModel() ?? null,
         recencyTimestamp: aggregator.getRecencyTimestamp(),
         todos: aggregator.getCurrentTodos(),
@@ -639,9 +639,9 @@ export class WorkspaceStore {
 
     // Extract continueMessage from compaction-request before history gets replaced
     const compactRequestMsg = findCompactionRequestMessage(aggregator);
-    const cmuxMeta = compactRequestMsg?.metadata?.cmuxMetadata;
+    const muxMeta = compactRequestMsg?.metadata?.muxMetadata;
     const continueMessage =
-      cmuxMeta?.type === "compaction-request" ? cmuxMeta.parsed.continueMessage : undefined;
+      muxMeta?.type === "compaction-request" ? muxMeta.parsed.continueMessage : undefined;
 
     const summaryMessage = createMuxMessage(
       `summary-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
@@ -663,7 +663,7 @@ export class WorkspaceStore {
             ? (metadata.systemMessageTokens as number | undefined)
             : undefined,
         // Store continueMessage in summary so it survives history replacement
-        cmuxMetadata: continueMessage
+        muxMetadata: continueMessage
           ? { type: "compaction-result", continueMessage, requestId: compactRequestMsg?.id }
           : { type: "normal" },
       }

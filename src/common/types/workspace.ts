@@ -24,7 +24,7 @@ export const WorkspaceMetadataSchema = z.object({
  *   Can be changed via rename operation
  *
  * For legacy workspaces created before stable IDs:
- * - id and name are the same (e.g., "cmux-stable-ids")
+ * - id and name are the same (e.g., "mux-stable-ids")
  * For new workspaces:
  * - id is a random 10 hex char string (e.g., "a1b2c3d4e5")
  * - name is the branch/workspace name (e.g., "feature-branch")

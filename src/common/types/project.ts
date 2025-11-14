@@ -10,7 +10,7 @@ import type { RuntimeConfig } from "./runtime";
  *
  * NEW FORMAT (preferred, used for all new workspaces):
  * {
- *   "path": "~/.cmux/src/project/workspace-id",  // Kept for backward compat
+ *   "path": "~/.mux/src/project/workspace-id",  // Kept for backward compat
  *   "id": "a1b2c3d4e5",                          // Stable workspace ID
  *   "name": "feature-branch",                    // User-facing name
  *   "createdAt": "2024-01-01T00:00:00Z",        // Creation timestamp
@@ -19,10 +19,10 @@ import type { RuntimeConfig } from "./runtime";
  *
  * LEGACY FORMAT (old workspaces, still supported):
  * {
- *   "path": "~/.cmux/src/project/workspace-id"   // Only field present
+ *   "path": "~/.mux/src/project/workspace-id"   // Only field present
  * }
  *
- * For legacy entries, metadata is read from ~/.cmux/sessions/{workspaceId}/metadata.json
+ * For legacy entries, metadata is read from ~/.mux/sessions/{workspaceId}/metadata.json
  */
 export interface Workspace {
   /** Absolute path to workspace directory - REQUIRED for backward compatibility */

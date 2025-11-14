@@ -347,7 +347,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   };
 
   // UI preference: project order persists in localStorage
-  const [projectOrder, setProjectOrder] = usePersistedState<string[]>("cmux:projectOrder", []);
+  const [projectOrder, setProjectOrder] = usePersistedState<string[]>("mux:projectOrder", []);
 
   // Build a stable signature of the project keys so effects don't fire on Map identity churn
   const projectPathsSignature = React.useMemo(() => {
