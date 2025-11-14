@@ -72,12 +72,6 @@ function WorkspaceContent(): JSX.Element {
           },
         ]
       : []),
-    {
-      id: "settings",
-      label: "Workspace Settings",
-      icon: "settings-outline" as const,
-      onPress: () => router.push(`/workspace/${id}/settings`),
-    },
   ];
 
   if (!id) {

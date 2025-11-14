@@ -328,6 +328,10 @@ function WorkspaceScreenInner({
     () => sanitizeModelSequence([model, ...recentModels]),
     [model, recentModels]
   );
+  const runSettingsDetails = useMemo(() => {
+    const modeLabel = mode === "plan" ? "Plan" : "Exec";
+    return `${modeLabel} • ${thinkingLevel.toUpperCase()}`;
+  }, [mode, thinkingLevel]);
   const modelSummary = useMemo(() => formatModelSummary(model), [model]);
   const [input, setInput] = useState("");
 
@@ -1158,6 +1162,9 @@ function WorkspaceScreenInner({
                 Run settings
               </ThemedText>
               <ThemedText weight="semibold">{modelSummary}</ThemedText>
+              <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted, marginTop: 2 }}>
+                {runSettingsDetails}
+              </ThemedText>
             </View>
             <Ionicons name="chevron-up" size={16} color={theme.colors.foregroundPrimary} />
           </Pressable>
