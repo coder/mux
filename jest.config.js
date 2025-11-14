@@ -20,6 +20,8 @@ module.exports = {
       {
         tsconfig: {
           target: "ES2020",
+          module: "ESNext",
+          moduleResolution: "node",
           lib: ["ES2020", "DOM", "ES2022.Intl"],
           esModuleInterop: true,
           allowSyntheticDefaultImports: true,
