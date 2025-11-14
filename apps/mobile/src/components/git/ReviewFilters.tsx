@@ -25,24 +25,31 @@ const COMMON_BASES = [
 ];
 
 export const ReviewFilters = memo<ReviewFiltersProps>(
-  ({ diffBase, includeUncommitted, selectedFilePath, fileTree, onChangeDiffBase, onChangeIncludeUncommitted, onChangeSelectedFile }) => {
+  ({
+    diffBase,
+    includeUncommitted,
+    selectedFilePath,
+    fileTree,
+    onChangeDiffBase,
+    onChangeIncludeUncommitted,
+    onChangeSelectedFile,
+  }) => {
     const theme = useTheme();
     const [showBaseModal, setShowBaseModal] = useState(false);
     const [showFileModal, setShowFileModal] = useState(false);
     const [customBase, setCustomBase] = useState("");
 
-    const currentBaseLabel =
-      COMMON_BASES.find((b) => b.value === diffBase)?.label || diffBase;
-    
+    const currentBaseLabel = COMMON_BASES.find((b) => b.value === diffBase)?.label || diffBase;
+
     // Extract file name from path for display
-    const selectedFileName = selectedFilePath 
-      ? selectedFilePath.split('/').pop() || selectedFilePath 
+    const selectedFileName = selectedFilePath
+      ? selectedFilePath.split("/").pop() || selectedFilePath
       : null;
-    
+
     // Flatten file tree for modal display
     const flattenTree = (node: FileTreeNode): Array<{ path: string; name: string }> => {
       const items: Array<{ path: string; name: string }> = [];
-      
+
       if (!node.isDirectory) {
         // Leaf node (file) - has a path
         items.push({ path: node.path, name: node.name });
@@ -52,10 +59,10 @@ export const ReviewFilters = memo<ReviewFiltersProps>(
           items.push(...flattenTree(childNode));
         }
       }
-      
+
       return items;
     };
-    
+
     const allFiles = fileTree ? flattenTree(fileTree) : [];
 
     return (
@@ -80,9 +87,7 @@ export const ReviewFilters = memo<ReviewFiltersProps>(
             style={[
               styles.toggleButton,
               {
-                backgroundColor: includeUncommitted
-                  ? theme.colors.accent
-                  : theme.colors.surface,
+                backgroundColor: includeUncommitted ? theme.colors.accent : theme.colors.surface,
               },
             ]}
             onPress={() => onChangeIncludeUncommitted(!includeUncommitted)}
@@ -101,9 +106,14 @@ export const ReviewFilters = memo<ReviewFiltersProps>(
             </Text>
           </Pressable>
         </View>
-        
+
         {/* File Filter Selector (second row) */}
-        <View style={[styles.fileFilterContainer, { backgroundColor: theme.colors.surfaceSecondary, borderTopColor: theme.colors.border }]}>
+        <View
+          style={[
+            styles.fileFilterContainer,
+            { backgroundColor: theme.colors.surfaceSecondary, borderTopColor: theme.colors.border },
+          ]}
+        >
           <Pressable
             style={[styles.filterButton, { backgroundColor: theme.colors.surface }]}
             onPress={() => setShowFileModal(true)}
@@ -117,7 +127,7 @@ export const ReviewFilters = memo<ReviewFiltersProps>(
             </Text>
             <Ionicons name="chevron-down" size={16} color={theme.colors.foregroundSecondary} />
           </Pressable>
-          
+
           {selectedFilePath && (
             <Pressable
               style={[styles.clearButton, { backgroundColor: theme.colors.surface }]}
@@ -187,7 +197,7 @@ export const ReviewFilters = memo<ReviewFiltersProps>(
             </View>
           </Pressable>
         </Modal>
-        
+
         {/* File Selection Modal */}
         <Modal
           visible={showFileModal}
@@ -242,7 +252,7 @@ export const ReviewFilters = memo<ReviewFiltersProps>(
                     <Ionicons name="checkmark" size={20} color={theme.colors.accent} />
                   )}
                 </Pressable>
-                
+
                 {/* Individual files */}
                 {allFiles.map((file) => (
                   <Pressable

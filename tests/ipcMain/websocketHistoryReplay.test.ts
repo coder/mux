@@ -2,7 +2,7 @@ import { createTestEnvironment, cleanupTestEnvironment } from "./setup";
 import { createWorkspace, generateBranchName } from "./helpers";
 import { IPC_CHANNELS, getChatChannel } from "../../src/constants/ipc-constants";
 import type { WorkspaceChatMessage } from "../../src/types/ipc";
-import type { CmuxMessage } from "../../src/types/message";
+import type { MuxMessage } from "../../src/types/message";
 
 /**
  * Integration test for WebSocket history replay bug
@@ -59,9 +59,9 @@ describe("WebSocket history replay", () => {
 
         // Directly write a test message to history file
         const { HistoryService } = await import("../../src/services/historyService");
-        const { createCmuxMessage } = await import("../../src/types/message");
+        const { createMuxMessage } = await import("../../src/types/message");
         const historyService = new HistoryService(env.config);
-        const testMessage = createCmuxMessage("test-msg-2", "user", "Test message for getHistory");
+        const testMessage = createMuxMessage("test-msg-2", "user", "Test message for getHistory");
         await historyService.appendToHistory(workspaceId, testMessage);
 
         // Wait for file write

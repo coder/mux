@@ -45,7 +45,7 @@ include fmt.mk
 
 .PHONY: all build dev start clean help
 .PHONY: build-renderer version build-icons build-static
-.PHONY: lint lint-fix typecheck static-check
+.PHONY: lint lint-fix typecheck typecheck-react-native static-check
 .PHONY: test test-unit test-integration test-watch test-coverage test-e2e
 .PHONY: dist dist-mac dist-win dist-linux
 .PHONY: vscode-ext vscode-ext-install
@@ -221,6 +221,10 @@ typecheck: node_modules/.installed src/version.ts
 		"$(TSGO) --noEmit" \
 		"$(TSGO) --noEmit -p tsconfig.main.json"
 endif
+
+typecheck-react-native: ## Run TypeScript type checking for React Native app
+	@echo "Type checking React Native app..."
+	@cd apps/mobile && bunx tsc --noEmit 2>&1 | grep -E "^(src/|app/|Type checking)" || echo "✓ No errors in React Native app"
 
 check-deadcode: node_modules/.installed ## Check for potential dead code (manual only, not in static-check)
 	@echo "Checking for potential dead code with ts-prune..."

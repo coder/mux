@@ -56,7 +56,7 @@ export function parseDiff(diffOutput: string): FileDiff[] {
   if (!diffOutput || typeof diffOutput !== "string") {
     return [];
   }
-  
+
   const lines = diffOutput.split("\n");
   const files: FileDiff[] = [];
   let currentFile: FileDiff | null = null;

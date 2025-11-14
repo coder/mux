@@ -207,7 +207,7 @@ const httpIpcMain = new HttpIpcMainAdapter(app);
   // Create WebSocket server
   const wss = new WebSocketServer({ server, path: "/ws" });
 
-    wss.on("connection", (ws, req) => {
+  wss.on("connection", (ws, req) => {
     // Authorization check (no-op if AUTH_TOKEN not set)
     if (!isWsAuthorized(req, { token: AUTH_TOKEN })) {
       try {
@@ -216,13 +216,13 @@ const httpIpcMain = new HttpIpcMainAdapter(app);
       return;
     }
     console.log("Client connected");
-  
+
     // Initialize client tracking
     clients.set(ws, {
       chatSubscriptions: new Set(),
       metadataSubscription: false,
     });
-  
+
     ws.on("message", (rawData: RawData) => {
       try {
         // WebSocket data can be Buffer, ArrayBuffer, or string - convert to string
@@ -243,10 +243,10 @@ const httpIpcMain = new HttpIpcMainAdapter(app);
           workspaceId?: string;
         };
         const { type, channel, workspaceId } = message;
-  
+
         const clientInfo = clients.get(ws);
         if (!clientInfo) return;
-  
+
         if (type === "subscribe") {
           if (channel === "workspace:chat" && workspaceId) {
             console.log(`[WS] Client subscribed to workspace chat: ${workspaceId}`);
@@ -255,7 +255,7 @@ const httpIpcMain = new HttpIpcMainAdapter(app);
               `[WS] Subscription added. Current subscriptions:`,
               Array.from(clientInfo.chatSubscriptions)
             );
-  
+
             // Replay full history including active streams, partial messages, and init state
             // This fetches all replay events without broadcasting to other clients
             void (async () => {
@@ -268,12 +268,12 @@ const httpIpcMain = new HttpIpcMainAdapter(app);
                   );
                   return;
                 }
-  
+
                 // Get full replay events (history + active streams + partial + init + caught-up)
                 // This does NOT broadcast to any clients - just returns the array
                 const replayEvents = (await handler(null, workspaceId)) as unknown[];
                 console.log(`[WS] Sending ${replayEvents.length} replay events to client`);
-  
+
                 // Send all events directly to this client only
                 for (const event of replayEvents) {
                   if (ws.readyState === WebSocket.OPEN) {
@@ -287,7 +287,7 @@ const httpIpcMain = new HttpIpcMainAdapter(app);
           } else if (channel === "workspace:metadata") {
             console.log("[WS] Client subscribed to workspace metadata");
             clientInfo.metadataSubscription = true;
-  
+
             // Send subscription acknowledgment
             httpIpcMain.send("workspace:metadata:subscribe");
           }
@@ -295,13 +295,13 @@ const httpIpcMain = new HttpIpcMainAdapter(app);
           if (channel === "workspace:chat" && workspaceId) {
             console.log(`Client unsubscribed from workspace chat: ${workspaceId}`);
             clientInfo.chatSubscriptions.delete(workspaceId);
-  
+
             // Send unsubscription acknowledgment
             httpIpcMain.send("workspace:chat:unsubscribe", workspaceId);
           } else if (channel === "workspace:metadata") {
             console.log("Client unsubscribed from workspace metadata");
             clientInfo.metadataSubscription = false;
-  
+
             // Send unsubscription acknowledgment
             httpIpcMain.send("workspace:metadata:unsubscribe");
           }
@@ -314,17 +314,17 @@ const httpIpcMain = new HttpIpcMainAdapter(app);
         console.error("Error handling WebSocket message:", error);
       }
     });
-  
+
     ws.on("close", () => {
       console.log("Client disconnected");
       clients.delete(ws);
     });
-  
+
     ws.on("error", (error) => {
       console.error("WebSocket error:", error);
     });
   });
-  
+
   server.listen(PORT, HOST, () => {
     console.log(`Server is running on http://${HOST}:${PORT}`);
   });

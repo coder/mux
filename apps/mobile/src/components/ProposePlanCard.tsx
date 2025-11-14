@@ -81,7 +81,11 @@ export function ProposePlanCard({
         }}
       >
         <Text style={{ fontSize: 20 }}>📋</Text>
-        <ThemedText variant="titleSmall" weight="bold" style={{ flex: 1, color: theme.colors.planModeLight }}>
+        <ThemedText
+          variant="titleSmall"
+          weight="bold"
+          style={{ flex: 1, color: theme.colors.planModeLight }}
+        >
           {title}
         </ThemedText>
       </View>
@@ -96,18 +100,30 @@ export function ProposePlanCard({
         }}
       >
         <Pressable onPress={handleCopy} style={buttonStyle(copied)}>
-          <ThemedText variant="caption" weight="medium" style={{ color: theme.colors.planModeLight }}>
+          <ThemedText
+            variant="caption"
+            weight="medium"
+            style={{ color: theme.colors.planModeLight }}
+          >
             {copied ? "✓ Copied" : "Copy"}
           </ThemedText>
         </Pressable>
         <Pressable onPress={() => setShowRaw(!showRaw)} style={buttonStyle(showRaw)}>
-          <ThemedText variant="caption" weight="medium" style={{ color: theme.colors.planModeLight }}>
+          <ThemedText
+            variant="caption"
+            weight="medium"
+            style={{ color: theme.colors.planModeLight }}
+          >
             {showRaw ? "Show Markdown" : "Show Text"}
           </ThemedText>
         </Pressable>
         {workspaceId && onStartHere && (
           <Pressable onPress={() => setShowModal(true)} style={buttonStyle(false)}>
-            <ThemedText variant="caption" weight="medium" style={{ color: theme.colors.planModeLight }}>
+            <ThemedText
+              variant="caption"
+              weight="medium"
+              style={{ color: theme.colors.planModeLight }}
+            >
               Start Here
             </ThemedText>
           </Pressable>

@@ -90,25 +90,17 @@ export const WorkspaceActionSheet = memo<WorkspaceActionSheetProps>(
               {
                 transform: [{ translateY: slideAnim }],
                 paddingBottom: insets.bottom || 8,
-              }
+              },
             ]}
           >
             {/* Main actions */}
-            <View
-              style={[
-                styles.actionsGroup,
-                { backgroundColor: theme.colors.surface },
-              ]}
-            >
+            <View style={[styles.actionsGroup, { backgroundColor: theme.colors.surface }]}>
               {items.map((item, index) => (
                 <Pressable
                   key={item.id}
                   style={({ pressed }) => [
                     styles.actionItem,
-                    index > 0 && [
-                      styles.actionItemBorder,
-                      { borderTopColor: theme.colors.border },
-                    ],
+                    index > 0 && [styles.actionItemBorder, { borderTopColor: theme.colors.border }],
                     pressed && { backgroundColor: theme.colors.surfaceSecondary },
                   ]}
                   onPress={() => handleItemPress(item)}
@@ -123,21 +115,14 @@ export const WorkspaceActionSheet = memo<WorkspaceActionSheetProps>(
                     style={[
                       styles.actionLabel,
                       {
-                        color: item.destructive
-                          ? "#FF3B30"
-                          : theme.colors.foregroundPrimary,
+                        color: item.destructive ? "#FF3B30" : theme.colors.foregroundPrimary,
                       },
                     ]}
                   >
                     {item.label}
                   </Text>
                   {item.badge !== undefined && (
-                    <View
-                      style={[
-                        styles.badge,
-                        { backgroundColor: theme.colors.error },
-                      ]}
-                    >
+                    <View style={[styles.badge, { backgroundColor: theme.colors.error }]}>
                       <Text style={styles.badgeText}>{item.badge}</Text>
                     </View>
                   )}
@@ -160,14 +145,7 @@ export const WorkspaceActionSheet = memo<WorkspaceActionSheetProps>(
               ]}
               onPress={onClose}
             >
-              <Text
-                style={[
-                  styles.cancelLabel,
-                  { color: theme.colors.accent },
-                ]}
-              >
-                Cancel
-              </Text>
+              <Text style={[styles.cancelLabel, { color: theme.colors.accent }]}>Cancel</Text>
             </Pressable>
           </Animated.View>
         </View>

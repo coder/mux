@@ -1,6 +1,13 @@
 import type { DisplayedMessage, WorkspaceChatEvent } from "../types";
-import type { MuxMessage, MuxTextPart, MuxImagePart } from "@shared/types/message";
+import type {
+  MuxMessage,
+  MuxTextPart,
+  MuxImagePart,
+  MuxReasoningPart,
+  MuxToolPart,
+} from "@shared/types/message";
 import type { DynamicToolPart } from "@shared/types/toolParts";
+import type { WorkspaceChatMessage } from "@shared/types/ipc";
 import { createChatEventProcessor } from "@shared/utils/messages/ChatEventProcessor";
 
 interface MuxMessageLike {
@@ -10,7 +17,14 @@ interface MuxMessageLike {
   metadata?: Record<string, unknown>;
 }
 
-type IncomingEvent = WorkspaceChatEvent | DisplayedMessage | MuxMessageLike | string | number | null | undefined;
+type IncomingEvent =
+  | WorkspaceChatEvent
+  | DisplayedMessage
+  | MuxMessageLike
+  | string
+  | number
+  | null
+  | undefined;
 
 interface ChatEventExpander {
   expand(event: IncomingEvent | IncomingEvent[]): WorkspaceChatEvent[];
@@ -26,13 +40,7 @@ export const DISPLAYABLE_MESSAGE_TYPES: ReadonlySet<DisplayedMessage["type"]> = 
   "workspace-init",
 ]);
 
-const PASS_THROUGH_TYPES = new Set([
-  "delete",
-  "status",
-  "error",
-  "stream-error",
-  "caught-up",
-]);
+const PASS_THROUGH_TYPES = new Set(["delete", "status", "error", "stream-error", "caught-up"]);
 
 const INIT_MESSAGE_ID = "workspace-init";
 
@@ -49,7 +57,10 @@ function isMuxMessageLike(value: unknown): value is MuxMessageLike {
   return typeof role === "string" && Array.isArray(parts);
 }
 
-function getMetadataNumber(metadata: Record<string, unknown> | undefined, key: string): number | undefined {
+function getMetadataNumber(
+  metadata: Record<string, unknown> | undefined,
+  key: string
+): number | undefined {
   if (!metadata) {
     return undefined;
   }
@@ -92,13 +103,18 @@ function buildDisplayedMessagesFromMux(message: MuxMessageLike): DisplayedMessag
   // This ensures consistent tool/reasoning handling across all message sources
   const metadata = isObject(message.metadata) ? message.metadata : undefined;
   const historySequence = getMetadataNumber(metadata, "historySequence") ?? Date.now();
-  const timestamp = getMetadataNumber(metadata, "createdAt") ?? getMetadataNumber(metadata, "timestamp");
+  const timestamp =
+    getMetadataNumber(metadata, "createdAt") ?? getMetadataNumber(metadata, "timestamp");
   const model = typeof metadata?.model === "string" ? metadata.model : undefined;
 
   const muxMessage: MuxMessage = {
     id: message.id ?? `msg-${historySequence}`,
     role: (typeof message.role === "string" ? message.role : "assistant") as "user" | "assistant",
-    parts: (message.parts ?? []) as MuxMessage["parts"],
+    parts: Array.isArray(message.parts)
+      ? (message.parts.filter(
+          (p): p is Record<string, unknown> => typeof p === "object" && p !== null && "type" in p
+        ) as unknown as Array<MuxTextPart | MuxReasoningPart | MuxImagePart | MuxToolPart>)
+      : [],
     metadata: {
       historySequence,
       timestamp,
@@ -310,18 +326,18 @@ export function createChatEventExpander(): ChatEventExpander {
     // Mark displayed parts as streaming (except completed/failed tools)
     displayed.forEach((msg) => {
       // Don't mark completed or failed tools as streaming
-      if (msg.type === 'tool') {
-        const toolMsg = msg as DisplayedMessage & { type: 'tool'; status: string };
-        if (toolMsg.status === 'completed' || toolMsg.status === 'failed') {
+      if (msg.type === "tool") {
+        const toolMsg = msg as DisplayedMessage & { type: "tool"; status: string };
+        if (toolMsg.status === "completed" || toolMsg.status === "failed") {
           // Tool is done, don't mark as streaming
           return;
         }
       }
 
-      if ('isStreaming' in msg) {
+      if ("isStreaming" in msg) {
         (msg as any).isStreaming = true;
       }
-      if ('isPartial' in msg) {
+      if ("isPartial" in msg) {
         (msg as any).isPartial = true;
       }
     });
@@ -344,7 +360,9 @@ export function createChatEventExpander(): ChatEventExpander {
     }
 
     if (typeof payload === "string" || typeof payload === "number") {
-      return [payload as WorkspaceChatEvent];
+      // Skip primitive values - they're not valid events
+      console.warn("Received non-object payload, skipping:", payload);
+      return [];
     }
 
     if (isObject(payload) && typeof payload.type === "string") {
@@ -360,49 +378,54 @@ export function createChatEventExpander(): ChatEventExpander {
 
       // Emit init message updates
       if (type === "init-start" || type === "init-output" || type === "init-end") {
-        processor.handleEvent(payload as WorkspaceChatEvent);
+        processor.handleEvent(payload as unknown as WorkspaceChatMessage);
         return emitInitMessage();
       }
 
       // Stream start: mark as active and emit initial partial message
       if (type === "stream-start") {
-        processor.handleEvent(payload as WorkspaceChatEvent);
-        const messageId = (payload as { messageId: string }).messageId;
+        processor.handleEvent(payload as unknown as WorkspaceChatMessage);
+        const messageId = typeof payload.messageId === "string" ? payload.messageId : "";
+        if (!messageId) return [];
         activeStreams.add(messageId);
         return emitPartialMessages(messageId);
       }
 
       // Stream delta: emit partial message with accumulated content
       if (type === "stream-delta") {
-        processor.handleEvent(payload as WorkspaceChatEvent);
-        const messageId = (payload as { messageId: string }).messageId;
+        processor.handleEvent(payload as unknown as WorkspaceChatMessage);
+        const messageId = typeof payload.messageId === "string" ? payload.messageId : "";
+        if (!messageId) return [];
         return emitPartialMessages(messageId);
       }
 
       // Reasoning delta: emit partial reasoning message
       if (type === "reasoning-delta") {
-        processor.handleEvent(payload as WorkspaceChatEvent);
-        const messageId = (payload as { messageId: string }).messageId;
+        processor.handleEvent(payload as unknown as WorkspaceChatMessage);
+        const messageId = typeof payload.messageId === "string" ? payload.messageId : "";
+        if (!messageId) return [];
         return emitPartialMessages(messageId);
       }
 
       // Tool call events: emit partial messages to show tool progress
       if (type === "tool-call-start" || type === "tool-call-delta" || type === "tool-call-end") {
-        processor.handleEvent(payload as WorkspaceChatEvent);
-        const messageId = (payload as { messageId: string }).messageId;
+        processor.handleEvent(payload as unknown as WorkspaceChatMessage);
+        const messageId = typeof payload.messageId === "string" ? payload.messageId : "";
+        if (!messageId) return [];
         return emitPartialMessages(messageId);
       }
 
       // Reasoning end: just process, next delta will emit
       if (type === "reasoning-end") {
-        processor.handleEvent(payload as WorkspaceChatEvent);
+        processor.handleEvent(payload as unknown as WorkspaceChatMessage);
         return [];
       }
 
       // Stream end: emit final complete message and clear streaming state
       if (type === "stream-end") {
-        processor.handleEvent(payload as WorkspaceChatEvent);
-        const messageId = (payload as { messageId: string }).messageId;
+        processor.handleEvent(payload as unknown as WorkspaceChatMessage);
+        const messageId = typeof payload.messageId === "string" ? payload.messageId : "";
+        if (!messageId) return [];
         activeStreams.delete(messageId);
 
         const message = processor.getMessageById(messageId);
@@ -410,10 +433,10 @@ export function createChatEventExpander(): ChatEventExpander {
           const displayed = transformMuxToDisplayed(message);
           // Mark as complete (not streaming)
           displayed.forEach((msg) => {
-            if ('isStreaming' in msg) {
+            if ("isStreaming" in msg) {
               (msg as any).isStreaming = false;
             }
-            if ('isPartial' in msg) {
+            if ("isPartial" in msg) {
               (msg as any).isPartial = false;
             }
           });
@@ -424,8 +447,9 @@ export function createChatEventExpander(): ChatEventExpander {
 
       // Stream abort: emit partial message marked as interrupted
       if (type === "stream-abort") {
-        processor.handleEvent(payload as WorkspaceChatEvent);
-        const messageId = (payload as { messageId: string }).messageId;
+        processor.handleEvent(payload as unknown as WorkspaceChatMessage);
+        const messageId = typeof payload.messageId === "string" ? payload.messageId : "";
+        if (!messageId) return [];
         activeStreams.delete(messageId);
         return emitPartialMessages(messageId);
       }

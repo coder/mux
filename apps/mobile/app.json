@@ -5,10 +5,7 @@
     "version": "0.0.1",
     "scheme": "cmux",
     "orientation": "portrait",
-    "platforms": [
-      "ios",
-      "android"
-    ],
+    "platforms": ["ios", "android"],
     "newArchEnabled": true,
     "jsEngine": "hermes",
     "experiments": {
@@ -20,10 +17,7 @@
         "authToken": ""
       }
     },
-    "plugins": [
-      "expo-router",
-      "expo-secure-store"
-    ],
+    "plugins": ["expo-router", "expo-secure-store"],
     "ios": {
       "bundleIdentifier": "com.coder.cmux-mobile"
     }

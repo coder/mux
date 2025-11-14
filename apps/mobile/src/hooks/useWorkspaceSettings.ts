@@ -116,11 +116,7 @@ async function readSetting<T>(
 /**
  * Write a workspace-specific setting
  */
-async function writeSetting(
-  workspaceId: string,
-  setting: string,
-  value: string
-): Promise<void> {
+async function writeSetting(workspaceId: string, setting: string, value: string): Promise<void> {
   try {
     const key = getWorkspaceSettingKey(workspaceId, setting);
     await SecureStore.setItemAsync(key, value);

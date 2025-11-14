@@ -41,10 +41,7 @@ export const DiffHunkView = memo<DiffHunkViewProps>(({ hunk, isRead = false, onP
     const content = line.substring(1); // Remove prefix
 
     return (
-      <View
-        key={index}
-        style={[styles.diffLine, { backgroundColor }]}
-      >
+      <View key={index} style={[styles.diffLine, { backgroundColor }]}>
         <Text style={[styles.diffPrefix, { color: textColor }]}>{prefix}</Text>
         <Text style={[styles.diffContent, { color: textColor }]}>{content}</Text>
       </View>
@@ -63,7 +60,10 @@ export const DiffHunkView = memo<DiffHunkViewProps>(({ hunk, isRead = false, onP
     >
       {/* File path header */}
       <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
-        <Text style={[styles.filePath, { color: theme.colors.foregroundPrimary }]} numberOfLines={1}>
+        <Text
+          style={[styles.filePath, { color: theme.colors.foregroundPrimary }]}
+          numberOfLines={1}
+        >
           {hunk.filePath}
         </Text>
         {hunk.changeType && (

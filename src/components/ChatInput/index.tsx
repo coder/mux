@@ -118,39 +118,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   })();
 
   const [input, setInput] = usePersistedState(storageKeys.inputKey, "", { listener: true });
-||||||| parent of 7f2805fc (🤖 feat: initial React Native mobile app setup):src/components/ChatInput.tsx
-export const ChatInput: React.FC<ChatInputProps> = ({
-  workspaceId,
-  onMessageSent,
-  onTruncateHistory,
-  onProviderConfig,
-  onModelChange,
-  disabled = false,
-  isCompacting = false,
-  editingMessage,
-  onCancelEdit,
-  onEditLastUserMessage,
-  canInterrupt = false,
-  onReady,
-}) => {
-  const [input, setInput] = usePersistedState(getInputKey(workspaceId), "", { listener: true });
-=======
-export const ChatInput: React.FC<ChatInputProps> = ({
-  workspaceId,
-  onMessageSent,
-  onTruncateHistory,
-  onProviderConfig,
-  onModelChange,
-  disabled = false,
-  isCompacting = false,
-  editingMessage,
-  onCancelEdit,
-  onEditLastUserMessage,
-  canInterrupt = false,
-  onReady,
-}) => {
-  const [input, setInput] = usePersistedState(getInputKey(workspaceId), WORKSPACE_DEFAULTS.input, { listener: true });
->>>>>>> 7f2805fc (🤖 feat: initial React Native mobile app setup):src/components/ChatInput.tsx
   const [isSending, setIsSending] = useState(false);
   const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
   const [commandSuggestions, setCommandSuggestions] = useState<SlashSuggestion[]>([]);

@@ -136,13 +136,9 @@ export function SecretsModal({
                 disabled={isLoading}
                 style={{ paddingHorizontal: spacing.sm }}
               >
-                <ThemedText style={{ fontSize: 17, color: theme.colors.accent }}>
-                  Cancel
-                </ThemedText>
+                <ThemedText style={{ fontSize: 17, color: theme.colors.accent }}>Cancel</ThemedText>
               </TouchableOpacity>
-              <ThemedText style={{ fontSize: 17, fontWeight: "600" }}>
-                Secrets
-              </ThemedText>
+              <ThemedText style={{ fontSize: 17, fontWeight: "600" }}>Secrets</ThemedText>
               <TouchableOpacity
                 onPress={() => void handleSave()}
                 disabled={isLoading}

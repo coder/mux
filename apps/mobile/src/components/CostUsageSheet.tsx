@@ -54,7 +54,13 @@ function renderComponentRow(
   label: string,
   component: ChatUsageDisplay[keyof ChatUsageDisplay],
   theme: ReturnType<typeof useTheme>
-): JSX.Element {
+): JSX.Element | null {
+  // Type guard: only ChatUsageComponent has .tokens property
+  // The 'model' field is a string, so we skip it
+  if (typeof component !== "object" || component === null || !("tokens" in component)) {
+    return null;
+  }
+
   return (
     <View style={styles.metricRow} key={label}>
       <Text style={[styles.metricLabel, { color: theme.colors.foregroundPrimary }]}>{label}</Text>
@@ -146,7 +152,9 @@ export function CostUsageSheet({ visible, onClose }: CostUsageSheetProps): JSX.E
           ]}
         >
           <View style={styles.header}>
-            <Text style={[styles.headerTitle, { color: theme.colors.foregroundPrimary }]}>Cost &amp; Usage</Text>
+            <Text style={[styles.headerTitle, { color: theme.colors.foregroundPrimary }]}>
+              Cost &amp; Usage
+            </Text>
             <Pressable onPress={onClose} hitSlop={8}>
               <Ionicons name="close" size={20} color={theme.colors.foregroundMuted} />
             </Pressable>
@@ -232,7 +240,9 @@ export function CostUsageSheet({ visible, onClose }: CostUsageSheetProps): JSX.E
               <View style={styles.sectionDivider} />
 
               <View style={styles.sectionHeader}>
-                <Text style={[styles.sectionTitle, { color: theme.colors.foregroundPrimary }]}>Consumer breakdown</Text>
+                <Text style={[styles.sectionTitle, { color: theme.colors.foregroundPrimary }]}>
+                  Consumer breakdown
+                </Text>
                 {consumersReady ? (
                   <Text style={[styles.sectionSubtitle, { color: theme.colors.foregroundMuted }]}>
                     Tokenizer: {consumersReady.tokenizerName || "unknown"}
@@ -252,17 +262,25 @@ export function CostUsageSheet({ visible, onClose }: CostUsageSheetProps): JSX.E
                         key={consumer.name}
                         style={[styles.consumerRow, { borderBottomColor: theme.colors.border }]}
                       >
-                        <Text style={[styles.consumerName, { color: theme.colors.foregroundPrimary }]}>
+                        <Text
+                          style={[styles.consumerName, { color: theme.colors.foregroundPrimary }]}
+                        >
                           {consumer.name}
                         </Text>
                         <View style={styles.consumerMetrics}>
                           <Text
-                            style={[styles.consumerValue, { color: theme.colors.foregroundPrimary }]}
+                            style={[
+                              styles.consumerValue,
+                              { color: theme.colors.foregroundPrimary },
+                            ]}
                           >
                             {formatTokens(consumer.tokens)}
                           </Text>
                           <Text
-                            style={[styles.consumerPercentage, { color: theme.colors.foregroundMuted }]}
+                            style={[
+                              styles.consumerPercentage,
+                              { color: theme.colors.foregroundMuted },
+                            ]}
                           >
                             {consumer.percentage.toFixed(1)}%
                           </Text>
@@ -286,7 +304,9 @@ export function CostUsageSheet({ visible, onClose }: CostUsageSheetProps): JSX.E
                   {isConsumersLoading ? (
                     <ActivityIndicator color={theme.colors.accent} />
                   ) : (
-                    <Text style={[styles.loadButtonLabel, { color: theme.colors.foregroundPrimary }]}>
+                    <Text
+                      style={[styles.loadButtonLabel, { color: theme.colors.foregroundPrimary }]}
+                    >
                       Load detailed breakdown
                     </Text>
                   )}

@@ -10,12 +10,7 @@ interface StartHereModalProps {
   isExecuting: boolean;
 }
 
-export function StartHereModal({
-  visible,
-  onConfirm,
-  onCancel,
-  isExecuting,
-}: StartHereModalProps) {
+export function StartHereModal({ visible, onConfirm, onCancel, isExecuting }: StartHereModalProps) {
   const theme = useTheme();
 
   return (

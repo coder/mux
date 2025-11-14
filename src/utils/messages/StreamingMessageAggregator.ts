@@ -321,8 +321,20 @@ export class StreamingMessageAggregator {
    * Used when backend truncates history
    */
   handleDeleteMessage(deleteMsg: DeleteMessage): void {
-    // Delegate to processor to remove messages
-    this.processor.deleteByHistorySequence(deleteMsg.historySequences);
+    // Remove messages with matching historySequence
+    const sequencesToDelete = new Set(deleteMsg.historySequences);
+    const messagesToRemove: string[] = [];
+
+    for (const [id, msg] of this.messages.entries()) {
+      const seq = msg.metadata?.historySequence;
+      if (seq !== undefined && sequencesToDelete.has(seq)) {
+        messagesToRemove.push(id);
+      }
+    }
+
+    for (const id of messagesToRemove) {
+      this.messages.delete(id);
+    }
 
     this.invalidateCache();
   }

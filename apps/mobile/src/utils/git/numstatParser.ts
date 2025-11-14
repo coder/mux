@@ -17,7 +17,7 @@ export function parseNumstat(numstatOutput: string): FileStats[] {
   if (!numstatOutput || typeof numstatOutput !== "string") {
     return [];
   }
-  
+
   const lines = numstatOutput.trim().split("\n").filter(Boolean);
   const stats: FileStats[] = [];
 

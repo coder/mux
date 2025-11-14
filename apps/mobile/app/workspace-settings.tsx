@@ -259,11 +259,7 @@ export default function WorkspaceSettings(): JSX.Element {
               }}
             >
               <ThemedText variant="label">Default Reasoning Level</ThemedText>
-              <ThemedText
-                variant="caption"
-                weight="medium"
-                style={{ textTransform: "uppercase" }}
-              >
+              <ThemedText variant="caption" weight="medium" style={{ textTransform: "uppercase" }}>
                 {defaultReasoningLevel}
               </ThemedText>
             </View>
@@ -281,9 +277,7 @@ export default function WorkspaceSettings(): JSX.Element {
                 maximumValue={THINKING_LEVELS.length - 1}
                 step={1}
                 value={thinkingLevelToValue(defaultReasoningLevel)}
-                onValueChange={(value) =>
-                  setDefaultReasoningLevel(valueToThinkingLevel(value))
-                }
+                onValueChange={(value) => setDefaultReasoningLevel(valueToThinkingLevel(value))}
                 minimumTrackTintColor={theme.colors.accent}
                 maximumTrackTintColor={theme.colors.border}
                 thumbTintColor={theme.colors.accent}

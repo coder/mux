@@ -67,7 +67,13 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptions {
     { listener: true } // Listen for changes from ModelSelector and other sources
   );
 
-  return constructSendMessageOptions(mode, thinkingLevel, preferredModel, use1M, WORKSPACE_DEFAULTS.model);
+  return constructSendMessageOptions(
+    mode,
+    thinkingLevel,
+    preferredModel,
+    use1M,
+    WORKSPACE_DEFAULTS.model
+  );
 }
 
 /**

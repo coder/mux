@@ -2,7 +2,7 @@
  * Platform-agnostic chat event processor for streaming message accumulation.
  *
  * This module handles the core logic of accumulating streaming events into coherent
- * CmuxMessage objects. It's shared between desktop and mobile implementations.
+ * MuxMessage objects. It's shared between desktop and mobile implementations.
  *
  * Responsibilities:
  * - Accumulate streaming deltas (text, reasoning, tool calls) by messageId
@@ -16,7 +16,7 @@
  * - React/DOM interactions
  */
 
-import type { CmuxMessage, CmuxMetadata } from "../../types/message";
+import type { MuxMessage, MuxMetadata } from "../../types/message";
 import type { WorkspaceChatMessage } from "../../types/ipc";
 import {
   isStreamStart,
@@ -28,11 +28,10 @@ import {
   isToolCallEnd,
   isReasoningDelta,
   isReasoningEnd,
-  isCmuxMessage,
+  isMuxMessage,
   isInitStart,
   isInitOutput,
   isInitEnd,
-  type WorkspaceInitEvent,
 } from "../../types/ipc";
 import type {
   DynamicToolPart,
@@ -57,12 +56,12 @@ export interface ChatEventProcessor {
   /**
    * Get all accumulated messages, ordered by historySequence.
    */
-  getMessages(): CmuxMessage[];
+  getMessages(): MuxMessage[];
 
   /**
    * Get a specific message by ID.
    */
-  getMessageById(id: string): CmuxMessage | undefined;
+  getMessageById(id: string): MuxMessage | undefined;
 
   /**
    * Get current init state (if any).
@@ -82,15 +81,15 @@ export interface ChatEventProcessor {
 }
 
 /**
- * Create a helper for CmuxMessage creation
+ * Create a helper for MuxMessage creation
  */
-function createCmuxMessage(
+function createMuxMessage(
   id: string,
   role: "user" | "assistant",
   content: string,
-  metadata?: CmuxMetadata
-): CmuxMessage {
-  const parts: CmuxMessage["parts"] = content ? [{ type: "text" as const, text: content }] : [];
+  metadata?: MuxMetadata
+): MuxMessage {
+  const parts: MuxMessage["parts"] = content ? [{ type: "text" as const, text: content }] : [];
 
   return {
     id,
@@ -102,7 +101,7 @@ function createCmuxMessage(
 
 export function createChatEventProcessor(): ChatEventProcessor {
   // Message storage keyed by messageId
-  const messages = new Map<string, CmuxMessage>();
+  const messages = new Map<string, MuxMessage>();
 
   // Init hook state (ephemeral, not persisted)
   let initState: InitState | null = null;
@@ -146,7 +145,7 @@ export function createChatEventProcessor(): ChatEventProcessor {
     }
 
     // Handle complete messages (from history or reconnection)
-    if (isCmuxMessage(event)) {
+    if (isMuxMessage(event)) {
       const incomingMessage = event;
       const incomingSequence = incomingMessage.metadata?.historySequence;
 
@@ -170,7 +169,7 @@ export function createChatEventProcessor(): ChatEventProcessor {
 
     // Handle streaming lifecycle events
     if (isStreamStart(event)) {
-      const streamingMessage = createCmuxMessage(event.messageId, "assistant", "", {
+      const streamingMessage = createMuxMessage(event.messageId, "assistant", "", {
         historySequence: event.historySequence,
         timestamp: Date.now(),
         model: event.model,
@@ -220,7 +219,7 @@ export function createChatEventProcessor(): ChatEventProcessor {
         }
       } else if (!message) {
         // Reconnection case: create message from stream-end
-        const completeMessage: CmuxMessage = {
+        const completeMessage: MuxMessage = {
           id: event.messageId,
           role: "assistant",
           metadata: {
@@ -333,7 +332,7 @@ export function createChatEventProcessor(): ChatEventProcessor {
     // Ignore caught-up events (coordination signal)
   };
 
-  const getMessages = (): CmuxMessage[] => {
+  const getMessages = (): MuxMessage[] => {
     return Array.from(messages.values()).sort((a, b) => {
       const seqA = a.metadata?.historySequence ?? 0;
       const seqB = b.metadata?.historySequence ?? 0;
@@ -341,7 +340,7 @@ export function createChatEventProcessor(): ChatEventProcessor {
     });
   };
 
-  const getMessageById = (id: string): CmuxMessage | undefined => {
+  const getMessageById = (id: string): MuxMessage | undefined => {
     return messages.get(id);
   };
 

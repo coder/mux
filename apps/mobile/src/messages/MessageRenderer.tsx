@@ -1,6 +1,19 @@
 import type { JSX } from "react";
 import Markdown from "react-native-markdown-display";
-import { Image, View, StyleSheet, ScrollView, Text, Pressable, Animated, ActionSheetIOS, Platform, Modal, TouchableOpacity } from "react-native";
+import {
+  Image,
+  View,
+  StyleSheet,
+  ScrollView,
+  Text,
+  Pressable,
+  Animated,
+  ActionSheetIOS,
+  Platform,
+  Modal,
+  TouchableOpacity,
+  Keyboard,
+} from "react-native";
 import { useMemo, useState, useEffect, useRef } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { Surface } from "../components/Surface";
@@ -60,7 +73,13 @@ export interface MessageRendererProps {
   canEdit?: boolean;
 }
 
-export function MessageRenderer({ message, workspaceId, onStartHere, onEditMessage, canEdit }: MessageRendererProps): JSX.Element | null {
+export function MessageRenderer({
+  message,
+  workspaceId,
+  onStartHere,
+  onEditMessage,
+  canEdit,
+}: MessageRendererProps): JSX.Element | null {
   switch (message.type) {
     case "assistant":
       return <AssistantMessageCard message={message} />;
@@ -75,7 +94,9 @@ export function MessageRenderer({ message, workspaceId, onStartHere, onEditMessa
     case "workspace-init":
       return <WorkspaceInitMessageCard message={message} />;
     case "tool":
-      return <ToolMessageCard message={message} workspaceId={workspaceId} onStartHere={onStartHere} />;
+      return (
+        <ToolMessageCard message={message} workspaceId={workspaceId} onStartHere={onStartHere} />
+      );
     default:
       // Exhaustiveness check
       assert(false, `Unsupported message type: ${(message as DisplayedMessage).type}`);
@@ -90,18 +111,22 @@ function AssistantMessageCard({
 }): JSX.Element {
   const theme = useTheme();
   const [menuVisible, setMenuVisible] = useState(false);
-  const isStreaming = 'isStreaming' in message && (message as any).isStreaming === true;
+  const isStreaming = "isStreaming" in message && (message as any).isStreaming === true;
+
+  const handlePress = () => {
+    Keyboard.dismiss();
+  };
 
   const handleLongPress = async () => {
     // Import haptics dynamically to handle on press
-    const Haptics = await import('expo-haptics');
+    const Haptics = await import("expo-haptics");
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     // Use native ActionSheet on iOS, custom modal on Android
-    if (Platform.OS === 'ios') {
+    if (Platform.OS === "ios") {
       ActionSheetIOS.showActionSheetWithOptions(
         {
-          options: ['Copy Message', 'Cancel'],
+          options: ["Copy Message", "Cancel"],
           cancelButtonIndex: 1,
         },
         async (buttonIndex) => {
@@ -117,7 +142,7 @@ function AssistantMessageCard({
 
   const handleCopy = async () => {
     setMenuVisible(false);
-    const Clipboard = await import('expo-clipboard');
+    const Clipboard = await import("expo-clipboard");
     await Clipboard.setStringAsync(message.content);
   };
 
@@ -204,110 +229,113 @@ function AssistantMessageCard({
   );
 
   return (
-    <Pressable
-      onLongPress={handleLongPress}
-      delayLongPress={500}
-    >
+    <Pressable onPress={handlePress} onLongPress={handleLongPress} delayLongPress={500}>
       <Surface
         variant="plain"
         style={{ padding: theme.spacing.md, marginBottom: theme.spacing.md }}
         accessibilityRole="summary"
       >
-      <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: theme.spacing.sm }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: theme.spacing.sm }}>
-          <ThemedText variant="label">Assistant</ThemedText>
-          {message.isCompacted && (
-            <View
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            marginBottom: theme.spacing.sm,
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: theme.spacing.sm }}>
+            <ThemedText variant="label">Assistant</ThemedText>
+            {message.isCompacted && (
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 4,
+                  paddingHorizontal: theme.spacing.sm,
+                  paddingVertical: theme.spacing.xs,
+                  backgroundColor: "rgba(31, 107, 184, 0.15)",
+                  borderRadius: theme.radii.sm,
+                }}
+              >
+                <Text style={{ fontSize: 12 }}>📦</Text>
+                <ThemedText
+                  variant="caption"
+                  weight="semibold"
+                  style={{ color: theme.colors.planModeLight, textTransform: "uppercase" }}
+                >
+                  Compacted
+                </ThemedText>
+              </View>
+            )}
+          </View>
+          {message.model ? (
+            <Surface
+              variant="ghost"
               style={{
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 4,
+                borderRadius: theme.radii.pill,
+                borderWidth: 1,
+                borderColor: theme.colors.chipBorder,
                 paddingHorizontal: theme.spacing.sm,
                 paddingVertical: theme.spacing.xs,
-                backgroundColor: "rgba(31, 107, 184, 0.15)",
-                borderRadius: theme.radii.sm,
               }}
             >
-              <Text style={{ fontSize: 12 }}>📦</Text>
-              <ThemedText
-                variant="caption"
-                weight="semibold"
-                style={{ color: theme.colors.planModeLight, textTransform: "uppercase" }}
-              >
-                Compacted
+              <ThemedText variant="caption" weight="medium">
+                {truncateModel(message.model)}
               </ThemedText>
-            </View>
-          )}
+            </Surface>
+          ) : null}
         </View>
-        {message.model ? (
-          <Surface
-            variant="ghost"
-            style={{
-              borderRadius: theme.radii.pill,
-              borderWidth: 1,
-              borderColor: theme.colors.chipBorder,
-              paddingHorizontal: theme.spacing.sm,
-              paddingVertical: theme.spacing.xs,
-            }}
-          >
-            <ThemedText variant="caption" weight="medium">
-              {truncateModel(message.model)}
-            </ThemedText>
-          </Surface>
-        ) : null}
-      </View>
-      <View style={{ flexDirection: "row", alignItems: "flex-end" }}>
-        <View style={{ flex: 1 }}>
-          {Boolean(message.content) ? (
-            <Markdown style={markdownStyles}>{message.content}</Markdown>
-          ) : (
-            <ThemedText variant="muted">(No content)</ThemedText>
-          )}
-        </View>
-        {isStreaming && <StreamingCursor />}
-      </View>
-    </Surface>
-
-    {/* Android context menu modal */}
-    {Platform.OS === 'android' && (
-      <Modal
-        visible={menuVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setMenuVisible(false)}
-      >
-        <Pressable
-          style={{
-            flex: 1,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            justifyContent: 'flex-end',
-          }}
-          onPress={() => setMenuVisible(false)}
-        >
-          <View
-            style={{
-              backgroundColor: theme.colors.surfaceElevated,
-              borderTopLeftRadius: theme.radii.lg,
-              borderTopRightRadius: theme.radii.lg,
-              paddingBottom: theme.spacing.xl,
-            }}
-          >
-            <Pressable
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: theme.spacing.md,
-                padding: theme.spacing.md,
-              }}
-              onPress={handleCopy}
-            >
-              <ThemedText>📋 Copy Message</ThemedText>
-            </Pressable>
+        <View style={{ flexDirection: "row", alignItems: "flex-end" }}>
+          <View style={{ flex: 1 }}>
+            {Boolean(message.content) ? (
+              <Markdown style={markdownStyles}>{message.content}</Markdown>
+            ) : (
+              <ThemedText variant="muted">(No content)</ThemedText>
+            )}
           </View>
-        </Pressable>
-      </Modal>
-    )}
-  </Pressable>
+          {isStreaming && <StreamingCursor />}
+        </View>
+      </Surface>
+
+      {/* Android context menu modal */}
+      {Platform.OS === "android" && (
+        <Modal
+          visible={menuVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setMenuVisible(false)}
+        >
+          <Pressable
+            style={{
+              flex: 1,
+              backgroundColor: "rgba(0, 0, 0, 0.5)",
+              justifyContent: "flex-end",
+            }}
+            onPress={() => setMenuVisible(false)}
+          >
+            <View
+              style={{
+                backgroundColor: theme.colors.surfaceElevated,
+                borderTopLeftRadius: theme.radii.lg,
+                borderTopRightRadius: theme.radii.lg,
+                paddingBottom: theme.spacing.xl,
+              }}
+            >
+              <Pressable
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: theme.spacing.md,
+                  padding: theme.spacing.md,
+                }}
+                onPress={handleCopy}
+              >
+                <ThemedText>📋 Copy Message</ThemedText>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Modal>
+      )}
+    </Pressable>
   );
 }
 
@@ -323,18 +351,22 @@ function UserMessageCard({
   const theme = useTheme();
   const [menuVisible, setMenuVisible] = useState(false);
 
+  const handlePress = () => {
+    Keyboard.dismiss();
+  };
+
   const handleLongPress = async () => {
     // Import haptics dynamically to handle on press
-    const Haptics = await import('expo-haptics');
+    const Haptics = await import("expo-haptics");
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     // Use native ActionSheet on iOS, custom modal on Android
-    if (Platform.OS === 'ios') {
-      const options = ['Copy Message'];
+    if (Platform.OS === "ios") {
+      const options = ["Copy Message"];
       if (canEdit && onEditMessage) {
-        options.unshift('Edit Message'); // Add Edit as first option
+        options.unshift("Edit Message"); // Add Edit as first option
       }
-      options.push('Cancel');
+      options.push("Cancel");
 
       const cancelButtonIndex = options.length - 1;
 
@@ -367,22 +399,21 @@ function UserMessageCard({
 
   const handleCopy = async () => {
     setMenuVisible(false);
-    const Clipboard = await import('expo-clipboard');
+    const Clipboard = await import("expo-clipboard");
     await Clipboard.setStringAsync(message.content);
   };
 
   return (
-    <Pressable
-      onLongPress={handleLongPress}
-      delayLongPress={500}
-    >
+    <Pressable onPress={handlePress} onLongPress={handleLongPress} delayLongPress={500}>
       <Surface
         variant="plain"
         style={{ padding: theme.spacing.md, marginBottom: theme.spacing.md }}
         accessibilityRole="text"
       >
         <ThemedText variant="label">You</ThemedText>
-        <ThemedText style={{ marginTop: theme.spacing.sm }}>{message.content || "(No content)"}</ThemedText>
+        <ThemedText style={{ marginTop: theme.spacing.sm }}>
+          {message.content || "(No content)"}
+        </ThemedText>
         {message.imageParts && message.imageParts.length > 0 ? (
           <ScrollView
             horizontal
@@ -409,7 +440,7 @@ function UserMessageCard({
       </Surface>
 
       {/* Android context menu modal */}
-      {Platform.OS === 'android' && (
+      {Platform.OS === "android" && (
         <Modal
           visible={menuVisible}
           transparent
@@ -419,9 +450,9 @@ function UserMessageCard({
           <TouchableOpacity
             style={{
               flex: 1,
-              backgroundColor: 'rgba(0, 0, 0, 0.5)',
-              justifyContent: 'center',
-              alignItems: 'center',
+              backgroundColor: "rgba(0, 0, 0, 0.5)",
+              justifyContent: "center",
+              alignItems: "center",
             }}
             activeOpacity={1}
             onPress={() => setMenuVisible(false)}
@@ -433,7 +464,7 @@ function UserMessageCard({
                 padding: theme.spacing.md,
                 minWidth: 200,
                 elevation: 5,
-                shadowColor: '#000',
+                shadowColor: "#000",
                 shadowOffset: { width: 0, height: 2 },
                 shadowOpacity: 0.25,
                 shadowRadius: 4,
@@ -473,7 +504,7 @@ function ReasoningMessageCard({
   message: DisplayedMessage & { type: "reasoning" };
 }): JSX.Element {
   const theme = useTheme();
-  const isStreaming = 'isStreaming' in message && (message as any).isStreaming === true;
+  const isStreaming = "isStreaming" in message && (message as any).isStreaming === true;
   const [isExpanded, setIsExpanded] = useState(true); // Default expanded
 
   // Auto-collapse when reasoning finishes (isStreaming becomes false)
@@ -501,7 +532,9 @@ function ReasoningMessageCard({
 
       {isExpanded && (
         <View style={{ flexDirection: "row", alignItems: "flex-end", marginTop: theme.spacing.sm }}>
-          <ThemedText style={{ flex: 1, fontStyle: "italic", color: theme.colors.foregroundSecondary }}>
+          <ThemedText
+            style={{ flex: 1, fontStyle: "italic", color: theme.colors.foregroundSecondary }}
+          >
             {message.content || "(Thinking…)"}
           </ThemedText>
           {isStreaming && <StreamingCursor />}
@@ -533,7 +566,15 @@ function StreamErrorMessageCard({
       accessibilityRole="alert"
     >
       {/* Header with error type and count */}
-      <View style={{ flexDirection: "row", alignItems: "center", gap: theme.spacing.sm, marginBottom: theme.spacing.sm, flexWrap: "wrap" }}>
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: theme.spacing.sm,
+          marginBottom: theme.spacing.sm,
+          flexWrap: "wrap",
+        }}
+      >
         <View style={{ flexDirection: "row", alignItems: "center", gap: theme.spacing.xs }}>
           <ThemedText style={{ color: theme.colors.danger, fontSize: 16, lineHeight: 16 }}>
             ●
@@ -667,7 +708,14 @@ function WorkspaceInitMessageCard({
           statusLabel: "Running",
         } as const;
     }
-  }, [message.exitCode, message.status, theme.colors.accent, theme.colors.accentMuted, theme.colors.danger, theme.colors.success]);
+  }, [
+    message.exitCode,
+    message.status,
+    theme.colors.accent,
+    theme.colors.accentMuted,
+    theme.colors.danger,
+    theme.colors.success,
+  ]);
 
   return (
     <Surface
@@ -834,9 +882,9 @@ function ToolMessageCard({
   if (isProposePlanTool(message)) {
     const handleStartHereWithPlan = onStartHere
       ? async () => {
-        const fullContent = `# ${message.args.title}\n\n${message.args.plan}`;
-        await onStartHere(fullContent);
-      }
+          const fullContent = `# ${message.args.title}\n\n${message.args.plan}`;
+          await onStartHere(fullContent);
+        }
       : undefined;
 
     return (
@@ -884,7 +932,14 @@ function ToolMessageCard({
       default:
         return { color: theme.colors.foregroundSecondary, label: "○ Pending" };
     }
-  }, [message.status, theme.colors.accent, theme.colors.danger, theme.colors.foregroundSecondary, theme.colors.success, theme.colors.warning]);
+  }, [
+    message.status,
+    theme.colors.accent,
+    theme.colors.danger,
+    theme.colors.foregroundSecondary,
+    theme.colors.success,
+    theme.colors.warning,
+  ]);
 
   return (
     <Surface
@@ -896,7 +951,9 @@ function ToolMessageCard({
         onPress={() => setIsExpanded(!isExpanded)}
         style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}
       >
-        <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: theme.spacing.sm }}>
+        <View
+          style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: theme.spacing.sm }}
+        >
           <Ionicons
             name={isExpanded ? "chevron-down" : "chevron-forward"}
             size={16}

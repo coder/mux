@@ -15,10 +15,7 @@ import { createDisplayUsage } from "@shared/utils/tokens/displayUsage";
 import type { ChatStats } from "@shared/types/chatStats.ts";
 import type { MuxMessage } from "@shared/types/message.ts";
 import type { WorkspaceChatMessage } from "@shared/types/ipc";
-import {
-  isMuxMessage,
-  isStreamEnd,
-} from "@shared/types/ipc";
+import { isMuxMessage, isStreamEnd } from "@shared/types/ipc";
 import type { StreamEndEvent, StreamAbortEvent } from "@shared/types/stream.ts";
 
 import type { WorkspaceChatEvent } from "../types";
@@ -82,7 +79,8 @@ function normalizeUsage(
     return null;
   }
 
-  const model = typeof metadata.model === "string" && metadata.model.length > 0 ? metadata.model : "unknown";
+  const model =
+    typeof metadata.model === "string" && metadata.model.length > 0 ? metadata.model : "unknown";
   const display = createDisplayUsage(metadata.usage, model, metadata.providerMetadata);
   if (!display) {
     return null;
@@ -148,13 +146,16 @@ export function WorkspaceCostProvider({
   workspaceId,
   children,
 }: {
-  workspaceId: string;
+  workspaceId?: string | null;
   children: ReactNode;
 }): JSX.Element {
   const api = useApiClient();
   const usageMapRef = useRef<Map<string, UsageEntry>>(new Map());
   const [usageHistory, setUsageHistory] = useState<ChatUsageDisplay[]>([]);
   const [isInitialized, setIsInitialized] = useState(false);
+
+  // Check if we're in creation mode (no workspaceId yet)
+  const isCreationMode = !workspaceId;
   const [consumers, setConsumers] = useState<ConsumerState>({ status: "idle" });
 
   useEffect(() => {
@@ -164,9 +165,15 @@ export function WorkspaceCostProvider({
     setConsumers({ status: "idle" });
     setIsInitialized(false);
 
+    // Skip loading in creation mode (no workspace yet)
+    if (isCreationMode) {
+      setIsInitialized(true);
+      return;
+    }
+
     void (async () => {
       try {
-        const events = await api.workspace.getFullReplay(workspaceId);
+        const events = await api.workspace.getFullReplay(workspaceId!);
         if (isCancelled) {
           return;
         }
@@ -185,8 +192,8 @@ export function WorkspaceCostProvider({
             if (entry) {
               nextMap.set(entry.messageId, entry);
             }
-          } else if (isStreamEnd(event as WorkspaceChatEvent)) {
-            const stream = event as StreamEndEvent;
+          } else if (isStreamEnd(event as unknown as WorkspaceChatMessage)) {
+            const stream = event as unknown as StreamEndEvent;
             const entry = normalizeUsage(stream.messageId, {
               usage: stream.metadata?.usage,
               model: stream.metadata?.model,
@@ -214,7 +221,7 @@ export function WorkspaceCostProvider({
     return () => {
       isCancelled = true;
     };
-  }, [api, workspaceId]);
+  }, [api, workspaceId, isCreationMode]);
 
   const registerUsage = useCallback((entry: UsageEntry | null) => {
     if (!entry) {
@@ -256,6 +263,11 @@ export function WorkspaceCostProvider({
   );
 
   const refreshConsumers = useCallback(async () => {
+    // Skip in creation mode
+    if (isCreationMode) {
+      return;
+    }
+
     setConsumers((prev) => {
       if (prev.status === "loading") {
         return prev;
@@ -264,7 +276,7 @@ export function WorkspaceCostProvider({
     });
 
     try {
-      const events = await api.workspace.getFullReplay(workspaceId);
+      const events = await api.workspace.getFullReplay(workspaceId!);
       const messages = extractMessagesFromReplay(events);
       if (messages.length === 0) {
         setConsumers({
@@ -287,7 +299,7 @@ export function WorkspaceCostProvider({
       const message = error instanceof Error ? error.message : String(error);
       setConsumers({ status: "error", error: message });
     }
-  }, [api, workspaceId]);
+  }, [api, workspaceId, isCreationMode]);
 
   const lastUsage = usageHistory.length > 0 ? usageHistory[usageHistory.length - 1] : undefined;
   const sessionUsage = useMemo(() => sumUsageHistory(usageHistory), [usageHistory]);

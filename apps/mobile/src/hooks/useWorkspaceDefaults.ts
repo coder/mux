@@ -166,8 +166,7 @@ export function useWorkspaceDefaults(): {
         setUse1MContextState(context1M);
         setIsLoading(false);
       }
-    }
-    );
+    });
     return () => {
       cancelled = true;
     };

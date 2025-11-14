@@ -3,6 +3,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -90,18 +91,20 @@ function applyChatEvent(current: TimelineEntry[], event: WorkspaceChatEvent): Ti
 
     if (existingIndex >= 0) {
       // Message already exists - check if it's an update
-      const existingMessage = (current[existingIndex] as Extract<TimelineEntry, { kind: "displayed" }>).message;
+      const existingMessage = (
+        current[existingIndex] as Extract<TimelineEntry, { kind: "displayed" }>
+      ).message;
 
       // Check if it's a streaming update
       const isStreamingUpdate =
         existingMessage.historySequence === event.historySequence &&
-        'isStreaming' in event &&
+        "isStreaming" in event &&
         (event as any).isStreaming === true;
 
       // Check if it's a tool status change (executing → completed/failed)
       const isToolStatusChange =
-        existingMessage.type === 'tool' &&
-        event.type === 'tool' &&
+        existingMessage.type === "tool" &&
+        event.type === "tool" &&
         existingMessage.historySequence === event.historySequence &&
         (existingMessage as any).status !== (event as any).status;
 
@@ -130,7 +133,9 @@ function applyChatEvent(current: TimelineEntry[], event: WorkspaceChatEvent): Ti
     // Check if we need to sort (is new message out of order?)
     const lastDisplayed = [...current]
       .reverse()
-      .find((item): item is Extract<TimelineEntry, { kind: "displayed" }> => item.kind === "displayed");
+      .find(
+        (item): item is Extract<TimelineEntry, { kind: "displayed" }> => item.kind === "displayed"
+      );
 
     if (!lastDisplayed || compareDisplayedMessages(lastDisplayed.message, event) <= 0) {
       // New message is in order - just append (no sort needed)
@@ -138,9 +143,13 @@ function applyChatEvent(current: TimelineEntry[], event: WorkspaceChatEvent): Ti
     }
 
     // Out of order - need to sort
-    const withoutExisting = current.filter((item) => item.kind !== "displayed" || item.message.id !== event.id);
+    const withoutExisting = current.filter(
+      (item) => item.kind !== "displayed" || item.message.id !== event.id
+    );
     const displayed = withoutExisting
-      .filter((item): item is Extract<TimelineEntry, { kind: "displayed" }> => item.kind === "displayed")
+      .filter(
+        (item): item is Extract<TimelineEntry, { kind: "displayed" }> => item.kind === "displayed"
+      )
       .concat(entry)
       .sort((left, right) => compareDisplayedMessages(left.message, right.message));
     const raw = withoutExisting.filter(
@@ -153,7 +162,8 @@ function applyChatEvent(current: TimelineEntry[], event: WorkspaceChatEvent): Ti
     typeof event === "object" &&
     event !== null &&
     "type" in event &&
-    ((event as { type: unknown }).type === "caught-up" || (event as { type: unknown }).type === "stream-start")
+    ((event as { type: unknown }).type === "caught-up" ||
+      (event as { type: unknown }).type === "stream-start")
   ) {
     return current;
   }
@@ -184,7 +194,7 @@ function RawEventCard({
   const spacing = theme.spacing;
 
   if (payload && typeof payload === "object" && "type" in payload) {
-    const typed = payload as { type: unknown;[key: string]: unknown };
+    const typed = payload as { type: unknown; [key: string]: unknown };
     if (typed.type === "status" && typeof typed.status === "string") {
       return <ThemedText variant="caption">{typed.status}</ThemedText>;
     }
@@ -265,18 +275,41 @@ const TimelineRow = memo(
 TimelineRow.displayName = "TimelineRow";
 
 interface WorkspaceScreenInnerProps {
-  workspaceId: string;
+  workspaceId?: string | null;
+  creationContext?: {
+    projectPath: string;
+    projectName: string;
+    branches?: string[];
+    defaultTrunk?: string;
+  };
 }
 
-function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.Element {
+function WorkspaceScreenInner({
+  workspaceId,
+  creationContext,
+}: WorkspaceScreenInnerProps): JSX.Element {
+  const isCreationMode = !workspaceId && !!creationContext;
+  const router = useRouter();
   const { recordStreamUsage } = useWorkspaceCost();
   const theme = useTheme();
   const spacing = theme.spacing;
   const insets = useSafeAreaInsets();
   const expanderRef = useRef(createChatEventExpander());
   const api = useApiClient();
-  const { mode, thinkingLevel, model, use1MContext, isLoading: settingsLoading } = useWorkspaceSettings(workspaceId);
+  const {
+    mode,
+    thinkingLevel,
+    model,
+    use1MContext,
+    isLoading: settingsLoading,
+  } = useWorkspaceSettings(workspaceId ?? "");
   const [input, setInput] = useState("");
+
+  // Creation mode: branch selection state
+  const [branches, setBranches] = useState<string[]>(creationContext?.branches ?? []);
+  const [trunkBranch, setTrunkBranch] = useState<string>(
+    creationContext?.defaultTrunk ?? branches[0] ?? "main"
+  );
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [isSending, setIsSending] = useState(false);
   const wsRef = useRef<{ close: () => void } | null>(null);
@@ -284,7 +317,9 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   const inputRef = useRef<TextInput>(null);
 
   // Editing state - tracks message being edited
-  const [editingMessage, setEditingMessage] = useState<{ id: string; content: string } | undefined>(undefined);
+  const [editingMessage, setEditingMessage] = useState<{ id: string; content: string } | undefined>(
+    undefined
+  );
 
   // Track current todos for floating card (during streaming)
   const [currentTodos, setCurrentTodos] = useState<TodoItem[]>([]);
@@ -304,10 +339,30 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
     expanderRef.current = createChatEventExpander();
   }, [workspaceId]);
 
+  // Load branches in creation mode
+  useEffect(() => {
+    if (!isCreationMode || !creationContext) return;
+
+    async function loadBranches() {
+      try {
+        const result = await api.projects.listBranches(creationContext!.projectPath);
+        const sanitized = result?.branches ?? [];
+        setBranches(sanitized);
+        const trunk = result?.recommendedTrunk ?? sanitized[0] ?? "main";
+        setTrunkBranch(trunk);
+      } catch (error) {
+        console.error("Failed to load branches:", error);
+        // Keep defaults
+      }
+    }
+    void loadBranches();
+  }, [isCreationMode, api, creationContext]);
+
   const metadataQuery = useQuery({
     queryKey: ["workspace", workspaceId],
-    queryFn: () => api.workspace.getInfo(workspaceId),
+    queryFn: () => api.workspace.getInfo(workspaceId!),
     staleTime: 15_000,
+    enabled: !isCreationMode && !!workspaceId,
   });
 
   const metadata = metadataQuery.data ?? null;
@@ -316,23 +371,24 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   useEffect(() => {
     // Find the most recent completed todo_write tool in timeline
     const toolMessages = timeline
-      .filter((entry): entry is Extract<TimelineEntry, { kind: "displayed" }> =>
-        entry.kind === "displayed"
+      .filter(
+        (entry): entry is Extract<TimelineEntry, { kind: "displayed" }> =>
+          entry.kind === "displayed"
       )
-      .map(entry => entry.message)
-      .filter((msg): msg is DisplayedMessage & { type: "tool" } =>
-        msg.type === "tool"
-      )
-      .filter(msg => msg.toolName === "todo_write");
+      .map((entry) => entry.message)
+      .filter((msg): msg is DisplayedMessage & { type: "tool" } => msg.type === "tool")
+      .filter((msg) => msg.toolName === "todo_write");
 
     // Get the most recent one (timeline is already sorted)
     const latestTodoTool = toolMessages[toolMessages.length - 1];
 
-    if (latestTodoTool &&
+    if (
+      latestTodoTool &&
       latestTodoTool.args &&
       typeof latestTodoTool.args === "object" &&
       "todos" in latestTodoTool.args &&
-      Array.isArray(latestTodoTool.args.todos)) {
+      Array.isArray(latestTodoTool.args.todos)
+    ) {
       const todos = latestTodoTool.args.todos as TodoItem[];
       setCurrentTodos(todos);
       setHasTodos(todos.length > 0);
@@ -344,8 +400,11 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   }, [timeline, setHasTodos]);
 
   useEffect(() => {
+    // Skip WebSocket subscription in creation mode (no workspace yet)
+    if (isCreationMode) return;
+
     const expander = expanderRef.current;
-    const subscription = api.workspace.subscribeChat(workspaceId, (payload) => {
+    const subscription = api.workspace.subscribeChat(workspaceId!, (payload) => {
       // Track streaming state and tokens (60s trailing window like desktop)
       if (payload && typeof payload === "object" && "type" in payload) {
         const typedEvent = payload as StreamEndEvent | StreamAbortEvent | { type: string };
@@ -368,9 +427,10 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
           payload.tokens > 0
         ) {
           const tokens = payload.tokens;
-          const timestamp = "timestamp" in payload && typeof payload.timestamp === "number"
-            ? payload.timestamp
-            : Date.now();
+          const timestamp =
+            "timestamp" in payload && typeof payload.timestamp === "number"
+              ? payload.timestamp
+              : Date.now();
 
           // Add delta with timestamp
           deltasRef.current.push({ tokens, timestamp });
@@ -430,7 +490,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
       subscription.close();
       wsRef.current = null;
     };
-  }, [api, workspaceId, recordStreamUsage]);
+  }, [api, workspaceId, isCreationMode, recordStreamUsage]);
 
   // Reset timeline, todos, and editing state when workspace changes
   useEffect(() => {
@@ -454,9 +514,41 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
     setInput("");
     setIsSending(true);
 
-    // Send message - fire and forget
+    if (isCreationMode) {
+      // CREATION MODE: Send first message to create workspace
+      const result = await api.workspace.sendMessage(null, trimmed, {
+        model,
+        mode,
+        thinkingLevel,
+        projectPath: creationContext!.projectPath,
+        trunkBranch,
+        runtimeConfig: undefined, // Can add runtime preference loading
+        providerOptions: {
+          anthropic: {
+            use1MContext,
+          },
+        },
+      });
+
+      if (!result.success) {
+        console.error("[createWorkspace] Failed:", result.error);
+        setTimeline((current) =>
+          applyChatEvent(current, { type: "error", error: result.error } as WorkspaceChatEvent)
+        );
+        setInput(originalContent);
+      } else if ("metadata" in result && result.metadata) {
+        // Success! Navigate to new workspace
+        router.replace(`/workspace/${result.metadata.id}`);
+        // Note: router.replace ensures we don't go back to creation screen
+      }
+
+      setIsSending(false);
+      return;
+    }
+
+    // NORMAL MODE: Send message - fire and forget
     // Actual errors will come via stream-error events from WebSocket
-    const result = await api.workspace.sendMessage(workspaceId, trimmed, {
+    const result = await api.workspace.sendMessage(workspaceId!, trimmed, {
       model,
       mode,
       thinkingLevel,
@@ -470,7 +562,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
 
     // Only show error for validation failures (not stream errors)
     if (!result.success) {
-      console.error('[sendMessage] Validation failed:', result.error);
+      console.error("[sendMessage] Validation failed:", result.error);
       setTimeline((current) =>
         applyChatEvent(current, { type: "error", error: result.error } as WorkspaceChatEvent)
       );
@@ -488,14 +580,29 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
     }
 
     setIsSending(false);
-  }, [api, input, mode, thinkingLevel, model, use1MContext, workspaceId, editingMessage]);
+  }, [
+    api,
+    input,
+    mode,
+    thinkingLevel,
+    model,
+    use1MContext,
+    workspaceId,
+    editingMessage,
+    isCreationMode,
+    creationContext,
+    trunkBranch,
+    router,
+  ]);
 
   const onCancelStream = useCallback(async () => {
+    if (!workspaceId) return;
     await api.workspace.interruptStream(workspaceId);
   }, [api, workspaceId]);
 
   const handleStartHere = useCallback(
     async (content: string) => {
+      if (!workspaceId) return;
       const message = createCompactedMessage(content);
       const result = await api.workspace.replaceChatHistory(workspaceId, message);
 
@@ -525,15 +632,18 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   }, []);
 
   // Validation: check if message can be edited
-  const canEditMessage = useCallback((message: DisplayedMessage): boolean => {
-    // Cannot edit during streaming
-    if (isStreaming) return false;
+  const canEditMessage = useCallback(
+    (message: DisplayedMessage): boolean => {
+      // Cannot edit during streaming
+      if (isStreaming) return false;
 
-    // Only user messages can be edited
-    if (message.type !== 'user') return false;
+      // Only user messages can be edited
+      if (message.type !== "user") return false;
 
-    return true;
-  }, [isStreaming]);
+      return true;
+    },
+    [isStreaming]
+  );
 
   // Reverse timeline for inverted FlatList (chat messages bottom-to-top)
   const listData = useMemo(() => [...timeline].reverse(), [timeline]);
@@ -559,7 +669,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
             item={item}
             spacing={spacing}
             onDismiss={item.kind === "raw" ? () => handleDismissRawEvent(item.key) : undefined}
-            workspaceId={workspaceId}
+            workspaceId={workspaceId ?? undefined}
             onStartHere={handleStartHere}
             onEditMessage={handleStartEdit}
             canEditMessage={canEditMessage}
@@ -569,9 +679,9 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
           {isEditCutoff && (
             <View
               style={{
-                backgroundColor: '#FEF3C7',
+                backgroundColor: "#FEF3C7",
                 borderBottomWidth: 3,
-                borderBottomColor: '#F59E0B',
+                borderBottomColor: "#F59E0B",
                 paddingVertical: 12,
                 paddingHorizontal: 16,
                 marginVertical: 16,
@@ -581,10 +691,10 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
             >
               <ThemedText
                 style={{
-                  color: '#92400E',
+                  color: "#92400E",
                   fontSize: 12,
-                  textAlign: 'center',
-                  fontWeight: '600',
+                  textAlign: "center",
+                  fontWeight: "600",
                 }}
               >
                 ⚠️ Messages below this line will be removed when you submit the edit
@@ -594,7 +704,15 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
         </>
       );
     },
-    [spacing, handleDismissRawEvent, workspaceId, handleStartHere, handleStartEdit, canEditMessage, editingMessage]
+    [
+      spacing,
+      handleDismissRawEvent,
+      workspaceId,
+      handleStartHere,
+      handleStartEdit,
+      canEditMessage,
+      editingMessage,
+    ]
   );
 
   return (
@@ -606,7 +724,35 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
       <View style={{ flex: 1 }}>
         {/* Chat area - header bar removed, all actions now in action sheet menu */}
         <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
-          {metadataQuery.isLoading && timeline.length === 0 ? (
+          {isCreationMode && timeline.length === 0 ? (
+            <View
+              style={{
+                flex: 1,
+                justifyContent: "center",
+                alignItems: "center",
+                padding: spacing.xl,
+              }}
+            >
+              <Ionicons name="chatbubbles-outline" size={48} color={theme.colors.foregroundMuted} />
+              <ThemedText
+                variant="titleSmall"
+                weight="semibold"
+                style={{ marginTop: spacing.md, textAlign: "center" }}
+              >
+                Start a new conversation
+              </ThemedText>
+              <ThemedText
+                variant="caption"
+                style={{
+                  marginTop: spacing.xs,
+                  textAlign: "center",
+                  color: theme.colors.foregroundMuted,
+                }}
+              >
+                Type your first message below to create a workspace
+              </ThemedText>
+            </View>
+          ) : metadataQuery.isLoading && timeline.length === 0 ? (
             <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
               <ActivityIndicator color={theme.colors.accent} />
             </View>
@@ -624,6 +770,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
               updateCellsBatchingPeriod={32}
               removeClippedSubviews
               keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
             />
           )}
         </View>
@@ -676,25 +823,50 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
             borderTopColor: theme.colors.border,
           }}
         >
+          {/* Creation banner */}
+          {isCreationMode && (
+            <View
+              style={{
+                flexDirection: "column",
+                backgroundColor: theme.colors.surfaceElevated,
+                paddingVertical: spacing.md,
+                paddingHorizontal: spacing.md,
+                borderRadius: 8,
+                marginBottom: spacing.sm,
+              }}
+            >
+              <ThemedText
+                variant="titleSmall"
+                weight="semibold"
+                style={{ marginBottom: spacing.xs }}
+              >
+                {creationContext!.projectName}
+              </ThemedText>
+              <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted }}>
+                Workspace name and branch will be generated automatically
+              </ThemedText>
+            </View>
+          )}
+
           {/* Editing banner */}
           {editingMessage && (
             <View
               style={{
-                flexDirection: 'row',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                backgroundColor: '#FFF4E6',
+                flexDirection: "row",
+                justifyContent: "space-between",
+                alignItems: "center",
+                backgroundColor: "#FFF4E6",
                 paddingVertical: spacing.sm,
                 paddingHorizontal: spacing.md,
                 borderRadius: 8,
                 marginBottom: spacing.sm,
               }}
             >
-              <ThemedText style={{ color: '#B45309', fontSize: 14, fontWeight: '600' }}>
+              <ThemedText style={{ color: "#B45309", fontSize: 14, fontWeight: "600" }}>
                 ✏️ Editing message
               </ThemedText>
               <Pressable onPress={handleCancelEdit}>
-                <ThemedText style={{ color: '#1E40AF', fontSize: 14, fontWeight: '600' }}>
+                <ThemedText style={{ color: "#1E40AF", fontSize: 14, fontWeight: "600" }}>
                   Cancel
                 </ThemedText>
               </Pressable>
@@ -706,7 +878,13 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
               ref={inputRef}
               value={input}
               onChangeText={setInput}
-              placeholder={editingMessage ? "Edit your message..." : "Message"}
+              placeholder={
+                isCreationMode
+                  ? "Describe what you want to build..."
+                  : editingMessage
+                    ? "Edit your message..."
+                    : "Message"
+              }
               placeholderTextColor={theme.colors.foregroundMuted}
               style={{
                 flex: 1,
@@ -718,7 +896,7 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
                 backgroundColor: theme.colors.inputBackground,
                 color: theme.colors.foregroundPrimary,
                 borderWidth: editingMessage ? 2 : 1,
-                borderColor: editingMessage ? '#F59E0B' : theme.colors.inputBorder,
+                borderColor: editingMessage ? "#F59E0B" : theme.colors.inputBorder,
                 fontSize: 16,
               }}
               textAlignVertical="center"
@@ -737,8 +915,12 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
                   : isSending || !input.trim()
                     ? theme.colors.inputBorder
                     : pressed
-                      ? editingMessage ? '#D97706' : theme.colors.accentHover
-                      : editingMessage ? '#F59E0B' : theme.colors.accent,
+                      ? editingMessage
+                        ? "#D97706"
+                        : theme.colors.accentHover
+                      : editingMessage
+                        ? "#F59E0B"
+                        : theme.colors.accent,
                 width: 38,
                 height: 38,
                 borderRadius: isStreaming ? 8 : 19, // Square when streaming, circle when not
@@ -777,13 +959,23 @@ function WorkspaceScreenInner({ workspaceId }: WorkspaceScreenInnerProps): JSX.E
   );
 }
 
-export function WorkspaceScreen(): JSX.Element {
+export function WorkspaceScreen({
+  creationContext,
+}: {
+  creationContext?: { projectPath: string; projectName: string };
+} = {}): JSX.Element {
   const theme = useTheme();
   const spacing = theme.spacing;
   const router = useRouter();
   const params = useLocalSearchParams<{ id?: string }>();
-  const workspaceId = params.id ? String(params.id) : "";
 
+  // Creation mode: use null workspaceId
+  if (creationContext) {
+    return <WorkspaceScreenInner workspaceId={null} creationContext={creationContext} />;
+  }
+
+  // Normal mode: existing logic
+  const workspaceId = params.id ? String(params.id) : "";
   if (!workspaceId) {
     return (
       <View

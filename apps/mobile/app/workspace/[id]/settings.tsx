@@ -262,11 +262,7 @@ export default function WorkspaceSettingsScreen(): JSX.Element {
               }}
             >
               <ThemedText variant="label">Reasoning Level</ThemedText>
-              <ThemedText
-                variant="caption"
-                weight="medium"
-                style={{ textTransform: "uppercase" }}
-              >
+              <ThemedText variant="caption" weight="medium" style={{ textTransform: "uppercase" }}>
                 {thinkingLevel}
               </ThemedText>
             </View>
@@ -316,8 +312,6 @@ export default function WorkspaceSettingsScreen(): JSX.Element {
               Higher reasoning levels use extended thinking for complex tasks.
             </ThemedText>
           </View>
-
-
         </Surface>
       </ScrollView>
     </>

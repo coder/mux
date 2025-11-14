@@ -103,9 +103,13 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
   // Auto-retry state - minimal setter for keybinds and message sent handler
   // RetryBarrier manages its own state, but we need this for interrupt keybind
-  const [, setAutoRetry] = usePersistedState<boolean>(getAutoRetryKey(workspaceId), WORKSPACE_DEFAULTS.autoRetry, {
-    listener: true,
-  });
+  const [, setAutoRetry] = usePersistedState<boolean>(
+    getAutoRetryKey(workspaceId),
+    WORKSPACE_DEFAULTS.autoRetry,
+    {
+      listener: true,
+    }
+  );
 
   // Vim mode state - needed for keybind selection (Ctrl+C in vim, Esc otherwise)
   const [vimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, { listener: true });

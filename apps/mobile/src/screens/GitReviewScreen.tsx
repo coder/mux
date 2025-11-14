@@ -1,13 +1,6 @@
 import type { JSX } from "react";
 import { useCallback, useEffect, useState } from "react";
-import {
-  ActivityIndicator,
-  FlatList,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme";
@@ -133,12 +126,9 @@ export default function GitReviewScreen(): JSX.Element {
     void loadGitData();
   }, [loadGitData]);
 
-  const renderHunk = useCallback(
-    ({ item }: { item: DiffHunk }) => {
-      return <DiffHunkView hunk={item} />;
-    },
-    []
-  );
+  const renderHunk = useCallback(({ item }: { item: DiffHunk }) => {
+    return <DiffHunkView hunk={item} />;
+  }, []);
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
@@ -159,20 +149,13 @@ export default function GitReviewScreen(): JSX.Element {
           style={[
             styles.warningBanner,
             {
-              backgroundColor: '#FEF3C7',
-              borderBottomColor: '#F59E0B',
+              backgroundColor: "#FEF3C7",
+              borderBottomColor: "#F59E0B",
             },
           ]}
         >
           <Ionicons name="warning" size={18} color="#F59E0B" />
-          <Text
-            style={[
-              styles.warningText,
-              { color: '#92400E' },
-            ]}
-          >
-            {truncationWarning}
-          </Text>
+          <Text style={[styles.warningText, { color: "#92400E" }]}>{truncationWarning}</Text>
         </View>
       )}
 
@@ -248,8 +231,8 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   warningBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     paddingVertical: 12,
     paddingHorizontal: 16,
     gap: 8,
@@ -258,6 +241,6 @@ const styles = StyleSheet.create({
   warningText: {
     flex: 1,
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: "600",
   },
 });

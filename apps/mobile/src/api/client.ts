@@ -202,23 +202,16 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
       },
       getInfo: async (workspaceId: string): Promise<FrontendWorkspaceMetadata | null> =>
         invoke(IPC_CHANNELS.WORKSPACE_GET_INFO, [ensureWorkspaceId(workspaceId)]),
-      getHistory: async (
-        workspaceId: string
-      ): Promise<WorkspaceChatEvent[]> =>
+      getHistory: async (workspaceId: string): Promise<WorkspaceChatEvent[]> =>
         invoke(IPC_CHANNELS.WORKSPACE_CHAT_GET_HISTORY, [ensureWorkspaceId(workspaceId)]),
-      getFullReplay: async (
-        workspaceId: string
-      ): Promise<WorkspaceChatEvent[]> =>
+      getFullReplay: async (workspaceId: string): Promise<WorkspaceChatEvent[]> =>
         invoke(IPC_CHANNELS.WORKSPACE_CHAT_GET_FULL_REPLAY, [ensureWorkspaceId(workspaceId)]),
       remove: async (
         workspaceId: string,
         options?: { force?: boolean }
       ): Promise<Result<void, string>> => {
         try {
-          await invoke(IPC_CHANNELS.WORKSPACE_REMOVE, [
-            ensureWorkspaceId(workspaceId),
-            options,
-          ]);
+          await invoke(IPC_CHANNELS.WORKSPACE_REMOVE, [ensureWorkspaceId(workspaceId), options]);
           return { success: true, data: undefined };
         } catch (error) {
           const err = error instanceof Error ? error.message : String(error);
@@ -230,14 +223,11 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
         newName: string
       ): Promise<Result<{ newWorkspaceId: string }, string>> => {
         try {
-          assert(
-            typeof newName === "string" && newName.trim().length > 0,
-            "newName required"
-          );
-          const result = await invoke<{ newWorkspaceId: string }>(
-            IPC_CHANNELS.WORKSPACE_RENAME,
-            [ensureWorkspaceId(workspaceId), newName.trim()]
-          );
+          assert(typeof newName === "string" && newName.trim().length > 0, "newName required");
+          const result = await invoke<{ newWorkspaceId: string }>(IPC_CHANNELS.WORKSPACE_RENAME, [
+            ensureWorkspaceId(workspaceId),
+            newName.trim(),
+          ]);
           return { success: true, data: result };
         } catch (error) {
           const err = error instanceof Error ? error.message : String(error);
@@ -336,7 +326,8 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
         options?: { timeout_secs?: number; niceness?: number }
       ): Promise<
         Result<
-          { success: true; output: string; truncated?: { reason: string } } | { success: false; error: string }
+          | { success: true; output: string; truncated?: { reason: string } }
+          | { success: false; error: string }
         >
       > => {
         try {
@@ -359,7 +350,8 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
           }
 
           const result = await invoke<
-            { success: true; output: string; truncated?: { reason: string } } | { success: false; error: string }
+            | { success: true; output: string; truncated?: { reason: string } }
+            | { success: false; error: string }
           >(IPC_CHANNELS.WORKSPACE_EXECUTE_BASH, [trimmedId, trimmedCommand, options ?? {}]);
 
           return { success: true, data: result };
@@ -467,10 +459,7 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
         ),
     },
     tokenizer: {
-      calculateStats: async (
-        messages: MuxMessage[],
-        model: string
-      ): Promise<ChatStats> =>
+      calculateStats: async (messages: MuxMessage[], model: string): Promise<ChatStats> =>
         invoke(IPC_CHANNELS.TOKENIZER_CALCULATE_STATS, [messages, model]),
       countTokens: async (model: string, text: string): Promise<number> =>
         invoke(IPC_CHANNELS.TOKENIZER_COUNT_TOKENS, [model, text]),

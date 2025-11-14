@@ -54,7 +54,13 @@ export function ReasoningControl({ disabled }: ReasoningControlProps): JSX.Eleme
         disabled={disabled}
         style={{ marginTop: theme.spacing.sm }}
       />
-      <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: theme.spacing.xs }}>
+      <View
+        style={{
+          flexDirection: "row",
+          justifyContent: "space-between",
+          marginTop: theme.spacing.xs,
+        }}
+      >
         {LEVELS.map((level) => (
           <ThemedText key={level} variant="caption" style={{ textTransform: "uppercase" }}>
             {level}

@@ -18,9 +18,31 @@ function WorkspaceContent(): JSX.Element {
   const title = typeof params.title === "string" ? params.title : "";
   const id = typeof params.id === "string" ? params.id : "";
 
+  // Check for creation mode
+  const isCreationMode = id === "new";
+  const projectPath = typeof params.projectPath === "string" ? params.projectPath : undefined;
+  const projectName = typeof params.projectName === "string" ? params.projectName : undefined;
+
   const [showActionSheet, setShowActionSheet] = useState(false);
   const [showCostSheet, setShowCostSheet] = useState(false);
   const { toggleTodoCard, hasTodos } = useWorkspaceActions();
+
+  // Handle creation mode
+  if (isCreationMode && projectPath && projectName) {
+    return (
+      <WorkspaceCostProvider workspaceId={null}>
+        <>
+          <Stack.Screen
+            options={{
+              title: `New Chat - ${projectName}`,
+              headerBackVisible: true,
+            }}
+          />
+          <WorkspaceScreen creationContext={{ projectPath, projectName }} />
+        </>
+      </WorkspaceCostProvider>
+    );
+  }
 
   const actionItems = [
     {
@@ -42,13 +64,13 @@ function WorkspaceContent(): JSX.Element {
     // Only show todo item if there are todos
     ...(hasTodos
       ? [
-        {
-          id: "todo",
-          label: "Todo List",
-          icon: "list-outline" as const,
-          onPress: toggleTodoCard,
-        },
-      ]
+          {
+            id: "todo",
+            label: "Todo List",
+            icon: "list-outline" as const,
+            onPress: toggleTodoCard,
+          },
+        ]
       : []),
     {
       id: "settings",

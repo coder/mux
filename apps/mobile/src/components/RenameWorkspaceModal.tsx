@@ -59,7 +59,7 @@ export function RenameWorkspaceModal({
 
     // Validate
     const result = validateWorkspaceName(trimmed);
-    setError(result.valid ? null : result.error ?? null);
+    setError(result.valid ? null : (result.error ?? null));
   }, [newName, currentName]);
 
   const handleSubmit = async () => {
