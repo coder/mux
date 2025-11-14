@@ -70,7 +70,7 @@ export function CreationControls(props: CreationControlsProps) {
             <strong>Runtime:</strong>
             <br />
             • Local: git worktree in ~/.mux/src
-            <br />• SSH: remote clone in ~/.mux/src on SSH host
+            <br />• SSH: remote clone in ~/mux on SSH host
           </Tooltip>
         </TooltipWrapper>
       </div>

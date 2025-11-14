@@ -47,7 +47,6 @@ export interface MuxMetadata {
   cmuxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
   muxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
   historicalUsage?: ChatUsageDisplay; // Cumulative usage from all messages before this compaction (only present on compaction summaries)
-
 }
 
 // Extended tool part type that supports interrupted tool calls (input-available state)

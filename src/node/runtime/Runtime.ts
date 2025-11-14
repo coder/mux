@@ -248,11 +248,11 @@ export interface Runtime {
    *
    * @example
    * // LocalRuntime
-   * await runtime.resolvePath("~/.mux/src")      // => "/home/user/mux"
+   * await runtime.resolvePath("~/mux")      // => "/home/user/mux"
    * await runtime.resolvePath("./relative")  // => "/current/dir/relative"
    *
    * // SSHRuntime
-   * await runtime.resolvePath("~/.mux/src")      // => "/home/user/mux" (via SSH shell expansion)
+   * await runtime.resolvePath("~/mux")      // => "/home/user/mux" (via SSH shell expansion)
    */
   resolvePath(path: string): Promise<string>;
 
