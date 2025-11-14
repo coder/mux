@@ -399,7 +399,6 @@ const AIViewInner: React.FC<AIViewProps> = ({
                       msg.type !== "workspace-init" &&
                       msg.historyId === editCutoffHistoryId;
 
-
                     return (
                       <React.Fragment key={msg.id}>
                         <div
