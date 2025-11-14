@@ -5,7 +5,7 @@
 import { Config } from "./config";
 import { IPC_CHANNELS } from "@/constants/ipc-constants";
 import { IpcMain } from "./services/ipcMain";
-import { migrateCmuxToMux } from "./constants/paths";
+import { migrateLegacyMuxHome } from "./constants/paths";
 import cors from "cors";
 import type { BrowserWindow, IpcMain as ElectronIpcMain } from "electron";
 import express from "express";
@@ -144,8 +144,8 @@ const httpIpcMain = new HttpIpcMainAdapter(app);
 
 // Initialize async services and register handlers
 (async () => {
-  // Migrate from .cmux to .mux directory structure if needed
-  migrateCmuxToMux();
+  // Migrate from .mux to .mux directory structure if needed
+  migrateLegacyMuxHome();
 
   // Initialize config and IPC service
   const config = new Config();

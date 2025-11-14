@@ -179,7 +179,7 @@ export function TitleBar() {
 
     // Always add releases link as defense-in-depth
     lines.push(
-      <a href="https://github.com/coder/cmux/releases" target="_blank" rel="noopener noreferrer">
+      <a href="https://github.com/coder/mux/releases" target="_blank" rel="noopener noreferrer">
         View all releases
       </a>
     );
@@ -248,7 +248,7 @@ export function TitleBar() {
           </TooltipWrapper>
         )}
         <div className="min-w-0 cursor-text truncate text-xs font-normal tracking-wider select-text">
-          cmux {gitDescribe ?? "(dev)"}
+          mux {gitDescribe ?? "(dev)"}
         </div>
       </div>
       <TooltipWrapper>

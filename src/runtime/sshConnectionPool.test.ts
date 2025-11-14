@@ -80,7 +80,7 @@ describe("sshConnectionPool", () => {
       const controlPath = getControlPath(config);
 
       expect(controlPath).toContain(os.tmpdir());
-      expect(controlPath).toMatch(/cmux-ssh-[a-f0-9]{12}$/);
+      expect(controlPath).toMatch(/mux-ssh-[a-f0-9]{12}$/);
     });
 
     test("missing port defaults to 22 in hash calculation", () => {
@@ -129,8 +129,8 @@ describe("username isolation", () => {
     // The path should be deterministic for this user
     expect(controlPath).toBe(getControlPath(config));
 
-    const expectedPrefix = path.join(os.tmpdir(), "cmux-ssh-");
+    const expectedPrefix = path.join(os.tmpdir(), "mux-ssh-");
     expect(controlPath.startsWith(expectedPrefix)).toBe(true);
-    expect(controlPath).toMatch(/cmux-ssh-[a-f0-9]{12}$/);
+    expect(controlPath).toMatch(/mux-ssh-[a-f0-9]{12}$/);
   });
 });

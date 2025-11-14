@@ -414,7 +414,7 @@ ${script}`;
           const fileId = Math.random().toString(16).substring(2, 10);
           // Write to runtime temp directory (managed by StreamManager)
           // Use path.posix.join to preserve forward slashes for SSH runtime
-          // (config.runtimeTempDir is always a POSIX path like /home/user/.cmux-tmp/token)
+          // (config.runtimeTempDir is always a POSIX path like /home/user/.mux-tmp/token)
           const overflowPath = path.posix.join(config.runtimeTempDir, `bash-${fileId}.txt`);
           const fullOutput = lines.join("\n");
 

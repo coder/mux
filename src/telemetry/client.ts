@@ -46,7 +46,7 @@ let isInitialized = false;
 
 // Storage key for telemetry enabled preference
 const TELEMETRY_ENABLED_KEY = "mux_telemetry_enabled";
-const LEGACY_TELEMETRY_KEY = "cmux_telemetry_enabled";
+const LEGACY_TELEMETRY_KEY = "mux_telemetry_enabled";
 
 /**
  * Check if telemetry is enabled by user preference

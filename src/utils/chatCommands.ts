@@ -57,7 +57,7 @@ export function parseRuntimeString(
     return {
       type: RUNTIME_MODE.SSH,
       host: hostPart,
-      srcBaseDir: "~/cmux", // Default remote base directory (tilde will be resolved by backend)
+      srcBaseDir: "~/mux", // Default remote base directory (tilde will be resolved by backend)
     };
   }
 
@@ -236,7 +236,7 @@ export async function executeCompaction(options: CompactionOptions): Promise<Com
 
   const result = await window.api.workspace.sendMessage(options.workspaceId, messageText, {
     ...sendOptions,
-    cmuxMetadata: metadata,
+    muxMetadata: metadata,
     editMessageId: options.editMessageId,
   });
 

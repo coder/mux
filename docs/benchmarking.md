@@ -10,18 +10,18 @@ mux ships with a headless adapter for [Terminal-Bench](https://www.tbench.ai/). 
 
 Optional environment overrides:
 
-| Variable               | Purpose                                                   | Default                                |
-| ---------------------- | --------------------------------------------------------- | -------------------------------------- |
-| `CMUX_AGENT_REPO_ROOT` | Path copied into each task container                      | repo root inferred from the agent file |
-| `CMUX_TRUNK`           | Branch checked out when preparing the project             | `main`                                 |
-| `CMUX_WORKSPACE_ID`    | Workspace identifier used inside mux                      | `mux-bench`                            |
-| `CMUX_MODEL`           | Preferred model (supports `provider/model` syntax)        | `anthropic/claude-sonnet-4-5`          |
-| `CMUX_THINKING_LEVEL`  | Optional reasoning level (`off`, `low`, `medium`, `high`) | `high`                                 |
-| `CMUX_MODE`            | Starting mode (`plan` or `exec`)                          | `exec`                                 |
-| `CMUX_TIMEOUT_MS`      | Optional stream timeout in milliseconds                   | no timeout                             |
-| `CMUX_CONFIG_ROOT`     | Location for mux session data inside the container        | `/root/.mux`                           |
-| `CMUX_APP_ROOT`        | Path where the mux sources are staged                     | `/opt/mux-app`                         |
-| `CMUX_PROJECT_PATH`    | Explicit project directory inside the task container      | auto-detected from common paths        |
+| Variable              | Purpose                                                   | Default                                |
+| --------------------- | --------------------------------------------------------- | -------------------------------------- |
+| `MUX_AGENT_REPO_ROOT` | Path copied into each task container                      | repo root inferred from the agent file |
+| `MUX_TRUNK`           | Branch checked out when preparing the project             | `main`                                 |
+| `MUX_WORKSPACE_ID`    | Workspace identifier used inside mux                      | `mux-bench`                            |
+| `MUX_MODEL`           | Preferred model (supports `provider/model` syntax)        | `anthropic/claude-sonnet-4-5`          |
+| `MUX_THINKING_LEVEL`  | Optional reasoning level (`off`, `low`, `medium`, `high`) | `high`                                 |
+| `MUX_MODE`            | Starting mode (`plan` or `exec`)                          | `exec`                                 |
+| `MUX_TIMEOUT_MS`      | Optional stream timeout in milliseconds                   | no timeout                             |
+| `MUX_CONFIG_ROOT`     | Location for mux session data inside the container        | `/root/.mux`                           |
+| `MUX_APP_ROOT`        | Path where the mux sources are staged                     | `/opt/mux-app`                         |
+| `MUX_PROJECT_PATH`    | Explicit project directory inside the task container      | auto-detected from common paths        |
 
 ## Running Terminal-Bench
 
@@ -65,12 +65,12 @@ The adapter lives in `benchmarks/terminal_bench/mux_agent.py`. For each task it:
 
 1. Copies the mux repository (package manifests + `src/`) into `/tmp/mux-app` inside the container.
 2. Ensures Bun exists, then runs `bun install --frozen-lockfile`.
-3. Launches `src/debug/agentSessionCli.ts` to prepare workspace metadata and stream the instruction, storing state under `CMUX_CONFIG_ROOT` (default `/root/.mux`).
+3. Launches `src/debug/agentSessionCli.ts` to prepare workspace metadata and stream the instruction, storing state under `MUX_CONFIG_ROOT` (default `/root/.mux`).
 
-`CMUX_MODEL` accepts either the mux colon form (`anthropic:claude-sonnet-4-5`) or the Terminal-Bench slash form (`anthropic/claude-sonnet-4-5`); the adapter normalises whichever you provide.
+`MUX_MODEL` accepts either the mux colon form (`anthropic:claude-sonnet-4-5`) or the Terminal-Bench slash form (`anthropic/claude-sonnet-4-5`); the adapter normalises whichever you provide.
 
 ## Troubleshooting
 
 - **`command not found: bun`** – ensure the container can reach Bun’s install script, or pre-install Bun in your base image. The adapter aborts if the install step fails.
-- **Workspace creation errors** – set `CMUX_PROJECT_PATH` to the project directory inside the task container if auto-discovery misses it.
-- **Streaming timeouts** – pass `--n-tasks 1` while iterating on fixes, or set `CMUX_TIMEOUT_MS=180000` to reinstate a timeout if needed.
+- **Workspace creation errors** – set `MUX_PROJECT_PATH` to the project directory inside the task container if auto-discovery misses it.
+- **Streaming timeouts** – pass `--n-tasks 1` while iterating on fixes, or set `MUX_TIMEOUT_MS=180000` to reinstate a timeout if needed.

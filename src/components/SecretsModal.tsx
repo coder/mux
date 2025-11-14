@@ -132,7 +132,7 @@ const SecretsModal: React.FC<SecretsModalProps> = ({
     >
       <ModalInfo>
         <p>
-          Secrets are stored in <code>~/.cmux/secrets.json</code> (kept away from source code) but
+          Secrets are stored in <code>~/.mux/secrets.json</code> (kept away from source code) but
           namespaced per project.
         </p>
         <p>Secrets are injected as environment variables to compute commands (e.g. Bash)</p>

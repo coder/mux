@@ -1,4 +1,4 @@
-/* cmux Documentation Theme — cohesive with the desktop app
+/* mux Documentation Theme — cohesive with the desktop app
    ---------------------------------------------------------
    Goals
    - Honor the app's color tokens and typography
@@ -550,7 +550,7 @@ details[open] > summary::before {
 
 
 
-/* Code block wrapper with line numbers and copy button (from cmux app) */
+/* Code block wrapper with line numbers and copy button (from mux app) */
 .code-block-wrapper {
   position: relative;
   margin: 0.75em 0;

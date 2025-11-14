@@ -16,7 +16,7 @@ import {
  * - streaming: Boolean indicating if workspace has an active stream
  * - lastModel: Last model used in this workspace
  *
- * File location: ~/.cmux/extensionMetadata.json
+ * File location: ~/.mux/extensionMetadata.json
  *
  * Design:
  * - Stateless: reads from disk on every operation, no in-memory cache

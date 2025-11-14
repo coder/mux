@@ -170,14 +170,14 @@ export const SingleProject: Story = {
         "/home/user/projects/my-app",
         {
           workspaces: [
-            { path: "/home/user/.cmux/src/my-app/main", id: "a1b2c3d4e5", name: "main" },
+            { path: "/home/user/.mux/src/my-app/main", id: "a1b2c3d4e5", name: "main" },
             {
-              path: "/home/user/.cmux/src/my-app/feature-auth",
+              path: "/home/user/.mux/src/my-app/feature-auth",
               id: "f6g7h8i9j0",
               name: "feature/auth",
             },
             {
-              path: "/home/user/.cmux/src/my-app/bugfix",
+              path: "/home/user/.mux/src/my-app/bugfix",
               id: "k1l2m3n4o5",
               name: "bugfix/memory-leak",
             },
@@ -192,7 +192,7 @@ export const SingleProject: Story = {
         name: "main",
         projectPath: "/home/user/projects/my-app",
         projectName: "my-app",
-        namedWorkspacePath: "/home/user/.cmux/src/my-app/main",
+        namedWorkspacePath: "/home/user/.mux/src/my-app/main",
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
       },
       {
@@ -200,11 +200,11 @@ export const SingleProject: Story = {
         name: "feature/auth",
         projectPath: "/home/user/projects/my-app",
         projectName: "my-app",
-        namedWorkspacePath: "/home/user/.cmux/src/my-app/feature-auth",
+        namedWorkspacePath: "/home/user/.mux/src/my-app/feature-auth",
         runtimeConfig: {
           type: "ssh",
           host: "dev-server.example.com",
-          srcBaseDir: "/home/user/.cmux/src",
+          srcBaseDir: "/home/user/.mux/src",
         },
       },
       {
@@ -212,7 +212,7 @@ export const SingleProject: Story = {
         name: "bugfix/memory-leak",
         projectPath: "/home/user/projects/my-app",
         projectName: "my-app",
-        namedWorkspacePath: "/home/user/.cmux/src/my-app/bugfix",
+        namedWorkspacePath: "/home/user/.mux/src/my-app/bugfix",
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
       },
     ];
@@ -229,9 +229,9 @@ export const MultipleProjects: Story = {
         "/home/user/projects/frontend",
         {
           workspaces: [
-            { path: "/home/user/.cmux/src/frontend/main", id: "1a2b3c4d5e", name: "main" },
+            { path: "/home/user/.mux/src/frontend/main", id: "1a2b3c4d5e", name: "main" },
             {
-              path: "/home/user/.cmux/src/frontend/redesign",
+              path: "/home/user/.mux/src/frontend/redesign",
               id: "2b3c4d5e6f",
               name: "redesign",
             },
@@ -242,10 +242,10 @@ export const MultipleProjects: Story = {
         "/home/user/projects/backend",
         {
           workspaces: [
-            { path: "/home/user/.cmux/src/backend/main", id: "3c4d5e6f7a", name: "main" },
-            { path: "/home/user/.cmux/src/backend/api-v2", id: "4d5e6f7a8b", name: "api-v2" },
+            { path: "/home/user/.mux/src/backend/main", id: "3c4d5e6f7a", name: "main" },
+            { path: "/home/user/.mux/src/backend/api-v2", id: "4d5e6f7a8b", name: "api-v2" },
             {
-              path: "/home/user/.cmux/src/backend/db-migration",
+              path: "/home/user/.mux/src/backend/db-migration",
               id: "5e6f7a8b9c",
               name: "db-migration",
             },
@@ -255,9 +255,7 @@ export const MultipleProjects: Story = {
       [
         "/home/user/projects/mobile",
         {
-          workspaces: [
-            { path: "/home/user/.cmux/src/mobile/main", id: "6f7a8b9c0d", name: "main" },
-          ],
+          workspaces: [{ path: "/home/user/.mux/src/mobile/main", id: "6f7a8b9c0d", name: "main" }],
         },
       ],
     ]);
@@ -268,7 +266,7 @@ export const MultipleProjects: Story = {
         name: "main",
         projectPath: "/home/user/projects/frontend",
         projectName: "frontend",
-        namedWorkspacePath: "/home/user/.cmux/src/frontend/main",
+        namedWorkspacePath: "/home/user/.mux/src/frontend/main",
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
       },
       {
@@ -276,7 +274,7 @@ export const MultipleProjects: Story = {
         name: "redesign",
         projectPath: "/home/user/projects/frontend",
         projectName: "frontend",
-        namedWorkspacePath: "/home/user/.cmux/src/frontend/redesign",
+        namedWorkspacePath: "/home/user/.mux/src/frontend/redesign",
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
       },
       {
@@ -284,7 +282,7 @@ export const MultipleProjects: Story = {
         name: "main",
         projectPath: "/home/user/projects/backend",
         projectName: "backend",
-        namedWorkspacePath: "/home/user/.cmux/src/backend/main",
+        namedWorkspacePath: "/home/user/.mux/src/backend/main",
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
       },
       {
@@ -292,11 +290,11 @@ export const MultipleProjects: Story = {
         name: "api-v2",
         projectPath: "/home/user/projects/backend",
         projectName: "backend",
-        namedWorkspacePath: "/home/user/.cmux/src/backend/api-v2",
+        namedWorkspacePath: "/home/user/.mux/src/backend/api-v2",
         runtimeConfig: {
           type: "ssh",
           host: "prod-server.example.com",
-          srcBaseDir: "/home/user/.cmux/src",
+          srcBaseDir: "/home/user/.mux/src",
         },
       },
       {
@@ -304,11 +302,11 @@ export const MultipleProjects: Story = {
         name: "db-migration",
         projectPath: "/home/user/projects/backend",
         projectName: "backend",
-        namedWorkspacePath: "/home/user/.cmux/src/backend/db-migration",
+        namedWorkspacePath: "/home/user/.mux/src/backend/db-migration",
         runtimeConfig: {
           type: "ssh",
           host: "staging.example.com",
-          srcBaseDir: "/home/user/.cmux/src",
+          srcBaseDir: "/home/user/.mux/src",
         },
       },
       {
@@ -316,7 +314,7 @@ export const MultipleProjects: Story = {
         name: "main",
         projectPath: "/home/user/projects/mobile",
         projectName: "mobile",
-        namedWorkspacePath: "/home/user/.cmux/src/mobile/main",
+        namedWorkspacePath: "/home/user/.mux/src/mobile/main",
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
       },
     ];
@@ -347,7 +345,7 @@ export const ManyWorkspaces: Story = {
         "/home/user/projects/big-app",
         {
           workspaces: workspaceNames.map((name) => ({
-            path: `/home/user/.cmux/src/big-app/${name}`,
+            path: `/home/user/.mux/src/big-app/${name}`,
             id: `big-app-${name}`,
             name,
           })),
@@ -360,7 +358,7 @@ export const ManyWorkspaces: Story = {
       name,
       projectPath: "/home/user/projects/big-app",
       projectName: "big-app",
-      namedWorkspacePath: `/home/user/.cmux/src/big-app/${name}`,
+      namedWorkspacePath: `/home/user/.mux/src/big-app/${name}`,
       runtimeConfig: DEFAULT_RUNTIME_CONFIG,
     }));
 
@@ -415,22 +413,22 @@ export const ActiveWorkspaceWithChat: Story = {
         "/home/user/projects/my-app",
         {
           workspaces: [
-            { path: "/home/user/.cmux/src/my-app/feature", id: workspaceId, name: "feature/auth" },
+            { path: "/home/user/.mux/src/my-app/feature", id: workspaceId, name: "feature/auth" },
             {
-              path: "/home/user/.cmux/src/my-app/streaming",
+              path: "/home/user/.mux/src/my-app/streaming",
               id: streamingWorkspaceId,
               name: "feature/streaming",
             },
-            { path: "/home/user/.cmux/src/my-app/main", id: "ws-clean", name: "main" },
-            { path: "/home/user/.cmux/src/my-app/ahead", id: "ws-ahead", name: "feature/new-ui" },
-            { path: "/home/user/.cmux/src/my-app/behind", id: "ws-behind", name: "feature/api" },
-            { path: "/home/user/.cmux/src/my-app/dirty", id: "ws-dirty", name: "bugfix/crash" },
+            { path: "/home/user/.mux/src/my-app/main", id: "ws-clean", name: "main" },
+            { path: "/home/user/.mux/src/my-app/ahead", id: "ws-ahead", name: "feature/new-ui" },
+            { path: "/home/user/.mux/src/my-app/behind", id: "ws-behind", name: "feature/api" },
+            { path: "/home/user/.mux/src/my-app/dirty", id: "ws-dirty", name: "bugfix/crash" },
             {
-              path: "/home/user/.cmux/src/my-app/diverged",
+              path: "/home/user/.mux/src/my-app/diverged",
               id: "ws-diverged",
               name: "refactor/db",
             },
-            { path: "/home/user/.cmux/src/my-app/ssh-remote", id: "ws-ssh", name: "deploy/prod" },
+            { path: "/home/user/.mux/src/my-app/ssh-remote", id: "ws-ssh", name: "deploy/prod" },
           ],
         },
       ],
@@ -449,7 +447,7 @@ export const ActiveWorkspaceWithChat: Story = {
         name: "feature/auth",
         projectPath: "/home/user/projects/my-app",
         projectName: "my-app",
-        namedWorkspacePath: "/home/user/.cmux/src/my-app/feature",
+        namedWorkspacePath: "/home/user/.mux/src/my-app/feature",
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
         createdAt: new Date(NOW - 7200000).toISOString(), // 2 hours ago
       },
@@ -459,7 +457,7 @@ export const ActiveWorkspaceWithChat: Story = {
         name: "feature/streaming",
         projectPath: "/home/user/projects/my-app",
         projectName: "my-app",
-        namedWorkspacePath: "/home/user/.cmux/src/my-app/streaming",
+        namedWorkspacePath: "/home/user/.mux/src/my-app/streaming",
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
         createdAt: new Date(NOW - 3600000).toISOString(), // 1 hour ago
       },
@@ -469,7 +467,7 @@ export const ActiveWorkspaceWithChat: Story = {
         name: "main",
         projectPath: "/home/user/projects/my-app",
         projectName: "my-app",
-        namedWorkspacePath: "/home/user/.cmux/src/my-app/main",
+        namedWorkspacePath: "/home/user/.mux/src/my-app/main",
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
         createdAt: new Date(NOW - 10800000).toISOString(), // 3 hours ago
       },
@@ -479,7 +477,7 @@ export const ActiveWorkspaceWithChat: Story = {
         name: "feature/new-ui",
         projectPath: "/home/user/projects/my-app",
         projectName: "my-app",
-        namedWorkspacePath: "/home/user/.cmux/src/my-app/ahead",
+        namedWorkspacePath: "/home/user/.mux/src/my-app/ahead",
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
         createdAt: new Date(NOW - 14400000).toISOString(), // 4 hours ago
       },
@@ -489,7 +487,7 @@ export const ActiveWorkspaceWithChat: Story = {
         name: "feature/api",
         projectPath: "/home/user/projects/my-app",
         projectName: "my-app",
-        namedWorkspacePath: "/home/user/.cmux/src/my-app/behind",
+        namedWorkspacePath: "/home/user/.mux/src/my-app/behind",
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
         createdAt: new Date(NOW - 18000000).toISOString(), // 5 hours ago
       },
@@ -499,7 +497,7 @@ export const ActiveWorkspaceWithChat: Story = {
         name: "bugfix/crash",
         projectPath: "/home/user/projects/my-app",
         projectName: "my-app",
-        namedWorkspacePath: "/home/user/.cmux/src/my-app/dirty",
+        namedWorkspacePath: "/home/user/.mux/src/my-app/dirty",
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
         createdAt: new Date(NOW - 21600000).toISOString(), // 6 hours ago
       },
@@ -509,7 +507,7 @@ export const ActiveWorkspaceWithChat: Story = {
         name: "refactor/db",
         projectPath: "/home/user/projects/my-app",
         projectName: "my-app",
-        namedWorkspacePath: "/home/user/.cmux/src/my-app/diverged",
+        namedWorkspacePath: "/home/user/.mux/src/my-app/diverged",
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
         createdAt: new Date(NOW - 25200000).toISOString(), // 7 hours ago
       },
@@ -519,11 +517,11 @@ export const ActiveWorkspaceWithChat: Story = {
         name: "deploy/prod",
         projectPath: "/home/user/projects/my-app",
         projectName: "my-app",
-        namedWorkspacePath: "/home/user/.cmux/src/my-app/ssh-remote",
+        namedWorkspacePath: "/home/user/.mux/src/my-app/ssh-remote",
         runtimeConfig: {
           type: "ssh",
           host: "prod.example.com",
-          srcBaseDir: "/home/deploy/.cmux/src",
+          srcBaseDir: "/home/deploy/.mux/src",
         },
         createdAt: new Date(NOW - 28800000).toISOString(), // 8 hours ago
       },
@@ -1205,7 +1203,7 @@ main
             workspaceId: workspaceId,
             projectPath: "/home/user/projects/my-app",
             projectName: "my-app",
-            namedWorkspacePath: "/home/user/.cmux/src/my-app/feature",
+            namedWorkspacePath: "/home/user/.mux/src/my-app/feature",
           })
         );
 
@@ -1237,7 +1235,7 @@ export const MarkdownTables: Story = {
             name: "feature",
             projectPath: "/home/user/projects/my-app",
             projectName: "my-app",
-            namedWorkspacePath: "/home/user/.cmux/src/my-app/feature",
+            namedWorkspacePath: "/home/user/.mux/src/my-app/feature",
             runtimeConfig: DEFAULT_RUNTIME_CONFIG,
           },
         ];
@@ -1248,7 +1246,7 @@ export const MarkdownTables: Story = {
               "/home/user/projects/my-app",
               {
                 workspaces: [
-                  { path: "/home/user/.cmux/src/my-app/feature", id: workspaceId, name: "feature" },
+                  { path: "/home/user/.mux/src/my-app/feature", id: workspaceId, name: "feature" },
                 ],
               },
             ],
@@ -1401,7 +1399,7 @@ These tables should render cleanly without any disruptive copy or download actio
             workspaceId: workspaceId,
             projectPath: "/home/user/projects/my-app",
             projectName: "my-app",
-            namedWorkspacePath: "/home/user/.cmux/src/my-app/feature",
+            namedWorkspacePath: "/home/user/.mux/src/my-app/feature",
           })
         );
 

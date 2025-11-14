@@ -8,20 +8,20 @@ from .mux_agent import MuxAgent
 
 
 @pytest.fixture(autouse=True)
-def _clear_cmux_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def _clear_mux_env(monkeypatch: pytest.MonkeyPatch) -> None:
     keys = [
-        "CMUX_AGENT_GIT_URL",
-        "CMUX_BUN_INSTALL_URL",
-        "CMUX_PROJECT_PATH",
-        "CMUX_PROJECT_CANDIDATES",
-        "CMUX_TRUNK",
-        "CMUX_MODEL",
-        "CMUX_TIMEOUT_MS",
-        "CMUX_THINKING_LEVEL",
-        "CMUX_CONFIG_ROOT",
-        "CMUX_APP_ROOT",
-        "CMUX_WORKSPACE_ID",
-        "CMUX_MODE",
+        "MUX_AGENT_GIT_URL",
+        "MUX_BUN_INSTALL_URL",
+        "MUX_PROJECT_PATH",
+        "MUX_PROJECT_CANDIDATES",
+        "MUX_TRUNK",
+        "MUX_MODEL",
+        "MUX_TIMEOUT_MS",
+        "MUX_THINKING_LEVEL",
+        "MUX_CONFIG_ROOT",
+        "MUX_APP_ROOT",
+        "MUX_WORKSPACE_ID",
+        "MUX_MODE",
     ]
     for key in keys:
         monkeypatch.delenv(key, raising=False)
@@ -32,20 +32,20 @@ def _repo_root() -> Path:
 
 
 def test_env_defaults_are_normalized(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CMUX_AGENT_REPO_ROOT", str(_repo_root()))
+    monkeypatch.setenv("MUX_AGENT_REPO_ROOT", str(_repo_root()))
     agent = MuxAgent(model_name="anthropic/claude-sonnet-4-5")
 
     env = agent._env
 
-    assert env["CMUX_MODEL"] == "anthropic:claude-sonnet-4-5"
-    assert env["CMUX_THINKING_LEVEL"] == "high"
-    assert env["CMUX_MODE"] == "exec"
-    assert env["CMUX_PROJECT_CANDIDATES"] == agent._DEFAULT_PROJECT_CANDIDATES
+    assert env["MUX_MODEL"] == "anthropic:claude-sonnet-4-5"
+    assert env["MUX_THINKING_LEVEL"] == "high"
+    assert env["MUX_MODE"] == "exec"
+    assert env["MUX_PROJECT_CANDIDATES"] == agent._DEFAULT_PROJECT_CANDIDATES
 
 
 def test_timeout_must_be_numeric(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CMUX_AGENT_REPO_ROOT", str(_repo_root()))
-    monkeypatch.setenv("CMUX_TIMEOUT_MS", "not-a-number")
+    monkeypatch.setenv("MUX_AGENT_REPO_ROOT", str(_repo_root()))
+    monkeypatch.setenv("MUX_TIMEOUT_MS", "not-a-number")
 
     agent = MuxAgent()
     with pytest.raises(ValueError):

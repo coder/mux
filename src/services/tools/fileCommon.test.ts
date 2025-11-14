@@ -215,14 +215,14 @@ describe("fileCommon", () => {
       const sshRuntime = createRuntime({
         type: "ssh",
         host: "user@localhost",
-        srcBaseDir: "/home/user/cmux",
+        srcBaseDir: "/home/user/mux",
         identityFile: "/tmp/fake-key",
       });
-      const sshCwd = "/home/user/cmux/project/branch";
+      const sshCwd = "/home/user/mux/project/branch";
 
       // Should auto-correct absolute paths with redundant prefix on SSH too
       const result = validateNoRedundantPrefix(
-        "/home/user/cmux/project/branch/src/file.ts",
+        "/home/user/mux/project/branch/src/file.ts",
         sshCwd,
         sshRuntime
       );

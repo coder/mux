@@ -132,7 +132,7 @@ for JOB_ID in $JOB_IDS; do
 
   while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
     # Use gh api to fetch logs (works for individual completed jobs even if run is in progress)
-    if gh api "/repos/coder/cmux/actions/jobs/$JOB_ID/logs" 2>/dev/null; then
+    if gh api "/repos/coder/mux/actions/jobs/$JOB_ID/logs" 2>/dev/null; then
       break
     else
       RETRY_COUNT=$((RETRY_COUNT + 1))

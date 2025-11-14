@@ -12,7 +12,7 @@ describe("InitStateManager", () => {
   let manager: InitStateManager;
 
   beforeEach(async () => {
-    // Create temp directory as cmux root
+    // Create temp directory as mux root
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "init-state-test-"));
 
     // Create sessions directory

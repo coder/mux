@@ -557,7 +557,7 @@ export class SSHRuntime implements Runtime {
 
     // Use timestamp-based bundle path to avoid conflicts (simpler than $$)
     const timestamp = Date.now();
-    const bundleTempPath = `~/.cmux-bundle-${timestamp}.bundle`;
+    const bundleTempPath = `~/.mux-bundle-${timestamp}.bundle`;
 
     try {
       // Step 1: Get origin URL from local repository (if it exists)
@@ -569,7 +569,7 @@ export class SSHRuntime implements Runtime {
         const { stdout } = await proc.result;
         const url = stdout.trim();
         // Only use URL if it's not a bundle path (avoids propagating bundle paths)
-        if (url && !url.includes(".bundle") && !url.includes(".cmux-bundle")) {
+        if (url && !url.includes(".bundle") && !url.includes(".mux-bundle")) {
           originUrl = url;
         }
       } catch (error) {

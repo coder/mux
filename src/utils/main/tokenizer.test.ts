@@ -29,7 +29,7 @@ describe("tokenizer", () => {
   });
 
   test("countTokens returns stable values", async () => {
-    const text = "cmux-tokenizer-smoke-test";
+    const text = "mux-tokenizer-smoke-test";
     const first = await countTokens(model, text);
     const second = await countTokens(model, text);
     expect(first).toBeGreaterThan(0);

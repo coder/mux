@@ -67,7 +67,7 @@ async function establishRootDir(providedRootDir?: string): Promise<{
     };
   }
 
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cmux-headless-"));
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mux-headless-"));
   return {
     rootDir: tempRoot,
     dispose: async () => {

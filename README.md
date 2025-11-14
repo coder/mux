@@ -4,9 +4,9 @@
 
 # mux - coding agent multiplexer
 
-[![CI](https://github.com/coder/cmux/actions/workflows/ci.yml/badge.svg)](https://github.com/coder/cmux/actions/workflows/ci.yml)
-[![Build](https://github.com/coder/cmux/actions/workflows/build.yml/badge.svg?event=merge_group)](https://github.com/coder/cmux/actions/workflows/build.yml?query=event:merge_group)
-[![Download](https://img.shields.io/badge/Download-Releases-purple)](https://github.com/coder/cmux/releases)
+[![CI](https://github.com/coder/mux/actions/workflows/ci.yml/badge.svg)](https://github.com/coder/mux/actions/workflows/ci.yml)
+[![Build](https://github.com/coder/mux/actions/workflows/build.yml/badge.svg?event=merge_group)](https://github.com/coder/mux/actions/workflows/build.yml?query=event:merge_group)
+[![Download](https://img.shields.io/badge/Download-Releases-purple)](https://github.com/coder/mux/releases)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL%203.0-blue.svg)](LICENSE)
 
 </div>
@@ -51,10 +51,10 @@ like [opportunistic compaction](https://cmux.io/context-management.html) and [mo
 ## Install
 
 > [!WARNING]  
-> cmux is in a Preview state. You will encounter bugs and performance issues.
+> mux is in a Preview state. You will encounter bugs and performance issues.
 > It's still possible to be highly productive. We are using it almost exclusively for our own development.
 
-Download pre-built binaries from [the releases page](https://github.com/coder/cmux/releases) for
+Download pre-built binaries from [the releases page](https://github.com/coder/mux/releases) for
 macOS and Linux.
 
 [More on installation →](https://cmux.io/install.html)

@@ -17,7 +17,7 @@ export const SSH_RUNTIME_PREFIX = "ssh ";
 export type RuntimeConfig =
   | {
       type: "local";
-      /** Base directory where all workspaces are stored (e.g., ~/.cmux/src) */
+      /** Base directory where all workspaces are stored (e.g., ~/.mux/src) */
       srcBaseDir: string;
     }
   | {

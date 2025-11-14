@@ -1,10 +1,10 @@
 import * as path from "path";
 import * as os from "os";
-import { Config } from "cmux/config";
-import type { WorkspaceMetadata } from "cmux/types/workspace";
-import { type ExtensionMetadata, readExtensionMetadata } from "cmux/utils/extensionMetadata";
-import { getProjectName } from "cmux/utils/runtime/helpers";
-import { createRuntime } from "cmux/runtime/runtimeFactory";
+import { Config } from "mux/config";
+import type { WorkspaceMetadata } from "mux/types/workspace";
+import { type ExtensionMetadata, readExtensionMetadata } from "mux/utils/extensionMetadata";
+import { getProjectName } from "mux/utils/runtime/helpers";
+import { createRuntime } from "mux/runtime/runtimeFactory";
 
 /**
  * Workspace with extension metadata for display in VS Code extension.
@@ -16,7 +16,7 @@ export interface WorkspaceWithContext extends WorkspaceMetadata {
 }
 
 /**
- * Get all workspaces from cmux config, enriched with extension metadata.
+ * Get all workspaces from mux config, enriched with extension metadata.
  * Uses main app's Config class to read workspace metadata, then enriches
  * with extension-specific data (recency, streaming status).
  */

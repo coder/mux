@@ -10,7 +10,7 @@ describe("extractSshHostname", () => {
   it("should return null for local runtime", () => {
     const config: RuntimeConfig = {
       type: "local",
-      srcBaseDir: "/home/user/.cmux/src",
+      srcBaseDir: "/home/user/.mux/src",
     };
     expect(extractSshHostname(config)).toBeNull();
   });
@@ -19,7 +19,7 @@ describe("extractSshHostname", () => {
     const config: RuntimeConfig = {
       type: "ssh",
       host: "myserver",
-      srcBaseDir: "/home/user/.cmux/src",
+      srcBaseDir: "/home/user/.mux/src",
     };
     expect(extractSshHostname(config)).toBe("myserver");
   });
@@ -28,7 +28,7 @@ describe("extractSshHostname", () => {
     const config: RuntimeConfig = {
       type: "ssh",
       host: "user@myserver.example.com",
-      srcBaseDir: "/home/user/.cmux/src",
+      srcBaseDir: "/home/user/.mux/src",
     };
     expect(extractSshHostname(config)).toBe("myserver.example.com");
   });
@@ -37,7 +37,7 @@ describe("extractSshHostname", () => {
     const config: RuntimeConfig = {
       type: "ssh",
       host: "myserver:2222",
-      srcBaseDir: "/home/user/.cmux/src",
+      srcBaseDir: "/home/user/.mux/src",
     };
     expect(extractSshHostname(config)).toBe("myserver");
   });
@@ -46,7 +46,7 @@ describe("extractSshHostname", () => {
     const config: RuntimeConfig = {
       type: "ssh",
       host: "user@myserver.example.com:2222",
-      srcBaseDir: "/home/user/.cmux/src",
+      srcBaseDir: "/home/user/.mux/src",
     };
     expect(extractSshHostname(config)).toBe("myserver.example.com");
   });
@@ -55,7 +55,7 @@ describe("extractSshHostname", () => {
     const config: RuntimeConfig = {
       type: "ssh",
       host: "my-server-alias",
-      srcBaseDir: "/home/user/.cmux/src",
+      srcBaseDir: "/home/user/.mux/src",
     };
     expect(extractSshHostname(config)).toBe("my-server-alias");
   });
