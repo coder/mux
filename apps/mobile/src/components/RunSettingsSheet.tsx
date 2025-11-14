@@ -51,7 +51,7 @@ interface SectionProps {
 function SectionCard(props: SectionProps): JSX.Element {
   const theme = useTheme();
   return (
-    <View style={[styles.sectionCard, { borderColor: theme.colors.border }]}> 
+    <View style={[styles.sectionCard, { borderColor: theme.colors.border }]}>
       <Pressable
         onPress={props.onToggle}
         style={({ pressed }) => [
@@ -127,7 +127,7 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
       presentationStyle="pageSheet"
       onRequestClose={props.onClose}
     >
-      <View style={[styles.container, { backgroundColor: theme.colors.background }]}> 
+      <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
         <View style={styles.header}>
           <ThemedText variant="titleMedium" weight="semibold">
             Run settings
@@ -209,7 +209,12 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
               </View>
             )}
 
-            <View style={styles.modelList}>
+            <ScrollView
+              style={styles.modelList}
+              nestedScrollEnabled
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
+            >
               {filteredModels.length === 0 ? (
                 <View style={{ padding: 24 }}>
                   <ThemedText variant="caption" style={{ textAlign: "center" }}>
@@ -248,7 +253,7 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
                   </View>
                 ))
               )}
-            </View>
+            </ScrollView>
           </SectionCard>
 
           <SectionCard
@@ -279,7 +284,7 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
                     {modeOption}
                   </ThemedText>
                   <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted }}>
-                    {modeOption === "plan" ? "Ask before executing" : "Act directly"}
+                    {modeOption === "plan" ? "Plan before executing" : "Act directly"}
                   </ThemedText>
                 </Pressable>
               ))}
