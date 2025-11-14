@@ -111,7 +111,7 @@ export function validatePathInCwd(
 ): { error: string } | null {
   // TODO: Make path validation runtime-aware instead of skipping for SSH.
   // For now, skip local path validation for SSH runtimes since:
-  // 1. Node's path module doesn't understand remote paths (~/mux/branch)
+  // 1. Node's path module doesn't understand remote paths (~/.mux/src/branch)
   // 2. The runtime's own file operations will fail on invalid paths anyway
   if (runtime instanceof SSHRuntime) {
     return null;

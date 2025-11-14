@@ -57,7 +57,7 @@ export function parseRuntimeString(
     return {
       type: RUNTIME_MODE.SSH,
       host: hostPart,
-      srcBaseDir: "~/mux", // Default remote base directory (tilde will be resolved by backend)
+      srcBaseDir: "~/.mux/src", // Default remote base directory (tilde will be resolved by backend)
     };
   }
 

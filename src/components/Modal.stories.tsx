@@ -106,7 +106,7 @@ export const WithInfoBox: Story = {
       <>
         <ModalInfo>
           <p>
-            This operation will create a new workspace at <code>~/mux/project/branch</code>
+            This operation will create a new workspace at <code>~/.mux/src/project/branch</code>
           </p>
           <p>Existing files will not be affected.</p>
         </ModalInfo>

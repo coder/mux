@@ -7,7 +7,7 @@ describe("SSHRuntime constructor", () => {
     expect(() => {
       new SSHRuntime({
         host: "example.com",
-        srcBaseDir: "~/mux",
+        srcBaseDir: "~/.mux/src",
       });
     }).not.toThrow();
   });
