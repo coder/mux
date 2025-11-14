@@ -1,10 +1,13 @@
 /* eslint-disable @typescript-eslint/unbound-method */
-import { describe, test, expect, beforeEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import { PartialService } from "./partialService";
 import type { HistoryService } from "./historyService";
-import type { Config } from "@/node/config";
-import type { MuxMessage } from "@/common/types/message";
+import { Config } from "@/node/config";
+import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import { Ok } from "@/common/types/result";
+import * as fs from "fs/promises";
+import * as path from "path";
+import * as os from "os";
 
 // Mock Config
 const createMockConfig = (): Config => {
@@ -192,5 +195,38 @@ describe("PartialService - Error Recovery", () => {
     // Should still delete the partial (cleanup)
     const deletePartial = partialService.deletePartial as ReturnType<typeof mock>;
     expect(deletePartial).toHaveBeenCalledWith(workspaceId);
+  });
+});
+
+describe("PartialService - Legacy compatibility", () => {
+  let tempDir: string;
+  let config: Config;
+  let partialService: PartialService;
+
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-partial-legacy-"));
+    config = new Config(tempDir);
+    partialService = new PartialService(config, createMockHistoryService());
+  });
+
+  afterEach(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  test("readPartial upgrades legacy cmuxMetadata", async () => {
+    const workspaceId = "legacy-ws";
+    const workspaceDir = config.getSessionDir(workspaceId);
+    await fs.mkdir(workspaceDir, { recursive: true });
+
+    const partialMessage = createMuxMessage("partial-1", "assistant", "legacy", {
+      historySequence: 0,
+    });
+    (partialMessage.metadata as Record<string, unknown>).cmuxMetadata = { type: "normal" };
+
+    const partialPath = path.join(workspaceDir, "partial.json");
+    await fs.writeFile(partialPath, JSON.stringify(partialMessage));
+
+    const result = await partialService.readPartial(workspaceId);
+    expect(result?.metadata?.muxMetadata?.type).toBe("normal");
   });
 });

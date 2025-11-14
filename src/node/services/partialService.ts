@@ -6,6 +6,7 @@ import type { MuxMessage } from "@/common/types/message";
 import type { Config } from "@/node/config";
 import type { HistoryService } from "./historyService";
 import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
+import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
 
 /**
  * PartialService - Manages partial message persistence for interrupted streams
@@ -48,7 +49,8 @@ export class PartialService {
     try {
       const partialPath = this.getPartialPath(workspaceId);
       const data = await fs.readFile(partialPath, "utf-8");
-      return JSON.parse(data) as MuxMessage;
+      const message = JSON.parse(data) as MuxMessage;
+      return normalizeLegacyMuxMetadata(message);
     } catch (error) {
       if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
         return null; // No partial exists
