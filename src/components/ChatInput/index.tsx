@@ -102,7 +102,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   const isCompacting = variant === "workspace" ? (props.isCompacting ?? false) : false;
   const canInterrupt = variant === "workspace" ? (props.canInterrupt ?? false) : false;
 
-<<<<<<< HEAD:src/components/ChatInput/index.tsx
   // Storage keys differ by variant
   const storageKeys = (() => {
     if (variant === "creation") {
