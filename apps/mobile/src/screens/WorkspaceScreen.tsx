@@ -14,6 +14,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Picker } from "@react-native-picker/picker";
 import { useTheme } from "../theme";
 import { ThemedText } from "../components/ThemedText";
 import { useApiClient } from "../hooks/useApiClient";
@@ -27,6 +28,9 @@ import type { TodoItem } from "../components/TodoItemView";
 import { createChatEventExpander, DISPLAYABLE_MESSAGE_TYPES } from "../messages/normalizeChatEvent";
 import type { DisplayedMessage, FrontendWorkspaceMetadata, WorkspaceChatEvent } from "../types";
 import { createCompactedMessage } from "../utils/messageHelpers";
+import type { RuntimeConfig, RuntimeMode } from "@shared/types/runtime";
+import { RUNTIME_MODE, parseRuntimeModeAndHost, buildRuntimeString } from "@shared/types/runtime";
+import { loadRuntimePreference, saveRuntimePreference } from "../utils/workspacePreferences";
 type ThemeSpacing = ReturnType<typeof useTheme>["spacing"];
 
 type TimelineEntry =
@@ -310,6 +314,12 @@ function WorkspaceScreenInner({
   const [trunkBranch, setTrunkBranch] = useState<string>(
     creationContext?.defaultTrunk ?? branches[0] ?? "main"
   );
+  
+  // Creation mode: advanced options state
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>(RUNTIME_MODE.LOCAL);
+  const [sshHost, setSshHost] = useState("");
+  
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [isSending, setIsSending] = useState(false);
   const wsRef = useRef<{ close: () => void } | null>(null);
@@ -357,6 +367,26 @@ function WorkspaceScreenInner({
     }
     void loadBranches();
   }, [isCreationMode, api, creationContext]);
+
+  // Load runtime preference in creation mode
+  useEffect(() => {
+    if (!isCreationMode || !creationContext) return;
+
+    async function loadRuntime() {
+      try {
+        const saved = await loadRuntimePreference(creationContext!.projectPath);
+        if (saved) {
+          const parsed = parseRuntimeModeAndHost(saved);
+          setRuntimeMode(parsed.mode);
+          setSshHost(parsed.host);
+        }
+      } catch (error) {
+        console.error("Failed to load runtime preference:", error);
+        // Keep defaults (local)
+      }
+    }
+    void loadRuntime();
+  }, [isCreationMode, creationContext]);
 
   const metadataQuery = useQuery({
     queryKey: ["workspace", workspaceId],
@@ -516,13 +546,20 @@ function WorkspaceScreenInner({
 
     if (isCreationMode) {
       // CREATION MODE: Send first message to create workspace
+      
+      // Build runtime config based on selected mode
+      const runtimeConfig: RuntimeConfig | undefined =
+        runtimeMode === RUNTIME_MODE.SSH
+          ? { type: "ssh" as const, host: sshHost, srcBaseDir: "~/cmux" }
+          : undefined;
+      
       const result = await api.workspace.sendMessage(null, trimmed, {
         model,
         mode,
         thinkingLevel,
         projectPath: creationContext!.projectPath,
         trunkBranch,
-        runtimeConfig: undefined, // Can add runtime preference loading
+        runtimeConfig,
         providerOptions: {
           anthropic: {
             use1MContext,
@@ -537,6 +574,14 @@ function WorkspaceScreenInner({
         );
         setInput(originalContent);
       } else if ("metadata" in result && result.metadata) {
+        // Save runtime preference if non-local
+        if (runtimeMode !== RUNTIME_MODE.LOCAL) {
+          const runtimeString = buildRuntimeString(runtimeMode, sshHost);
+          if (runtimeString) {
+            await saveRuntimePreference(creationContext!.projectPath, runtimeString);
+          }
+        }
+        
         // Success! Navigate to new workspace
         router.replace(`/workspace/${result.metadata.id}`);
         // Note: router.replace ensures we don't go back to creation screen
@@ -592,6 +637,8 @@ function WorkspaceScreenInner({
     isCreationMode,
     creationContext,
     trunkBranch,
+    runtimeMode,
+    sshHost,
     router,
   ]);
 
@@ -827,7 +874,6 @@ function WorkspaceScreenInner({
           {isCreationMode && (
             <View
               style={{
-                flexDirection: "column",
                 backgroundColor: theme.colors.surfaceElevated,
                 paddingVertical: spacing.md,
                 paddingHorizontal: spacing.md,
@@ -845,6 +891,138 @@ function WorkspaceScreenInner({
               <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted }}>
                 Workspace name and branch will be generated automatically
               </ThemedText>
+
+              {/* Advanced Options Toggle */}
+              <Pressable
+                onPress={() => setShowAdvanced(!showAdvanced)}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: spacing.xs,
+                  marginTop: spacing.sm,
+                  paddingVertical: spacing.xs,
+                }}
+              >
+                <Ionicons
+                  name="settings-outline"
+                  size={14}
+                  color={theme.colors.foregroundMuted}
+                />
+                <ThemedText
+                  variant="caption"
+                  style={{ color: theme.colors.foregroundMuted, flex: 1 }}
+                >
+                  Advanced Options
+                </ThemedText>
+                <Ionicons
+                  name={showAdvanced ? "chevron-down" : "chevron-forward"}
+                  size={14}
+                  color={theme.colors.foregroundMuted}
+                />
+              </Pressable>
+
+              {/* Expandable Options */}
+              {showAdvanced && (
+                <View style={{ marginTop: spacing.md, gap: spacing.md }}>
+                  {/* Trunk Branch Picker */}
+                  <View>
+                    <ThemedText
+                      variant="caption"
+                      style={{ marginBottom: spacing.xs, color: theme.colors.foregroundMuted }}
+                    >
+                      Base Branch
+                    </ThemedText>
+                    <View
+                      style={{
+                        borderWidth: 1,
+                        borderColor: theme.colors.inputBorder,
+                        borderRadius: theme.radii.sm,
+                        backgroundColor: theme.colors.inputBackground,
+                      }}
+                    >
+                      <Picker
+                        selectedValue={trunkBranch}
+                        onValueChange={(value) => setTrunkBranch(value)}
+                        style={{ color: theme.colors.foregroundPrimary }}
+                        dropdownIconColor={theme.colors.foregroundPrimary}
+                      >
+                        {branches.map((branch) => (
+                          <Picker.Item
+                            key={branch}
+                            label={branch}
+                            value={branch}
+                            color={theme.colors.foregroundPrimary}
+                          />
+                        ))}
+                      </Picker>
+                    </View>
+                  </View>
+
+                  {/* Runtime Picker */}
+                  <View>
+                    <ThemedText
+                      variant="caption"
+                      style={{ marginBottom: spacing.xs, color: theme.colors.foregroundMuted }}
+                    >
+                      Runtime
+                    </ThemedText>
+                    <View
+                      style={{
+                        borderWidth: 1,
+                        borderColor: theme.colors.inputBorder,
+                        borderRadius: theme.radii.sm,
+                        backgroundColor: theme.colors.inputBackground,
+                      }}
+                    >
+                      <Picker
+                        selectedValue={runtimeMode}
+                        onValueChange={(value) => setRuntimeMode(value as RuntimeMode)}
+                        style={{ color: theme.colors.foregroundPrimary }}
+                        dropdownIconColor={theme.colors.foregroundPrimary}
+                      >
+                        <Picker.Item
+                          label="Local"
+                          value={RUNTIME_MODE.LOCAL}
+                          color={theme.colors.foregroundPrimary}
+                        />
+                        <Picker.Item
+                          label="SSH Remote"
+                          value={RUNTIME_MODE.SSH}
+                          color={theme.colors.foregroundPrimary}
+                        />
+                      </Picker>
+                    </View>
+                  </View>
+
+                  {/* SSH Host Input (conditional) */}
+                  {runtimeMode === RUNTIME_MODE.SSH && (
+                    <View>
+                      <ThemedText
+                        variant="caption"
+                        style={{ marginBottom: spacing.xs, color: theme.colors.foregroundMuted }}
+                      >
+                        SSH Host
+                      </ThemedText>
+                      <TextInput
+                        value={sshHost}
+                        onChangeText={setSshHost}
+                        placeholder="user@hostname"
+                        placeholderTextColor={theme.colors.foregroundMuted}
+                        style={{
+                          borderWidth: 1,
+                          borderColor: theme.colors.inputBorder,
+                          borderRadius: theme.radii.sm,
+                          backgroundColor: theme.colors.inputBackground,
+                          color: theme.colors.foregroundPrimary,
+                          paddingHorizontal: spacing.md,
+                          paddingVertical: spacing.sm,
+                          fontSize: 14,
+                        }}
+                      />
+                    </View>
+                  )}
+                </View>
+              )}
             </View>
           )}
 
