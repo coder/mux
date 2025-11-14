@@ -1,7 +1,6 @@
 import type { JSX } from "react";
 import { useMemo, useState, useEffect } from "react";
 import {
-  FlatList,
   Modal,
   Pressable,
   ScrollView,
@@ -210,45 +209,46 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
               </View>
             )}
 
-            <FlatList
-              data={filteredModels}
-              keyExtractor={(item) => item.id}
-              nestedScrollEnabled
-              style={{ maxHeight: 320 }}
-              renderItem={({ item }) => (
-                <Pressable
-                  onPress={() => handleSelectModel(item.id)}
-                  style={({ pressed }) => [
-                    styles.listItem,
-                    {
-                      backgroundColor: pressed
-                        ? theme.colors.surfaceSecondary
-                        : theme.colors.background,
-                    },
-                  ]}
-                >
-                  <View style={{ flex: 1 }}>
-                    <ThemedText weight="semibold">{getModelDisplayName(item.id)}</ThemedText>
-                    <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted }}>
-                      {formatModelSummary(item.id)}
-                    </ThemedText>
-                  </View>
-                  {props.selectedModel === item.id && (
-                    <Ionicons name="checkmark-circle" size={20} color={theme.colors.accent} />
-                  )}
-                </Pressable>
-              )}
-              ItemSeparatorComponent={() => (
-                <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: theme.colors.border }} />
-              )}
-              ListEmptyComponent={() => (
+            <View style={styles.modelList}>
+              {filteredModels.length === 0 ? (
                 <View style={{ padding: 24 }}>
                   <ThemedText variant="caption" style={{ textAlign: "center" }}>
                     No models match "{query}"
                   </ThemedText>
                 </View>
+              ) : (
+                filteredModels.map((item, index) => (
+                  <View key={item.id}>
+                    <Pressable
+                      onPress={() => handleSelectModel(item.id)}
+                      style={({ pressed }) => [
+                        styles.listItem,
+                        {
+                          backgroundColor: pressed
+                            ? theme.colors.surfaceSecondary
+                            : theme.colors.background,
+                        },
+                      ]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <ThemedText weight="semibold">{getModelDisplayName(item.id)}</ThemedText>
+                        <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted }}>
+                          {formatModelSummary(item.id)}
+                        </ThemedText>
+                      </View>
+                      {props.selectedModel === item.id && (
+                        <Ionicons name="checkmark-circle" size={20} color={theme.colors.accent} />
+                      )}
+                    </Pressable>
+                    {index < filteredModels.length - 1 ? (
+                      <View
+                        style={{ height: StyleSheet.hairlineWidth, backgroundColor: theme.colors.border }}
+                      />
+                    ) : null}
+                  </View>
+                ))
               )}
-            />
+            </View>
           </SectionCard>
 
           <SectionCard
@@ -390,6 +390,9 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 8,
     marginTop: 8,
+  },
+  modelList: {
+    maxHeight: 320,
   },
   chip: {
     paddingVertical: 6,
