@@ -23,6 +23,7 @@ import { useWorkspaceCost } from "../contexts/WorkspaceCostContext";
 import type { StreamAbortEvent, StreamEndEvent } from "@shared/types/stream.ts";
 import { MessageRenderer } from "../messages/MessageRenderer";
 import { useWorkspaceSettings } from "../hooks/useWorkspaceSettings";
+import type { ThinkingLevel, WorkspaceMode } from "../types/settings";
 import { FloatingTodoCard } from "../components/FloatingTodoCard";
 import type { TodoItem } from "../components/TodoItemView";
 import { createChatEventExpander, DISPLAYABLE_MESSAGE_TYPES } from "../messages/normalizeChatEvent";
@@ -31,9 +32,10 @@ import { createCompactedMessage } from "../utils/messageHelpers";
 import type { RuntimeConfig, RuntimeMode } from "@shared/types/runtime";
 import { RUNTIME_MODE, parseRuntimeModeAndHost, buildRuntimeString } from "@shared/types/runtime";
 import { loadRuntimePreference, saveRuntimePreference } from "../utils/workspacePreferences";
-import { ModelPickerSheet } from "../components/ModelPickerSheet";
+import { RunSettingsSheet } from "../components/RunSettingsSheet";
 import { useModelHistory } from "../hooks/useModelHistory";
 import {
+  assertKnownModelId,
   formatModelSummary,
   getModelDisplayName,
   sanitizeModelSequence,
@@ -313,10 +315,15 @@ function WorkspaceScreenInner({
     model,
     use1MContext,
     setModel,
+    setMode,
+    setThinkingLevel,
+    setUse1MContext,
     isLoading: settingsLoading,
   } = useWorkspaceSettings(workspaceId ?? "");
   const { recentModels, addRecentModel } = useModelHistory();
-  const [isModelPickerVisible, setModelPickerVisible] = useState(false);
+  const [isRunSettingsVisible, setRunSettingsVisible] = useState(false);
+  const selectedModelEntry = useMemo(() => assertKnownModelId(model), [model]);
+  const supportsExtendedContext = selectedModelEntry.provider === "anthropic";
   const modelPickerRecents = useMemo(
     () => sanitizeModelSequence([model, ...recentModels]),
     [model, recentModels]
@@ -550,21 +557,20 @@ function WorkspaceScreenInner({
     setInput("");
   }, [workspaceId, setHasTodos]);
 
-  const handleOpenModelPicker = useCallback(() => {
+  const handleOpenRunSettings = useCallback(() => {
     if (settingsLoading) {
       return;
     }
-    setModelPickerVisible(true);
+    setRunSettingsVisible(true);
   }, [settingsLoading]);
 
-  const handleCloseModelPicker = useCallback(() => {
-    setModelPickerVisible(false);
+  const handleCloseRunSettings = useCallback(() => {
+    setRunSettingsVisible(false);
   }, []);
 
   const handleSelectModel = useCallback(
     async (modelId: string) => {
       if (modelId === model) {
-        setModelPickerVisible(false);
         return;
       }
       try {
@@ -574,12 +580,37 @@ function WorkspaceScreenInner({
         if (process.env.NODE_ENV !== "production") {
           console.error("Failed to update model", error);
         }
-      } finally {
-        setModelPickerVisible(false);
       }
     },
     [model, setModel, addRecentModel]
   );
+
+  const handleSelectMode = useCallback(
+    (nextMode: WorkspaceMode) => {
+      if (nextMode === mode) {
+        return;
+      }
+      void setMode(nextMode);
+    },
+    [mode, setMode]
+  );
+
+  const handleSelectThinkingLevel = useCallback(
+    (level: ThinkingLevel) => {
+      if (level === thinkingLevel) {
+        return;
+      }
+      void setThinkingLevel(level);
+    },
+    [thinkingLevel, setThinkingLevel]
+  );
+
+  const handleToggle1MContext = useCallback(() => {
+    if (!supportsExtendedContext) {
+      return;
+    }
+    void setUse1MContext(!use1MContext);
+  }, [supportsExtendedContext, use1MContext, setUse1MContext]);
 
   const onSend = useCallback(async () => {
     const trimmed = input.trim();
@@ -1103,7 +1134,7 @@ function WorkspaceScreenInner({
           )}
 
           <Pressable
-            onPress={handleOpenModelPicker}
+            onPress={handleOpenRunSettings}
             disabled={settingsLoading}
             style={({ pressed }) => [
               {
@@ -1124,7 +1155,7 @@ function WorkspaceScreenInner({
           >
             <View style={{ flex: 1 }}>
               <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted }}>
-                Model
+                Run settings
               </ThemedText>
               <ThemedText weight="semibold">{modelSummary}</ThemedText>
             </View>
@@ -1214,12 +1245,19 @@ function WorkspaceScreenInner({
         </View>
       </View>
       </KeyboardAvoidingView>
-      <ModelPickerSheet
-        visible={isModelPickerVisible}
-        onClose={handleCloseModelPicker}
+      <RunSettingsSheet
+        visible={isRunSettingsVisible}
+        onClose={handleCloseRunSettings}
         selectedModel={model}
-        onSelect={handleSelectModel}
+        onSelectModel={handleSelectModel}
         recentModels={modelPickerRecents}
+        mode={mode}
+        onSelectMode={handleSelectMode}
+        thinkingLevel={thinkingLevel}
+        onSelectThinkingLevel={handleSelectThinkingLevel}
+        use1MContext={use1MContext}
+        onToggle1MContext={handleToggle1MContext}
+        supportsExtendedContext={supportsExtendedContext}
       />
     </>
   );
