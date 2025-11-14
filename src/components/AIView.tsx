@@ -6,6 +6,7 @@ import { StreamingBarrier } from "./Messages/ChatBarrier/StreamingBarrier";
 import { RetryBarrier } from "./Messages/ChatBarrier/RetryBarrier";
 import { PinnedTodoList } from "./PinnedTodoList";
 import { getAutoRetryKey, VIM_ENABLED_KEY } from "@/constants/storage";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { ChatInput, type ChatInputAPI } from "./ChatInput/index";
 import { RightSidebar, type TabType } from "./RightSidebar";
 import { useResizableSidebar } from "@/hooks/useResizableSidebar";

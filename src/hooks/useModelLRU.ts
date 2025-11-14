@@ -7,10 +7,10 @@ const MAX_LRU_SIZE = 8;
 const LRU_KEY = "model-lru";
 
 // Default models from abbreviations (for initial LRU population)
-// Ensure defaultModel is first, then fill with other abbreviations
+// Ensure default model is first, then fill with other abbreviations
 const DEFAULT_MODELS = [
-  defaultModel,
-  ...Object.values(MODEL_ABBREVIATIONS).filter((m) => m !== defaultModel),
+  WORKSPACE_DEFAULTS.model,
+  ...Object.values(MODEL_ABBREVIATIONS).filter((m) => m !== WORKSPACE_DEFAULTS.model),
 ].slice(0, MAX_LRU_SIZE);
 function persistModels(models: string[]): void {
   updatePersistedState(LRU_KEY, models.slice(0, MAX_LRU_SIZE));
