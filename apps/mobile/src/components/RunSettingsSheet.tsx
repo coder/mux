@@ -23,8 +23,6 @@ import {
 const ALL_MODELS = listKnownModels();
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high"];
 
-type CollapsibleKey = "model" | "mode" | "reasoning" | "context";
-
 interface RunSettingsSheetProps {
   visible: boolean;
   onClose: () => void;
@@ -40,55 +38,9 @@ interface RunSettingsSheetProps {
   supportsExtendedContext: boolean;
 }
 
-interface SectionProps {
-  title: string;
-  subtitle?: string;
-  collapsed: boolean;
-  onToggle: () => void;
-  children: JSX.Element | JSX.Element[];
-}
-
-function SectionCard(props: SectionProps): JSX.Element {
-  const theme = useTheme();
-  return (
-    <View style={[styles.sectionCard, { borderColor: theme.colors.border }]}>
-      <Pressable
-        onPress={props.onToggle}
-        style={({ pressed }) => [
-          styles.sectionHeader,
-          pressed ? { backgroundColor: theme.colors.surfaceSecondary } : null,
-        ]}
-      >
-        <View style={{ flex: 1 }}>
-          <ThemedText variant="label" weight="semibold">
-            {props.title}
-          </ThemedText>
-          {props.subtitle && (
-            <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted }}>
-              {props.subtitle}
-            </ThemedText>
-          )}
-        </View>
-        <Ionicons
-          name={props.collapsed ? "chevron-forward" : "chevron-down"}
-          size={18}
-          color={theme.colors.foregroundPrimary}
-        />
-      </Pressable>
-      {!props.collapsed && <View style={styles.sectionBody}>{props.children}</View>}
-    </View>
-  );
-}
-
 export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
   const theme = useTheme();
   const [query, setQuery] = useState("");
-  const [collapsed, setCollapsed] = useState<Record<CollapsibleKey, boolean>>({
-    model: false,
-    mode: false,
-    reasoning: false,
-    context: false,
-  });
 
   useEffect(() => {
     if (!props.visible) {
@@ -112,10 +64,6 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
     return props.recentModels.filter(isKnownModelId);
   }, [props.recentModels]);
 
-  const toggleSection = (key: CollapsibleKey) => {
-    setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
-
   const handleSelectModel = (modelId: string) => {
     props.onSelectModel(modelId);
   };
@@ -127,9 +75,9 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
       presentationStyle="pageSheet"
       onRequestClose={props.onClose}
     >
-      <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      <View style={[styles.container, { backgroundColor: theme.colors.background }]}> 
         <View style={styles.header}>
-          <ThemedText variant="titleMedium" weight="semibold">
+          <ThemedText variant="titleMedium" weight="semibold" style={styles.headerTitle}>
             Run settings
           </ThemedText>
           <Pressable onPress={props.onClose} style={styles.closeButton}>
@@ -137,13 +85,17 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
           </Pressable>
         </View>
 
-        <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
-          <SectionCard
-            title="Model"
-            subtitle={formatModelSummary(props.selectedModel)}
-            collapsed={collapsed.model}
-            onToggle={() => toggleSection("model")}
-          >
+        <ScrollView contentContainerStyle={styles.content}>
+          <View style={[styles.sectionBlock, { borderColor: theme.colors.border }]}> 
+            <View style={styles.sectionHeading}>
+              <ThemedText variant="label" weight="semibold">
+                Model
+              </ThemedText>
+              <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted }}>
+                {formatModelSummary(props.selectedModel)}
+              </ThemedText>
+            </View>
+
             <View
               style={[
                 styles.searchWrapper,
@@ -254,14 +206,12 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
                 ))
               )}
             </ScrollView>
-          </SectionCard>
+          </View>
 
-          <SectionCard
-            title="Mode"
-            subtitle={props.mode === "plan" ? "Plan" : "Exec"}
-            collapsed={collapsed.mode}
-            onToggle={() => toggleSection("mode")}
-          >
+          <View style={[styles.sectionBlock, { borderColor: theme.colors.border }]}> 
+            <ThemedText variant="label" weight="semibold" style={styles.sectionTitle}>
+              Mode
+            </ThemedText>
             <View style={styles.modeRow}>
               {(["plan", "exec"] as WorkspaceMode[]).map((modeOption) => (
                 <Pressable
@@ -289,14 +239,12 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
                 </Pressable>
               ))}
             </View>
-          </SectionCard>
+          </View>
 
-          <SectionCard
-            title="Reasoning"
-            subtitle={props.thinkingLevel.toUpperCase()}
-            collapsed={collapsed.reasoning}
-            onToggle={() => toggleSection("reasoning")}
-          >
+          <View style={[styles.sectionBlock, { borderColor: theme.colors.border }]}> 
+            <ThemedText variant="label" weight="semibold" style={styles.sectionTitle}>
+              Reasoning
+            </ThemedText>
             <View style={styles.levelRow}>
               {THINKING_LEVELS.map((level) => {
                 const active = props.thinkingLevel === level;
@@ -330,15 +278,13 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
                 );
               })}
             </View>
-          </SectionCard>
+          </View>
 
           {props.supportsExtendedContext && (
-            <SectionCard
-              title="Context window"
-              subtitle={props.use1MContext ? "1M tokens" : "128K tokens"}
-              collapsed={collapsed.context}
-              onToggle={() => toggleSection("context")}
-            >
+            <View style={[styles.sectionBlock, { borderColor: theme.colors.border }]}> 
+              <ThemedText variant="label" weight="semibold" style={styles.sectionTitle}>
+                Context window
+              </ThemedText>
               <View style={styles.contextRow}>
                 <ThemedText style={{ flex: 1 }}>
                   Enable 1M token context (Anthropic only)
@@ -350,7 +296,7 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
                   thumbColor={theme.colors.surface}
                 />
               </View>
-            </SectionCard>
+            </View>
           )}
         </ScrollView>
       </View>
@@ -361,34 +307,53 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingHorizontal: 16,
     paddingTop: 12,
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    paddingHorizontal: 24,
     marginBottom: 12,
+  },
+  headerTitle: {
+    paddingRight: 16,
+  },
+  content: {
+    paddingBottom: 32,
+    paddingHorizontal: 16,
   },
   closeButton: {
     padding: 8,
+  },
+  sectionBlock: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    gap: 12,
+  },
+  sectionHeading: {
+    gap: 4,
+  },
+  sectionTitle: {
+    marginBottom: 4,
   },
   searchWrapper: {
     flexDirection: "row",
     alignItems: "center",
     borderWidth: 1,
-    borderRadius: 8,
+    borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 8,
     gap: 8,
-    marginBottom: 16,
   },
   searchInput: {
     flex: 1,
     fontSize: 16,
   },
   section: {
-    marginBottom: 12,
+    marginTop: 8,
   },
   recentChips: {
     flexDirection: "row",
@@ -409,23 +374,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 14,
     paddingHorizontal: 4,
-  },
-  sectionCard: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 12,
-    marginBottom: 16,
-    overflow: "hidden",
-  },
-  sectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-  },
-  sectionBody: {
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    gap: 12,
   },
   modeRow: {
     flexDirection: "row",
