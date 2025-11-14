@@ -1,5 +1,6 @@
 import Constants from "expo-constants";
 import { assert } from "../utils/assert";
+import { assertKnownModelId } from "../utils/modelCatalog";
 import type { ChatStats } from "@shared/types/chatStats.ts";
 import type { MuxMessage } from "@shared/types/message.ts";
 import type {
@@ -279,6 +280,7 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
         | { success: true; workspaceId: string; metadata: FrontendWorkspaceMetadata }
       > => {
         try {
+          assertKnownModelId(options.model);
           assert(typeof message === "string" && message.trim().length > 0, "message required");
 
           // If workspaceId is null, we're creating a new workspace

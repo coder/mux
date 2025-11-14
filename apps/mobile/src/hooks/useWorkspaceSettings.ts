@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import * as SecureStore from "expo-secure-store";
 import type { ThinkingLevel, WorkspaceMode } from "../types/settings";
+import {
+  DEFAULT_MODEL_ID,
+  assertKnownModelId,
+  isKnownModelId,
+} from "../utils/modelCatalog";
 
 interface WorkspaceSettings {
   mode: WorkspaceMode;
@@ -12,7 +17,7 @@ interface WorkspaceSettings {
 // Default values (hardcoded tier 3)
 const DEFAULT_MODE: WorkspaceMode = "plan";
 const DEFAULT_THINKING_LEVEL: ThinkingLevel = "off";
-const DEFAULT_MODEL = "anthropic:claude-sonnet-4-5";
+const DEFAULT_MODEL = DEFAULT_MODEL_ID;
 const DEFAULT_1M_CONTEXT = false;
 
 /**
@@ -156,6 +161,10 @@ function validateThinkingLevel(value: string): ThinkingLevel | null {
   return null;
 }
 
+
+function validateModel(value: string): string | null {
+  return isKnownModelId(value) ? value : null;
+}
 function validateBoolean(value: string): boolean | null {
   if (value === "true") return true;
   if (value === "false") return false;
@@ -197,7 +206,7 @@ export function useWorkspaceSettings(workspaceId: string): {
         const [loadedMode, loadedThinking, loadedModel, loaded1M] = await Promise.all([
           readSetting(workspaceId, "mode", DEFAULT_MODE, validateMode),
           readSetting(workspaceId, "reasoning", DEFAULT_THINKING_LEVEL, validateThinkingLevel),
-          readSetting(workspaceId, "model", DEFAULT_MODEL),
+          readSetting(workspaceId, "model", DEFAULT_MODEL, validateModel),
           readSetting(
             workspaceId,
             "use1MContext",
@@ -247,6 +256,7 @@ export function useWorkspaceSettings(workspaceId: string): {
 
   const setModel = useCallback(
     async (newModel: string) => {
+      assertKnownModelId(newModel);
       setModelState(newModel);
       await writeSetting(workspaceId, "model", newModel);
     },

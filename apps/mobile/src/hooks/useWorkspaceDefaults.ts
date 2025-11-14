@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import * as SecureStore from "expo-secure-store";
 import type { ThinkingLevel, WorkspaceMode } from "../types/settings";
+import {
+  DEFAULT_MODEL_ID,
+  assertKnownModelId,
+  isKnownModelId,
+} from "../utils/modelCatalog";
 
 export interface GlobalDefaults {
   defaultMode: WorkspaceMode;
@@ -17,7 +22,7 @@ const STORAGE_KEY_1M_CONTEXT = "com.coder.cmux.defaults.use1MContext";
 
 const DEFAULT_MODE: WorkspaceMode = "exec";
 const DEFAULT_REASONING: ThinkingLevel = "off";
-const DEFAULT_MODEL = "anthropic:claude-sonnet-4-5";
+const DEFAULT_MODEL = DEFAULT_MODEL_ID;
 const DEFAULT_1M_CONTEXT = false;
 
 async function readGlobalMode(): Promise<WorkspaceMode> {
@@ -77,8 +82,10 @@ async function writeGlobalReasoning(level: ThinkingLevel): Promise<void> {
 async function readGlobalModel(): Promise<string> {
   try {
     // Try new key first
-    let value = await SecureStore.getItemAsync(STORAGE_KEY_MODEL);
-    if (value) return value;
+    const value = await SecureStore.getItemAsync(STORAGE_KEY_MODEL);
+    if (value && isKnownModelId(value)) {
+      return value;
+    }
 
     return DEFAULT_MODEL;
   } catch (error) {
@@ -91,6 +98,7 @@ async function readGlobalModel(): Promise<string> {
 
 async function writeGlobalModel(model: string): Promise<void> {
   try {
+    assertKnownModelId(model);
     await SecureStore.setItemAsync(STORAGE_KEY_MODEL, model);
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
@@ -183,6 +191,7 @@ export function useWorkspaceDefaults(): {
   }, []);
 
   const setDefaultModel = useCallback((model: string) => {
+    assertKnownModelId(model);
     setDefaultModelState(model);
     void writeGlobalModel(model);
   }, []);

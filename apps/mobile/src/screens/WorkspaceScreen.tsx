@@ -31,6 +31,13 @@ import { createCompactedMessage } from "../utils/messageHelpers";
 import type { RuntimeConfig, RuntimeMode } from "@shared/types/runtime";
 import { RUNTIME_MODE, parseRuntimeModeAndHost, buildRuntimeString } from "@shared/types/runtime";
 import { loadRuntimePreference, saveRuntimePreference } from "../utils/workspacePreferences";
+import { ModelPickerSheet } from "../components/ModelPickerSheet";
+import { useModelHistory } from "../hooks/useModelHistory";
+import {
+  formatModelSummary,
+  getModelDisplayName,
+  sanitizeModelSequence,
+} from "../utils/modelCatalog";
 type ThemeSpacing = ReturnType<typeof useTheme>["spacing"];
 
 type TimelineEntry =
@@ -305,8 +312,16 @@ function WorkspaceScreenInner({
     thinkingLevel,
     model,
     use1MContext,
+    setModel,
     isLoading: settingsLoading,
   } = useWorkspaceSettings(workspaceId ?? "");
+  const { recentModels, addRecentModel } = useModelHistory();
+  const [isModelPickerVisible, setModelPickerVisible] = useState(false);
+  const modelPickerRecents = useMemo(
+    () => sanitizeModelSequence([model, ...recentModels]),
+    [model, recentModels]
+  );
+  const modelSummary = useMemo(() => formatModelSummary(model), [model]);
   const [input, setInput] = useState("");
 
   // Creation mode: branch selection state
@@ -340,6 +355,10 @@ function WorkspaceScreenInner({
   // Track streaming state for indicator
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingModel, setStreamingModel] = useState<string | null>(null);
+  const streamingModelDisplay = useMemo(
+    () => (streamingModel ? getModelDisplayName(streamingModel) : null),
+    [streamingModel]
+  );
 
   // Track deltas with timestamps for accurate TPS calculation (60s window like desktop)
   const deltasRef = useRef<Array<{ tokens: number; timestamp: number }>>([]);
@@ -530,6 +549,37 @@ function WorkspaceScreenInner({
     setEditingMessage(undefined);
     setInput("");
   }, [workspaceId, setHasTodos]);
+
+  const handleOpenModelPicker = useCallback(() => {
+    if (settingsLoading) {
+      return;
+    }
+    setModelPickerVisible(true);
+  }, [settingsLoading]);
+
+  const handleCloseModelPicker = useCallback(() => {
+    setModelPickerVisible(false);
+  }, []);
+
+  const handleSelectModel = useCallback(
+    async (modelId: string) => {
+      if (modelId === model) {
+        setModelPickerVisible(false);
+        return;
+      }
+      try {
+        await setModel(modelId);
+        addRecentModel(modelId);
+      } catch (error) {
+        if (process.env.NODE_ENV !== "production") {
+          console.error("Failed to update model", error);
+        }
+      } finally {
+        setModelPickerVisible(false);
+      }
+    },
+    [model, setModel, addRecentModel]
+  );
 
   const onSend = useCallback(async () => {
     const trimmed = input.trim();
@@ -763,11 +813,12 @@ function WorkspaceScreenInner({
   );
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: theme.colors.background }}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={80}
-    >
+    <>
+      <KeyboardAvoidingView
+        style={{ flex: 1, backgroundColor: theme.colors.background }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={80}
+      >
       <View style={{ flex: 1 }}>
         {/* Chat area - header bar removed, all actions now in action sheet menu */}
         <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
@@ -842,7 +893,7 @@ function WorkspaceScreenInner({
             }}
           >
             <ThemedText variant="caption" style={{ color: theme.colors.accent }}>
-              {streamingModel} streaming...
+              {(streamingModelDisplay ?? streamingModel) ?? ""} streaming...
             </ThemedText>
             {tokenDisplay.total > 0 && (
               <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
@@ -1051,6 +1102,35 @@ function WorkspaceScreenInner({
             </View>
           )}
 
+          <Pressable
+            onPress={handleOpenModelPicker}
+            disabled={settingsLoading}
+            style={({ pressed }) => [
+              {
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+                paddingVertical: spacing.xs,
+                paddingHorizontal: spacing.md,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.surface,
+                marginBottom: spacing.xs,
+              },
+              pressed && !settingsLoading ? { backgroundColor: theme.colors.surfaceSecondary } : null,
+              settingsLoading ? { opacity: 0.6 } : null,
+            ]}
+          >
+            <View style={{ flex: 1 }}>
+              <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted }}>
+                Model
+              </ThemedText>
+              <ThemedText weight="semibold">{modelSummary}</ThemedText>
+            </View>
+            <Ionicons name="chevron-up" size={16} color={theme.colors.foregroundPrimary} />
+          </Pressable>
+
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
             <TextInput
               ref={inputRef}
@@ -1133,7 +1213,15 @@ function WorkspaceScreenInner({
           </View>
         </View>
       </View>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+      <ModelPickerSheet
+        visible={isModelPickerVisible}
+        onClose={handleCloseModelPicker}
+        selectedModel={model}
+        onSelect={handleSelectModel}
+        recentModels={modelPickerRecents}
+      />
+    </>
   );
 }
 
