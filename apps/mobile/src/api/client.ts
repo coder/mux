@@ -1,7 +1,7 @@
 import Constants from "expo-constants";
 import { assert } from "../utils/assert";
 import type { ChatStats } from "@shared/types/chatStats.ts";
-import type { CmuxMessage } from "@shared/types/message.ts";
+import type { MuxMessage } from "@shared/types/message.ts";
 import type {
   FrontendWorkspaceMetadata,
   ProjectsListResponse,
@@ -468,7 +468,7 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
     },
     tokenizer: {
       calculateStats: async (
-        messages: CmuxMessage[],
+        messages: MuxMessage[],
         model: string
       ): Promise<ChatStats> =>
         invoke(IPC_CHANNELS.TOKENIZER_CALCULATE_STATS, [messages, model]),

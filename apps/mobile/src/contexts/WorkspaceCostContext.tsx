@@ -13,9 +13,10 @@ import type { ChatUsageDisplay } from "@shared/utils/tokens/usageAggregator";
 import { sumUsageHistory } from "@shared/utils/tokens/usageAggregator";
 import { createDisplayUsage } from "@shared/utils/tokens/displayUsage";
 import type { ChatStats } from "@shared/types/chatStats.ts";
-import type { CmuxMessage } from "@shared/types/message.ts";
+import type { MuxMessage } from "@shared/types/message.ts";
+import type { WorkspaceChatMessage } from "@shared/types/ipc";
 import {
-  isCmuxMessage,
+  isMuxMessage,
   isStreamEnd,
 } from "@shared/types/ipc";
 import type { StreamEndEvent, StreamAbortEvent } from "@shared/types/stream.ts";
@@ -123,17 +124,17 @@ function sortEntries(entries: Iterable<UsageEntry>): ChatUsageDisplay[] {
     .map((entry) => entry.usage);
 }
 
-function extractMessagesFromReplay(events: WorkspaceChatEvent[]): CmuxMessage[] {
-  const messages: CmuxMessage[] = [];
+function extractMessagesFromReplay(events: WorkspaceChatEvent[]): MuxMessage[] {
+  const messages: MuxMessage[] = [];
   for (const event of events) {
-    if (isCmuxMessage(event as unknown as CmuxMessage)) {
-      messages.push(event as unknown as CmuxMessage);
+    if (isMuxMessage(event as unknown as WorkspaceChatMessage)) {
+      messages.push(event as unknown as MuxMessage);
     }
   }
   return messages;
 }
 
-function getLastModel(messages: CmuxMessage[]): string | undefined {
+function getLastModel(messages: MuxMessage[]): string | undefined {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const candidate = messages[i]?.metadata?.model;
     if (typeof candidate === "string" && candidate.length > 0) {
@@ -172,8 +173,8 @@ export function WorkspaceCostProvider({
 
         const nextMap = new Map<string, UsageEntry>();
         for (const event of events) {
-          if (isCmuxMessage(event as unknown as CmuxMessage)) {
-            const message = event as unknown as CmuxMessage;
+          if (isMuxMessage(event as unknown as WorkspaceChatMessage)) {
+            const message = event as unknown as MuxMessage;
             const entry = normalizeUsage(message.id, {
               usage: message.metadata?.usage,
               model: message.metadata?.model,

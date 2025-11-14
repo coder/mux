@@ -1,16 +1,16 @@
 import type { DisplayedMessage, WorkspaceChatEvent } from "../types";
-import type { CmuxMessage, CmuxTextPart, CmuxImagePart } from "@shared/types/message";
+import type { MuxMessage, MuxTextPart, MuxImagePart } from "@shared/types/message";
 import type { DynamicToolPart } from "@shared/types/toolParts";
 import { createChatEventProcessor } from "@shared/utils/messages/ChatEventProcessor";
 
-interface CmuxMessageLike {
+interface MuxMessageLike {
   id?: string;
   role?: string;
   parts?: Array<Record<string, unknown>>;
   metadata?: Record<string, unknown>;
 }
 
-type IncomingEvent = WorkspaceChatEvent | DisplayedMessage | CmuxMessageLike | string | number | null | undefined;
+type IncomingEvent = WorkspaceChatEvent | DisplayedMessage | MuxMessageLike | string | number | null | undefined;
 
 interface ChatEventExpander {
   expand(event: IncomingEvent | IncomingEvent[]): WorkspaceChatEvent[];
@@ -40,7 +40,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function isCmuxMessageLike(value: unknown): value is CmuxMessageLike {
+function isMuxMessageLike(value: unknown): value is MuxMessageLike {
   if (!isObject(value)) {
     return false;
   }
@@ -87,18 +87,18 @@ function extractReasoningFromPart(part: Record<string, unknown>): string {
   return "";
 }
 
-function buildDisplayedMessagesFromCmux(message: CmuxMessageLike): DisplayedMessage[] {
-  // Convert CmuxMessageLike to proper CmuxMessage and use transformCmuxToDisplayed
+function buildDisplayedMessagesFromMux(message: MuxMessageLike): DisplayedMessage[] {
+  // Convert MuxMessageLike to proper MuxMessage and use transformMuxToDisplayed
   // This ensures consistent tool/reasoning handling across all message sources
   const metadata = isObject(message.metadata) ? message.metadata : undefined;
   const historySequence = getMetadataNumber(metadata, "historySequence") ?? Date.now();
   const timestamp = getMetadataNumber(metadata, "createdAt") ?? getMetadataNumber(metadata, "timestamp");
   const model = typeof metadata?.model === "string" ? metadata.model : undefined;
 
-  const cmuxMessage: CmuxMessage = {
+  const muxMessage: MuxMessage = {
     id: message.id ?? `msg-${historySequence}`,
     role: (typeof message.role === "string" ? message.role : "assistant") as "user" | "assistant",
-    parts: (message.parts ?? []) as CmuxMessage["parts"],
+    parts: (message.parts ?? []) as MuxMessage["parts"],
     metadata: {
       historySequence,
       timestamp,
@@ -106,7 +106,7 @@ function buildDisplayedMessagesFromCmux(message: CmuxMessageLike): DisplayedMess
     },
   };
 
-  return transformCmuxToDisplayed(cmuxMessage);
+  return transformMuxToDisplayed(muxMessage);
 }
 
 /**
@@ -120,10 +120,10 @@ function hasFailureResult(result: unknown): boolean {
 }
 
 /**
- * Transform CmuxMessage into DisplayedMessage array.
+ * Transform MuxMessage into DisplayedMessage array.
  * Handles merging adjacent text/reasoning parts and extracting tool calls.
  */
-function transformCmuxToDisplayed(message: CmuxMessage): DisplayedMessage[] {
+function transformMuxToDisplayed(message: MuxMessage): DisplayedMessage[] {
   const displayed: DisplayedMessage[] = [];
   const historySequence = message.metadata?.historySequence ?? 0;
   const baseTimestamp = message.metadata?.timestamp;
@@ -131,12 +131,12 @@ function transformCmuxToDisplayed(message: CmuxMessage): DisplayedMessage[] {
 
   if (message.role === "user") {
     const content = message.parts
-      .filter((p): p is CmuxTextPart => p.type === "text")
+      .filter((p): p is MuxTextPart => p.type === "text")
       .map((p) => p.text)
       .join("");
 
     const imageParts = message.parts
-      .filter((p): p is CmuxImagePart => p.type === "file")
+      .filter((p): p is MuxImagePart => p.type === "file")
       .map((p) => ({
         url: p.url,
         mediaType: p.mediaType,
@@ -305,7 +305,7 @@ export function createChatEventExpander(): ChatEventExpander {
       return [];
     }
 
-    const displayed = transformCmuxToDisplayed(message);
+    const displayed = transformMuxToDisplayed(message);
 
     // Mark displayed parts as streaming (except completed/failed tools)
     displayed.forEach((msg) => {
@@ -334,9 +334,9 @@ export function createChatEventExpander(): ChatEventExpander {
       return [];
     }
 
-    // Handle legacy CmuxMessage-like objects (from old serialization)
-    if (isCmuxMessageLike(payload)) {
-      return buildDisplayedMessagesFromCmux(payload);
+    // Handle legacy MuxMessage-like objects (from old serialization)
+    if (isMuxMessageLike(payload)) {
+      return buildDisplayedMessagesFromMux(payload);
     }
 
     if (Array.isArray(payload)) {
@@ -407,7 +407,7 @@ export function createChatEventExpander(): ChatEventExpander {
 
         const message = processor.getMessageById(messageId);
         if (message) {
-          const displayed = transformCmuxToDisplayed(message);
+          const displayed = transformMuxToDisplayed(message);
           // Mark as complete (not streaming)
           displayed.forEach((msg) => {
             if ('isStreaming' in msg) {
