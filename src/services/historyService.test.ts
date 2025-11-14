@@ -99,6 +99,25 @@ describe("HistoryService", () => {
       }
     });
 
+    it("hydrates legacy cmuxMetadata entries", async () => {
+      const workspaceId = "workspace-legacy";
+      const workspaceDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(workspaceDir, { recursive: true });
+
+      const legacyMessage = createMuxMessage("msg-legacy", "user", "legacy", {
+        historySequence: 0,
+      });
+      (legacyMessage.metadata as Record<string, unknown>).cmuxMetadata = { type: "normal" };
+
+      const chatPath = path.join(workspaceDir, "chat.jsonl");
+      await fs.writeFile(chatPath, JSON.stringify({ ...legacyMessage, workspaceId }) + "\n");
+
+      const result = await service.getHistory(workspaceId);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data[0].metadata?.muxMetadata?.type).toBe("normal");
+      }
+    });
     it("should handle empty lines in history file", async () => {
       const workspaceId = "workspace1";
       const workspaceDir = config.getSessionDir(workspaceId);

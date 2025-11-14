@@ -8,6 +8,7 @@ import { workspaceFileLocks } from "@/utils/concurrency/workspaceFileLocks";
 import { log } from "./log";
 import { getTokenizerForModel } from "@/utils/main/tokenizer";
 import { KNOWN_MODELS } from "@/constants/knownModels";
+import { normalizeLegacyMuxMetadata } from "@/utils/messages/legacy";
 
 /**
  * HistoryService - Manages chat history persistence and sequence numbering
@@ -49,7 +50,7 @@ export class HistoryService {
       for (let i = 0; i < lines.length; i++) {
         try {
           const message = JSON.parse(lines[i]) as MuxMessage;
-          messages.push(message);
+          messages.push(normalizeLegacyMuxMetadata(message));
         } catch (parseError) {
           // Skip malformed lines but log error for debugging
           console.error(

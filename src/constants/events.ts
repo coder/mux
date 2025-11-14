@@ -49,16 +49,12 @@ export const CUSTOM_EVENTS = {
    * Event to execute a command from the command palette
    * Detail: { commandId: string }
    */
-<<<<<<< HEAD
   EXECUTE_COMMAND: "mux:executeCommand",
   /**
    * Event to enter the chat-based workspace creation experience.
    * Detail: { projectPath: string, startMessage?: string, model?: string, trunkBranch?: string, runtime?: string }
    */
   START_WORKSPACE_CREATION: "mux:startWorkspaceCreation",
-=======
-  EXECUTE_COMMAND: "mux:executeCommand",
->>>>>>> a3cb9358 (🤖 chore: rename cmux refs to mux)
 } as const;
 
 /**
