@@ -82,6 +82,13 @@ export class SSHRuntime implements Runtime {
   }
 
   /**
+   * Get SSH configuration (for PTY terminal spawning)
+   */
+  public getConfig(): SSHRuntimeConfig {
+    return this.config;
+  }
+
+  /**
    * Execute command over SSH with streaming I/O
    */
   // eslint-disable-next-line @typescript-eslint/require-await

@@ -1535,18 +1535,18 @@ export class IpcMain {
 
     // Handle terminal input (keyboard, etc.)
     // Use handle() for both Electron and browser mode
-    ipcMain.handle(IPC_CHANNELS.TERMINAL_INPUT, async (_event, sessionId: string, data: string) => {
+    ipcMain.handle(IPC_CHANNELS.TERMINAL_INPUT, (_event, sessionId: string, data: string) => {
       try {
-        await this.ptyService.sendInput(sessionId, data);
+        this.ptyService.sendInput(sessionId, data);
       } catch (err) {
         log.error(`Error sending input to terminal ${sessionId}:`, err);
         throw err;
       }
     });
 
-    ipcMain.handle(IPC_CHANNELS.TERMINAL_CLOSE, async (_event, sessionId: string) => {
+    ipcMain.handle(IPC_CHANNELS.TERMINAL_CLOSE, (_event, sessionId: string) => {
       try {
-        await this.ptyService.closeSession(sessionId);
+        this.ptyService.closeSession(sessionId);
       } catch (err) {
         log.error("Error closing terminal session:", err);
         throw err;

@@ -6,23 +6,66 @@
  */
 
 import { log } from "@/services/log";
-import type { Runtime, ExecStream } from "@/runtime/Runtime";
+import type { Runtime } from "@/runtime/Runtime";
 import type { TerminalSession, TerminalCreateParams, TerminalResizeParams } from "@/types/terminal";
 import type { IPty } from "node-pty";
-import { SSHRuntime } from "@/runtime/SSHRuntime";
+import { SSHRuntime, type SSHRuntimeConfig } from "@/runtime/SSHRuntime";
 import { LocalRuntime } from "@/runtime/LocalRuntime";
 import { access } from "fs/promises";
 import { constants } from "fs";
+import { getControlPath } from "@/runtime/sshConnectionPool";
 
 interface SessionData {
-  pty?: IPty; // For local sessions
-  stream?: ExecStream; // For SSH sessions
-  stdinWriter?: WritableStreamDefaultWriter<Uint8Array>; // Persistent writer for SSH stdin
+  pty: IPty; // Used for both local and SSH sessions
   workspaceId: string;
   workspacePath: string;
   runtime: Runtime;
   onData: (data: string) => void;
   onExit: (exitCode: number) => void;
+}
+
+/**
+ * Build SSH command arguments from config
+ * Preserves ControlMaster connection pooling and respects ~/.ssh/config
+ */
+function buildSSHArgs(config: SSHRuntimeConfig, remotePath: string): string[] {
+  const args: string[] = [];
+
+  // Add port if specified (overrides ~/.ssh/config)
+  if (config.port) {
+    args.push("-p", String(config.port));
+  }
+
+  // Add identity file if specified (overrides ~/.ssh/config)
+  if (config.identityFile) {
+    args.push("-i", config.identityFile);
+    args.push("-o", "StrictHostKeyChecking=no");
+    args.push("-o", "UserKnownHostsFile=/dev/null");
+    args.push("-o", "LogLevel=ERROR");
+  }
+
+  // Add connection multiplexing (reuse SSHRuntime's controlPath logic)
+  const controlPath = getControlPath(config);
+  args.push("-o", "ControlMaster=auto");
+  args.push("-o", `ControlPath=${controlPath}`);
+  args.push("-o", "ControlPersist=60");
+
+  // Add connection timeout
+  args.push("-o", "ConnectTimeout=15");
+  args.push("-o", "ServerAliveInterval=5");
+  args.push("-o", "ServerAliveCountMax=2");
+
+  // Force PTY allocation
+  args.push("-t");
+
+  // Host (can be alias from ~/.ssh/config)
+  args.push(config.host);
+
+  // Remote command: cd to workspace and start shell
+  const escapedPath = remotePath.replace(/'/g, "'\\''");
+  args.push(`cd '${escapedPath}' && exec $SHELL -i`);
+
+  return args;
 }
 
 /**
@@ -152,107 +195,89 @@ export class PTYService {
         onExit,
       });
     } else if (runtime instanceof SSHRuntime) {
-      // SSH: Use runtime.exec with PTY allocation
-      // Use 'script' to force a proper PTY session with the shell
-      // Set LINES and COLUMNS before starting script so the shell knows the terminal size
-      // -q = quiet (no start/done messages)
-      // -c = command to run
-      // /dev/null = don't save output to a file
-      const command = `export LINES=${params.rows} COLUMNS=${params.cols}; script -qfc "$SHELL -i" /dev/null`;
+      // SSH: Use node-pty to spawn SSH with local PTY (enables resize support)
+      const sshConfig = runtime.getConfig();
+      const sshArgs = buildSSHArgs(sshConfig, workspacePath);
 
-      log.info(`[PTY] SSH command for ${sessionId}: ${command}`);
+      log.info(`[PTY] SSH terminal for ${sessionId}: ssh ${sshArgs.join(" ")}`);
       log.info(`[PTY] SSH terminal size: ${params.cols}x${params.rows}`);
-      log.info(`[PTY] SSH working directory: ${workspacePath}`);
 
-      let stream: ExecStream;
+      // Load node-pty dynamically
+      // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+      let pty: typeof import("node-pty");
       try {
-        log.info(`[PTY] Calling runtime.exec for ${sessionId}...`);
-        // Execute shell with PTY allocation
-        // Use a very long timeout (24 hours) instead of Infinity
-        stream = await runtime.exec(command, {
-          cwd: workspacePath,
-          timeout: 86400, // 24 hours in seconds
-          env: {
-            TERM: "xterm-256color",
-          },
-          forcePTY: true,
-        });
-        log.info(`[PTY] runtime.exec returned successfully for ${sessionId}`);
+        // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
+        pty = require("node-pty");
       } catch (err) {
-        log.error(`[PTY] Failed to create SSH stream for ${sessionId}:`, err);
-        throw err;
+        log.error("node-pty not available - SSH terminals will not work:", err);
+        throw new Error(
+          "SSH terminals are not available. node-pty failed to load (likely due to Electron ABI version mismatch)."
+        );
       }
 
-      log.info(
-        `[PTY] SSH stream created for ${sessionId}, stdin writable: ${stream.stdin.locked === false}`
-      );
+      let ptyProcess: IPty;
+      try {
+        // Spawn SSH with PTY (same as local terminals)
+        ptyProcess = pty.spawn("ssh", sshArgs, {
+          name: "xterm-256color",
+          cols: params.cols,
+          rows: params.rows,
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            TERM: "xterm-256color",
+            PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+          },
+        });
+      } catch (err) {
+        log.error(`[PTY] Failed to spawn SSH terminal ${sessionId}:`, err);
+        throw new Error(
+          `Failed to spawn SSH terminal: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
 
-      // Get a persistent writer for stdin to avoid locking issues
-      const stdinWriter = stream.stdin.getWriter();
+      // Handle data (same as local - buffer incomplete escape sequences)
+      let buffer = "";
+      ptyProcess.onData((data) => {
+        buffer += data;
+        let sendUpTo = buffer.length;
 
+        // Hold back incomplete escape sequences
+        if (buffer.endsWith("\x1b")) {
+          sendUpTo = buffer.length - 1;
+        } else if (buffer.endsWith("\x1b[")) {
+          sendUpTo = buffer.length - 2;
+        } else {
+          // eslint-disable-next-line no-control-regex, @typescript-eslint/prefer-regexp-exec
+          const match = buffer.match(/\x1b\[[0-9;]*$/);
+          if (match) {
+            sendUpTo = buffer.length - match[0].length;
+          }
+        }
+
+        if (sendUpTo > 0) {
+          const toSend = buffer.substring(0, sendUpTo);
+          onData(toSend);
+          buffer = buffer.substring(sendUpTo);
+        }
+      });
+
+      // Handle exit (same as local)
+      ptyProcess.onExit(({ exitCode }) => {
+        log.info(`SSH terminal session ${sessionId} exited with code ${exitCode}`);
+        this.sessions.delete(sessionId);
+        onExit(exitCode);
+      });
+
+      // Store PTY (same interface as local)
       this.sessions.set(sessionId, {
-        stream,
-        stdinWriter,
+        pty: ptyProcess,
         workspaceId: params.workspaceId,
         workspacePath,
         runtime,
         onData,
         onExit,
       });
-
-      // Pipe stdout via callback
-      const reader = stream.stdout.getReader();
-      const decoder = new TextDecoder();
-
-      (async () => {
-        try {
-          let bytesRead = 0;
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-              log.info(`[PTY] SSH stdout closed for ${sessionId} after ${bytesRead} bytes`);
-              break;
-            }
-            bytesRead += value.length;
-            const text = decoder.decode(value, { stream: true });
-            onData(text);
-          }
-        } catch (err) {
-          log.error(`[PTY] Error reading from SSH terminal ${sessionId}:`, err);
-        }
-      })();
-
-      // Pipe stderr to terminal AND logs (zsh sends prompt to stderr)
-      const stderrReader = stream.stderr.getReader();
-      (async () => {
-        try {
-          while (true) {
-            const { done, value } = await stderrReader.read();
-            if (done) break;
-            const text = decoder.decode(value, { stream: true });
-            // Send stderr to terminal (shells often write prompts to stderr)
-            onData(text);
-          }
-        } catch (err) {
-          log.error(`[PTY] Error reading stderr for ${sessionId}:`, err);
-        }
-      })();
-
-      // Handle exit
-      stream.exitCode
-        .then((exitCode: number) => {
-          log.info(`[PTY] SSH terminal session ${sessionId} exited with code ${exitCode}`);
-          log.info(
-            `[PTY] Session was alive for ${((Date.now() - parseInt(sessionId.split("-")[1])) / 1000).toFixed(1)}s`
-          );
-          this.sessions.delete(sessionId);
-          onExit(exitCode);
-        })
-        .catch((err: unknown) => {
-          log.error(`[PTY] SSH terminal session ${sessionId} error:`, err);
-          this.sessions.delete(sessionId);
-          onExit(1);
-        });
     } else {
       throw new Error(`Unsupported runtime type: ${runtime.constructor.name}`);
     }
@@ -268,24 +293,15 @@ export class PTYService {
   /**
    * Send input to a terminal session
    */
-  async sendInput(sessionId: string, data: string): Promise<void> {
+  sendInput(sessionId: string, data: string): void {
     const session = this.sessions.get(sessionId);
-    if (!session) {
-      throw new Error(`Terminal session ${sessionId} not found`);
+    if (!session?.pty) {
+      log.info(`Cannot send input to session ${sessionId}: not found or no PTY`);
+      return;
     }
 
-    if (session.pty) {
-      // Local: Write to PTY
-      session.pty.write(data);
-    } else if (session.stdinWriter) {
-      // SSH: Write to stdin using persistent writer
-      try {
-        await session.stdinWriter.write(new TextEncoder().encode(data));
-      } catch (err) {
-        log.error(`[PTY] Error writing to ${sessionId}:`, err);
-        throw err;
-      }
-    }
+    // Works for both local and SSH now
+    session.pty.write(data);
   }
 
   /**
@@ -293,28 +309,22 @@ export class PTYService {
    */
   resize(params: TerminalResizeParams): void {
     const session = this.sessions.get(params.sessionId);
-    if (!session) {
-      log.info(`Cannot resize terminal session ${params.sessionId}: not found`);
+    if (!session?.pty) {
+      log.info(`Cannot resize terminal session ${params.sessionId}: not found or no PTY`);
       return;
     }
 
-    if (session.pty) {
-      // Local: Resize PTY
-      session.pty.resize(params.cols, params.rows);
-      log.debug(`Resized local terminal ${params.sessionId} to ${params.cols}x${params.rows}`);
-    } else {
-      // SSH: Dynamic resize not supported for SSH sessions
-      // The terminal size is set at session creation time via LINES/COLUMNS env vars
-      log.debug(
-        `SSH terminal ${params.sessionId} resize requested to ${params.cols}x${params.rows} (not supported)`
-      );
-    }
+    // Now works for both local AND SSH! 🎉
+    session.pty.resize(params.cols, params.rows);
+    log.debug(
+      `Resized terminal ${params.sessionId} (${session.runtime instanceof SSHRuntime ? "SSH" : "local"}) to ${params.cols}x${params.rows}`
+    );
   }
 
   /**
    * Close a terminal session
    */
-  async closeSession(sessionId: string): Promise<void> {
+  closeSession(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (!session) {
       log.info(`Cannot close terminal session ${sessionId}: not found`);
@@ -324,15 +334,8 @@ export class PTYService {
     log.info(`Closing terminal session ${sessionId}`);
 
     if (session.pty) {
-      // Local: Kill PTY process
+      // Works for both local and SSH
       session.pty.kill();
-    } else if (session.stdinWriter) {
-      // SSH: Close stdin writer to signal EOF
-      try {
-        await session.stdinWriter.close();
-      } catch (err) {
-        log.error(`Error closing SSH terminal ${sessionId}:`, err);
-      }
     }
 
     this.sessions.delete(sessionId);
@@ -341,14 +344,14 @@ export class PTYService {
   /**
    * Close all terminal sessions for a workspace
    */
-  async closeWorkspaceSessions(workspaceId: string): Promise<void> {
+  closeWorkspaceSessions(workspaceId: string): void {
     const sessionIds = Array.from(this.sessions.entries())
       .filter(([, session]) => session.workspaceId === workspaceId)
       .map(([id]) => id);
 
     log.info(`Closing ${sessionIds.length} terminal session(s) for workspace ${workspaceId}`);
 
-    await Promise.all(sessionIds.map((id) => this.closeSession(id)));
+    sessionIds.forEach((id) => this.closeSession(id));
   }
 
   /**
