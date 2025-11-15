@@ -16,6 +16,7 @@
     "access": "public"
   },
   "scripts": {
+    "postinstall": "npx @electron/rebuild -f -m node_modules/node-pty",
     "dev": "make dev",
     "prebuild:main": "./scripts/generate-version.sh",
     "build": "make build",
