@@ -63,10 +63,9 @@ function buildSSHArgs(config: SSHRuntimeConfig, remotePath: string): string[] {
   args.push(config.host);
 
   // Remote command: cd to workspace and start shell
-  // Expand tildes before quoting to ensure remote shell can resolve them
+  // expandTildeForSSH already handles quoting, so use it directly
   const expandedPath = expandTildeForSSH(remotePath);
-  const escapedPath = expandedPath.replace(/'/g, "'\\''");
-  args.push(`cd '${escapedPath}' && exec $SHELL -i`);
+  args.push(`cd ${expandedPath} && exec $SHELL -i`);
 
   return args;
 }
