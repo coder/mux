@@ -350,9 +350,13 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     return metadata;
   }, []);
 
-  const beginWorkspaceCreation = useCallback((projectPath: string) => {
-    setPendingNewWorkspaceProject(projectPath);
-  }, []);
+  const beginWorkspaceCreation = useCallback(
+    (projectPath: string) => {
+      setPendingNewWorkspaceProject(projectPath);
+      setSelectedWorkspace(null);
+    },
+    [setSelectedWorkspace]
+  );
 
   const clearPendingWorkspaceCreation = useCallback(() => {
     setPendingNewWorkspaceProject(null);

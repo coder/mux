@@ -83,7 +83,7 @@ export function persistWorkspaceCreationPrefill(
 
 interface UseStartWorkspaceCreationOptions {
   projects: Map<string, ProjectConfig>;
-  setPendingNewWorkspaceProject: (projectPath: string | null) => void;
+  beginWorkspaceCreation: (projectPath: string) => void;
   setSelectedWorkspace: (selection: WorkspaceSelection | null) => void;
 }
 
@@ -100,7 +100,7 @@ function resolveProjectPath(
 
 export function useStartWorkspaceCreation({
   projects,
-  setPendingNewWorkspaceProject,
+  beginWorkspaceCreation,
   setSelectedWorkspace,
 }: UseStartWorkspaceCreationOptions) {
   const startWorkspaceCreation = useCallback(
@@ -113,10 +113,10 @@ export function useStartWorkspaceCreation({
       }
 
       persistWorkspaceCreationPrefill(resolvedProjectPath, detail);
-      setPendingNewWorkspaceProject(resolvedProjectPath);
+      beginWorkspaceCreation(resolvedProjectPath);
       setSelectedWorkspace(null);
     },
-    [projects, setPendingNewWorkspaceProject, setSelectedWorkspace]
+    [projects, beginWorkspaceCreation, setSelectedWorkspace]
   );
 
   useEffect(() => {

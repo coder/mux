@@ -417,7 +417,7 @@ describe("WorkspaceContext", () => {
     expect(info).toEqual(workspace);
   });
 
-  test("tracks pending workspace creation state", async () => {
+  test("beginWorkspaceCreation clears selection and tracks pending state", async () => {
     createMockAPI({
       workspace: {
         list: () => Promise.resolve([]),
@@ -434,9 +434,20 @@ describe("WorkspaceContext", () => {
     expect(ctx().pendingNewWorkspaceProject).toBeNull();
 
     act(() => {
+      ctx().setSelectedWorkspace({
+        workspaceId: "ws-123",
+        projectPath: "/alpha",
+        projectName: "alpha",
+        namedWorkspacePath: "alpha/ws-123",
+      });
+    });
+    expect(ctx().selectedWorkspace?.workspaceId).toBe("ws-123");
+
+    act(() => {
       ctx().beginWorkspaceCreation("/alpha");
     });
     expect(ctx().pendingNewWorkspaceProject).toBe("/alpha");
+    expect(ctx().selectedWorkspace).toBeNull();
 
     act(() => {
       ctx().clearPendingWorkspaceCreation();

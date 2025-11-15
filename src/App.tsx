@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useEffect, useCallback, useRef } from "react";
 import "./styles/globals.css";
 import { useWorkspaceContext } from "./contexts/WorkspaceContext";
 import { useProjectContext } from "./contexts/ProjectContext";
@@ -44,6 +44,9 @@ function AppInner() {
     renameWorkspace,
     selectedWorkspace,
     setSelectedWorkspace,
+    pendingNewWorkspaceProject,
+    beginWorkspaceCreation,
+    clearPendingWorkspaceCreation,
   } = useWorkspaceContext();
   const {
     projects,
@@ -53,9 +56,6 @@ function AppInner() {
     closeProjectCreateModal,
     addProject,
   } = useProjectContext();
-
-  // Track when we're in "new workspace creation" mode (show FirstMessageInput)
-  const [pendingNewWorkspaceProject, setPendingNewWorkspaceProject] = useState<string | null>(null);
 
   // Auto-collapse sidebar on mobile by default
   const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
@@ -72,7 +72,7 @@ function AppInner() {
 
   const startWorkspaceCreation = useStartWorkspaceCreation({
     projects,
-    setPendingNewWorkspaceProject,
+    beginWorkspaceCreation,
     setSelectedWorkspace,
   });
 
@@ -569,13 +569,13 @@ function AppInner() {
                           telemetry.workspaceCreated(metadata.id);
 
                           // Clear pending state
-                          setPendingNewWorkspaceProject(null);
+                          clearPendingWorkspaceCreation();
                         }}
                         onCancel={
                           pendingNewWorkspaceProject
                             ? () => {
                                 // User cancelled workspace creation - clear pending state
-                                setPendingNewWorkspaceProject(null);
+                                clearPendingWorkspaceCreation();
                               }
                             : undefined
                         }
