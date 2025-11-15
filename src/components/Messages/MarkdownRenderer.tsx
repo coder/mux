@@ -8,7 +8,11 @@ interface MarkdownRendererProps {
   style?: React.CSSProperties;
 }
 
-export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className, style }) => {
+export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
+  content,
+  className,
+  style,
+}) => {
   return (
     <div className={cn("markdown-content", className)} style={style}>
       <MarkdownCore content={content} />
