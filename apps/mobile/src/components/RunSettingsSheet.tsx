@@ -1,14 +1,6 @@
 import type { JSX } from "react";
 import { useMemo, useState, useEffect } from "react";
-import {
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  TextInput,
-  View,
-} from "react-native";
+import { Modal, Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme";
 import { ThemedText } from "./ThemedText";
@@ -75,7 +67,7 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
       presentationStyle="pageSheet"
       onRequestClose={props.onClose}
     >
-      <View style={[styles.container, { backgroundColor: theme.colors.background }]}> 
+      <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
         <View style={styles.header}>
           <ThemedText variant="titleMedium" weight="semibold" style={styles.headerTitle}>
             Settings
@@ -86,7 +78,7 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
         </View>
 
         <ScrollView contentContainerStyle={styles.content}>
-          <View style={[styles.sectionBlock, { borderColor: theme.colors.border }]}> 
+          <View style={[styles.sectionBlock, { borderColor: theme.colors.border }]}>
             <View style={styles.sectionHeading}>
               <ThemedText variant="label" weight="semibold">
                 Model
@@ -184,7 +176,10 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
                     >
                       <View style={{ flex: 1 }}>
                         <ThemedText weight="semibold">{getModelDisplayName(item.id)}</ThemedText>
-                        <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted }}>
+                        <ThemedText
+                          variant="caption"
+                          style={{ color: theme.colors.foregroundMuted }}
+                        >
                           {formatModelSummary(item.id)}
                         </ThemedText>
                       </View>
@@ -194,7 +189,10 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
                     </Pressable>
                     {index < filteredModels.length - 1 ? (
                       <View
-                        style={{ height: StyleSheet.hairlineWidth, backgroundColor: theme.colors.border }}
+                        style={{
+                          height: StyleSheet.hairlineWidth,
+                          backgroundColor: theme.colors.border,
+                        }}
                       />
                     ) : null}
                   </View>
@@ -214,7 +212,7 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
                   gap: 8,
                 }}
               >
-                <View style={styles.sectionHeader}>
+                <View style={styles.sectionHeading}>
                   <ThemedText weight="semibold">Context window</ThemedText>
                   <Ionicons
                     name="information-circle-outline"
@@ -239,7 +237,7 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
             ) : null}
           </View>
 
-          <View style={[styles.sectionBlock, { borderColor: theme.colors.border }]}> 
+          <View style={[styles.sectionBlock, { borderColor: theme.colors.border }]}>
             <ThemedText variant="label" weight="semibold" style={styles.sectionTitle}>
               Mode
             </ThemedText>
@@ -266,9 +264,10 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
                     weight="semibold"
                     style={{
                       textTransform: "capitalize",
-                      color: props.mode === modeOption
-                        ? theme.colors.foregroundInverted
-                        : theme.colors.foregroundPrimary,
+                      color:
+                        props.mode === modeOption
+                          ? theme.colors.foregroundInverted
+                          : theme.colors.foregroundPrimary,
                     }}
                   >
                     {modeOption}
@@ -276,9 +275,10 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
                   <ThemedText
                     variant="caption"
                     style={{
-                      color: props.mode === modeOption
-                        ? theme.colors.foregroundInverted
-                        : theme.colors.foregroundMuted,
+                      color:
+                        props.mode === modeOption
+                          ? theme.colors.foregroundInverted
+                          : theme.colors.foregroundMuted,
                     }}
                   >
                     {modeOption === "plan" ? "Plan before executing" : "Act directly"}
@@ -288,7 +288,7 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
             </View>
           </View>
 
-          <View style={[styles.sectionBlock, { borderColor: theme.colors.border }]}> 
+          <View style={[styles.sectionBlock, { borderColor: theme.colors.border }]}>
             <ThemedText variant="label" weight="semibold" style={styles.sectionTitle}>
               Reasoning
             </ThemedText>
@@ -326,7 +326,6 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
               })}
             </View>
           </View>
-
         </ScrollView>
       </View>
     </Modal>
@@ -419,6 +418,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
+  },
+  toggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
   levelChip: {
     paddingVertical: 8,

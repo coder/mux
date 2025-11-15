@@ -37,7 +37,10 @@ export async function executeSlashCommand(
       ctx.showInfo("Model updated", `Switched to ${parsed.modelString}`);
       return true;
     case "model-help":
-      ctx.showInfo("/model", "Usage: /model <model-id>. Example: /model anthropic:claude-sonnet-4-5");
+      ctx.showInfo(
+        "/model",
+        "Usage: /model <model-id>. Example: /model anthropic:claude-sonnet-4-5"
+      );
       return true;
     case "providers-set":
       return handleProviderSet(ctx, parsed);
@@ -45,7 +48,10 @@ export async function executeSlashCommand(
       ctx.showInfo("/providers", "Usage: /providers set <provider> <keyPath> <value>");
       return true;
     case "providers-missing-args":
-      ctx.showError("/providers", "Missing required arguments. Usage: /providers set <provider> <keyPath> <value>");
+      ctx.showError(
+        "/providers",
+        "Missing required arguments. Usage: /providers set <provider> <keyPath> <value>"
+      );
       return true;
     case "providers-invalid-subcommand":
       ctx.showError("/providers", `Unknown subcommand: ${parsed.subcommand}`);
@@ -53,7 +59,10 @@ export async function executeSlashCommand(
     case "fork":
       return handleFork(ctx, parsed);
     case "fork-help":
-      ctx.showInfo("/fork", "Usage: /fork <new-workspace-name>. Optionally add text on new lines to send as the first message.");
+      ctx.showInfo(
+        "/fork",
+        "Usage: /fork <new-workspace-name>. Optionally add text on new lines to send as the first message."
+      );
       return true;
     case "new":
       return handleNew(ctx, parsed);
@@ -89,7 +98,10 @@ async function handleTruncate(
     }
     ctx.onClearTimeline();
     ctx.onCancelEdit();
-    ctx.showInfo("History", percentage >= 1 ? "Cleared conversation" : `Truncated to ${(percentage * 100).toFixed(0)}%`);
+    ctx.showInfo(
+      "History",
+      percentage >= 1 ? "Cleared conversation" : `Truncated to ${(percentage * 100).toFixed(0)}%`
+    );
     return true;
   } catch (error) {
     ctx.showError("History", getErrorMessage(error));
@@ -119,7 +131,10 @@ async function handleCompaction(
       return true;
     }
 
-    ctx.showInfo("Compaction", "Summarization started. You will see the summary when it completes.");
+    ctx.showInfo(
+      "Compaction",
+      "Summarization started. You will see the summary when it completes."
+    );
     ctx.onCancelEdit();
     return true;
   } catch (error) {
@@ -166,7 +181,11 @@ async function handleFork(
     ctx.showInfo("Fork", `Switched to ${result.metadata.name}`);
 
     if (parsed.startMessage) {
-      await ctx.api.workspace.sendMessage(result.metadata.id, parsed.startMessage, ctx.sendMessageOptions);
+      await ctx.api.workspace.sendMessage(
+        result.metadata.id,
+        parsed.startMessage,
+        ctx.sendMessageOptions
+      );
     }
     return true;
   } catch (error) {
@@ -193,7 +212,12 @@ async function handleNew(
   try {
     const trunkBranch = await resolveTrunkBranch(ctx, projectPath, parsed.trunkBranch);
     const runtimeConfig = parseRuntimeStringForMobile(parsed.runtime);
-    const result = await ctx.api.workspace.create(projectPath, parsed.workspaceName, trunkBranch, runtimeConfig);
+    const result = await ctx.api.workspace.create(
+      projectPath,
+      parsed.workspaceName,
+      trunkBranch,
+      runtimeConfig
+    );
     if (!result.success) {
       ctx.showError("New workspace", result.error ?? "Failed to create workspace");
       return true;
@@ -203,7 +227,11 @@ async function handleNew(
     ctx.showInfo("New workspace", `Created ${result.metadata.name}`);
 
     if (parsed.startMessage) {
-      await ctx.api.workspace.sendMessage(result.metadata.id, parsed.startMessage, ctx.sendMessageOptions);
+      await ctx.api.workspace.sendMessage(
+        result.metadata.id,
+        parsed.startMessage,
+        ctx.sendMessageOptions
+      );
     }
 
     return true;

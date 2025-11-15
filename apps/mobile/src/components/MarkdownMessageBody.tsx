@@ -1,10 +1,13 @@
 import type { JSX } from "react";
 import { useMemo } from "react";
 import Markdown from "react-native-markdown-display";
-import type { MarkdownStyle } from "react-native-markdown-display";
 import { useTheme } from "../theme";
 import { assert } from "../utils/assert";
-import { createMarkdownStyles, type MarkdownVariant } from "../messages/markdownStyles";
+import {
+  createMarkdownStyles,
+  type MarkdownVariant,
+  type MarkdownStyle,
+} from "../messages/markdownStyles";
 import { normalizeMarkdown } from "../messages/markdownUtils";
 
 export interface MarkdownMessageBodyProps {
@@ -13,10 +16,14 @@ export interface MarkdownMessageBodyProps {
   styleOverrides?: Partial<MarkdownStyle>;
 }
 
-export function MarkdownMessageBody({ content, variant, styleOverrides }: MarkdownMessageBodyProps): JSX.Element | null {
+export function MarkdownMessageBody({
+  content,
+  variant,
+  styleOverrides,
+}: MarkdownMessageBodyProps): JSX.Element | null {
   assert(
     content === undefined || content === null || typeof content === "string",
-    "MarkdownMessageBody expects string content",
+    "MarkdownMessageBody expects string content"
   );
 
   const theme = useTheme();
@@ -43,7 +50,7 @@ export function MarkdownMessageBody({ content, variant, styleOverrides }: Markdo
     return {
       ...base,
       ...styleOverrides,
-    } satisfies MarkdownStyle;
+    } as MarkdownStyle;
   }, [theme, variant, styleOverrides]);
 
   return <Markdown style={markdownStyles}>{normalizedContent}</Markdown>;

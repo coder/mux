@@ -2,11 +2,7 @@ import { assert } from "./assert";
 import type { WorkspaceChatEvent, DisplayedMessage } from "../types";
 import type { TodoItem } from "../components/TodoItemView";
 
-const TODO_STATUSES: ReadonlyArray<TodoItem["status"]> = [
-  "pending",
-  "in_progress",
-  "completed",
-];
+const TODO_STATUSES: ReadonlyArray<TodoItem["status"]> = ["pending", "in_progress", "completed"];
 
 function isTodoStatus(value: unknown): value is TodoItem["status"] {
   return TODO_STATUSES.includes(value as TodoItem["status"]);

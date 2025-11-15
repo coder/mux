@@ -196,13 +196,10 @@ export function ProjectsScreen(): JSX.Element {
     return results;
   }, [projectsQuery.data, workspacesQuery.data, activityMap, search]);
 
-  const isLoading =
-    projectsQuery.isLoading || workspacesQuery.isLoading || activityQuery.isLoading;
+  const isLoading = projectsQuery.isLoading || workspacesQuery.isLoading || activityQuery.isLoading;
   const isRefreshing =
     projectsQuery.isRefetching || workspacesQuery.isRefetching || activityQuery.isRefetching;
-  const hasError = Boolean(
-    projectsQuery.error ?? workspacesQuery.error ?? activityQuery.error
-  );
+  const hasError = Boolean(projectsQuery.error ?? workspacesQuery.error ?? activityQuery.error);
   const errorMessage =
     (projectsQuery.error instanceof Error && projectsQuery.error.message) ||
     (workspacesQuery.error instanceof Error && workspacesQuery.error.message) ||
@@ -210,11 +207,7 @@ export function ProjectsScreen(): JSX.Element {
     undefined;
 
   const onRefresh = () => {
-    void Promise.all([
-      projectsQuery.refetch(),
-      workspacesQuery.refetch(),
-      activityQuery.refetch(),
-    ]);
+    void Promise.all([projectsQuery.refetch(), workspacesQuery.refetch(), activityQuery.refetch()]);
   };
 
   const handleOpenSecrets = async (projectPath: string, projectName: string) => {

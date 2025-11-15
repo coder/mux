@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import * as SecureStore from "expo-secure-store";
 import type { ThinkingLevel, WorkspaceMode } from "../types/settings";
-import {
-  DEFAULT_MODEL_ID,
-  assertKnownModelId,
-  isKnownModelId,
-} from "../utils/modelCatalog";
+import { DEFAULT_MODEL_ID, assertKnownModelId, isKnownModelId } from "../utils/modelCatalog";
 
 interface WorkspaceSettings {
   mode: WorkspaceMode;
@@ -160,7 +156,6 @@ function validateThinkingLevel(value: string): ThinkingLevel | null {
   }
   return null;
 }
-
 
 function validateModel(value: string): string | null {
   return isKnownModelId(value) ? value : null;

@@ -91,7 +91,8 @@ function parseWorkspaceActivity(value: unknown): WorkspaceActivitySnapshot | nul
   if (!isJsonRecord(value)) {
     return null;
   }
-  const recency = typeof value.recency === "number" && Number.isFinite(value.recency) ? value.recency : null;
+  const recency =
+    typeof value.recency === "number" && Number.isFinite(value.recency) ? value.recency : null;
   if (recency === null) {
     return null;
   }
@@ -286,7 +287,10 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
       > => {
         try {
           assert(typeof newName === "string" && newName.trim().length > 0, "newName required");
-          return await invoke(IPC_CHANNELS.WORKSPACE_FORK, [ensureWorkspaceId(workspaceId), newName.trim()]);
+          return await invoke(IPC_CHANNELS.WORKSPACE_FORK, [
+            ensureWorkspaceId(workspaceId),
+            newName.trim(),
+          ]);
         } catch (error) {
           return {
             success: false,
@@ -324,7 +328,10 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
         percentage = 1.0
       ): Promise<Result<void, string>> => {
         try {
-          assert(typeof percentage === "number" && Number.isFinite(percentage), "percentage must be a number");
+          assert(
+            typeof percentage === "number" && Number.isFinite(percentage),
+            "percentage must be a number"
+          );
           await invoke(IPC_CHANNELS.WORKSPACE_TRUNCATE_HISTORY, [
             ensureWorkspaceId(workspaceId),
             percentage,
@@ -552,7 +559,9 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
         ),
       activity: {
         list: async (): Promise<Record<string, WorkspaceActivitySnapshot>> => {
-          const response = await invoke<Record<string, unknown>>(IPC_CHANNELS.WORKSPACE_ACTIVITY_LIST);
+          const response = await invoke<Record<string, unknown>>(
+            IPC_CHANNELS.WORKSPACE_ACTIVITY_LIST
+          );
           const result: Record<string, WorkspaceActivitySnapshot> = {};
           if (response && typeof response === "object") {
             for (const [workspaceId, value] of Object.entries(response)) {

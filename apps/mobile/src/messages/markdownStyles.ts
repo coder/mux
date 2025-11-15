@@ -1,9 +1,10 @@
 import { StyleSheet } from "react-native";
-import type { MarkdownStyle } from "react-native-markdown-display";
+import type { MarkdownProps } from "react-native-markdown-display";
 import type { Theme } from "../theme";
 import { assert } from "../utils/assert";
 
 export type MarkdownVariant = "assistant" | "reasoning" | "plan";
+export type MarkdownStyle = NonNullable<MarkdownProps["style"]>;
 
 type VariantColorResolver = (theme: Theme) => string;
 
@@ -124,5 +125,5 @@ export function createMarkdownStyles(theme: Theme, variant: MarkdownVariant): Ma
       marginTop: 0,
       marginBottom: theme.spacing.sm,
     },
-  } satisfies MarkdownStyle;
+  } as MarkdownStyle;
 }

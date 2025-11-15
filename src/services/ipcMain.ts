@@ -160,10 +160,7 @@ export class IpcMain {
     });
   }
 
-  private async updateRecencyTimestamp(
-    workspaceId: string,
-    timestamp?: number
-  ): Promise<void> {
+  private async updateRecencyTimestamp(workspaceId: string, timestamp?: number): Promise<void> {
     try {
       const snapshot = await this.extensionMetadata.updateRecency(workspaceId, timestamp);
       this.emitWorkspaceActivity(workspaceId, snapshot);
@@ -1553,25 +1550,25 @@ export class IpcMain {
           return Ok(undefined);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-    ipcMain.on(IPC_CHANNELS.WORKSPACE_ACTIVITY_SUBSCRIBE, () => {
-      void (async () => {
-        try {
-          const snapshots = await this.extensionMetadata.getAllSnapshots();
-          for (const [workspaceId, activity] of snapshots.entries()) {
-            this.mainWindow?.webContents.send(IPC_CHANNELS.WORKSPACE_ACTIVITY, {
-              workspaceId,
-              activity,
-            });
-          }
-        } catch (error) {
-          log.error("Failed to emit current workspace activity", error);
-        }
-      })();
-    });
+          ipcMain.on(IPC_CHANNELS.WORKSPACE_ACTIVITY_SUBSCRIBE, () => {
+            void (async () => {
+              try {
+                const snapshots = await this.extensionMetadata.getAllSnapshots();
+                for (const [workspaceId, activity] of snapshots.entries()) {
+                  this.mainWindow?.webContents.send(IPC_CHANNELS.WORKSPACE_ACTIVITY, {
+                    workspaceId,
+                    activity,
+                  });
+                }
+              } catch (error) {
+                log.error("Failed to emit current workspace activity", error);
+              }
+            })();
+          });
 
-    ipcMain.on(IPC_CHANNELS.WORKSPACE_ACTIVITY_UNSUBSCRIBE, () => {
-      // no-op: kept for symmetry with subscribe
-    });
+          ipcMain.on(IPC_CHANNELS.WORKSPACE_ACTIVITY_UNSUBSCRIBE, () => {
+            // no-op: kept for symmetry with subscribe
+          });
 
           return Err(`Failed to update project secrets: ${message}`);
         }

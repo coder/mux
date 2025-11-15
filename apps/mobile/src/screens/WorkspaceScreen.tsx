@@ -10,7 +10,11 @@ import {
   TextInput,
   View,
 } from "react-native";
-import type { TextInputKeyPressEventData } from "react-native";
+import type {
+  LayoutChangeEvent,
+  TextInputContentSizeChangeEventData,
+  TextInputKeyPressEventData,
+} from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
@@ -38,6 +42,8 @@ import { createCompactedMessage } from "../utils/messageHelpers";
 import type { RuntimeConfig, RuntimeMode } from "@shared/types/runtime";
 import { RUNTIME_MODE, parseRuntimeModeAndHost, buildRuntimeString } from "@shared/types/runtime";
 import { loadRuntimePreference, saveRuntimePreference } from "../utils/workspacePreferences";
+import { FullscreenComposerModal } from "../components/FullscreenComposerModal";
+
 import { RunSettingsSheet } from "../components/RunSettingsSheet";
 import { useModelHistory } from "../hooks/useModelHistory";
 import { areTodosEqual, extractTodosFromEvent } from "../utils/todoLifecycle";
@@ -47,6 +53,17 @@ import {
   getModelDisplayName,
   sanitizeModelSequence,
 } from "../utils/modelCatalog";
+
+const CHAT_INPUT_MIN_HEIGHT = 38;
+const CHAT_INPUT_MAX_HEIGHT = 120;
+
+if (__DEV__) {
+  console.assert(
+    CHAT_INPUT_MIN_HEIGHT < CHAT_INPUT_MAX_HEIGHT,
+    "Chat composer height bounds invalid"
+  );
+}
+
 type ThemeSpacing = ReturnType<typeof useTheme>["spacing"];
 
 type TimelineEntry =
@@ -214,7 +231,7 @@ function RawEventCard({
   const spacing = theme.spacing;
 
   if (payload && typeof payload === "object" && "type" in payload) {
-    const typed = payload as { type: unknown;[key: string]: unknown };
+    const typed = payload as { type: unknown; [key: string]: unknown };
     if (typed.type === "status" && typeof typed.status === "string") {
       return <ThemedText variant="caption">{typed.status}</ThemedText>;
     }
@@ -350,13 +367,10 @@ function WorkspaceScreenInner({
   );
   const [input, setInput] = useState("");
   const [suppressCommandSuggestions, setSuppressCommandSuggestions] = useState(false);
-  const setInputWithSuggestionGuard = useCallback(
-    (next: string) => {
-      setInput(next);
-      setSuppressCommandSuggestions(false);
-    },
-    []
-  );
+  const setInputWithSuggestionGuard = useCallback((next: string) => {
+    setInput(next);
+    setSuppressCommandSuggestions(false);
+  }, []);
   const commandListIdRef = useRef(`slash-${Math.random().toString(36).slice(2)}`);
   const [commandHighlightIndex, setCommandHighlightIndex] = useState(0);
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -470,6 +484,13 @@ function WorkspaceScreenInner({
   const wsRef = useRef<{ close: () => void } | null>(null);
   const flatListRef = useRef<FlatList<TimelineEntry> | null>(null);
   const inputRef = useRef<TextInput>(null);
+  const [composerContentHeight, setComposerContentHeight] = useState(CHAT_INPUT_MIN_HEIGHT);
+  const inlineMaxHeight = CHAT_INPUT_MAX_HEIGHT;
+  const composerDisplayHeight = useMemo(() => {
+    const clampedHeight = Math.max(composerContentHeight, CHAT_INPUT_MIN_HEIGHT);
+    return Math.min(clampedHeight, inlineMaxHeight);
+  }, [composerContentHeight, inlineMaxHeight]);
+  const [isFullscreenComposerOpen, setFullscreenComposerOpen] = useState(false);
 
   // Editing state - tracks message being edited
   const [editingMessage, setEditingMessage] = useState<{ id: string; content: string } | undefined>(
@@ -485,15 +506,48 @@ function WorkspaceScreenInner({
     return "Message";
   }, [isCreationMode, editingMessage]);
 
+  // Track current todos
+
+  const handleOpenFullscreenComposer = useCallback(() => {
+    setSuppressCommandSuggestions(true);
+    setFullscreenComposerOpen(true);
+  }, [setFullscreenComposerOpen, setSuppressCommandSuggestions]);
+
+  const handleCloseFullscreenComposer = useCallback(() => {
+    setFullscreenComposerOpen(false);
+    setSuppressCommandSuggestions(false);
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 150);
+  }, [setFullscreenComposerOpen, setSuppressCommandSuggestions]);
+
   // Track current todos for floating card (during streaming)
   const [currentTodos, setCurrentTodos] = useState<TodoItem[]>([]);
 
   // Track streaming state for indicator
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingModel, setStreamingModel] = useState<string | null>(null);
+  const updateComposerContentHeight = useCallback((nextHeight: number) => {
+    const clamped = Math.max(nextHeight, CHAT_INPUT_MIN_HEIGHT);
+    setComposerContentHeight((current) => (Math.abs(current - clamped) < 0.5 ? current : clamped));
+  }, []);
   const streamingModelDisplay = useMemo(
     () => (streamingModel ? getModelDisplayName(streamingModel) : null),
     [streamingModel]
+  );
+
+  const handleComposerContentSizeChange = useCallback(
+    (event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => {
+      updateComposerContentHeight(event.nativeEvent.contentSize?.height ?? CHAT_INPUT_MIN_HEIGHT);
+    },
+    [updateComposerContentHeight]
+  );
+
+  const handleComposerLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      updateComposerContentHeight(event.nativeEvent.layout.height);
+    },
+    [updateComposerContentHeight]
   );
 
   // Track deltas with timestamps for accurate TPS calculation (60s window like desktop)
@@ -546,6 +600,12 @@ function WorkspaceScreenInner({
     void loadRuntime();
   }, [isCreationMode, creationContext]);
 
+  useEffect(() => {
+    if (input.trim().length === 0) {
+      setComposerContentHeight(CHAT_INPUT_MIN_HEIGHT);
+    }
+  }, [input]);
+
   const metadataQuery = useQuery({
     queryKey: ["workspace", workspaceId],
     queryFn: () => api.workspace.getInfo(workspaceId!),
@@ -570,7 +630,11 @@ function WorkspaceScreenInner({
         if (payload.type === "caught-up") {
           hasCaughtUpRef.current = true;
 
-          if (pendingTodosRef.current && pendingTodosRef.current.length > 0 && isStreamActiveRef.current) {
+          if (
+            pendingTodosRef.current &&
+            pendingTodosRef.current.length > 0 &&
+            isStreamActiveRef.current
+          ) {
             const pending = pendingTodosRef.current;
             setCurrentTodos((prev) => (areTodosEqual(prev, pending) ? prev : pending));
           } else if (!isStreamActiveRef.current) {
@@ -758,7 +822,13 @@ function WorkspaceScreenInner({
     void setUse1MContext(!use1MContext);
   }, [supportsExtendedContext, use1MContext, setUse1MContext]);
 
-  const onSend = useCallback(async () => {
+  const handleCancelEdit = useCallback(() => {
+    setEditingMessage(undefined);
+    setInputWithSuggestionGuard("");
+    setSuppressCommandSuggestions(false);
+  }, [setEditingMessage, setInputWithSuggestionGuard, setSuppressCommandSuggestions]);
+
+  const onSend = useCallback(async (): Promise<boolean> => {
     const trimmed = input.trim();
     const parsedCommand = parseCommand(trimmed);
 
@@ -785,12 +855,12 @@ function WorkspaceScreenInner({
         setIsSending(false);
         setSuppressCommandSuggestions(true);
         setInputWithSuggestionGuard("");
-        return;
+        return true;
       }
     }
 
     if (!trimmed) {
-      return;
+      return false;
     }
 
     const wasEditing = !!editingMessage;
@@ -801,9 +871,6 @@ function WorkspaceScreenInner({
     setSuppressCommandSuggestions(true);
 
     if (isCreationMode) {
-      // CREATION MODE: Send first message to create workspace
-
-      // Build runtime config based on selected mode
       const runtimeConfig: RuntimeConfig | undefined =
         runtimeMode === RUNTIME_MODE.SSH
           ? { type: "ssh" as const, host: sshHost, srcBaseDir: "~/cmux" }
@@ -822,8 +889,11 @@ function WorkspaceScreenInner({
           applyChatEvent(current, { type: "error", error: result.error } as WorkspaceChatEvent)
         );
         setInputWithSuggestionGuard(originalContent);
-      } else if ("metadata" in result && result.metadata) {
-        // Save runtime preference if non-local
+        setIsSending(false);
+        return false;
+      }
+
+      if ("metadata" in result && result.metadata) {
         if (runtimeMode !== RUNTIME_MODE.LOCAL) {
           const runtimeString = buildRuntimeString(runtimeMode, sshHost);
           if (runtimeString) {
@@ -831,42 +901,39 @@ function WorkspaceScreenInner({
           }
         }
 
-        // Success! Navigate to new workspace
         router.replace(`/workspace/${result.metadata.id}`);
-        // Note: router.replace ensures we don't go back to creation screen
       }
 
       setIsSending(false);
-      return;
+      return true;
     }
 
-    // NORMAL MODE: Send message - fire and forget
-    // Actual errors will come via stream-error events from WebSocket
     const result = await api.workspace.sendMessage(workspaceId!, trimmed, {
       ...sendMessageOptions,
-      editMessageId: editingMessage?.id, // Pass editMessageId if editing
+      editMessageId: editingMessage?.id,
     });
 
-    // Only show error for validation failures (not stream errors)
     if (!result.success) {
       console.error("[sendMessage] Validation failed:", result.error);
       setTimeline((current) =>
         applyChatEvent(current, { type: "error", error: result.error } as WorkspaceChatEvent)
       );
 
-      // Restore edit state on error
       if (wasEditing) {
         setEditingMessage(editingMessage);
         setInputWithSuggestionGuard(originalContent);
       }
-    } else {
-      // Clear editing state on success
-      if (wasEditing) {
-        setEditingMessage(undefined);
-      }
+
+      setIsSending(false);
+      return false;
+    }
+
+    if (wasEditing) {
+      setEditingMessage(undefined);
     }
 
     setIsSending(false);
+    return true;
   }, [
     api,
     creationContext,
@@ -894,6 +961,14 @@ function WorkspaceScreenInner({
     use1MContext,
     workspaceId,
   ]);
+
+  const handleFullscreenSend = useCallback(async () => {
+    const sent = await onSend();
+    if (sent) {
+      setFullscreenComposerOpen(false);
+    }
+    return sent;
+  }, [onSend, setFullscreenComposerOpen]);
 
   const onCancelStream = useCallback(async () => {
     if (!workspaceId) return;
@@ -925,11 +1000,6 @@ function WorkspaceScreenInner({
       inputRef.current?.focus();
     }, 100);
   }, []);
-
-  const handleCancelEdit = useCallback(() => {
-    setEditingMessage(undefined);
-    setInputWithSuggestionGuard("");
-  }, [setInputWithSuggestionGuard]);
 
   // Validation: check if message can be edited
   const canEditMessage = useCallback(
@@ -1034,7 +1104,11 @@ function WorkspaceScreenInner({
                   padding: spacing.xl,
                 }}
               >
-                <Ionicons name="chatbubbles-outline" size={48} color={theme.colors.foregroundMuted} />
+                <Ionicons
+                  name="chatbubbles-outline"
+                  size={48}
+                  color={theme.colors.foregroundMuted}
+                />
                 <ThemedText
                   variant="titleSmall"
                   weight="semibold"
@@ -1064,7 +1138,10 @@ function WorkspaceScreenInner({
                 keyExtractor={keyExtractor}
                 renderItem={renderItem}
                 inverted
-                contentContainerStyle={{ paddingHorizontal: spacing.md, paddingVertical: spacing.sm }}
+                contentContainerStyle={{
+                  paddingHorizontal: spacing.md,
+                  paddingVertical: spacing.sm,
+                }}
                 initialNumToRender={20}
                 maxToRenderPerBatch={12}
                 windowSize={5}
@@ -1094,7 +1171,7 @@ function WorkspaceScreenInner({
               }}
             >
               <ThemedText variant="caption" style={{ color: theme.colors.accent }}>
-                {(streamingModelDisplay ?? streamingModel) ?? ""} streaming...
+                {streamingModelDisplay ?? streamingModel ?? ""} streaming...
               </ThemedText>
               {tokenDisplay.total > 0 && (
                 <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
@@ -1334,13 +1411,18 @@ function WorkspaceScreenInner({
                     borderColor: theme.colors.border,
                     backgroundColor: theme.colors.surface,
                   },
-                  pressed && !settingsLoading ? { backgroundColor: theme.colors.surfaceSecondary } : null,
+                  pressed && !settingsLoading
+                    ? { backgroundColor: theme.colors.surfaceSecondary }
+                    : null,
                   settingsLoading ? { opacity: 0.6 } : null,
                 ]}
               >
                 <View style={{ flex: 1 }}>
                   <ThemedText weight="semibold">{modelSummary}</ThemedText>
-                  <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted, marginTop: 2 }}>
+                  <ThemedText
+                    variant="caption"
+                    style={{ color: theme.colors.foregroundMuted, marginTop: 2 }}
+                  >
                     {runSettingsDetails}
                   </ThemedText>
                 </View>
@@ -1372,8 +1454,6 @@ function WorkspaceScreenInner({
                   placeholderTextColor={theme.colors.foregroundMuted}
                   style={{
                     flex: 1,
-                    minHeight: 38,
-                    maxHeight: 100,
                     paddingVertical: spacing.xs,
                     paddingHorizontal: spacing.md,
                     borderRadius: 20,
@@ -1382,14 +1462,38 @@ function WorkspaceScreenInner({
                     borderWidth: editingMessage ? 2 : 1,
                     borderColor: editingMessage ? "#F59E0B" : theme.colors.inputBorder,
                     fontSize: 16,
+                    height: composerDisplayHeight,
+                    minHeight: CHAT_INPUT_MIN_HEIGHT,
+                    maxHeight: inlineMaxHeight,
                   }}
-                  textAlignVertical="center"
+                  textAlignVertical="top"
                   multiline
+                  onContentSizeChange={handleComposerContentSizeChange}
+                  onLayout={handleComposerLayout}
                   autoCorrect={false}
                   autoCapitalize="sentences"
                   onFocus={() => setSuppressCommandSuggestions(false)}
                 />
               </View>
+              <Pressable
+                onPress={handleOpenFullscreenComposer}
+                accessibilityRole="button"
+                accessibilityLabel="Open fullscreen composer"
+                onFocus={() => setSuppressCommandSuggestions(true)}
+                style={({ pressed }) => ({
+                  backgroundColor: pressed ? theme.colors.surfaceSecondary : theme.colors.surface,
+                  width: 38,
+                  height: 38,
+                  borderRadius: 19,
+                  borderWidth: 1,
+                  borderColor: theme.colors.inputBorder,
+                  justifyContent: "center",
+                  alignItems: "center",
+                })}
+              >
+                <Ionicons name="open-outline" size={20} color={theme.colors.foregroundPrimary} />
+              </Pressable>
+
               <Pressable
                 onPress={isStreaming ? onCancelStream : onSend}
                 disabled={!isStreaming && (isSending || !input.trim())}
@@ -1456,6 +1560,16 @@ function WorkspaceScreenInner({
         use1MContext={use1MContext}
         onToggle1MContext={handleToggle1MContext}
         supportsExtendedContext={supportsExtendedContext}
+      />
+      <FullscreenComposerModal
+        visible={isFullscreenComposerOpen}
+        value={input}
+        placeholder={handlePlaceholder}
+        isEditing={!!editingMessage}
+        isSending={isSending}
+        onChangeText={setInputWithSuggestionGuard}
+        onClose={handleCloseFullscreenComposer}
+        onSend={handleFullscreenSend}
       />
     </>
   );

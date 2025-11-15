@@ -9,9 +9,7 @@ interface WorkspaceActivityIndicatorProps {
   fallbackLabel: string;
 }
 
-export function WorkspaceActivityIndicator(
-  props: WorkspaceActivityIndicatorProps
-): JSX.Element {
+export function WorkspaceActivityIndicator(props: WorkspaceActivityIndicatorProps): JSX.Element {
   const theme = useTheme();
   const isStreaming = props.activity?.streaming ?? false;
   const dotColor = isStreaming ? theme.colors.accent : theme.colors.borderSubtle;

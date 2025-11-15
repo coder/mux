@@ -124,7 +124,10 @@ const api: IPCApi = {
     activity: {
       list: () => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_ACTIVITY_LIST),
       subscribe: (
-        callback: (payload: { workspaceId: string; activity: WorkspaceActivitySnapshot | null }) => void
+        callback: (payload: {
+          workspaceId: string;
+          activity: WorkspaceActivitySnapshot | null;
+        }) => void
       ) => {
         const handler = (
           _event: unknown,

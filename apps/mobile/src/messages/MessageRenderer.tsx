@@ -147,7 +147,6 @@ function AssistantMessageCard({
     await Clipboard.setStringAsync(message.content);
   };
 
-
   return (
     <Pressable onPress={handlePress} onLongPress={handleLongPress} delayLongPress={500}>
       <Surface

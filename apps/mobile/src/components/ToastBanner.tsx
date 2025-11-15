@@ -68,7 +68,12 @@ export function ToastBanner(props: ToastBannerProps) {
           gap: theme.spacing.sm,
         }}
       >
-        <Ionicons name={palette.icon} size={18} color={palette.iconColor} style={{ marginTop: 1 }} />
+        <Ionicons
+          name={palette.icon}
+          size={18}
+          color={palette.iconColor}
+          style={{ marginTop: 1 }}
+        />
         <View style={{ flex: 1, gap: 2 }}>
           <ThemedText weight="semibold" style={{ color: palette.text }}>
             {props.toast.title}
@@ -94,10 +99,7 @@ export function ToastBanner(props: ToastBannerProps) {
   );
 }
 
-function getPalette(
-  tone: ToastTone,
-  colors: ReturnType<typeof useTheme>["colors"]
-) {
+function getPalette(tone: ToastTone, colors: ReturnType<typeof useTheme>["colors"]) {
   switch (tone) {
     case "success":
       return {

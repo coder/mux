@@ -28,7 +28,6 @@ export function useProjectsData() {
     staleTime: 15_000,
   });
 
-
   useEffect(() => {
     const subscription = api.workspace.subscribeMetadata(({ workspaceId, metadata }) => {
       queryClient.setQueryData<FrontendWorkspaceMetadata[] | undefined>(

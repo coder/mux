@@ -1,4 +1,4 @@
-import { FlatList, Pressable, View } from "react-native";
+import { FlatList, Pressable, View, type ListRenderItemInfo } from "react-native";
 import type { SlashSuggestion } from "@shared/utils/slashCommands/types";
 import { ThemedText } from "./ThemedText";
 import { useTheme } from "../theme";
@@ -39,12 +39,11 @@ export function SlashCommandSuggestions(props: SlashCommandSuggestionsProps) {
         zIndex: 20,
       }}
     >
-      <FlatList
+      <FlatList<SlashSuggestion>
         data={props.suggestions}
         keyExtractor={(item) => item.id}
-        listKey={props.listId}
         keyboardShouldPersistTaps="handled"
-        renderItem={({ item, index }) => {
+        renderItem={({ item, index }: ListRenderItemInfo<SlashSuggestion>) => {
           const highlighted = index === props.highlightedIndex;
           return (
             <Pressable
@@ -57,7 +56,7 @@ export function SlashCommandSuggestions(props: SlashCommandSuggestionsProps) {
                 backgroundColor: highlighted
                   ? theme.colors.surfaceSecondary
                   : pressed
-                    ? theme.colors.surfaceTertiary
+                    ? theme.colors.surfaceSecondary
                     : theme.colors.surface,
                 flexDirection: "row",
                 alignItems: "center",

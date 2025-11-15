@@ -307,7 +307,6 @@ const webApi: IPCApi = {
         }),
     },
 
-
     onChat: (workspaceId, callback) => {
       const channel = getChatChannel(workspaceId);
       return wsManager.on(channel, callback as (data: unknown) => void, workspaceId);

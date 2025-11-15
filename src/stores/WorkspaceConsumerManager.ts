@@ -6,6 +6,8 @@ import assert from "@/utils/assert";
 
 const TOKENIZER_CANCELLED_MESSAGE = "Cancelled by newer request";
 
+type TimerHandle = ReturnType<typeof setTimeout>;
+
 let globalTokenStatsRequestId = 0;
 const latestRequestByWorkspace = new Map<string, number>();
 
@@ -80,7 +82,7 @@ export class WorkspaceConsumerManager {
   private cache = new Map<string, WorkspaceConsumersState>();
 
   // Debounce timers for consumer calculations (prevents rapid-fire during tool sequences)
-  private debounceTimers = new Map<string, NodeJS.Timeout>();
+  private debounceTimers = new Map<string, TimerHandle>();
 
   // Callback to bump the store when calculation completes
   private readonly onCalculationComplete: (workspaceId: string) => void;

@@ -36,7 +36,9 @@ function createMockApi(): SlashCommandRunnerContext["api"] {
   return api;
 }
 
-function createContext(overrides: Partial<SlashCommandRunnerContext> = {}): SlashCommandRunnerContext {
+function createContext(
+  overrides: Partial<SlashCommandRunnerContext> = {}
+): SlashCommandRunnerContext {
   const api = createMockApi();
   return {
     api,
