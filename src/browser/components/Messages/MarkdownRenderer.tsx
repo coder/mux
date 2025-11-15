@@ -5,11 +5,12 @@ import { cn } from "@/common/lib/utils";
 interface MarkdownRendererProps {
   content: string;
   className?: string;
+  style?: React.CSSProperties;
 }
 
-export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className }) => {
+export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className, style }) => {
   return (
-    <div className={cn("markdown-content", className)}>
+    <div className={cn("markdown-content", className)} style={style}>
       <MarkdownCore content={content} />
     </div>
   );
