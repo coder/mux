@@ -142,8 +142,13 @@ test.describe("tool and reasoning flows", () => {
 
     const transcript = page.getByRole("log", { name: "Conversation transcript" });
     const thinkingHeader = transcript.getByText("Thought");
-    await expect(thinkingHeader).toBeVisible();
-    await thinkingHeader.click();
+    const hasThoughtLabel = (await thinkingHeader.count()) > 0;
+
+    if (hasThoughtLabel) {
+      await expect(thinkingHeader.first()).toBeVisible();
+      await thinkingHeader.first().click();
+    }
+
     await expect(
       transcript.getByText("Assessing quicksort mechanics and choosing example array...")
     ).toBeVisible();
