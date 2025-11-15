@@ -72,20 +72,72 @@ const getContrastColor = (type: DiffLineType): string => {
 export const DiffContainer: React.FC<
   React.PropsWithChildren<{ fontSize?: string; maxHeight?: string; className?: string }>
 > = ({ children, fontSize, maxHeight, className }) => {
+  const resolvedMaxHeight = maxHeight ?? "400px";
+  const [isExpanded, setIsExpanded] = React.useState(false);
+  const contentRef = React.useRef<HTMLDivElement>(null);
+  const [isOverflowing, setIsOverflowing] = React.useState(false);
+  const clampContent = resolvedMaxHeight !== "none" && !isExpanded;
+
+  React.useEffect(() => {
+    if (maxHeight === "none") {
+      setIsExpanded(false);
+    }
+  }, [maxHeight]);
+
+  React.useEffect(() => {
+    const element = contentRef.current;
+    if (!element) {
+      return;
+    }
+
+    const updateOverflowState = () => {
+      setIsOverflowing(element.scrollHeight > element.clientHeight + 1);
+    };
+
+    updateOverflowState();
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(updateOverflowState);
+      resizeObserver.observe(element);
+    }
+
+    return () => {
+      resizeObserver?.disconnect();
+    };
+  }, [resolvedMaxHeight, clampContent]);
+
   return (
-    <div
-      className={cn(
-        "m-0 py-1.5 bg-code-bg rounded grid overflow-y-auto overflow-x-auto [&_*]:text-[inherit]",
-        className
+    <div className={cn("relative m-0 rounded bg-code-bg py-1.5 [&_*]:text-[inherit]", className)}>
+      <div
+        ref={contentRef}
+        className={cn(
+          "grid overflow-x-auto",
+          clampContent ? "pb-6 overflow-y-hidden" : "overflow-y-visible"
+        )}
+        style={{
+          fontSize: fontSize ?? "12px",
+          lineHeight: 1.4,
+          maxHeight: clampContent ? resolvedMaxHeight : undefined,
+          gridTemplateColumns: "minmax(min-content, 1fr)",
+        }}
+      >
+        {children}
+      </div>
+
+      {clampContent && isOverflowing && (
+        <>
+          <div className="via-[color-mix(in srgb, var(--color-code-bg) 80%, transparent)] pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-[var(--color-code-bg)] to-transparent" />
+          <div className="absolute inset-x-0 bottom-0 flex justify-center pb-1.5">
+            <button
+              className="bg-dark/60 text-foreground/80 hover:text-foreground border border-white/20 px-2 py-0.5 text-[10px] tracking-wide uppercase backdrop-blur transition hover:border-white/40"
+              onClick={() => setIsExpanded(true)}
+            >
+              Expand diff
+            </button>
+          </div>
+        </>
       )}
-      style={{
-        fontSize: fontSize ?? "12px",
-        lineHeight: 1.4,
-        maxHeight: maxHeight ?? "400px",
-        gridTemplateColumns: "minmax(min-content, 1fr)",
-      }}
-    >
-      {children}
     </div>
   );
 };
@@ -192,30 +244,14 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
   // Show loading state while highlighting
   if (!highlightedChunks) {
     return (
-      <div
-        className="bg-code-bg m-0 grid overflow-auto rounded py-1.5 [&_*]:text-[inherit]"
-        style={{
-          fontSize: fontSize ?? "12px",
-          lineHeight: 1.4,
-          maxHeight: maxHeight ?? "400px",
-          gridTemplateColumns: "minmax(min-content, 1fr)",
-        }}
-      >
+      <DiffContainer fontSize={fontSize} maxHeight={maxHeight}>
         <div style={{ opacity: 0.5, padding: "8px" }}>Processing...</div>
-      </div>
+      </DiffContainer>
     );
   }
 
   return (
-    <div
-      className="bg-code-bg m-0 grid overflow-auto rounded py-1.5 [&_*]:text-[inherit]"
-      style={{
-        fontSize: fontSize ?? "12px",
-        lineHeight: 1.4,
-        maxHeight: maxHeight ?? "400px",
-        gridTemplateColumns: "minmax(min-content, 1fr)",
-      }}
-    >
+    <DiffContainer fontSize={fontSize} maxHeight={maxHeight}>
       {highlightedChunks.flatMap((chunk) =>
         chunk.lines.map((line) => {
           const indicator = chunk.type === "add" ? "+" : chunk.type === "remove" ? "-" : " ";
@@ -260,7 +296,7 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
           );
         })
       )}
-    </div>
+    </DiffContainer>
   );
 };
 
@@ -502,17 +538,9 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     // Show loading state while highlighting
     if (!highlightedChunks || highlightedLineData.length === 0) {
       return (
-        <div
-          className="bg-code-bg m-0 grid overflow-auto rounded py-1.5 [&_*]:text-[inherit]"
-          style={{
-            fontSize: fontSize ?? "12px",
-            lineHeight: 1.4,
-            maxHeight: maxHeight ?? "400px",
-            gridTemplateColumns: "minmax(min-content, 1fr)",
-          }}
-        >
+        <DiffContainer fontSize={fontSize} maxHeight={maxHeight}>
           <div style={{ opacity: 0.5, padding: "8px" }}>Processing...</div>
-        </div>
+        </DiffContainer>
       );
     }
 
@@ -520,15 +548,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     const lines = content.split("\n").filter((line) => line.length > 0);
 
     return (
-      <div
-        className="bg-code-bg m-0 grid overflow-auto rounded py-1.5 [&_*]:text-[inherit]"
-        style={{
-          fontSize: fontSize ?? "12px",
-          lineHeight: 1.4,
-          maxHeight: maxHeight ?? "400px",
-          gridTemplateColumns: "minmax(min-content, 1fr)",
-        }}
-      >
+      <DiffContainer fontSize={fontSize} maxHeight={maxHeight}>
         {highlightedLineData.map((lineInfo, displayIndex) => {
           const isSelected = isLineSelected(displayIndex);
           const indicator = lineInfo.type === "add" ? "+" : lineInfo.type === "remove" ? "-" : " ";
@@ -626,7 +646,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
             </React.Fragment>
           );
         })}
-      </div>
+      </DiffContainer>
     );
   }
 );

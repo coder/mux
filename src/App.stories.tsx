@@ -434,6 +434,12 @@ export const ActiveWorkspaceWithChat: Story = {
           ],
         },
       ],
+      [
+        "/home/user/projects/another-app",
+        {
+          workspaces: [],
+        },
+      ],
     ]);
 
     const workspaces: FrontendWorkspaceMetadata[] = [
@@ -600,7 +606,7 @@ export const ActiveWorkspaceWithChat: Story = {
                       metadata: {
                         historySequence: 2,
                         timestamp: STABLE_TIMESTAMP - 290000,
-                        model: "claude-sonnet-4-20250514",
+                        model: "anthropic:claude-sonnet-4-5",
                         usage: {
                           inputTokens: 1250,
                           outputTokens: 450,
@@ -621,36 +627,105 @@ export const ActiveWorkspaceWithChat: Story = {
                       },
                     });
 
-                    // Assistant message with file edit
+                    // Assistant message with file edit (large diff)
                     callback({
                       id: "msg-4",
                       role: "assistant",
                       parts: [
                         {
                           type: "text",
-                          text: "I'll add JWT token validation to the endpoint. Let me update the file.",
+                          text: "I'll add JWT token validation to the endpoint. Let me update the file with proper authentication middleware and error handling.",
                         },
                         {
                           type: "dynamic-tool",
                           toolCallId: "call-2",
-                          toolName: "search_replace",
+                          toolName: "file_edit_replace_string",
                           state: "output-available",
                           input: {
                             file_path: "src/api/users.ts",
-                            old_string: "export function getUser(req, res) {",
+                            old_string:
+                              "import express from 'express';\nimport { db } from '../db';\n\nexport function getUser(req, res) {\n  const user = db.users.find(req.params.id);\n  res.json(user);\n}",
                             new_string:
-                              "import { verifyToken } from '../auth/jwt';\n\nexport function getUser(req, res) {\n  const token = req.headers.authorization?.split(' ')[1];\n  if (!token || !verifyToken(token)) {\n    return res.status(401).json({ error: 'Unauthorized' });\n  }",
+                              "import express from 'express';\nimport { db } from '../db';\nimport { verifyToken } from '../auth/jwt';\nimport { logger } from '../utils/logger';\n\nexport async function getUser(req, res) {\n  try {\n    const token = req.headers.authorization?.split(' ')[1];\n    if (!token) {\n      logger.warn('Missing authorization token');\n      return res.status(401).json({ error: 'Unauthorized' });\n    }\n    const decoded = await verifyToken(token);\n    const user = await db.users.find(req.params.id);\n    res.json(user);\n  } catch (err) {\n    logger.error('Auth error:', err);\n    return res.status(401).json({ error: 'Invalid token' });\n  }\n}",
                           },
                           output: {
                             success: true,
-                            message: "File updated successfully",
+                            diff: [
+                              "--- src/api/users.ts",
+                              "+++ src/api/users.ts",
+                              "@@ -2,0 +3,2 @@",
+                              "+import { verifyToken } from '../auth/jwt';",
+                              "+import { logger } from '../utils/logger';",
+                              "@@ -4,28 +6,14 @@",
+                              "-// TODO: Add authentication middleware",
+                              "-// Current implementation is insecure and allows unauthorized access",
+                              "-// Need to validate JWT tokens before processing requests",
+                              "-// Also need to add rate limiting to prevent abuse",
+                              "-// Consider adding request logging for audit trail",
+                              "-// Add input validation for user IDs",
+                              "-// Handle edge cases for deleted/suspended users",
+                              "-",
+                              "-/**",
+                              "- * Get user by ID",
+                              "- * @param {Object} req - Express request object",
+                              "- * @param {Object} res - Express response object",
+                              "- */",
+                              "-export function getUser(req, res) {",
+                              "-  // FIXME: No authentication check",
+                              "-  // FIXME: No error handling",
+                              "-  // FIXME: Synchronous database call blocks event loop",
+                              "-  // FIXME: No input validation",
+                              "-  // FIXME: Direct database access without repository pattern",
+                              "-  // FIXME: No logging",
+                              "-",
+                              "-  const user = db.users.find(req.params.id);",
+                              "-",
+                              "-  // TODO: Check if user exists",
+                              "-  // TODO: Filter sensitive fields (password hash, etc)",
+                              "-  // TODO: Check permissions - user should only access their own data",
+                              "-",
+                              "-  res.json(user);",
+                              "+export async function getUser(req, res) {",
+                              "+  try {",
+                              "+    const token = req.headers.authorization?.split(' ')[1];",
+                              "+    if (!token) {",
+                              "+      logger.warn('Missing authorization token');",
+                              "+      return res.status(401).json({ error: 'Unauthorized' });",
+                              "+    }",
+                              "+    const decoded = await verifyToken(token);",
+                              "+    const user = await db.users.find(req.params.id);",
+                              "+    res.json(user);",
+                              "+  } catch (err) {",
+                              "+    logger.error('Auth error:', err);",
+                              "+    return res.status(401).json({ error: 'Invalid token' });",
+                              "+  }",
+                              "@@ -34,3 +22,2 @@",
+                              "-// TODO: Add updateUser function",
+                              "-// TODO: Add deleteUser function",
+                              "-// TODO: Add listUsers function with pagination",
+                              "+// Note: updateUser, deleteUser, and listUsers endpoints will be added in separate PR",
+                              "+// to keep changes focused and reviewable",
+                              "@@ -41,0 +29,11 @@",
+                              "+",
+                              "+export async function rotateApiKey(req, res) {",
+                              "+  const admin = await db.admins.find(req.user.id);",
+                              "+  if (!admin) {",
+                              "+    return res.status(403).json({ error: 'Forbidden' });",
+                              "+  }",
+                              "+",
+                              "+  const apiKey = await db.tokens.rotate(admin.orgId);",
+                              "+  logger.info('Rotated API key', { orgId: admin.orgId });",
+                              "+  res.json({ apiKey });",
+                              "+}",
+                            ].join("\n"),
+                            edits_applied: 1,
                           },
                         },
                       ],
                       metadata: {
                         historySequence: 4,
                         timestamp: STABLE_TIMESTAMP - 270000,
-                        model: "claude-sonnet-4-20250514",
+                        model: "anthropic:claude-sonnet-4-5",
                         usage: {
                           inputTokens: 2100,
                           outputTokens: 680,
@@ -673,7 +748,7 @@ export const ActiveWorkspaceWithChat: Story = {
                       metadata: {
                         historySequence: 5,
                         timestamp: STABLE_TIMESTAMP - 260000,
-                        model: "claude-sonnet-4-20250514",
+                        model: "anthropic:claude-sonnet-4-5",
                         usage: {
                           inputTokens: 1800,
                           outputTokens: 520,
@@ -725,7 +800,7 @@ export const ActiveWorkspaceWithChat: Story = {
                       metadata: {
                         historySequence: 7,
                         timestamp: STABLE_TIMESTAMP - 230000,
-                        model: "claude-sonnet-4-20250514",
+                        model: "anthropic:claude-sonnet-4-5",
                         usage: {
                           inputTokens: 2800,
                           outputTokens: 420,
@@ -785,7 +860,7 @@ export const ActiveWorkspaceWithChat: Story = {
                       metadata: {
                         historySequence: 9,
                         timestamp: STABLE_TIMESTAMP - 170000,
-                        model: "claude-sonnet-4-20250514",
+                        model: "anthropic:claude-sonnet-4-5",
                         usage: {
                           inputTokens: 3500,
                           outputTokens: 520,
@@ -826,7 +901,7 @@ export const ActiveWorkspaceWithChat: Story = {
                       metadata: {
                         historySequence: 10,
                         timestamp: STABLE_TIMESTAMP - 160000,
-                        model: "claude-sonnet-4-20250514",
+                        model: "anthropic:claude-sonnet-4-5",
                         usage: {
                           inputTokens: 800,
                           outputTokens: 150,
@@ -836,12 +911,60 @@ export const ActiveWorkspaceWithChat: Story = {
                       },
                     });
 
+                    // User follow-up asking about documentation
+                    callback({
+                      id: "msg-11",
+                      role: "user",
+                      parts: [
+                        {
+                          type: "text",
+                          text: "Should we add documentation for the authentication changes?",
+                        },
+                      ],
+                      metadata: {
+                        historySequence: 11,
+                        timestamp: STABLE_TIMESTAMP - 150000,
+                      },
+                    });
+
                     // Mark as caught up
                     callback({ type: "caught-up" });
+
+                    // Now start streaming assistant response with reasoning
+                    callback({
+                      type: "stream-start",
+                      workspaceId: workspaceId,
+                      messageId: "msg-12",
+                      model: "anthropic:claude-sonnet-4-5",
+                      historySequence: 12,
+                    });
+
+                    // Send reasoning delta
+                    callback({
+                      type: "reasoning-delta",
+                      workspaceId: workspaceId,
+                      messageId: "msg-12",
+                      delta:
+                        "The user is asking about documentation. This is important because the authentication changes introduce a breaking change for API clients. They'll need to know how to include JWT tokens in their requests. I should suggest adding both inline code comments and updating the API documentation to explain the new authentication requirements, including examples of how to obtain and use tokens.",
+                      tokens: 65,
+                      timestamp: STABLE_TIMESTAMP - 140000,
+                    });
                   }, 100);
 
+                  // Keep sending reasoning deltas to maintain streaming state
+                  const intervalId = setInterval(() => {
+                    callback({
+                      type: "reasoning-delta",
+                      workspaceId: workspaceId,
+                      messageId: "msg-12",
+                      delta: ".",
+                      tokens: 1,
+                      timestamp: NOW,
+                    });
+                  }, 2000);
+
                   return () => {
-                    // Cleanup
+                    clearInterval(intervalId);
                   };
                 } else if (wsId === streamingWorkspaceId) {
                   // Streaming workspace - show active work in progress
@@ -876,7 +999,7 @@ export const ActiveWorkspaceWithChat: Story = {
                       metadata: {
                         historySequence: 0,
                         timestamp: now - 5000, // 5 seconds ago
-                        model: "claude-sonnet-4-20250514",
+                        model: "anthropic:claude-sonnet-4-5",
                         usage: {
                           inputTokens: 200,
                           outputTokens: 50,
@@ -912,7 +1035,7 @@ export const ActiveWorkspaceWithChat: Story = {
                       type: "stream-start",
                       workspaceId: streamingWorkspaceId,
                       messageId: "stream-msg-2",
-                      model: "claude-sonnet-4-20250514",
+                      model: "anthropic:claude-sonnet-4-5",
                       historySequence: 2,
                     });
 
@@ -1237,7 +1360,7 @@ These tables should render cleanly without any disruptive copy or download actio
                     metadata: {
                       historySequence: 2,
                       timestamp: STABLE_TIMESTAMP + 1000,
-                      model: "claude-sonnet-4-20250514",
+                      model: "anthropic:claude-sonnet-4-5",
                       usage: {
                         inputTokens: 100,
                         outputTokens: 500,

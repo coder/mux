@@ -141,7 +141,7 @@ test.describe("tool and reasoning flows", () => {
     }
 
     const transcript = page.getByRole("log", { name: "Conversation transcript" });
-    const thinkingHeader = transcript.getByText("Thinking");
+    const thinkingHeader = transcript.getByText("Thought...");
     await expect(thinkingHeader).toBeVisible();
     await thinkingHeader.click();
     await expect(

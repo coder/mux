@@ -1,0 +1,402 @@
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import type { FrontendWorkspaceMetadata } from "@/types/workspace";
+import type { WorkspaceSelection } from "@/components/ProjectSidebar";
+import type { RuntimeConfig } from "@/types/runtime";
+import { deleteWorkspaceStorage } from "@/constants/storage";
+import { usePersistedState } from "@/hooks/usePersistedState";
+import { useProjectContext } from "@/contexts/ProjectContext";
+
+/**
+ * Ensure workspace metadata has createdAt timestamp.
+ * DEFENSIVE: Backend guarantees createdAt, but default to 2025-01-01 if missing.
+ * This prevents crashes if backend contract is violated.
+ */
+function ensureCreatedAt(metadata: FrontendWorkspaceMetadata): void {
+  if (!metadata.createdAt) {
+    console.warn(
+      `[Frontend] Workspace ${metadata.id} missing createdAt - using default (2025-01-01)`
+    );
+    metadata.createdAt = "2025-01-01T00:00:00.000Z";
+  }
+}
+
+export interface WorkspaceContext {
+  // Workspace data
+  workspaceMetadata: Map<string, FrontendWorkspaceMetadata>;
+  loading: boolean;
+
+  // Workspace operations
+  createWorkspace: (
+    projectPath: string,
+    branchName: string,
+    trunkBranch: string,
+    runtimeConfig?: RuntimeConfig
+  ) => Promise<{
+    projectPath: string;
+    projectName: string;
+    namedWorkspacePath: string;
+    workspaceId: string;
+  }>;
+  removeWorkspace: (
+    workspaceId: string,
+    options?: { force?: boolean }
+  ) => Promise<{ success: boolean; error?: string }>;
+  renameWorkspace: (
+    workspaceId: string,
+    newName: string
+  ) => Promise<{ success: boolean; error?: string }>;
+  refreshWorkspaceMetadata: () => Promise<void>;
+  setWorkspaceMetadata: React.Dispatch<
+    React.SetStateAction<Map<string, FrontendWorkspaceMetadata>>
+  >;
+
+  // Selection
+  selectedWorkspace: WorkspaceSelection | null;
+  setSelectedWorkspace: (workspace: WorkspaceSelection | null) => void;
+
+  // Workspace creation flow
+  pendingNewWorkspaceProject: string | null;
+  beginWorkspaceCreation: (projectPath: string) => void;
+  clearPendingWorkspaceCreation: () => void;
+
+  // Helpers
+  getWorkspaceInfo: (workspaceId: string) => Promise<FrontendWorkspaceMetadata | null>;
+}
+
+const WorkspaceContext = createContext<WorkspaceContext | undefined>(undefined);
+
+interface WorkspaceProviderProps {
+  children: ReactNode;
+}
+
+export function WorkspaceProvider(props: WorkspaceProviderProps) {
+  // Get project refresh function from ProjectContext
+  const { refreshProjects } = useProjectContext();
+
+  const [workspaceMetadata, setWorkspaceMetadata] = useState<
+    Map<string, FrontendWorkspaceMetadata>
+  >(new Map());
+  const [loading, setLoading] = useState(true);
+  const [pendingNewWorkspaceProject, setPendingNewWorkspaceProject] = useState<string | null>(null);
+
+  // Manage selected workspace internally with localStorage persistence
+  const [selectedWorkspace, setSelectedWorkspace] = usePersistedState<WorkspaceSelection | null>(
+    "selectedWorkspace",
+    null
+  );
+
+  const loadWorkspaceMetadata = useCallback(async () => {
+    try {
+      const metadataList = await window.api.workspace.list();
+      const metadataMap = new Map<string, FrontendWorkspaceMetadata>();
+      for (const metadata of metadataList) {
+        ensureCreatedAt(metadata);
+        // Use stable workspace ID as key (not path, which can change)
+        metadataMap.set(metadata.id, metadata);
+      }
+      setWorkspaceMetadata(metadataMap);
+    } catch (error) {
+      console.error("Failed to load workspace metadata:", error);
+      setWorkspaceMetadata(new Map());
+    }
+  }, []);
+
+  // Load metadata once on mount
+  useEffect(() => {
+    void (async () => {
+      await loadWorkspaceMetadata();
+      // After loading metadata (which may trigger migration), reload projects
+      // to ensure frontend has the updated config with workspace IDs
+      await refreshProjects();
+      setLoading(false);
+    })();
+  }, [loadWorkspaceMetadata, refreshProjects]);
+
+  // Restore workspace from URL hash (overrides localStorage)
+  // Runs once after metadata is loaded
+  useEffect(() => {
+    if (loading) return;
+
+    const hash = window.location.hash;
+    if (hash.startsWith("#workspace=")) {
+      const workspaceId = decodeURIComponent(hash.substring("#workspace=".length));
+
+      // Find workspace in metadata
+      const metadata = workspaceMetadata.get(workspaceId);
+
+      if (metadata) {
+        // Restore from hash (overrides localStorage)
+        setSelectedWorkspace({
+          workspaceId: metadata.id,
+          projectPath: metadata.projectPath,
+          projectName: metadata.projectName,
+          namedWorkspacePath: metadata.namedWorkspacePath,
+        });
+      }
+    }
+    // Only run once when loading finishes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
+
+  // Check for launch project from server (for --add-project flag)
+  // This only applies in server mode, runs after metadata loads
+  useEffect(() => {
+    if (loading) return;
+
+    // Skip if we already have a selected workspace (from localStorage or URL hash)
+    if (selectedWorkspace) return;
+
+    const checkLaunchProject = async () => {
+      // Only available in server mode
+      if (!window.api.server?.getLaunchProject) return;
+
+      const launchProjectPath = await window.api.server.getLaunchProject();
+      if (!launchProjectPath) return;
+
+      // Find first workspace in this project
+      const projectWorkspaces = Array.from(workspaceMetadata.values()).filter(
+        (meta) => meta.projectPath === launchProjectPath
+      );
+
+      if (projectWorkspaces.length > 0) {
+        // Select the first workspace in the project
+        const metadata = projectWorkspaces[0];
+        setSelectedWorkspace({
+          workspaceId: metadata.id,
+          projectPath: metadata.projectPath,
+          projectName: metadata.projectName,
+          namedWorkspacePath: metadata.namedWorkspacePath,
+        });
+      }
+      // If no workspaces exist yet, just leave the project in the sidebar
+      // The user will need to create a workspace
+    };
+
+    void checkLaunchProject();
+    // Only run once when loading finishes or selectedWorkspace changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, selectedWorkspace]);
+
+  // Subscribe to metadata updates (for create/rename/delete operations)
+  useEffect(() => {
+    const unsubscribe = window.api.workspace.onMetadata(
+      (event: { workspaceId: string; metadata: FrontendWorkspaceMetadata | null }) => {
+        setWorkspaceMetadata((prev) => {
+          const updated = new Map(prev);
+          const isNewWorkspace = !prev.has(event.workspaceId) && event.metadata !== null;
+
+          if (event.metadata === null) {
+            // Workspace deleted - remove from map
+            updated.delete(event.workspaceId);
+          } else {
+            ensureCreatedAt(event.metadata);
+            updated.set(event.workspaceId, event.metadata);
+          }
+
+          // If this is a new workspace (e.g., from fork), reload projects
+          // to ensure the sidebar shows the updated workspace list
+          if (isNewWorkspace) {
+            void refreshProjects();
+          }
+
+          return updated;
+        });
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [refreshProjects]);
+
+  const createWorkspace = useCallback(
+    async (
+      projectPath: string,
+      branchName: string,
+      trunkBranch: string,
+      runtimeConfig?: RuntimeConfig
+    ) => {
+      console.assert(
+        typeof trunkBranch === "string" && trunkBranch.trim().length > 0,
+        "Expected trunk branch to be provided when creating a workspace"
+      );
+      const result = await window.api.workspace.create(
+        projectPath,
+        branchName,
+        trunkBranch,
+        runtimeConfig
+      );
+      if (result.success) {
+        // Backend has already updated the config - reload projects to get updated state
+        await refreshProjects();
+
+        // Update metadata immediately to avoid race condition with validation effect
+        ensureCreatedAt(result.metadata);
+        setWorkspaceMetadata((prev) => {
+          const updated = new Map(prev);
+          updated.set(result.metadata.id, result.metadata);
+          return updated;
+        });
+
+        // Return the new workspace selection
+        return {
+          projectPath,
+          projectName: result.metadata.projectName,
+          namedWorkspacePath: result.metadata.namedWorkspacePath,
+          workspaceId: result.metadata.id,
+        };
+      } else {
+        throw new Error(result.error);
+      }
+    },
+    // refreshProjects is stable from context, doesn't need to be in deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [loadWorkspaceMetadata]
+  );
+
+  const removeWorkspace = useCallback(
+    async (
+      workspaceId: string,
+      options?: { force?: boolean }
+    ): Promise<{ success: boolean; error?: string }> => {
+      try {
+        const result = await window.api.workspace.remove(workspaceId, options);
+        if (result.success) {
+          // Clean up workspace-specific localStorage keys
+          deleteWorkspaceStorage(workspaceId);
+
+          // Backend has already updated the config - reload projects to get updated state
+          await refreshProjects();
+
+          // Reload workspace metadata
+          await loadWorkspaceMetadata();
+
+          // Clear selected workspace if it was removed
+          if (selectedWorkspace?.workspaceId === workspaceId) {
+            setSelectedWorkspace(null);
+          }
+          return { success: true };
+        } else {
+          console.error("Failed to remove workspace:", result.error);
+          return { success: false, error: result.error };
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error("Failed to remove workspace:", errorMessage);
+        return { success: false, error: errorMessage };
+      }
+    },
+    [loadWorkspaceMetadata, refreshProjects, selectedWorkspace, setSelectedWorkspace]
+  );
+
+  const renameWorkspace = useCallback(
+    async (workspaceId: string, newName: string): Promise<{ success: boolean; error?: string }> => {
+      try {
+        const result = await window.api.workspace.rename(workspaceId, newName);
+        if (result.success) {
+          // Backend has already updated the config - reload projects to get updated state
+          await refreshProjects();
+
+          // Reload workspace metadata
+          await loadWorkspaceMetadata();
+
+          // Update selected workspace if it was renamed
+          if (selectedWorkspace?.workspaceId === workspaceId) {
+            const newWorkspaceId = result.data.newWorkspaceId;
+
+            // Get updated workspace metadata from backend
+            const newMetadata = await window.api.workspace.getInfo(newWorkspaceId);
+            if (newMetadata) {
+              ensureCreatedAt(newMetadata);
+              setSelectedWorkspace({
+                projectPath: selectedWorkspace.projectPath,
+                projectName: newMetadata.projectName,
+                namedWorkspacePath: newMetadata.namedWorkspacePath,
+                workspaceId: newWorkspaceId,
+              });
+            }
+          }
+          return { success: true };
+        } else {
+          console.error("Failed to rename workspace:", result.error);
+          return { success: false, error: result.error };
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error("Failed to rename workspace:", errorMessage);
+        return { success: false, error: errorMessage };
+      }
+    },
+    [loadWorkspaceMetadata, refreshProjects, selectedWorkspace, setSelectedWorkspace]
+  );
+
+  const refreshWorkspaceMetadata = useCallback(async () => {
+    await loadWorkspaceMetadata();
+  }, [loadWorkspaceMetadata]);
+
+  const getWorkspaceInfo = useCallback(async (workspaceId: string) => {
+    const metadata = await window.api.workspace.getInfo(workspaceId);
+    if (metadata) {
+      ensureCreatedAt(metadata);
+    }
+    return metadata;
+  }, []);
+
+  const beginWorkspaceCreation = useCallback((projectPath: string) => {
+    setPendingNewWorkspaceProject(projectPath);
+  }, []);
+
+  const clearPendingWorkspaceCreation = useCallback(() => {
+    setPendingNewWorkspaceProject(null);
+  }, []);
+
+  const value = useMemo<WorkspaceContext>(
+    () => ({
+      workspaceMetadata,
+      loading,
+      createWorkspace,
+      removeWorkspace,
+      renameWorkspace,
+      refreshWorkspaceMetadata,
+      setWorkspaceMetadata,
+      selectedWorkspace,
+      setSelectedWorkspace,
+      pendingNewWorkspaceProject,
+      beginWorkspaceCreation,
+      clearPendingWorkspaceCreation,
+      getWorkspaceInfo,
+    }),
+    [
+      workspaceMetadata,
+      loading,
+      createWorkspace,
+      removeWorkspace,
+      renameWorkspace,
+      refreshWorkspaceMetadata,
+      selectedWorkspace,
+      setSelectedWorkspace,
+      pendingNewWorkspaceProject,
+      beginWorkspaceCreation,
+      clearPendingWorkspaceCreation,
+      getWorkspaceInfo,
+    ]
+  );
+
+  return <WorkspaceContext.Provider value={value}>{props.children}</WorkspaceContext.Provider>;
+}
+
+export function useWorkspaceContext(): WorkspaceContext {
+  const context = useContext(WorkspaceContext);
+  if (!context) {
+    throw new Error("useWorkspaceContext must be used within WorkspaceProvider");
+  }
+  return context;
+}

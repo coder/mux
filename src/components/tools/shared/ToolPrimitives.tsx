@@ -13,7 +13,7 @@ interface ToolContainerProps extends React.HTMLAttributes<HTMLDivElement> {
 export const ToolContainer: React.FC<ToolContainerProps> = ({ expanded, className, ...props }) => (
   <div
     className={cn(
-      "my-2 bg-gray-overlay rounded font-mono text-[11px] transition-all duration-200",
+      "my-2 rounded font-mono text-[11px] transition-all duration-200",
       "[container-type:inline-size]",
       expanded ? "py-2 px-3" : "py-1 px-3",
       className

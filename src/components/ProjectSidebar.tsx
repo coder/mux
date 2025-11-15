@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
-import type { ProjectConfig } from "@/config";
 import type { FrontendWorkspaceMetadata } from "@/types/workspace";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { DndProvider } from "react-dnd";
@@ -18,8 +17,11 @@ import { TooltipWrapper, Tooltip } from "./Tooltip";
 import SecretsModal from "./SecretsModal";
 import type { Secret } from "@/types/secrets";
 import { ForceDeleteModal } from "./ForceDeleteModal";
-import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem";
+import { WorkspaceListItem } from "./WorkspaceListItem";
 import { RenameProvider } from "@/contexts/WorkspaceRenameContext";
+import { useProjectContext } from "@/contexts/ProjectContext";
+import { ChevronRight, KeyRound } from "lucide-react";
+import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
 
 // Re-export WorkspaceSelection for backwards compatibility
 export type { WorkspaceSelection } from "./WorkspaceListItem";
@@ -138,7 +140,6 @@ const ProjectDragLayer: React.FC = () => {
     <div className="pointer-events-none fixed inset-0 z-[9999] cursor-grabbing">
       <div style={{ transform: `translate(${currentOffset.x + 10}px, ${currentOffset.y + 10}px)` }}>
         <div className="bg-hover/95 text-foreground border-l-accent flex w-fit max-w-72 min-w-44 items-center rounded border-l-[3px] px-3 py-1.5 shadow-[0_6px_24px_rgba(0,0,0,0.4)]">
-          <span className="text-dim mr-1.5 text-xs">⠿</span>
           <span className="text-muted mr-2 text-xs">▶</span>
           <div className="min-w-0 flex-1">
             <div className="text-muted-dark font-monospace truncate text-sm leading-tight">
@@ -153,49 +154,40 @@ const ProjectDragLayer: React.FC = () => {
 };
 
 interface ProjectSidebarProps {
-  projects: Map<string, ProjectConfig>;
-  workspaceMetadata: Map<string, FrontendWorkspaceMetadata>;
-  selectedWorkspace: WorkspaceSelection | null;
-  onSelectWorkspace: (selection: WorkspaceSelection) => void;
-  onAddProject: () => void;
-  onAddWorkspace: (projectPath: string) => void;
-  onRemoveProject: (path: string) => void;
-  onRemoveWorkspace: (
-    workspaceId: string,
-    options?: { force?: boolean }
-  ) => Promise<{ success: boolean; error?: string }>;
-  onRenameWorkspace: (
-    workspaceId: string,
-    newName: string
-  ) => Promise<{ success: boolean; error?: string }>;
   lastReadTimestamps: Record<string, number>;
   onToggleUnread: (workspaceId: string) => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
-  onGetSecrets: (projectPath: string) => Promise<Secret[]>;
-  onUpdateSecrets: (projectPath: string, secrets: Secret[]) => Promise<void>;
   sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>;
   workspaceRecency: Record<string, number>;
 }
 
 const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
-  projects,
-  selectedWorkspace,
-  onSelectWorkspace,
-  onAddProject,
-  onAddWorkspace,
-  onRemoveProject,
-  onRemoveWorkspace,
-  onRenameWorkspace,
   lastReadTimestamps,
   onToggleUnread: _onToggleUnread,
   collapsed,
   onToggleCollapsed,
-  onGetSecrets,
-  onUpdateSecrets,
   sortedWorkspacesByProject,
   workspaceRecency,
 }) => {
+  // Get workspace state and operations from context
+  const {
+    selectedWorkspace,
+    setSelectedWorkspace: onSelectWorkspace,
+    removeWorkspace: onRemoveWorkspace,
+    renameWorkspace: onRenameWorkspace,
+    beginWorkspaceCreation: onAddWorkspace,
+  } = useWorkspaceContext();
+
+  // Get project state and operations from context
+  const {
+    projects,
+    openProjectCreateModal: onAddProject,
+    removeProject: onRemoveProject,
+    getSecrets: onGetSecrets,
+    updateSecrets: onUpdateSecrets,
+  } = useProjectContext();
+
   // Workspace-specific subscriptions moved to WorkspaceListItem component
 
   // Store as array in localStorage, convert to Set for usage
@@ -478,19 +470,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                           data-project-path={projectPath}
                         >
                           <span
-                            data-drag-handle
-                            aria-hidden
-                            className="text-dim mr-1.5 cursor-grab text-xs opacity-0 transition-opacity duration-150 select-none"
-                          >
-                            ⠿
-                          </span>
-                          <span
                             data-project-path={projectPath}
                             aria-hidden="true"
                             className="text-muted mr-2 shrink-0 text-xs transition-transform duration-200"
                             style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
                           >
-                            ▶
+                            <ChevronRight size={12} />
                           </span>
                           <div className="flex min-w-0 flex-1 items-center pr-2">
                             <TooltipWrapper inline>
@@ -522,9 +507,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               }}
                               aria-label={`Manage secrets for ${projectName}`}
                               data-project-path={projectPath}
-                              className="text-muted-dark hover:text-accent hover:bg-accent/10 mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-sm opacity-0 transition-all duration-200"
+                              className="text-muted-dark mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-sm opacity-0 transition-all duration-200 hover:bg-yellow-500/10 hover:text-yellow-500"
                             >
-                              🔑
+                              <KeyRound size={12} />
                             </button>
                             <Tooltip className="tooltip" align="right">
                               Manage secrets
@@ -534,7 +519,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             <button
                               onClick={(event) => {
                                 event.stopPropagation();
-                                onRemoveProject(projectPath);
+                                void onRemoveProject(projectPath);
                               }}
                               title="Remove project"
                               aria-label={`Remove project ${projectName}`}
@@ -555,7 +540,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             role="region"
                             aria-label={`Workspaces for ${projectName}`}
                           >
-                            <div className="border-hover border-b px-3 py-2 pl-[22px]">
+                            <div className="border-hover border-b px-3 py-2">
                               <button
                                 onClick={() => onAddWorkspace(projectPath)}
                                 data-project-path={projectPath}
@@ -619,7 +604,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                               : "rotate(0deg)",
                                           }}
                                         >
-                                          ▶
+                                          <ChevronRight size={12} />
                                         </span>
                                       </button>
                                       {showOldWorkspaces && old.map(renderWorkspace)}

@@ -47,7 +47,7 @@ export const ModelDisplay: React.FC<ModelDisplayProps> = ({ modelString, showToo
           {providerIcon}
         </span>
       )}
-      <span className="inline font-mono">{displayName}</span>
+      <span className="inline">{displayName}</span>
     </span>
   );
 

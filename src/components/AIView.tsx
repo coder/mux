@@ -375,94 +375,96 @@ const AIViewInner: React.FC<AIViewProps> = ({
             tabIndex={0}
             className="h-full overflow-y-auto p-[15px] leading-[1.5] break-words whitespace-pre-wrap"
           >
-            {mergedMessages.length === 0 ? (
-              <div className="text-placeholder flex h-full flex-1 flex-col items-center justify-center text-center [&_h3]:m-0 [&_h3]:mb-2.5 [&_h3]:text-base [&_h3]:font-medium [&_p]:m-0 [&_p]:text-[13px]">
-                <h3>No Messages Yet</h3>
-                <p>Send a message below to begin</p>
-                <p className="mt-5 text-xs text-[#888]">
-                  💡 Tip: Add a{" "}
-                  <code className="rounded-[3px] bg-[#2d2d30] px-1.5 py-0.5 font-mono text-[11px] text-[#d7ba7d]">
-                    .cmux/init
-                  </code>{" "}
-                  hook to your project to run setup commands
-                  <br />
-                  (e.g., install dependencies, build) when creating new workspaces
-                </p>
-              </div>
-            ) : (
-              <>
-                {mergedMessages.map((msg) => {
-                  const isAtCutoff =
-                    editCutoffHistoryId !== undefined &&
-                    msg.type !== "history-hidden" &&
-                    msg.type !== "workspace-init" &&
-                    msg.historyId === editCutoffHistoryId;
+            <div className={cn("max-w-4xl mx-auto", mergedMessages.length === 0 && "h-full")}>
+              {mergedMessages.length === 0 ? (
+                <div className="text-placeholder flex h-full flex-1 flex-col items-center justify-center text-center [&_h3]:m-0 [&_h3]:mb-2.5 [&_h3]:text-base [&_h3]:font-medium [&_p]:m-0 [&_p]:text-[13px]">
+                  <h3>No Messages Yet</h3>
+                  <p>Send a message below to begin</p>
+                  <p className="mt-5 text-xs text-[#888]">
+                    💡 Tip: Add a{" "}
+                    <code className="rounded-[3px] bg-[#2d2d30] px-1.5 py-0.5 font-mono text-[11px] text-[#d7ba7d]">
+                      .cmux/init
+                    </code>{" "}
+                    hook to your project to run setup commands
+                    <br />
+                    (e.g., install dependencies, build) when creating new workspaces
+                  </p>
+                </div>
+              ) : (
+                <>
+                  {mergedMessages.map((msg) => {
+                    const isAtCutoff =
+                      editCutoffHistoryId !== undefined &&
+                      msg.type !== "history-hidden" &&
+                      msg.type !== "workspace-init" &&
+                      msg.historyId === editCutoffHistoryId;
 
-                  return (
-                    <React.Fragment key={msg.id}>
-                      <div
-                        data-message-id={
-                          msg.type !== "history-hidden" && msg.type !== "workspace-init"
-                            ? msg.historyId
-                            : undefined
-                        }
-                      >
-                        <MessageRenderer
-                          message={msg}
-                          onEditUserMessage={handleEditUserMessage}
-                          workspaceId={workspaceId}
-                          isCompacting={isCompacting}
-                        />
-                      </div>
-                      {isAtCutoff && (
+                    return (
+                      <React.Fragment key={msg.id}>
                         <div
-                          className="text-edit-mode bg-edit-mode/10 my-5 px-[15px] py-3 text-center text-xs font-medium"
-                          style={{
-                            borderBottom: "3px solid",
-                            borderImage:
-                              "repeating-linear-gradient(45deg, var(--color-editing-mode), var(--color-editing-mode) 10px, transparent 10px, transparent 20px) 1",
-                          }}
+                          data-message-id={
+                            msg.type !== "history-hidden" && msg.type !== "workspace-init"
+                              ? msg.historyId
+                              : undefined
+                          }
                         >
-                          ⚠️ Messages below this line will be removed when you submit the edit
+                          <MessageRenderer
+                            message={msg}
+                            onEditUserMessage={handleEditUserMessage}
+                            workspaceId={workspaceId}
+                            isCompacting={isCompacting}
+                          />
                         </div>
-                      )}
-                      {shouldShowInterruptedBarrier(msg) && <InterruptedBarrier />}
-                    </React.Fragment>
-                  );
-                })}
-                {/* Show RetryBarrier after the last message if needed */}
-                {showRetryBarrier && <RetryBarrier workspaceId={workspaceId} />}
-              </>
-            )}
-            <PinnedTodoList workspaceId={workspaceId} />
-            {canInterrupt && (
-              <StreamingBarrier
-                statusText={
-                  isCompacting
-                    ? currentModel
-                      ? `${getModelName(currentModel)} compacting...`
-                      : "compacting..."
-                    : currentModel
-                      ? `${getModelName(currentModel)} streaming...`
-                      : "streaming..."
-                }
-                cancelText={
-                  isCompacting
-                    ? `${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} cancel | ${formatKeybind(KEYBINDS.ACCEPT_EARLY_COMPACTION)} accept early`
-                    : `hit ${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} to cancel`
-                }
-                tokenCount={
-                  activeStreamMessageId
-                    ? aggregator.getStreamingTokenCount(activeStreamMessageId)
-                    : undefined
-                }
-                tps={
-                  activeStreamMessageId
-                    ? aggregator.getStreamingTPS(activeStreamMessageId)
-                    : undefined
-                }
-              />
-            )}
+                        {isAtCutoff && (
+                          <div
+                            className="text-edit-mode bg-edit-mode/10 my-5 px-[15px] py-3 text-center text-xs font-medium"
+                            style={{
+                              borderBottom: "3px solid",
+                              borderImage:
+                                "repeating-linear-gradient(45deg, var(--color-editing-mode), var(--color-editing-mode) 10px, transparent 10px, transparent 20px) 1",
+                            }}
+                          >
+                            ⚠️ Messages below this line will be removed when you submit the edit
+                          </div>
+                        )}
+                        {shouldShowInterruptedBarrier(msg) && <InterruptedBarrier />}
+                      </React.Fragment>
+                    );
+                  })}
+                  {/* Show RetryBarrier after the last message if needed */}
+                  {showRetryBarrier && <RetryBarrier workspaceId={workspaceId} />}
+                </>
+              )}
+              <PinnedTodoList workspaceId={workspaceId} />
+              {canInterrupt && (
+                <StreamingBarrier
+                  statusText={
+                    isCompacting
+                      ? currentModel
+                        ? `${getModelName(currentModel)} compacting...`
+                        : "compacting..."
+                      : currentModel
+                        ? `${getModelName(currentModel)} streaming...`
+                        : "streaming..."
+                  }
+                  cancelText={
+                    isCompacting
+                      ? `${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} cancel | ${formatKeybind(KEYBINDS.ACCEPT_EARLY_COMPACTION)} accept early`
+                      : `hit ${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} to cancel`
+                  }
+                  tokenCount={
+                    activeStreamMessageId
+                      ? aggregator.getStreamingTokenCount(activeStreamMessageId)
+                      : undefined
+                  }
+                  tps={
+                    activeStreamMessageId
+                      ? aggregator.getStreamingTPS(activeStreamMessageId)
+                      : undefined
+                  }
+                />
+              )}
+            </div>
           </div>
           {!autoScroll && (
             <button
@@ -488,7 +490,6 @@ const AIViewInner: React.FC<AIViewProps> = ({
             </button>
           )}
         </div>
-
         <ChatInput
           variant="workspace"
           workspaceId={workspaceId}

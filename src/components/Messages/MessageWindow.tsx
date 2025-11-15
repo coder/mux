@@ -1,27 +1,26 @@
-import type { ReactNode } from "react";
-import React, { useState, useMemo } from "react";
-import type { MuxMessage, DisplayedMessage } from "@/types/message";
-import { HeaderButton } from "../tools/shared/ToolPrimitives";
+import { cn } from "@/lib/utils";
+import type { DisplayedMessage, MuxMessage } from "@/types/message";
 import { formatTimestamp } from "@/utils/ui/dateTime";
-import { TooltipWrapper, Tooltip } from "../Tooltip";
-import { KebabMenu, type KebabMenuItem } from "../KebabMenu";
+import { Code2Icon } from "lucide-react";
+import type { ReactNode } from "react";
+import React, { useMemo, useState } from "react";
+import { Tooltip, TooltipWrapper } from "../Tooltip";
+import { Button } from "../ui/button";
 
 export interface ButtonConfig {
   label: string;
   onClick: () => void;
+  icon?: ReactNode;
   active?: boolean;
   disabled?: boolean;
-  emoji?: string; // Optional emoji that shows only on hover
   tooltip?: string; // Optional tooltip text
 }
 
 interface MessageWindowProps {
   label: ReactNode;
-  borderColor: string;
-  backgroundColor?: string;
+  variant?: "assistant" | "user";
   message: MuxMessage | DisplayedMessage;
   buttons?: ButtonConfig[];
-  kebabMenuItems?: KebabMenuItem[]; // Optional kebab menu items (provide empty array to use kebab with only Show JSON)
   children: ReactNode;
   className?: string;
   rightLabel?: ReactNode;
@@ -30,13 +29,10 @@ interface MessageWindowProps {
 
 export const MessageWindow: React.FC<MessageWindowProps> = ({
   label,
-  borderColor,
-  backgroundColor,
+  variant = "assistant",
   message,
   buttons = [],
-  kebabMenuItems = [],
   children,
-  className,
   rightLabel,
   backgroundEffect,
 }) => {
@@ -52,113 +48,117 @@ export const MessageWindow: React.FC<MessageWindowProps> = ({
     [timestamp]
   );
 
+  const isLastPartOfMessage = useMemo(() => {
+    if ("isLastPartOfMessage" in message && message.isLastPartOfMessage && !message.isPartial) {
+      return true;
+    }
+    return false;
+  }, [message]);
+
+  // We do not want to display these on every message, otherwise it spams the UI
+  // with buttons and timestamps
+  const showMetaRow = useMemo(() => {
+    return variant === "user" || isLastPartOfMessage;
+  }, [variant, isLastPartOfMessage]);
+
   return (
     <div
-      className={className}
-      style={{
-        position: "relative",
-        marginBottom: "15px",
-        marginTop: "15px",
-        background: backgroundColor ?? "#1e1e1e",
-        borderLeft: `3px solid ${borderColor}`,
-        borderRadius: "3px",
-        overflow: "hidden",
-      }}
+      className={cn(
+        "mt-4 mb-1 flex w-full flex-col relative isolate w-fit",
+        variant === "user" && "ml-auto",
+        variant === "assistant" && "text-white",
+        isLastPartOfMessage && "mb-4"
+      )}
       data-message-block
     >
-      {backgroundEffect}
       <div
-        className="text-message-header relative z-10 flex items-center justify-between border-b border-white/10 bg-white/5 px-3 py-1 text-[11px] font-medium"
-        data-message-header
-      >
-        <div className="flex min-w-0 flex-1 items-baseline gap-3" data-message-header-left>
-          <div
-            className="inline-flex min-w-0 items-baseline overflow-hidden font-mono tracking-wider whitespace-nowrap uppercase"
-            data-message-type-label
-          >
-            {label}
-          </div>
-          {formattedTimestamp && (
-            <span className="font-mono text-[10px] font-normal opacity-50" data-message-timestamp>
-              {formattedTimestamp}
-            </span>
-          )}
-        </div>
-        <div className="flex gap-1.5" data-message-header-buttons>
-          {rightLabel}
-          {buttons.map((button, index) =>
-            button.tooltip ? (
-              <TooltipWrapper key={index} inline>
-                <ButtonWithHoverEmoji
-                  button={button}
-                  active={button.active}
-                  disabled={button.disabled}
-                />
-                <Tooltip align="center">{button.tooltip}</Tooltip>
-              </TooltipWrapper>
-            ) : (
-              <ButtonWithHoverEmoji
-                key={index}
-                button={button}
-                active={button.active}
-                disabled={button.disabled}
-              />
-            )
-          )}
-          {kebabMenuItems !== undefined ? (
-            <KebabMenu
-              items={[
-                ...kebabMenuItems,
-                {
-                  label: showJson ? "Hide JSON" : "Show JSON",
-                  onClick: () => setShowJson(!showJson),
-                },
-              ]}
-            />
-          ) : (
-            <HeaderButton active={showJson} onClick={() => setShowJson(!showJson)}>
-              {showJson ? "Hide JSON" : "Show JSON"}
-            </HeaderButton>
-          )}
-        </div>
-      </div>
-      <div className="relative z-10 m-3" data-message-content>
-        {showJson ? (
-          <pre className="text-light m-0 overflow-x-auto rounded-sm bg-black/30 p-2 font-mono text-[11px] leading-snug whitespace-pre-wrap">
-            {JSON.stringify(message, null, 2)}
-          </pre>
-        ) : (
-          children
+        className={cn(
+          variant === "user" &&
+            "bg-neutral-700/50 border border-user-border/20 rounded-lg px-3 py-2 overflow-hidden",
+          variant === "assistant" && "px-1 py-1"
         )}
+      >
+        {backgroundEffect}
+        <div className="relative z-10 flex flex-col gap-2">
+          <div data-message-content>
+            {showJson ? (
+              <pre className="m-0 overflow-x-auto rounded-xl border border-white/10 bg-black/30 p-3 text-[12px] leading-snug whitespace-pre-wrap text-white/80">
+                {JSON.stringify(message, null, 2)}
+              </pre>
+            ) : (
+              children
+            )}
+          </div>
+        </div>
       </div>
+      {showMetaRow && (
+        <div
+          className={cn(
+            "mt-2 flex flex-wrap items-center justify-between gap-3 text-[11px]",
+            variant === "user" ? "ml-auto text-white/60" : "text-white/60"
+          )}
+          data-message-meta
+        >
+          <div className="flex flex-wrap items-center gap-0.5" data-message-meta-actions>
+            {buttons.map((button, index) => (
+              <IconActionButton key={index} button={button} />
+            ))}
+            <IconActionButton
+              button={{
+                label: showJson ? "Hide JSON" : "Show JSON",
+                icon: <Code2Icon />,
+                active: showJson,
+                onClick: () => setShowJson(!showJson),
+                tooltip: showJson ? "Hide raw JSON" : "Show raw JSON",
+              }}
+            />
+          </div>
+          <div
+            className="text-muted flex min-w-0 flex-1 flex-wrap items-center gap-2 text-xs"
+            data-message-meta-right
+          >
+            {rightLabel}
+            {label && (
+              <div className="inline-flex min-w-0 items-center gap-2 whitespace-nowrap">
+                {label}
+              </div>
+            )}
+            {formattedTimestamp && <span data-message-timestamp>{formattedTimestamp}</span>}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
-// Button component that shows emoji only on hover
-interface ButtonWithHoverEmojiProps {
+interface IconActionButtonProps {
   button: ButtonConfig;
-  active?: boolean;
-  disabled?: boolean;
 }
 
-const ButtonWithHoverEmoji: React.FC<ButtonWithHoverEmojiProps> = ({
-  button,
-  active,
-  disabled,
-}) => {
-  const [isHovered, setIsHovered] = useState(false);
-
-  return (
-    <HeaderButton
-      active={active}
+const IconActionButton: React.FC<IconActionButtonProps> = ({ button }) => {
+  const content = (
+    <Button
       onClick={button.onClick}
-      disabled={disabled}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      disabled={button.disabled}
+      aria-label={button.label}
+      variant="ghost"
+      size="icon"
+      className="text-placeholder flex h-6 w-6 items-center justify-center [&_svg]:size-3.5"
     >
-      {button.emoji && isHovered && <span className="mr-1">{button.emoji}</span>}
-      {button.label}
-    </HeaderButton>
+      {button.icon ?? (
+        <span className="text-[10px] font-semibold tracking-wide uppercase">{button.label}</span>
+      )}
+    </Button>
   );
+
+  if (button.tooltip || button.label) {
+    return (
+      <TooltipWrapper inline>
+        {content}
+        <Tooltip align="center">{button.tooltip ?? button.label}</Tooltip>
+      </TooltipWrapper>
+    );
+  }
+
+  return content;
 };

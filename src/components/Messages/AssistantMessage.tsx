@@ -1,17 +1,17 @@
-import React, { useState } from "react";
-import type { DisplayedMessage } from "@/types/message";
-import { MarkdownRenderer } from "./MarkdownRenderer";
-import { TypewriterMarkdown } from "./TypewriterMarkdown";
-import type { ButtonConfig } from "./MessageWindow";
-import { MessageWindow } from "./MessageWindow";
-import { useStartHere } from "@/hooks/useStartHere";
-import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import { COMPACTED_EMOJI } from "@/constants/ui";
-import { ModelDisplay } from "./ModelDisplay";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
+import { useStartHere } from "@/hooks/useStartHere";
+import type { DisplayedMessage } from "@/types/message";
+import { copyToClipboard } from "@/utils/clipboard";
+import { Clipboard, ClipboardCheck, FileText, ListStart } from "lucide-react";
+import React, { useState } from "react";
 import { CompactingMessageContent } from "./CompactingMessageContent";
 import { CompactionBackground } from "./CompactionBackground";
-import type { KebabMenuItem } from "@/components/KebabMenu";
-import { copyToClipboard } from "@/utils/clipboard";
+import { MarkdownRenderer } from "./MarkdownRenderer";
+import type { ButtonConfig } from "./MessageWindow";
+import { MessageWindow } from "./MessageWindow";
+import { ModelDisplay } from "./ModelDisplay";
+import { TypewriterMarkdown } from "./TypewriterMarkdown";
 
 interface AssistantMessageProps {
   message: DisplayedMessage & { type: "assistant" };
@@ -52,42 +52,33 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
     ? []
     : [
         {
-          label: copied ? "✓ Copied" : "Copy",
+          label: copied ? "Copied" : "Copy",
           onClick: () => void copyToClipboard(content),
+          icon: copied ? <ClipboardCheck /> : <Clipboard />,
         },
       ];
 
-  // Kebab menu items (less frequently used actions)
-  const kebabMenuItems: KebabMenuItem[] = isStreaming
-    ? []
-    : [
-        // Add Start Here button if workspaceId is available and message is not already compacted
-        ...(workspaceId && !isCompacted
-          ? [
-              {
-                label: buttonLabel,
-                onClick: openModal,
-                disabled: startHereDisabled,
-                tooltip: "Replace all chat history with this message",
-              },
-            ]
-          : []),
-        {
-          label: showRaw ? "Show Markdown" : "Show Text",
-          onClick: () => setShowRaw(!showRaw),
-          active: showRaw,
-        },
-      ];
+  if (!isStreaming) {
+    buttons.push({
+      label: buttonLabel,
+      onClick: openModal,
+      disabled: startHereDisabled,
+      tooltip: "Replace all chat history with this message",
+      icon: <ListStart />,
+    });
+    buttons.push({
+      label: showRaw ? "Show Markdown" : "Show Text",
+      onClick: () => setShowRaw(!showRaw),
+      active: showRaw,
+      icon: <FileText />,
+    });
+  }
 
   // Render appropriate content based on state
   const renderContent = () => {
     // Empty streaming state
     if (isStreaming && !content) {
-      return (
-        <div className="font-primary text-secondary text-[13px] italic">
-          Waiting for response...
-        </div>
-      );
+      return <div className="font-primary text-secondary italic">Waiting for response...</div>;
     }
 
     // Streaming text gets typewriter effect
@@ -135,10 +126,9 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
     <>
       <MessageWindow
         label={renderLabel()}
-        borderColor="var(--color-assistant-border)"
+        variant="assistant"
         message={message}
         buttons={buttons}
-        kebabMenuItems={kebabMenuItems}
         className={className}
         backgroundEffect={isStreamingCompaction ? <CompactionBackground /> : undefined}
       >

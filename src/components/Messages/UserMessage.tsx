@@ -5,10 +5,10 @@ import { MessageWindow } from "./MessageWindow";
 import { TerminalOutput } from "./TerminalOutput";
 import { formatKeybind, KEYBINDS } from "@/utils/ui/keybinds";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
-import type { KebabMenuItem } from "@/components/KebabMenu";
 import { copyToClipboard } from "@/utils/clipboard";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { VIM_ENABLED_KEY } from "@/constants/storage";
+import { Clipboard, ClipboardCheck, Pencil } from "lucide-react";
 
 interface UserMessageProps {
   message: DisplayedMessage & { type: "user" };
@@ -60,6 +60,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
             label: "Edit",
             onClick: handleEdit,
             disabled: isCompacting,
+            icon: <Pencil />,
             tooltip: isCompacting
               ? `Cannot edit while compacting (${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} to cancel)`
               : undefined,
@@ -67,25 +68,21 @@ export const UserMessage: React.FC<UserMessageProps> = ({
         ]
       : []),
     {
-      label: copied ? "✓ Copied" : "Copy",
+      label: copied ? "Copied" : "Copy",
       onClick: () => void copyToClipboard(content),
+      icon: copied ? <ClipboardCheck /> : <Clipboard />,
     },
   ];
-
-  // Currently no additional kebab items for user messages
-  // MessageWindow will add "Show JSON" to kebab menu automatically if kebabMenuItems is provided
-  const kebabMenuItems: KebabMenuItem[] = [];
 
   // If it's a local command output, render with TerminalOutput
   if (isLocalCommandOutput) {
     return (
       <MessageWindow
-        label="USER"
-        borderColor="var(--color-user-border)"
+        label={null}
         message={message}
         buttons={buttons}
-        kebabMenuItems={kebabMenuItems}
         className={className}
+        variant="user"
       >
         <TerminalOutput output={extractedOutput} isError={false} />
       </MessageWindow>
@@ -95,26 +92,25 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   // Otherwise, render as normal user message
   return (
     <MessageWindow
-      label="USER"
-      borderColor="var(--color-user-border)"
+      label={null}
       message={message}
       buttons={buttons}
-      kebabMenuItems={kebabMenuItems}
       className={className}
+      variant="user"
     >
       {content && (
-        <pre className="text-subtle m-0 font-mono text-xs leading-4 break-words whitespace-pre-wrap opacity-90">
+        <pre className="font-primary m-0 leading-6 break-words whitespace-pre-wrap text-slate-100">
           {content}
         </pre>
       )}
       {message.imageParts && message.imageParts.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-2">
+        <div className="mt-3 flex flex-wrap gap-3">
           {message.imageParts.map((img, idx) => (
             <img
               key={idx}
               src={img.url}
               alt={`Attachment ${idx + 1}`}
-              className="border-border-light max-h-[300px] max-w-80 rounded border"
+              className="max-h-[300px] max-w-72 rounded-xl border border-white/10 object-cover"
             />
           ))}
         </div>

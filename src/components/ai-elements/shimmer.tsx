@@ -33,6 +33,7 @@ const ShimmerComponent = ({
         "[--bg:linear-gradient(90deg,#0000_calc(50%-var(--spread)),var(--color-background),#0000_calc(50%+var(--spread)))] [background-repeat:no-repeat,padding-box]",
         className
       )}
+      data-chromatic="ignore"
       initial={{ backgroundPosition: "100% center" }}
       style={
         {

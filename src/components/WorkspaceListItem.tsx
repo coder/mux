@@ -103,7 +103,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
     <React.Fragment>
       <div
         className={cn(
-          "py-1.5 pl-8 pr-2 cursor-pointer border-l-[3px] border-transparent transition-all duration-150 text-[13px] relative hover:bg-hover [&:hover_button]:opacity-100 flex gap-2",
+          "py-1.5 pl-4 pr-2 cursor-pointer border-l-[3px] border-transparent transition-all duration-150 text-[13px] relative hover:bg-hover [&:hover_button]:opacity-100 flex gap-2",
           isSelected && "bg-hover border-l-blue-400"
         )}
         onClick={() =>

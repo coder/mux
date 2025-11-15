@@ -3,6 +3,8 @@ import type { DisplayedMessage } from "@/types/message";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { TypewriterMarkdown } from "./TypewriterMarkdown";
 import { cn } from "@/lib/utils";
+import { Shimmer } from "../ai-elements/shimmer";
+import { Lightbulb } from "lucide-react";
 
 interface ReasoningMessageProps {
   message: DisplayedMessage & { type: "reasoning" };
@@ -47,17 +49,28 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
   return (
     <div
       className={cn(
-        "my-2 p-0.5 bg-[color-mix(in_srgb,var(--color-thinking-mode)_2%,transparent)] rounded relative",
+        "my-2 px-2 py-1 bg-[color-mix(in_srgb,var(--color-thinking-mode)_5%,transparent)] rounded relative",
         className
       )}
     >
       <div
-        className="mb-1.5 flex cursor-pointer items-center justify-between gap-2 select-none"
+        className={cn(
+          "flex cursor-pointer items-center justify-between gap-2 select-none",
+          isExpanded && "mb-1.5"
+        )}
         onClick={toggleExpanded}
       >
-        <div className="text-thinking-mode flex items-center gap-2 text-[10px] font-semibold tracking-wide uppercase opacity-80">
-          <span className="text-xs">💭</span>
-          <span>Thinking</span>
+        <div className="text-thinking-mode flex items-center gap-1 text-xs opacity-80">
+          <span className="text-xs">
+            <Lightbulb className={cn("size-3.5", isStreaming && "animate-pulse")} />
+          </span>
+          <span>
+            {isStreaming ? (
+              <Shimmer colorClass="var(--color-thinking-mode)">Thinking...</Shimmer>
+            ) : (
+              "Thought..."
+            )}
+          </span>
         </div>
         {!isStreaming && (
           <span

@@ -856,141 +856,145 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         className="bg-separator border-border-light relative flex flex-col gap-1 border-t px-[15px] pt-[5px] pb-[15px]"
         data-component="ChatInputSection"
       >
-        {/* Creation error toast */}
-        {variant === "creation" && creationState?.error && (
-          <div className="mb-2 rounded border border-red-700 bg-red-900/20 px-3 py-2 text-sm text-red-400">
-            {creationState.error}
-          </div>
-        )}
-
-        {/* Workspace toast */}
-        {variant === "workspace" && <ChatInputToast toast={toast} onDismiss={handleToastDismiss} />}
-
-        {/* Command suggestions - workspace only */}
-        {variant === "workspace" && (
-          <CommandSuggestions
-            suggestions={commandSuggestions}
-            onSelectSuggestion={handleCommandSelect}
-            onDismiss={() => setShowCommandSuggestions(false)}
-            isVisible={showCommandSuggestions}
-            ariaLabel="Slash command suggestions"
-            listId={commandListId}
-          />
-        )}
-
-        <div className="flex items-end gap-2.5" data-component="ChatInputControls">
-          <VimTextArea
-            ref={inputRef}
-            value={input}
-            isEditing={!!editingMessage}
-            mode={mode}
-            onChange={setInput}
-            onKeyDown={handleKeyDown}
-            onPaste={variant === "workspace" ? handlePaste : undefined}
-            onDragOver={variant === "workspace" ? handleDragOver : undefined}
-            onDrop={variant === "workspace" ? handleDrop : undefined}
-            suppressKeys={showCommandSuggestions ? COMMAND_SUGGESTION_KEYS : undefined}
-            placeholder={placeholder}
-            disabled={!editingMessage && (disabled || isSending || isCompacting)}
-            aria-label={editingMessage ? "Edit your last message" : "Message Claude"}
-            aria-autocomplete="list"
-            aria-controls={
-              showCommandSuggestions && commandSuggestions.length > 0 ? commandListId : undefined
-            }
-            aria-expanded={showCommandSuggestions && commandSuggestions.length > 0}
-          />
-        </div>
-
-        {/* Image attachments - workspace only */}
-        {variant === "workspace" && (
-          <ImageAttachments images={imageAttachments} onRemove={handleRemoveImage} />
-        )}
-
-        <div className="flex flex-col gap-1" data-component="ChatModeToggles">
-          {/* Editing indicator - workspace only */}
-          {variant === "workspace" && editingMessage && (
-            <div className="text-edit-mode text-[11px] font-medium">
-              Editing message ({formatKeybind(KEYBINDS.CANCEL_EDIT)} to cancel)
+        <div className="mx-auto w-full max-w-4xl">
+          {/* Creation error toast */}
+          {variant === "creation" && creationState?.error && (
+            <div className="mb-2 rounded border border-red-700 bg-red-900/20 px-3 py-2 text-sm text-red-400">
+              {creationState.error}
             </div>
           )}
 
-          <div className="@container flex flex-wrap items-center gap-x-3 gap-y-2">
-            {/* Model Selector - always visible */}
-            <div className="flex items-center" data-component="ModelSelectorGroup">
-              <ModelSelector
-                ref={modelSelectorRef}
-                value={preferredModel}
-                onChange={setPreferredModel}
-                recentModels={recentModels}
-                onRemoveModel={evictModel}
-                onComplete={() => inputRef.current?.focus()}
-              />
-              <TooltipWrapper inline>
-                <HelpIndicator>?</HelpIndicator>
-                <Tooltip className="tooltip" align="left" width="wide">
-                  <strong>Click to edit</strong> or use{" "}
-                  {formatKeybind(KEYBINDS.OPEN_MODEL_SELECTOR)}
-                  <br />
-                  <br />
-                  <strong>Abbreviations:</strong>
-                  <br />• <code>/model opus</code> - Claude Opus 4.1
-                  <br />• <code>/model sonnet</code> - Claude Sonnet 4.5
-                  <br />
-                  <br />
-                  <strong>Full format:</strong>
-                  <br />
-                  <code>/model provider:model-name</code>
-                  <br />
-                  (e.g., <code>/model anthropic:claude-sonnet-4-5</code>)
-                </Tooltip>
-              </TooltipWrapper>
-            </div>
+          {/* Workspace toast */}
+          {variant === "workspace" && (
+            <ChatInputToast toast={toast} onDismiss={handleToastDismiss} />
+          )}
 
-            {/* Thinking Slider - slider hidden on narrow containers, label always clickable */}
-            <div
-              className="flex items-center [&_.thinking-slider]:[@container(max-width:550px)]:hidden"
-              data-component="ThinkingSliderGroup"
-            >
-              <ThinkingSliderComponent modelString={preferredModel} />
-            </div>
+          {/* Command suggestions - workspace only */}
+          {variant === "workspace" && (
+            <CommandSuggestions
+              suggestions={commandSuggestions}
+              onSelectSuggestion={handleCommandSelect}
+              onDismiss={() => setShowCommandSuggestions(false)}
+              isVisible={showCommandSuggestions}
+              ariaLabel="Slash command suggestions"
+              listId={commandListId}
+            />
+          )}
 
-            {/* Context 1M Checkbox - always visible */}
-            <div className="flex items-center" data-component="Context1MGroup">
-              <Context1MCheckbox modelString={preferredModel} />
-            </div>
+          <div className="flex items-end gap-2.5" data-component="ChatInputControls">
+            <VimTextArea
+              ref={inputRef}
+              value={input}
+              isEditing={!!editingMessage}
+              mode={mode}
+              onChange={setInput}
+              onKeyDown={handleKeyDown}
+              onPaste={variant === "workspace" ? handlePaste : undefined}
+              onDragOver={variant === "workspace" ? handleDragOver : undefined}
+              onDrop={variant === "workspace" ? handleDrop : undefined}
+              suppressKeys={showCommandSuggestions ? COMMAND_SUGGESTION_KEYS : undefined}
+              placeholder={placeholder}
+              disabled={!editingMessage && (disabled || isSending || isCompacting)}
+              aria-label={editingMessage ? "Edit your last message" : "Message Claude"}
+              aria-autocomplete="list"
+              aria-controls={
+                showCommandSuggestions && commandSuggestions.length > 0 ? commandListId : undefined
+              }
+              aria-expanded={showCommandSuggestions && commandSuggestions.length > 0}
+            />
+          </div>
 
-            {preferredModel && (
-              <div className={hasTypedText ? "block" : "hidden"}>
-                <Suspense
-                  fallback={
-                    <div
-                      className="text-muted flex items-center gap-1 text-xs"
-                      data-component="TokenEstimate"
-                    >
-                      <span>Calculating tokens…</span>
-                    </div>
-                  }
-                >
-                  <TokenCountDisplay reader={tokenCountReader} />
-                </Suspense>
+          {/* Image attachments - workspace only */}
+          {variant === "workspace" && (
+            <ImageAttachments images={imageAttachments} onRemove={handleRemoveImage} />
+          )}
+
+          <div className="flex flex-col gap-1" data-component="ChatModeToggles">
+            {/* Editing indicator - workspace only */}
+            {variant === "workspace" && editingMessage && (
+              <div className="text-edit-mode text-[11px] font-medium">
+                Editing message ({formatKeybind(KEYBINDS.CANCEL_EDIT)} to cancel)
               </div>
             )}
 
-            <ModeSelector mode={mode} onChange={setMode} className="ml-auto" />
-          </div>
+            <div className="@container flex flex-wrap items-center gap-x-3 gap-y-2">
+              {/* Model Selector - always visible */}
+              <div className="flex items-center" data-component="ModelSelectorGroup">
+                <ModelSelector
+                  ref={modelSelectorRef}
+                  value={preferredModel}
+                  onChange={setPreferredModel}
+                  recentModels={recentModels}
+                  onRemoveModel={evictModel}
+                  onComplete={() => inputRef.current?.focus()}
+                />
+                <TooltipWrapper inline>
+                  <HelpIndicator>?</HelpIndicator>
+                  <Tooltip className="tooltip" align="left" width="wide">
+                    <strong>Click to edit</strong> or use{" "}
+                    {formatKeybind(KEYBINDS.OPEN_MODEL_SELECTOR)}
+                    <br />
+                    <br />
+                    <strong>Abbreviations:</strong>
+                    <br />• <code>/model opus</code> - Claude Opus 4.1
+                    <br />• <code>/model sonnet</code> - Claude Sonnet 4.5
+                    <br />
+                    <br />
+                    <strong>Full format:</strong>
+                    <br />
+                    <code>/model provider:model-name</code>
+                    <br />
+                    (e.g., <code>/model anthropic:claude-sonnet-4-5</code>)
+                  </Tooltip>
+                </TooltipWrapper>
+              </div>
 
-          {/* Creation controls - second row for creation variant */}
-          {variant === "creation" && (
-            <CreationControls
-              branches={creationState.branches}
-              trunkBranch={creationState.trunkBranch}
-              onTrunkBranchChange={creationState.setTrunkBranch}
-              runtimeMode={creationState.runtimeMode}
-              sshHost={creationState.sshHost}
-              onRuntimeChange={creationState.setRuntimeOptions}
-              disabled={creationState.isSending || isSending}
-            />
-          )}
+              {/* Thinking Slider - slider hidden on narrow containers, label always clickable */}
+              <div
+                className="flex items-center [&_.thinking-slider]:[@container(max-width:550px)]:hidden"
+                data-component="ThinkingSliderGroup"
+              >
+                <ThinkingSliderComponent modelString={preferredModel} />
+              </div>
+
+              {/* Context 1M Checkbox - always visible */}
+              <div className="flex items-center" data-component="Context1MGroup">
+                <Context1MCheckbox modelString={preferredModel} />
+              </div>
+
+              {preferredModel && (
+                <div className={hasTypedText ? "block" : "hidden"}>
+                  <Suspense
+                    fallback={
+                      <div
+                        className="text-muted flex items-center gap-1 text-xs"
+                        data-component="TokenEstimate"
+                      >
+                        <span>Calculating tokens…</span>
+                      </div>
+                    }
+                  >
+                    <TokenCountDisplay reader={tokenCountReader} />
+                  </Suspense>
+                </div>
+              )}
+
+              <ModeSelector mode={mode} onChange={setMode} className="ml-auto" />
+            </div>
+
+            {/* Creation controls - second row for creation variant */}
+            {variant === "creation" && (
+              <CreationControls
+                branches={creationState.branches}
+                trunkBranch={creationState.trunkBranch}
+                onTrunkBranchChange={creationState.setTrunkBranch}
+                runtimeMode={creationState.runtimeMode}
+                sshHost={creationState.sshHost}
+                onRuntimeChange={creationState.setRuntimeOptions}
+                disabled={creationState.isSending || isSending}
+              />
+            )}
+          </div>
         </div>
       </div>
     </Wrapper>

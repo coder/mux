@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import "./styles/globals.css";
-import { useApp } from "./contexts/AppContext";
+import { useWorkspaceContext } from "./contexts/WorkspaceContext";
+import { useProjectContext } from "./contexts/ProjectContext";
 import type { WorkspaceSelection } from "./components/ProjectSidebar";
 import type { FrontendWorkspaceMetadata } from "./types/workspace";
 import { LeftSidebar } from "./components/LeftSidebar";
@@ -35,19 +36,23 @@ import { useStartWorkspaceCreation, getFirstProjectPath } from "./hooks/useStart
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high"];
 
 function AppInner() {
-  // Get app-level state from context
+  // Get workspace state from context
   const {
-    projects,
-    addProject,
-    removeProject,
     workspaceMetadata,
     setWorkspaceMetadata,
     removeWorkspace,
     renameWorkspace,
     selectedWorkspace,
     setSelectedWorkspace,
-  } = useApp();
-  const [projectCreateModalOpen, setProjectCreateModalOpen] = useState(false);
+  } = useWorkspaceContext();
+  const {
+    projects,
+    removeProject,
+    openProjectCreateModal,
+    isProjectCreateModalOpen,
+    closeProjectCreateModal,
+    addProject,
+  } = useProjectContext();
 
   // Track when we're in "new workspace creation" mode (show FirstMessageInput)
   const [pendingNewWorkspaceProject, setPendingNewWorkspaceProject] = useState<string | null>(null);
@@ -87,22 +92,15 @@ function AppInner() {
   // Get workspace store for command palette
   const workspaceStore = useWorkspaceStoreRaw();
 
-  // Wrapper for setSelectedWorkspace that tracks telemetry
-  const handleWorkspaceSwitch = useCallback(
-    (newWorkspace: WorkspaceSelection | null) => {
-      // Track workspace switch when both old and new are non-null (actual switch, not init/clear)
-      if (
-        selectedWorkspace &&
-        newWorkspace &&
-        selectedWorkspace.workspaceId !== newWorkspace.workspaceId
-      ) {
-        telemetry.workspaceSwitched(selectedWorkspace.workspaceId, newWorkspace.workspaceId);
-      }
-
-      setSelectedWorkspace(newWorkspace);
-    },
-    [selectedWorkspace, setSelectedWorkspace, telemetry]
-  );
+  // Track telemetry when workspace selection changes
+  const prevWorkspaceRef = useRef<WorkspaceSelection | null>(null);
+  useEffect(() => {
+    const prev = prevWorkspaceRef.current;
+    if (prev && selectedWorkspace && prev.workspaceId !== selectedWorkspace.workspaceId) {
+      telemetry.workspaceSwitched(prev.workspaceId, selectedWorkspace.workspaceId);
+    }
+    prevWorkspaceRef.current = selectedWorkspace;
+  }, [selectedWorkspace, telemetry]);
 
   // Validate selectedWorkspace when metadata changes
   // Clear selection if workspace was deleted
@@ -181,48 +179,11 @@ function AppInner() {
       }
       await removeProject(path);
     },
-    [removeProject, selectedWorkspace, setSelectedWorkspace]
-  );
-
-  const handleAddWorkspace = useCallback(
-    (projectPath: string) => {
-      startWorkspaceCreation(projectPath);
-    },
-    [startWorkspaceCreation]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedWorkspace, setSelectedWorkspace]
   );
 
   // Memoize callbacks to prevent LeftSidebar/ProjectSidebar re-renders
-  const handleAddProjectCallback = useCallback(() => {
-    setProjectCreateModalOpen(true);
-  }, []);
-
-  const handleAddWorkspaceCallback = useCallback(
-    (projectPath: string) => {
-      void handleAddWorkspace(projectPath);
-    },
-    [handleAddWorkspace]
-  );
-
-  const handleRemoveProjectCallback = useCallback(
-    (path: string) => {
-      void handleRemoveProject(path);
-    },
-    [handleRemoveProject]
-  );
-
-  const handleGetSecrets = useCallback(async (projectPath: string) => {
-    return await window.api.projects.secrets.get(projectPath);
-  }, []);
-
-  const handleUpdateSecrets = useCallback(
-    async (projectPath: string, secrets: Array<{ key: string; value: string }>) => {
-      const result = await window.api.projects.secrets.update(projectPath, secrets);
-      if (!result.success) {
-        console.error("Failed to update secrets:", result.error);
-      }
-    },
-    []
-  );
 
   // NEW: Get workspace recency from store
   const workspaceRecency = useWorkspaceRecency();
@@ -390,9 +351,9 @@ function AppInner() {
 
   const selectWorkspaceFromPalette = useCallback(
     (selection: WorkspaceSelection) => {
-      handleWorkspaceSwitch(selection);
+      setSelectedWorkspace(selection);
     },
-    [handleWorkspaceSwitch]
+    [setSelectedWorkspace]
   );
 
   const removeWorkspaceFromPalette = useCallback(
@@ -406,8 +367,8 @@ function AppInner() {
   );
 
   const addProjectFromPalette = useCallback(() => {
-    setProjectCreateModalOpen(true);
-  }, []);
+    openProjectCreateModal();
+  }, [openProjectCreateModal]);
 
   const removeProjectFromPalette = useCallback(
     (path: string) => {
@@ -552,16 +513,10 @@ function AppInner() {
     <>
       <div className="bg-bg-dark mobile-layout flex h-screen overflow-hidden">
         <LeftSidebar
-          onSelectWorkspace={handleWorkspaceSwitch}
-          onAddProject={handleAddProjectCallback}
-          onAddWorkspace={handleAddWorkspaceCallback}
-          onRemoveProject={handleRemoveProjectCallback}
           lastReadTimestamps={lastReadTimestamps}
           onToggleUnread={onToggleUnread}
           collapsed={sidebarCollapsed}
           onToggleCollapsed={handleToggleSidebar}
-          onGetSecrets={handleGetSecrets}
-          onUpdateSecrets={handleUpdateSecrets}
           sortedWorkspacesByProject={sortedWorkspacesByProject}
           workspaceRecency={workspaceRecency}
         />
@@ -603,7 +558,7 @@ function AppInner() {
                           setWorkspaceMetadata((prev) => new Map(prev).set(metadata.id, metadata));
 
                           // Switch to new workspace
-                          handleWorkspaceSwitch({
+                          setSelectedWorkspace({
                             workspaceId: metadata.id,
                             projectPath: metadata.projectPath,
                             projectName: metadata.projectName,
@@ -652,8 +607,8 @@ function AppInner() {
           })}
         />
         <ProjectCreateModal
-          isOpen={projectCreateModalOpen}
-          onClose={() => setProjectCreateModalOpen(false)}
+          isOpen={isProjectCreateModalOpen}
+          onClose={closeProjectCreateModal}
           onSuccess={addProject}
         />
       </div>
