@@ -1588,7 +1588,9 @@ export class IpcMain {
           await this.terminalWindowManager.openTerminalWindow(workspaceId);
         } else {
           // SSH workspace in browser mode - let browser handle it
-          log.info(`Browser mode: terminal UI handled by browser for SSH workspace: ${workspaceId}`);
+          log.info(
+            `Browser mode: terminal UI handled by browser for SSH workspace: ${workspaceId}`
+          );
         }
 
         log.info(`Terminal opened successfully for workspace: ${workspaceId}`);

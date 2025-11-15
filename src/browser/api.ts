@@ -270,10 +270,10 @@ const webApi: IPCApi = {
     openWindow: async (workspaceId) => {
       // Check workspace runtime type - only open browser tab for SSH workspaces
       // Local workspaces will open native terminals via the IPC handler
-      const workspaces = (await invokeIPC(IPC_CHANNELS.WORKSPACE_LIST)) as Array<{
+      const workspaces: Array<{
         id: string;
         runtimeConfig?: { type: "local" | "ssh" };
-      }>;
+      }> = await invokeIPC(IPC_CHANNELS.WORKSPACE_LIST);
       const workspace = workspaces.find((ws) => ws.id === workspaceId);
       const isSSH = workspace?.runtimeConfig?.type === "ssh";
 
