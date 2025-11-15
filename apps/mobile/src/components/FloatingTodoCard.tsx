@@ -3,21 +3,19 @@ import { useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ThemedText } from "./ThemedText";
-import { IconButton } from "./IconButton";
 import { TodoItemView, type TodoItem } from "./TodoItemView";
 import { useTheme } from "../theme";
 
 interface FloatingTodoCardProps {
   todos: TodoItem[];
-  onDismiss: () => void;
 }
 
 /**
  * Floating todo card that appears above the input area during streaming.
  * Shows current progress and updates in real-time as agent works.
- * Disappears when stream ends or user dismisses.
+ * Disappears when stream ends.
  */
-export function FloatingTodoCard({ todos, onDismiss }: FloatingTodoCardProps): JSX.Element | null {
+export function FloatingTodoCard({ todos }: FloatingTodoCardProps): JSX.Element | null {
   const theme = useTheme();
   const spacing = theme.spacing;
   const [isExpanded, setIsExpanded] = useState(true);
@@ -60,12 +58,6 @@ export function FloatingTodoCard({ todos, onDismiss }: FloatingTodoCardProps): J
             color={theme.colors.foregroundSecondary}
           />
         </View>
-        <IconButton
-          icon={<Ionicons name="close" size={18} color={theme.colors.foregroundMuted} />}
-          accessibilityLabel="Dismiss todos"
-          variant="ghost"
-          onPress={onDismiss}
-        />
       </Pressable>
 
       {/* Todo Items */}

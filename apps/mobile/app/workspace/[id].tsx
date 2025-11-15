@@ -6,10 +6,6 @@ import { Ionicons } from "@expo/vector-icons";
 import WorkspaceScreen from "../../src/screens/WorkspaceScreen";
 import { WorkspaceActionSheet } from "../../src/components/WorkspaceActionSheet";
 import { CostUsageSheet } from "../../src/components/CostUsageSheet";
-import {
-  WorkspaceActionsProvider,
-  useWorkspaceActions,
-} from "../../src/contexts/WorkspaceActionsContext";
 import { WorkspaceCostProvider } from "../../src/contexts/WorkspaceCostContext";
 
 function WorkspaceContent(): JSX.Element {
@@ -25,7 +21,6 @@ function WorkspaceContent(): JSX.Element {
 
   const [showActionSheet, setShowActionSheet] = useState(false);
   const [showCostSheet, setShowCostSheet] = useState(false);
-  const { toggleTodoCard, hasTodos } = useWorkspaceActions();
 
   // Handle creation mode
   if (isCreationMode && projectPath && projectName) {
@@ -61,17 +56,6 @@ function WorkspaceContent(): JSX.Element {
       badge: undefined, // TODO: Add change count
       onPress: () => router.push(`/workspace/${id}/review`),
     },
-    // Only show todo item if there are todos
-    ...(hasTodos
-      ? [
-          {
-            id: "todo",
-            label: "Todo List",
-            icon: "list-outline" as const,
-            onPress: toggleTodoCard,
-          },
-        ]
-      : []),
   ];
 
   if (!id) {
@@ -108,9 +92,5 @@ function WorkspaceContent(): JSX.Element {
 }
 
 export default function WorkspaceRoute(): JSX.Element {
-  return (
-    <WorkspaceActionsProvider>
-      <WorkspaceContent />
-    </WorkspaceActionsProvider>
-  );
+  return <WorkspaceContent />;
 }

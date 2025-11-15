@@ -19,7 +19,6 @@ import { Picker } from "@react-native-picker/picker";
 import { useTheme } from "../theme";
 import { ThemedText } from "../components/ThemedText";
 import { useApiClient } from "../hooks/useApiClient";
-import { useWorkspaceActions } from "../contexts/WorkspaceActionsContext";
 import { useWorkspaceCost } from "../contexts/WorkspaceCostContext";
 import type { StreamAbortEvent, StreamEndEvent } from "@shared/types/stream.ts";
 import { MessageRenderer } from "../messages/MessageRenderer";
@@ -41,6 +40,7 @@ import { RUNTIME_MODE, parseRuntimeModeAndHost, buildRuntimeString } from "@shar
 import { loadRuntimePreference, saveRuntimePreference } from "../utils/workspacePreferences";
 import { RunSettingsSheet } from "../components/RunSettingsSheet";
 import { useModelHistory } from "../hooks/useModelHistory";
+import { areTodosEqual, extractTodosFromEvent } from "../utils/todoLifecycle";
 import {
   assertKnownModelId,
   formatModelSummary,
@@ -488,9 +488,6 @@ function WorkspaceScreenInner({
   // Track current todos for floating card (during streaming)
   const [currentTodos, setCurrentTodos] = useState<TodoItem[]>([]);
 
-  // Use context for todo card visibility
-  const { todoCardVisible, toggleTodoCard, setHasTodos } = useWorkspaceActions();
-
   // Track streaming state for indicator
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingModel, setStreamingModel] = useState<string | null>(null);
@@ -501,6 +498,9 @@ function WorkspaceScreenInner({
 
   // Track deltas with timestamps for accurate TPS calculation (60s window like desktop)
   const deltasRef = useRef<Array<{ tokens: number; timestamp: number }>>([]);
+  const isStreamActiveRef = useRef(false);
+  const hasCaughtUpRef = useRef(false);
+  const pendingTodosRef = useRef<TodoItem[] | null>(null);
   const [tokenDisplay, setTokenDisplay] = useState({ total: 0, tps: 0 });
 
   useEffect(() => {
@@ -555,46 +555,36 @@ function WorkspaceScreenInner({
 
   const metadata = metadataQuery.data ?? null;
 
-  // Extract most recent todos from timeline (timeline-based approach)
-  useEffect(() => {
-    // Find the most recent completed todo_write tool in timeline
-    const toolMessages = timeline
-      .filter(
-        (entry): entry is Extract<TimelineEntry, { kind: "displayed" }> =>
-          entry.kind === "displayed"
-      )
-      .map((entry) => entry.message)
-      .filter((msg): msg is DisplayedMessage & { type: "tool" } => msg.type === "tool")
-      .filter((msg) => msg.toolName === "todo_write");
-
-    // Get the most recent one (timeline is already sorted)
-    const latestTodoTool = toolMessages[toolMessages.length - 1];
-
-    if (
-      latestTodoTool &&
-      latestTodoTool.args &&
-      typeof latestTodoTool.args === "object" &&
-      "todos" in latestTodoTool.args &&
-      Array.isArray(latestTodoTool.args.todos)
-    ) {
-      const todos = latestTodoTool.args.todos as TodoItem[];
-      setCurrentTodos(todos);
-      setHasTodos(todos.length > 0);
-    } else if (toolMessages.length === 0) {
-      // Only clear if no todo_write tools exist at all
-      setCurrentTodos([]);
-      setHasTodos(false);
-    }
-  }, [timeline, setHasTodos]);
-
   useEffect(() => {
     // Skip WebSocket subscription in creation mode (no workspace yet)
     if (isCreationMode) return;
+
+    isStreamActiveRef.current = false;
+    hasCaughtUpRef.current = false;
+    pendingTodosRef.current = null;
 
     const expander = expanderRef.current;
     const subscription = api.workspace.subscribeChat(workspaceId!, (payload) => {
       // Track streaming state and tokens (60s trailing window like desktop)
       if (payload && typeof payload === "object" && "type" in payload) {
+        if (payload.type === "caught-up") {
+          hasCaughtUpRef.current = true;
+
+          if (pendingTodosRef.current && pendingTodosRef.current.length > 0 && isStreamActiveRef.current) {
+            const pending = pendingTodosRef.current;
+            setCurrentTodos((prev) => (areTodosEqual(prev, pending) ? prev : pending));
+          } else if (!isStreamActiveRef.current) {
+            setCurrentTodos([]);
+          }
+
+          pendingTodosRef.current = null;
+
+          if (__DEV__) {
+            console.debug(`[WorkspaceScreen] caught up for workspace ${workspaceId}`);
+          }
+          return;
+        }
+
         const typedEvent = payload as StreamEndEvent | StreamAbortEvent | { type: string };
         if (typedEvent.type === "stream-end" || typedEvent.type === "stream-abort") {
           recordStreamUsage(typedEvent as StreamEndEvent | StreamAbortEvent);
@@ -605,6 +595,9 @@ function WorkspaceScreenInner({
           setStreamingModel(typeof payload.model === "string" ? payload.model : null);
           deltasRef.current = [];
           setTokenDisplay({ total: 0, tps: 0 });
+          isStreamActiveRef.current = true;
+          pendingTodosRef.current = null;
+          setCurrentTodos([]);
         } else if (
           (payload.type === "stream-delta" ||
             payload.type === "reasoning-delta" ||
@@ -647,10 +640,29 @@ function WorkspaceScreenInner({
           setStreamingModel(null);
           deltasRef.current = [];
           setTokenDisplay({ total: 0, tps: 0 });
+          isStreamActiveRef.current = false;
+          pendingTodosRef.current = null;
+          setCurrentTodos([]);
         }
       }
 
       const expanded = expander.expand(payload);
+
+      let latestTodos: TodoItem[] | null = null;
+      for (const event of expanded) {
+        const todos = extractTodosFromEvent(event);
+        if (todos) {
+          latestTodos = todos;
+        }
+      }
+
+      if (latestTodos) {
+        if (hasCaughtUpRef.current) {
+          setCurrentTodos((prev) => (areTodosEqual(prev, latestTodos) ? prev : latestTodos));
+        } else {
+          pendingTodosRef.current = latestTodos;
+        }
+      }
 
       // If expander returns [], it means the event was handled but nothing to display yet
       // (e.g., streaming deltas accumulating). Do NOT fall back to raw display.
@@ -684,10 +696,12 @@ function WorkspaceScreenInner({
   useEffect(() => {
     setTimeline([]);
     setCurrentTodos([]);
-    setHasTodos(false);
     setEditingMessage(undefined);
     setInputWithSuggestionGuard("");
-  }, [workspaceId, setHasTodos, setInputWithSuggestionGuard]);
+    isStreamActiveRef.current = false;
+    hasCaughtUpRef.current = false;
+    pendingTodosRef.current = null;
+  }, [workspaceId, setInputWithSuggestionGuard]);
 
   const handleOpenRunSettings = useCallback(() => {
     if (settingsLoading) {
@@ -1063,9 +1077,7 @@ function WorkspaceScreenInner({
           </View>
 
           {/* Floating Todo Card */}
-          {currentTodos.length > 0 && todoCardVisible && (
-            <FloatingTodoCard todos={currentTodos} onDismiss={toggleTodoCard} />
-          )}
+          {currentTodos.length > 0 && <FloatingTodoCard todos={currentTodos} />}
 
           {/* Streaming Indicator */}
           {isStreaming && streamingModel && (
