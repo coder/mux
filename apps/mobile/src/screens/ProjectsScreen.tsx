@@ -19,8 +19,9 @@ import { Surface } from "../components/Surface";
 import { IconButton } from "../components/IconButton";
 import { SecretsModal } from "../components/SecretsModal";
 import { RenameWorkspaceModal } from "../components/RenameWorkspaceModal";
+import { WorkspaceActivityIndicator } from "../components/WorkspaceActivityIndicator";
 import { createClient } from "../api/client";
-import type { FrontendWorkspaceMetadata, Secret } from "../types";
+import type { FrontendWorkspaceMetadata, Secret, WorkspaceActivitySnapshot } from "../types";
 
 interface WorkspaceListItem {
   metadata: FrontendWorkspaceMetadata;
@@ -35,6 +36,7 @@ interface ProjectGroup {
 }
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const EMPTY_ACTIVITY_MAP: Record<string, WorkspaceActivitySnapshot> = {};
 
 function deriveProjectName(projectPath: string): string {
   if (!projectPath) {
@@ -53,7 +55,13 @@ function parseTimestamp(value?: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function calculateLastActive(metadata: FrontendWorkspaceMetadata): number {
+function calculateLastActive(
+  metadata: FrontendWorkspaceMetadata,
+  activity?: WorkspaceActivitySnapshot
+): number {
+  if (activity && Number.isFinite(activity.recency)) {
+    return activity.recency;
+  }
   return parseTimestamp(metadata.createdAt);
 }
 
@@ -82,7 +90,7 @@ export function ProjectsScreen(): JSX.Element {
   const theme = useTheme();
   const spacing = theme.spacing;
   const router = useRouter();
-  const { api, projectsQuery, workspacesQuery } = useProjectsData();
+  const { api, projectsQuery, workspacesQuery, activityQuery } = useProjectsData();
   const [search, setSearch] = useState("");
   const [secretsModalState, setSecretsModalState] = useState<{
     visible: boolean;
@@ -90,6 +98,7 @@ export function ProjectsScreen(): JSX.Element {
     projectName: string;
     secrets: Secret[];
   } | null>(null);
+  const activityMap = activityQuery.data ?? EMPTY_ACTIVITY_MAP;
 
   const [renameModalState, setRenameModalState] = useState<{
     visible: boolean;
@@ -136,7 +145,8 @@ export function ProjectsScreen(): JSX.Element {
         continue;
       }
       const group = ensureGroup(workspace.projectPath);
-      const lastActive = calculateLastActive(workspace);
+      const activity = activityMap[workspace.id];
+      const lastActive = calculateLastActive(workspace, activity);
       const isOld = Date.now() - lastActive >= ONE_DAY_MS;
       group.workspaces.push({ metadata: workspace, lastActive, isOld });
     }
@@ -184,14 +194,27 @@ export function ProjectsScreen(): JSX.Element {
       );
 
     return results;
-  }, [projectsQuery.data, workspacesQuery.data, search]);
+  }, [projectsQuery.data, workspacesQuery.data, activityMap, search]);
 
-  const isLoading = projectsQuery.isLoading || workspacesQuery.isLoading;
-  const isRefreshing = projectsQuery.isRefetching || workspacesQuery.isRefetching;
-  const hasError = Boolean(projectsQuery.error ?? workspacesQuery.error);
+  const isLoading =
+    projectsQuery.isLoading || workspacesQuery.isLoading || activityQuery.isLoading;
+  const isRefreshing =
+    projectsQuery.isRefetching || workspacesQuery.isRefetching || activityQuery.isRefetching;
+  const hasError = Boolean(
+    projectsQuery.error ?? workspacesQuery.error ?? activityQuery.error
+  );
+  const errorMessage =
+    (projectsQuery.error instanceof Error && projectsQuery.error.message) ||
+    (workspacesQuery.error instanceof Error && workspacesQuery.error.message) ||
+    (activityQuery.error instanceof Error && activityQuery.error.message) ||
+    undefined;
 
   const onRefresh = () => {
-    void Promise.all([projectsQuery.refetch(), workspacesQuery.refetch()]);
+    void Promise.all([
+      projectsQuery.refetch(),
+      workspacesQuery.refetch(),
+      activityQuery.refetch(),
+    ]);
   };
 
   const handleOpenSecrets = async (projectPath: string, projectName: string) => {
@@ -326,6 +349,7 @@ export function ProjectsScreen(): JSX.Element {
     const { metadata, lastActive, isOld } = item;
     const accentWidth = 3;
     const formattedTimestamp = lastActive ? formatRelativeTime(lastActive) : "Unknown";
+    const activity = activityMap[metadata.id];
 
     return (
       <Pressable
@@ -391,9 +415,9 @@ export function ProjectsScreen(): JSX.Element {
             {metadata.namedWorkspacePath}
           </ThemedText>
         </View>
-        <ThemedText variant="caption" style={{ marginLeft: spacing.md }}>
-          {formattedTimestamp}
-        </ThemedText>
+        <View style={{ marginLeft: spacing.md }}>
+          <WorkspaceActivityIndicator activity={activity} fallbackLabel={formattedTimestamp} />
+        </View>
       </Pressable>
     );
   };
@@ -466,7 +490,7 @@ export function ProjectsScreen(): JSX.Element {
                 Unable to load data
               </ThemedText>
               <ThemedText variant="caption" style={{ marginTop: spacing.xs }}>
-                Please check your connection and try again.
+                {errorMessage ?? "Please check your connection and try again."}
               </ThemedText>
               <Pressable
                 onPress={onRefresh}

@@ -56,6 +56,11 @@ export const IPC_CHANNELS = {
   WORKSPACE_CHAT_GET_FULL_REPLAY: "workspace:chat:getFullReplay",
   WORKSPACE_METADATA: "workspace:metadata",
   WORKSPACE_METADATA_SUBSCRIBE: "workspace:metadata:subscribe",
+  WORKSPACE_METADATA_UNSUBSCRIBE: "workspace:metadata:unsubscribe",
+  WORKSPACE_ACTIVITY: "workspace:activity",
+  WORKSPACE_ACTIVITY_SUBSCRIBE: "workspace:activity:subscribe",
+  WORKSPACE_ACTIVITY_UNSUBSCRIBE: "workspace:activity:unsubscribe",
+  WORKSPACE_ACTIVITY_LIST: "workspace:activity:list",
 } as const;
 
 // Helper functions for dynamic channels

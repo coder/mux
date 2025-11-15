@@ -8,6 +8,7 @@ import type {
   ProjectsListResponse,
   WorkspaceChatEvent,
   Secret,
+  WorkspaceActivitySnapshot,
 } from "../types";
 
 export type Result<T, E = string> = { success: true; data: T } | { success: false; error: E };
@@ -43,6 +44,10 @@ const IPC_CHANNELS = {
   PROJECT_LIST: "project:list",
   PROJECT_LIST_BRANCHES: "project:listBranches",
   PROJECT_SECRETS_GET: "project:secrets:get",
+  WORKSPACE_ACTIVITY: "workspace:activity",
+  WORKSPACE_ACTIVITY_SUBSCRIBE: "workspace:activity",
+  WORKSPACE_ACTIVITY_ACK: "workspace:activity:subscribe",
+  WORKSPACE_ACTIVITY_LIST: "workspace:activity:list",
   PROJECT_SECRETS_UPDATE: "project:secrets:update",
   WORKSPACE_METADATA: "workspace:metadata",
   WORKSPACE_METADATA_SUBSCRIBE: "workspace:metadata",
@@ -80,6 +85,23 @@ function pickToken(): string | undefined {
 
 function isJsonRecord(value: unknown): value is JsonRecord {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseWorkspaceActivity(value: unknown): WorkspaceActivitySnapshot | null {
+  if (!isJsonRecord(value)) {
+    return null;
+  }
+  const recency = typeof value.recency === "number" && Number.isFinite(value.recency) ? value.recency : null;
+  if (recency === null) {
+    return null;
+  }
+  const streaming = value.streaming === true;
+  const lastModel = typeof value.lastModel === "string" ? value.lastModel : null;
+  return {
+    recency,
+    streaming,
+    lastModel,
+  };
 }
 
 function ensureWorkspaceId(id: string): string {
@@ -528,6 +550,60 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
             onMetadata({ workspaceId, metadata });
           }
         ),
+      activity: {
+        list: async (): Promise<Record<string, WorkspaceActivitySnapshot>> => {
+          const response = await invoke<Record<string, unknown>>(IPC_CHANNELS.WORKSPACE_ACTIVITY_LIST);
+          const result: Record<string, WorkspaceActivitySnapshot> = {};
+          if (response && typeof response === "object") {
+            for (const [workspaceId, value] of Object.entries(response)) {
+              if (typeof workspaceId !== "string") {
+                continue;
+              }
+              const parsed = parseWorkspaceActivity(value);
+              if (parsed) {
+                result[workspaceId] = parsed;
+              }
+            }
+          }
+          return result;
+        },
+        subscribe: (
+          onActivity: (payload: {
+            workspaceId: string;
+            activity: WorkspaceActivitySnapshot | null;
+          }) => void
+        ): WebSocketSubscription =>
+          subscribe(
+            { type: "subscribe", channel: IPC_CHANNELS.WORKSPACE_ACTIVITY_SUBSCRIBE },
+            (data) => {
+              if (data.channel !== IPC_CHANNELS.WORKSPACE_ACTIVITY) {
+                return;
+              }
+              const args = Array.isArray(data.args) ? data.args : [];
+              const [firstArg] = args;
+              if (!isJsonRecord(firstArg)) {
+                return;
+              }
+              const workspaceId =
+                typeof firstArg.workspaceId === "string" ? firstArg.workspaceId : null;
+              if (!workspaceId) {
+                return;
+              }
+
+              if (firstArg.activity === null) {
+                onActivity({ workspaceId, activity: null });
+                return;
+              }
+
+              const activity = parseWorkspaceActivity(firstArg.activity);
+              if (!activity) {
+                return;
+              }
+
+              onActivity({ workspaceId, activity });
+            }
+          ),
+      },
     },
     tokenizer: {
       calculateStats: async (messages: MuxMessage[], model: string): Promise<ChatStats> =>

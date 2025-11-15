@@ -1,5 +1,9 @@
 import type { Result } from "./result";
-import type { FrontendWorkspaceMetadata, WorkspaceMetadata } from "./workspace";
+import type {
+  FrontendWorkspaceMetadata,
+  WorkspaceMetadata,
+  WorkspaceActivitySnapshot,
+} from "./workspace";
 import type { MuxMessage, MuxFrontendMetadata } from "./message";
 import type { ChatStats } from "./chatStats";
 import type { ProjectConfig } from "../config";
@@ -294,6 +298,15 @@ export interface IPCApi {
     // to encourage the renderer to maintain an always up-to-date view of the state
     // through continuous subscriptions rather than polling patterns.
     onChat(workspaceId: string, callback: (data: WorkspaceChatMessage) => void): () => void;
+    activity: {
+      list(): Promise<Record<string, WorkspaceActivitySnapshot>>;
+      subscribe(
+        callback: (data: {
+          workspaceId: string;
+          activity: WorkspaceActivitySnapshot | null;
+        }) => void
+      ): () => void;
+    };
     onMetadata(
       callback: (data: { workspaceId: string; metadata: FrontendWorkspaceMetadata }) => void
     ): () => void;

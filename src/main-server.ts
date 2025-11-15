@@ -106,7 +106,14 @@ class HttpIpcMainAdapter {
   }
 }
 
-type Clients = Map<WebSocket, { chatSubscriptions: Set<string>; metadataSubscription: boolean }>;
+type Clients = Map<
+  WebSocket,
+  {
+    chatSubscriptions: Set<string>;
+    metadataSubscription: boolean;
+    activitySubscription: boolean;
+  }
+>;
 
 // Mock BrowserWindow for events
 class MockBrowserWindow {
@@ -123,14 +130,14 @@ class MockBrowserWindow {
         // Only send to clients subscribed to this channel
         if (channel === IPC_CHANNELS.WORKSPACE_METADATA && clientInfo.metadataSubscription) {
           client.send(message);
+        } else if (channel === IPC_CHANNELS.WORKSPACE_ACTIVITY && clientInfo.activitySubscription) {
+          client.send(message);
         } else if (channel.startsWith(IPC_CHANNELS.WORKSPACE_CHAT_PREFIX)) {
-          // Extract workspace ID from channel
           const workspaceId = channel.replace(IPC_CHANNELS.WORKSPACE_CHAT_PREFIX, "");
           if (clientInfo.chatSubscriptions.has(workspaceId)) {
             client.send(message);
           }
         } else {
-          // Send other channels to all clients
           client.send(message);
         }
       });
@@ -221,6 +228,7 @@ const httpIpcMain = new HttpIpcMainAdapter(app);
     clients.set(ws, {
       chatSubscriptions: new Set(),
       metadataSubscription: false,
+      activitySubscription: false,
     });
 
     ws.on("message", (rawData: RawData) => {
@@ -256,8 +264,6 @@ const httpIpcMain = new HttpIpcMainAdapter(app);
               Array.from(clientInfo.chatSubscriptions)
             );
 
-            // Replay full history including active streams, partial messages, and init state
-            // This fetches all replay events without broadcasting to other clients
             void (async () => {
               try {
                 const chatChannel = `${IPC_CHANNELS.WORKSPACE_CHAT_PREFIX}${workspaceId}`;
@@ -269,12 +275,9 @@ const httpIpcMain = new HttpIpcMainAdapter(app);
                   return;
                 }
 
-                // Get full replay events (history + active streams + partial + init + caught-up)
-                // This does NOT broadcast to any clients - just returns the array
                 const replayEvents = (await handler(null, workspaceId)) as unknown[];
                 console.log(`[WS] Sending ${replayEvents.length} replay events to client`);
 
-                // Send all events directly to this client only
                 for (const event of replayEvents) {
                   if (ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({ channel: chatChannel, args: [event] }));
@@ -287,23 +290,25 @@ const httpIpcMain = new HttpIpcMainAdapter(app);
           } else if (channel === "workspace:metadata") {
             console.log("[WS] Client subscribed to workspace metadata");
             clientInfo.metadataSubscription = true;
-
-            // Send subscription acknowledgment
-            httpIpcMain.send("workspace:metadata:subscribe");
+            httpIpcMain.send(IPC_CHANNELS.WORKSPACE_METADATA_SUBSCRIBE);
+          } else if (channel === "workspace:activity") {
+            console.log("[WS] Client subscribed to workspace activity updates");
+            clientInfo.activitySubscription = true;
+            httpIpcMain.send(IPC_CHANNELS.WORKSPACE_ACTIVITY_SUBSCRIBE);
           }
         } else if (type === "unsubscribe") {
           if (channel === "workspace:chat" && workspaceId) {
             console.log(`Client unsubscribed from workspace chat: ${workspaceId}`);
             clientInfo.chatSubscriptions.delete(workspaceId);
-
-            // Send unsubscription acknowledgment
             httpIpcMain.send("workspace:chat:unsubscribe", workspaceId);
           } else if (channel === "workspace:metadata") {
             console.log("Client unsubscribed from workspace metadata");
             clientInfo.metadataSubscription = false;
-
-            // Send unsubscription acknowledgment
-            httpIpcMain.send("workspace:metadata:unsubscribe");
+            httpIpcMain.send(IPC_CHANNELS.WORKSPACE_METADATA_UNSUBSCRIBE);
+          } else if (channel === "workspace:activity") {
+            console.log("Client unsubscribed from workspace activity");
+            clientInfo.activitySubscription = false;
+            httpIpcMain.send(IPC_CHANNELS.WORKSPACE_ACTIVITY_UNSUBSCRIBE);
           }
         } else if (type === "invoke") {
           // Handle direct IPC invocations over WebSocket (for streaming responses)

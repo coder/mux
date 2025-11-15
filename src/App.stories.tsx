@@ -68,6 +68,10 @@ function setupMockAPI(options: {
       resumeStream: () => Promise.resolve({ success: true, data: undefined }),
       interruptStream: () => Promise.resolve({ success: true, data: undefined }),
       truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
+      activity: {
+        list: () => Promise.resolve({}),
+        subscribe: () => () => undefined,
+      },
       replaceChatHistory: () => Promise.resolve({ success: true, data: undefined }),
       getInfo: () => Promise.resolve(null),
       executeBash: () =>
@@ -540,6 +544,10 @@ export const ActiveWorkspaceWithChat: Story = {
                   },
                 }),
               list: () => Promise.resolve(workspaces),
+              activity: {
+                list: () => Promise.resolve({}),
+                subscribe: () => () => undefined,
+              },
               rename: (workspaceId: string) =>
                 Promise.resolve({
                   success: true,
@@ -1254,6 +1262,10 @@ export const MarkdownTables: Story = {
                   },
                 }),
               list: () => Promise.resolve(workspaces),
+              activity: {
+                list: () => Promise.resolve({}),
+                subscribe: () => () => undefined,
+              },
               rename: (workspaceId: string) =>
                 Promise.resolve({
                   success: true,

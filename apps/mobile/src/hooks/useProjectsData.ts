@@ -1,9 +1,10 @@
 import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useApiClient } from "./useApiClient";
-import type { FrontendWorkspaceMetadata } from "../types";
+import type { FrontendWorkspaceMetadata, WorkspaceActivitySnapshot } from "../types";
 
 const WORKSPACES_QUERY_KEY = ["workspaces"] as const;
+const WORKSPACE_ACTIVITY_QUERY_KEY = ["workspace-activity"] as const;
 const PROJECTS_QUERY_KEY = ["projects"] as const;
 
 export function useProjectsData() {
@@ -21,6 +22,12 @@ export function useProjectsData() {
     queryFn: () => api.workspace.list(),
     staleTime: 15_000,
   });
+  const activityQuery = useQuery({
+    queryKey: WORKSPACE_ACTIVITY_QUERY_KEY,
+    queryFn: () => api.workspace.activity.list(),
+    staleTime: 15_000,
+  });
+
 
   useEffect(() => {
     const subscription = api.workspace.subscribeMetadata(({ workspaceId, metadata }) => {
@@ -31,15 +38,12 @@ export function useProjectsData() {
             return existing;
           }
 
-          // Handle deletion (null metadata)
           if (metadata === null) {
             return existing.filter((w) => w.id !== workspaceId);
           }
 
-          // Handle update/rename
           const index = existing.findIndex((workspace) => workspace.id === workspaceId);
           if (index === -1) {
-            // New workspace - add it
             return [...existing, metadata];
           }
 
@@ -55,9 +59,34 @@ export function useProjectsData() {
     };
   }, [api, queryClient]);
 
+  useEffect(() => {
+    const subscription = api.workspace.activity.subscribe(({ workspaceId, activity }) => {
+      queryClient.setQueryData<Record<string, WorkspaceActivitySnapshot> | undefined>(
+        WORKSPACE_ACTIVITY_QUERY_KEY,
+        (existing) => {
+          const current = existing ?? {};
+          if (activity === null) {
+            if (!current[workspaceId]) {
+              return existing;
+            }
+            const next = { ...current };
+            delete next[workspaceId];
+            return next;
+          }
+          return { ...current, [workspaceId]: activity };
+        }
+      );
+    });
+
+    return () => {
+      subscription.close();
+    };
+  }, [api, queryClient]);
+
   return {
     api,
     projectsQuery,
     workspacesQuery,
+    activityQuery,
   };
 }
