@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import "./styles/globals.css";
-import { useApp } from "./contexts/AppContext";
+import { useWorkspaceContext } from "./contexts/WorkspaceContext";
 import { useProjectContext } from "./contexts/ProjectContext";
 import type { WorkspaceSelection } from "./components/ProjectSidebar";
 import type { FrontendWorkspaceMetadata } from "./types/workspace";
@@ -36,7 +36,7 @@ import { useStartWorkspaceCreation, getFirstProjectPath } from "./hooks/useStart
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high"];
 
 function AppInner() {
-  // Get app-level state from context
+  // Get workspace state from context
   const {
     workspaceMetadata,
     setWorkspaceMetadata,
@@ -44,7 +44,7 @@ function AppInner() {
     renameWorkspace,
     selectedWorkspace,
     setSelectedWorkspace,
-  } = useApp();
+  } = useWorkspaceContext();
   const {
     projects,
     removeProject,

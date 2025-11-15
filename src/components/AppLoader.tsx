@@ -3,7 +3,6 @@ import App from "../App";
 import { LoadingScreen } from "./LoadingScreen";
 import { useWorkspaceStoreRaw } from "../stores/WorkspaceStore";
 import { useGitStatusStoreRaw } from "../stores/GitStatusStore";
-import { AppProvider } from "../contexts/AppContext";
 import { ProjectProvider } from "../contexts/ProjectContext";
 import { WorkspaceProvider, useWorkspaceContext } from "../contexts/WorkspaceContext";
 
@@ -63,18 +62,6 @@ function AppLoaderInner() {
     return <LoadingScreen />;
   }
 
-  // Render App with all initialized data via context
-  return (
-    <AppProvider
-      workspaceMetadata={workspaceContext.workspaceMetadata}
-      setWorkspaceMetadata={workspaceContext.setWorkspaceMetadata}
-      createWorkspace={workspaceContext.createWorkspace}
-      removeWorkspace={workspaceContext.removeWorkspace}
-      renameWorkspace={workspaceContext.renameWorkspace}
-      selectedWorkspace={workspaceContext.selectedWorkspace}
-      setSelectedWorkspace={workspaceContext.setSelectedWorkspace}
-    >
-      <App />
-    </AppProvider>
-  );
+  // Render App - all state available via contexts
+  return <App />;
 }
