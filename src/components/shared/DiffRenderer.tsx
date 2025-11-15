@@ -107,13 +107,16 @@ export const DiffContainer: React.FC<
     };
   }, [resolvedMaxHeight, clampContent]);
 
+  const showOverflowControls = clampContent && isOverflowing;
+
   return (
     <div className={cn("relative m-0 rounded bg-code-bg py-1.5 [&_*]:text-[inherit]", className)}>
       <div
         ref={contentRef}
         className={cn(
           "grid overflow-x-auto",
-          clampContent ? "pb-6 overflow-y-hidden" : "overflow-y-visible"
+          clampContent ? "overflow-y-hidden" : "overflow-y-visible",
+          showOverflowControls && "pb-6"
         )}
         style={{
           fontSize: fontSize ?? "12px",
@@ -125,7 +128,7 @@ export const DiffContainer: React.FC<
         {children}
       </div>
 
-      {clampContent && isOverflowing && (
+      {showOverflowControls && (
         <>
           <div className="via-[color-mix(in srgb, var(--color-code-bg) 80%, transparent)] pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-[var(--color-code-bg)] to-transparent" />
           <div className="absolute inset-x-0 bottom-0 flex justify-center pb-1.5">
