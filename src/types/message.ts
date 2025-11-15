@@ -72,7 +72,6 @@ export interface MuxReasoningPart {
   type: "reasoning";
   text: string;
   timestamp?: number;
-  segmentCount?: number; // Number of merged reasoning deltas represented by this part
 }
 
 // File/Image part type for multimodal messages (matches AI SDK FileUIPart)
@@ -152,7 +151,6 @@ export type DisplayedMessage =
       isLastPartOfMessage?: boolean; // True if this is the last part of a multi-part message
       timestamp?: number;
       tokens?: number; // Reasoning tokens if available
-      reasoningSegmentCount?: number; // Number of merged reasoning deltas represented by this block
     }
   | {
       type: "stream-error";

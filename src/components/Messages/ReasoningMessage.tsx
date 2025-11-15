@@ -18,10 +18,8 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
   const isStreaming = message.isStreaming;
   const trimmedContent = content?.trim() ?? "";
   const hasContent = trimmedContent.length > 0;
-  const reasoningSegments = message.reasoningSegmentCount ?? 1;
   // OpenAI models often emit terse, single-line traces; surface them inline instead of hiding behind the label.
-  const isSingleLineTrace =
-    !isStreaming && hasContent && reasoningSegments === 1 && !/[\r\n]/.test(trimmedContent);
+  const isSingleLineTrace = !isStreaming && hasContent && !/[\r\n]/.test(trimmedContent);
   const isCollapsible = !isStreaming && hasContent && !isSingleLineTrace;
 
   // Auto-collapse when streaming ends
