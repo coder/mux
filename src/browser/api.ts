@@ -184,22 +184,6 @@ class WebSocketManager {
 
 const wsManager = new WebSocketManager();
 
-// Cache workspace metadata to avoid async lookup during user gestures (popup blocker issue)
-let workspaceMetadataCache: Array<{
-  id: string;
-  runtimeConfig?: { type: "local" | "ssh" };
-}> = [];
-
-// Update cache when workspace metadata changes
-function updateWorkspaceCache() {
-  void invokeIPC(IPC_CHANNELS.WORKSPACE_LIST).then((workspaces) => {
-    workspaceMetadataCache = workspaces as typeof workspaceMetadataCache;
-  });
-}
-
-// Initialize cache
-updateWorkspaceCache();
-
 // Create the Web API implementation
 const webApi: IPCApi = {
   tokenizer: {
@@ -256,9 +240,7 @@ const webApi: IPCApi = {
     },
 
     onMetadata: (callback) => {
-      // Update cache whenever workspace metadata changes
       const unsubscribe = wsManager.on(IPC_CHANNELS.WORKSPACE_METADATA, (data: unknown) => {
-        updateWorkspaceCache();
         callback(data as Parameters<typeof callback>[0]);
       });
       return unsubscribe;
@@ -289,18 +271,12 @@ const webApi: IPCApi = {
       return wsManager.on(channel, callback as (data: unknown) => void);
     },
     openWindow: (workspaceId) => {
-      // Check workspace runtime type using cached metadata (synchronous)
+      // In browser mode, always open terminal in a new browser window (for both local and SSH workspaces)
       // This must be synchronous to avoid popup blocker during user gesture
-      const workspace = workspaceMetadataCache.find((ws) => ws.id === workspaceId);
-      const isSSH = workspace?.runtimeConfig?.type === "ssh";
+      const url = `/terminal.html?workspaceId=${encodeURIComponent(workspaceId)}`;
+      window.open(url, `terminal-${workspaceId}-${Date.now()}`, "width=1000,height=600,popup=yes");
 
-      if (isSSH) {
-        // SSH workspace - open browser tab with terminal UI (must be synchronous)
-        const url = `/terminal.html?workspaceId=${encodeURIComponent(workspaceId)}`;
-        window.open(url, `terminal-${workspaceId}-${Date.now()}`, "width=1000,height=600");
-      }
-      // For local workspaces, the IPC handler will open a native terminal
-
+      // Also invoke IPC to let backend know (desktop mode will handle native/ghostty-web routing)
       return invokeIPC(IPC_CHANNELS.TERMINAL_WINDOW_OPEN, workspaceId);
     },
     closeWindow: (workspaceId) => invokeIPC(IPC_CHANNELS.TERMINAL_WINDOW_CLOSE, workspaceId),

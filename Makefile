@@ -52,7 +52,7 @@ include fmt.mk
 .PHONY: docs docs-build docs-watch
 .PHONY: storybook storybook-build test-storybook chromatic
 .PHONY: benchmark-terminal
-.PHONY: ensure-deps
+.PHONY: ensure-deps rebuild-native
 .PHONY: check-eager-imports check-bundle-size check-startup
 
 # Build tools
@@ -94,6 +94,12 @@ node_modules/.installed: package.json bun.lock
 
 # Legacy target for backwards compatibility
 ensure-deps: node_modules/.installed
+
+# Rebuild native modules for Electron
+rebuild-native: node_modules/.installed ## Rebuild native modules (node-pty) for Electron
+	@echo "Rebuilding native modules for Electron..."
+	@npx @electron/rebuild -f -m node_modules/node-pty
+	@echo "Native modules rebuilt successfully"
 
 ## Help
 help: ## Show this help message
@@ -362,7 +368,7 @@ benchmark-terminal: ## Run Terminal-Bench with the mux agent (use TB_DATASET/TB_
 	export MUX_TIMEOUT_MS=$$((TB_TIMEOUT * 1000)); \
 	uvx terminal-bench run \
 		--dataset "$$TB_DATASET" \
-		--agent-import-path benchmarks.terminal_bench.mux_agent:CmuxAgent \
+		--agent-import-path benchmarks.terminal_bench.mux_agent:MuxAgent \
 		--global-agent-timeout-sec $$TB_TIMEOUT \
 		$$CONCURRENCY_FLAG \
 		$$LIVESTREAM_FLAG \

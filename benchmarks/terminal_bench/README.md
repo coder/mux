@@ -101,8 +101,8 @@ Based on analysis of the Oct 30 nightly run (15-minute timeout):
 
 ## Files
 
-- `cmux_agent.py`: Main agent adapter implementing Terminal-Bench's agent interface
-- `cmux-run.sh`: Shell script that sets up environment and invokes cmux CLI
-- `cmux_payload.py`: Helper to package cmux app for containerized execution
-- `cmux_setup.sh.j2`: Jinja2 template for agent installation script
+- `mux_agent.py`: Main agent adapter implementing Terminal-Bench's agent interface
+- `mux-run.sh`: Shell script that sets up environment and invokes mux CLI
+- `mux_payload.py`: Helper to package the mux app for containerized execution
+- `mux_setup.sh.j2`: Jinja2 template for agent installation script
 - `sample_tasks.py`: Utility to randomly sample tasks from dataset

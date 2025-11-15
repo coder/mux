@@ -1575,21 +1575,27 @@ export class IpcMain {
         }
 
         const runtimeConfig = workspace.runtimeConfig;
+        const isSSH = isSSHRuntime(runtimeConfig);
+        const isDesktop = !!this.terminalWindowManager;
 
-        // For local workspaces, use native terminal (both desktop and browser mode)
-        // For SSH workspaces, use ghostty-web (desktop) or browser terminal (browser mode)
-        if (!isSSHRuntime(runtimeConfig)) {
-          // Local workspace - use native terminal
+        // Terminal routing logic:
+        // - Desktop + Local: Native terminal
+        // - Desktop + SSH: Web terminal (ghostty-web Electron window)
+        // - Browser + Local: Web terminal (browser tab)
+        // - Browser + SSH: Web terminal (browser tab)
+        if (isDesktop && !isSSH) {
+          // Desktop + Local: Native terminal
           log.info(`Opening native terminal for local workspace: ${workspaceId}`);
           await this.openTerminal({ type: "local", workspacePath: workspace.namedWorkspacePath });
-        } else if (this.terminalWindowManager) {
-          // SSH workspace in desktop mode - use ghostty-web Electron window
+        } else if (isDesktop && isSSH) {
+          // Desktop + SSH: Web terminal (ghostty-web Electron window)
           log.info(`Opening ghostty-web terminal for SSH workspace: ${workspaceId}`);
-          await this.terminalWindowManager.openTerminalWindow(workspaceId);
+          await this.terminalWindowManager!.openTerminalWindow(workspaceId);
         } else {
-          // SSH workspace in browser mode - let browser handle it
+          // Browser mode (local or SSH): Web terminal (browser window)
+          // Browser will handle opening the terminal window via window.open()
           log.info(
-            `Browser mode: terminal UI handled by browser for SSH workspace: ${workspaceId}`
+            `Browser mode: terminal UI handled by browser for ${isSSH ? "SSH" : "local"} workspace: ${workspaceId}`
           );
         }
 

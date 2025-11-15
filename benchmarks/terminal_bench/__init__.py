@@ -1,3 +1,3 @@
-from .cmux_agent import CmuxAgent
+from .mux_agent import MuxAgent
 
-__all__ = ["CmuxAgent"]
+__all__ = ["MuxAgent"]
