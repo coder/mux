@@ -1,6 +1,5 @@
 import assert from "@/utils/assert";
-import { BrowserWindow } from "electron";
-import type { IpcMain as ElectronIpcMain } from "electron";
+import type { IpcMain as ElectronIpcMain, BrowserWindow } from "electron";
 import { spawn, spawnSync } from "child_process";
 import * as fsPromises from "fs/promises";
 import * as path from "path";
@@ -1479,12 +1478,19 @@ export class IpcMain {
   private registerTerminalHandlers(ipcMain: ElectronIpcMain, mainWindow: BrowserWindow): void {
     ipcMain.handle(IPC_CHANNELS.TERMINAL_CREATE, async (event, params: TerminalCreateParams) => {
       try {
+        let senderWindow: Electron.BrowserWindow | null = null;
         // Get the window that requested this terminal
         // In Electron, use the actual sender window. In browser mode, event is null,
         // so we use the mainWindow (mockWindow) which broadcasts to all WebSocket clients
-        const senderWindow = event?.sender
-          ? BrowserWindow.fromWebContents(event.sender)
-          : mainWindow;
+        if (event?.sender) {
+          // We must dynamically import here because the browser distribution
+          // does not include the electron module.
+          // eslint-disable-next-line no-restricted-syntax
+          const { BrowserWindow } = await import("electron");
+          senderWindow = BrowserWindow.fromWebContents(event.sender);
+        } else {
+          senderWindow = mainWindow;
+        }
         if (!senderWindow) {
           throw new Error("Could not find sender window for terminal creation");
         }
