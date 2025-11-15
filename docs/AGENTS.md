@@ -142,14 +142,14 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 - Prefer fixes that simplify existing code; such simplifications often do not need new tests.
 - When adding complexity, add or extend tests. If coverage requires new infrastructure, propose the harness and then add the tests there.
 
-## Execution Modes
+<!-- IMPORTANT: Do not rename these Mode headings; the parser extracts them verbatim. -->
 
-### Exec Mode (`wait_pr_checks` requests)
+## Mode: Exec
 
 - Treat as a standing order: keep running checks and addressing failures until they pass or a blocker outside your control arises.
 - Reproduce remote static-check failures locally with `make static-check`; fix formatting with `make fmt` before rerunning CI.
 - When CI fails, reproduce locally with the smallest relevant command; log approximate runtimes to optimize future loops.
 
-### Plan Mode
+## Mode: Plan
 
 - Attach a net LoC estimate (product code only) to each recommended approach.

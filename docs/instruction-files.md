@@ -9,6 +9,8 @@ mux layers instructions from two locations:
 
 Priority within each location: `AGENTS.md` → `AGENT.md` → `CLAUDE.md` (first match wins). If the base file is found, mux also appends `AGENTS.local.md` from the same directory when present.
 
+> **Note:** mux strips HTML-style markdown comments (`<!-- ... -->`) from instruction files before sending them to the model. Use these comments for editor-only metadata—they will not reach the agent.
+
 ## Mode Prompts
 
 > Use mode-specific sections to optimize context and customize the behavior specific modes.

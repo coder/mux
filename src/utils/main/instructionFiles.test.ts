@@ -58,6 +58,19 @@ describe("instructionFiles", () => {
       expect(result).toBeNull();
     });
 
+    it("should strip markdown comments from instructions", async () => {
+      await fs.writeFile(path.join(tempDir, "AGENTS.md"), "<!-- secret -->\nVisible directive");
+
+      const result = await readInstructionSet(tempDir);
+      expect(result).toBe("Visible directive");
+    });
+
+    it("should return null if stripping comments leaves no content", async () => {
+      await fs.writeFile(path.join(tempDir, "AGENTS.md"), "<!-- only comments -->");
+
+      const result = await readInstructionSet(tempDir);
+      expect(result).toBeNull();
+    });
     it("should prefer AGENTS.md even if AGENT.md and AGENTS.local.md exist", async () => {
       await fs.writeFile(path.join(tempDir, "AGENTS.md"), "agents base");
       await fs.writeFile(path.join(tempDir, "AGENT.md"), "agent base");

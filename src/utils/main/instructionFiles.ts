@@ -3,6 +3,12 @@ import * as path from "path";
 import type { Runtime } from "@/runtime/Runtime";
 import { readFileString } from "@/utils/runtime/helpers";
 
+const MARKDOWN_COMMENT_REGEX = /<!--[\s\S]*?-->/g;
+
+function stripMarkdownComments(content: string): string {
+  return content.replace(MARKDOWN_COMMENT_REGEX, "").trim();
+}
+
 /**
  * Instruction file names to search for, in priority order.
  * The first file found in a directory is used as the base instruction set.
@@ -82,14 +88,20 @@ async function readFileWithLocalVariant(
 ): Promise<string | null> {
   const baseContent = await readFirstAvailableFile(reader, directory, baseFilenames);
   if (!baseContent) return null;
-  if (!localFilename) return baseContent;
 
-  try {
-    const localContent = await reader.readFile(path.join(directory, localFilename));
-    return `${baseContent}\n\n${localContent}`;
-  } catch {
-    return baseContent; // Local variant missing, return base only
+  let combinedContent = baseContent;
+
+  if (localFilename) {
+    try {
+      const localContent = await reader.readFile(path.join(directory, localFilename));
+      combinedContent = `${combinedContent}\n\n${localContent}`;
+    } catch {
+      // Local variant missing, keep base only
+    }
   }
+
+  const sanitized = stripMarkdownComments(combinedContent);
+  return sanitized.length > 0 ? sanitized : null;
 }
 
 /**
