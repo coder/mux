@@ -2,6 +2,7 @@ import type { UIMessage } from "ai";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { StreamErrorType } from "./errors";
 import type { ToolPolicy } from "@/utils/tools/toolPolicy";
+import type { ChatUsageDisplay } from "@/utils/tokens/usageAggregator";
 
 // Parsed compaction request data (shared type for consistency)
 export interface CompactionRequestData {
@@ -44,6 +45,7 @@ export interface MuxMetadata {
   toolPolicy?: ToolPolicy; // Tool policy active when this message was sent (user messages only)
   mode?: string; // The mode (plan/exec/etc) active when this message was sent (assistant messages only)
   cmuxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
+  historicalUsage?: ChatUsageDisplay; // Cumulative usage from all messages before this compaction (only present on compaction summaries)
 }
 
 // Extended tool part type that supports interrupted tool calls (input-available state)

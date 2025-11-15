@@ -14,6 +14,7 @@ import { MapStore } from "./MapStore";
 import { createDisplayUsage } from "@/utils/tokens/displayUsage";
 import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";
 import type { ChatUsageDisplay } from "@/utils/tokens/usageAggregator";
+import { sumUsageHistory } from "@/utils/tokens/usageAggregator";
 import type { TokenConsumer } from "@/types/chatStats";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { getCancelledCompactionKey } from "@/constants/storage";
@@ -405,25 +406,41 @@ export class WorkspaceStore {
 
       // Extract usage from assistant messages
       const usageHistory: ChatUsageDisplay[] = [];
+      let cumulativeHistorical: ChatUsageDisplay | undefined;
 
       for (const msg of messages) {
-        if (msg.role === "assistant" && msg.metadata?.usage) {
-          // Use the model from this specific message (not global)
-          const model = msg.metadata.model ?? aggregator.getCurrentModel() ?? "unknown";
+        if (msg.role === "assistant") {
+          // Check for historical usage from compaction summaries
+          // This preserves costs from messages deleted during compaction
+          if (msg.metadata?.historicalUsage) {
+            cumulativeHistorical = msg.metadata.historicalUsage;
+          }
 
-          const usage = createDisplayUsage(
-            msg.metadata.usage,
-            model,
-            msg.metadata.providerMetadata
-          );
+          // Extract current message's usage
+          if (msg.metadata?.usage) {
+            // Use the model from this specific message (not global)
+            const model = msg.metadata.model ?? aggregator.getCurrentModel() ?? "unknown";
 
-          if (usage) {
-            usageHistory.push(usage);
+            const usage = createDisplayUsage(
+              msg.metadata.usage,
+              model,
+              msg.metadata.providerMetadata
+            );
+
+            if (usage) {
+              usageHistory.push(usage);
+            }
           }
         }
       }
 
-      // Calculate total from usage history
+      // If we have historical usage from a compaction, prepend it to history
+      // This ensures costs from pre-compaction messages are included in totals
+      if (cumulativeHistorical) {
+        usageHistory.unshift(cumulativeHistorical);
+      }
+
+      // Calculate total from usage history (now includes historical)
       const totalTokens = usageHistory.reduce(
         (sum, u) =>
           sum +
@@ -606,6 +623,12 @@ export class WorkspaceStore {
     // Extract metadata safely with type guard
     const metadata = "metadata" in data ? data.metadata : undefined;
 
+    // Calculate cumulative historical usage before replacing history
+    // This preserves costs from all messages that are about to be deleted
+    const currentUsage = this.getWorkspaceUsage(workspaceId);
+    const historicalUsage =
+      currentUsage.usageHistory.length > 0 ? sumUsageHistory(currentUsage.usageHistory) : undefined;
+
     // Extract continueMessage from compaction-request before history gets replaced
     const compactRequestMsg = findCompactionRequestMessage(aggregator);
     const cmuxMeta = compactRequestMsg?.metadata?.cmuxMetadata;
@@ -621,6 +644,7 @@ export class WorkspaceStore {
         compacted: true,
         model: aggregator.getCurrentModel(),
         usage: metadata?.usage,
+        historicalUsage, // Store cumulative costs from all pre-compaction messages
         providerMetadata:
           metadata && "providerMetadata" in metadata
             ? (metadata.providerMetadata as Record<string, unknown> | undefined)
