@@ -257,14 +257,11 @@ const webApi: IPCApi = {
 
     onMetadata: (callback) => {
       // Update cache whenever workspace metadata changes
-      const wrappedCallback = (data: unknown) => {
+      const unsubscribe = wsManager.on(IPC_CHANNELS.WORKSPACE_METADATA, (data: unknown) => {
         updateWorkspaceCache();
-        callback(data);
-      };
-      return wsManager.on(
-        IPC_CHANNELS.WORKSPACE_METADATA,
-        wrappedCallback as (data: unknown) => void
-      );
+        callback(data as Parameters<typeof callback>[0]);
+      });
+      return unsubscribe;
     },
   },
   window: {
