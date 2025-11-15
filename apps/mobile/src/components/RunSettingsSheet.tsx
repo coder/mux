@@ -78,7 +78,7 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
       <View style={[styles.container, { backgroundColor: theme.colors.background }]}> 
         <View style={styles.header}>
           <ThemedText variant="titleMedium" weight="semibold" style={styles.headerTitle}>
-            Run settings
+            Settings
           </ThemedText>
           <Pressable onPress={props.onClose} style={styles.closeButton}>
             <Ionicons name="close" size={20} color={theme.colors.foregroundPrimary} />
@@ -161,12 +161,7 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
               </View>
             )}
 
-            <ScrollView
-              style={styles.modelList}
-              nestedScrollEnabled
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator
-            >
+            <View style={styles.modelList}>
               {filteredModels.length === 0 ? (
                 <View style={{ padding: 24 }}>
                   <ThemedText variant="caption" style={{ textAlign: "center" }}>
@@ -205,7 +200,43 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
                   </View>
                 ))
               )}
-            </ScrollView>
+            </View>
+            {props.supportsExtendedContext ? (
+              <View
+                style={{
+                  marginTop: 20,
+                  paddingTop: 12,
+                  borderTopWidth: StyleSheet.hairlineWidth,
+                  borderBottomWidth: StyleSheet.hairlineWidth,
+                  borderTopColor: theme.colors.border,
+                  borderBottomColor: theme.colors.border,
+                  paddingBottom: 12,
+                  gap: 8,
+                }}
+              >
+                <View style={styles.sectionHeader}>
+                  <ThemedText weight="semibold">Context window</ThemedText>
+                  <Ionicons
+                    name="information-circle-outline"
+                    size={16}
+                    color={theme.colors.foregroundMuted}
+                  />
+                </View>
+                <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted }}>
+                  Use the 1M-token Anthropic context window when supported.
+                </ThemedText>
+                <View style={styles.toggleRow}>
+                  <ThemedText weight="semibold">1M token context</ThemedText>
+                  <Switch
+                    trackColor={{ false: theme.colors.inputBorder, true: theme.colors.accent }}
+                    thumbColor={props.use1MContext ? theme.colors.accent : theme.colors.surface}
+                    value={props.use1MContext}
+                    onValueChange={props.onToggle1MContext}
+                    disabled={!props.selectedModel?.startsWith("anthropic")}
+                  />
+                </View>
+              </View>
+            ) : null}
           </View>
 
           <View style={[styles.sectionBlock, { borderColor: theme.colors.border }]}> 
@@ -217,23 +248,39 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
                 <Pressable
                   key={modeOption}
                   onPress={() => props.onSelectMode(modeOption)}
-                  style={({ pressed }) => [
-                    styles.modeCard,
-                    {
-                      borderColor:
-                        props.mode === modeOption ? theme.colors.accent : theme.colors.border,
-                      backgroundColor:
-                        props.mode === modeOption
-                          ? theme.colors.surface
-                          : theme.colors.surfaceSecondary,
-                      opacity: pressed ? 0.85 : 1,
-                    },
-                  ]}
+                  style={({ pressed }) => {
+                    const isSelected = props.mode === modeOption;
+                    const selectedFill =
+                      modeOption === "plan" ? theme.colors.planMode : theme.colors.execMode;
+                    return [
+                      styles.modeCard,
+                      {
+                        borderColor: isSelected ? selectedFill : theme.colors.border,
+                        backgroundColor: isSelected ? selectedFill : theme.colors.surfaceSecondary,
+                        opacity: pressed ? 0.85 : 1,
+                      },
+                    ];
+                  }}
                 >
-                  <ThemedText weight="semibold" style={{ textTransform: "capitalize" }}>
+                  <ThemedText
+                    weight="semibold"
+                    style={{
+                      textTransform: "capitalize",
+                      color: props.mode === modeOption
+                        ? theme.colors.foregroundInverted
+                        : theme.colors.foregroundPrimary,
+                    }}
+                  >
                     {modeOption}
                   </ThemedText>
-                  <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted }}>
+                  <ThemedText
+                    variant="caption"
+                    style={{
+                      color: props.mode === modeOption
+                        ? theme.colors.foregroundInverted
+                        : theme.colors.foregroundMuted,
+                    }}
+                  >
                     {modeOption === "plan" ? "Plan before executing" : "Act directly"}
                   </ThemedText>
                 </Pressable>
@@ -280,24 +327,6 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
             </View>
           </View>
 
-          {props.supportsExtendedContext && (
-            <View style={[styles.sectionBlock, { borderColor: theme.colors.border }]}> 
-              <ThemedText variant="label" weight="semibold" style={styles.sectionTitle}>
-                Context window
-              </ThemedText>
-              <View style={styles.contextRow}>
-                <ThemedText style={{ flex: 1 }}>
-                  Enable 1M token context (Anthropic only)
-                </ThemedText>
-                <Switch
-                  value={props.use1MContext}
-                  onValueChange={props.onToggle1MContext}
-                  trackColor={{ true: theme.colors.accent, false: theme.colors.border }}
-                  thumbColor={theme.colors.surface}
-                />
-              </View>
-            </View>
-          )}
         </ScrollView>
       </View>
     </Modal>
@@ -362,7 +391,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   modelList: {
-    maxHeight: 320,
+    marginTop: 8,
   },
   chip: {
     paddingVertical: 6,
@@ -395,10 +424,5 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 999,
-  },
-  contextRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
   },
 });

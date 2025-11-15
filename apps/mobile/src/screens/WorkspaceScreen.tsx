@@ -3,13 +3,14 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
-  Keyboard,
   KeyboardAvoidingView,
+  NativeSyntheticEvent,
   Platform,
   Pressable,
   TextInput,
   View,
 } from "react-native";
+import type { TextInputKeyPressEventData } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
@@ -28,6 +29,12 @@ import { FloatingTodoCard } from "../components/FloatingTodoCard";
 import type { TodoItem } from "../components/TodoItemView";
 import { createChatEventExpander, DISPLAYABLE_MESSAGE_TYPES } from "../messages/normalizeChatEvent";
 import type { DisplayedMessage, FrontendWorkspaceMetadata, WorkspaceChatEvent } from "../types";
+import type { SlashSuggestion } from "@shared/utils/slashCommands/types";
+import { parseCommand } from "@shared/utils/slashCommands/parser";
+import { useSlashCommandSuggestions } from "../hooks/useSlashCommandSuggestions";
+import { ToastBanner, ToastPayload, ToastState } from "../components/ToastBanner";
+import { SlashCommandSuggestions } from "../components/SlashCommandSuggestions";
+import { executeSlashCommand } from "../utils/slashCommandRunner";
 import { createCompactedMessage } from "../utils/messageHelpers";
 import type { RuntimeConfig, RuntimeMode } from "@shared/types/runtime";
 import { RUNTIME_MODE, parseRuntimeModeAndHost, buildRuntimeString } from "@shared/types/runtime";
@@ -207,7 +214,7 @@ function RawEventCard({
   const spacing = theme.spacing;
 
   if (payload && typeof payload === "object" && "type" in payload) {
-    const typed = payload as { type: unknown; [key: string]: unknown };
+    const typed = payload as { type: unknown;[key: string]: unknown };
     if (typed.type === "status" && typeof typed.status === "string") {
       return <ThemedText variant="caption">{typed.status}</ThemedText>;
     }
@@ -328,24 +335,136 @@ function WorkspaceScreenInner({
     () => sanitizeModelSequence([model, ...recentModels]),
     [model, recentModels]
   );
+  const sendMessageOptions = useMemo(
+    () => ({
+      model,
+      mode,
+      thinkingLevel,
+      providerOptions: {
+        anthropic: {
+          use1MContext,
+        },
+      },
+    }),
+    [model, mode, thinkingLevel, use1MContext]
+  );
+  const [input, setInput] = useState("");
+  const [suppressCommandSuggestions, setSuppressCommandSuggestions] = useState(false);
+  const setInputWithSuggestionGuard = useCallback(
+    (next: string) => {
+      setInput(next);
+      setSuppressCommandSuggestions(false);
+    },
+    []
+  );
+  const commandListIdRef = useRef(`slash-${Math.random().toString(36).slice(2)}`);
+  const [commandHighlightIndex, setCommandHighlightIndex] = useState(0);
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const showToast = useCallback((payload: ToastPayload) => {
+    setToast({
+      ...payload,
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    });
+  }, []);
+  const dismissToast = useCallback(() => {
+    setToast(null);
+  }, []);
+  const showInfoToast = useCallback(
+    (title: string, message: string) => {
+      showToast({ title, message, tone: "info" });
+    },
+    [showToast]
+  );
+  const showErrorToast = useCallback(
+    (title: string, message: string) => {
+      showToast({ title, message, tone: "error" });
+    },
+    [showToast]
+  );
+  const { suggestions: commandSuggestions } = useSlashCommandSuggestions({
+    input,
+    api,
+    enabled: !isCreationMode,
+  });
+  useEffect(() => {
+    if (!toast || toast.tone === "error") {
+      return;
+    }
+    const timer = setTimeout(() => {
+      setToast((current) => (current?.id === toast.id ? null : current));
+    }, 3500);
+    return () => clearTimeout(timer);
+  }, [toast]);
+  useEffect(() => {
+    setCommandHighlightIndex((currentIndex) => {
+      if (commandSuggestions.length === 0) {
+        return 0;
+      }
+      return Math.min(currentIndex, commandSuggestions.length - 1);
+    });
+  }, [commandSuggestions]);
+  const selectHighlightedCommand = useCallback(
+    (suggestion?: SlashSuggestion) => {
+      const target = suggestion ?? commandSuggestions[commandHighlightIndex];
+      if (!target) {
+        return;
+      }
+      const replacement = target.replacement.endsWith(" ")
+        ? target.replacement
+        : `${target.replacement} `;
+      setInputWithSuggestionGuard(replacement);
+    },
+    [commandHighlightIndex, commandSuggestions, setInputWithSuggestionGuard]
+  );
+  const showCommandSuggestions =
+    !isCreationMode && !suppressCommandSuggestions && commandSuggestions.length > 0;
+  const handleCommandKeyDown = useCallback(
+    (event: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
+      if (!showCommandSuggestions || commandSuggestions.length === 0) {
+        return;
+      }
+      const key = event.nativeEvent.key;
+      if (key === "ArrowDown") {
+        event.preventDefault();
+        setCommandHighlightIndex((prev) => (prev + 1) % commandSuggestions.length);
+      } else if (key === "ArrowUp") {
+        event.preventDefault();
+        setCommandHighlightIndex(
+          (prev) => (prev - 1 + commandSuggestions.length) % commandSuggestions.length
+        );
+      } else if (key === "Tab") {
+        event.preventDefault();
+        selectHighlightedCommand();
+      } else if (key === "Escape") {
+        event.preventDefault();
+        setSuppressCommandSuggestions(true);
+      }
+    },
+    [
+      commandSuggestions.length,
+      selectHighlightedCommand,
+      setSuppressCommandSuggestions,
+      showCommandSuggestions,
+    ]
+  );
+
   const runSettingsDetails = useMemo(() => {
     const modeLabel = mode === "plan" ? "Plan" : "Exec";
     return `${modeLabel} • ${thinkingLevel.toUpperCase()}`;
   }, [mode, thinkingLevel]);
   const modelSummary = useMemo(() => formatModelSummary(model), [model]);
-  const [input, setInput] = useState("");
 
   // Creation mode: branch selection state
   const [branches, setBranches] = useState<string[]>(creationContext?.branches ?? []);
   const [trunkBranch, setTrunkBranch] = useState<string>(
     creationContext?.defaultTrunk ?? branches[0] ?? "main"
   );
-  
+
   // Creation mode: advanced options state
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>(RUNTIME_MODE.LOCAL);
   const [sshHost, setSshHost] = useState("");
-  
+
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [isSending, setIsSending] = useState(false);
   const wsRef = useRef<{ close: () => void } | null>(null);
@@ -356,6 +475,15 @@ function WorkspaceScreenInner({
   const [editingMessage, setEditingMessage] = useState<{ id: string; content: string } | undefined>(
     undefined
   );
+  const handlePlaceholder = useMemo(() => {
+    if (isCreationMode) {
+      return "Describe what you want to build...";
+    }
+    if (editingMessage) {
+      return "Edit your message...";
+    }
+    return "Message";
+  }, [isCreationMode, editingMessage]);
 
   // Track current todos for floating card (during streaming)
   const [currentTodos, setCurrentTodos] = useState<TodoItem[]>([]);
@@ -558,8 +686,8 @@ function WorkspaceScreenInner({
     setCurrentTodos([]);
     setHasTodos(false);
     setEditingMessage(undefined);
-    setInput("");
-  }, [workspaceId, setHasTodos]);
+    setInputWithSuggestionGuard("");
+  }, [workspaceId, setHasTodos, setInputWithSuggestionGuard]);
 
   const handleOpenRunSettings = useCallback(() => {
     if (settingsLoading) {
@@ -618,6 +746,35 @@ function WorkspaceScreenInner({
 
   const onSend = useCallback(async () => {
     const trimmed = input.trim();
+    const parsedCommand = parseCommand(trimmed);
+
+    if (!isCreationMode && parsedCommand) {
+      const handled = await executeSlashCommand(parsedCommand, {
+        api,
+        workspaceId,
+        metadata,
+        sendMessageOptions,
+        editingMessageId: editingMessage?.id,
+        onClearTimeline: () => setTimeline([]),
+        onCancelEdit: handleCancelEdit,
+        onNavigateToWorkspace: (nextWorkspaceId) => {
+          router.replace(`/workspace/${nextWorkspaceId}`);
+        },
+        onSelectModel: async (modelId) => {
+          await handleSelectModel(modelId);
+        },
+        showInfo: showInfoToast,
+        showError: showErrorToast,
+      });
+
+      if (handled) {
+        setIsSending(false);
+        setSuppressCommandSuggestions(true);
+        setInputWithSuggestionGuard("");
+        return;
+      }
+    }
+
     if (!trimmed) {
       return;
     }
@@ -625,31 +782,24 @@ function WorkspaceScreenInner({
     const wasEditing = !!editingMessage;
     const originalContent = input;
 
-    // Clear input immediately for better UX
-    setInput("");
+    setInputWithSuggestionGuard("");
     setIsSending(true);
+    setSuppressCommandSuggestions(true);
 
     if (isCreationMode) {
       // CREATION MODE: Send first message to create workspace
-      
+
       // Build runtime config based on selected mode
       const runtimeConfig: RuntimeConfig | undefined =
         runtimeMode === RUNTIME_MODE.SSH
           ? { type: "ssh" as const, host: sshHost, srcBaseDir: "~/cmux" }
           : undefined;
-      
+
       const result = await api.workspace.sendMessage(null, trimmed, {
-        model,
-        mode,
-        thinkingLevel,
+        ...sendMessageOptions,
         projectPath: creationContext!.projectPath,
         trunkBranch,
         runtimeConfig,
-        providerOptions: {
-          anthropic: {
-            use1MContext,
-          },
-        },
       });
 
       if (!result.success) {
@@ -657,7 +807,7 @@ function WorkspaceScreenInner({
         setTimeline((current) =>
           applyChatEvent(current, { type: "error", error: result.error } as WorkspaceChatEvent)
         );
-        setInput(originalContent);
+        setInputWithSuggestionGuard(originalContent);
       } else if ("metadata" in result && result.metadata) {
         // Save runtime preference if non-local
         if (runtimeMode !== RUNTIME_MODE.LOCAL) {
@@ -666,7 +816,7 @@ function WorkspaceScreenInner({
             await saveRuntimePreference(creationContext!.projectPath, runtimeString);
           }
         }
-        
+
         // Success! Navigate to new workspace
         router.replace(`/workspace/${result.metadata.id}`);
         // Note: router.replace ensures we don't go back to creation screen
@@ -679,15 +829,8 @@ function WorkspaceScreenInner({
     // NORMAL MODE: Send message - fire and forget
     // Actual errors will come via stream-error events from WebSocket
     const result = await api.workspace.sendMessage(workspaceId!, trimmed, {
-      model,
-      mode,
-      thinkingLevel,
+      ...sendMessageOptions,
       editMessageId: editingMessage?.id, // Pass editMessageId if editing
-      providerOptions: {
-        anthropic: {
-          use1MContext,
-        },
-      },
     });
 
     // Only show error for validation failures (not stream errors)
@@ -700,7 +843,7 @@ function WorkspaceScreenInner({
       // Restore edit state on error
       if (wasEditing) {
         setEditingMessage(editingMessage);
-        setInput(originalContent);
+        setInputWithSuggestionGuard(originalContent);
       }
     } else {
       // Clear editing state on success
@@ -712,19 +855,30 @@ function WorkspaceScreenInner({
     setIsSending(false);
   }, [
     api,
+    creationContext,
+    editingMessage,
+    handleCancelEdit,
+    handleSelectModel,
     input,
-    mode,
-    thinkingLevel,
+    isCreationMode,
+    metadata,
     model,
+    mode,
+    router,
+    runtimeMode,
+    sendMessageOptions,
+    setEditingMessage,
+    setInputWithSuggestionGuard,
+    setIsSending,
+    setSuppressCommandSuggestions,
+    setTimeline,
+    showErrorToast,
+    showInfoToast,
+    sshHost,
+    thinkingLevel,
+    trunkBranch,
     use1MContext,
     workspaceId,
-    editingMessage,
-    isCreationMode,
-    creationContext,
-    trunkBranch,
-    runtimeMode,
-    sshHost,
-    router,
   ]);
 
   const onCancelStream = useCallback(async () => {
@@ -751,7 +905,7 @@ function WorkspaceScreenInner({
   // Edit message handlers
   const handleStartEdit = useCallback((messageId: string, content: string) => {
     setEditingMessage({ id: messageId, content });
-    setInput(content);
+    setInputWithSuggestionGuard(content);
     // Focus input after a short delay to ensure keyboard opens
     setTimeout(() => {
       inputRef.current?.focus();
@@ -760,8 +914,8 @@ function WorkspaceScreenInner({
 
   const handleCancelEdit = useCallback(() => {
     setEditingMessage(undefined);
-    setInput("");
-  }, []);
+    setInputWithSuggestionGuard("");
+  }, [setInputWithSuggestionGuard]);
 
   // Validation: check if message can be edited
   const canEditMessage = useCallback(
@@ -854,403 +1008,428 @@ function WorkspaceScreenInner({
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={80}
       >
-      <View style={{ flex: 1 }}>
-        {/* Chat area - header bar removed, all actions now in action sheet menu */}
-        <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
-          {isCreationMode && timeline.length === 0 ? (
-            <View
-              style={{
-                flex: 1,
-                justifyContent: "center",
-                alignItems: "center",
-                padding: spacing.xl,
-              }}
-            >
-              <Ionicons name="chatbubbles-outline" size={48} color={theme.colors.foregroundMuted} />
-              <ThemedText
-                variant="titleSmall"
-                weight="semibold"
-                style={{ marginTop: spacing.md, textAlign: "center" }}
-              >
-                Start a new conversation
-              </ThemedText>
-              <ThemedText
-                variant="caption"
+        <View style={{ flex: 1 }}>
+          {/* Chat area - header bar removed, all actions now in action sheet menu */}
+          <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
+            {isCreationMode && timeline.length === 0 ? (
+              <View
                 style={{
-                  marginTop: spacing.xs,
-                  textAlign: "center",
-                  color: theme.colors.foregroundMuted,
-                }}
-              >
-                Type your first message below to create a workspace
-              </ThemedText>
-            </View>
-          ) : metadataQuery.isLoading && timeline.length === 0 ? (
-            <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-              <ActivityIndicator color={theme.colors.accent} />
-            </View>
-          ) : (
-            <FlatList
-              ref={flatListRef}
-              data={listData}
-              keyExtractor={keyExtractor}
-              renderItem={renderItem}
-              inverted
-              contentContainerStyle={{ paddingHorizontal: spacing.md, paddingVertical: spacing.sm }}
-              initialNumToRender={20}
-              maxToRenderPerBatch={12}
-              windowSize={5}
-              updateCellsBatchingPeriod={32}
-              removeClippedSubviews
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="on-drag"
-            />
-          )}
-        </View>
-
-        {/* Floating Todo Card */}
-        {currentTodos.length > 0 && todoCardVisible && (
-          <FloatingTodoCard todos={currentTodos} onDismiss={toggleTodoCard} />
-        )}
-
-        {/* Streaming Indicator */}
-        {isStreaming && streamingModel && (
-          <View
-            style={{
-              paddingVertical: spacing.xs,
-              paddingHorizontal: spacing.md,
-              backgroundColor: theme.colors.surfaceSecondary,
-              borderTopWidth: 1,
-              borderTopColor: theme.colors.border,
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}
-          >
-            <ThemedText variant="caption" style={{ color: theme.colors.accent }}>
-              {(streamingModelDisplay ?? streamingModel) ?? ""} streaming...
-            </ThemedText>
-            {tokenDisplay.total > 0 && (
-              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
-                <ThemedText variant="caption" style={{ color: theme.colors.accent }}>
-                  ~{tokenDisplay.total.toLocaleString()} tokens
-                </ThemedText>
-                {tokenDisplay.tps > 0 && (
-                  <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted }}>
-                    @ {tokenDisplay.tps} t/s
-                  </ThemedText>
-                )}
-              </View>
-            )}
-          </View>
-        )}
-
-        {/* Input area */}
-        <View
-          style={{
-            paddingHorizontal: spacing.md,
-            paddingTop: spacing.sm,
-            paddingBottom: Math.max(spacing.sm, insets.bottom),
-            backgroundColor: theme.colors.surfaceSecondary,
-            borderTopWidth: 1,
-            borderTopColor: theme.colors.border,
-          }}
-        >
-          {/* Creation banner */}
-          {isCreationMode && (
-            <View
-              style={{
-                backgroundColor: theme.colors.surfaceElevated,
-                paddingVertical: spacing.md,
-                paddingHorizontal: spacing.md,
-                borderRadius: 8,
-                marginBottom: spacing.sm,
-              }}
-            >
-              <ThemedText
-                variant="titleSmall"
-                weight="semibold"
-                style={{ marginBottom: spacing.xs }}
-              >
-                {creationContext!.projectName}
-              </ThemedText>
-              <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted }}>
-                Workspace name and branch will be generated automatically
-              </ThemedText>
-
-              {/* Advanced Options Toggle */}
-              <Pressable
-                onPress={() => setShowAdvanced(!showAdvanced)}
-                style={{
-                  flexDirection: "row",
+                  flex: 1,
+                  justifyContent: "center",
                   alignItems: "center",
-                  gap: spacing.xs,
-                  marginTop: spacing.sm,
-                  paddingVertical: spacing.xs,
+                  padding: spacing.xl,
                 }}
               >
-                <Ionicons
-                  name="settings-outline"
-                  size={14}
-                  color={theme.colors.foregroundMuted}
-                />
+                <Ionicons name="chatbubbles-outline" size={48} color={theme.colors.foregroundMuted} />
+                <ThemedText
+                  variant="titleSmall"
+                  weight="semibold"
+                  style={{ marginTop: spacing.md, textAlign: "center" }}
+                >
+                  Start a new conversation
+                </ThemedText>
                 <ThemedText
                   variant="caption"
-                  style={{ color: theme.colors.foregroundMuted, flex: 1 }}
+                  style={{
+                    marginTop: spacing.xs,
+                    textAlign: "center",
+                    color: theme.colors.foregroundMuted,
+                  }}
                 >
-                  Advanced Options
+                  Type your first message below to create a workspace
                 </ThemedText>
-                <Ionicons
-                  name={showAdvanced ? "chevron-down" : "chevron-forward"}
-                  size={14}
-                  color={theme.colors.foregroundMuted}
-                />
-              </Pressable>
+              </View>
+            ) : metadataQuery.isLoading && timeline.length === 0 ? (
+              <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+                <ActivityIndicator color={theme.colors.accent} />
+              </View>
+            ) : (
+              <FlatList
+                ref={flatListRef}
+                data={listData}
+                keyExtractor={keyExtractor}
+                renderItem={renderItem}
+                inverted
+                contentContainerStyle={{ paddingHorizontal: spacing.md, paddingVertical: spacing.sm }}
+                initialNumToRender={20}
+                maxToRenderPerBatch={12}
+                windowSize={5}
+                updateCellsBatchingPeriod={32}
+                removeClippedSubviews
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
+              />
+            )}
+          </View>
 
-              {/* Expandable Options */}
-              {showAdvanced && (
-                <View style={{ marginTop: spacing.md, gap: spacing.md }}>
-                  {/* Trunk Branch Picker */}
-                  <View>
-                    <ThemedText
-                      variant="caption"
-                      style={{ marginBottom: spacing.xs, color: theme.colors.foregroundMuted }}
-                    >
-                      Base Branch
+          {/* Floating Todo Card */}
+          {currentTodos.length > 0 && todoCardVisible && (
+            <FloatingTodoCard todos={currentTodos} onDismiss={toggleTodoCard} />
+          )}
+
+          {/* Streaming Indicator */}
+          {isStreaming && streamingModel && (
+            <View
+              style={{
+                paddingVertical: spacing.xs,
+                paddingHorizontal: spacing.md,
+                backgroundColor: theme.colors.surfaceSecondary,
+                borderTopWidth: 1,
+                borderTopColor: theme.colors.border,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <ThemedText variant="caption" style={{ color: theme.colors.accent }}>
+                {(streamingModelDisplay ?? streamingModel) ?? ""} streaming...
+              </ThemedText>
+              {tokenDisplay.total > 0 && (
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                  <ThemedText variant="caption" style={{ color: theme.colors.accent }}>
+                    ~{tokenDisplay.total.toLocaleString()} tokens
+                  </ThemedText>
+                  {tokenDisplay.tps > 0 && (
+                    <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted }}>
+                      @ {tokenDisplay.tps} t/s
                     </ThemedText>
-                    <View
-                      style={{
-                        borderWidth: 1,
-                        borderColor: theme.colors.inputBorder,
-                        borderRadius: theme.radii.sm,
-                        backgroundColor: theme.colors.inputBackground,
-                      }}
-                    >
-                      <Picker
-                        selectedValue={trunkBranch}
-                        onValueChange={(value) => setTrunkBranch(value)}
-                        style={{ color: theme.colors.foregroundPrimary }}
-                        dropdownIconColor={theme.colors.foregroundPrimary}
-                      >
-                        {branches.map((branch) => (
-                          <Picker.Item
-                            key={branch}
-                            label={branch}
-                            value={branch}
-                            color={theme.colors.foregroundPrimary}
-                          />
-                        ))}
-                      </Picker>
-                    </View>
-                  </View>
-
-                  {/* Runtime Picker */}
-                  <View>
-                    <ThemedText
-                      variant="caption"
-                      style={{ marginBottom: spacing.xs, color: theme.colors.foregroundMuted }}
-                    >
-                      Runtime
-                    </ThemedText>
-                    <View
-                      style={{
-                        borderWidth: 1,
-                        borderColor: theme.colors.inputBorder,
-                        borderRadius: theme.radii.sm,
-                        backgroundColor: theme.colors.inputBackground,
-                      }}
-                    >
-                      <Picker
-                        selectedValue={runtimeMode}
-                        onValueChange={(value) => setRuntimeMode(value as RuntimeMode)}
-                        style={{ color: theme.colors.foregroundPrimary }}
-                        dropdownIconColor={theme.colors.foregroundPrimary}
-                      >
-                        <Picker.Item
-                          label="Local"
-                          value={RUNTIME_MODE.LOCAL}
-                          color={theme.colors.foregroundPrimary}
-                        />
-                        <Picker.Item
-                          label="SSH Remote"
-                          value={RUNTIME_MODE.SSH}
-                          color={theme.colors.foregroundPrimary}
-                        />
-                      </Picker>
-                    </View>
-                  </View>
-
-                  {/* SSH Host Input (conditional) */}
-                  {runtimeMode === RUNTIME_MODE.SSH && (
-                    <View>
-                      <ThemedText
-                        variant="caption"
-                        style={{ marginBottom: spacing.xs, color: theme.colors.foregroundMuted }}
-                      >
-                        SSH Host
-                      </ThemedText>
-                      <TextInput
-                        value={sshHost}
-                        onChangeText={setSshHost}
-                        placeholder="user@hostname"
-                        placeholderTextColor={theme.colors.foregroundMuted}
-                        style={{
-                          borderWidth: 1,
-                          borderColor: theme.colors.inputBorder,
-                          borderRadius: theme.radii.sm,
-                          backgroundColor: theme.colors.inputBackground,
-                          color: theme.colors.foregroundPrimary,
-                          paddingHorizontal: spacing.md,
-                          paddingVertical: spacing.sm,
-                          fontSize: 14,
-                        }}
-                      />
-                    </View>
                   )}
                 </View>
               )}
             </View>
           )}
 
-          {/* Editing banner */}
-          {editingMessage && (
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "center",
-                backgroundColor: "#FFF4E6",
-                paddingVertical: spacing.sm,
-                paddingHorizontal: spacing.md,
-                borderRadius: 8,
-                marginBottom: spacing.sm,
-              }}
-            >
-              <ThemedText style={{ color: "#B45309", fontSize: 14, fontWeight: "600" }}>
-                ✏️ Editing message
-              </ThemedText>
-              <Pressable onPress={handleCancelEdit}>
-                <ThemedText style={{ color: "#1E40AF", fontSize: 14, fontWeight: "600" }}>
-                  Cancel
+          {/* Input area */}
+          <View
+            style={{
+              paddingHorizontal: spacing.md,
+              paddingTop: spacing.sm,
+              paddingBottom: Math.max(spacing.sm, insets.bottom),
+              backgroundColor: theme.colors.surfaceSecondary,
+              borderTopWidth: 1,
+              borderTopColor: theme.colors.border,
+            }}
+          >
+            {/* Creation banner */}
+            {isCreationMode && (
+              <View
+                style={{
+                  backgroundColor: theme.colors.surfaceElevated,
+                  paddingVertical: spacing.md,
+                  paddingHorizontal: spacing.md,
+                  borderRadius: 8,
+                  marginBottom: spacing.sm,
+                }}
+              >
+                <ThemedText
+                  variant="titleSmall"
+                  weight="semibold"
+                  style={{ marginBottom: spacing.xs }}
+                >
+                  {creationContext!.projectName}
                 </ThemedText>
+                <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted }}>
+                  Workspace name and branch will be generated automatically
+                </ThemedText>
+
+                {/* Advanced Options Toggle */}
+                <Pressable
+                  onPress={() => setShowAdvanced(!showAdvanced)}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: spacing.xs,
+                    marginTop: spacing.sm,
+                    paddingVertical: spacing.xs,
+                  }}
+                >
+                  <Ionicons
+                    name="settings-outline"
+                    size={14}
+                    color={theme.colors.foregroundMuted}
+                  />
+                  <ThemedText
+                    variant="caption"
+                    style={{ color: theme.colors.foregroundMuted, flex: 1 }}
+                  >
+                    Advanced Options
+                  </ThemedText>
+                  <Ionicons
+                    name={showAdvanced ? "chevron-down" : "chevron-forward"}
+                    size={14}
+                    color={theme.colors.foregroundMuted}
+                  />
+                </Pressable>
+
+                {/* Expandable Options */}
+                {showAdvanced && (
+                  <View style={{ marginTop: spacing.md, gap: spacing.md }}>
+                    {/* Trunk Branch Picker */}
+                    <View>
+                      <ThemedText
+                        variant="caption"
+                        style={{ marginBottom: spacing.xs, color: theme.colors.foregroundMuted }}
+                      >
+                        Base Branch
+                      </ThemedText>
+                      <View
+                        style={{
+                          borderWidth: 1,
+                          borderColor: theme.colors.inputBorder,
+                          borderRadius: theme.radii.sm,
+                          backgroundColor: theme.colors.inputBackground,
+                        }}
+                      >
+                        <Picker
+                          selectedValue={trunkBranch}
+                          onValueChange={(value) => setTrunkBranch(value)}
+                          style={{ color: theme.colors.foregroundPrimary }}
+                          dropdownIconColor={theme.colors.foregroundPrimary}
+                        >
+                          {branches.map((branch) => (
+                            <Picker.Item
+                              key={branch}
+                              label={branch}
+                              value={branch}
+                              color={theme.colors.foregroundPrimary}
+                            />
+                          ))}
+                        </Picker>
+                      </View>
+                    </View>
+
+                    {/* Runtime Picker */}
+                    <View>
+                      <ThemedText
+                        variant="caption"
+                        style={{ marginBottom: spacing.xs, color: theme.colors.foregroundMuted }}
+                      >
+                        Runtime
+                      </ThemedText>
+                      <View
+                        style={{
+                          borderWidth: 1,
+                          borderColor: theme.colors.inputBorder,
+                          borderRadius: theme.radii.sm,
+                          backgroundColor: theme.colors.inputBackground,
+                        }}
+                      >
+                        <Picker
+                          selectedValue={runtimeMode}
+                          onValueChange={(value) => setRuntimeMode(value as RuntimeMode)}
+                          style={{ color: theme.colors.foregroundPrimary }}
+                          dropdownIconColor={theme.colors.foregroundPrimary}
+                        >
+                          <Picker.Item
+                            label="Local"
+                            value={RUNTIME_MODE.LOCAL}
+                            color={theme.colors.foregroundPrimary}
+                          />
+                          <Picker.Item
+                            label="SSH Remote"
+                            value={RUNTIME_MODE.SSH}
+                            color={theme.colors.foregroundPrimary}
+                          />
+                        </Picker>
+                      </View>
+                    </View>
+
+                    {/* SSH Host Input (conditional) */}
+                    {runtimeMode === RUNTIME_MODE.SSH && (
+                      <View>
+                        <ThemedText
+                          variant="caption"
+                          style={{ marginBottom: spacing.xs, color: theme.colors.foregroundMuted }}
+                        >
+                          SSH Host
+                        </ThemedText>
+                        <TextInput
+                          value={sshHost}
+                          onChangeText={setSshHost}
+                          placeholder="user@hostname"
+                          placeholderTextColor={theme.colors.foregroundMuted}
+                          style={{
+                            borderWidth: 1,
+                            borderColor: theme.colors.inputBorder,
+                            borderRadius: theme.radii.sm,
+                            backgroundColor: theme.colors.inputBackground,
+                            color: theme.colors.foregroundPrimary,
+                            paddingHorizontal: spacing.md,
+                            paddingVertical: spacing.sm,
+                            fontSize: 14,
+                          }}
+                        />
+                      </View>
+                    )}
+                  </View>
+                )}
+              </View>
+            )}
+
+            {/* Editing banner */}
+            {editingMessage && (
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  backgroundColor: "#FFF4E6",
+                  paddingVertical: spacing.sm,
+                  paddingHorizontal: spacing.md,
+                  borderRadius: 8,
+                  marginBottom: spacing.sm,
+                }}
+              >
+                <ThemedText style={{ color: "#B45309", fontSize: 14, fontWeight: "600" }}>
+                  ✏️ Editing message
+                </ThemedText>
+                <Pressable onPress={handleCancelEdit}>
+                  <ThemedText style={{ color: "#1E40AF", fontSize: 14, fontWeight: "600" }}>
+                    Cancel
+                  </ThemedText>
+                </Pressable>
+              </View>
+            )}
+
+            <View style={{ position: "relative", marginBottom: spacing.sm }}>
+              {toast && (
+                <View
+                  pointerEvents="box-none"
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    right: 0,
+                    bottom: "100%",
+                    marginBottom: spacing.lg,
+                    zIndex: 10,
+                  }}
+                >
+                  <ToastBanner toast={toast} onDismiss={dismissToast} />
+                </View>
+              )}
+              <Pressable
+                onPress={handleOpenRunSettings}
+                disabled={settingsLoading}
+                style={({ pressed }) => [
+                  {
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    paddingVertical: spacing.xs,
+                    paddingHorizontal: spacing.md,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: theme.colors.border,
+                    backgroundColor: theme.colors.surface,
+                  },
+                  pressed && !settingsLoading ? { backgroundColor: theme.colors.surfaceSecondary } : null,
+                  settingsLoading ? { opacity: 0.6 } : null,
+                ]}
+              >
+                <View style={{ flex: 1 }}>
+                  <ThemedText weight="semibold">{modelSummary}</ThemedText>
+                  <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted, marginTop: 2 }}>
+                    {runSettingsDetails}
+                  </ThemedText>
+                </View>
+                <Ionicons name="chevron-up" size={16} color={theme.colors.foregroundPrimary} />
               </Pressable>
             </View>
-          )}
 
-          <Pressable
-            onPress={handleOpenRunSettings}
-            disabled={settingsLoading}
-            style={({ pressed }) => [
-              {
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "space-between",
-                paddingVertical: spacing.xs,
-                paddingHorizontal: spacing.md,
-                borderRadius: 10,
-                borderWidth: 1,
-                borderColor: theme.colors.border,
-                backgroundColor: theme.colors.surface,
-                marginBottom: spacing.xs,
-              },
-              pressed && !settingsLoading ? { backgroundColor: theme.colors.surfaceSecondary } : null,
-              settingsLoading ? { opacity: 0.6 } : null,
-            ]}
-          >
-            <View style={{ flex: 1 }}>
-              <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted }}>
-                Run settings
-              </ThemedText>
-              <ThemedText weight="semibold">{modelSummary}</ThemedText>
-              <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted, marginTop: 2 }}>
-                {runSettingsDetails}
-              </ThemedText>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+              <View style={{ flex: 1, position: "relative" }}>
+                {showCommandSuggestions && (
+                  <SlashCommandSuggestions
+                    suggestions={commandSuggestions}
+                    visible
+                    highlightedIndex={commandHighlightIndex}
+                    listId={commandListIdRef.current}
+                    onSelect={(suggestion) => {
+                      selectHighlightedCommand(suggestion);
+                      inputRef.current?.focus();
+                    }}
+                    onHighlight={setCommandHighlightIndex}
+                  />
+                )}
+                <TextInput
+                  ref={inputRef}
+                  value={input}
+                  onChangeText={setInputWithSuggestionGuard}
+                  onKeyPress={handleCommandKeyDown}
+                  placeholder={handlePlaceholder}
+                  placeholderTextColor={theme.colors.foregroundMuted}
+                  style={{
+                    flex: 1,
+                    minHeight: 38,
+                    maxHeight: 100,
+                    paddingVertical: spacing.xs,
+                    paddingHorizontal: spacing.md,
+                    borderRadius: 20,
+                    backgroundColor: theme.colors.inputBackground,
+                    color: theme.colors.foregroundPrimary,
+                    borderWidth: editingMessage ? 2 : 1,
+                    borderColor: editingMessage ? "#F59E0B" : theme.colors.inputBorder,
+                    fontSize: 16,
+                  }}
+                  textAlignVertical="center"
+                  multiline
+                  autoCorrect={false}
+                  autoCapitalize="sentences"
+                  onFocus={() => setSuppressCommandSuggestions(false)}
+                />
+              </View>
+              <Pressable
+                onPress={isStreaming ? onCancelStream : onSend}
+                disabled={!isStreaming && (isSending || !input.trim())}
+                onFocus={() => setSuppressCommandSuggestions(true)}
+                style={({ pressed }) => ({
+                  backgroundColor: isStreaming
+                    ? pressed
+                      ? theme.colors.accentHover
+                      : theme.colors.accent
+                    : isSending || !input.trim()
+                      ? theme.colors.inputBorder
+                      : pressed
+                        ? editingMessage
+                          ? "#D97706"
+                          : theme.colors.accentHover
+                        : editingMessage
+                          ? "#F59E0B"
+                          : theme.colors.accent,
+                  width: 38,
+                  height: 38,
+                  borderRadius: isStreaming ? 8 : 19, // Square when streaming, circle when not
+                  justifyContent: "center",
+                  alignItems: "center",
+                })}
+              >
+                {isStreaming ? (
+                  <Ionicons name="stop" size={20} color={theme.colors.foregroundInverted} />
+                ) : editingMessage ? (
+                  <Ionicons
+                    name="checkmark"
+                    size={24}
+                    color={
+                      isSending || !input.trim()
+                        ? theme.colors.foregroundMuted
+                        : theme.colors.foregroundInverted
+                    }
+                  />
+                ) : (
+                  <Ionicons
+                    name="arrow-up"
+                    size={24}
+                    color={
+                      isSending || !input.trim()
+                        ? theme.colors.foregroundMuted
+                        : theme.colors.foregroundInverted
+                    }
+                  />
+                )}
+              </Pressable>
             </View>
-            <Ionicons name="chevron-up" size={16} color={theme.colors.foregroundPrimary} />
-          </Pressable>
-
-          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-            <TextInput
-              ref={inputRef}
-              value={input}
-              onChangeText={setInput}
-              placeholder={
-                isCreationMode
-                  ? "Describe what you want to build..."
-                  : editingMessage
-                    ? "Edit your message..."
-                    : "Message"
-              }
-              placeholderTextColor={theme.colors.foregroundMuted}
-              style={{
-                flex: 1,
-                minHeight: 38,
-                maxHeight: 100,
-                paddingVertical: spacing.xs,
-                paddingHorizontal: spacing.md,
-                borderRadius: 20,
-                backgroundColor: theme.colors.inputBackground,
-                color: theme.colors.foregroundPrimary,
-                borderWidth: editingMessage ? 2 : 1,
-                borderColor: editingMessage ? "#F59E0B" : theme.colors.inputBorder,
-                fontSize: 16,
-              }}
-              textAlignVertical="center"
-              multiline
-              autoCorrect={false}
-              autoCapitalize="sentences"
-            />
-            <Pressable
-              onPress={isStreaming ? onCancelStream : onSend}
-              disabled={!isStreaming && (isSending || !input.trim())}
-              style={({ pressed }) => ({
-                backgroundColor: isStreaming
-                  ? pressed
-                    ? theme.colors.accentHover
-                    : theme.colors.accent
-                  : isSending || !input.trim()
-                    ? theme.colors.inputBorder
-                    : pressed
-                      ? editingMessage
-                        ? "#D97706"
-                        : theme.colors.accentHover
-                      : editingMessage
-                        ? "#F59E0B"
-                        : theme.colors.accent,
-                width: 38,
-                height: 38,
-                borderRadius: isStreaming ? 8 : 19, // Square when streaming, circle when not
-                justifyContent: "center",
-                alignItems: "center",
-              })}
-            >
-              {isStreaming ? (
-                <Ionicons name="stop" size={20} color={theme.colors.foregroundInverted} />
-              ) : editingMessage ? (
-                <Ionicons
-                  name="checkmark"
-                  size={24}
-                  color={
-                    isSending || !input.trim()
-                      ? theme.colors.foregroundMuted
-                      : theme.colors.foregroundInverted
-                  }
-                />
-              ) : (
-                <Ionicons
-                  name="arrow-up"
-                  size={24}
-                  color={
-                    isSending || !input.trim()
-                      ? theme.colors.foregroundMuted
-                      : theme.colors.foregroundInverted
-                  }
-                />
-              )}
-            </Pressable>
           </View>
         </View>
-      </View>
       </KeyboardAvoidingView>
       <RunSettingsSheet
         visible={isRunSettingsVisible}

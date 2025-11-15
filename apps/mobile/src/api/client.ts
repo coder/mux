@@ -24,12 +24,16 @@ export interface CmuxMobileClientConfig {
 }
 
 const IPC_CHANNELS = {
+  PROVIDERS_SET_CONFIG: "providers:setConfig",
+  PROVIDERS_LIST: "providers:list",
   WORKSPACE_LIST: "workspace:list",
   WORKSPACE_CREATE: "workspace:create",
   WORKSPACE_REMOVE: "workspace:remove",
   WORKSPACE_RENAME: "workspace:rename",
+  WORKSPACE_FORK: "workspace:fork",
   WORKSPACE_SEND_MESSAGE: "workspace:sendMessage",
   WORKSPACE_INTERRUPT_STREAM: "workspace:interruptStream",
+  WORKSPACE_TRUNCATE_HISTORY: "workspace:truncateHistory",
   WORKSPACE_GET_INFO: "workspace:getInfo",
   WORKSPACE_EXECUTE_BASH: "workspace:executeBash",
   WORKSPACE_CHAT_PREFIX: "workspace:chat:",
@@ -158,6 +162,38 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
   }
 
   return {
+    providers: {
+      list: async (): Promise<string[]> => invoke(IPC_CHANNELS.PROVIDERS_LIST),
+      setProviderConfig: async (
+        provider: string,
+        keyPath: string[],
+        value: string
+      ): Promise<Result<void, string>> => {
+        try {
+          assert(typeof provider === "string" && provider.trim().length > 0, "provider required");
+          assert(Array.isArray(keyPath) && keyPath.length > 0, "keyPath required");
+          keyPath.forEach((segment, index) => {
+            assert(
+              typeof segment === "string" && segment.trim().length > 0,
+              `keyPath segment ${index} must be a non-empty string`
+            );
+          });
+          assert(typeof value === "string", "value must be a string");
+
+          const normalizedProvider = provider.trim();
+          const normalizedPath = keyPath.map((segment) => segment.trim());
+          await invoke(IPC_CHANNELS.PROVIDERS_SET_CONFIG, [
+            normalizedProvider,
+            normalizedPath,
+            value,
+          ]);
+          return { success: true, data: undefined };
+        } catch (error) {
+          const err = error instanceof Error ? error.message : String(error);
+          return { success: false, error: err };
+        }
+      },
+    },
     projects: {
       list: async (): Promise<ProjectsListResponse> => invoke(IPC_CHANNELS.PROJECT_LIST),
       listBranches: async (
@@ -219,6 +255,23 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
           return { success: false, error: err };
         }
       },
+      fork: async (
+        workspaceId: string,
+        newName: string
+      ): Promise<
+        | { success: true; metadata: FrontendWorkspaceMetadata; projectPath: string }
+        | { success: false; error: string }
+      > => {
+        try {
+          assert(typeof newName === "string" && newName.trim().length > 0, "newName required");
+          return await invoke(IPC_CHANNELS.WORKSPACE_FORK, [ensureWorkspaceId(workspaceId), newName.trim()]);
+        } catch (error) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
       rename: async (
         workspaceId: string,
         newName: string
@@ -238,6 +291,22 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
       interruptStream: async (workspaceId: string): Promise<Result<void, string>> => {
         try {
           await invoke(IPC_CHANNELS.WORKSPACE_INTERRUPT_STREAM, [ensureWorkspaceId(workspaceId)]);
+          return { success: true, data: undefined };
+        } catch (error) {
+          const err = error instanceof Error ? error.message : String(error);
+          return { success: false, error: err };
+        }
+      },
+      truncateHistory: async (
+        workspaceId: string,
+        percentage = 1.0
+      ): Promise<Result<void, string>> => {
+        try {
+          assert(typeof percentage === "number" && Number.isFinite(percentage), "percentage must be a number");
+          await invoke(IPC_CHANNELS.WORKSPACE_TRUNCATE_HISTORY, [
+            ensureWorkspaceId(workspaceId),
+            percentage,
+          ]);
           return { success: true, data: undefined };
         } catch (error) {
           const err = error instanceof Error ? error.message : String(error);
@@ -470,3 +539,5 @@ export function createClient(cfg: CmuxMobileClientConfig = {}) {
     },
   } as const;
 }
+
+export type CmuxMobileClient = ReturnType<typeof createClient>;
