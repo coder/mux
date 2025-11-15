@@ -78,7 +78,7 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
             ) : isSingleLineTrace ? (
               <MarkdownRenderer
                 content={trimmedContent}
-                className="truncate [&_*]:inline [&_*]:whitespace-nowrap [&_*]:align-baseline"
+                className="truncate text-[12px] leading-[18px] [&_*]:inline [&_*]:whitespace-nowrap [&_*]:align-baseline"
               />
             ) : (
               "Thought"
