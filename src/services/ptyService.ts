@@ -14,6 +14,7 @@ import { LocalRuntime } from "@/runtime/LocalRuntime";
 import { access } from "fs/promises";
 import { constants } from "fs";
 import { getControlPath } from "@/runtime/sshConnectionPool";
+import { expandTildeForSSH } from "@/runtime/tildeExpansion";
 
 interface SessionData {
   pty: IPty; // Used for both local and SSH sessions
@@ -62,7 +63,9 @@ function buildSSHArgs(config: SSHRuntimeConfig, remotePath: string): string[] {
   args.push(config.host);
 
   // Remote command: cd to workspace and start shell
-  const escapedPath = remotePath.replace(/'/g, "'\\''");
+  // Expand tildes before quoting to ensure remote shell can resolve them
+  const expandedPath = expandTildeForSSH(remotePath);
+  const escapedPath = expandedPath.replace(/'/g, "'\\''");
   args.push(`cd '${escapedPath}' && exec $SHELL -i`);
 
   return args;
