@@ -72,15 +72,18 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
           <span className="text-xs">
             <Lightbulb className={cn("size-3.5", isStreaming && "animate-pulse")} />
           </span>
-          <span className="truncate">
+          <div className="truncate">
             {isStreaming ? (
               <Shimmer colorClass="var(--color-thinking-mode)">Thinking...</Shimmer>
             ) : isSingleLineTrace ? (
-              trimmedContent
+              <MarkdownRenderer
+                content={trimmedContent}
+                className="truncate [&_*]:inline [&_*]:whitespace-nowrap [&_*]:align-baseline"
+              />
             ) : (
               "Thought"
             )}
-          </span>
+          </div>
         </div>
         {isCollapsible && (
           <span
