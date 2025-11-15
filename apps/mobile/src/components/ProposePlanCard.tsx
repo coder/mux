@@ -1,12 +1,12 @@
 import type { JSX } from "react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
-import Markdown from "react-native-markdown-display";
 import { Surface } from "./Surface";
 import { ThemedText } from "./ThemedText";
 import { useTheme } from "../theme";
 import { StartHereModal } from "./StartHereModal";
+import { MarkdownMessageBody } from "./MarkdownMessageBody";
 
 interface ProposePlanCardProps {
   title: string;
@@ -26,6 +26,69 @@ export function ProposePlanCard({
   const theme = useTheme();
   const spacing = theme.spacing;
   const [showRaw, setShowRaw] = useState(false);
+  const markdownOverrides = useMemo(
+    () => ({
+      body: {
+        color: theme.colors.foregroundPrimary,
+        fontSize: 14,
+        lineHeight: 20,
+      },
+      heading1: {
+        color: theme.colors.planModeLight,
+        fontSize: 18,
+        fontWeight: "bold",
+        marginTop: spacing.sm,
+        marginBottom: spacing.xs,
+      },
+      heading2: {
+        color: theme.colors.planModeLight,
+        fontSize: 16,
+        fontWeight: "600",
+        marginTop: spacing.sm,
+        marginBottom: spacing.xs,
+      },
+      heading3: {
+        color: theme.colors.foregroundPrimary,
+        fontSize: 14,
+        fontWeight: "600",
+        marginTop: spacing.xs,
+        marginBottom: spacing.xs,
+      },
+      paragraph: {
+        marginTop: 0,
+        marginBottom: spacing.sm,
+      },
+      code_inline: {
+        backgroundColor: "rgba(31, 107, 184, 0.15)",
+        color: theme.colors.planModeLight,
+        fontSize: 12,
+        paddingHorizontal: 4,
+        paddingVertical: 2,
+        borderRadius: 3,
+        fontFamily: theme.typography.familyMono,
+      },
+      code_block: {
+        backgroundColor: theme.colors.background,
+        borderRadius: theme.radii.sm,
+        padding: spacing.sm,
+        fontFamily: theme.typography.familyMono,
+        fontSize: 12,
+      },
+      fence: {
+        backgroundColor: theme.colors.background,
+        borderRadius: theme.radii.sm,
+        padding: spacing.sm,
+        marginVertical: spacing.xs,
+      },
+      bullet_list: {
+        marginVertical: spacing.xs,
+      },
+      ordered_list: {
+        marginVertical: spacing.xs,
+      },
+    }),
+    [spacing, theme]
+  );
   const [copied, setCopied] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [isStartingHere, setIsStartingHere] = useState(false);
@@ -154,70 +217,7 @@ export function ProposePlanCard({
           </ScrollView>
         ) : (
           <ScrollView showsVerticalScrollIndicator>
-            <Markdown
-              style={{
-                body: {
-                  color: theme.colors.foregroundPrimary,
-                  fontSize: 14,
-                  lineHeight: 20,
-                },
-                heading1: {
-                  color: theme.colors.planModeLight,
-                  fontSize: 18,
-                  fontWeight: "bold",
-                  marginTop: spacing.sm,
-                  marginBottom: spacing.xs,
-                },
-                heading2: {
-                  color: theme.colors.planModeLight,
-                  fontSize: 16,
-                  fontWeight: "600",
-                  marginTop: spacing.sm,
-                  marginBottom: spacing.xs,
-                },
-                heading3: {
-                  color: theme.colors.foregroundPrimary,
-                  fontSize: 14,
-                  fontWeight: "600",
-                  marginTop: spacing.xs,
-                  marginBottom: spacing.xs,
-                },
-                paragraph: {
-                  marginTop: 0,
-                  marginBottom: spacing.sm,
-                },
-                code_inline: {
-                  backgroundColor: "rgba(31, 107, 184, 0.15)",
-                  color: theme.colors.planModeLight,
-                  fontSize: 12,
-                  paddingHorizontal: 4,
-                  paddingVertical: 2,
-                  borderRadius: 3,
-                  fontFamily: theme.typography.familyMono,
-                },
-                code_block: {
-                  backgroundColor: theme.colors.background,
-                  borderRadius: theme.radii.sm,
-                  padding: spacing.sm,
-                  fontFamily: theme.typography.familyMono,
-                  fontSize: 12,
-                },
-                fence: {
-                  backgroundColor: theme.colors.background,
-                  borderRadius: theme.radii.sm,
-                  padding: spacing.sm,
-                  marginVertical: spacing.xs,
-                },
-                bullet_list: {
-                  marginVertical: spacing.xs,
-                },
-                ordered_list: {
-                  marginVertical: spacing.xs,
-                },
-              }}
-            >
-              {plan}
-            </Markdown>
+            <MarkdownMessageBody variant="plan" content={plan} styleOverrides={markdownOverrides} />
           </ScrollView>
         )}
       </View>

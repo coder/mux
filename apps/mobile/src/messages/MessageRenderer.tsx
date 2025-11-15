@@ -1,5 +1,4 @@
 import type { JSX } from "react";
-import Markdown from "react-native-markdown-display";
 import {
   Image,
   View,
@@ -15,6 +14,8 @@ import {
   Keyboard,
 } from "react-native";
 import { useMemo, useState, useEffect, useRef } from "react";
+import { MarkdownMessageBody } from "../components/MarkdownMessageBody";
+import { hasRenderableMarkdown } from "./markdownUtils";
 import { Ionicons } from "@expo/vector-icons";
 import { Surface } from "../components/Surface";
 import { ThemedText } from "../components/ThemedText";
@@ -146,87 +147,6 @@ function AssistantMessageCard({
     await Clipboard.setStringAsync(message.content);
   };
 
-  const markdownStyles = useMemo(
-    () => ({
-      body: {
-        color: theme.colors.foregroundPrimary,
-        fontFamily: theme.typography.familyPrimary,
-        fontSize: theme.typography.sizes.body,
-        lineHeight: theme.typography.lineHeights.normal,
-      },
-      code_block: {
-        backgroundColor: theme.colors.surfaceSunken,
-        borderRadius: theme.radii.sm,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.separator,
-        padding: theme.spacing.sm,
-        fontFamily: theme.typography.familyMono,
-        fontSize: theme.typography.sizes.caption,
-        color: theme.colors.foregroundPrimary,
-      },
-      code_inline: {
-        fontFamily: theme.typography.familyMono,
-        backgroundColor: theme.colors.surfaceSunken,
-        paddingHorizontal: theme.spacing.xs,
-        paddingVertical: 1,
-        borderRadius: theme.radii.xs,
-        color: theme.colors.foregroundPrimary,
-        fontSize: theme.typography.sizes.caption,
-      },
-      fence: {
-        backgroundColor: theme.colors.surfaceSunken,
-        borderRadius: theme.radii.sm,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.separator,
-        padding: theme.spacing.sm,
-        marginVertical: theme.spacing.xs,
-      },
-      pre: {
-        backgroundColor: theme.colors.surfaceSunken,
-        borderRadius: theme.radii.sm,
-        padding: theme.spacing.sm,
-        fontFamily: theme.typography.familyMono,
-        fontSize: theme.typography.sizes.caption,
-        color: theme.colors.foregroundPrimary,
-      },
-      text: {
-        fontFamily: theme.typography.familyMono,
-        fontSize: theme.typography.sizes.caption,
-        color: theme.colors.foregroundPrimary,
-      },
-      bullet_list: {
-        marginVertical: theme.spacing.xs,
-      },
-      ordered_list: {
-        marginVertical: theme.spacing.xs,
-      },
-      blockquote: {
-        borderLeftColor: theme.colors.accent,
-        borderLeftWidth: 2,
-        paddingLeft: theme.spacing.md,
-        color: theme.colors.foregroundSecondary,
-      },
-      heading1: {
-        color: theme.colors.foregroundPrimary,
-        fontSize: theme.typography.sizes.titleLarge,
-        fontWeight: theme.typography.weights.bold,
-        marginVertical: theme.spacing.sm,
-      },
-      heading2: {
-        color: theme.colors.foregroundPrimary,
-        fontSize: theme.typography.sizes.titleMedium,
-        fontWeight: theme.typography.weights.semibold,
-        marginVertical: theme.spacing.sm,
-      },
-      heading3: {
-        color: theme.colors.foregroundPrimary,
-        fontSize: theme.typography.sizes.titleSmall,
-        fontWeight: theme.typography.weights.semibold,
-        marginVertical: theme.spacing.xs,
-      },
-    }),
-    [theme]
-  );
 
   return (
     <Pressable onPress={handlePress} onLongPress={handleLongPress} delayLongPress={500}>
@@ -287,7 +207,7 @@ function AssistantMessageCard({
         <View style={{ flexDirection: "row", alignItems: "flex-end" }}>
           <View style={{ flex: 1 }}>
             {Boolean(message.content) ? (
-              <Markdown style={markdownStyles}>{message.content}</Markdown>
+              <MarkdownMessageBody variant="assistant" content={message.content} />
             ) : (
               <ThemedText variant="muted">(No content)</ThemedText>
             )}
@@ -506,6 +426,7 @@ function ReasoningMessageCard({
   const theme = useTheme();
   const isStreaming = "isStreaming" in message && (message as any).isStreaming === true;
   const [isExpanded, setIsExpanded] = useState(true); // Default expanded
+  const hasReasoningContent = hasRenderableMarkdown(message.content);
 
   // Auto-collapse when reasoning finishes (isStreaming becomes false)
   useEffect(() => {
@@ -532,11 +453,15 @@ function ReasoningMessageCard({
 
       {isExpanded && (
         <View style={{ flexDirection: "row", alignItems: "flex-end", marginTop: theme.spacing.sm }}>
-          <ThemedText
-            style={{ flex: 1, fontStyle: "italic", color: theme.colors.foregroundSecondary }}
-          >
-            {message.content || "(Thinking…)"}
-          </ThemedText>
+          <View style={{ flex: 1 }}>
+            {hasReasoningContent ? (
+              <MarkdownMessageBody variant="reasoning" content={message.content} />
+            ) : (
+              <ThemedText style={{ fontStyle: "italic", color: theme.colors.foregroundSecondary }}>
+                {"(Thinking…)"}
+              </ThemedText>
+            )}
+          </View>
           {isStreaming && <StreamingCursor />}
         </View>
       )}
