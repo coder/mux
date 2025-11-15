@@ -68,7 +68,12 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
         )}
         onClick={isCollapsible ? toggleExpanded : undefined}
       >
-        <div className="text-thinking-mode flex flex-1 items-center gap-1 text-xs opacity-80 min-w-0">
+        <div
+          className={cn(
+            "flex flex-1 items-center gap-1 min-w-0 text-xs opacity-80",
+            "text-thinking-mode"
+          )}
+        >
           <span className="text-xs">
             <Lightbulb className={cn("size-3.5", isStreaming && "animate-pulse")} />
           </span>
@@ -78,7 +83,7 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
             ) : isSingleLineTrace ? (
               <MarkdownRenderer
                 content={trimmedContent}
-                className="truncate [&_*]:inline [&_*]:whitespace-nowrap [&_*]:align-baseline"
+                className="truncate [&_*]:inline [&_*]:align-baseline [&_*]:whitespace-nowrap"
                 style={{ fontSize: 12, lineHeight: "18px" }}
               />
             ) : (
