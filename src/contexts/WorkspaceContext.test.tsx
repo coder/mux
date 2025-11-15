@@ -885,7 +885,7 @@ function createMockAPI(options: MockAPIOptions = {}) {
   // Create fresh window environment with explicit typing
   const happyWindow = new GlobalWindow();
   globalThis.window = happyWindow as unknown as Window & typeof globalThis;
-  globalThis.document = happyWindow.document;
+  globalThis.document = happyWindow.document as unknown as Document;
   globalThis.localStorage = happyWindow.localStorage;
 
   // Set up localStorage with any provided data
