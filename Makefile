@@ -362,7 +362,7 @@ benchmark-terminal: ## Run Terminal-Bench with the mux agent (use TB_DATASET/TB_
 	export MUX_TIMEOUT_MS=$$((TB_TIMEOUT * 1000)); \
 	uvx terminal-bench run \
 		--dataset "$$TB_DATASET" \
-		--agent-import-path benchmarks.terminal_bench.mux_agent:CmuxAgent \
+		--agent-import-path benchmarks.terminal_bench.mux_agent:MuxAgent \
 		--global-agent-timeout-sec $$TB_TIMEOUT \
 		$$CONCURRENCY_FLAG \
 		$$LIVESTREAM_FLAG \
