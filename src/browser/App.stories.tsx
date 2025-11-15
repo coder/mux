@@ -871,6 +871,34 @@ export const ActiveWorkspaceWithChat: Story = {
                       },
                     });
 
+                    // Assistant quick update with a single-line reasoning trace to exercise inline display
+                    callback({
+                      id: "msg-9a",
+                      role: "assistant",
+                      parts: [
+                        {
+                          type: "reasoning",
+                          text: "Cache is warm already; rerunning the full suite would be redundant.",
+                        },
+                        {
+                          type: "text",
+                          text: "Cache is warm from the last test run, so I'll shift focus to documentation next.",
+                        },
+                      ],
+                      metadata: {
+                        historySequence: 10,
+                        timestamp: STABLE_TIMESTAMP - 165000,
+                        model: "anthropic:claude-sonnet-4-5",
+                        usage: {
+                          inputTokens: 1200,
+                          outputTokens: 180,
+                          totalTokens: 1380,
+                          reasoningTokens: 20,
+                        },
+                        duration: 900,
+                      },
+                    });
+
                     // Assistant message with status_set tool to show agent status
                     callback({
                       id: "msg-10",
@@ -899,7 +927,7 @@ export const ActiveWorkspaceWithChat: Story = {
                         },
                       ],
                       metadata: {
-                        historySequence: 10,
+                        historySequence: 11,
                         timestamp: STABLE_TIMESTAMP - 160000,
                         model: "anthropic:claude-sonnet-4-5",
                         usage: {
@@ -922,7 +950,7 @@ export const ActiveWorkspaceWithChat: Story = {
                         },
                       ],
                       metadata: {
-                        historySequence: 11,
+                        historySequence: 12,
                         timestamp: STABLE_TIMESTAMP - 150000,
                       },
                     });
@@ -936,7 +964,7 @@ export const ActiveWorkspaceWithChat: Story = {
                       workspaceId: workspaceId,
                       messageId: "msg-12",
                       model: "anthropic:claude-sonnet-4-5",
-                      historySequence: 12,
+                      historySequence: 13,
                     });
 
                     // Send reasoning delta

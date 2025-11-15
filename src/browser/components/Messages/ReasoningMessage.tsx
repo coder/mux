@@ -16,6 +16,11 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
 
   const content = message.content;
   const isStreaming = message.isStreaming;
+  const trimmedContent = content?.trim() ?? "";
+  const hasContent = trimmedContent.length > 0;
+  // OpenAI models often emit terse, single-line traces; surface them inline instead of hiding behind the label.
+  const isSingleLineTrace = !isStreaming && hasContent && !/[\r\n]/.test(trimmedContent);
+  const isCollapsible = !isStreaming && hasContent && !isSingleLineTrace;
 
   // Auto-collapse when streaming ends
   useEffect(() => {
@@ -25,9 +30,11 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
   }, [isStreaming]);
 
   const toggleExpanded = () => {
-    if (!isStreaming) {
-      setIsExpanded(!isExpanded);
+    if (!isCollapsible) {
+      return;
     }
+
+    setIsExpanded(!isExpanded);
   };
 
   // Render appropriate content based on state
@@ -55,24 +62,27 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
     >
       <div
         className={cn(
-          "flex cursor-pointer items-center justify-between gap-2 select-none",
-          isExpanded && "mb-1.5"
+          "flex items-center justify-between gap-2 select-none",
+          isCollapsible && "cursor-pointer",
+          isExpanded && !isSingleLineTrace && "mb-1.5"
         )}
-        onClick={toggleExpanded}
+        onClick={isCollapsible ? toggleExpanded : undefined}
       >
-        <div className="text-thinking-mode flex items-center gap-1 text-xs opacity-80">
+        <div className="text-thinking-mode flex flex-1 items-center gap-1 text-xs opacity-80 min-w-0">
           <span className="text-xs">
             <Lightbulb className={cn("size-3.5", isStreaming && "animate-pulse")} />
           </span>
-          <span>
+          <span className="truncate">
             {isStreaming ? (
               <Shimmer colorClass="var(--color-thinking-mode)">Thinking...</Shimmer>
+            ) : isSingleLineTrace ? (
+              trimmedContent
             ) : (
-              "Thought..."
+              "Thought"
             )}
           </span>
         </div>
-        {!isStreaming && (
+        {isCollapsible && (
           <span
             className={cn(
               "text-thinking-mode opacity-60 transition-transform duration-200 ease-in-out text-xs",
@@ -84,7 +94,7 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
         )}
       </div>
 
-      {isExpanded && (
+      {isExpanded && !isSingleLineTrace && (
         <div className="font-primary text-sm leading-6 italic opacity-85 [&_p]:mt-0 [&_p]:mb-1 [&_p:last-child]:mb-0">
           {renderContent()}
         </div>
