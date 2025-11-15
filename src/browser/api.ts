@@ -267,11 +267,23 @@ const webApi: IPCApi = {
       const channel = `terminal:exit:${sessionId}`;
       return wsManager.on(channel, callback as (data: unknown) => void);
     },
-    openWindow: (workspaceId) => {
-      // In browser mode, open a new window/tab with the terminal page
-      // Use a unique name with timestamp to create a new window each time
-      const url = `/terminal.html?workspaceId=${encodeURIComponent(workspaceId)}`;
-      window.open(url, `terminal-${workspaceId}-${Date.now()}`, "width=1000,height=600");
+    openWindow: async (workspaceId) => {
+      // Check workspace runtime type - only open browser tab for SSH workspaces
+      // Local workspaces will open native terminals via the IPC handler
+      const workspaces = (await invokeIPC(IPC_CHANNELS.WORKSPACE_LIST)) as Array<{
+        id: string;
+        runtimeConfig?: { type: "local" | "ssh" };
+      }>;
+      const workspace = workspaces.find((ws) => ws.id === workspaceId);
+      const isSSH = workspace?.runtimeConfig?.type === "ssh";
+
+      if (isSSH) {
+        // SSH workspace - open browser tab with terminal UI
+        const url = `/terminal.html?workspaceId=${encodeURIComponent(workspaceId)}`;
+        window.open(url, `terminal-${workspaceId}-${Date.now()}`, "width=1000,height=600");
+      }
+      // For local workspaces, the IPC handler will open a native terminal
+
       return invokeIPC(IPC_CHANNELS.TERMINAL_WINDOW_OPEN, workspaceId);
     },
     closeWindow: (workspaceId) => invokeIPC(IPC_CHANNELS.TERMINAL_WINDOW_CLOSE, workspaceId),

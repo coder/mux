@@ -1565,12 +1565,33 @@ export class IpcMain {
     ipcMain.handle(IPC_CHANNELS.TERMINAL_WINDOW_OPEN, async (_event, workspaceId: string) => {
       console.log(`[BACKEND] TERMINAL_WINDOW_OPEN handler called with: ${workspaceId}`);
       try {
-        if (!this.terminalWindowManager) {
-          throw new Error("Terminal window manager not available (desktop mode only)");
+        // Look up workspace to determine runtime type
+        const allMetadata = await this.config.getAllWorkspaceMetadata();
+        const workspace = allMetadata.find((w) => w.id === workspaceId);
+
+        if (!workspace) {
+          log.error(`Workspace not found: ${workspaceId}`);
+          throw new Error(`Workspace not found: ${workspaceId}`);
         }
-        log.info(`Opening terminal window for workspace: ${workspaceId}`);
-        await this.terminalWindowManager.openTerminalWindow(workspaceId);
-        log.info(`Terminal window opened successfully for workspace: ${workspaceId}`);
+
+        const runtimeConfig = workspace.runtimeConfig;
+
+        // For local workspaces, use native terminal (both desktop and browser mode)
+        // For SSH workspaces, use ghostty-web (desktop) or browser terminal (browser mode)
+        if (!isSSHRuntime(runtimeConfig)) {
+          // Local workspace - use native terminal
+          log.info(`Opening native terminal for local workspace: ${workspaceId}`);
+          await this.openTerminal({ type: "local", workspacePath: workspace.namedWorkspacePath });
+        } else if (this.terminalWindowManager) {
+          // SSH workspace in desktop mode - use ghostty-web Electron window
+          log.info(`Opening ghostty-web terminal for SSH workspace: ${workspaceId}`);
+          await this.terminalWindowManager.openTerminalWindow(workspaceId);
+        } else {
+          // SSH workspace in browser mode - let browser handle it
+          log.info(`Browser mode: terminal UI handled by browser for SSH workspace: ${workspaceId}`);
+        }
+
+        log.info(`Terminal opened successfully for workspace: ${workspaceId}`);
       } catch (err) {
         log.error("Error opening terminal window:", err);
         throw err;
