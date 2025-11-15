@@ -184,6 +184,22 @@ class WebSocketManager {
 
 const wsManager = new WebSocketManager();
 
+// Cache workspace metadata to avoid async lookup during user gestures (popup blocker issue)
+let workspaceMetadataCache: Array<{
+  id: string;
+  runtimeConfig?: { type: "local" | "ssh" };
+}> = [];
+
+// Update cache when workspace metadata changes
+function updateWorkspaceCache() {
+  void invokeIPC(IPC_CHANNELS.WORKSPACE_LIST).then((workspaces) => {
+    workspaceMetadataCache = workspaces as typeof workspaceMetadataCache;
+  });
+}
+
+// Initialize cache
+updateWorkspaceCache();
+
 // Create the Web API implementation
 const webApi: IPCApi = {
   tokenizer: {
@@ -240,7 +256,15 @@ const webApi: IPCApi = {
     },
 
     onMetadata: (callback) => {
-      return wsManager.on(IPC_CHANNELS.WORKSPACE_METADATA, callback as (data: unknown) => void);
+      // Update cache whenever workspace metadata changes
+      const wrappedCallback = (data: unknown) => {
+        updateWorkspaceCache();
+        callback(data);
+      };
+      return wsManager.on(
+        IPC_CHANNELS.WORKSPACE_METADATA,
+        wrappedCallback as (data: unknown) => void
+      );
     },
   },
   window: {
@@ -267,18 +291,14 @@ const webApi: IPCApi = {
       const channel = `terminal:exit:${sessionId}`;
       return wsManager.on(channel, callback as (data: unknown) => void);
     },
-    openWindow: async (workspaceId) => {
-      // Check workspace runtime type - only open browser tab for SSH workspaces
-      // Local workspaces will open native terminals via the IPC handler
-      const workspaces: Array<{
-        id: string;
-        runtimeConfig?: { type: "local" | "ssh" };
-      }> = await invokeIPC(IPC_CHANNELS.WORKSPACE_LIST);
-      const workspace = workspaces.find((ws) => ws.id === workspaceId);
+    openWindow: (workspaceId) => {
+      // Check workspace runtime type using cached metadata (synchronous)
+      // This must be synchronous to avoid popup blocker during user gesture
+      const workspace = workspaceMetadataCache.find((ws) => ws.id === workspaceId);
       const isSSH = workspace?.runtimeConfig?.type === "ssh";
 
       if (isSSH) {
-        // SSH workspace - open browser tab with terminal UI
+        // SSH workspace - open browser tab with terminal UI (must be synchronous)
         const url = `/terminal.html?workspaceId=${encodeURIComponent(workspaceId)}`;
         window.open(url, `terminal-${workspaceId}-${Date.now()}`, "width=1000,height=600");
       }
