@@ -613,7 +613,6 @@ export class StreamingMessageAggregator {
       type: "reasoning",
       text: data.delta,
       timestamp: data.timestamp,
-      segmentCount: 1,
     });
 
     // Track delta for token counting and TPS calculation
@@ -799,20 +798,15 @@ export class StreamingMessageAggregator {
                 timestamp: lastMerged.timestamp ?? part.timestamp,
               };
             } else if (lastMerged?.type === "reasoning" && part.type === "reasoning") {
-              // Merge reasoning parts, preserving the first timestamp and accumulating segment count
+              // Merge reasoning parts, preserving the first timestamp
               mergedParts[mergedParts.length - 1] = {
                 type: "reasoning",
                 text: lastMerged.text + part.text,
                 timestamp: lastMerged.timestamp ?? part.timestamp,
-                segmentCount: (lastMerged.segmentCount ?? 1) + (part.segmentCount ?? 1),
               };
             } else {
               // Different type or tool part - add new part
-              if (part.type === "reasoning") {
-                mergedParts.push({ ...part, segmentCount: part.segmentCount ?? 1 });
-              } else {
-                mergedParts.push(part);
-              }
+              mergedParts.push(part);
             }
           }
 
@@ -849,7 +843,6 @@ export class StreamingMessageAggregator {
                 isPartial: message.metadata?.partial ?? false,
                 isLastPartOfMessage: isLastPart,
                 timestamp: part.timestamp ?? baseTimestamp,
-                reasoningSegmentCount: part.segmentCount ?? 1,
               });
             } else if (part.type === "text" && part.text) {
               // Skip empty text parts
