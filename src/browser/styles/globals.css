@@ -12,7 +12,7 @@
 
 @font-face {
   font-family: "Seti";
-  src: url("../assets/file-icons/seti.woff") format("woff");
+  src: url("/seti.woff") format("woff");
   font-weight: normal;
   font-style: normal;
   font-display: swap;
