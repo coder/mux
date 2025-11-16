@@ -11,13 +11,10 @@
     "excludeFiles": ["**/*.d.ts.map"]
   },
   "include": [
-    "src/main.ts",
-    "src/main-server.ts",
-    "src/main-desktop.ts",
-    "src/constants/**/*",
-    "src/web/**/*",
-    "src/utils/main/**/*",
-    "src/types/**/*.d.ts"
+    "src/cli/**/*",
+    "src/desktop/**/*",
+    "src/node/**/*",
+    "src/common/**/*"
   ],
-  "exclude": ["src/App.tsx", "src/main.tsx"]
+  "exclude": ["src/browser/**/*", "src/main.tsx", "src/terminal-window.tsx"]
 }
