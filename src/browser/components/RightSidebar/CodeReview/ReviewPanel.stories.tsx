@@ -370,21 +370,22 @@ function createSuccessResult(
 }
 
 function setupCodeReviewMocks(config: ScenarioConfig) {
-  const executeBash: IPCApi["workspace"]["executeBash"] = async (_workspaceId, command, _options) => {
+  const executeBash: IPCApi["workspace"]["executeBash"] = (_workspaceId, command) => {
     if (command.includes("git ls-files --others --exclude-standard")) {
-      return createSuccessResult(config.untrackedFiles.join("\n"));
+      return Promise.resolve(createSuccessResult(config.untrackedFiles.join("\n")));
     }
 
     if (command.includes("--numstat")) {
-      return createSuccessResult(config.numstatOutput);
+      return Promise.resolve(createSuccessResult(config.numstatOutput));
     }
 
     if (command.includes("git add --")) {
-      return createSuccessResult("");
+      return Promise.resolve(createSuccessResult(""));
     }
 
     if (command.startsWith("git diff") || command.includes("git diff ")) {
-      const pathMatch = command.match(/ -- "([^"]+)"/);
+      const pathRegex = / -- "([^"]+)"/;
+      const pathMatch = pathRegex.exec(command);
       const pathFilter = pathMatch?.[1];
       const diffOutput = pathFilter
         ? config.diffByFile[pathFilter] ?? ""
@@ -393,10 +394,10 @@ function setupCodeReviewMocks(config: ScenarioConfig) {
             .join("\n\n");
 
       const truncated = !pathFilter && config.truncated ? { truncated: config.truncated } : undefined;
-      return createSuccessResult(diffOutput, truncated);
+      return Promise.resolve(createSuccessResult(diffOutput, truncated));
     }
 
-    return createSuccessResult("");
+    return Promise.resolve(createSuccessResult(""));
   };
 
   const mockApi = {
@@ -412,7 +413,6 @@ function setupCodeReviewMocks(config: ScenarioConfig) {
   } as unknown as IPCApi;
 
   // @ts-expect-error - mockApi is not typed correctly
-  // eslint-disable-next-line no-restricted-syntax
   window.api = mockApi;
 
   deleteWorkspaceStorage(config.workspaceId);
@@ -463,7 +463,6 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const RichContent: Story = {
-  name: "Rich Content",
   args: {
     workspaceId: scenarioConfigs.rich.workspaceId,
     workspacePath: scenarioConfigs.rich.workspacePath,
@@ -472,7 +471,6 @@ export const RichContent: Story = {
 };
 
 export const TruncatedDiff: Story = {
-  name: "Truncated Diff",
   args: {
     workspaceId: scenarioConfigs.truncated.workspaceId,
     workspacePath: scenarioConfigs.truncated.workspacePath,
@@ -481,7 +479,6 @@ export const TruncatedDiff: Story = {
 };
 
 export const EmptyState: Story = {
-  name: "Empty State",
   args: {
     workspaceId: scenarioConfigs.empty.workspaceId,
     workspacePath: scenarioConfigs.empty.workspacePath,
