@@ -1,5 +1,5 @@
-import type { ScenarioTurn } from "../scenarioTypes";
-import { STREAM_BASE_DELAY } from "../scenarioTypes";
+import type { ScenarioTurn } from "@/node/services/mock/scenarioTypes";
+import { STREAM_BASE_DELAY } from "@/node/services/mock/scenarioTypes";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 
 export const LIST_PROGRAMMING_LANGUAGES = "List 3 programming languages";

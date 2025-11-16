@@ -3,7 +3,7 @@
  */
 
 import type { BaseTelemetryProperties } from "./payload";
-import { VERSION } from "../version";
+import { VERSION } from "@/version";
 
 /**
  * Get base telemetry properties included with all events

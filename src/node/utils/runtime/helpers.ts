@@ -1,5 +1,5 @@
 import type { Runtime, ExecOptions } from "@/node/runtime/Runtime";
-import { PlatformPaths } from "../paths";
+import { PlatformPaths } from "@/node/utils/paths.main";
 
 /**
  * Convenience helpers for working with streaming Runtime APIs.

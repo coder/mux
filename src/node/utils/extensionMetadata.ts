@@ -1,5 +1,5 @@
 import { readFileSync, existsSync } from "fs";
-import { getMuxExtensionMetadataPath } from "../constants/paths";
+import { getMuxExtensionMetadataPath } from "@/common/constants/paths";
 
 /**
  * Extension metadata for a single workspace.

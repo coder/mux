@@ -15,16 +15,16 @@ import type {
   InitLogger,
 } from "./Runtime";
 import { RuntimeError as RuntimeErrorClass } from "./Runtime";
-import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "../constants/exitCodes";
+import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { log } from "@/node/services/log";
 import { checkInitHookExists, createLineBufferedLoggers, getInitHookEnv } from "./initHook";
 import { streamProcessToLogger } from "./streamProcess";
 import { expandTildeForSSH, cdCommandForSSH } from "./tildeExpansion";
-import { getProjectName } from "../utils/runtime/helpers";
-import { getErrorMessage } from "../utils/errors";
-import { execAsync, DisposableProcess } from "../utils/disposableExec";
+import { getProjectName } from "@/node/utils/runtime/helpers";
+import { getErrorMessage } from "@/common/utils/errors";
+import { execAsync, DisposableProcess } from "@/node/utils/disposableExec";
 import { getControlPath } from "./sshConnectionPool";
-import { getBashPath } from "../utils/main/bashPath";
+import { getBashPath } from "@/node/utils/main/bashPath";
 
 /**
  * Shell-escape helper for remote bash.

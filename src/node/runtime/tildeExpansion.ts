@@ -8,7 +8,7 @@
  * For local paths, tildes should be expanded to actual file system paths.
  */
 
-import { PlatformPaths } from "../utils/paths.main";
+import { PlatformPaths } from "@/node/utils/paths.main";
 
 /**
  * Expand tilde to actual home directory path for local file system operations.

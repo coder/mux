@@ -1,7 +1,7 @@
 import { spawn } from "child_process";
 import type { ChildProcess } from "child_process";
 import { log } from "./log";
-import { getBashPath } from "../utils/main/bashPath";
+import { getBashPath } from "@/node/utils/main/bashPath";
 
 /**
  * Configuration for bash execution
