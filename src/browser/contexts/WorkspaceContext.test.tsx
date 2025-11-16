@@ -7,6 +7,7 @@ import { GlobalWindow } from "happy-dom";
 import type { WorkspaceContext } from "./WorkspaceContext";
 import { WorkspaceProvider, useWorkspaceContext } from "./WorkspaceContext";
 import { ProjectProvider } from "@/browser/contexts/ProjectContext";
+import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 
 // Helper to create test workspace metadata with default runtime config
 const createWorkspaceMetadata = (
@@ -25,6 +26,9 @@ describe("WorkspaceContext", () => {
   afterEach(() => {
     cleanup();
 
+    // Reset global workspace store to avoid cross-test leakage
+    useWorkspaceStoreRaw().dispose();
+
     // @ts-expect-error - Resetting global state in tests
     globalThis.window = undefined;
     // @ts-expect-error - Resetting global state in tests
@@ -33,6 +37,57 @@ describe("WorkspaceContext", () => {
     globalThis.localStorage = undefined;
   });
 
+  test("syncs workspace store subscriptions when metadata loads", async () => {
+    const initialWorkspaces: FrontendWorkspaceMetadata[] = [
+      createWorkspaceMetadata({
+        id: "ws-sync-load",
+        projectPath: "/alpha",
+        projectName: "alpha",
+        name: "main",
+        namedWorkspacePath: "/alpha-main",
+      }),
+    ];
+
+    const { workspace: workspaceApi } = createMockAPI({
+      workspace: {
+        list: () => Promise.resolve(initialWorkspaces),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(1));
+    await waitFor(() =>
+      expect(
+        workspaceApi.onChat.mock.calls.some(([workspaceId]) => workspaceId === "ws-sync-load")
+      ).toBe(true)
+    );
+  });
+
+  test("subscribes to new workspace immediately when metadata event fires", async () => {
+    const { workspace: workspaceApi } = createMockAPI({
+      workspace: {
+        list: () => Promise.resolve([]),
+      },
+    });
+
+    await setup();
+
+    await waitFor(() => expect(workspaceApi.onMetadata.mock.calls.length).toBeGreaterThan(0));
+    const metadataListener: Parameters<IPCApi["workspace"]["onMetadata"]>[0] =
+      workspaceApi.onMetadata.mock.calls[0][0];
+
+    const newWorkspace = createWorkspaceMetadata({ id: "ws-from-event" });
+    act(() => {
+      metadataListener({ workspaceId: newWorkspace.id, metadata: newWorkspace });
+    });
+
+    await waitFor(() =>
+      expect(
+        workspaceApi.onChat.mock.calls.some(([workspaceId]) => workspaceId === "ws-from-event")
+      ).toBe(true)
+    );
+  });
   test("loads workspace metadata on mount", async () => {
     const initialWorkspaces: FrontendWorkspaceMetadata[] = [
       createWorkspaceMetadata({
@@ -884,7 +939,7 @@ type MockedWorkspaceAPI = Pick<
   {
     [K in keyof IPCApi["workspace"]]: ReturnType<typeof mock<IPCApi["workspace"][K]>>;
   },
-  "create" | "list" | "remove" | "rename" | "getInfo" | "onMetadata"
+  "create" | "list" | "remove" | "rename" | "getInfo" | "onMetadata" | "onChat"
 >;
 
 // Just type the list method directly since Pick with conditional types causes issues
@@ -938,6 +993,12 @@ function createMockAPI(options: MockAPIOptions = {}) {
     onMetadata: mock(
       options.workspace?.onMetadata ??
         (() => () => {
+          // Empty cleanup function
+        })
+    ),
+    onChat: mock(
+      options.workspace?.onChat ??
+        ((_workspaceId: string, _callback: Parameters<IPCApi["workspace"]["onChat"]>[1]) => () => {
           // Empty cleanup function
         })
     ),

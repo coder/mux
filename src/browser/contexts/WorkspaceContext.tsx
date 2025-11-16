@@ -6,6 +6,7 @@ import {
   useMemo,
   useState,
   type ReactNode,
+  type SetStateAction,
 } from "react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
@@ -13,6 +14,7 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import { deleteWorkspaceStorage } from "@/common/constants/storage";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
+import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 
 /**
  * Ensure workspace metadata has createdAt timestamp.
@@ -81,9 +83,25 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   // Get project refresh function from ProjectContext
   const { refreshProjects } = useProjectContext();
 
-  const [workspaceMetadata, setWorkspaceMetadata] = useState<
+  const workspaceStore = useWorkspaceStoreRaw();
+  const [workspaceMetadata, setWorkspaceMetadataState] = useState<
     Map<string, FrontendWorkspaceMetadata>
   >(new Map());
+  const setWorkspaceMetadata = useCallback(
+    (update: SetStateAction<Map<string, FrontendWorkspaceMetadata>>) => {
+      setWorkspaceMetadataState((prev) => {
+        const next = typeof update === "function" ? update(prev) : update;
+        // IMPORTANT: Sync the imperative WorkspaceStore first so hooks (AIView,
+        // LeftSidebar, etc.) never render with a selected workspace ID before
+        // the store has subscribed and created its aggregator. Otherwise the
+        // render path hits WorkspaceStore.assertGet() and throws the
+        // "Workspace <id> not found - must call addWorkspace() first" assert.
+        workspaceStore.syncWorkspaces(next);
+        return next;
+      });
+    },
+    [workspaceStore]
+  );
   const [loading, setLoading] = useState(true);
   const [pendingNewWorkspaceProject, setPendingNewWorkspaceProject] = useState<string | null>(null);
 
@@ -107,7 +125,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       console.error("Failed to load workspace metadata:", error);
       setWorkspaceMetadata(new Map());
     }
-  }, []);
+  }, [setWorkspaceMetadata]);
 
   // Load metadata once on mount
   useEffect(() => {
@@ -215,7 +233,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     return () => {
       unsubscribe();
     };
-  }, [refreshProjects]);
+  }, [refreshProjects, setWorkspaceMetadata]);
 
   const createWorkspace = useCallback(
     async (
@@ -385,6 +403,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       removeWorkspace,
       renameWorkspace,
       refreshWorkspaceMetadata,
+      setWorkspaceMetadata,
       selectedWorkspace,
       setSelectedWorkspace,
       pendingNewWorkspaceProject,
