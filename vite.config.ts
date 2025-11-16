@@ -136,11 +136,14 @@ export default defineConfig(({ mode }) => ({
       target: "esnext",
     },
     
-    // Include only what's actually imported to reduce scanning
-    entries: ['src/**/*.{ts,tsx}'],
+    // Only scan renderer code, not main/preload
+    entries: ['src/renderer/**/*.{ts,tsx}', 'src/components/**/*.{ts,tsx}', 'src/App.tsx'],
     
     // Force re-optimize dependencies
     force: false,
+    
+    // Exclude native modules from optimization
+    exclude: ['@homebridge/node-pty-prebuilt-multiarch'],
   },
   assetsInclude: ["**/*.wasm"],
 }));
