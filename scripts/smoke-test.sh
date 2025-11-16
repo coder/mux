@@ -71,6 +71,9 @@ if [[ ! -f "$PACKAGE_TARBALL" ]]; then
   exit 1
 fi
 
+# Convert to absolute path before changing directories
+PACKAGE_TARBALL=$(realpath "$PACKAGE_TARBALL")
+
 log_info "Starting smoke test for package: $PACKAGE_TARBALL"
 
 # Create temporary test directory
