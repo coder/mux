@@ -13,18 +13,17 @@ module.exports = {
     "^@/(.*)$": "<rootDir>/src/$1",
     "^chalk$": "<rootDir>/tests/__mocks__/chalk.js",
   },
-  transform: {
-    "^.+\\.tsx?$": [
-      "ts-jest",
-      {
-        tsconfig: {
-          target: "ES2020",
-          lib: ["ES2020", "DOM", "ES2022.Intl"],
-          esModuleInterop: true,
-          allowSyntheticDefaultImports: true,
-        },
+  globals: {
+    "ts-jest": {
+      tsconfig: {
+        target: "ES2020",
+        lib: ["ES2020", "DOM", "ES2022.Intl"],
+        module: "ESNext",
+        moduleResolution: "node",
+        esModuleInterop: true,
+        allowSyntheticDefaultImports: true,
       },
-    ],
+    },
   },
   // Transform ESM modules (like shiki) to CommonJS for Jest
   transformIgnorePatterns: ["node_modules/(?!(shiki)/)"],

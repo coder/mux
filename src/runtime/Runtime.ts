@@ -151,6 +151,8 @@ export interface WorkspaceInitParams {
   initLogger: InitLogger;
   /** Optional abort signal for cancellation */
   abortSignal?: AbortSignal;
+  /** If provided, copy from this workspace instead of syncing from local (fork scenario) */
+  sourceWorkspacePath?: string;
 }
 
 /**
@@ -189,6 +191,8 @@ export interface WorkspaceForkResult {
   success: boolean;
   /** Path to the new workspace (if successful) */
   workspacePath?: string;
+  /** Path to the source workspace (needed for init phase) */
+  sourceWorkspacePath?: string;
   /** Branch that was forked from */
   sourceBranch?: string;
   /** Error message (if failed) */
@@ -304,7 +308,7 @@ export interface Runtime {
   /**
    * Initialize workspace asynchronously (may be slow, streams progress)
    * - LocalRuntime: Runs init hook if present
-   * - SSHRuntime: Syncs files, checks out branch, runs init hook
+   * - SSHRuntime: Syncs files (or copies from source), checks out branch, runs init hook
    * Streams progress via initLogger.
    * @param params Workspace initialization parameters
    * @returns Result indicating success or error

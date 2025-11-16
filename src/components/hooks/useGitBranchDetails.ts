@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { getImportMetaEnv } from "@/utils/importMeta";
 import { z } from "zod";
 import type { GitStatus } from "@/types/workspace";
 import { parseGitShowBranch, type GitCommit, type GitBranchHeader } from "@/utils/git/parseGitLog";
@@ -25,7 +26,8 @@ const SECTION_MARKERS = {
   dirtyEnd: "__MUX_BRANCH_DATA__END_DIRTY_FILES__",
 } as const;
 
-const isDevelopment = import.meta.env.DEV;
+const importMetaEnv = getImportMetaEnv<{ DEV?: boolean }>();
+const isDevelopment = Boolean(importMetaEnv.DEV);
 
 function debugAssert(condition: unknown, message: string): void {
   if (!condition && isDevelopment) {

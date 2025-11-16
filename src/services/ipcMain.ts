@@ -15,7 +15,6 @@ import { countTokens, countTokensBatch } from "@/utils/main/tokenizer";
 import { calculateTokenStats } from "@/utils/tokens/tokenStatsCalculator";
 import { IPC_CHANNELS, getChatChannel } from "@/constants/ipc-constants";
 import { SUPPORTED_PROVIDERS } from "@/constants/providers";
-import { DEFAULT_RUNTIME_CONFIG } from "@/constants/workspace";
 import type { SendMessageError } from "@/types/errors";
 import type { SendMessageOptions, DeleteMessage } from "@/types/ipc";
 import { Ok, Err } from "@/types/result";
@@ -699,6 +698,16 @@ export class IpcMain {
             return { success: false, error: validation.error };
           }
 
+          // Check if source workspace is currently initializing
+          const initState = this.initStateManager.getInitState(sourceWorkspaceId);
+          if (initState?.status === "running") {
+            return {
+              success: false,
+              error:
+                "Cannot fork workspace while it is initializing. Please wait for initialization to complete.",
+            };
+          }
+
           // If streaming, commit the partial response to history first
           // This preserves the streamed content in both workspaces
           if (this.aiService.isStreaming(sourceWorkspaceId)) {
@@ -717,12 +726,16 @@ export class IpcMain {
           const foundProjectPath = sourceMetadata.projectPath;
           const projectName = sourceMetadata.projectName;
 
-          // Create runtime for source workspace
-          const sourceRuntimeConfig = sourceMetadata.runtimeConfig ?? {
-            type: "local",
-            srcBaseDir: this.config.srcDir,
-          };
-          const runtime = createRuntime(sourceRuntimeConfig);
+          // Preserve source runtime config (undefined for local default, or explicit SSH config)
+          const sourceRuntimeConfig = sourceMetadata.runtimeConfig;
+
+          // Create runtime for fork operation
+          const runtimeForFork = createRuntime(
+            sourceRuntimeConfig ?? {
+              type: "local",
+              srcBaseDir: this.config.srcDir,
+            }
+          );
 
           // Generate stable workspace ID for the new workspace
           const newWorkspaceId = this.config.generateStableId();
@@ -735,8 +748,8 @@ export class IpcMain {
 
           const initLogger = this.createInitLogger(newWorkspaceId);
 
-          // Delegate fork operation to runtime
-          const forkResult = await runtime.forkWorkspace({
+          // Delegate fork operation to runtime (fast path - returns before init hook)
+          const forkResult = await runtimeForFork.forkWorkspace({
             projectPath: foundProjectPath,
             sourceWorkspaceName: sourceMetadata.name,
             newWorkspaceName: newName,
@@ -746,6 +759,13 @@ export class IpcMain {
           if (!forkResult.success) {
             return { success: false, error: forkResult.error };
           }
+
+          if (!forkResult.workspacePath) {
+            return { success: false, error: "Fork succeeded but no workspace path returned" };
+          }
+
+          // Store validated workspace path for type safety
+          const workspacePath = forkResult.workspacePath;
 
           // Copy session files (chat.jsonl, partial.json) - local backend operation
           const sourceSessionDir = this.config.getSessionDir(sourceWorkspaceId);
@@ -781,7 +801,7 @@ export class IpcMain {
             }
           } catch (copyError) {
             // If copy fails, clean up everything we created
-            await runtime.deleteWorkspace(foundProjectPath, newName, true);
+            await runtimeForFork.deleteWorkspace(foundProjectPath, newName, true);
             try {
               await fsPromises.rm(newSessionDir, { recursive: true, force: true });
             } catch (cleanupError) {
@@ -798,7 +818,7 @@ export class IpcMain {
             projectName,
             projectPath: foundProjectPath,
             createdAt: new Date().toISOString(),
-            runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+            runtimeConfig: sourceRuntimeConfig,
           };
 
           // Write metadata to config.json
@@ -806,6 +826,26 @@ export class IpcMain {
 
           // Emit metadata event
           session.emitMetadata(metadata);
+
+          // Run initialization in background (fire-and-forget like createWorkspace)
+          // For SSH: copies workspace + creates branch + runs init hook
+          // For Local: just runs init hook (worktree already created)
+          // This allows fork to return immediately while init streams progress
+          void runtimeForFork
+            .initWorkspace({
+              projectPath: foundProjectPath,
+              branchName: newName,
+              trunkBranch: "main", // Only used for non-fork (sync) case in SSH runtime
+              workspacePath,
+              initLogger,
+              sourceWorkspacePath: forkResult.sourceWorkspacePath, // Fork from source, not sync from local
+            })
+            .catch((error: unknown) => {
+              const errorMsg = error instanceof Error ? error.message : String(error);
+              log.error(`initWorkspace failed for forked workspace ${newWorkspaceId}:`, error);
+              initLogger.logStderr(`Initialization failed: ${errorMsg}`);
+              initLogger.logComplete(-1);
+            });
 
           return {
             success: true,

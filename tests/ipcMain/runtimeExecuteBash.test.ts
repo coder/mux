@@ -11,8 +11,6 @@ import {
   cleanupTestEnvironment,
   shouldRunIntegrationTests,
   validateApiKeys,
-  getApiKey,
-  setupProviders,
 } from "./setup";
 import { IPC_CHANNELS } from "../../src/constants/ipc-constants";
 import {
@@ -22,7 +20,7 @@ import {
   createWorkspaceWithInit,
   sendMessageAndWait,
   extractTextFromEvents,
-  HAIKU_MODEL,
+  DEFAULT_TEST_MODEL,
   TEST_TIMEOUT_LOCAL_MS,
   TEST_TIMEOUT_SSH_MS,
 } from "./helpers";
@@ -111,11 +109,6 @@ describeIntegration("Runtime Bash Execution", () => {
 
           try {
             // Setup provider
-            await setupProviders(env.mockIpcRenderer, {
-              anthropic: {
-                apiKey: getApiKey("ANTHROPIC_API_KEY"),
-              },
-            });
 
             // Create workspace
             const branchName = generateBranchName("bash-simple");
@@ -135,7 +128,7 @@ describeIntegration("Runtime Bash Execution", () => {
                 env,
                 workspaceId,
                 'Run the bash command "echo Hello World"',
-                HAIKU_MODEL,
+                DEFAULT_TEST_MODEL,
                 BASH_ONLY
               );
 
@@ -169,11 +162,6 @@ describeIntegration("Runtime Bash Execution", () => {
 
           try {
             // Setup provider
-            await setupProviders(env.mockIpcRenderer, {
-              anthropic: {
-                apiKey: getApiKey("ANTHROPIC_API_KEY"),
-              },
-            });
 
             // Create workspace
             const branchName = generateBranchName("bash-env");
@@ -193,7 +181,7 @@ describeIntegration("Runtime Bash Execution", () => {
                 env,
                 workspaceId,
                 'Run bash command: export TEST_VAR="test123" && echo "Value: $TEST_VAR"',
-                HAIKU_MODEL,
+                DEFAULT_TEST_MODEL,
                 BASH_ONLY
               );
 
@@ -227,11 +215,6 @@ describeIntegration("Runtime Bash Execution", () => {
 
           try {
             // Setup provider
-            await setupProviders(env.mockIpcRenderer, {
-              anthropic: {
-                apiKey: getApiKey("ANTHROPIC_API_KEY"),
-              },
-            });
 
             // Create workspace
             const branchName = generateBranchName("bash-stdin");
@@ -252,7 +235,7 @@ describeIntegration("Runtime Bash Execution", () => {
                 env,
                 workspaceId,
                 'Run bash: echo \'{"test": "data"}\' > /tmp/test.json',
-                HAIKU_MODEL,
+                DEFAULT_TEST_MODEL,
                 BASH_ONLY
               );
 
@@ -264,7 +247,7 @@ describeIntegration("Runtime Bash Execution", () => {
                 env,
                 workspaceId,
                 "Run bash: cat /tmp/test.json | grep test",
-                HAIKU_MODEL,
+                DEFAULT_TEST_MODEL,
                 BASH_ONLY,
                 10000 // 10s timeout - should complete in ~4s per API call
               );
@@ -307,11 +290,6 @@ describeIntegration("Runtime Bash Execution", () => {
 
           try {
             // Setup provider
-            await setupProviders(env.mockIpcRenderer, {
-              anthropic: {
-                apiKey: getApiKey("ANTHROPIC_API_KEY"),
-              },
-            });
 
             // Create workspace
             const branchName = generateBranchName("bash-grep-head");
@@ -331,7 +309,7 @@ describeIntegration("Runtime Bash Execution", () => {
                 env,
                 workspaceId,
                 'Run bash: for i in {1..1000}; do echo "terminal bench line $i" >> testfile.txt; done',
-                HAIKU_MODEL,
+                DEFAULT_TEST_MODEL,
                 BASH_ONLY
               );
 
@@ -342,7 +320,7 @@ describeIntegration("Runtime Bash Execution", () => {
                 env,
                 workspaceId,
                 'Run bash: grep -n "terminal bench" testfile.txt | head -n 200',
-                HAIKU_MODEL,
+                DEFAULT_TEST_MODEL,
                 BASH_ONLY,
                 15000 // 15s timeout - should complete quickly
               );
