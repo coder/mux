@@ -2,7 +2,12 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Command } from "cmdk";
 import { useCommandRegistry } from "@/browser/contexts/CommandRegistryContext";
 import type { CommandAction } from "@/browser/contexts/CommandRegistryContext";
-import { formatKeybind, KEYBINDS, isEditableElement, matchesKeybind } from "@/browser/utils/ui/keybinds";
+import {
+  formatKeybind,
+  KEYBINDS,
+  isEditableElement,
+  matchesKeybind,
+} from "@/browser/utils/ui/keybinds";
 import { getSlashCommandSuggestions } from "@/browser/utils/slashCommands/suggestions";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { filterCommandsByPrefix } from "@/browser/utils/commandPaletteFiltering";

@@ -4,7 +4,10 @@ import { CUSTOM_EVENTS, type CustomEventType } from "@/common/constants/events";
 import { getAutoRetryKey, getRetryStateKey } from "@/common/constants/storage";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import { readPersistedState, updatePersistedState } from "./usePersistedState";
-import { isEligibleForAutoRetry, isNonRetryableSendError } from "@/browser/utils/messages/retryEligibility";
+import {
+  isEligibleForAutoRetry,
+  isNonRetryableSendError,
+} from "@/browser/utils/messages/retryEligibility";
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
 import type { SendMessageError } from "@/common/types/errors";
 import {

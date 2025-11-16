@@ -1,4 +1,9 @@
-import type { MuxMessage, MuxMetadata, MuxImagePart, DisplayedMessage } from "@/common/types/message";
+import type {
+  MuxMessage,
+  MuxMetadata,
+  MuxImagePart,
+  DisplayedMessage,
+} from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type {
   StreamStartEvent,

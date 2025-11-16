@@ -4,7 +4,11 @@ import { use1MContext } from "./use1MContext";
 import { useThinkingLevel } from "./useThinkingLevel";
 import { useMode } from "@/browser/contexts/ModeContext";
 import { useModelLRU } from "./useModelLRU";
-import { type RuntimeMode, parseRuntimeModeAndHost, buildRuntimeString } from "@/common/types/runtime";
+import {
+  type RuntimeMode,
+  parseRuntimeModeAndHost,
+  buildRuntimeString,
+} from "@/common/types/runtime";
 import {
   getModelKey,
   getRuntimeKey,
