@@ -317,7 +317,7 @@ const reasoningQuicksortTurn: ScenarioTurn = {
       {
         kind: "reasoning-delta",
         delay: STREAM_BASE_DELAY,
-        text: "Assessing quicksort mechanics and choosing example array...",
+        text: "Assessing quicksort mechanics and choosing example array...\n",
       },
       {
         kind: "reasoning-delta",

@@ -135,3 +135,13 @@ export const EmptyContent: Story = {
     message: createReasoningMessage(""),
   },
 };
+export const ExpandablePreview: Story = {
+  args: {
+    message: createReasoningMessage(
+      "Assessing quicksort mechanics and choosing example array...\n" +
+        "Plan: explain pivot selection, partitioning, recursion, base case.\n" +
+        "Next, I'll outline best practices for implementing the partition step.",
+      { isStreaming: false }
+    ),
+  },
+};

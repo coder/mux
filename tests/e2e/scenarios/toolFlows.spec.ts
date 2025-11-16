@@ -141,16 +141,18 @@ test.describe("tool and reasoning flows", () => {
     }
 
     const transcript = page.getByRole("log", { name: "Conversation transcript" });
-    const thinkingHeader = transcript.getByText("Thought");
-    const hasThoughtLabel = (await thinkingHeader.count()) > 0;
+    const reasoningPreview = transcript
+      .getByText("Assessing quicksort mechanics and choosing example array...")
+      .first();
+    await expect(reasoningPreview).toBeVisible();
 
-    if (hasThoughtLabel) {
-      await expect(thinkingHeader.first()).toBeVisible();
-      await thinkingHeader.first().click();
-    }
+    const ellipsisIndicator = transcript.getByTestId("reasoning-ellipsis").first();
+    await expect(ellipsisIndicator).toBeVisible();
+
+    await reasoningPreview.click();
 
     await expect(
-      transcript.getByText("Assessing quicksort mechanics and choosing example array...")
+      transcript.getByText("Plan: explain pivot selection, partitioning, recursion, base case.")
     ).toBeVisible();
     await ui.chat.expectTranscriptContains("Quicksort works by picking a pivot");
   });
