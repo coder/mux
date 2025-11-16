@@ -945,6 +945,19 @@ input[type="checkbox"] {
   @apply checked:after:border-solid checked:after:border-white checked:after:content-[''];
 }
 
+/* Global placeholder styling */
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-placeholder);
+  opacity: 0.6;
+}
+
+input:focus::placeholder,
+textarea:focus::placeholder {
+  opacity: 0.4;
+}
+
+
 .text-dim {
   color: var(--color-dim);
 }
