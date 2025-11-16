@@ -1207,23 +1207,29 @@ export class StreamManager extends EventEmitter {
    * Frontend will automatically retry, and buildProviderOptions will filter it out
    */
   private recordLostResponseIdIfApplicable(error: unknown, streamInfo: WorkspaceStreamInfo): void {
-    const errorCode = this.extractErrorCode(error);
-    if (errorCode !== "previous_response_not_found") {
+    const responseId = this.extractPreviousResponseIdFromError(error);
+    if (!responseId) {
       return;
     }
 
-    // Extract previousResponseId from the stream's initial provider options
-    // We need to check streamInfo.streamResult.providerOptions, but that's not exposed
-    // Instead, we can extract it from the error response body if it contains it
-    const responseId = this.extractPreviousResponseIdFromError(error);
-    if (responseId) {
-      log.info("Recording lost previousResponseId for future filtering", {
-        previousResponseId: responseId,
-        workspaceId: streamInfo.messageId,
-        model: streamInfo.model,
-      });
-      this.lostResponseIds.add(responseId);
+    const errorCode = this.extractErrorCode(error);
+    const statusCode = this.extractStatusCode(error);
+    const shouldRecord =
+      errorCode === "previous_response_not_found" || statusCode === 404 || statusCode === 500;
+
+    if (!shouldRecord || this.lostResponseIds.has(responseId)) {
+      return;
     }
+
+    log.info("Recording lost previousResponseId for future filtering", {
+      previousResponseId: responseId,
+      messageId: streamInfo.messageId,
+      model: streamInfo.model,
+      statusCode,
+      errorCode,
+    });
+
+    this.lostResponseIds.add(responseId);
   }
 
   /**
@@ -1277,6 +1283,21 @@ export class StreamManager extends EventEmitter {
         }
       }
     }
+    return undefined;
+  }
+
+  private extractStatusCode(error: unknown): number | undefined {
+    if (APICallError.isInstance(error) && typeof error.statusCode === "number") {
+      return error.statusCode;
+    }
+
+    if (typeof error === "object" && error !== null && "statusCode" in error) {
+      const candidate = (error as { statusCode?: unknown }).statusCode;
+      if (typeof candidate === "number") {
+        return candidate;
+      }
+    }
+
     return undefined;
   }
 

@@ -455,4 +455,58 @@ describe("StreamManager - previousResponseId recovery", () => {
     const errorWithoutId = new Error("Some other error");
     expect(extractMethod.call(streamManager, errorWithoutId)).toBeUndefined();
   });
+
+  test("recordLostResponseIdIfApplicable records IDs for explicit OpenAI errors", () => {
+    const mockHistoryService = createMockHistoryService();
+    const mockPartialService = createMockPartialService();
+    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+
+    const recordMethod = Reflect.get(streamManager, "recordLostResponseIdIfApplicable") as (
+      error: unknown,
+      streamInfo: unknown
+    ) => void;
+    expect(typeof recordMethod).toBe("function");
+
+    const apiError = new APICallError({
+      message: "Previous response with id 'resp_deadbeef' not found.",
+      url: "https://api.openai.com/v1/responses",
+      requestBodyValues: {},
+      statusCode: 400,
+      responseHeaders: {},
+      responseBody: "Previous response with id 'resp_deadbeef' not found.",
+      isRetryable: false,
+      data: { error: { code: "previous_response_not_found" } },
+    });
+
+    recordMethod.call(streamManager, apiError, { messageId: "msg-1", model: "openai:gpt-mini" });
+
+    expect(streamManager.isResponseIdLost("resp_deadbeef")).toBe(true);
+  });
+
+  test("recordLostResponseIdIfApplicable records IDs for 500 errors referencing previous responses", () => {
+    const mockHistoryService = createMockHistoryService();
+    const mockPartialService = createMockPartialService();
+    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+
+    const recordMethod = Reflect.get(streamManager, "recordLostResponseIdIfApplicable") as (
+      error: unknown,
+      streamInfo: unknown
+    ) => void;
+    expect(typeof recordMethod).toBe("function");
+
+    const apiError = new APICallError({
+      message: "Internal error: Previous response with id 'resp_cafebabe' not found.",
+      url: "https://api.openai.com/v1/responses",
+      requestBodyValues: {},
+      statusCode: 500,
+      responseHeaders: {},
+      responseBody: "Internal error: Previous response with id 'resp_cafebabe' not found.",
+      isRetryable: false,
+      data: { error: { code: "server_error" } },
+    });
+
+    recordMethod.call(streamManager, apiError, { messageId: "msg-2", model: "openai:gpt-mini" });
+
+    expect(streamManager.isResponseIdLost("resp_cafebabe")).toBe(true);
+  });
 });
