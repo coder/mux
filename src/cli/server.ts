@@ -8,6 +8,7 @@ import { IpcMain } from "@/node/services/ipcMain";
 import { migrateCmuxToMux } from "@/common/constants/paths";
 import cors from "cors";
 import type { BrowserWindow, IpcMain as ElectronIpcMain } from "electron";
+import { existsSync } from "fs";
 import express from "express";
 import * as http from "http";
 import * as path from "path";
@@ -140,6 +141,14 @@ app.use(express.json({ limit: "50mb" }));
 const clients: Clients = new Map();
 
 const mockWindow = new MockBrowserWindow(clients);
+const STATIC_ROOT = path.resolve(__dirname, "..");
+const STATIC_INDEX = path.join(STATIC_ROOT, "index.html");
+
+if (!existsSync(STATIC_INDEX)) {
+  console.warn(
+    `[mux-server] Built renderer missing at ${STATIC_INDEX}. Did you run "make build-renderer"?`
+  );
+}
 const httpIpcMain = new HttpIpcMainAdapter(app);
 
 // Initialize async services and register handlers
@@ -176,7 +185,7 @@ const httpIpcMain = new HttpIpcMainAdapter(app);
   });
 
   // Serve static files from dist directory (built renderer)
-  app.use(express.static(path.join(__dirname, ".")));
+  app.use(express.static(STATIC_ROOT));
 
   // Health check endpoint
   app.get("/health", (req, res) => {
@@ -186,7 +195,7 @@ const httpIpcMain = new HttpIpcMainAdapter(app);
   // Fallback to index.html for SPA routes (use middleware instead of deprecated wildcard)
   app.use((req, res, next) => {
     if (!req.path.startsWith("/ipc") && !req.path.startsWith("/ws")) {
-      res.sendFile(path.join(__dirname, "index.html"));
+      res.sendFile(path.join(STATIC_ROOT, "index.html"));
     } else {
       next();
     }
