@@ -157,9 +157,9 @@ start: node_modules/.installed build-main build-preload build-static ## Build an
 ## Build targets (can run in parallel)
 build: node_modules/.installed src/version.ts build-renderer build-main build-preload build-icons build-static ## Build all targets
 
-build-main: node_modules/.installed dist/main.js ## Build main process
+build-main: node_modules/.installed dist/cli/index.js ## Build main process
 
-dist/main.js: src/cli/index.ts src/desktop/main.ts src/version.ts tsconfig.main.json tsconfig.json $(TS_SOURCES)
+dist/cli/index.js: src/cli/index.ts src/desktop/main.ts src/cli/server.ts src/version.ts tsconfig.main.json tsconfig.json $(TS_SOURCES)
 	@echo "Building main process..."
 	@NODE_ENV=production $(TSGO) -p tsconfig.main.json
 	@NODE_ENV=production bun x tsc-alias -p tsconfig.main.json
