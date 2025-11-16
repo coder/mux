@@ -79,14 +79,11 @@ Example:
 
 ```markdown
 ## Model: sonnet
-Anthropic's Claude Sonnet family tends to wax poetic—answer in two sentences max and focus on code changes.
+Be terse and to the point.
 
-## Model: /openai:.*codex/i
-OpenAI's GPT-5.1 Codex models already respond tersely, so no additional instruction is required.
+## Model: openai:.*codex
+Use status reporting tools every few minutes.
 ```
-
-The second section documents that OpenAI models (as of `openai:gpt-5.1-codex`) don't need extra prompting, while Sonnet benefits from an explicit "be terse" reminder.
-
 
 ## Practical layout
 
