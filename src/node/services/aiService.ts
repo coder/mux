@@ -655,7 +655,8 @@ export class AIService extends EventEmitter {
         runtime,
         workspacePath,
         mode,
-        additionalSystemInstructions
+        additionalSystemInstructions,
+        modelString
       );
 
       // Count system message tokens for cost tracking

@@ -62,6 +62,32 @@ When compacting conversation history:
 
 Customizing the `compact` mode is particularly useful for controlling what information is preserved during automatic history compaction.
 
+## Model Prompts
+
+Similar to modes, mux reads headings titled `Model: <regex>` to scope instructions to specific models or families. The `<regex>` is matched against the full model identifier (for example, `openai:gpt-5.1-codex`).
+
+Rules:
+
+- Workspace instructions are evaluated before global instructions; the first matching section wins.
+- Regexes are case-insensitive by default. Use `/pattern/flags` syntax to opt into custom flags (e.g., `/openai:.*codex/i`).
+- Invalid regex patterns are ignored instead of breaking the parse.
+- Only the content under the first matching heading is injected.
+
+<!-- Developers: See extractModelSection in src/node/utils/main/markdown.ts for the implementation. -->
+
+Example:
+
+```markdown
+## Model: sonnet
+Anthropic's Claude Sonnet family tends to wax poetic—answer in two sentences max and focus on code changes.
+
+## Model: /openai:.*codex/i
+OpenAI's GPT-5.1 Codex models already respond tersely, so no additional instruction is required.
+```
+
+The second section documents that OpenAI models (as of `openai:gpt-5.1-codex`) don't need extra prompting, while Sonnet benefits from an explicit "be terse" reminder.
+
+
 ## Practical layout
 
 ```

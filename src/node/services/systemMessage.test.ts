@@ -203,4 +203,73 @@ Special mode instructions.
     expect(systemMessage).toContain("Special mode instructions");
     expect(systemMessage).toContain("</my-special_mode->");
   });
+
+  test("includes model-specific section when regex matches active model", async () => {
+    await fs.writeFile(
+      path.join(projectDir, "AGENTS.md"),
+      `# Instructions
+## Model: sonnet
+Respond to Sonnet tickets in two sentences max.
+`
+    );
+
+    const metadata: WorkspaceMetadata = {
+      id: "test-workspace",
+      name: "test-workspace",
+      projectName: "test-project",
+      projectPath: projectDir,
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    };
+
+    const systemMessage = await buildSystemMessage(
+      metadata,
+      runtime,
+      workspaceDir,
+      undefined,
+      undefined,
+      "anthropic:claude-3.5-sonnet"
+    );
+
+    expect(systemMessage).toContain("<model-anthropic-claude-3-5-sonnet>");
+    expect(systemMessage).toContain("Respond to Sonnet tickets in two sentences max.");
+    expect(systemMessage).toContain("</model-anthropic-claude-3-5-sonnet>");
+  });
+
+  test("falls back to global model section when project lacks a match", async () => {
+    await fs.writeFile(
+      path.join(globalDir, "AGENTS.md"),
+      `# Global Instructions
+## Model: /openai:.*codex/i
+OpenAI's GPT-5.1 Codex models already default to terse replies.
+`
+    );
+
+    await fs.writeFile(
+      path.join(projectDir, "AGENTS.md"),
+      `# Project Instructions
+General details only.
+`
+    );
+
+    const metadata: WorkspaceMetadata = {
+      id: "test-workspace",
+      name: "test-workspace",
+      projectName: "test-project",
+      projectPath: projectDir,
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    };
+
+    const systemMessage = await buildSystemMessage(
+      metadata,
+      runtime,
+      workspaceDir,
+      undefined,
+      undefined,
+      "openai:gpt-5.1-codex"
+    );
+
+    expect(systemMessage).toContain("<model-openai-gpt-5-1-codex>");
+    expect(systemMessage).toContain("OpenAI's GPT-5.1 Codex models already default to terse replies.");
+  });
+
 });
