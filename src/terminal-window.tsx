@@ -8,7 +8,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { TerminalView } from "@/browser/components/TerminalView";
-import "./styles/globals.css";
+import "./browser/styles/globals.css";
 
 // Shims the `window.api` object with the browser API if not running in Electron
 import "./browser/api";

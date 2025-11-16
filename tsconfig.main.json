@@ -10,6 +10,17 @@
     "excludeDirectories": ["**/node_modules", "**/dist", "**/build", "**/.git"],
     "excludeFiles": ["**/*.d.ts.map"]
   },
-  "include": ["src/cli/**/*", "src/desktop/**/*", "src/node/**/*", "src/common/**/*"],
-  "exclude": ["src/browser/**/*", "src/main.tsx", "src/terminal-window.tsx"]
+  "include": [
+    "src/cli/index.ts",
+    "src/cli/server.ts",
+    "src/desktop/**/*",
+    "src/node/**/*",
+    "src/common/**/*"
+  ],
+  "exclude": [
+    "src/browser/**/*",
+    "src/main.tsx",
+    "src/terminal-window.tsx",
+    "src/cli/debug/**/*"
+  ]
 }
