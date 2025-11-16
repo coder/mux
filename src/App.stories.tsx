@@ -1370,6 +1370,88 @@ These tables should render cleanly without any disruptive copy or download actio
                     },
                   });
 
+                  // User asking to test error handling
+                  callback({
+                    id: "msg-10",
+                    role: "user",
+                    parts: [
+                      {
+                        type: "text",
+                        text: "Can you show me some examples of error handling?",
+                      },
+                    ],
+                    metadata: {
+                      historySequence: 10,
+                      timestamp: STABLE_TIMESTAMP - 160000,
+                    },
+                  });
+
+                  // Assistant response with various tool errors
+                  callback({
+                    id: "msg-11",
+                    role: "assistant",
+                    parts: [
+                      {
+                        type: "text",
+                        text: "I'll demonstrate various error scenarios:",
+                      },
+                      // Tool error format #1: File read error
+                      {
+                        type: "dynamic-tool",
+                        toolCallId: "call-5",
+                        toolName: "file_read",
+                        state: "output-available",
+                        input: {
+                          filePath: "/nonexistent/file.txt",
+                        },
+                        output: {
+                          success: false,
+                          error: "ENOENT: no such file or directory, open '/nonexistent/file.txt'",
+                        },
+                      },
+                      // Tool error format #2: WRITE DENIED (should be collapsed)
+                      {
+                        type: "dynamic-tool",
+                        toolCallId: "call-6",
+                        toolName: "file_edit_replace_string",
+                        state: "output-available",
+                        input: {
+                          file_path: "src/test.ts",
+                          old_string: "const x = 1;",
+                          new_string: "const x = 2;",
+                        },
+                        output: {
+                          success: false,
+                          error:
+                            "WRITE DENIED, FILE UNMODIFIED: File has been modified since it was read. Please re-read the file and try again.",
+                        },
+                      },
+                      // Tool error format #3: AI SDK error (policy disabled)
+                      {
+                        type: "dynamic-tool",
+                        toolCallId: "call-7",
+                        toolName: "unknown_tool",
+                        state: "output-available",
+                        input: {
+                          someParam: "value",
+                        },
+                        output: {
+                          error:
+                            "Tool 'unknown_tool' is not available. Available tools: bash, file_read, file_edit_replace_string",
+                        },
+                      },
+                      {
+                        type: "text",
+                        text: "As you can see, different error types are displayed with clear indicators and appropriate styling.",
+                      },
+                    ],
+                    metadata: {
+                      historySequence: 11,
+                      timestamp: STABLE_TIMESTAMP - 150000,
+                      model: "claude-sonnet-4-20250514",
+                    },
+                  });
+
                   // Mark as caught up
                   callback({ type: "caught-up" });
                 }, 100);

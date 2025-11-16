@@ -102,8 +102,16 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
   const isFailed = result && !result.success;
   const initialExpanded = !isFailed;
 
-  const { expanded, toggleExpanded } = useToolExpansion(initialExpanded);
+  const { expanded, setExpanded, toggleExpanded } = useToolExpansion(initialExpanded);
   const [showRaw, setShowRaw] = React.useState(false);
+
+  // Update expanded state when result changes from undefined to WRITE DENIED
+  // This handles the case where the component renders before the result is available
+  React.useEffect(() => {
+    if (result && !result.success && result.error?.startsWith(WRITE_DENIED_PREFIX)) {
+      setExpanded(false);
+    }
+  }, [result, setExpanded]);
 
   const filePath = "file_path" in args ? args.file_path : undefined;
 
