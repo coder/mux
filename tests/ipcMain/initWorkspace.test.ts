@@ -3,8 +3,6 @@ import {
   createTestEnvironment,
   cleanupTestEnvironment,
   validateApiKeys,
-  getApiKey,
-  setupProviders,
   type TestEnvironment,
 } from "./setup";
 import { IPC_CHANNELS, getChatChannel } from "../../src/constants/ipc-constants";
@@ -15,6 +13,7 @@ import {
   waitForInitEnd,
   collectInitEvents,
   waitFor,
+  sendMessage,
 } from "./helpers";
 import type { WorkspaceChatMessage, WorkspaceInitEvent } from "../../src/types/ipc";
 import { isInitStart, isInitOutput, isInitEnd } from "../../src/types/ipc";
@@ -511,14 +510,8 @@ describeIntegration("Init Queue - Runtime Matrix", () => {
           const env = await createTestEnvironment();
           const branchName = generateBranchName("init-wait-file-read");
 
-          // Setup API provider
-          await setupProviders(env.mockIpcRenderer, {
-            anthropic: {
-              apiKey: getApiKey("ANTHROPIC_API_KEY"),
-            },
-          });
-
           // Create repo with init hook that sleeps 5s, writes a file, then FAILS
+          // Provider setup happens automatically in sendMessage
           // This tests that tools proceed even when init hook fails (exit code 1)
           const tempGitRepo = await createTempGitRepoWithInitHook({
             exitCode: 1, // EXIT WITH FAILURE
@@ -551,8 +544,9 @@ exit 1
             env.sentEvents.length = 0;
 
             // IMMEDIATELY ask AI to read the file (before init completes)
-            const sendResult = await env.mockIpcRenderer.invoke(
-              IPC_CHANNELS.WORKSPACE_SEND_MESSAGE,
+            // Use sendMessage helper which includes provider setup
+            const sendResult = await sendMessage(
+              env.mockIpcRenderer,
               workspaceId,
               "Read the file init_created_file.txt and tell me what it says",
               {

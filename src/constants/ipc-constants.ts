@@ -67,3 +67,8 @@ export const IPC_CHANNELS = {
 // Helper functions for dynamic channels
 export const getChatChannel = (workspaceId: string): string =>
   `${IPC_CHANNELS.WORKSPACE_CHAT_PREFIX}${workspaceId}`;
+
+// Event type constants for workspace init events
+export const EVENT_TYPE_PREFIX_INIT = "init-";
+export const EVENT_TYPE_INIT_OUTPUT = "init-output" as const;
+export const EVENT_TYPE_INIT_END = "init-end" as const;

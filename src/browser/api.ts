@@ -2,11 +2,13 @@
  * Browser API client. Used when running cmux in server mode.
  */
 import { IPC_CHANNELS, getChatChannel } from "@/constants/ipc-constants";
+import { getImportMetaEnv } from "@/utils/importMeta";
 import type { IPCApi } from "@/types/ipc";
 
 // Backend URL - defaults to same origin, but can be overridden via VITE_BACKEND_URL
 // This allows frontend (Vite :8080) to connect to backend (:3000) in dev mode
-const API_BASE = import.meta.env.VITE_BACKEND_URL ?? window.location.origin;
+const importMetaEnv = getImportMetaEnv<{ VITE_BACKEND_URL?: string }>();
+const API_BASE = importMetaEnv.VITE_BACKEND_URL ?? window.location.origin;
 const WS_BASE = API_BASE.replace("http://", "ws://").replace("https://", "wss://");
 
 interface InvokeResponse<T> {
@@ -56,9 +58,10 @@ class WebSocketManager {
     }
 
     this.isConnecting = true;
-    this.ws = new WebSocket(`${WS_BASE}/ws`);
+    const ws = new WebSocket(`${WS_BASE}/ws`);
+    this.ws = ws;
 
-    this.ws.onopen = () => {
+    ws.onopen = () => {
       console.log("WebSocket connected");
       this.isConnecting = false;
 
@@ -69,7 +72,7 @@ class WebSocketManager {
       }
     };
 
-    this.ws.onmessage = (event) => {
+    ws.onmessage = (event: MessageEvent) => {
       try {
         const parsed = JSON.parse(event.data as string) as { channel: string; args: unknown[] };
         const { channel, args } = parsed;
@@ -82,12 +85,12 @@ class WebSocketManager {
       }
     };
 
-    this.ws.onerror = (error) => {
+    ws.onerror = (error: Event) => {
       console.error("WebSocket error:", error);
       this.isConnecting = false;
     };
 
-    this.ws.onclose = () => {
+    ws.onclose = () => {
       console.log("WebSocket disconnected");
       this.isConnecting = false;
       this.ws = null;
@@ -100,47 +103,53 @@ class WebSocketManager {
   }
 
   subscribe(channel: string, workspaceId?: string): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      if (channel.startsWith(IPC_CHANNELS.WORKSPACE_CHAT_PREFIX)) {
-        console.log(
-          `[WebSocketManager] Subscribing to workspace chat for workspaceId: ${workspaceId ?? "undefined"}`
-        );
-        this.ws.send(
-          JSON.stringify({
-            type: "subscribe",
-            channel: "workspace:chat",
-            workspaceId,
-          })
-        );
-      } else if (channel === IPC_CHANNELS.WORKSPACE_METADATA) {
-        this.ws.send(
-          JSON.stringify({
-            type: "subscribe",
-            channel: "workspace:metadata",
-          })
-        );
-      }
+    const ws = this.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    if (channel.startsWith(IPC_CHANNELS.WORKSPACE_CHAT_PREFIX)) {
+      console.log(
+        `[WebSocketManager] Subscribing to workspace chat for workspaceId: ${workspaceId ?? "undefined"}`
+      );
+      ws.send(
+        JSON.stringify({
+          type: "subscribe",
+          channel: "workspace:chat",
+          workspaceId,
+        })
+      );
+    } else if (channel === IPC_CHANNELS.WORKSPACE_METADATA) {
+      ws.send(
+        JSON.stringify({
+          type: "subscribe",
+          channel: "workspace:metadata",
+        })
+      );
     }
   }
 
   unsubscribe(channel: string, workspaceId?: string): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      if (channel.startsWith(IPC_CHANNELS.WORKSPACE_CHAT_PREFIX)) {
-        this.ws.send(
-          JSON.stringify({
-            type: "unsubscribe",
-            channel: "workspace:chat",
-            workspaceId,
-          })
-        );
-      } else if (channel === IPC_CHANNELS.WORKSPACE_METADATA) {
-        this.ws.send(
-          JSON.stringify({
-            type: "unsubscribe",
-            channel: "workspace:metadata",
-          })
-        );
-      }
+    const ws = this.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    if (channel.startsWith(IPC_CHANNELS.WORKSPACE_CHAT_PREFIX)) {
+      ws.send(
+        JSON.stringify({
+          type: "unsubscribe",
+          channel: "workspace:chat",
+          workspaceId,
+        })
+      );
+    } else if (channel === IPC_CHANNELS.WORKSPACE_METADATA) {
+      ws.send(
+        JSON.stringify({
+          type: "unsubscribe",
+          channel: "workspace:metadata",
+        })
+      );
     }
   }
 

@@ -16,7 +16,12 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import { shouldRunIntegrationTests, createTestEnvironment, cleanupTestEnvironment } from "./setup";
 import type { TestEnvironment } from "./setup";
-import { IPC_CHANNELS } from "../../src/constants/ipc-constants";
+import {
+  IPC_CHANNELS,
+  EVENT_TYPE_PREFIX_INIT,
+  EVENT_TYPE_INIT_OUTPUT,
+  EVENT_TYPE_INIT_END,
+} from "../../src/constants/ipc-constants";
 import { createTempGitRepo, cleanupTempGitRepo, generateBranchName } from "./helpers";
 import { detectDefaultTrunkBranch } from "../../src/git";
 import {
@@ -30,6 +35,7 @@ import type { FrontendWorkspaceMetadata } from "../../src/types/workspace";
 import { createRuntime } from "../../src/runtime/runtimeFactory";
 import type { SSHRuntime } from "../../src/runtime/SSHRuntime";
 import { streamToString } from "../../src/runtime/SSHRuntime";
+import { CMUX_DIR, INIT_HOOK_FILENAME } from "../../src/runtime/initHook";
 
 const execAsync = promisify(exec);
 
@@ -37,14 +43,6 @@ const execAsync = promisify(exec);
 const TEST_TIMEOUT_MS = 60000;
 const INIT_HOOK_WAIT_MS = 1500; // Wait for async init hook completion (local runtime)
 const SSH_INIT_WAIT_MS = 7000; // SSH init includes sync + checkout + hook, takes longer
-const MUX_DIR = ".mux";
-const INIT_HOOK_FILENAME = "init";
-
-// Event type constants
-const EVENT_PREFIX_WORKSPACE_CHAT = "workspace:chat:";
-const EVENT_TYPE_PREFIX_INIT = "init-";
-const EVENT_TYPE_INIT_OUTPUT = "init-output";
-const EVENT_TYPE_INIT_END = "init-end";
 
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -91,7 +89,7 @@ function setupInitEventCapture(env: TestEnvironment): Array<{ channel: string; d
   const originalSend = env.mockWindow.webContents.send;
 
   env.mockWindow.webContents.send = ((channel: string, data: unknown) => {
-    if (channel.startsWith(EVENT_PREFIX_WORKSPACE_CHAT) && isInitEvent(data)) {
+    if (channel.startsWith(IPC_CHANNELS.WORKSPACE_CHAT_PREFIX) && isInitEvent(data)) {
       capturedEvents.push({ channel, data });
     }
     originalSend.call(env.mockWindow.webContents, channel, data);
@@ -104,9 +102,9 @@ function setupInitEventCapture(env: TestEnvironment): Array<{ channel: string; d
  * Create init hook file in git repo
  */
 async function createInitHook(repoPath: string, hookContent: string): Promise<void> {
-  const muxDir = path.join(repoPath, MUX_DIR);
-  await fs.mkdir(muxDir, { recursive: true });
-  const initHookPath = path.join(muxDir, INIT_HOOK_FILENAME);
+  const cmuxDir = path.join(repoPath, CMUX_DIR);
+  await fs.mkdir(cmuxDir, { recursive: true });
+  const initHookPath = path.join(cmuxDir, INIT_HOOK_FILENAME);
   await fs.writeFile(initHookPath, hookContent, { mode: 0o755 });
 }
 
@@ -366,7 +364,7 @@ describeIntegration("WORKSPACE_CREATE with both runtimes", () => {
 
       describe("Init hook execution", () => {
         test.concurrent(
-          "executes .mux/init hook when present and streams logs",
+          "executes .cmux/init hook when present and streams logs",
           async () => {
             const env = await createTestEnvironment();
             const tempGitRepo = await createTempGitRepo();
@@ -878,7 +876,7 @@ exit 1
             // Should be the original origin URL, not the bundle path
             expect(remoteUrl).toBe(originUrl);
             expect(remoteUrl).not.toContain(".bundle");
-            expect(remoteUrl).not.toContain(".mux-bundle");
+            expect(remoteUrl).not.toContain(".cmux-bundle");
           } finally {
             await cleanup();
           }
