@@ -255,7 +255,7 @@ async function showSplashScreen() {
   });
 
   // Wait for splash HTML to load
-  await splashWindow.loadFile(path.join(__dirname, "splash.html"));
+  await splashWindow.loadFile(path.join(__dirname, "../splash.html"));
 
   // Wait for the window to actually be shown and rendered before continuing
   // This ensures the splash is visible before we block the event loop with heavy work
@@ -465,7 +465,7 @@ function createWindow() {
     }
   } else {
     // Production mode: load built files
-    const htmlPath = path.join(__dirname, "index.html");
+    const htmlPath = path.join(__dirname, "../index.html");
     console.log(`[${timestamp()}] [window] Loading from file: ${htmlPath}`);
     void mainWindow.loadFile(htmlPath);
   }
