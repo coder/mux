@@ -167,6 +167,8 @@
     "dist/**/*.wasm",
     "dist/**/*.html",
     "dist/**/*.css",
+    "dist/**/*.woff",
+    "dist/**/*.woff2",
     "dist/**/*.json",
     "dist/**/*.png",
     "dist/assets/**/*",
