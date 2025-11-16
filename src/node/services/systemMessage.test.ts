@@ -269,7 +269,8 @@ General details only.
     );
 
     expect(systemMessage).toContain("<model-openai-gpt-5-1-codex>");
-    expect(systemMessage).toContain("OpenAI's GPT-5.1 Codex models already default to terse replies.");
+    expect(systemMessage).toContain(
+      "OpenAI's GPT-5.1 Codex models already default to terse replies."
+    );
   });
-
 });
