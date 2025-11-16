@@ -1,10 +1,10 @@
 import * as fs from "fs";
 import * as path from "path";
-import { defaultConfig } from "@/config";
-import type { MuxMessage } from "@/types/message";
-import type { SendMessageOptions } from "@/types/ipc";
+import { defaultConfig } from "@/node/config";
+import type { MuxMessage } from "@/common/types/message";
+import type { SendMessageOptions } from "@/common/types/ipc";
 import { getDefaultModelFromLRU } from "@/hooks/useModelLRU";
-import { getMuxSessionsDir } from "@/constants/paths";
+import { getMuxSessionsDir } from "@/common/constants/paths";
 
 /**
  * Debug command to send a message to a workspace, optionally editing an existing message

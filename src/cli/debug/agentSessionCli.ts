@@ -5,12 +5,12 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { PlatformPaths } from "../utils/paths";
 import { parseArgs } from "util";
-import { Config } from "@/config";
-import { HistoryService } from "@/services/historyService";
-import { PartialService } from "@/services/partialService";
-import { InitStateManager } from "@/services/initStateManager";
-import { AIService } from "@/services/aiService";
-import { AgentSession, type AgentSessionChatEvent } from "@/services/agentSession";
+import { Config } from "@/node/config";
+import { HistoryService } from "@/node/services/historyService";
+import { PartialService } from "@/node/services/partialService";
+import { InitStateManager } from "@/node/services/initStateManager";
+import { AIService } from "@/node/services/aiService";
+import { AgentSession, type AgentSessionChatEvent } from "@/node/services/agentSession";
 import {
   isCaughtUpMessage,
   isStreamAbort,
@@ -23,12 +23,12 @@ import {
   isToolCallStart,
   type SendMessageOptions,
   type WorkspaceChatMessage,
-} from "@/types/ipc";
+} from "@/common/types/ipc";
 import { getDefaultModelFromLRU } from "@/hooks/useModelLRU";
 import { ensureProvidersConfig } from "@/utils/providers/ensureProvidersConfig";
 import { modeToToolPolicy, PLAN_MODE_INSTRUCTION } from "@/utils/ui/modeUtils";
 import { extractAssistantText, extractReasoning, extractToolCalls } from "@/debug/chatExtractors";
-import type { ThinkingLevel } from "@/types/thinking";
+import type { ThinkingLevel } from "@/common/types/thinking";
 
 interface CliResult {
   success: boolean;
