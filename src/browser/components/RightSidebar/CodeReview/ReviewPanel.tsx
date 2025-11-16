@@ -28,15 +28,15 @@ import { ReviewControls } from "./ReviewControls";
 import { FileTree } from "./FileTree";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useReviewState } from "@/browser/hooks/useReviewState";
-import { parseDiff, extractAllHunks } from "@/utils/git/diffParser";
+import { parseDiff, extractAllHunks } from "@/node/utils/git/diffParser";
 import { getReviewSearchStateKey } from "@/common/constants/storage";
 import { Tooltip, TooltipWrapper } from "@/browser/components/Tooltip";
-import { parseNumstat, buildFileTree, extractNewPath } from "@/utils/git/numstatParser";
+import { parseNumstat, buildFileTree, extractNewPath } from "@/node/utils/git/numstatParser";
 import type { DiffHunk, ReviewFilters as ReviewFiltersType } from "@/common/types/review";
-import type { FileTreeNode } from "@/utils/git/numstatParser";
+import type { FileTreeNode } from "@/node/utils/git/numstatParser";
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { applyFrontendFilters } from "@/browser/utils/review/filterHunks";
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 
 interface ReviewPanelProps {
   workspaceId: string;

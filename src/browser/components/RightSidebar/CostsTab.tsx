@@ -1,12 +1,12 @@
 import React from "react";
 import { useWorkspaceUsage, useWorkspaceConsumers } from "@/browser/stores/WorkspaceStore";
-import { getModelStats } from "@/utils/tokens/modelStats";
-import { sumUsageHistory } from "@/utils/tokens/usageAggregator";
+import { getModelStats } from "@/common/utils/tokens/modelStats";
+import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { ToggleGroup, type ToggleOption } from "../ToggleGroup";
 import { use1MContext } from "@/browser/hooks/use1MContext";
-import { supports1MContext } from "@/utils/ai/models";
-import { TOKEN_COMPONENT_COLORS } from "@/utils/tokens/tokenMeterUtils";
+import { supports1MContext } from "@/common/utils/ai/models";
+import { TOKEN_COMPONENT_COLORS } from "@/common/utils/tokens/tokenMeterUtils";
 import { ConsumerBreakdown } from "./ConsumerBreakdown";
 
 // Format token display - show k for thousands with 1 decimal

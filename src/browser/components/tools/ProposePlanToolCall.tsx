@@ -14,7 +14,7 @@ import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useStartHere } from "@/browser/hooks/useStartHere";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { TooltipWrapper, Tooltip } from "../Tooltip";
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 
 interface ProposePlanToolCallProps {
   args: ProposePlanToolArgs;

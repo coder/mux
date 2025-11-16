@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import type { DisplayedMessage } from "@/common/types/message";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { TypewriterMarkdown } from "./TypewriterMarkdown";
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 import { Shimmer } from "../ai-elements/shimmer";
 import { Lightbulb } from "lucide-react";
 

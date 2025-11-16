@@ -3,7 +3,7 @@ import type { Toast } from "./ChatInputToast";
 import { SolutionLabel } from "./ChatInputToast";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import type { SendMessageError as SendMessageErrorType } from "@/common/types/errors";
-import { formatSendMessageError } from "@/utils/errors/formatSendError";
+import { formatSendMessageError } from "@/node/utils/errors/formatSendError";
 
 /**
  * Creates a toast message for command-related errors and help messages

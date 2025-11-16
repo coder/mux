@@ -1,5 +1,5 @@
 import { buildCoreSources } from "./sources";
-import type { ProjectConfig } from "@/config";
+import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 

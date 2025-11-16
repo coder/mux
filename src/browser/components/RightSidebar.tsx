@@ -6,10 +6,10 @@ import { useResizeObserver } from "@/browser/hooks/useResizeObserver";
 import { CostsTab } from "./RightSidebar/CostsTab";
 import { VerticalTokenMeter } from "./RightSidebar/VerticalTokenMeter";
 import { ReviewPanel } from "./RightSidebar/CodeReview/ReviewPanel";
-import { calculateTokenMeterData } from "@/utils/tokens/tokenMeterUtils";
+import { calculateTokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { TooltipWrapper, Tooltip } from "./Tooltip";
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 
 interface SidebarContainerProps {
   collapsed: boolean;

@@ -6,8 +6,8 @@
  */
 
 import { describe, test, expect } from "@jest/globals";
-import { KNOWN_MODELS } from "@/constants/knownModels";
-import modelsJson from "@/utils/tokens/models.json";
+import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import modelsJson from "@/common/utils/tokens/models.json";
 
 describe("Known Models Integration", () => {
   test("all known models exist in models.json", () => {

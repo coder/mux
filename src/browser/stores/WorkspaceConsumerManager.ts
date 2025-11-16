@@ -2,7 +2,7 @@ import type { WorkspaceConsumersState } from "./WorkspaceStore";
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import type { ChatStats } from "@/common/types/chatStats";
 import type { MuxMessage } from "@/common/types/message";
-import assert from "@/utils/assert";
+import assert from "@/common/utils/assert";
 
 const TOKENIZER_CANCELLED_MESSAGE = "Cancelled by newer request";
 

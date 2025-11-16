@@ -1,5 +1,5 @@
 import type { UIMode } from "@/common/types/mode";
-import type { ToolPolicy } from "@/utils/tools/toolPolicy";
+import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 
 /**
  * System instruction for Plan Mode

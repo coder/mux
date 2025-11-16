@@ -2,7 +2,7 @@ import React from "react";
 import AnthropicIcon from "@/assets/icons/anthropic.svg?react";
 import OpenAIIcon from "@/assets/icons/openai.svg?react";
 import { TooltipWrapper, Tooltip } from "@/browser/components/Tooltip";
-import { formatModelDisplayName } from "@/utils/ai/modelDisplay";
+import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 
 interface ModelDisplayProps {
   modelString: string;

@@ -3,7 +3,7 @@ import type { UIMode } from "@/common/types/mode";
 import * as vim from "@/browser/utils/vim";
 import { TooltipWrapper, Tooltip, HelpIndicator } from "./Tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
 

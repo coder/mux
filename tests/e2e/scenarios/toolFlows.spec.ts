@@ -1,7 +1,7 @@
 import path from "path";
 import fs from "fs/promises";
 import { electronTest as test, electronExpect as expect } from "../electronTest";
-import { TOOL_FLOW_PROMPTS } from "@/services/mock/scenarios/toolFlows";
+import { TOOL_FLOW_PROMPTS } from "@/node/services/mock/scenarios/toolFlows";
 
 test.skip(
   ({ browserName }) => browserName !== "chromium",

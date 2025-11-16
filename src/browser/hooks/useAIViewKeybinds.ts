@@ -8,7 +8,7 @@ import { DEFAULT_THINKING_LEVEL } from "@/common/types/thinking";
 import { getThinkingPolicyForModel } from "@/browser/utils/thinking/policy";
 import { getDefaultModelFromLRU } from "@/browser/hooks/useModelLRU";
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
-import { isCompactingStream, cancelCompaction } from "@/utils/compaction/handler";
+import { isCompactingStream, cancelCompaction } from "@/node/utils/compaction/handler";
 
 interface UseAIViewKeybindsParams {
   workspaceId: string;

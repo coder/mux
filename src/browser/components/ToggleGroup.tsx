@@ -1,4 +1,4 @@
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 
 export interface ToggleOption<T extends string> {
   value: T;

@@ -1,5 +1,5 @@
 import { electronTest as test, electronExpect as expect } from "../electronTest";
-import { LIST_PROGRAMMING_LANGUAGES } from "@/services/mock/scenarios/basicChat";
+import { LIST_PROGRAMMING_LANGUAGES } from "@/node/services/mock/scenarios/basicChat";
 
 const SIMPLE_PROMPT = LIST_PROGRAMMING_LANGUAGES;
 

@@ -12,9 +12,9 @@ import {
   OPENAI_REASONING_EFFORT,
   OPENROUTER_REASONING_EFFORT,
 } from "@/common/types/thinking";
-import { log } from "@/services/log";
+import { log } from "@/node/services/log";
 import type { MuxMessage } from "@/common/types/message";
-import { enforceThinkingPolicy } from "@/utils/thinking/policy";
+import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 
 /**
  * Extended OpenAI Responses provider options to include truncation

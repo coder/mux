@@ -13,7 +13,7 @@ import { Tooltip, TooltipWrapper } from "../../Tooltip";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getReviewExpandStateKey } from "@/common/constants/storage";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 
 interface HunkViewerProps {
   hunk: DiffHunk;

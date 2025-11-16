@@ -13,7 +13,7 @@ import {
   countTokensForData,
   getToolDefinitionTokens,
   type Tokenizer,
-} from "@/utils/main/tokenizer";
+} from "@/node/utils/main/tokenizer";
 import { createDisplayUsage } from "./displayUsage";
 import type { ChatUsageDisplay } from "./usageAggregator";
 

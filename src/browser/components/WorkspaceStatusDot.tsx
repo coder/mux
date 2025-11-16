@@ -1,4 +1,4 @@
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { getStatusTooltip } from "@/browser/utils/ui/statusTooltip";
 import { memo, useMemo } from "react";

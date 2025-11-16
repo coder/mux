@@ -1,6 +1,6 @@
 import React from "react";
 import { use1MContext } from "@/browser/hooks/use1MContext";
-import { supports1MContext } from "@/utils/ai/models";
+import { supports1MContext } from "@/common/utils/ai/models";
 import { TooltipWrapper, Tooltip } from "./Tooltip";
 
 interface Context1MCheckboxProps {

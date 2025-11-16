@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from "react";
 import { Modal, ModalActions, CancelButton, PrimaryButton } from "./Modal";
-import type { ProjectConfig } from "@/config";
+import type { ProjectConfig } from "@/node/config";
 
 interface ProjectCreateModalProps {
   isOpen: boolean;

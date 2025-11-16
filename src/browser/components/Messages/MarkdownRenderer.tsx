@@ -1,6 +1,6 @@
 import React from "react";
 import { MarkdownCore } from "./MarkdownCore";
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 
 interface MarkdownRendererProps {
   content: string;

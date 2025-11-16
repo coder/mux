@@ -13,7 +13,7 @@ import {
   getRuntimeKey,
   getTrunkBranchKey,
 } from "@/common/constants/storage";
-import type { ProjectConfig } from "@/config";
+import type { ProjectConfig } from "@/node/config";
 
 import type { updatePersistedState } from "@/browser/hooks/usePersistedState";
 

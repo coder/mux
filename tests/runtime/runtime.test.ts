@@ -16,9 +16,9 @@ import {
   type SSHServerConfig,
 } from "./ssh-fixture";
 import { createTestRuntime, TestWorkspace, type RuntimeType } from "./test-helpers";
-import { execBuffered, readFileString, writeFileString } from "@/utils/runtime/helpers";
-import type { Runtime } from "@/runtime/Runtime";
-import { RuntimeError } from "@/runtime/Runtime";
+import { execBuffered, readFileString, writeFileString } from "@/node/utils/runtime/helpers";
+import type { Runtime } from "@/node/runtime/Runtime";
+import { RuntimeError } from "@/node/runtime/Runtime";
 
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;

@@ -1,5 +1,5 @@
 import React from "react";
-import { TOOL_DEFINITIONS } from "@/utils/tools/toolDefinitions";
+import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { DisplayedMessage } from "@/common/types/message";
 import { GenericToolCall } from "../tools/GenericToolCall";
 import { BashToolCall } from "../tools/BashToolCall";

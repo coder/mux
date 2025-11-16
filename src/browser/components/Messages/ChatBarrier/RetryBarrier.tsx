@@ -2,11 +2,11 @@ import React, { useState, useEffect, useMemo } from "react";
 import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getRetryStateKey, getAutoRetryKey } from "@/common/constants/storage";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 import type { RetryState } from "@/browser/hooks/useResumeManager";
 import { useWorkspaceState } from "@/browser/stores/WorkspaceStore";
 import { isEligibleForAutoRetry, isNonRetryableSendError } from "@/browser/utils/messages/retryEligibility";
-import { formatSendMessageError } from "@/utils/errors/formatSendError";
+import { formatSendMessageError } from "@/node/utils/errors/formatSendError";
 import { createManualRetryState, calculateBackoffDelay } from "@/browser/utils/messages/retryState";
 
 interface RetryBarrierProps {

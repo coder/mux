@@ -1,6 +1,6 @@
 import React from "react";
-import { cn } from "@/lib/utils";
-import type { TokenSegment } from "@/utils/tokens/tokenMeterUtils";
+import { cn } from "@/common/lib/utils";
+import type { TokenSegment } from "@/common/utils/tokens/tokenMeterUtils";
 
 interface TokenMeterProps {
   segments: TokenSegment[];

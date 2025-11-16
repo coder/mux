@@ -1,6 +1,6 @@
 import React from "react";
 import type { DisplayedMessage } from "@/common/types/message";
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 
 interface StreamErrorMessageProps {
   message: DisplayedMessage & { type: "stream-error" };
