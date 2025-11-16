@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { AppLoader } from "./components/AppLoader";
+import { AppLoader } from "@/browser/components/AppLoader";
 import { initTelemetry, trackAppStarted } from "./telemetry";
 
 // Shims the `window.api` object with the browser API.

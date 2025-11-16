@@ -1,0 +1,92 @@
+/**
+ * Tests for compaction options transformation
+ */
+
+import { applyCompactionOverrides } from "./compactionOptions";
+import type { SendMessageOptions } from "@/common/types/ipc";
+import type { CompactionRequestData } from "@/common/types/message";
+import { KNOWN_MODELS } from "@/common/constants/knownModels";
+
+describe("applyCompactionOverrides", () => {
+  const baseOptions: SendMessageOptions = {
+    model: KNOWN_MODELS.SONNET.id,
+    thinkingLevel: "medium",
+    toolPolicy: [],
+    mode: "exec",
+  };
+
+  it("uses workspace model when no override specified", () => {
+    const compactData: CompactionRequestData = {};
+    const result = applyCompactionOverrides(baseOptions, compactData);
+
+    expect(result.model).toBe(KNOWN_MODELS.SONNET.id);
+    expect(result.mode).toBe("compact");
+  });
+
+  it("applies custom model override", () => {
+    const compactData: CompactionRequestData = {
+      model: KNOWN_MODELS.HAIKU.id,
+    };
+    const result = applyCompactionOverrides(baseOptions, compactData);
+
+    expect(result.model).toBe(KNOWN_MODELS.HAIKU.id);
+  });
+
+  it("preserves workspace thinking level for all models", () => {
+    // Test Anthropic model
+    const anthropicData: CompactionRequestData = {
+      model: KNOWN_MODELS.HAIKU.id,
+    };
+    const anthropicResult = applyCompactionOverrides(baseOptions, anthropicData);
+    expect(anthropicResult.thinkingLevel).toBe("medium");
+
+    // Test OpenAI model
+    const openaiData: CompactionRequestData = {
+      model: "openai:gpt-5-pro",
+    };
+    const openaiResult = applyCompactionOverrides(baseOptions, openaiData);
+    expect(openaiResult.thinkingLevel).toBe("medium");
+  });
+
+  it("applies maxOutputTokens override", () => {
+    const compactData: CompactionRequestData = {
+      maxOutputTokens: 8000,
+    };
+    const result = applyCompactionOverrides(baseOptions, compactData);
+
+    expect(result.maxOutputTokens).toBe(8000);
+  });
+
+  it("sets compact mode and disables all tools", () => {
+    const compactData: CompactionRequestData = {};
+    const result = applyCompactionOverrides(baseOptions, compactData);
+
+    expect(result.mode).toBe("compact");
+    expect(result.toolPolicy).toEqual([]);
+  });
+
+  it("disables all tools even when base options has tool policy", () => {
+    const baseWithTools: SendMessageOptions = {
+      ...baseOptions,
+      toolPolicy: [{ regex_match: "bash", action: "enable" }],
+    };
+    const compactData: CompactionRequestData = {};
+    const result = applyCompactionOverrides(baseWithTools, compactData);
+
+    expect(result.mode).toBe("compact");
+    expect(result.toolPolicy).toEqual([]); // Tools always disabled for compaction
+  });
+
+  it("applies all overrides together", () => {
+    const compactData: CompactionRequestData = {
+      model: KNOWN_MODELS.GPT.id,
+      maxOutputTokens: 5000,
+    };
+    const result = applyCompactionOverrides(baseOptions, compactData);
+
+    expect(result.model).toBe(KNOWN_MODELS.GPT.id);
+    expect(result.maxOutputTokens).toBe(5000);
+    expect(result.mode).toBe("compact");
+    expect(result.thinkingLevel).toBe("medium"); // Non-Anthropic preserves original
+  });
+});
