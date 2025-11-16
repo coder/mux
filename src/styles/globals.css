@@ -189,6 +189,182 @@
   /* Error backgrounds */
   --color-error-bg-dark: hsl(0 33% 13%); /* #3c1f1f - dark error bg */
 
+
+[data-theme="light"] @theme {
+  /* Mode Colors - Keep hue, adjust lightness for light backgrounds */
+  --color-plan-mode: hsl(210 80% 45%);
+  --color-plan-mode-hover: hsl(210 80% 38%);
+  --color-plan-mode-light: hsl(210 80% 55%);
+
+  --color-exec-mode: hsl(268.56 70% 50%);
+  --color-exec-mode-hover: hsl(268.56 70% 43%);
+  --color-exec-mode-light: hsl(268.56 70% 60%);
+
+  --color-edit-mode: hsl(120 45% 38%);
+  --color-edit-mode-hover: hsl(120 45% 32%);
+  --color-edit-mode-light: hsl(120 45% 48%);
+
+  --color-read: hsl(210 80% 45%);
+  --color-editing-mode: hsl(30 100% 40%);
+  --color-pending: hsl(30 100% 50%);
+
+  --color-debug-mode: hsl(214 100% 50%);
+  --color-debug-light: hsl(214 100% 60%);
+  --color-debug-text: hsl(214 100% 45%);
+
+  --color-thinking-mode: hsl(271 76% 48%);
+  --color-thinking-mode-light: hsl(271 76% 58%);
+  --color-thinking-border: hsl(271 76% 48%);
+
+  /* Background & Layout - Inverted */
+  --color-background: hsl(0 0% 98%);
+  --color-background-secondary: hsl(0 0% 96%);
+  --color-border: hsl(240 3% 85%);
+  --color-foreground: hsl(0 0% 15%);
+  --color-muted-foreground: hsl(0 0% 40%);
+  --color-secondary: hsl(0 0% 55%);
+
+  /* Code */
+  --color-code-bg: hsl(0 0% 95%);
+
+  /* Buttons */
+  --color-button-bg: hsl(0 0% 90%);
+  --color-button-text: hsl(0 0% 20%);
+  --color-button-hover: hsl(0 0% 85%);
+
+  /* Messages */
+  --color-user-border: hsl(0 0% 70%);
+  --color-user-border-hover: hsl(0 0% 65%);
+  --color-assistant-border: hsl(207 45% 60%);
+  --color-assistant-border-hover: hsl(207 45% 55%);
+  --color-message-header: hsl(0 0% 20%);
+
+  /* Tokens */
+  --color-token-prompt: hsl(0 0% 55%);
+  --color-token-completion: hsl(207 100% 45%);
+  --color-token-variable: hsl(207 100% 45%);
+  --color-token-fixed: hsl(0 0% 55%);
+  --color-token-input: hsl(120 40% 38%);
+  --color-token-output: hsl(207 100% 45%);
+  --color-token-cached: hsl(0 0% 50%);
+
+  /* Toggle */
+  --color-toggle-bg: hsl(0 0% 92%);
+  --color-toggle-active: hsl(0 0% 88%);
+  --color-toggle-hover: hsl(0 0% 90%);
+  --color-toggle-text: hsl(0 0% 45%);
+  --color-toggle-text-active: hsl(0 0% 10%);
+  --color-toggle-text-hover: hsl(0 0% 30%);
+
+  /* Status */
+  --color-interrupted: hsl(38 92% 45%);
+  --color-review-accent: hsl(48 70% 45%);
+  --color-git-dirty: hsl(38 92% 45%);
+  --color-error: hsl(0 70% 50%);
+  --color-error-bg: hsl(0 50% 95%);
+
+  /* Input */
+  --color-input-bg: hsl(0 0% 100%);
+  --color-input-text: hsl(0 0% 15%);
+  --color-input-border: hsl(207 51% 65%);
+  --color-input-border-focus: hsl(193 91% 55%);
+
+  /* Scrollbar */
+  --color-scrollbar-track: hsl(0 0% 93%);
+  --color-scrollbar-thumb: hsl(0 0% 75%);
+  --color-scrollbar-thumb-hover: hsl(0 0% 65%);
+
+  /* Additional Semantic Colors */
+  --color-muted: hsl(0 0% 50%);
+  --color-muted-light: hsl(0 0% 55%);
+  --color-muted-dark: hsl(0 0% 45%);
+  --color-placeholder: hsl(0 0% 60%);
+  --color-subtle: hsl(0 0% 45%);
+  --color-dim: hsl(0 0% 55%);
+  --color-light: hsl(0 0% 25%);
+  --color-lighter: hsl(0 0% 20%);
+  --color-bright: hsl(0 0% 30%);
+  --color-subdued: hsl(0 0% 45%);
+  --color-label: hsl(0 0% 40%);
+  --color-gray: hsl(0 0% 52%);
+  --color-medium: hsl(0 0% 45%);
+
+  --color-border-light: hsl(240 3% 88%);
+  --color-border-medium: hsl(0 0% 82%);
+  --color-border-darker: hsl(0 0% 78%);
+  --color-border-subtle: hsl(0 0% 75%);
+  --color-border-gray: hsl(240 1% 80%);
+
+  --color-dark: hsl(0 0% 93%);
+  --color-darker: hsl(0 0% 95%);
+  --color-hover: hsl(0 0% 92%);
+  --color-bg-medium: hsl(0 0% 85%);
+  --color-bg-light: hsl(0 0% 88%);
+  --color-bg-subtle: hsl(240 3% 94%);
+
+  --color-separator: hsl(0 0% 90%);
+  --color-separator-light: hsl(0 0% 85%);
+  --color-modal-bg: hsl(0 0% 97%);
+
+  --color-accent: hsl(207 100% 45%);
+  --color-accent-hover: hsl(207 100% 40%);
+  --color-accent-dark: hsl(207 100% 38%);
+  --color-accent-darker: hsl(202 100% 30%);
+  --color-accent-light: hsl(198 100% 55%);
+
+  --color-success: hsl(122 39% 45%);
+  --color-success-light: hsl(123 46% 55%);
+
+  --color-danger: hsl(4 90% 52%);
+  --color-danger-light: hsl(0 91% 62%);
+  --color-danger-soft: hsl(6 93% 60%);
+
+  --color-warning: hsl(45 100% 45%);
+  --color-warning-light: hsl(0 91% 65%);
+
+  /* Code syntax highlighting */
+  --color-code-type: hsl(197 71% 40%);
+  --color-code-keyword: hsl(210 59% 45%);
+
+  /* Toast and notification backgrounds */
+  --color-toast-success-bg: hsl(207 100% 45% / 0.1);
+  --color-toast-success-text: hsl(207 100% 40%);
+  --color-toast-error-bg: hsl(5 89% 50% / 0.1);
+  --color-toast-error-text: hsl(5 89% 45%);
+  --color-toast-error-border: hsl(5 89% 50%);
+  --color-toast-fatal-bg: hsl(0 50% 95%);
+  --color-toast-fatal-border: hsl(0 50% 85%);
+
+  /* Semi-transparent overlays */
+  --color-danger-overlay: hsl(4 90% 52% / 0.1);
+  --color-warning-overlay: hsl(45 100% 45% / 0.1);
+  --color-gray-overlay: hsl(0 0% 50% / 0.05);
+  --color-white-overlay-light: hsl(0 0% 0% / 0.03);
+  --color-white-overlay: hsl(0 0% 0% / 0.05);
+  --color-selection: hsl(204 100% 65% / 0.3);
+  --color-vim-status: hsl(0 0% 20% / 0.6);
+  --color-code-keyword-overlay-light: hsl(210 100% 50% / 0.05);
+  --color-code-keyword-overlay: hsl(210 100% 50% / 0.15);
+
+  /* Info/status colors */
+  --color-info-light: hsl(5 100% 60%);
+  --color-info-yellow: hsl(38 100% 55%);
+
+  /* Review/diff backgrounds */
+  --color-review-bg-blue: hsl(201 31% 90%);
+  --color-review-bg-info: hsl(202 33% 92%);
+  --color-review-bg-warning: hsl(40 100% 95%);
+  --color-review-warning: hsl(38 100% 40%);
+  --color-review-warning-medium: hsl(38 100% 45%);
+  --color-review-warning-light: hsl(40 100% 92%);
+
+  /* Error backgrounds */
+  --color-error-bg-dark: hsl(0 50% 93%);
+
+  /* Radius */
+  --radius: 0.5rem;
+}
+
   /* Radius */
   --radius: 0.5rem;
 }

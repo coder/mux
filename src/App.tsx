@@ -28,7 +28,7 @@ import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sour
 import type { ThinkingLevel } from "./types/thinking";
 import { CUSTOM_EVENTS } from "./constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceFork";
-import { getThinkingLevelKey } from "./constants/storage";
+import { getThinkingLevelKey, THEME_KEY } from "./constants/storage";
 import type { BranchListResult } from "./types/ipc";
 import { useTelemetry } from "./hooks/useTelemetry";
 import { useStartWorkspaceCreation, getFirstProjectPath } from "./hooks/useStartWorkspaceCreation";
@@ -60,6 +60,15 @@ function AppInner() {
   // Auto-collapse sidebar on mobile by default
   const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("sidebarCollapsed", isMobile);
+  
+  // Theme state (global, not workspace-specific)
+  const [theme, setTheme] = usePersistedState<"light" | "dark">(THEME_KEY, "dark");
+  
+  // Apply theme to document root
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
+  
   const defaultProjectPath = getFirstProjectPath(projects);
   const creationChatInputRef = useRef<ChatInputAPI | null>(null);
   const creationProjectPath = !selectedWorkspace
@@ -381,6 +390,10 @@ function AppInner() {
     setSidebarCollapsed((prev) => !prev);
   }, [setSidebarCollapsed]);
 
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
+  }, [setTheme]);
+
   const navigateWorkspaceFromPalette = useCallback(
     (dir: "next" | "prev") => {
       handleNavigateWorkspace(dir);
@@ -402,6 +415,7 @@ function AppInner() {
     onAddProject: addProjectFromPalette,
     onRemoveProject: removeProjectFromPalette,
     onToggleSidebar: toggleSidebarFromPalette,
+    onToggleTheme: toggleTheme,
     onNavigateWorkspace: navigateWorkspaceFromPalette,
     onOpenWorkspaceInTerminal: openWorkspaceInTerminal,
   };
@@ -449,6 +463,9 @@ function AppInner() {
       } else if (matchesKeybind(e, KEYBINDS.TOGGLE_SIDEBAR)) {
         e.preventDefault();
         setSidebarCollapsed((prev) => !prev);
+      } else if (matchesKeybind(e, KEYBINDS.TOGGLE_THEME)) {
+        e.preventDefault();
+        toggleTheme();
       }
     };
 
@@ -457,6 +474,7 @@ function AppInner() {
   }, [
     handleNavigateWorkspace,
     setSidebarCollapsed,
+    toggleTheme,
     isCommandPaletteOpen,
     closeCommandPalette,
     openCommandPalette,

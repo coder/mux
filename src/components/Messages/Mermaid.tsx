@@ -7,26 +7,36 @@ import { usePersistedState } from "@/hooks/usePersistedState";
 const MIN_HEIGHT = 300;
 const MAX_HEIGHT = 1200;
 
-// Initialize mermaid
-mermaid.initialize({
-  startOnLoad: false,
-  theme: "dark",
-  layout: "elk",
-  securityLevel: "loose",
-  fontFamily: "var(--font-monospace)",
-  darkMode: true,
-  elk: {
-    nodePlacementStrategy: "LINEAR_SEGMENTS",
-    mergeEdges: true,
-  },
-  wrap: true,
-  markdownAutoWrap: true,
-  flowchart: {
-    nodeSpacing: 60,
-    curve: "linear",
-    defaultRenderer: "elk",
-  },
-});
+/**
+ * Get mermaid theme configuration based on current theme
+ */
+function getMermaidConfig() {
+  const isDark =
+    typeof document === "undefined" || document.documentElement.dataset.theme !== "light";
+  const theme: "dark" | "default" = isDark ? "dark" : "default";
+  return {
+    startOnLoad: false,
+    theme,
+    layout: "elk",
+    securityLevel: "loose" as const,
+    fontFamily: "var(--font-monospace)",
+    darkMode: isDark,
+    elk: {
+      nodePlacementStrategy: "LINEAR_SEGMENTS" as const,
+      mergeEdges: true,
+    },
+    wrap: true,
+    markdownAutoWrap: true,
+    flowchart: {
+      nodeSpacing: 60,
+      curve: "linear" as const,
+      defaultRenderer: "elk" as const,
+    },
+  };
+}
+
+// Initialize mermaid with default dark theme
+mermaid.initialize(getMermaidConfig());
 
 // Common button styles
 const getButtonStyle = (disabled = false): CSSProperties => ({
@@ -140,6 +150,9 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
       id = `mermaid-${Math.random().toString(36).substr(2, 9)}`;
       try {
         setError(null);
+
+        // Re-initialize mermaid with current theme
+        mermaid.initialize(getMermaidConfig());
 
         // Parse first to validate syntax without rendering
         await mermaid.parse(chart);

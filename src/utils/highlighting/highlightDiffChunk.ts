@@ -1,9 +1,9 @@
 import {
   getShikiHighlighter,
   mapToShikiLang,
-  SHIKI_THEME,
   MAX_DIFF_SIZE_BYTES,
 } from "./shikiHighlighter";
+import { getShikiTheme } from "./shiki-shared";
 import type { DiffChunk } from "./diffChunking";
 
 /**
@@ -83,7 +83,7 @@ export async function highlightDiffChunk(
 
     const html = highlighter.codeToHtml(code, {
       lang: shikiLang,
-      theme: SHIKI_THEME,
+      theme: getShikiTheme(),
     });
 
     // Parse HTML to extract line contents

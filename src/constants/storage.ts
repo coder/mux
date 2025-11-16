@@ -120,6 +120,13 @@ export const USE_1M_CONTEXT_KEY = "use1MContext";
  */
 export const PREFERRED_COMPACTION_MODEL_KEY = "preferredCompactionModel";
 
+
+/**
+ * Get the localStorage key for theme preference (global)
+ * Format: "theme"
+ */
+export const THEME_KEY = "theme";
+
 /**
  * Get the localStorage key for vim mode preference (global)
  * Format: "vimEnabled"

@@ -4,9 +4,8 @@ import { Mermaid } from "./Mermaid";
 import {
   getShikiHighlighter,
   mapToShikiLang,
-  SHIKI_THEME,
 } from "@/utils/highlighting/shikiHighlighter";
-import { extractShikiLines } from "@/utils/highlighting/shiki-shared";
+import { extractShikiLines, getShikiTheme } from "@/utils/highlighting/shiki-shared";
 import { CopyButton } from "@/components/ui/CopyButton";
 
 interface CodeProps {
@@ -79,7 +78,7 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
 
         const html = highlighter.codeToHtml(code, {
           lang: shikiLang,
-          theme: SHIKI_THEME,
+          theme: getShikiTheme(),
         });
 
         if (!cancelled) {

@@ -33,6 +33,7 @@ export const CommandIds = {
   navNext: () => "nav:next" as const,
   navPrev: () => "nav:prev" as const,
   navToggleSidebar: () => "nav:toggleSidebar" as const,
+  navToggleTheme: () => "nav:toggleTheme" as const,
 
   // Chat commands
   chatClear: () => "chat:clear" as const,
