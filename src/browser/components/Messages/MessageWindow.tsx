@@ -66,7 +66,7 @@ export const MessageWindow: React.FC<MessageWindowProps> = ({
       className={cn(
         "mt-4 mb-1 flex w-full flex-col relative isolate w-fit",
         variant === "user" && "ml-auto",
-        variant === "assistant" && "text-white",
+        variant === "assistant" && "text-foreground",
         isLastPartOfMessage && "mb-4"
       )}
       data-message-block
@@ -74,7 +74,7 @@ export const MessageWindow: React.FC<MessageWindowProps> = ({
       <div
         className={cn(
           variant === "user" &&
-            "bg-neutral-700/50 border border-user-border/20 rounded-lg px-3 py-2 overflow-hidden",
+            "bg-[var(--color-user-surface)] border border-[var(--color-user-border)] rounded-lg px-3 py-2 overflow-hidden shadow-sm",
           variant === "assistant" && "px-1 py-1"
         )}
       >
@@ -95,7 +95,7 @@ export const MessageWindow: React.FC<MessageWindowProps> = ({
         <div
           className={cn(
             "mt-2 flex flex-wrap items-center justify-between gap-3 text-[11px]",
-            variant === "user" ? "ml-auto text-white/60" : "text-white/60"
+            variant === "user" ? "ml-auto text-muted" : "text-muted"
           )}
           data-message-meta
         >

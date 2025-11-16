@@ -83,6 +83,7 @@
 
     /* Messages */
     --color-user-border: hsl(0 0% 45%);
+    --color-user-surface: hsla(0 0% 100% / 0.06);
     --color-user-border-hover: hsl(0 0% 44%);
     --color-assistant-border: hsl(207 45% 40%);
     --color-assistant-border-hover: hsl(207 45% 50%);
@@ -249,6 +250,191 @@
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
 }
 
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --color-plan-mode: hsl(210 70% 40%);
+  --color-plan-mode-hover: hsl(210 70% 52%);
+  --color-plan-mode-light: hsl(210 70% 68%);
+  --color-plan-mode-alpha: hsla(210 70% 40% / 0.08);
+
+  --color-exec-mode: hsl(268.56 94.04% 55.19%);
+  --color-exec-mode-hover: hsl(268.56 94.04% 67%);
+  --color-exec-mode-light: hsl(268.56 94.04% 78%);
+
+  --color-edit-mode: hsl(120 50% 35%);
+  --color-edit-mode-hover: hsl(120 50% 45%);
+  --color-edit-mode-light: hsl(120 50% 60%);
+
+  --color-read: hsl(210 70% 40%);
+  --color-editing-mode: hsl(30 100% 50%);
+  --color-editing-mode-alpha: hsla(30 100% 50% / 0.08);
+  --color-pending: hsl(30 100% 64%);
+
+  --color-debug-mode: hsl(214 100% 56%);
+  --color-debug-light: hsl(214 100% 68%);
+  --color-debug-text: hsl(214 100% 32%);
+
+  --color-thinking-mode: hsl(271 70% 46%);
+  --color-thinking-mode-light: hsl(271 70% 62%);
+  --color-thinking-border: hsl(271 70% 46%);
+
+  --color-background: hsl(210 33% 98%);
+  --color-background-secondary: hsl(210 36% 95%);
+  --color-border: hsl(210 24% 82%);
+  --color-foreground: hsl(210 18% 16%);
+  --color-text: hsl(210 18% 16%);
+  --color-text-light: hsl(210 15% 28%);
+  --color-text-secondary: hsl(210 12% 42%);
+  --color-muted-foreground: hsl(210 14% 48%);
+  --color-secondary: hsl(210 18% 60%);
+
+  --color-code-bg: hsl(210 40% 96%);
+
+  --color-button-bg: hsl(210 35% 94%);
+  --color-button-text: hsl(210 20% 20%);
+  --color-button-hover: hsl(210 32% 90%);
+
+  --color-user-surface: hsl(0 0% 91%);
+  --color-user-border: hsl(210 20% 78%);
+  --color-user-border-hover: hsl(210 20% 68%);
+  --color-assistant-border: hsl(207 65% 50%);
+  --color-assistant-border-hover: hsl(207 65% 40%);
+  --color-message-header: hsl(210 18% 20%);
+
+  --color-token-prompt: hsl(210 18% 32%);
+  --color-token-completion: hsl(207 90% 40%);
+  --color-token-variable: hsl(207 90% 40%);
+  --color-token-fixed: hsl(210 18% 32%);
+  --color-token-input: hsl(125 45% 36%);
+  --color-token-output: hsl(207 90% 40%);
+  --color-token-cached: hsl(210 16% 50%);
+
+  --surface-plan-gradient: linear-gradient(135deg, color-mix(in srgb, var(--color-plan-mode), transparent 94%) 0%, color-mix(in srgb, var(--color-plan-mode), transparent 97%) 100%);
+  --surface-plan-border: color-mix(in srgb, var(--color-plan-mode), transparent 78%);
+  --surface-plan-border-subtle: color-mix(in srgb, var(--color-plan-mode), transparent 85%);
+  --surface-plan-border-strong: color-mix(in srgb, var(--color-plan-mode), transparent 70%);
+  --surface-plan-divider: color-mix(in srgb, var(--color-plan-mode), transparent 86%);
+  --surface-plan-chip-bg: color-mix(in srgb, var(--color-plan-mode), transparent 94%);
+  --surface-plan-chip-hover: color-mix(in srgb, var(--color-plan-mode), transparent 90%);
+  --surface-plan-chip-active: color-mix(in srgb, var(--color-plan-mode), transparent 72%);
+  --surface-plan-chip-border: color-mix(in srgb, var(--color-plan-mode), transparent 78%);
+  --surface-plan-chip-border-strong: color-mix(in srgb, var(--color-plan-mode), transparent 68%);
+  --surface-plan-neutral-border: hsl(210 16% 72% / 0.5);
+
+  --surface-assistant-chip-bg: hsl(from var(--color-assistant-border) h s l / 0.15);
+  --surface-assistant-chip-hover: hsl(from var(--color-assistant-border) h s l / 0.45);
+  --surface-assistant-chip-border: hsl(from var(--color-assistant-border) h s l / 0.45);
+  --surface-assistant-chip-border-strong: hsl(from var(--color-assistant-border) h s l / 0.65);
+
+  --border-warning-dashed: color-mix(in srgb, var(--color-warning), transparent 55%);
+
+  --color-toggle-bg: hsl(210 34% 95%);
+  --color-toggle-active: hsl(210 48% 88%);
+  --color-toggle-hover: hsl(210 38% 92%);
+  --color-toggle-text: hsl(210 16% 32%);
+  --color-toggle-text-active: hsl(210 18% 18%);
+  --color-toggle-text-hover: hsl(210 20% 26%);
+
+  --color-interrupted: hsl(38 92% 50%);
+  --color-review-accent: hsl(48 70% 52%);
+  --color-git-dirty: hsl(38 92% 50%);
+  --color-error: hsl(0 68% 46%);
+  --color-error-bg: hsl(0 82% 94%);
+
+  --color-input-bg: hsl(0 0% 100%);
+  --color-input-text: hsl(210 18% 16%);
+  --color-input-border: hsl(207 75% 52%);
+  --color-input-border-focus: hsl(193 85% 56%);
+
+  --color-scrollbar-track: hsl(210 38% 95%);
+  --color-scrollbar-thumb: hsl(210 18% 78%);
+  --color-scrollbar-thumb-hover: hsl(210 18% 70%);
+
+  --color-muted: hsl(210 14% 52%);
+  --color-muted-light: hsl(210 20% 60%);
+  --color-muted-dark: hsl(210 12% 42%);
+  --color-placeholder: hsl(210 16% 52%);
+  --color-subtle: hsl(210 20% 64%);
+  --color-dim: hsl(210 16% 50%);
+  --color-light: hsl(210 22% 72%);
+  --color-lighter: hsl(210 32% 86%);
+  --color-bright: hsl(210 60% 48%);
+  --color-subdued: hsl(210 18% 60%);
+  --color-label: hsl(210 18% 46%);
+  --color-gray: hsl(210 14% 54%);
+  --color-medium: hsl(210 18% 58%);
+
+  --color-border-light: hsl(210 24% 84%);
+  --color-border-medium: hsl(210 22% 78%);
+  --color-border-darker: hsl(210 20% 70%);
+  --color-border-subtle: hsl(210 18% 64%);
+  --color-border-gray: hsl(210 22% 76%);
+
+  --color-dark: hsl(210 33% 98%);
+  --color-darker: hsl(210 30% 94%);
+  --color-hover: hsl(210 28% 92%);
+  --color-bg-medium: hsl(210 26% 88%);
+  --color-bg-light: hsl(210 24% 84%);
+  --color-bg-subtle: hsl(210 32% 92%);
+
+  --color-separator: hsl(0 0% 91%);
+  --color-separator-light: hsl(0 0% 96%);
+  --color-modal-bg: hsl(210 35% 96%);
+
+  --color-accent: hsl(207 90% 42%);
+  --color-accent-hover: hsl(207 90% 46%);
+  --color-accent-dark: hsl(207 90% 38%);
+  --color-accent-darker: hsl(204 92% 30%);
+  --color-accent-light: hsl(198 100% 70%);
+
+  --color-success: hsl(122 39% 45%);
+  --color-success-light: hsl(123 46% 60%);
+  --color-on-success: hsl(0 0% 100%);
+
+  --color-danger: hsl(4 78% 52%);
+  --color-danger-light: hsl(4 78% 70%);
+  --color-danger-soft: hsl(6 80% 76%);
+  --color-on-danger: hsl(0 0% 100%);
+
+  --color-warning: hsl(45 100% 50%);
+  --color-warning-light: hsl(38 100% 70%);
+
+  --color-code-type: hsl(210 70% 34%);
+  --color-code-keyword: hsl(210 78% 32%);
+
+  --color-toast-success-bg: hsl(207 90% 46% / 0.18);
+  --color-toast-success-text: hsl(207 90% 34%);
+  --color-toast-error-bg: hsl(5 80% 55% / 0.18);
+  --color-toast-error-text: hsl(5 78% 46%);
+  --color-toast-error-border: hsl(5 78% 46%);
+  --color-toast-fatal-bg: hsl(0 72% 94%);
+  --color-toast-fatal-border: hsl(0 74% 82%);
+
+  --color-danger-overlay: hsl(4 80% 52% / 0.12);
+  --color-warning-overlay: hsl(45 100% 50% / 0.12);
+  --color-gray-overlay: hsl(210 16% 30% / 0.08);
+  --color-white-overlay-light: hsl(210 14% 12% / 0.04);
+  --color-white-overlay: hsl(210 14% 12% / 0.08);
+  --color-selection: hsl(204 100% 45% / 0.3);
+  --color-vim-status: hsl(210 18% 32% / 0.6);
+  --color-code-keyword-overlay-light: hsl(210 80% 45% / 0.12);
+  --color-code-keyword-overlay: hsl(210 80% 45% / 0.24);
+
+  --color-info-light: hsl(5 90% 70%);
+  --color-info-yellow: hsl(38 100% 60%);
+
+  --color-review-bg-blue: hsl(212 57% 82%);
+  --color-review-bg-info: hsl(200 60% 80%);
+  --color-review-bg-warning: hsl(38 88% 82%);
+  --color-review-warning: hsl(34 86% 45%);
+  --color-review-warning-medium: hsl(34 86% 52%);
+  --color-review-warning-light: hsl(38 100% 88%);
+
+  --color-error-bg-dark: hsl(0 65% 86%);
+
+  --radius: 0.5rem;
+}
 :root[data-theme="dark"] {
   color-scheme: dark;
   /* Theme override hook: redeclare tokens inside this block to swap palettes */

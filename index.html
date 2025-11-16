@@ -16,13 +16,38 @@
         margin: 0;
         padding: 0;
         overflow: hidden;
-        background: #1e1e1e;
+        background: var(--color-background, #1e1e1e);
       }
       #root {
         height: 100vh;
         overflow: hidden;
       }
     </style>
+    <script>
+      (function () {
+        const THEME_KEY = "uiTheme";
+        try {
+          const stored = window.localStorage.getItem(THEME_KEY);
+          const parsed = stored ? JSON.parse(stored) : null;
+          const prefersLight = window.matchMedia
+            ? window.matchMedia("(prefers-color-scheme: light)").matches
+            : false;
+          const theme = parsed === "light" || parsed === "dark" ? parsed : prefersLight ? "light" : "dark";
+
+          document.documentElement.dataset.theme = theme;
+          document.documentElement.style.colorScheme = theme;
+
+          const metaThemeColor = document.querySelector('meta[name="theme-color"]');
+          if (metaThemeColor) {
+            metaThemeColor.setAttribute("content", theme === "light" ? "#f5f6f8" : "#1e1e1e");
+          }
+        } catch (error) {
+          console.warn("Failed to apply preferred theme early", error);
+          document.documentElement.dataset.theme = "dark";
+          document.documentElement.style.colorScheme = "dark";
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -50,6 +50,10 @@ export const CommandIds = {
   projectRemove: (projectPath: string) =>
     `${COMMAND_ID_PREFIXES.PROJECT_REMOVE}${projectPath}` as const,
 
+  // Appearance commands
+  themeToggle: () => "appearance:theme:toggle" as const,
+  themeSet: (theme: "light" | "dark") => `appearance:theme:set:${theme}` as const,
+
   // Help commands
   helpKeybinds: () => "help:keybinds" as const,
 } as const;

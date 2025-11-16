@@ -1,3 +1,4 @@
+import type { ThemeMode } from "@/browser/contexts/ThemeContext";
 import type { CommandAction } from "@/browser/contexts/CommandRegistryContext";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import type { ThinkingLevel } from "@/common/types/thinking";
@@ -12,6 +13,7 @@ export interface BuildSourcesParams {
   projects: Map<string, ProjectConfig>;
   /** Map of workspace ID to workspace metadata (keyed by metadata.id, not path) */
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>;
+  theme: ThemeMode;
   selectedWorkspace: {
     projectPath: string;
     projectName: string;
@@ -41,6 +43,8 @@ export interface BuildSourcesParams {
   onToggleSidebar: () => void;
   onNavigateWorkspace: (dir: "next" | "prev") => void;
   onOpenWorkspaceInTerminal: (workspaceId: string) => void;
+  onToggleTheme: () => void;
+  onSetTheme: (theme: ThemeMode) => void;
 }
 
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high"];
@@ -56,12 +60,14 @@ export const COMMAND_SECTIONS = {
   MODE: "Modes & Model",
   HELP: "Help",
   PROJECTS: "Projects",
+  APPEARANCE: "Appearance",
 } as const;
 
 const section = {
   workspaces: COMMAND_SECTIONS.WORKSPACES,
   navigation: COMMAND_SECTIONS.NAVIGATION,
   chat: COMMAND_SECTIONS.CHAT,
+  appearance: COMMAND_SECTIONS.APPEARANCE,
   mode: COMMAND_SECTIONS.MODE,
   help: COMMAND_SECTIONS.HELP,
   projects: COMMAND_SECTIONS.PROJECTS,
@@ -304,6 +310,38 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       run: () => p.onToggleSidebar(),
     },
   ]);
+
+  // Appearance
+  actions.push(() => {
+    const list: CommandAction[] = [
+      {
+        id: CommandIds.themeToggle(),
+        title: `Switch to ${p.theme === "dark" ? "Light" : "Dark"} Theme`,
+        section: section.appearance,
+        run: () => p.onToggleTheme(),
+      },
+    ];
+
+    if (p.theme !== "dark") {
+      list.push({
+        id: CommandIds.themeSet("dark"),
+        title: "Use Dark Theme",
+        section: section.appearance,
+        run: () => p.onSetTheme("dark"),
+      });
+    }
+
+    if (p.theme !== "light") {
+      list.push({
+        id: CommandIds.themeSet("light"),
+        title: "Use Light Theme",
+        section: section.appearance,
+        run: () => p.onSetTheme("light"),
+      });
+    }
+
+    return list;
+  });
 
   // Chat utilities
   actions.push(() => {

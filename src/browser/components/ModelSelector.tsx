@@ -236,8 +236,8 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                   "text-[11px] font-monospace py-1.5 px-2.5 cursor-pointer transition-colors duration-100",
                   "first:rounded-t last:rounded-b",
                   index === highlightedIndex
-                    ? "text-white bg-hover"
-                    : "text-light bg-transparent hover:bg-hover hover:text-white"
+                    ? "text-foreground bg-hover"
+                    : "text-light bg-transparent hover:bg-hover hover:text-foreground"
                 )}
                 onClick={() => handleSelectModel(model)}
               >

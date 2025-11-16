@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { cn } from "@/common/lib/utils";
 import { VERSION } from "@/version";
+import { ThemeToggleButton } from "./ThemeToggleButton";
 import { TooltipWrapper, Tooltip } from "./Tooltip";
 import type { UpdateStatus } from "@/common/types/ipc";
 import { isTelemetryEnabled } from "@/common/telemetry";
@@ -251,10 +252,13 @@ export function TitleBar() {
           mux {gitDescribe ?? "(dev)"}
         </div>
       </div>
-      <TooltipWrapper>
-        <div className="cursor-default text-[11px] opacity-70">{buildDate}</div>
-        <Tooltip align="right">Built at {extendedTimestamp}</Tooltip>
-      </TooltipWrapper>
+      <div className="flex items-center gap-3">
+        <ThemeToggleButton />
+        <TooltipWrapper>
+          <div className="cursor-default text-[11px] opacity-70">{buildDate}</div>
+          <Tooltip align="right">Built at {extendedTimestamp}</Tooltip>
+        </TooltipWrapper>
+      </div>
     </div>
   );
 }

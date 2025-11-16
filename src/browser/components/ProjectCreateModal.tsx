@@ -142,14 +142,14 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
             placeholder="/home/user/projects/my-project"
             autoFocus
             disabled={isCreating}
-            className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-muted w-full flex-1 rounded border px-3 py-2 font-mono text-sm text-white focus:outline-none disabled:opacity-50"
+            className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-muted w-full flex-1 rounded border px-3 py-2 font-mono text-sm text-foreground focus:outline-none disabled:opacity-50"
           />
           {(isDesktop || hasWebFsPicker) && (
             <button
               type="button"
               onClick={handleBrowseClick}
               disabled={isCreating}
-              className="bg-border-medium hover:bg-border-darker border-border-medium rounded border px-4 text-sm font-medium text-white transition-colors disabled:opacity-50"
+              className="bg-border-medium hover:bg-border-darker border-border-medium rounded border px-4 text-sm font-medium text-foreground transition-colors disabled:opacity-50"
             >
               Browse...
             </button>

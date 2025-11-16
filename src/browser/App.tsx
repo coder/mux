@@ -21,6 +21,7 @@ import { CommandRegistryProvider, useCommandRegistry } from "./contexts/CommandR
 import type { CommandAction } from "./contexts/CommandRegistryContext";
 import { ModeProvider } from "./contexts/ModeContext";
 import { ProviderOptionsProvider } from "./contexts/ProviderOptionsContext";
+import { ThemeProvider, useTheme, type ThemeMode } from "./contexts/ThemeContext";
 import { ThinkingProvider } from "./contexts/ThinkingContext";
 import { CommandPalette } from "./components/CommandPalette";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
@@ -48,6 +49,13 @@ function AppInner() {
     beginWorkspaceCreation,
     clearPendingWorkspaceCreation,
   } = useWorkspaceContext();
+  const { theme, setTheme, toggleTheme } = useTheme();
+  const setThemePreference = useCallback(
+    (nextTheme: ThemeMode) => {
+      setTheme(nextTheme);
+    },
+    [setTheme]
+  );
   const {
     projects,
     removeProject,
@@ -389,6 +397,7 @@ function AppInner() {
     projects,
     workspaceMetadata,
     selectedWorkspace,
+    theme,
     getThinkingLevel: getThinkingLevelForWorkspace,
     onSetThinkingLevel: setThinkingLevelFromPalette,
     onStartWorkspaceCreation: openNewWorkspaceFromPalette,
@@ -401,6 +410,8 @@ function AppInner() {
     onToggleSidebar: toggleSidebarFromPalette,
     onNavigateWorkspace: navigateWorkspaceFromPalette,
     onOpenWorkspaceInTerminal: openWorkspaceInTerminal,
+    onToggleTheme: toggleTheme,
+    onSetTheme: setThemePreference,
   };
 
   useEffect(() => {
@@ -587,7 +598,7 @@ function AppInner() {
               })()
             ) : (
               <div
-                className="[&_p]:text-muted mx-auto w-full max-w-3xl text-center [&_h2]:mb-4 [&_h2]:font-bold [&_h2]:tracking-tight [&_h2]:text-white [&_p]:leading-[1.6]"
+                className="[&_p]:text-muted mx-auto w-full max-w-3xl text-center [&_h2]:mb-4 [&_h2]:font-bold [&_h2]:tracking-tight [&_h2]:text-foreground [&_p]:leading-[1.6]"
                 style={{
                   padding: "clamp(40px, 10vh, 100px) 20px",
                   fontSize: "clamp(14px, 2vw, 16px)",
@@ -619,9 +630,11 @@ function AppInner() {
 
 function App() {
   return (
-    <CommandRegistryProvider>
-      <AppInner />
-    </CommandRegistryProvider>
+    <ThemeProvider>
+      <CommandRegistryProvider>
+        <AppInner />
+      </CommandRegistryProvider>
+    </ThemeProvider>
   );
 }
 

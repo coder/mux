@@ -29,7 +29,7 @@ export const ModalContent: React.FC<
   <div
     className={cn(
       "bg-dark rounded-lg p-6 w-[90%] flex flex-col shadow-lg border border-border",
-      "[&_h2]:mt-0 [&_h2]:mb-2 [&_h2]:text-white",
+      "[&_h2]:mt-0 [&_h2]:mb-2 [&_h2]:text-foreground",
       maxHeight && "overflow-y-auto",
       className
     )}

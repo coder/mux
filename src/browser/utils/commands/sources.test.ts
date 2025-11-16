@@ -27,6 +27,7 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
   });
   const params: Parameters<typeof buildCoreSources>[0] = {
     projects,
+    theme: "dark",
     workspaceMetadata,
     selectedWorkspace: {
       projectPath: "/repo/a",
@@ -46,6 +47,8 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
     onToggleSidebar: () => undefined,
     onNavigateWorkspace: () => undefined,
     onOpenWorkspaceInTerminal: () => undefined,
+    onToggleTheme: () => undefined,
+    onSetTheme: () => undefined,
     getBranchesForProject: () =>
       Promise.resolve({
         branches: ["main"],

@@ -31,6 +31,12 @@ export function getPendingScopeId(projectPath: string): string {
 export const GLOBAL_SCOPE_ID = "__global__";
 
 /**
+ * Get the localStorage key for the UI theme preference (global)
+ * Format: "uiTheme"
+ */
+export const UI_THEME_KEY = "uiTheme";
+
+/**
  * Helper to create a thinking level storage key for a workspace
  * Format: "thinkingLevel:{workspaceId}"
  */
