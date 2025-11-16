@@ -267,7 +267,6 @@ export class StreamingMessageAggregator {
     return this.pendingStreamStartTime;
   }
 
-
   /**
    * Clear pending stream-start tracking when send fails before we ever receive stream-start.
    * Returns true when the internal state changed so callers can trigger updates.
