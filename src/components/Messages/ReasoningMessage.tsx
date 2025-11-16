@@ -18,9 +18,12 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
   const isStreaming = message.isStreaming;
   const trimmedContent = content?.trim() ?? "";
   const hasContent = trimmedContent.length > 0;
+  const summaryLine = hasContent ? (trimmedContent.split(/\r?\n/)[0] ?? "") : "";
+  const hasAdditionalLines = hasContent && /[\r\n]/.test(trimmedContent);
   // OpenAI models often emit terse, single-line traces; surface them inline instead of hiding behind the label.
-  const isSingleLineTrace = !isStreaming && hasContent && !/[\r\n]/.test(trimmedContent);
-  const isCollapsible = !isStreaming && hasContent && !isSingleLineTrace;
+  const isSingleLineTrace = !isStreaming && hasContent && !hasAdditionalLines;
+  const isCollapsible = !isStreaming && hasContent && hasAdditionalLines;
+  const showEllipsis = isCollapsible && !isExpanded;
 
   // Auto-collapse when streaming ends
   useEffect(() => {
@@ -77,17 +80,25 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
           <span className="text-xs">
             <Lightbulb className={cn("size-3.5", isStreaming && "animate-pulse")} />
           </span>
-          <div className="truncate">
+          <div className="flex min-w-0 items-center gap-1 truncate">
             {isStreaming ? (
               <Shimmer colorClass="var(--color-thinking-mode)">Thinking...</Shimmer>
-            ) : isSingleLineTrace ? (
+            ) : hasContent ? (
               <MarkdownRenderer
-                content={trimmedContent}
+                content={summaryLine}
                 className="truncate [&_*]:inline [&_*]:align-baseline [&_*]:whitespace-nowrap"
                 style={{ fontSize: 12, lineHeight: "18px" }}
               />
             ) : (
               "Thought"
+            )}
+            {showEllipsis && (
+              <span
+                className="text-[11px] tracking-widest text-[color:var(--color-text)] opacity-70"
+                data-testid="reasoning-ellipsis"
+              >
+                ...
+              </span>
             )}
           </div>
         </div>
