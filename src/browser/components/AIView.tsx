@@ -373,7 +373,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
             aria-busy={canInterrupt}
             aria-label="Conversation transcript"
             tabIndex={0}
-            className="h-full overflow-y-auto p-[15px] leading-[1.5] break-words whitespace-pre-wrap"
+            className="h-full overflow-y-auto p-[15px] leading-[1.5] break-words whitespace-pre-wrap focus:outline-none focus-visible:outline-none"
           >
             <div className={cn("max-w-4xl mx-auto", mergedMessages.length === 0 && "h-full")}>
               {mergedMessages.length === 0 ? (
