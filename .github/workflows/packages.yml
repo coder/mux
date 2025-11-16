@@ -1,0 +1,216 @@
+name: Build Artifacts
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: 'Set to "build" for CI artifacts or "release" for signed releases.'
+        required: true
+        type: string
+      release_tag:
+        description: 'Release tag name (required when mode == release)'
+        required: false
+        type: string
+    secrets:
+      MACOS_CERTIFICATE:
+        required: false
+      MACOS_CERTIFICATE_PWD:
+        required: false
+      AC_APIKEY_P8_BASE64:
+        required: false
+      AC_APIKEY_ID:
+        required: false
+      AC_APIKEY_ISSUER_ID:
+        required: false
+      GH_TOKEN:
+        required: false
+      VSCE_PAT:
+        required: false
+
+jobs:
+  macos:
+    name: ${{ inputs.mode == 'release' && 'Build and Release macOS' || 'Build macOS' }}
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-macos-15' || 'macos-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup-mux
+
+      - name: Setup code signing
+        run: ./scripts/setup-macos-signing.sh
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          AC_APIKEY_P8_BASE64: ${{ secrets.AC_APIKEY_P8_BASE64 }}
+          AC_APIKEY_ID: ${{ secrets.AC_APIKEY_ID }}
+          AC_APIKEY_ISSUER_ID: ${{ secrets.AC_APIKEY_ISSUER_ID }}
+
+      - name: Verify signing setup
+        if: inputs.mode == 'build'
+        run: |
+          if [ -n "${CSC_LINK:-}" ]; then
+            echo "✅ Code signing enabled"
+            security list-keychains -d user
+            security find-identity -v -p codesigning
+          else
+            echo "⚠️ Code signing NOT enabled"
+          fi
+
+      - name: Build application
+        run: bun run build
+
+      - name: Package for macOS
+        if: inputs.mode == 'build'
+        run: make dist-mac
+        env:
+          CSC_FOR_PULL_REQUEST: ${{ github.event.pull_request && github.event.pull_request.number == 234 }}
+
+      - name: Package and publish for macOS
+        if: inputs.mode == 'release'
+        run: make dist-mac-release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+
+      - name: Upload macOS DMG (x64)
+        if: inputs.mode == 'build'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg-x64
+          path: release/*-x64.dmg
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload macOS DMG (arm64)
+        if: inputs.mode == 'build'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg-arm64
+          path: release/*-arm64.dmg
+          retention-days: 30
+          if-no-files-found: error
+
+  linux:
+    name: ${{ inputs.mode == 'release' && 'Build and Release Linux' || 'Build Linux' }}
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup-mux
+
+      - name: Build application
+        run: bun run build
+
+      - name: Package for Linux
+        if: inputs.mode == 'build'
+        run: make dist-linux
+
+      - name: Package and publish for Linux
+        if: inputs.mode == 'release'
+        run: bun x electron-builder --linux --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+
+      - name: Upload Linux AppImage
+        if: inputs.mode == 'build'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: release/*.AppImage
+          retention-days: 30
+          if-no-files-found: error
+
+  windows:
+    name: ${{ inputs.mode == 'release' && 'Build and Release Windows' || 'Build Windows' }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup-mux
+
+      - name: Install GNU Make
+        shell: powershell
+        run: choco install -y make
+
+      - name: Verify tools
+        shell: bash
+        run: |
+          make --version
+          bun --version
+          magick --version | head -1
+
+      - name: Build application
+        shell: pwsh
+        run: bun run build
+
+      - name: Package for Windows (.exe)
+        if: inputs.mode == 'build'
+        shell: pwsh
+        run: make dist-win
+
+      - name: Package and publish for Windows (.exe)
+        if: inputs.mode == 'release'
+        shell: pwsh
+        run: bun x electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+
+      - name: Upload Windows installer (.exe)
+        if: inputs.mode == 'build'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: release/*.exe
+          retention-days: 30
+          if-no-files-found: error
+
+  vscode-extension:
+    name: ${{ inputs.mode == 'release' && 'Build and Publish VS Code Extension' || 'Build VS Code Extension' }}
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup-mux
+
+      - uses: ./.github/actions/build-vscode-extension
+
+      - name: Upload VS Code extension artifact
+        if: inputs.mode == 'build'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vscode-extension
+          path: vscode/mux-*.vsix
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload VS Code extension to release
+        if: inputs.mode == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          if [ -z "${{ inputs.release_tag }}" ]; then
+            echo "release_tag input is required when publishing"
+            exit 1
+          fi
+          gh release upload "${{ inputs.release_tag }}" \
+            vscode/mux-*.vsix \
+            --clobber
+
+      - name: Publish to VS Code Marketplace
+        if: inputs.mode == 'release'
+        working-directory: vscode
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "${VSCE_PAT:-}" ]; then
+            echo "VSCE_PAT not set; skipping Marketplace publish."
+            exit 0
+          fi
+          bunx vsce publish -p $VSCE_PAT
