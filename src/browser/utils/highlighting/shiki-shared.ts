@@ -5,6 +5,7 @@
 
 /**
  * Get the appropriate Shiki theme based on the current theme
+ * Falls back to reading from document if called outside React context
  */
 export function getShikiTheme(): "min-dark" | "min-light" {
   if (typeof document === "undefined") return "min-dark";

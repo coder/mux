@@ -22,16 +22,18 @@ import { CommandRegistryProvider, useCommandRegistry } from "./contexts/CommandR
 import type { CommandAction } from "./contexts/CommandRegistryContext";
 import { ModeProvider } from "./contexts/ModeContext";
 import { ThinkingProvider } from "./contexts/ThinkingContext";
+import { ThemeProvider } from "./contexts/ThemeContext";
 import { CommandPalette } from "./components/CommandPalette";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceFork";
-import { getThinkingLevelKey, THEME_KEY } from "@/common/constants/storage";
+import { getThinkingLevelKey } from "@/common/constants/storage";
 import type { BranchListResult } from "@/common/types/ipc";
 import { useTelemetry } from "./hooks/useTelemetry";
 import { useStartWorkspaceCreation, getFirstProjectPath } from "./hooks/useStartWorkspaceCreation";
+import { useTheme } from "./contexts/ThemeContext";
 
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high"];
 
@@ -62,12 +64,7 @@ function AppInner() {
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("sidebarCollapsed", isMobile);
 
   // Theme state (global, not workspace-specific)
-  const [theme, setTheme] = usePersistedState<"light" | "dark">(THEME_KEY, "dark");
-
-  // Apply theme to document root
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-  }, [theme]);
+  const { toggleTheme } = useTheme();
 
   const defaultProjectPath = getFirstProjectPath(projects);
   const creationChatInputRef = useRef<ChatInputAPI | null>(null);
@@ -390,10 +387,6 @@ function AppInner() {
     setSidebarCollapsed((prev) => !prev);
   }, [setSidebarCollapsed]);
 
-  const toggleThemeFromPalette = useCallback(() => {
-    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
-  }, [setTheme]);
-
   const navigateWorkspaceFromPalette = useCallback(
     (dir: "next" | "prev") => {
       handleNavigateWorkspace(dir);
@@ -415,7 +408,7 @@ function AppInner() {
     onAddProject: addProjectFromPalette,
     onRemoveProject: removeProjectFromPalette,
     onToggleSidebar: toggleSidebarFromPalette,
-    onToggleTheme: toggleThemeFromPalette,
+    onToggleTheme: toggleTheme,
     onNavigateWorkspace: navigateWorkspaceFromPalette,
     onOpenWorkspaceInTerminal: openWorkspaceInTerminal,
   };
@@ -632,9 +625,15 @@ function AppInner() {
 
 function App() {
   return (
-    <CommandRegistryProvider>
-      <AppInner />
-    </CommandRegistryProvider>
+    <ThemeProvider>
+      <CommandRegistryProvider>
+        <ModeProvider>
+          <ThinkingProvider>
+            <AppInner />
+          </ThinkingProvider>
+        </ModeProvider>
+      </CommandRegistryProvider>
+    </ThemeProvider>
   );
 }
 
