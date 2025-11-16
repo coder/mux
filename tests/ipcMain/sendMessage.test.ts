@@ -30,12 +30,10 @@ if (shouldRunIntegrationTests()) {
   validateApiKeys(["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]);
 }
 
-import { KNOWN_MODELS } from "@/common/constants/knownModels";
-
 // Test both providers with their respective models
 const PROVIDER_CONFIGS: Array<[string, string]> = [
-  ["openai", KNOWN_MODELS.GPT_MINI.providerModelId],
-  ["anthropic", KNOWN_MODELS.SONNET.providerModelId],
+  ["openai", "gpt-5-codex"],
+  ["anthropic", "claude-sonnet-4-5"],
 ];
 
 // Integration test timeout guidelines:
@@ -63,7 +61,8 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
             env.mockIpcRenderer,
             workspaceId,
             "Say 'hello' and nothing else",
-            modelString(provider, model)
+            provider,
+            model
           );
 
           // Verify the IPC call succeeded
@@ -94,12 +93,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
         try {
           // Start a long-running stream with a bash command that takes time
           const longMessage = "Run this bash command: while true; do sleep 1; done";
-          void sendMessageWithModel(
-            env.mockIpcRenderer,
-            workspaceId,
-            longMessage,
-            modelString(provider, model)
-          );
+          void sendMessageWithModel(env.mockIpcRenderer, workspaceId, longMessage, provider, model);
 
           // Wait for stream to start
           const collector = createEventCollector(env.sentEvents, workspaceId);
@@ -141,12 +135,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
           // Ask the model to run a long-running bash command
           // Use explicit instruction to ensure tool call happens
           const message = "Use the bash tool to run: sleep 60";
-          void sendMessageWithModel(
-            env.mockIpcRenderer,
-            workspaceId,
-            message,
-            modelString(provider, model)
-          );
+          void sendMessageWithModel(env.mockIpcRenderer, workspaceId, message, provider, model);
 
           // Wait for stream to start (more reliable than waiting for tool-call-start)
           const collector = createEventCollector(env.sentEvents, workspaceId);
@@ -204,7 +193,8 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
             env.mockIpcRenderer,
             workspaceId,
             "Write a short paragraph about TypeScript",
-            modelString(provider, model),
+            provider,
+            model,
             { thinkingLevel: "off" }
           );
 
@@ -275,12 +265,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
         try {
           // Start a stream that will generate some tokens
           const message = "Write a haiku about coding";
-          void sendMessageWithModel(
-            env.mockIpcRenderer,
-            workspaceId,
-            message,
-            modelString(provider, model)
-          );
+          void sendMessageWithModel(env.mockIpcRenderer, workspaceId, message, provider, model);
 
           // Wait for stream to start and get some deltas
           const collector = createEventCollector(env.sentEvents, workspaceId);
@@ -344,7 +329,8 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
             env.mockIpcRenderer,
             workspaceId,
             "Run this bash command: while true; do sleep 0.1; done",
-            modelString(provider, model)
+            provider,
+            model
           );
 
           // Wait for tool-call-start (which means model is executing bash)
@@ -438,7 +424,8 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
             env.mockIpcRenderer,
             workspaceId,
             "",
-            modelString(provider, model)
+            provider,
+            model
           );
 
           // Should fail - empty messages not allowed
@@ -475,7 +462,8 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
             env.mockIpcRenderer,
             workspaceId,
             "Say 'first message' and nothing else",
-            modelString(provider, model)
+            provider,
+            model
           );
           expect(result1.success).toBe(true);
 
@@ -495,7 +483,8 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
             env.mockIpcRenderer,
             workspaceId,
             "Say 'edited message' and nothing else",
-            modelString(provider, model),
+            provider,
+            model,
             { editMessageId: (firstUserMessage as { id: string }).id }
           );
           expect(result2.success).toBe(true);
@@ -521,7 +510,8 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
             env.mockIpcRenderer,
             workspaceId,
             "Run this bash command: for i in {1..20}; do sleep 0.5; done && echo done",
-            modelString(provider, model)
+            provider,
+            model
           );
           expect(result1.success).toBe(true);
 
@@ -539,7 +529,8 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
             env.mockIpcRenderer,
             workspaceId,
             "Run this bash command: for i in {1..10}; do sleep 0.5; done && echo second",
-            modelString(provider, model),
+            provider,
+            model,
             { editMessageId: (firstUserMessage as { id: string }).id }
           );
           expect(result2.success).toBe(true);
@@ -559,7 +550,8 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
             env.mockIpcRenderer,
             workspaceId,
             "Say 'third edit' and nothing else",
-            modelString(provider, model),
+            provider,
+            model,
             { editMessageId: (secondUserMessage as { id: string }).id }
           );
           expect(result3.success).toBe(true);
@@ -603,7 +595,8 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
             env.mockIpcRenderer,
             workspaceId,
             "Read the file test-file.txt and tell me its contents verbatim. Do not add any extra text.",
-            modelString(provider, model)
+            provider,
+            model
           );
 
           expect(result.success).toBe(true);
@@ -640,7 +633,8 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
             env.mockIpcRenderer,
             workspaceId,
             "Generate a random uncommon word and only say that word, nothing else.",
-            modelString(provider, model)
+            provider,
+            model
           );
           expect(result1.success).toBe(true);
 
@@ -674,7 +668,8 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
             env.mockIpcRenderer,
             workspaceId,
             "What was the word you just said? Reply with only that word.",
-            modelString(provider, model)
+            provider,
+            model
           );
           expect(result2.success).toBe(true);
 
@@ -779,7 +774,8 @@ These are general instructions that apply to all modes.
             env.mockIpcRenderer,
             workspaceId,
             "Please respond.",
-            modelString(provider, model),
+            provider,
+            model,
             { mode: "plan" }
           );
           expect(resultPlan.success).toBe(true);
@@ -802,7 +798,8 @@ These are general instructions that apply to all modes.
             env.mockIpcRenderer,
             workspaceId,
             "Please respond.",
-            modelString(provider, model),
+            provider,
+            model,
             { mode: "exec" }
           );
           expect(resultExec.success).toBe(true);
@@ -850,7 +847,8 @@ These are general instructions that apply to all modes.
             env.mockIpcRenderer,
             workspaceId,
             "Say 'parity test' and nothing else",
-            modelString(provider, model)
+            provider,
+            model
           );
 
           // Collect response
@@ -887,11 +885,16 @@ These are general instructions that apply to all modes.
         );
         try {
           // Try to send message without API key configured
-          const result = await sendMessageWithModel(
-            env.mockIpcRenderer,
+          // Call IPC directly to bypass provider setup
+          const result = await env.mockIpcRenderer.invoke(
+            IPC_CHANNELS.WORKSPACE_SEND_MESSAGE,
             workspaceId,
             "Hello",
-            modelString(provider, model)
+            {
+              model: modelString(provider, model),
+              thinkingLevel: "off",
+              mode: "exec",
+            }
           );
 
           // Should fail with api_key_not_found error
@@ -919,7 +922,8 @@ These are general instructions that apply to all modes.
             env.mockIpcRenderer,
             workspaceId,
             "Hello, world!",
-            modelString(provider, nonExistentModel)
+            provider,
+            nonExistentModel
           );
 
           // IPC call should succeed (errors come through stream events)
@@ -986,7 +990,8 @@ These are general instructions that apply to all modes.
             env.mockIpcRenderer,
             workspaceId,
             "What is the weather?",
-            modelString(provider, model),
+            provider,
+            model,
             sendOptions
           );
 
@@ -1105,7 +1110,8 @@ These are general instructions that apply to all modes.
             env.mockIpcRenderer,
             workspaceId,
             "Delete the file bash-test-file.txt using bash rm command",
-            modelString(provider, model),
+            provider,
+            model,
             {
               toolPolicy: [{ regex_match: "bash", action: "disable" }],
               ...(provider === "openai"
@@ -1177,7 +1183,8 @@ These are general instructions that apply to all modes.
             env.mockIpcRenderer,
             workspaceId,
             "Edit the file edit-test-file.txt and replace 'original' with 'modified'",
-            modelString(provider, model),
+            provider,
+            model,
             {
               toolPolicy: [
                 { regex_match: "file_edit_.*", action: "disable" },
@@ -1296,7 +1303,8 @@ These are general instructions that apply to all modes.
             env.mockIpcRenderer,
             workspaceId,
             "This should trigger a context error",
-            modelString(provider, model),
+            provider,
+            model,
             {
               providerOptions: {
                 openai: {
@@ -1343,7 +1351,8 @@ These are general instructions that apply to all modes.
             env.mockIpcRenderer,
             workspaceId,
             "This should succeed with auto-truncation",
-            modelString(provider, model)
+            provider,
+            model
             // disableAutoTruncation defaults to false (auto-truncation enabled)
           );
 
@@ -1374,7 +1383,8 @@ These are general instructions that apply to all modes.
             env.mockIpcRenderer,
             workspaceId,
             `Open and replace 'line2' with 'LINE2' in ${path.basename(testFilePath)} using file_edit_replace, then confirm the change was successfully applied.`,
-            modelString(provider, model)
+            provider,
+            model
           );
           expect(result1.success).toBe(true);
 
@@ -1417,7 +1427,8 @@ These are general instructions that apply to all modes.
             env.mockIpcRenderer,
             workspaceId,
             "Confirm the previous edit was applied.",
-            modelString(provider, model)
+            provider,
+            model
           );
           expect(result2.success).toBe(true);
 
@@ -1578,57 +1589,5 @@ describe.each(PROVIDER_CONFIGS)("%s:%s image support", (provider, model) => {
       }
     },
     40000
-  );
-
-  // Test multi-turn conversation specifically for reasoning models (codex mini)
-  test.concurrent(
-    "should handle multi-turn conversation with response ID persistence (openai reasoning models)",
-    async () => {
-      const { env, workspaceId, cleanup } = await setupWorkspace("openai");
-      try {
-        // First message
-        const result1 = await sendMessageWithModel(
-          env.mockIpcRenderer,
-          workspaceId,
-          "What is 2+2?",
-          modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId)
-        );
-        expect(result1.success).toBe(true);
-
-        const collector1 = createEventCollector(env.sentEvents, workspaceId);
-        await collector1.waitForEvent("stream-end", 30000);
-        assertStreamSuccess(collector1);
-        env.sentEvents.length = 0; // Clear events
-
-        // Second message - should use previousResponseId from first
-        const result2 = await sendMessageWithModel(
-          env.mockIpcRenderer,
-          workspaceId,
-          "Now add 3 to that",
-          modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId)
-        );
-        expect(result2.success).toBe(true);
-
-        const collector2 = createEventCollector(env.sentEvents, workspaceId);
-        await collector2.waitForEvent("stream-end", 30000);
-        assertStreamSuccess(collector2);
-
-        // Verify history contains both messages
-        const history = await readChatHistory(env.tempDir, workspaceId);
-        expect(history.length).toBeGreaterThanOrEqual(4); // 2 user + 2 assistant
-
-        // Verify assistant messages have responseId
-        const assistantMessages = history.filter((m) => m.role === "assistant");
-        expect(assistantMessages.length).toBeGreaterThanOrEqual(2);
-        // Check that responseId exists (type is unknown from JSONL parsing)
-        const firstAssistant = assistantMessages[0] as any;
-        const secondAssistant = assistantMessages[1] as any;
-        expect(firstAssistant.metadata?.providerMetadata?.openai?.responseId).toBeDefined();
-        expect(secondAssistant.metadata?.providerMetadata?.openai?.responseId).toBeDefined();
-      } finally {
-        await cleanup();
-      }
-    },
-    60000
   );
 });

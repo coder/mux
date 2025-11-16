@@ -270,3 +270,56 @@ export async function setupWorkspaceWithoutProvider(branchPrefix?: string): Prom
     cleanup,
   };
 }
+
+/**
+ * Setup SSH server for tests that need SSH runtime
+ *
+ * This helper ensures consistent SSH test setup across all test files:
+ * - Checks Docker availability (REQUIRED for SSH tests)
+ * - Starts SSH server container
+ * - Returns config for cleanup
+ *
+ * @throws Error if Docker is not available (fails test loudly rather than silently skipping)
+ *
+ * Usage:
+ * ```
+ * let sshConfig: SSHServerConfig | undefined;
+ *
+ * beforeAll(async () => {
+ *   sshConfig = await setupSSHServer();
+ * }, 120000);
+ *
+ * afterAll(async () => {
+ *   await cleanupSSHServer(sshConfig);
+ * }, 30000);
+ * ```
+ */
+export async function setupSSHServer() {
+  const { isDockerAvailable, startSSHServer } = await import("../runtime/ssh-fixture");
+
+  // Check if Docker is available (required for SSH tests)
+  if (!(await isDockerAvailable())) {
+    throw new Error(
+      "Docker is required for SSH runtime tests. Please install Docker or skip tests by unsetting TEST_INTEGRATION."
+    );
+  }
+
+  // Start SSH server (shared across all tests for speed)
+  console.log("Starting SSH server container...");
+  const config = await startSSHServer();
+  console.log(`SSH server ready on port ${config.port}`);
+  return config;
+}
+
+/**
+ * Cleanup SSH server after tests complete
+ */
+export async function cleanupSSHServer(
+  sshConfig: Awaited<ReturnType<typeof setupSSHServer>> | undefined
+) {
+  if (sshConfig) {
+    const { stopSSHServer } = await import("../runtime/ssh-fixture");
+    console.log("Stopping SSH server container...");
+    await stopSSHServer(sshConfig);
+  }
+}

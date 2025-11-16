@@ -18,15 +18,9 @@ import type {
 } from "./Runtime";
 import { RuntimeError as RuntimeErrorClass } from "./Runtime";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
-import { getBashPath } from "@/node/utils/main/bashPath";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { listLocalBranches } from "@/node/git";
-import {
-  checkInitHookExists,
-  getInitHookPath,
-  createLineBufferedLoggers,
-  getInitHookEnv,
-} from "./initHook";
+import { checkInitHookExists, getInitHookPath, createLineBufferedLoggers } from "./initHook";
 import { execAsync, DisposableProcess } from "@/node/utils/disposableExec";
 import { getProjectName } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -62,13 +56,11 @@ export class LocalRuntime implements Runtime {
       );
     }
 
-    // If niceness is specified on Unix/Linux, spawn nice directly to avoid escaping issues
-    // Windows doesn't have nice command, so just spawn bash directly
-    const isWindows = process.platform === "win32";
-    const bashPath = getBashPath();
-    const spawnCommand = options.niceness !== undefined && !isWindows ? "nice" : bashPath;
+    // If niceness is specified, spawn nice directly to avoid escaping issues
+    const spawnCommand = options.niceness !== undefined ? "nice" : "bash";
+    const bashPath = "bash";
     const spawnArgs =
-      options.niceness !== undefined && !isWindows
+      options.niceness !== undefined
         ? ["-n", options.niceness.toString(), bashPath, "-c", command]
         : ["-c", command];
 
@@ -378,7 +370,10 @@ export class LocalRuntime implements Runtime {
     const { projectPath, workspacePath, initLogger } = params;
 
     try {
-      // Run .mux/init hook if it exists
+      // Note: sourceWorkspacePath is only used by SSH runtime (to copy workspace)
+      // Local runtime creates git worktrees which are instant, so we don't need it here
+
+      // Run .cmux/init hook if it exists
       // Note: runInitHook calls logComplete() internally if hook exists
       const hookExists = await checkInitHookExists(projectPath);
       if (hookExists) {
@@ -400,7 +395,7 @@ export class LocalRuntime implements Runtime {
   }
 
   /**
-   * Run .mux/init hook if it exists and is executable
+   * Run .cmux/init hook if it exists and is executable
    */
   private async runInitHook(
     projectPath: string,
@@ -420,14 +415,9 @@ export class LocalRuntime implements Runtime {
     const loggers = createLineBufferedLoggers(initLogger);
 
     return new Promise<void>((resolve) => {
-      const bashPath = getBashPath();
-      const proc = spawn(bashPath, ["-c", `"${hookPath}"`], {
+      const proc = spawn("bash", ["-c", `"${hookPath}"`], {
         cwd: workspacePath,
         stdio: ["ignore", "pipe", "pipe"],
-        env: {
-          ...process.env,
-          ...getInitHookEnv(projectPath, "local"),
-        },
       });
 
       proc.stdout.on("data", (data: Buffer) => {
@@ -601,7 +591,10 @@ export class LocalRuntime implements Runtime {
         };
       }
 
+      initLogger.logStep(`Detected source branch: ${sourceBranch}`);
+
       // Use createWorkspace with sourceBranch as trunk to fork from source branch
+      // For local workspaces (worktrees), this is instant - no init needed
       const createResult = await this.createWorkspace({
         projectPath,
         branchName: newWorkspaceName,
@@ -617,9 +610,12 @@ export class LocalRuntime implements Runtime {
         };
       }
 
+      initLogger.logStep("Workspace forked successfully");
+
       return {
         success: true,
         workspacePath: createResult.workspacePath,
+        sourceWorkspacePath,
         sourceBranch,
       };
     } catch (error) {

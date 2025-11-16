@@ -14,8 +14,6 @@ import {
   cleanupTestEnvironment,
   shouldRunIntegrationTests,
   validateApiKeys,
-  getApiKey,
-  setupProviders,
   type TestEnvironment,
 } from "./setup";
 import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
@@ -26,7 +24,7 @@ import {
   createWorkspaceWithInit,
   sendMessageAndWait,
   extractTextFromEvents,
-  HAIKU_MODEL,
+  DEFAULT_TEST_MODEL,
   TEST_TIMEOUT_LOCAL_MS,
   TEST_TIMEOUT_SSH_MS,
   STREAM_TIMEOUT_LOCAL_MS,
@@ -110,11 +108,6 @@ describeIntegration("Runtime File Editing Tools", () => {
 
           try {
             // Setup provider
-            await setupProviders(env.mockIpcRenderer, {
-              anthropic: {
-                apiKey: getApiKey("ANTHROPIC_API_KEY"),
-              },
-            });
 
             // Create workspace
             const branchName = generateBranchName("read-test");
@@ -136,8 +129,8 @@ describeIntegration("Runtime File Editing Tools", () => {
               const createEvents = await sendMessageAndWait(
                 env,
                 workspaceId,
-                `Create a file called ${testFileName} with the content: "Hello from mux file tools!"`,
-                HAIKU_MODEL,
+                `Create a file called ${testFileName} with the content: "Hello from cmux file tools!"`,
+                DEFAULT_TEST_MODEL,
                 FILE_TOOLS_ONLY,
                 streamTimeout
               );
@@ -154,7 +147,7 @@ describeIntegration("Runtime File Editing Tools", () => {
                 env,
                 workspaceId,
                 `Use the file_read tool to read ${testFileName} and tell me what it contains.`,
-                HAIKU_MODEL,
+                DEFAULT_TEST_MODEL,
                 FILE_TOOLS_ONLY,
                 streamTimeout
               );
@@ -193,11 +186,6 @@ describeIntegration("Runtime File Editing Tools", () => {
 
           try {
             // Setup provider
-            await setupProviders(env.mockIpcRenderer, {
-              anthropic: {
-                apiKey: getApiKey("ANTHROPIC_API_KEY"),
-              },
-            });
 
             // Create workspace
             const branchName = generateBranchName("replace-test");
@@ -220,7 +208,7 @@ describeIntegration("Runtime File Editing Tools", () => {
                 env,
                 workspaceId,
                 `Create a file called ${testFileName} with the content: "The quick brown fox jumps over the lazy dog."`,
-                HAIKU_MODEL,
+                DEFAULT_TEST_MODEL,
                 FILE_TOOLS_ONLY,
                 streamTimeout
               );
@@ -237,7 +225,7 @@ describeIntegration("Runtime File Editing Tools", () => {
                 env,
                 workspaceId,
                 `Use the file_edit_replace_string tool to replace "brown fox" with "red panda" in ${testFileName}.`,
-                HAIKU_MODEL,
+                DEFAULT_TEST_MODEL,
                 FILE_TOOLS_ONLY,
                 streamTimeout
               );
@@ -282,11 +270,6 @@ describeIntegration("Runtime File Editing Tools", () => {
 
           try {
             // Setup provider
-            await setupProviders(env.mockIpcRenderer, {
-              anthropic: {
-                apiKey: getApiKey("ANTHROPIC_API_KEY"),
-              },
-            });
 
             // Create workspace
             const branchName = generateBranchName("insert-test");
@@ -309,7 +292,7 @@ describeIntegration("Runtime File Editing Tools", () => {
                 env,
                 workspaceId,
                 `Create a file called ${testFileName} with two lines: "Line 1" and "Line 3".`,
-                HAIKU_MODEL,
+                DEFAULT_TEST_MODEL,
                 FILE_TOOLS_ONLY,
                 streamTimeout
               );
@@ -325,8 +308,8 @@ describeIntegration("Runtime File Editing Tools", () => {
               const insertEvents = await sendMessageAndWait(
                 env,
                 workspaceId,
-                `Use the file_edit_insert (preferred) or file_edit_replace_string tool to insert "Line 2" between Line 1 and Line 3 in ${testFileName}.`,
-                HAIKU_MODEL,
+                `Use the file_edit_insert or file_edit_replace_string tool to insert "Line 2" between Line 1 and Line 3 in ${testFileName}.`,
+                DEFAULT_TEST_MODEL,
                 FILE_TOOLS_ONLY,
                 streamTimeout
               );
@@ -336,7 +319,7 @@ describeIntegration("Runtime File Editing Tools", () => {
               expect(streamEnd).toBeDefined();
               expect((streamEnd as any).error).toBeUndefined();
 
-              // Verify file_edit_insert (or fallback file_edit_replace_string) tool was called
+              // Verify a file_edit tool was called (either insert or replace_string)
               const toolCalls = insertEvents.filter(
                 (e) => "type" in e && e.type === "tool-call-start"
               );
@@ -372,11 +355,6 @@ describeIntegration("Runtime File Editing Tools", () => {
 
           try {
             // Setup provider
-            await setupProviders(env.mockIpcRenderer, {
-              anthropic: {
-                apiKey: getApiKey("ANTHROPIC_API_KEY"),
-              },
-            });
 
             // Create workspace
             const branchName = generateBranchName("relative-path-test");
@@ -400,7 +378,7 @@ describeIntegration("Runtime File Editing Tools", () => {
                 env,
                 workspaceId,
                 `Create a file at path "${relativeTestFile}" with content: "Original content"`,
-                HAIKU_MODEL,
+                DEFAULT_TEST_MODEL,
                 FILE_TOOLS_ONLY,
                 streamTimeout
               );
@@ -417,7 +395,7 @@ describeIntegration("Runtime File Editing Tools", () => {
                 env,
                 workspaceId,
                 `Replace the text in ${relativeTestFile}: change "Original" to "Modified"`,
-                HAIKU_MODEL,
+                DEFAULT_TEST_MODEL,
                 FILE_TOOLS_ONLY,
                 streamTimeout
               );
@@ -441,7 +419,7 @@ describeIntegration("Runtime File Editing Tools", () => {
                 env,
                 workspaceId,
                 `Read the file ${relativeTestFile} and tell me its content`,
-                HAIKU_MODEL,
+                DEFAULT_TEST_MODEL,
                 FILE_TOOLS_ONLY,
                 streamTimeout
               );
