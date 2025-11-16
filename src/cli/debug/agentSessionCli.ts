@@ -3,7 +3,7 @@
 import assert from "@/common/utils/assert";
 import * as fs from "fs/promises";
 import * as path from "path";
-import { PlatformPaths } from "../utils/paths";
+import { PlatformPaths } from "@/common/utils/paths";
 import { parseArgs } from "util";
 import { Config } from "@/node/config";
 import { HistoryService } from "@/node/services/historyService";
@@ -27,7 +27,7 @@ import {
 import { getDefaultModelFromLRU } from "@/browser/hooks/useModelLRU";
 import { ensureProvidersConfig } from "@/common/utils/providers/ensureProvidersConfig";
 import { modeToToolPolicy, PLAN_MODE_INSTRUCTION } from "@/browser/utils/ui/modeUtils";
-import { extractAssistantText, extractReasoning, extractToolCalls } from "@/debug/chatExtractors";
+import { extractAssistantText, extractReasoning, extractToolCalls } from "@/cli/debug/chatExtractors";
 import type { ThinkingLevel } from "@/common/types/thinking";
 
 interface CliResult {

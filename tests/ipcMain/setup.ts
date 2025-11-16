@@ -4,9 +4,9 @@ import * as fs from "fs/promises";
 import type { BrowserWindow, IpcMain as ElectronIpcMain, WebContents } from "electron";
 import type { IpcRenderer } from "electron";
 import createIPCMock from "electron-mock-ipc";
-import { Config } from "../../src/config";
-import { IpcMain } from "../../src/services/ipcMain";
-import { IPC_CHANNELS } from "../../src/constants/ipc-constants";
+import { Config } from "../../src/node/config";
+import { IpcMain } from "../../src/node/services/ipcMain";
+import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
 import { generateBranchName, createWorkspace } from "./helpers";
 import { shouldRunIntegrationTests, validateApiKeys, getApiKey } from "../testUtils";
 
@@ -139,8 +139,8 @@ export { shouldRunIntegrationTests, validateApiKeys, getApiKey };
  */
 export async function preloadTestModules(): Promise<void> {
   const [{ loadTokenizerModules }, { preloadAISDKProviders }] = await Promise.all([
-    import("../../src/utils/main/tokenizer"),
-    import("../../src/services/aiService"),
+    import("../../src/node/utils/main/tokenizer"),
+    import("../../src/node/services/aiService"),
   ]);
   await Promise.all([loadTokenizerModules(), preloadAISDKProviders()]);
 }

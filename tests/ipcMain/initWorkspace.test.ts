@@ -7,7 +7,7 @@ import {
   setupProviders,
   type TestEnvironment,
 } from "./setup";
-import { IPC_CHANNELS, getChatChannel } from "../../src/constants/ipc-constants";
+import { IPC_CHANNELS, getChatChannel } from "../../src/common/constants/ipc-constants";
 import {
   generateBranchName,
   createWorkspace,
@@ -16,8 +16,8 @@ import {
   collectInitEvents,
   waitFor,
 } from "./helpers";
-import type { WorkspaceChatMessage, WorkspaceInitEvent } from "../../src/types/ipc";
-import { isInitStart, isInitOutput, isInitEnd } from "../../src/types/ipc";
+import type { WorkspaceChatMessage, WorkspaceInitEvent } from "../../src/common/types/ipc";
+import { isInitStart, isInitOutput, isInitEnd } from "../../src/common/types/ipc";
 import * as path from "path";
 import * as os from "os";
 import {
@@ -26,7 +26,7 @@ import {
   stopSSHServer,
   type SSHServerConfig,
 } from "../runtime/ssh-fixture";
-import type { RuntimeConfig } from "../../src/types/runtime";
+import type { RuntimeConfig } from "../../src/common/types/runtime";
 
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;

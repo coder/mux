@@ -1,10 +1,10 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useRef } from "react";
 import { AppLoader } from "./components/AppLoader";
-import type { ProjectConfig } from "./config";
-import type { FrontendWorkspaceMetadata } from "./types/workspace";
-import type { IPCApi } from "./types/ipc";
-import type { ChatStats } from "./types/chatStats";
+import type { ProjectConfig } from "@/node/config";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { IPCApi } from "@/common/types/ipc";
+import type { ChatStats } from "@/common/types/chatStats";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 
 // Stable timestamp for testing active states (use fixed time minus small offsets)

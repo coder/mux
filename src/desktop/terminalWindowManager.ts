@@ -7,7 +7,7 @@
 
 import { BrowserWindow } from "electron";
 import * as path from "path";
-import { log } from "./log";
+import { log } from "@/node/services/log";
 import type { Config } from "@/node/config";
 
 export class TerminalWindowManager {

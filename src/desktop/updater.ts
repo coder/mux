@@ -2,7 +2,7 @@ import { autoUpdater } from "electron-updater";
 import type { UpdateInfo } from "electron-updater";
 import type { BrowserWindow } from "electron";
 import { IPC_CHANNELS } from "@/common/constants/ipc-constants";
-import { log } from "./log";
+import { log } from "@/node/services/log";
 import { parseDebugUpdater } from "@/common/utils/env";
 
 // Update check timeout in milliseconds (30 seconds)

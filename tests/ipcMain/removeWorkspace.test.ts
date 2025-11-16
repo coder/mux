@@ -13,7 +13,7 @@ import {
   shouldRunIntegrationTests,
   type TestEnvironment,
 } from "./setup";
-import { IPC_CHANNELS } from "../../src/constants/ipc-constants";
+import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
 import {
   createTempGitRepo,
   cleanupTempGitRepo,
@@ -33,8 +33,8 @@ import {
   stopSSHServer,
   type SSHServerConfig,
 } from "../runtime/ssh-fixture";
-import type { RuntimeConfig } from "../../src/types/runtime";
-import { execAsync } from "../../src/utils/disposableExec";
+import type { RuntimeConfig } from "../../src/common/types/runtime";
+import { execAsync } from "../../src/node/utils/disposableExec";
 
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;

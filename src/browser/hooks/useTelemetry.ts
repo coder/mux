@@ -1,6 +1,6 @@
 import { useCallback } from "react";
-import { trackEvent, getBaseTelemetryProperties, roundToBase2 } from "../telemetry";
-import type { ErrorContext } from "../telemetry/payload";
+import { trackEvent, getBaseTelemetryProperties, roundToBase2 } from "@/node/telemetry";
+import type { ErrorContext } from "@/node/telemetry/payload";
 
 /**
  * Hook for clean telemetry integration in React components

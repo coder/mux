@@ -19,8 +19,8 @@ import {
   TEST_IMAGES,
   modelString,
 } from "./helpers";
-import type { StreamDeltaEvent } from "../../src/types/stream";
-import { IPC_CHANNELS } from "../../src/constants/ipc-constants";
+import type { StreamDeltaEvent } from "../../src/common/types/stream";
+import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
 
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;

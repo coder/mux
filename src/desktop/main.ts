@@ -14,15 +14,15 @@ import {
 } from "electron";
 import * as fs from "fs";
 import * as path from "path";
-import type { Config } from "./config";
-import type { IpcMain } from "./services/ipcMain";
-import { VERSION } from "./version";
-import { IPC_CHANNELS } from "./constants/ipc-constants";
-import { getMuxHome, migrateCmuxToMux } from "./constants/paths";
-import { log } from "./services/log";
-import { parseDebugUpdater } from "./utils/env";
-import assert from "./utils/assert";
-import { loadTokenizerModules } from "./utils/main/tokenizer";
+import type { Config } from "@/node/config";
+import type { IpcMain } from "@/node/services/ipcMain";
+import { VERSION } from "@/version";
+import { IPC_CHANNELS } from "@/common/constants/ipc-constants";
+import { getMuxHome, migrateCmuxToMux } from "@/common/constants/paths";
+import { log } from "@/node/services/log";
+import { parseDebugUpdater } from "@/common/utils/env";
+import assert from "@/common/utils/assert";
+import { loadTokenizerModules } from "@/node/utils/main/tokenizer";
 
 // React DevTools for development profiling
 // Using require() instead of import since it's dev-only and conditionally loaded
@@ -69,7 +69,7 @@ if (!app.isPackaged) {
 let config: Config | null = null;
 let ipcMain: IpcMain | null = null;
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-let updaterService: typeof import("./services/updater").UpdaterService.prototype | null = null;
+let updaterService: typeof import("@/desktop/updater").UpdaterService.prototype | null = null;
 const isE2ETest = process.env.MUX_E2E === "1";
 const forceDistLoad = process.env.MUX_E2E_LOAD_DIST === "1";
 
@@ -310,10 +310,10 @@ async function loadServices(): Promise<void> {
     { UpdaterService: UpdaterServiceClass },
     { TerminalWindowManager: TerminalWindowManagerClass },
   ] = await Promise.all([
-    import("./config"),
-    import("./services/ipcMain"),
-    import("./services/updater"),
-    import("./services/terminalWindowManager"),
+    import("@/node/config"),
+    import("@/node/services/ipcMain"),
+    import("@/desktop/updater"),
+    import("@/desktop/terminalWindowManager"),
   ]);
   /* eslint-enable no-restricted-syntax */
   config = new ConfigClass();
