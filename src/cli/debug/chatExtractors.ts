@@ -1,5 +1,5 @@
 import assert from "@/utils/assert";
-import type { MuxReasoningPart, MuxTextPart, MuxToolPart } from "@/types/message";
+import type { MuxReasoningPart, MuxTextPart, MuxToolPart } from "@/common/types/message";
 
 export function extractAssistantText(parts: unknown): string {
   if (!Array.isArray(parts)) {

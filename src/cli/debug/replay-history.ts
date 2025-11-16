@@ -14,13 +14,13 @@
 import * as fs from "fs";
 import * as path from "path";
 import { parseArgs } from "util";
-import { defaultConfig } from "@/config";
-import type { MuxMessage } from "@/types/message";
-import { createMuxMessage } from "@/types/message";
-import { InitStateManager } from "@/services/initStateManager";
-import { AIService } from "@/services/aiService";
-import { HistoryService } from "@/services/historyService";
-import { PartialService } from "@/services/partialService";
+import { defaultConfig } from "@/node/config";
+import type { MuxMessage } from "@/common/types/message";
+import { createMuxMessage } from "@/common/types/message";
+import { InitStateManager } from "@/node/services/initStateManager";
+import { AIService } from "@/node/services/aiService";
+import { HistoryService } from "@/node/services/historyService";
+import { PartialService } from "@/node/services/partialService";
 
 const { positionals, values } = parseArgs({
   args: process.argv.slice(2),

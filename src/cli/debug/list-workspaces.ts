@@ -1,7 +1,7 @@
-import { defaultConfig } from "@/config";
+import { defaultConfig } from "@/node/config";
 import { PlatformPaths } from "../utils/paths";
 import * as fs from "fs";
-import { getMuxSessionsDir } from "@/constants/paths";
+import { getMuxSessionsDir } from "@/common/constants/paths";
 
 export function listWorkspacesCommand() {
   const config = defaultConfig.loadConfigOrDefault();

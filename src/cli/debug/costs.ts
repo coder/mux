@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
-import { defaultConfig } from "@/config";
-import type { MuxMessage } from "@/types/message";
+import { defaultConfig } from "@/node/config";
+import type { MuxMessage } from "@/common/types/message";
 import { calculateTokenStats } from "@/utils/tokens/tokenStatsCalculator";
 import { getDefaultModelFromLRU } from "@/hooks/useModelLRU";
 

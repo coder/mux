@@ -3,7 +3,7 @@
  * Allows accessing mux backend from mobile devices
  */
 import { Config } from "./config";
-import { IPC_CHANNELS } from "@/constants/ipc-constants";
+import { IPC_CHANNELS } from "@/common/constants/ipc-constants";
 import { IpcMain } from "./services/ipcMain";
 import { migrateCmuxToMux } from "./constants/paths";
 import cors from "cors";
