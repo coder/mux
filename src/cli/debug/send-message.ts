@@ -3,7 +3,7 @@ import * as path from "path";
 import { defaultConfig } from "@/node/config";
 import type { MuxMessage } from "@/common/types/message";
 import type { SendMessageOptions } from "@/common/types/ipc";
-import { getDefaultModel } from "@/common/utils/model/defaults";
+import { defaultModel } from "@/common/utils/ai/models";
 import { getMuxSessionsDir } from "@/common/constants/paths";
 
 /**
@@ -104,7 +104,7 @@ export function sendMessageCommand(
 
   // Prepare options
   const options: SendMessageOptions = {
-    model: getDefaultModel(),
+    model: defaultModel,
   };
 
   if (editMessageId) {
