@@ -1,4 +1,5 @@
 import React from "react";
+import { FileIcon } from "@/browser/components/FileIcon";
 import type { FileReadToolArgs, FileReadToolResult } from "@/common/types/tools";
 import {
   ToolContainer,
@@ -82,7 +83,10 @@ export const FileReadToolCall: React.FC<FileReadToolCallProps> = ({
           <span>📖</span>
           <Tooltip>file_read</Tooltip>
         </TooltipWrapper>
-        <span className="text-text font-monospace max-w-96 truncate">{filePath}</span>
+        <div className="text-text flex max-w-96 min-w-0 items-center gap-1.5">
+          <FileIcon filePath={filePath} className="text-[15px] leading-none" />
+          <span className="font-monospace truncate">{filePath}</span>
+        </div>
         {result && result.success && parsedContent && (
           <span className="text-secondary ml-2 text-[10px] whitespace-nowrap">
             <span className="hidden @sm:inline">read </span>

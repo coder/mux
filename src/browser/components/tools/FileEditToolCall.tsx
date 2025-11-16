@@ -1,4 +1,5 @@
 import React from "react";
+import { FileIcon } from "@/browser/components/FileIcon";
 import { parsePatch } from "diff";
 import type {
   FileEditInsertToolArgs,
@@ -138,7 +139,10 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
             <span>✏️</span>
             <Tooltip>{toolName}</Tooltip>
           </TooltipWrapper>
-          <span className="text-text font-monospace max-w-96 truncate">{filePath}</span>
+          <div className="text-text flex max-w-96 min-w-0 items-center gap-1.5">
+            <FileIcon filePath={filePath} className="text-[15px] leading-none" />
+            <span className="font-monospace truncate">{filePath}</span>
+          </div>
         </div>
         {!(result && result.success && result.diff) && (
           <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
