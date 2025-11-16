@@ -21,7 +21,7 @@ import { TooltipWrapper, Tooltip } from "./Tooltip";
 import SecretsModal from "./SecretsModal";
 import type { Secret } from "@/common/types/secrets";
 import { ForceDeleteModal } from "./ForceDeleteModal";
-import { WorkspaceListItem } from "./WorkspaceListItem";
+import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem";
 import { RenameProvider } from "@/browser/contexts/WorkspaceRenameContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { ChevronRight, KeyRound } from "lucide-react";
@@ -184,6 +184,17 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   } = useWorkspaceContext();
 
   // Get project state and operations from context
+  const handleSelectWorkspace = useCallback(
+    (selection: WorkspaceSelection) => {
+      onSelectWorkspace(selection);
+      // Auto-close sidebar on narrow viewports (PWA/mobile)
+      if (!collapsed && typeof window !== "undefined" && window.innerWidth <= 768) {
+        onToggleCollapsed();
+      }
+    },
+    [onSelectWorkspace, collapsed, onToggleCollapsed]
+  );
+
   const {
     projects,
     openProjectCreateModal: onAddProject,
@@ -573,7 +584,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   projectName={projectName}
                                   isSelected={selectedWorkspace?.workspaceId === metadata.id}
                                   lastReadTimestamp={lastReadTimestamps[metadata.id] ?? 0}
-                                  onSelectWorkspace={onSelectWorkspace}
+                                  onSelectWorkspace={handleSelectWorkspace}
                                   onRemoveWorkspace={handleRemoveWorkspace}
                                   onToggleUnread={_onToggleUnread}
                                 />
