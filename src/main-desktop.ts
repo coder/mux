@@ -492,7 +492,7 @@ if (gotTheLock) {
     try {
       console.log("App ready, creating window...");
 
-      // Migrate from .mux to .mux directory structure if needed
+      // Migrate from .cmux to .mux directory structure if needed
       migrateLegacyMuxHome();
 
       // Install React DevTools in development

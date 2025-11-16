@@ -144,7 +144,7 @@ const httpIpcMain = new HttpIpcMainAdapter(app);
 
 // Initialize async services and register handlers
 (async () => {
-  // Migrate from .mux to .mux directory structure if needed
+  // Migrate from .cmux to .mux directory structure if needed
   migrateLegacyMuxHome();
 
   // Initialize config and IPC service
