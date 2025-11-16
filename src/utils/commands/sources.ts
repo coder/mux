@@ -39,6 +39,7 @@ export interface BuildSourcesParams {
   onAddProject: () => void;
   onRemoveProject: (path: string) => void;
   onToggleSidebar: () => void;
+  onToggleTheme: () => void;
   onNavigateWorkspace: (dir: "next" | "prev") => void;
   onOpenWorkspaceInTerminal: (workspaceId: string) => void;
 }
@@ -302,6 +303,13 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       section: section.navigation,
       shortcutHint: formatKeybind(KEYBINDS.TOGGLE_SIDEBAR),
       run: () => p.onToggleSidebar(),
+    },
+    {
+      id: CommandIds.navToggleTheme(),
+      title: "Toggle Theme",
+      section: section.navigation,
+      shortcutHint: formatKeybind(KEYBINDS.TOGGLE_THEME),
+      run: () => p.onToggleTheme(),
     },
   ]);
 

@@ -1,8 +1,5 @@
 import { createHighlighter, type Highlighter } from "shiki";
 
-// Shiki theme used throughout the application
-export const SHIKI_THEME = "min-dark";
-
 // Maximum diff size to highlight (in bytes)
 // Diffs larger than this will fall back to plain text for performance
 export const MAX_DIFF_SIZE_BYTES = 32768; // 32kb
@@ -21,7 +18,7 @@ export async function getShikiHighlighter(): Promise<Highlighter> {
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
   if (!highlighterPromise) {
     highlighterPromise = createHighlighter({
-      themes: [SHIKI_THEME],
+      themes: ["min-dark", "min-light"],
       langs: [], // Load languages on-demand via highlightDiffChunk
     });
   }

@@ -3,8 +3,14 @@
  * Used by both the main app and documentation theme
  */
 
-// Shiki theme used throughout the application
-export const SHIKI_THEME = "min-dark";
+/**
+ * Get the appropriate Shiki theme based on the current theme
+ */
+export function getShikiTheme(): "min-dark" | "min-light" {
+  if (typeof document === "undefined") return "min-dark";
+  const theme = document.documentElement.dataset.theme;
+  return theme === "light" ? "min-light" : "min-dark";
+}
 
 /**
  * Map language names to Shiki-compatible language IDs

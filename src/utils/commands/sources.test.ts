@@ -44,6 +44,7 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
     onAddProject: () => undefined,
     onRemoveProject: () => undefined,
     onToggleSidebar: () => undefined,
+    onToggleTheme: () => undefined,
     onNavigateWorkspace: () => undefined,
     onOpenWorkspaceInTerminal: () => undefined,
     getBranchesForProject: () =>
