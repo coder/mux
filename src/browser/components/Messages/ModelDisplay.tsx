@@ -1,6 +1,6 @@
 import React from "react";
-import AnthropicIcon from "@/assets/icons/anthropic.svg?react";
-import OpenAIIcon from "@/assets/icons/openai.svg?react";
+import AnthropicIcon from "@/browser/assets/icons/anthropic.svg?react";
+import OpenAIIcon from "@/browser/assets/icons/openai.svg?react";
 import { TooltipWrapper, Tooltip } from "@/browser/components/Tooltip";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 
