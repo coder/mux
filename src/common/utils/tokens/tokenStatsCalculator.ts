@@ -6,8 +6,8 @@
  * For renderer-safe usage utilities, use displayUsage.ts instead.
  */
 
-import type { MuxMessage } from "@/types/message";
-import type { ChatStats, TokenConsumer } from "@/types/chatStats";
+import type { MuxMessage } from "@/common/types/message";
+import type { ChatStats, TokenConsumer } from "@/common/types/chatStats";
 import {
   getTokenizerForModel,
   countTokensForData,

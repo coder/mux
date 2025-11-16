@@ -6,14 +6,14 @@
 
 import type { AnthropicProviderOptions } from "@ai-sdk/anthropic";
 import type { OpenAIResponsesProviderOptions } from "@ai-sdk/openai";
-import type { ThinkingLevel } from "@/types/thinking";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import {
   ANTHROPIC_THINKING_BUDGETS,
   OPENAI_REASONING_EFFORT,
   OPENROUTER_REASONING_EFFORT,
-} from "@/types/thinking";
+} from "@/common/types/thinking";
 import { log } from "@/services/log";
-import type { MuxMessage } from "@/types/message";
+import type { MuxMessage } from "@/common/types/message";
 import { enforceThinkingPolicy } from "@/utils/thinking/policy";
 
 /**

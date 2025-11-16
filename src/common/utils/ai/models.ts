@@ -2,7 +2,7 @@
  * Model configuration and constants
  */
 
-import { DEFAULT_MODEL } from "@/constants/knownModels";
+import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 
 export const defaultModel = DEFAULT_MODEL;
 

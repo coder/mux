@@ -1,6 +1,6 @@
 import { describe, expect, test, it } from "bun:test";
 import { getModelStats } from "./modelStats";
-import { KNOWN_MODELS } from "@/constants/knownModels";
+import { KNOWN_MODELS } from "@/common/constants/knownModels";
 
 describe("getModelStats", () => {
   describe("direct model lookups", () => {

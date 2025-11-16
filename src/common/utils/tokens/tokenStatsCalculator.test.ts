@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import type { MuxMessage } from "@/types/message";
+import type { MuxMessage } from "@/common/types/message";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import {
   collectUniqueToolNames,

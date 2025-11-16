@@ -12,8 +12,8 @@ import {
   BASH_MAX_LINE_BYTES,
   BASH_MAX_TOTAL_BYTES,
   STATUS_MESSAGE_MAX_LENGTH,
-} from "@/constants/toolLimits";
-import { TOOL_EDIT_WARNING } from "@/types/tools";
+} from "@/common/constants/toolLimits";
+import { TOOL_EDIT_WARNING } from "@/common/types/tools";
 
 import { zodToJsonSchema } from "zod-to-json-schema";
 
