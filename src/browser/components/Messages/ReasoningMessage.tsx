@@ -11,6 +11,8 @@ interface ReasoningMessageProps {
   className?: string;
 }
 
+const REASONING_FONT_CLASSES = "font-primary text-[12px] leading-[18px]";
+
 export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, className }) => {
   const [isExpanded, setIsExpanded] = useState(true);
 
@@ -86,8 +88,10 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
             ) : hasContent ? (
               <MarkdownRenderer
                 content={summaryLine}
-                className="truncate [&_*]:inline [&_*]:align-baseline [&_*]:whitespace-nowrap"
-                style={{ fontSize: 12, lineHeight: "18px" }}
+                className={cn(
+                  "truncate [&_*]:inline [&_*]:align-baseline [&_*]:whitespace-nowrap",
+                  REASONING_FONT_CLASSES
+                )}
               />
             ) : (
               "Thought"
@@ -115,7 +119,12 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
       </div>
 
       {isExpanded && !isSingleLineTrace && (
-        <div className="font-primary text-sm leading-6 italic opacity-85 [&_p]:mt-0 [&_p]:mb-1 [&_p:last-child]:mb-0">
+        <div
+          className={cn(
+            REASONING_FONT_CLASSES,
+            "italic opacity-85 [&_p]:mt-0 [&_p]:mb-1 [&_p:last-child]:mb-0"
+          )}
+        >
           {renderContent()}
         </div>
       )}
