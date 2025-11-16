@@ -46,7 +46,7 @@ include fmt.mk
 .PHONY: all build dev start clean help
 .PHONY: build-renderer version build-icons build-static
 .PHONY: lint lint-fix typecheck static-check
-.PHONY: test test-unit test-integration test-watch test-coverage test-e2e
+.PHONY: test test-unit test-integration test-watch test-coverage test-e2e smoke-test
 .PHONY: dist dist-mac dist-win dist-linux
 .PHONY: vscode-ext vscode-ext-install
 .PHONY: docs docs-build docs-watch
@@ -254,6 +254,17 @@ test-watch: ## Run tests in watch mode
 
 test-coverage: ## Run tests with coverage
 	@./scripts/test.sh --coverage
+
+
+smoke-test: build ## Run smoke test on npm package
+	@echo "Building npm package tarball..."
+	@npm pack
+	@TARBALL=$$(ls mux-*.tgz | head -1); \
+	echo "Running smoke test on $$TARBALL..."; \
+	PACKAGE_TARBALL="$$TARBALL" ./scripts/smoke-test.sh; \
+	EXIT_CODE=$$?; \
+	rm -f "$$TARBALL"; \
+	exit $$EXIT_CODE
 
 test-e2e: ## Run end-to-end tests
 	@$(MAKE) build
