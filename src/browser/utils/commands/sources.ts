@@ -308,7 +308,6 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       id: CommandIds.navToggleTheme(),
       title: "Toggle Theme",
       section: section.navigation,
-      shortcutHint: formatKeybind(KEYBINDS.TOGGLE_THEME),
       run: () => p.onToggleTheme(),
     },
   ]);

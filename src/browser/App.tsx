@@ -390,7 +390,7 @@ function AppInner() {
     setSidebarCollapsed((prev) => !prev);
   }, [setSidebarCollapsed]);
 
-  const toggleTheme = useCallback(() => {
+  const toggleThemeFromPalette = useCallback(() => {
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
   }, [setTheme]);
 
@@ -415,7 +415,7 @@ function AppInner() {
     onAddProject: addProjectFromPalette,
     onRemoveProject: removeProjectFromPalette,
     onToggleSidebar: toggleSidebarFromPalette,
-    onToggleTheme: toggleTheme,
+    onToggleTheme: toggleThemeFromPalette,
     onNavigateWorkspace: navigateWorkspaceFromPalette,
     onOpenWorkspaceInTerminal: openWorkspaceInTerminal,
   };
@@ -463,9 +463,6 @@ function AppInner() {
       } else if (matchesKeybind(e, KEYBINDS.TOGGLE_SIDEBAR)) {
         e.preventDefault();
         setSidebarCollapsed((prev) => !prev);
-      } else if (matchesKeybind(e, KEYBINDS.TOGGLE_THEME)) {
-        e.preventDefault();
-        toggleTheme();
       }
     };
 
@@ -474,7 +471,6 @@ function AppInner() {
   }, [
     handleNavigateWorkspace,
     setSidebarCollapsed,
-    toggleTheme,
     isCommandPaletteOpen,
     closeCommandPalette,
     openCommandPalette,

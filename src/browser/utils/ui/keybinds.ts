@@ -249,10 +249,6 @@ export const KEYBINDS = {
   // macOS: Cmd+Shift+T, Win/Linux: Ctrl+Shift+T
   TOGGLE_THINKING: { key: "T", ctrl: true, shift: true },
 
-  /** Toggle theme between light and dark */
-  // macOS: Cmd+Option+T, Win/Linux: Ctrl+Alt+T
-  TOGGLE_THEME: { key: "T", ctrl: true, alt: true },
-
   /** Focus chat input from anywhere */
   // Works even when focus is already in an input field
   // macOS: Cmd+I, Win/Linux: Ctrl+I
