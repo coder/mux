@@ -5,7 +5,7 @@ import { APICallError } from "ai";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
 import { createAnthropic } from "@ai-sdk/anthropic";
-import { shouldRunIntegrationTests, validateApiKeys } from "../../tests/testUtils";
+import { shouldRunIntegrationTests, validateApiKeys } from "../../../tests/testUtils";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 
 // Skip integration tests if TEST_INTEGRATION is not set

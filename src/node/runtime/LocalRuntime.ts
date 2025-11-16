@@ -17,9 +17,9 @@ import type {
   InitLogger,
 } from "./Runtime";
 import { RuntimeError as RuntimeErrorClass } from "./Runtime";
-import { NON_INTERACTIVE_ENV_VARS } from "../constants/env";
-import { getBashPath } from "../utils/main/bashPath";
-import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "../constants/exitCodes";
+import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
+import { getBashPath } from "@/node/utils/main/bashPath";
+import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { listLocalBranches } from "@/node/git";
 import {
   checkInitHookExists,
@@ -27,9 +27,9 @@ import {
   createLineBufferedLoggers,
   getInitHookEnv,
 } from "./initHook";
-import { execAsync, DisposableProcess } from "../utils/disposableExec";
-import { getProjectName } from "../utils/runtime/helpers";
-import { getErrorMessage } from "../utils/errors";
+import { execAsync, DisposableProcess } from "@/node/utils/disposableExec";
+import { getProjectName } from "@/node/utils/runtime/helpers";
+import { getErrorMessage } from "@/common/utils/errors";
 import { expandTilde } from "./tildeExpansion";
 
 /**

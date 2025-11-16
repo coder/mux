@@ -1,6 +1,6 @@
-import type { ScenarioTurn } from "../scenarioTypes";
+import type { ScenarioTurn } from "@/node/services/mock/scenarioTypes";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import { STREAM_BASE_DELAY } from "../scenarioTypes";
+import { STREAM_BASE_DELAY } from "@/node/services/mock/scenarioTypes";
 
 export const PERMISSION_MODE_PROMPTS = {
   PLAN_REFACTOR: "How should I refactor this function?",

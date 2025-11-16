@@ -1,6 +1,6 @@
-import type { ScenarioTurn } from "../scenarioTypes";
+import type { ScenarioTurn } from "@/node/services/mock/scenarioTypes";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import { STREAM_BASE_DELAY } from "../scenarioTypes";
+import { STREAM_BASE_DELAY } from "@/node/services/mock/scenarioTypes";
 
 export const REVIEW_PROMPTS = {
   SUMMARIZE_BRANCHES: "Let's summarize the current branches.",

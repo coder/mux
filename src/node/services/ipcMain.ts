@@ -31,7 +31,7 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import { isSSHRuntime } from "@/common/types/runtime";
 import { validateProjectPath } from "@/node/utils/pathUtils";
 import { PTYService } from "@/node/services/ptyService";
-import type { TerminalWindowManager } from "@/node/services/terminalWindowManager";
+import type { TerminalWindowManager } from "@/desktop/terminalWindowManager";
 import type { TerminalCreateParams, TerminalResizeParams } from "@/common/types/terminal";
 import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
 import { generateWorkspaceName } from "./workspaceTitleGenerator";
