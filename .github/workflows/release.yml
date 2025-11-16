@@ -94,8 +94,6 @@ jobs:
           fetch-depth: 0 # Required for git describe to find tags
 
       - uses: ./.github/actions/setup-mux
-        with:
-          install-imagemagick: true
 
       - name: Install GNU Make (for build)
         run: choco install -y make
