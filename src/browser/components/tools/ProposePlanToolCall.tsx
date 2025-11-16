@@ -51,6 +51,8 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = ({
 
   const [isHovered, setIsHovered] = useState(false);
 
+  const controlButtonClasses =
+    "px-2 py-1 text-[10px] font-mono rounded-sm cursor-pointer transition-all duration-150 active:translate-y-px";
   const statusDisplay = getStatusDisplay(status);
 
   return (
@@ -63,21 +65,8 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = ({
 
       {expanded && (
         <ToolDetails>
-          <div
-            className="rounded-md p-3 shadow-md"
-            style={{
-              background:
-                "linear-gradient(135deg, color-mix(in srgb, var(--color-plan-mode), transparent 92%) 0%, color-mix(in srgb, var(--color-plan-mode), transparent 95%) 100%)",
-              border: "1px solid color-mix(in srgb, var(--color-plan-mode), transparent 70%)",
-            }}
-          >
-            <div
-              className="mb-3 flex items-center gap-2 pb-2"
-              style={{
-                borderBottom:
-                  "1px solid color-mix(in srgb, var(--color-plan-mode), transparent 80%)",
-              }}
-            >
+          <div className="plan-surface rounded-md p-3 shadow-md">
+            <div className="plan-divider mb-3 flex items-center gap-2 border-b pb-2">
               <div className="flex flex-1 items-center gap-2">
                 <div className="text-base">📋</div>
                 <div className="text-plan-mode font-mono text-[13px] font-semibold">
@@ -91,34 +80,18 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = ({
                       onClick={openModal}
                       disabled={startHereDisabled}
                       className={cn(
-                        "px-2 py-1 text-[10px] font-mono rounded-sm cursor-pointer transition-all duration-150",
-                        "active:translate-y-px",
-                        startHereDisabled ? "opacity-50 cursor-not-allowed" : "hover:text-plan-mode"
+                        controlButtonClasses,
+                        "plan-chip",
+                        startHereDisabled
+                          ? "cursor-not-allowed opacity-50"
+                          : "hover:plan-chip-hover active:plan-chip-active"
                       )}
-                      style={{
-                        color: "var(--color-plan-mode)",
-                        background: "color-mix(in srgb, var(--color-plan-mode), transparent 90%)",
-                        border:
-                          "1px solid color-mix(in srgb, var(--color-plan-mode), transparent 70%)",
-                      }}
-                      onMouseEnter={(e) => {
+                      onMouseEnter={() => {
                         if (!startHereDisabled) {
                           setIsHovered(true);
-                          (e.currentTarget as HTMLButtonElement).style.background =
-                            "color-mix(in srgb, var(--color-plan-mode), transparent 85%)";
-                          (e.currentTarget as HTMLButtonElement).style.borderColor =
-                            "color-mix(in srgb, var(--color-plan-mode), transparent 60%)";
                         }
                       }}
-                      onMouseLeave={(e) => {
-                        setIsHovered(false);
-                        if (!startHereDisabled) {
-                          (e.currentTarget as HTMLButtonElement).style.background =
-                            "color-mix(in srgb, var(--color-plan-mode), transparent 90%)";
-                          (e.currentTarget as HTMLButtonElement).style.borderColor =
-                            "color-mix(in srgb, var(--color-plan-mode), transparent 70%)";
-                        }
-                      }}
+                      onMouseLeave={() => setIsHovered(false)}
                     >
                       {isHovered && <span className="mr-1">{buttonEmoji}</span>}
                       {buttonLabel}
@@ -128,52 +101,21 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = ({
                 )}
                 <button
                   onClick={() => void copyToClipboard(args.plan)}
-                  className="text-muted hover:text-plan-mode cursor-pointer rounded-sm bg-transparent px-2 py-1 font-mono text-[10px] transition-all duration-150 active:translate-y-px"
-                  style={{
-                    border: "1px solid rgba(136, 136, 136, 0.3)",
-                  }}
-                  onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLButtonElement).style.background =
-                      "color-mix(in srgb, var(--color-plan-mode), transparent 85%)";
-                    (e.currentTarget as HTMLButtonElement).style.borderColor =
-                      "color-mix(in srgb, var(--color-plan-mode), transparent 60%)";
-                  }}
-                  onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-                    (e.currentTarget as HTMLButtonElement).style.borderColor =
-                      "rgba(136, 136, 136, 0.3)";
-                  }}
+                  className={cn(
+                    controlButtonClasses,
+                    "plan-chip-ghost hover:plan-chip-ghost-hover"
+                  )}
                 >
                   {copied ? "✓ Copied" : "Copy"}
                 </button>
                 <button
                   onClick={() => setShowRaw(!showRaw)}
                   className={cn(
-                    "px-2 py-1 text-[10px] font-mono rounded-sm cursor-pointer transition-all duration-150 active:translate-y-px hover:text-plan-mode"
+                    controlButtonClasses,
+                    showRaw
+                      ? "plan-chip hover:plan-chip-hover active:plan-chip-active"
+                      : "plan-chip-ghost text-muted hover:plan-chip-ghost-hover"
                   )}
-                  style={{
-                    color: showRaw ? "var(--color-plan-mode)" : "#888",
-                    background: showRaw
-                      ? "color-mix(in srgb, var(--color-plan-mode), transparent 90%)"
-                      : "transparent",
-                    border: showRaw
-                      ? "1px solid color-mix(in srgb, var(--color-plan-mode), transparent 70%)"
-                      : "1px solid rgba(136, 136, 136, 0.3)",
-                  }}
-                  onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLButtonElement).style.background =
-                      "color-mix(in srgb, var(--color-plan-mode), transparent 85%)";
-                    (e.currentTarget as HTMLButtonElement).style.borderColor =
-                      "color-mix(in srgb, var(--color-plan-mode), transparent 60%)";
-                  }}
-                  onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLButtonElement).style.background = showRaw
-                      ? "color-mix(in srgb, var(--color-plan-mode), transparent 90%)"
-                      : "transparent";
-                    (e.currentTarget as HTMLButtonElement).style.borderColor = showRaw
-                      ? "color-mix(in srgb, var(--color-plan-mode), transparent 70%)"
-                      : "rgba(136, 136, 136, 0.3)";
-                  }}
                 >
                   {showRaw ? "Show Markdown" : "Show Text"}
                 </button>
@@ -191,13 +133,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = ({
             )}
 
             {status === "completed" && (
-              <div
-                className="text-muted mt-3 pt-3 text-[11px] leading-normal italic"
-                style={{
-                  borderTop:
-                    "1px solid color-mix(in srgb, var(--color-plan-mode), transparent 80%)",
-                }}
-              >
+              <div className="plan-divider text-muted mt-3 border-t pt-3 text-[11px] leading-normal italic">
                 Respond with revisions or switch to Exec mode (
                 <span className="font-primary not-italic">
                   {formatKeybind(KEYBINDS.TOGGLE_MODE)}

@@ -416,14 +416,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
                           />
                         </div>
                         {isAtCutoff && (
-                          <div
-                            className="text-edit-mode bg-edit-mode/10 my-5 px-[15px] py-3 text-center text-xs font-medium"
-                            style={{
-                              borderBottom: "3px solid",
-                              borderImage:
-                                "repeating-linear-gradient(45deg, var(--color-editing-mode), var(--color-editing-mode) 10px, transparent 10px, transparent 20px) 1",
-                            }}
-                          >
+                          <div className="edit-cutoff-divider text-edit-mode bg-edit-mode/10 my-5 px-[15px] py-3 text-center text-xs font-medium">
                             ⚠️ Messages below this line will be removed when you submit the edit
                           </div>
                         )}
@@ -470,21 +463,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
             <button
               onClick={jumpToBottom}
               type="button"
-              className="font-primary absolute bottom-2 left-1/2 z-[100] -translate-x-1/2 cursor-pointer rounded-[20px] border px-2 py-1 text-xs font-medium text-white shadow-[0_4px_12px_rgba(0,0,0,0.3)] backdrop-blur-[1px] transition-all duration-200 hover:scale-105 active:scale-95"
-              style={{
-                background: "hsl(from var(--color-assistant-border) h s l / 0.1)",
-                borderColor: "hsl(from var(--color-assistant-border) h s l / 0.4)",
-              }}
-              onMouseEnter={(e) => {
-                const target = e.currentTarget;
-                target.style.background = "hsl(from var(--color-assistant-border) h s l / 0.4)";
-                target.style.borderColor = "hsl(from var(--color-assistant-border) h s l / 0.6)";
-              }}
-              onMouseLeave={(e) => {
-                const target = e.currentTarget;
-                target.style.background = "hsl(from var(--color-assistant-border) h s l / 0.1)";
-                target.style.borderColor = "hsl(from var(--color-assistant-border) h s l / 0.4)";
-              }}
+              className="assistant-chip font-primary text-foreground hover:assistant-chip-hover absolute bottom-2 left-1/2 z-[100] -translate-x-1/2 cursor-pointer rounded-[20px] px-2 py-1 text-xs font-medium shadow-[0_4px_12px_rgba(0,0,0,0.3)] backdrop-blur-[1px] transition-all duration-200 hover:scale-105 active:scale-95"
             >
               Press {formatKeybind(KEYBINDS.JUMP_TO_BOTTOM)} to jump to bottom
             </button>

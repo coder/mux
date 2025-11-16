@@ -13,6 +13,7 @@ import {
   LoadingDots,
 } from "./shared/ToolPrimitives";
 import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./shared/toolUtils";
+import { cn } from "@/common/lib/utils";
 import { TooltipWrapper, Tooltip } from "../Tooltip";
 
 interface BashToolCallProps {
@@ -69,10 +70,10 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
         </TooltipWrapper>
         <span className="text-text font-monospace max-w-96 truncate">{args.script}</span>
         <span
-          className="ml-2 text-[10px] whitespace-nowrap [@container(max-width:500px)]:hidden"
-          style={{
-            color: isPending ? "var(--color-pending)" : "var(--color-text-secondary)",
-          }}
+          className={cn(
+            "ml-2 text-[10px] whitespace-nowrap [@container(max-width:500px)]:hidden",
+            isPending ? "text-pending" : "text-text-secondary"
+          )}
         >
           timeout: {args.timeout_secs ?? BASH_DEFAULT_TIMEOUT_SECS}s
           {result && ` • took ${formatDuration(result.wall_duration_ms)}`}
@@ -80,11 +81,10 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
         </span>
         {result && (
           <span
-            className="ml-2 inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap"
-            style={{
-              background: result.exitCode === 0 ? "#4caf50" : "#f44336",
-              color: "white",
-            }}
+            className={cn(
+              "ml-2 inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
+              result.exitCode === 0 ? "bg-success text-on-success" : "bg-danger text-on-danger"
+            )}
           >
             {result.exitCode}
           </span>

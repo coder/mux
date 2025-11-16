@@ -149,29 +149,14 @@ export const markdownComponents = {
   details: ({ children, open }: DetailsProps) => (
     <details
       open={open}
-      style={{
-        margin: "0.5em 0",
-        padding: "0.25em 0.5em",
-        border: "1px solid rgba(255, 255, 255, 0.1)",
-        borderRadius: "4px",
-        background: "var(--color-code-bg)",
-      }}
+      className="bg-code-bg my-2 rounded border border-white/10 px-2 py-1 text-sm"
     >
       {children}
     </details>
   ),
 
   summary: ({ children }: SummaryProps) => (
-    <summary
-      style={{
-        cursor: "pointer",
-        fontWeight: 600,
-        padding: "0.25em 0",
-        userSelect: "none",
-      }}
-    >
-      <span style={{ marginLeft: "0.35em" }}>{children}</span>
-    </summary>
+    <summary className="cursor-pointer py-1 pl-1 font-semibold select-none">{children}</summary>
   ),
 
   // Custom code block renderer with async Shiki highlighting

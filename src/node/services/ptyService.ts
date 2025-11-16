@@ -12,7 +12,7 @@ import type {
   TerminalCreateParams,
   TerminalResizeParams,
 } from "@/common/types/terminal";
-import type { IPty } from "node-pty";
+import type { IPty } from "@homebridge/node-pty-prebuilt-multiarch";
 import { SSHRuntime, type SSHRuntimeConfig } from "@/node/runtime/SSHRuntime";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { access } from "fs/promises";

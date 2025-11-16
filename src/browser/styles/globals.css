@@ -18,222 +18,230 @@
   font-display: swap;
 }
 
-@theme {
-  /* Mode Colors */
-  --color-plan-mode: hsl(210 70% 40%);
-  --color-plan-mode-hover: hsl(210 70% 52%);
-  --color-plan-mode-light: hsl(210 70% 68%);
-
-  --color-exec-mode: hsl(268.56 94.04% 55.19%);
-  --color-exec-mode-hover: hsl(268.56 94.04% 67%);
-  --color-exec-mode-light: hsl(268.56 94.04% 78%);
-
-  --color-edit-mode: hsl(120 50% 35%);
-  --color-edit-mode-hover: hsl(120 50% 47%);
-  --color-edit-mode-light: hsl(120 50% 62%);
-
-  --color-read: hsl(210 70% 40%);
-  --color-editing-mode: hsl(30 100% 50%);
-  --color-pending: hsl(30 100% 70%);
-
-  --color-debug-mode: hsl(214 100% 64%);
-  --color-debug-light: hsl(214 100% 76%);
-  --color-debug-text: hsl(214 100% 80%);
-
-  --color-thinking-mode: hsl(271 76% 53%);
-  --color-thinking-mode-light: hsl(271 76% 65%);
-  --color-thinking-border: hsl(271 76% 53%);
-
-  /* Background & Layout */
-  --color-background: hsl(0 0% 12%);
-  --color-background-secondary: hsl(60 1% 15%);
-  --color-border: hsl(240 2% 25%);
-  --color-foreground: hsl(0 0% 83%);
-  --color-muted-foreground: hsl(0 0% 60%);
-  --color-secondary: hsl(0 0% 42%);
-
-  /* Code */
-  --color-code-bg: hsl(0 6.43% 8.04%);
-
-  /* Buttons */
-  --color-button-bg: hsl(0 0% 24%);
-  --color-button-text: hsl(0 0% 80%);
-  --color-button-hover: hsl(0 0% 29%);
-
-  /* Messages */
-  --color-user-border: hsl(0 0% 45%);
-  --color-user-border-hover: hsl(0 0% 44%);
-  --color-assistant-border: hsl(207 45% 40%);
-  --color-assistant-border-hover: hsl(207 45% 50%);
-  --color-message-header: hsl(0 0% 80%);
-
-  /* Tokens */
-  --color-token-prompt: hsl(0 0% 40%);
-  --color-token-completion: hsl(207 100% 40%);
-  --color-token-variable: hsl(207 100% 40%);
-  --color-token-fixed: hsl(0 0% 40%);
-  --color-token-input: hsl(120 40% 35%);
-  --color-token-output: hsl(207 100% 40%);
-  --color-token-cached: hsl(0 0% 50%);
-
-  /* Toggle */
-  --color-toggle-bg: hsl(0 0% 16.5%);
-  --color-toggle-active: hsl(0 0% 22.7%);
-  --color-toggle-hover: hsl(0 0% 17.6%);
-  --color-toggle-text: hsl(0 0% 53.3%);
-  --color-toggle-text-active: hsl(0 0% 100%);
-  --color-toggle-text-hover: hsl(0 0% 66.7%);
-
-  /* Status */
-  --color-interrupted: hsl(38 92% 50%);
-  --color-review-accent: hsl(48 70% 50%);
-  --color-git-dirty: hsl(38 92% 50%);
-  --color-error: hsl(0 70% 50%);
-  --color-error-bg: hsl(0 32% 18%);
-
-  /* Input */
-  --color-input-bg: hsl(0 0% 12%);
-  --color-input-text: hsl(0 0% 80%);
-  --color-input-border: hsl(207 51% 59%);
-  --color-input-border-focus: hsl(193 91% 64%);
-
-  /* Scrollbar */
-  --color-scrollbar-track: hsl(0 0% 18%);
-  --color-scrollbar-thumb: hsl(0 0% 32%);
-  --color-scrollbar-thumb-hover: hsl(0 0% 42%);
-
-  /* Additional Semantic Colors */
-  --color-muted: hsl(0 0% 53%); /* #888 - muted text */
-  --color-muted-light: hsl(0 0% 50%); /* #808080 - muted light */
-  --color-muted-dark: hsl(0 0% 43%); /* #6e6e6e - muted darker */
-  --color-placeholder: hsl(0 0% 42%); /* #6b6b6b - placeholder */
-  --color-subtle: hsl(0 0% 60%); /* #999 - subtle */
-  --color-dim: hsl(0 0% 42%); /* #666 - dimmed */
-  --color-light: hsl(0 0% 83%); /* #d4d4d4 - light */
-  --color-lighter: hsl(0 0% 90%); /* #e5e5e5 - lighter */
-  --color-bright: hsl(0 0% 80%); /* #cccccc - bright */
-  --color-subdued: hsl(0 0% 60%); /* #9a9a9a - subdued */
-  --color-label: hsl(0 0% 67%); /* #aaa - label */
-  --color-gray: hsl(0 0% 48%); /* #7a7a7a - gray */
-  --color-medium: hsl(0 0% 59%); /* #969696 - medium */
-
-  --color-border-light: hsl(240 3% 25%); /* #3e3e42 - lighter borders */
-  --color-border-medium: hsl(0 0% 27%); /* #444 - medium borders */
-  --color-border-darker: hsl(0 0% 33%); /* #555 - darker borders */
-  --color-border-subtle: hsl(0 0% 40%); /* #666 - subtle border */
-  --color-border-gray: hsl(240 1% 31%); /* #4e4e52 - gray border */
-
-  --color-dark: hsl(0 0% 11.5%); /* #1e1e1e - dark backgrounds */
-  --color-darker: hsl(0 0% 8.6%); /* #161616 - darker backgrounds */
-  --color-hover: hsl(0 0% 16.5%); /* #2a2a2b - hover states */
-  --color-bg-medium: hsl(0 0% 27%); /* #454545 - medium bg */
-  --color-bg-light: hsl(0 0% 30%); /* #4c4c4c - light bg */
-  --color-bg-subtle: hsl(240 3% 22%); /* #37373d - subtle bg */
-
-  --color-separator: hsl(0 0% 15%); /* #252526 - separators */
-  --color-separator-light: hsl(0 0% 27%); /* #464647 - lighter separator */
-  --color-modal-bg: hsl(0 0% 18%); /* #2d2d30 - modal backgrounds */
-
-  --color-accent: hsl(207 100% 40%); /* #007acc - VS Code blue */
-  --color-accent-hover: hsl(207 100% 45%); /* #1177bb - accent hover */
-  --color-accent-dark: hsl(207 100% 37%); /* #0e639c - darker accent */
-  --color-accent-darker: hsl(202 100% 23%); /* #094771 - even darker accent */
-  --color-accent-light: hsl(198 100% 65%); /* #4db8ff - lighter accent */
-
-  --color-success: hsl(122 39% 49%); /* #4caf50 - success green */
-  --color-success-light: hsl(123 46% 64%); /* #4ade80 - lighter success */
-
-  --color-danger: hsl(4 90% 58%); /* #f44336 - error red */
-  --color-danger-light: hsl(0 91% 71%); /* #ff5555 - lighter error red */
-  --color-danger-soft: hsl(6 93% 71%); /* #f48771 - softer error */
-
-  --color-warning: hsl(45 100% 51%); /* #ffc107 - warning yellow */
-  --color-warning-light: hsl(0 91% 71%); /* #f87171 - lighter warning/error */
-
-  /* Code syntax highlighting */
-  --color-code-type: hsl(197 71% 73%); /* #9cdcfe - type annotations */
-  --color-code-keyword: hsl(210 59% 63%); /* #6496ff - keywords */
-
-  /* Toast and notification backgrounds */
-  --color-toast-success-bg: hsl(207 100% 37% / 0.13); /* #0e639c with 20% opacity */
-  --color-toast-success-text: hsl(207 100% 60%); /* #3794ff */
-  --color-toast-error-bg: hsl(5 89% 60% / 0.15); /* #f14836 with 15% opacity */
-  --color-toast-error-text: hsl(5 89% 60%); /* #f14836 */
-  --color-toast-error-border: hsl(5 89% 60%); /* #f14836 */
-  --color-toast-fatal-bg: hsl(0 33% 18%); /* #2d1f1f - fatal error bg */
-  --color-toast-fatal-border: hsl(0 36% 26%); /* #5a2c2c - fatal error border */
-
-  /* Semi-transparent overlays */
-  --color-danger-overlay: hsl(4 90% 58% / 0.1); /* danger with 10% opacity */
-  --color-warning-overlay: hsl(45 100% 51% / 0.1); /* warning with 10% opacity */
-  --color-gray-overlay: hsl(0 0% 39% / 0.05); /* gray with 5% opacity */
-  --color-white-overlay-light: hsl(0 0% 100% / 0.05); /* white with 5% opacity */
-  --color-white-overlay: hsl(0 0% 100% / 0.1); /* white with 10% opacity */
-  --color-selection: hsl(204 100% 60% / 0.5); /* selection blue with 50% opacity */
-  --color-vim-status: hsl(0 0% 83% / 0.6); /* status text with 60% opacity */
-  --color-code-keyword-overlay-light: hsl(210 100% 70% / 0.05); /* code keyword with 5% opacity */
-  --color-code-keyword-overlay: hsl(210 100% 70% / 0.2); /* code keyword with 20% opacity */
-
-  /* Info/status colors */
-  --color-info-light: hsl(5 100% 75%); /* #ff9980 - light info/error */
-  --color-info-yellow: hsl(38 100% 64%); /* #ffb347 - yellow info */
-
-  /* Review/diff backgrounds */
-  --color-review-bg-blue: hsl(201 31% 22%); /* #2a3a4a - review background */
-  --color-review-bg-info: hsl(202 33% 24%); /* #2a4050 - info background */
-  --color-review-bg-warning: hsl(40 100% 12%); /* #3e2a00 - warning bg dark */
-  --color-review-warning: hsl(38 100% 25%); /* #806000 - warning dark */
-  --color-review-warning-medium: hsl(38 100% 32%); /* #a07000 - warning medium */
-  --color-review-warning-light: hsl(40 100% 20%); /* #4a3200 - warning light bg */
-
-  /* Error backgrounds */
-  --color-error-bg-dark: hsl(0 33% 13%); /* #3c1f1f - dark error bg */
-
-  /* Radius */
-  --radius: 0.5rem;
-}
-
 :root {
-  /* Legacy RGB for special uses */
+  color-scheme: dark;
+
+  @theme {
+    /* Mode Colors */
+    --color-plan-mode: hsl(210 70% 40%);
+    --color-plan-mode-hover: hsl(210 70% 52%);
+    --color-plan-mode-light: hsl(210 70% 68%);
+    --color-plan-mode-alpha: hsla(210 70% 40% / 0.1);
+
+    --color-exec-mode: hsl(268.56 94.04% 55.19%);
+    --color-exec-mode-hover: hsl(268.56 94.04% 67%);
+    --color-exec-mode-light: hsl(268.56 94.04% 78%);
+
+    --color-edit-mode: hsl(120 50% 35%);
+    --color-edit-mode-hover: hsl(120 50% 47%);
+    --color-edit-mode-light: hsl(120 50% 62%);
+
+    --color-read: hsl(210 70% 40%);
+    --color-editing-mode: hsl(30 100% 50%);
+    --color-editing-mode-alpha: hsla(30 100% 50% / 0.1);
+    --color-pending: hsl(30 100% 70%);
+
+    --color-debug-mode: hsl(214 100% 64%);
+    --color-debug-light: hsl(214 100% 76%);
+    --color-debug-text: hsl(214 100% 80%);
+
+    --color-thinking-mode: hsl(271 76% 53%);
+    --color-thinking-mode-light: hsl(271 76% 65%);
+    --color-thinking-border: hsl(271 76% 53%);
+
+    /* Background & Layout */
+    --color-background: hsl(0 0% 12%);
+    --color-background-secondary: hsl(60 1% 15%);
+    --color-border: hsl(240 2% 25%);
+    --color-foreground: hsl(0 0% 83%);
+    --color-text: hsl(0 0% 83%);
+    --color-text-light: hsl(0 0% 73%);
+    --color-text-secondary: hsl(0 0% 42%);
+    --color-muted-foreground: hsl(0 0% 60%);
+    --color-secondary: hsl(0 0% 42%);
+
+    /* Code */
+    --color-code-bg: hsl(0 6.43% 8.04%);
+
+    /* Buttons */
+    --color-button-bg: hsl(0 0% 24%);
+    --color-button-text: hsl(0 0% 80%);
+    --color-button-hover: hsl(0 0% 29%);
+
+    /* Messages */
+    --color-user-border: hsl(0 0% 45%);
+    --color-user-border-hover: hsl(0 0% 44%);
+    --color-assistant-border: hsl(207 45% 40%);
+    --color-assistant-border-hover: hsl(207 45% 50%);
+    --color-message-header: hsl(0 0% 80%);
+
+    /* Tokens */
+    --color-token-prompt: hsl(0 0% 40%);
+    --color-token-completion: hsl(207 100% 40%);
+    --color-token-variable: hsl(207 100% 40%);
+    --color-token-fixed: hsl(0 0% 40%);
+    --color-token-input: hsl(120 40% 35%);
+    --color-token-output: hsl(207 100% 40%);
+    --color-token-cached: hsl(0 0% 50%);
+
+    /* Plan surfaces */
+    --surface-plan-gradient: linear-gradient(135deg, color-mix(in srgb, var(--color-plan-mode), transparent 92%) 0%, color-mix(in srgb, var(--color-plan-mode), transparent 95%) 100%);
+    --surface-plan-border: color-mix(in srgb, var(--color-plan-mode), transparent 70%);
+    --surface-plan-border-subtle: color-mix(in srgb, var(--color-plan-mode), transparent 80%);
+    --surface-plan-border-strong: color-mix(in srgb, var(--color-plan-mode), transparent 60%);
+    --surface-plan-divider: color-mix(in srgb, var(--color-plan-mode), transparent 80%);
+    --surface-plan-chip-bg: color-mix(in srgb, var(--color-plan-mode), transparent 90%);
+    --surface-plan-chip-hover: color-mix(in srgb, var(--color-plan-mode), transparent 85%);
+    --surface-plan-chip-active: color-mix(in srgb, var(--color-plan-mode), transparent 65%);
+    --surface-plan-chip-border: color-mix(in srgb, var(--color-plan-mode), transparent 70%);
+    --surface-plan-chip-border-strong: color-mix(in srgb, var(--color-plan-mode), transparent 60%);
+    --surface-plan-neutral-border: hsl(0 0% 53% / 0.3);
+
+    /* Assistant surfaces */
+    --surface-assistant-chip-bg: hsl(from var(--color-assistant-border) h s l / 0.1);
+    --surface-assistant-chip-hover: hsl(from var(--color-assistant-border) h s l / 0.4);
+    --surface-assistant-chip-border: hsl(from var(--color-assistant-border) h s l / 0.4);
+    --surface-assistant-chip-border-strong: hsl(from var(--color-assistant-border) h s l / 0.6);
+
+    /* Warning surfaces */
+    --border-warning-dashed: color-mix(in srgb, var(--color-warning), transparent 45%);
+
+    /* Toggle */
+    --color-toggle-bg: hsl(0 0% 16.5%);
+    --color-toggle-active: hsl(0 0% 22.7%);
+    --color-toggle-hover: hsl(0 0% 17.6%);
+    --color-toggle-text: hsl(0 0% 53.3%);
+    --color-toggle-text-active: hsl(0 0% 100%);
+    --color-toggle-text-hover: hsl(0 0% 66.7%);
+
+    /* Status */
+    --color-interrupted: hsl(38 92% 50%);
+    --color-review-accent: hsl(48 70% 50%);
+    --color-git-dirty: hsl(38 92% 50%);
+    --color-error: hsl(0 70% 50%);
+    --color-error-bg: hsl(0 32% 18%);
+
+    /* Input */
+    --color-input-bg: hsl(0 0% 12%);
+    --color-input-text: hsl(0 0% 80%);
+    --color-input-border: hsl(207 51% 59%);
+    --color-input-border-focus: hsl(193 91% 64%);
+
+    /* Scrollbar */
+    --color-scrollbar-track: hsl(0 0% 18%);
+    --color-scrollbar-thumb: hsl(0 0% 32%);
+    --color-scrollbar-thumb-hover: hsl(0 0% 42%);
+
+    /* Additional Semantic Colors */
+    --color-muted: hsl(0 0% 53%); /* #888 - muted text */
+    --color-muted-light: hsl(0 0% 50%); /* #808080 - muted light */
+    --color-muted-dark: hsl(0 0% 43%); /* #6e6e6e - muted darker */
+    --color-placeholder: hsl(0 0% 42%); /* #6b6b6b - placeholder */
+    --color-subtle: hsl(0 0% 60%); /* #999 - subtle */
+    --color-dim: hsl(0 0% 42%); /* #666 - dimmed */
+    --color-light: hsl(0 0% 83%); /* #d4d4d4 - light */
+    --color-lighter: hsl(0 0% 90%); /* #e5e5e5 - lighter */
+    --color-bright: hsl(0 0% 80%); /* #cccccc - bright */
+    --color-subdued: hsl(0 0% 60%); /* #9a9a9a - subdued */
+    --color-label: hsl(0 0% 67%); /* #aaa - label */
+    --color-gray: hsl(0 0% 48%); /* #7a7a7a - gray */
+    --color-medium: hsl(0 0% 59%); /* #969696 - medium */
+
+    --color-border-light: hsl(240 3% 25%); /* #3e3e42 - lighter borders */
+    --color-border-medium: hsl(0 0% 27%); /* #444 - medium borders */
+    --color-border-darker: hsl(0 0% 33%); /* #555 - darker borders */
+    --color-border-subtle: hsl(0 0% 40%); /* #666 - subtle border */
+    --color-border-gray: hsl(240 1% 31%); /* #4e4e52 - gray border */
+
+    --color-dark: hsl(0 0% 11.5%); /* #1e1e1e - dark backgrounds */
+    --color-darker: hsl(0 0% 8.6%); /* #161616 - darker backgrounds */
+    --color-hover: hsl(0 0% 16.5%); /* #2a2a2b - hover states */
+    --color-bg-medium: hsl(0 0% 27%); /* #454545 - medium bg */
+    --color-bg-light: hsl(0 0% 30%); /* #4c4c4c - light bg */
+    --color-bg-subtle: hsl(240 3% 22%); /* #37373d - subtle bg */
+
+    --color-separator: hsl(0 0% 15%); /* #252526 - separators */
+    --color-separator-light: hsl(0 0% 27%); /* #464647 - lighter separator */
+    --color-modal-bg: hsl(0 0% 18%); /* #2d2d30 - modal backgrounds */
+
+    --color-accent: hsl(207 100% 40%); /* #007acc - VS Code blue */
+    --color-accent-hover: hsl(207 100% 45%); /* #1177bb - accent hover */
+    --color-accent-dark: hsl(207 100% 37%); /* #0e639c - darker accent */
+    --color-accent-darker: hsl(202 100% 23%); /* #094771 - even darker accent */
+    --color-accent-light: hsl(198 100% 65%); /* #4db8ff - lighter accent */
+
+    --color-success: hsl(122 39% 49%); /* #4caf50 - success green */
+    --color-success-light: hsl(123 46% 64%); /* #4ade80 - lighter success */
+    --color-on-success: hsl(0 0% 100%);
+
+    --color-danger: hsl(4 90% 58%); /* #f44336 - error red */
+    --color-danger-light: hsl(0 91% 71%); /* #ff5555 - lighter error red */
+    --color-danger-soft: hsl(6 93% 71%); /* #f48771 - softer error */
+    --color-on-danger: hsl(0 0% 100%);
+
+    --color-warning: hsl(45 100% 51%); /* #ffc107 - warning yellow */
+    --color-warning-light: hsl(0 91% 71%); /* #f87171 - lighter warning/error */
+
+    /* Code syntax highlighting */
+    --color-code-type: hsl(197 71% 73%); /* #9cdcfe - type annotations */
+    --color-code-keyword: hsl(210 59% 63%); /* #6496ff - keywords */
+
+    /* Toast and notification backgrounds */
+    --color-toast-success-bg: hsl(207 100% 37% / 0.13); /* #0e639c with 20% opacity */
+    --color-toast-success-text: hsl(207 100% 60%); /* #3794ff */
+    --color-toast-error-bg: hsl(5 89% 60% / 0.15); /* #f14836 with 15% opacity */
+    --color-toast-error-text: hsl(5 89% 60%); /* #f14836 */
+    --color-toast-error-border: hsl(5 89% 60%); /* #f14836 */
+    --color-toast-fatal-bg: hsl(0 33% 18%); /* #2d1f1f - fatal error bg */
+    --color-toast-fatal-border: hsl(0 36% 26%); /* #5a2c2c - fatal error border */
+
+    /* Semi-transparent overlays */
+    --color-danger-overlay: hsl(4 90% 58% / 0.1); /* danger with 10% opacity */
+    --color-warning-overlay: hsl(45 100% 51% / 0.1); /* warning with 10% opacity */
+    --color-gray-overlay: hsl(0 0% 39% / 0.05); /* gray with 5% opacity */
+    --color-white-overlay-light: hsl(0 0% 100% / 0.05); /* white with 5% opacity */
+    --color-white-overlay: hsl(0 0% 100% / 0.1); /* white with 10% opacity */
+    --color-selection: hsl(204 100% 60% / 0.5); /* selection blue with 50% opacity */
+    --color-vim-status: hsl(0 0% 83% / 0.6); /* status text with 60% opacity */
+    --color-code-keyword-overlay-light: hsl(210 100% 70% / 0.05); /* code keyword with 5% opacity */
+    --color-code-keyword-overlay: hsl(210 100% 70% / 0.2); /* code keyword with 20% opacity */
+
+    /* Info/status colors */
+    --color-info-light: hsl(5 100% 75%); /* #ff9980 - light info/error */
+    --color-info-yellow: hsl(38 100% 64%); /* #ffb347 - yellow info */
+
+    /* Review/diff backgrounds */
+    --color-review-bg-blue: hsl(201 31% 22%); /* #2a3a4a - review background */
+    --color-review-bg-info: hsl(202 33% 24%); /* #2a4050 - info background */
+    --color-review-bg-warning: hsl(40 100% 12%); /* #3e2a00 - warning bg dark */
+    --color-review-warning: hsl(38 100% 25%); /* #806000 - warning dark */
+    --color-review-warning-medium: hsl(38 100% 32%); /* #a07000 - warning medium */
+    --color-review-warning-light: hsl(40 100% 20%); /* #4a3200 - warning light bg */
+
+    /* Error backgrounds */
+    --color-error-bg-dark: hsl(0 33% 13%); /* #3c1f1f - dark error bg */
+
+    /* Radius */
+    --radius: 0.5rem;
+  }
+
   --plan-mode-rgb: 31, 107, 184;
 
-  /* Legacy CSS var format - keep for gradual migration */
-  --color-plan-mode: hsl(210 70% 40%);
-  --color-plan-mode-hover: hsl(210 70% 52%);
-  --color-plan-mode-alpha: hsla(210 70% 40% / 0.1);
-  --color-exec-mode: hsl(268.56 94.04% 55.19%);
-  --color-edit-mode: hsl(120 50% 35%);
-  --color-editing-mode: hsl(30 100% 50%);
-  --color-editing-mode-alpha: hsla(30 100% 50% / 0.1);
-  --color-read: hsl(210 70% 40%);
-  --color-thinking-mode: hsl(271 76% 53%);
-  --color-pending: hsl(30 100% 70%);
-  --color-interrupted: hsl(38 92% 50%);
-  --color-code-bg: hsl(0 6.43% 8.04%);
-  --color-border: hsl(240 2% 25%);
-  --color-text: hsl(0 0% 83%);
-  --color-text-secondary: hsl(0 0% 42%);
-  --color-user-border: hsl(0 0% 38%);
-  --color-assistant-border: hsl(207 45% 40%);
-  --color-review-accent: hsl(48 70% 50%);
-  --color-token-input: hsl(120 40% 35%);
-  --color-token-output: hsl(207 100% 40%);
-  --color-token-variable: hsl(207 100% 40%);
-  --color-token-fixed: hsl(0 0% 40%);
-  --color-token-cached: hsl(0 0% 50%);
-
-  /* Font Variables */
-  /* Primary UI Font - San Francisco on macOS, Geist on Windows/Linux */
   --font-primary:
     -apple-system, BlinkMacSystemFont, "Geist", system-ui, "Segoe UI", "Roboto",
     "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
     "Segoe UI Symbol";
 
-  /* Monospace Font - System monospace on macOS, Geist Mono on Windows/Linux */
   --font-monospace:
     "Monaco", "Menlo", "Geist Mono", "Ubuntu Mono", "Consolas", "Courier New", monospace,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
 }
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  /* Theme override hook: redeclare tokens inside this block to swap palettes */
+}
+
 
 body {
   background-color: var(--color-background);
@@ -329,6 +337,79 @@ body,
   }
 }
 
+
+/* Tailwind utility extensions for dark theme surfaces */
+@utility plan-surface {
+  background: var(--surface-plan-gradient);
+  border: 1px solid var(--surface-plan-border);
+}
+
+@utility plan-divider {
+  border-color: var(--surface-plan-divider);
+}
+
+@utility plan-divider-strong {
+  border-color: var(--surface-plan-border-strong);
+}
+
+@utility plan-chip {
+  color: var(--color-plan-mode);
+  background: var(--surface-plan-chip-bg);
+  border: 1px solid var(--surface-plan-chip-border);
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+@utility plan-chip-hover {
+  background: var(--surface-plan-chip-hover);
+  border-color: var(--surface-plan-chip-border-strong);
+}
+
+@utility plan-chip-active {
+  background: var(--surface-plan-chip-active);
+  border-color: var(--surface-plan-chip-border-strong);
+}
+
+@utility plan-chip-ghost {
+  color: var(--color-muted);
+  background: transparent;
+  border: 1px solid var(--surface-plan-neutral-border);
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+@utility plan-chip-ghost-hover {
+  color: var(--color-plan-mode);
+  background: var(--surface-plan-chip-hover);
+  border-color: var(--surface-plan-chip-border-strong);
+}
+
+@utility assistant-chip {
+  background: var(--surface-assistant-chip-bg);
+  border: 1px solid var(--surface-assistant-chip-border);
+  color: var(--color-foreground);
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+@utility assistant-chip-hover {
+  background: var(--surface-assistant-chip-hover);
+  border-color: var(--surface-assistant-chip-border-strong);
+}
+
+
+@utility edit-cutoff-divider {
+  border-bottom: 3px solid;
+  border-image: repeating-linear-gradient(
+      45deg,
+      var(--color-editing-mode),
+      var(--color-editing-mode) 10px,
+      transparent 10px,
+      transparent 20px
+    )
+    1;
+}
+@utility border-dashed-warning {
+  border-style: dashed;
+  border-color: var(--border-warning-dashed);
+}
 code {
   font-family: var(--font-monospace);
 }

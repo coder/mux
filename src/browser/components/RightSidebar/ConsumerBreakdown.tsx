@@ -60,27 +60,18 @@ const ConsumerBreakdownComponent: React.FC<ConsumerBreakdownProps> = ({ consumer
                   {consumer.fixedTokens && consumer.variableTokens ? (
                     <>
                       <div
-                        className="h-full transition-[width] duration-300"
-                        style={{
-                          width: `${fixedPercentage}%`,
-                          background: "var(--color-token-fixed)",
-                        }}
+                        className="bg-token-fixed h-full transition-[width] duration-300"
+                        style={{ width: `${fixedPercentage}%` }}
                       />
                       <div
-                        className="h-full transition-[width] duration-300"
-                        style={{
-                          width: `${variablePercentage}%`,
-                          background: "var(--color-token-variable)",
-                        }}
+                        className="bg-token-variable h-full transition-[width] duration-300"
+                        style={{ width: `${variablePercentage}%` }}
                       />
                     </>
                   ) : (
                     <div
-                      className="h-full transition-[width] duration-300"
-                      style={{
-                        width: `${consumer.percentage}%`,
-                        background: "linear-gradient(90deg, #4a9eff 0%, #6b5ce7 100%)",
-                      }}
+                      className="h-full bg-[linear-gradient(90deg,var(--color-token-input)_0%,var(--color-token-output)_100%)] transition-[width] duration-300"
+                      style={{ width: `${consumer.percentage}%` }}
                     />
                   )}
                 </div>
