@@ -1,7 +1,7 @@
 import { useCallback, useEffect } from "react";
 import { usePersistedState, readPersistedState, updatePersistedState } from "./usePersistedState";
 import { MODEL_ABBREVIATIONS } from "@/browser/utils/slashCommands/registry";
-import { defaultModel } from "@/utils/ai/models";
+import { defaultModel } from "@/common/utils/ai/models";
 
 const MAX_LRU_SIZE = 8;
 const LRU_KEY = "model-lru";

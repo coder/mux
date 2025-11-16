@@ -1,17 +1,17 @@
 import { type Tool } from "ai";
-import { createFileReadTool } from "@/services/tools/file_read";
-import { createBashTool } from "@/services/tools/bash";
-import { createFileEditReplaceStringTool } from "@/services/tools/file_edit_replace_string";
-// DISABLED: import { createFileEditReplaceLinesTool } from "@/services/tools/file_edit_replace_lines";
-import { createFileEditInsertTool } from "@/services/tools/file_edit_insert";
-import { createProposePlanTool } from "@/services/tools/propose_plan";
-import { createTodoWriteTool, createTodoReadTool } from "@/services/tools/todo";
-import { createStatusSetTool } from "@/services/tools/status_set";
-import { wrapWithInitWait } from "@/services/tools/wrapWithInitWait";
-import { log } from "@/services/log";
+import { createFileReadTool } from "@/node/services/tools/file_read";
+import { createBashTool } from "@/node/services/tools/bash";
+import { createFileEditReplaceStringTool } from "@/node/services/tools/file_edit_replace_string";
+// DISABLED: import { createFileEditReplaceLinesTool } from "@/node/services/tools/file_edit_replace_lines";
+import { createFileEditInsertTool } from "@/node/services/tools/file_edit_insert";
+import { createProposePlanTool } from "@/node/services/tools/propose_plan";
+import { createTodoWriteTool, createTodoReadTool } from "@/node/services/tools/todo";
+import { createStatusSetTool } from "@/node/services/tools/status_set";
+import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
+import { log } from "@/node/services/log";
 
-import type { Runtime } from "@/runtime/Runtime";
-import type { InitStateManager } from "@/services/initStateManager";
+import type { Runtime } from "@/node/runtime/Runtime";
+import type { InitStateManager } from "@/node/services/initStateManager";
 
 /**
  * Configuration for tools that need runtime context

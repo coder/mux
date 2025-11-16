@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, userEvent, waitFor } from "storybook/test";
 import { GitStatusIndicatorView } from "./GitStatusIndicatorView";
-import type { GitCommit, GitBranchHeader } from "@/utils/git/parseGitLog";
+import type { GitCommit, GitBranchHeader } from "@/node/utils/git/parseGitLog";
 import { useState } from "react";
 
 // Type for the wrapped component props (without interaction handlers)

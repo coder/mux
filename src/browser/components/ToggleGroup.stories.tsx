@@ -4,7 +4,7 @@ import { expect, userEvent, within, waitFor } from "storybook/test";
 import { useArgs } from "storybook/preview-api";
 import { ToggleGroup, type ToggleOption } from "./ToggleGroup";
 import { useState } from "react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 
 const meta = {
   title: "Components/ToggleGroup",

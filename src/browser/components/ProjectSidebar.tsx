@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { DndProvider } from "react-dnd";
 import { HTML5Backend, getEmptyImage } from "react-dnd-html5-backend";
 import { useDrag, useDrop, useDragLayer } from "react-dnd";
-import { sortProjectsByOrder, reorderProjects, normalizeOrder } from "@/utils/projectOrdering";
+import { sortProjectsByOrder, reorderProjects, normalizeOrder } from "@/common/utils/projectOrdering";
 import { matchesKeybind, formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import { PlatformPaths } from "@/utils/paths";
+import { PlatformPaths } from "@/common/utils/paths";
 import {
   partitionWorkspacesByAge,
   formatOldWorkspaceThreshold,

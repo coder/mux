@@ -15,7 +15,7 @@ import type { SendMessageError } from "@/common/types/errors";
 import { createUnknownSendMessageError } from "@/node/services/utils/sendMessageError";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
-import { enforceThinkingPolicy } from "@/utils/thinking/policy";
+import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 
 interface ImagePart {

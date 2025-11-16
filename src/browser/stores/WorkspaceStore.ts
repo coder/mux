@@ -1,4 +1,4 @@
-import assert from "@/utils/assert";
+import assert from "@/common/utils/assert";
 import type { MuxMessage, DisplayedMessage } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -11,14 +11,14 @@ import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { useSyncExternalStore } from "react";
 import { isCaughtUpMessage, isStreamError, isDeleteMessage, isMuxMessage } from "@/common/types/ipc";
 import { MapStore } from "./MapStore";
-import { createDisplayUsage } from "@/utils/tokens/displayUsage";
+import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";
-import type { ChatUsageDisplay } from "@/utils/tokens/usageAggregator";
-import { sumUsageHistory } from "@/utils/tokens/usageAggregator";
+import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
+import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import type { TokenConsumer } from "@/common/types/chatStats";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { getCancelledCompactionKey } from "@/common/constants/storage";
-import { isCompactingStream, findCompactionRequestMessage } from "@/utils/compaction/handler";
+import { isCompactingStream, findCompactionRequestMessage } from "@/node/utils/compaction/handler";
 import { createFreshRetryState } from "@/browser/utils/messages/retryState";
 
 export interface WorkspaceState {

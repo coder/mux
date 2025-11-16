@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { ProjectConfig } from "@/config";
+import type { ProjectConfig } from "@/node/config";
 import type { BranchListResult } from "@/common/types/ipc";
 import type { Secret } from "@/common/types/secrets";
 

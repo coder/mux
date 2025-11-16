@@ -4,7 +4,7 @@
 // - We represent order as an array of project paths (string[]).
 // - This file is intentionally framework-agnostic and pure for easy testing.
 
-import type { ProjectConfig } from "@/config";
+import type { ProjectConfig } from "@/node/config";
 
 /**
  * Sort projects by the provided order array. Unknown projects go to the end preserving natural order.

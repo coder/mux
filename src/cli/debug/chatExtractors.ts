@@ -1,4 +1,4 @@
-import assert from "@/utils/assert";
+import assert from "@/common/utils/assert";
 import type { MuxReasoningPart, MuxTextPart, MuxToolPart } from "@/common/types/message";
 
 export function extractAssistantText(parts: unknown): string {

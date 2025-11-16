@@ -1,5 +1,5 @@
 import { useRename } from "@/browser/contexts/WorkspaceRenameContext";
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";

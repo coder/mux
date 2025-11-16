@@ -3,10 +3,10 @@
  */
 
 import React from "react";
-import type { FileTreeNode } from "@/utils/git/numstatParser";
+import type { FileTreeNode } from "@/node/utils/git/numstatParser";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getFileTreeExpandStateKey } from "@/common/constants/storage";
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 
 /**
  * Compute read status for a directory by recursively checking all descendant files

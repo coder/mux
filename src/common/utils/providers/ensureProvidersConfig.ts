@@ -1,4 +1,4 @@
-import type { Config, ProviderConfig, ProvidersConfig } from "@/config";
+import type { Config, ProviderConfig, ProvidersConfig } from "@/node/config";
 
 const trim = (value: unknown): string => (typeof value === "string" ? value.trim() : "");
 

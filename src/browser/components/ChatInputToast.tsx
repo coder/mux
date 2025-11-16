@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import React, { useEffect, useCallback } from "react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 
 const toastTypeStyles: Record<"success" | "error", string> = {
   success: "bg-toast-success-bg border border-accent-dark text-toast-success-text",

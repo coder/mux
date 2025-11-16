@@ -3,7 +3,7 @@ import { ToggleGroup, type ToggleOption } from "./ToggleGroup";
 import { TooltipWrapper, Tooltip, HelpIndicator } from "./Tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import type { UIMode } from "@/common/types/mode";
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 
 const MODE_OPTIONS: Array<ToggleOption<UIMode>> = [
   { value: "exec", label: "Exec", activeClassName: "bg-exec-mode text-white" },

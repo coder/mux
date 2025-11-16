@@ -1,6 +1,6 @@
 import React, { useState, useRef, useLayoutEffect, createContext, useContext } from "react";
 import { createPortal } from "react-dom";
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 
 // Context for passing hover state and trigger ref from wrapper to tooltip
 interface TooltipContextValue {

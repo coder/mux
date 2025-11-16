@@ -2,7 +2,7 @@ import type { Result } from "./result";
 import type { FrontendWorkspaceMetadata, WorkspaceMetadata } from "./workspace";
 import type { MuxMessage, MuxFrontendMetadata } from "./message";
 import type { ChatStats } from "./chatStats";
-import type { ProjectConfig } from "@/config";
+import type { ProjectConfig } from "@/node/config";
 import type { SendMessageError, StreamErrorType } from "./errors";
 import type { ThinkingLevel } from "./thinking";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";

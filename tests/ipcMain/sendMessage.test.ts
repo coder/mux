@@ -30,7 +30,7 @@ if (shouldRunIntegrationTests()) {
   validateApiKeys(["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]);
 }
 
-import { KNOWN_MODELS } from "@/constants/knownModels";
+import { KNOWN_MODELS } from "@/common/constants/knownModels";
 
 // Test both providers with their respective models
 const PROVIDER_CONFIGS: Array<[string, string]> = [

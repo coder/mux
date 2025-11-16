@@ -5,7 +5,7 @@ import {
   normalizeOrder,
   equalOrders,
 } from "./projectOrdering";
-import type { ProjectConfig } from "@/config";
+import type { ProjectConfig } from "@/node/config";
 
 describe("projectOrdering", () => {
   const createProjects = (paths: string[]): Map<string, ProjectConfig> => {

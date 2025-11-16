@@ -2,8 +2,8 @@ import * as fs from "fs";
 import * as path from "path";
 import { defaultConfig } from "@/node/config";
 import type { MuxMessage } from "@/common/types/message";
-import { calculateTokenStats } from "@/utils/tokens/tokenStatsCalculator";
-import { getDefaultModelFromLRU } from "@/hooks/useModelLRU";
+import { calculateTokenStats } from "@/common/utils/tokens/tokenStatsCalculator";
+import { getDefaultModelFromLRU } from "@/browser/hooks/useModelLRU";
 
 /**
  * Debug command to display cost/token statistics for a workspace

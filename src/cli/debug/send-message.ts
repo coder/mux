@@ -3,7 +3,7 @@ import * as path from "path";
 import { defaultConfig } from "@/node/config";
 import type { MuxMessage } from "@/common/types/message";
 import type { SendMessageOptions } from "@/common/types/ipc";
-import { getDefaultModelFromLRU } from "@/hooks/useModelLRU";
+import { getDefaultModelFromLRU } from "@/browser/hooks/useModelLRU";
 import { getMuxSessionsDir } from "@/common/constants/paths";
 
 /**

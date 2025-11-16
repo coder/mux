@@ -5,7 +5,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { TooltipWrapper, Tooltip } from "@/browser/components/Tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 
 interface RefreshButtonProps {
   onClick: () => void;

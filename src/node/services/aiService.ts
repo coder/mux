@@ -2,8 +2,8 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import { EventEmitter } from "events";
 import { convertToModelMessages, type LanguageModel } from "ai";
-import { applyToolOutputRedaction } from "@/utils/messages/applyToolOutputRedaction";
-import { sanitizeToolInputs } from "@/utils/messages/sanitizeToolInput";
+import { applyToolOutputRedaction } from "@/browser/utils/messages/applyToolOutputRedaction";
+import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
@@ -26,7 +26,7 @@ import {
   addInterruptedSentinel,
   filterEmptyAssistantMessages,
   injectModeTransition,
-} from "@/utils/messages/modelMessageTransform";
+} from "@/browser/utils/messages/modelMessageTransform";
 import { applyCacheControl } from "@/common/utils/ai/cacheStrategy";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";

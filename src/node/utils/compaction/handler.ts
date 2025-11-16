@@ -11,7 +11,7 @@
  * - Reload-safe: localStorage persists, messageId ensures freshness
  */
 
-import type { StreamingMessageAggregator } from "@/utils/messages/StreamingMessageAggregator";
+import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { getCancelledCompactionKey } from "@/common/constants/storage";
 
 /**

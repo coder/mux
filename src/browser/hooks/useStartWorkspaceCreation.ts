@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from "react";
-import type { ProjectConfig } from "@/config";
+import type { ProjectConfig } from "@/node/config";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
 import { CUSTOM_EVENTS, type CustomEventPayloads } from "@/common/constants/events";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";

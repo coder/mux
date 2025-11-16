@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { TooltipWrapper, Tooltip } from "./Tooltip";
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 
 export interface KebabMenuItem {
   label: string;

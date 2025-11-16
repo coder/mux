@@ -1,10 +1,10 @@
 import type { FrontendWorkspaceMetadata, GitStatus } from "@/common/types/workspace";
-import { parseGitShowBranchForStatus } from "@/utils/git/parseGitStatus";
+import { parseGitShowBranchForStatus } from "@/node/utils/git/parseGitStatus";
 import {
   GIT_STATUS_SCRIPT,
   GIT_FETCH_SCRIPT,
   parseGitStatusScriptOutput,
-} from "@/utils/git/gitStatus";
+} from "@/node/utils/git/gitStatus";
 import { useSyncExternalStore } from "react";
 import { MapStore } from "./MapStore";
 import { isSSHRuntime } from "@/common/types/runtime";

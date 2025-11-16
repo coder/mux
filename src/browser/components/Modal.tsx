@@ -1,5 +1,5 @@
 import React, { useEffect, useCallback, useId } from "react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 
 // Export utility components for backwards compatibility

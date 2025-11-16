@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 import type { SlashSuggestion } from "@/browser/utils/slashCommands/types";
 
 // Export the keys that CommandSuggestions handles

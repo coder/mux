@@ -1,4 +1,4 @@
-import type { ProjectConfig } from "@/config";
+import type { ProjectConfig } from "@/node/config";
 import type { IPCApi } from "@/common/types/ipc";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, mock, test } from "bun:test";

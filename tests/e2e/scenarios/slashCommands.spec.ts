@@ -2,11 +2,11 @@ import fs from "fs/promises";
 import path from "path";
 import { parse } from "jsonc-parser";
 import { electronTest as test, electronExpect as expect } from "../electronTest";
-import { TOOL_FLOW_PROMPTS } from "@/services/mock/scenarios/toolFlows";
+import { TOOL_FLOW_PROMPTS } from "@/node/services/mock/scenarios/toolFlows";
 import {
   COMPACT_SUMMARY_TEXT,
   SLASH_COMMAND_PROMPTS,
-} from "@/services/mock/scenarios/slashCommands";
+} from "@/node/services/mock/scenarios/slashCommands";
 
 test.skip(
   ({ browserName }) => browserName !== "chromium",

@@ -1,12 +1,12 @@
 import React from "react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/common/lib/utils";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
 import { use1MContext } from "@/browser/hooks/use1MContext";
 import { useResizeObserver } from "@/browser/hooks/useResizeObserver";
 import { CostsTab } from "./RightSidebar/CostsTab";
 import { VerticalTokenMeter } from "./RightSidebar/VerticalTokenMeter";
-import { calculateTokenMeterData } from "@/utils/tokens/tokenMeterUtils";
+import { calculateTokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
 
 interface ChatMetaSidebarProps {
   workspaceId: string;
