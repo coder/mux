@@ -1,15 +1,35 @@
 import { useState, useEffect, useCallback } from "react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig, RuntimeMode } from "@/common/types/runtime";
+import type { UIMode } from "@/common/types/mode";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import { parseRuntimeString } from "@/browser/utils/chatCommands";
 import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
-import { getProjectScopeId } from "@/common/constants/storage";
+import { getModeKey, getProjectScopeId, getThinkingLevelKey } from "@/common/constants/storage";
 import { extractErrorMessage } from "./utils";
 
 interface UseCreationWorkspaceOptions {
   projectPath: string;
   onWorkspaceCreated: (metadata: FrontendWorkspaceMetadata) => void;
+}
+
+function syncCreationPreferences(projectPath: string, workspaceId: string): void {
+  const projectScopeId = getProjectScopeId(projectPath);
+
+  const projectMode = readPersistedState<UIMode | null>(getModeKey(projectScopeId), null);
+  if (projectMode) {
+    updatePersistedState(getModeKey(workspaceId), projectMode);
+  }
+
+  const projectThinking = readPersistedState<ThinkingLevel | null>(
+    getThinkingLevelKey(projectScopeId),
+    null
+  );
+  if (projectThinking) {
+    updatePersistedState(getThinkingLevelKey(workspaceId), projectThinking);
+  }
 }
 
 interface UseCreationWorkspaceReturn {
@@ -97,6 +117,7 @@ export function useCreationWorkspace({
 
         // Check if this is a workspace creation result (has metadata field)
         if ("metadata" in result && result.metadata) {
+          syncCreationPreferences(projectPath, result.metadata.id);
           // Settings are already persisted via useDraftWorkspaceSettings
           // Notify parent to switch workspace (clears input via parent unmount)
           onWorkspaceCreated(result.metadata);
