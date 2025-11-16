@@ -4,7 +4,7 @@
 /* Geist Font Declarations */
 @font-face {
   font-family: "Geist";
-  src: url("../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2") format("woff2");
+  src: url("../../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2") format("woff2");
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
@@ -12,7 +12,7 @@
 
 @font-face {
   font-family: "Geist Mono";
-  src: url("../../node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2") format("woff2");
+  src: url("../../../node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2") format("woff2");
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
