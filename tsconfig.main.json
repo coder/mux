@@ -2,6 +2,7 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "module": "CommonJS",
+    "rootDir": "src",
     "outDir": "dist",
     "noEmit": false,
     "sourceMap": true
@@ -11,13 +12,11 @@
     "excludeFiles": ["**/*.d.ts.map"]
   },
   "include": [
-    "src/main.ts",
-    "src/main-server.ts",
-    "src/main-desktop.ts",
-    "src/constants/**/*",
-    "src/web/**/*",
-    "src/utils/main/**/*",
-    "src/types/**/*.d.ts"
+    "src/cli/index.ts",
+    "src/cli/server.ts",
+    "src/desktop/**/*",
+    "src/node/**/*",
+    "src/common/**/*"
   ],
-  "exclude": ["src/App.tsx", "src/main.tsx"]
+  "exclude": ["src/browser/**/*", "src/main.tsx", "src/terminal-window.tsx", "src/cli/debug/**/*"]
 }

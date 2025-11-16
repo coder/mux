@@ -6,9 +6,9 @@ import * as fs from "fs/promises";
 import { realpathSync } from "fs";
 import * as os from "os";
 import * as path from "path";
-import type { Runtime } from "@/runtime/Runtime";
-import { LocalRuntime } from "@/runtime/LocalRuntime";
-import { SSHRuntime } from "@/runtime/SSHRuntime";
+import type { Runtime } from "@/node/runtime/Runtime";
+import { LocalRuntime } from "@/node/runtime/LocalRuntime";
+import { SSHRuntime } from "@/node/runtime/SSHRuntime";
 import type { SSHServerConfig } from "./ssh-fixture";
 
 /**

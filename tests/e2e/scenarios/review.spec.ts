@@ -1,5 +1,5 @@
 import { electronTest as test } from "../electronTest";
-import { REVIEW_PROMPTS } from "@/services/mock/scenarios/review";
+import { REVIEW_PROMPTS } from "@/node/services/mock/scenarios/review";
 
 test.skip(
   ({ browserName }) => browserName !== "chromium",

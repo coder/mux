@@ -1,5 +1,5 @@
 import { electronTest as test, electronExpect as expect } from "../electronTest";
-import { PERMISSION_MODE_PROMPTS } from "@/services/mock/scenarios/permissionModes";
+import { PERMISSION_MODE_PROMPTS } from "@/node/services/mock/scenarios/permissionModes";
 
 test.skip(
   ({ browserName }) => browserName !== "chromium",

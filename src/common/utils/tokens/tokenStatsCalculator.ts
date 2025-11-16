@@ -1,0 +1,360 @@
+/**
+ * Main-process-only token statistics calculation logic
+ * Used by backend (debug commands) and worker threads
+ *
+ * IMPORTANT: This file imports tokenizer and should ONLY be used in main process.
+ * For renderer-safe usage utilities, use displayUsage.ts instead.
+ */
+
+import type { MuxMessage } from "@/common/types/message";
+import type { ChatStats, TokenConsumer } from "@/common/types/chatStats";
+import {
+  getTokenizerForModel,
+  countTokensForData,
+  getToolDefinitionTokens,
+  type Tokenizer,
+} from "@/node/utils/main/tokenizer";
+import { createDisplayUsage } from "./displayUsage";
+import type { ChatUsageDisplay } from "./usageAggregator";
+
+// Re-export for backward compatibility
+export { createDisplayUsage };
+
+/**
+ * Helper Functions for Token Counting
+ * (Exported for testing)
+ */
+
+/**
+ * Extracts the actual data from nested tool output structure
+ * Tool results have nested structure: { type: "json", value: {...} }
+ */
+export function extractToolOutputData(output: unknown): unknown {
+  if (typeof output === "object" && output !== null && "value" in output) {
+    return (output as { value: unknown }).value;
+  }
+  return output;
+}
+
+/**
+ * Checks if the given data is encrypted web_search results
+ */
+export function isEncryptedWebSearch(toolName: string, data: unknown): boolean {
+  if (toolName !== "web_search" || !Array.isArray(data)) {
+    return false;
+  }
+
+  return data.some(
+    (item: unknown): item is { encryptedContent: string } =>
+      item !== null &&
+      typeof item === "object" &&
+      "encryptedContent" in item &&
+      typeof (item as Record<string, unknown>).encryptedContent === "string"
+  );
+}
+
+/**
+ * Calculates tokens for encrypted web_search content using heuristic
+ * Encrypted content is base64 encoded and then encrypted/compressed
+ * Apply reduction factors:
+ * 1. Remove base64 overhead (multiply by 0.75)
+ * 2. Apply an estimated token reduction factor of 4
+ */
+export function countEncryptedWebSearchTokens(data: unknown[]): number {
+  let encryptedChars = 0;
+  for (const item of data) {
+    if (
+      item !== null &&
+      typeof item === "object" &&
+      "encryptedContent" in item &&
+      typeof (item as Record<string, unknown>).encryptedContent === "string"
+    ) {
+      encryptedChars += (item as { encryptedContent: string }).encryptedContent.length;
+    }
+  }
+  // Use heuristic: encrypted chars * 0.75 for token estimation
+  return Math.ceil(encryptedChars * 0.75);
+}
+
+/**
+ * Counts tokens for tool output, handling special cases like encrypted web_search
+ */
+async function countToolOutputTokens(
+  part: { type: "dynamic-tool"; toolName: string; state: string; output?: unknown },
+  tokenizer: Tokenizer
+): Promise<number> {
+  if (part.state !== "output-available" || !part.output) {
+    return 0;
+  }
+
+  const outputData = extractToolOutputData(part.output);
+
+  // Special handling for web_search encrypted content
+  if (isEncryptedWebSearch(part.toolName, outputData)) {
+    return countEncryptedWebSearchTokens(outputData as unknown[]);
+  }
+
+  // Normal tool results
+  return countTokensForData(outputData, tokenizer);
+}
+
+/**
+ * Represents a single token counting operation
+ */
+export interface TokenCountJob {
+  consumer: string;
+  promise: Promise<number>;
+}
+
+/**
+ * Creates all token counting jobs from messages
+ * Jobs are executed immediately (promises start running)
+ */
+function createTokenCountingJobs(messages: MuxMessage[], tokenizer: Tokenizer): TokenCountJob[] {
+  const jobs: TokenCountJob[] = [];
+
+  for (const message of messages) {
+    if (message.role === "user") {
+      // User message text - batch all text parts together
+      const textParts = message.parts.filter((p) => p.type === "text");
+      if (textParts.length > 0) {
+        const allText = textParts.map((p) => p.text).join("");
+        jobs.push({
+          consumer: "User",
+          promise: tokenizer.countTokens(allText),
+        });
+      }
+    } else if (message.role === "assistant") {
+      // Assistant text parts - batch together
+      const textParts = message.parts.filter((p) => p.type === "text");
+      if (textParts.length > 0) {
+        const allText = textParts.map((p) => p.text).join("");
+        jobs.push({
+          consumer: "Assistant",
+          promise: tokenizer.countTokens(allText),
+        });
+      }
+
+      // Reasoning parts - batch together
+      const reasoningParts = message.parts.filter((p) => p.type === "reasoning");
+      if (reasoningParts.length > 0) {
+        const allReasoning = reasoningParts.map((p) => p.text).join("");
+        jobs.push({
+          consumer: "Reasoning",
+          promise: tokenizer.countTokens(allReasoning),
+        });
+      }
+
+      // Tool parts - count arguments and results separately
+      for (const part of message.parts) {
+        if (part.type === "dynamic-tool") {
+          // Tool arguments
+          jobs.push({
+            consumer: part.toolName,
+            promise: countTokensForData(part.input, tokenizer),
+          });
+
+          // Tool results (if available)
+          jobs.push({
+            consumer: part.toolName,
+            promise: countToolOutputTokens(part, tokenizer),
+          });
+        }
+      }
+    }
+  }
+
+  return jobs;
+}
+
+/**
+ * Collects all unique tool names from messages
+ */
+export function collectUniqueToolNames(messages: MuxMessage[]): Set<string> {
+  const toolNames = new Set<string>();
+
+  for (const message of messages) {
+    if (message.role === "assistant") {
+      for (const part of message.parts) {
+        if (part.type === "dynamic-tool") {
+          toolNames.add(part.toolName);
+        }
+      }
+    }
+  }
+
+  return toolNames;
+}
+
+/**
+ * Fetches all tool definitions in parallel
+ * Returns a map of tool name to token count
+ */
+export async function fetchAllToolDefinitions(
+  toolNames: Set<string>,
+  model: string
+): Promise<Map<string, number>> {
+  const entries = await Promise.all(
+    Array.from(toolNames).map(async (toolName) => {
+      const tokens = await getToolDefinitionTokens(toolName, model);
+      return [toolName, tokens] as const;
+    })
+  );
+
+  return new Map(entries);
+}
+
+/**
+ * Metadata that doesn't require async token counting
+ */
+interface SyncMetadata {
+  systemMessageTokens: number;
+  usageHistory: ChatUsageDisplay[];
+}
+
+/**
+ * Extracts synchronous metadata from messages (no token counting needed)
+ */
+export function extractSyncMetadata(messages: MuxMessage[], model: string): SyncMetadata {
+  let systemMessageTokens = 0;
+  const usageHistory: ChatUsageDisplay[] = [];
+
+  for (const message of messages) {
+    if (message.role === "assistant") {
+      // Accumulate system message tokens
+      if (message.metadata?.systemMessageTokens) {
+        systemMessageTokens += message.metadata.systemMessageTokens;
+      }
+
+      // Store usage history for comparison with estimates
+      if (message.metadata?.usage) {
+        const usage = createDisplayUsage(
+          message.metadata.usage,
+          message.metadata.model ?? model, // Use actual model from request, not UI model
+          message.metadata.providerMetadata
+        );
+        if (usage) {
+          usageHistory.push(usage);
+        }
+      }
+    }
+  }
+
+  return { systemMessageTokens, usageHistory };
+}
+
+/**
+ * Merges token counting results into consumer map
+ * Adds tool definition tokens only once per tool
+ */
+export function mergeResults(
+  jobs: TokenCountJob[],
+  results: number[],
+  toolDefinitions: Map<string, number>,
+  systemMessageTokens: number
+): Map<string, { fixed: number; variable: number }> {
+  const consumerMap = new Map<string, { fixed: number; variable: number }>();
+  const toolsWithDefinitions = new Set<string>();
+
+  // Process all job results
+  for (let i = 0; i < jobs.length; i++) {
+    const job = jobs[i];
+    const tokenCount = results[i];
+
+    if (tokenCount === 0) {
+      continue; // Skip empty results
+    }
+
+    const existing = consumerMap.get(job.consumer) ?? { fixed: 0, variable: 0 };
+
+    // Add tool definition tokens if this is the first time we see this tool
+    let fixedTokens = existing.fixed;
+    if (toolDefinitions.has(job.consumer) && !toolsWithDefinitions.has(job.consumer)) {
+      fixedTokens += toolDefinitions.get(job.consumer)!;
+      toolsWithDefinitions.add(job.consumer);
+    }
+
+    // Add variable tokens
+    const variableTokens = existing.variable + tokenCount;
+
+    consumerMap.set(job.consumer, { fixed: fixedTokens, variable: variableTokens });
+  }
+
+  // Add system message tokens as a consumer if present
+  if (systemMessageTokens > 0) {
+    consumerMap.set("System", { fixed: 0, variable: systemMessageTokens });
+  }
+
+  return consumerMap;
+}
+
+/**
+ * Calculate token statistics from raw MuxMessages
+ * This is the single source of truth for token counting
+ *
+ * @param messages - Array of MuxMessages from chat history
+ * @param model - Model string (e.g., "anthropic:claude-opus-4-1")
+ * @returns ChatStats with token breakdown by consumer and usage history
+ */
+export async function calculateTokenStats(
+  messages: MuxMessage[],
+  model: string
+): Promise<ChatStats> {
+  if (messages.length === 0) {
+    return {
+      consumers: [],
+      totalTokens: 0,
+      model,
+      tokenizerName: "No messages",
+      usageHistory: [],
+    };
+  }
+
+  performance.mark("calculateTokenStatsStart");
+
+  const tokenizer = await getTokenizerForModel(model);
+
+  // Phase 1: Fetch all tool definitions in parallel (first await point)
+  const toolNames = collectUniqueToolNames(messages);
+  const toolDefinitions = await fetchAllToolDefinitions(toolNames, model);
+
+  // Phase 2: Extract sync metadata (no awaits)
+  const { systemMessageTokens, usageHistory } = extractSyncMetadata(messages, model);
+
+  // Phase 3: Create all token counting jobs (promises start immediately)
+  const jobs = createTokenCountingJobs(messages, tokenizer);
+
+  // Phase 4: Execute all jobs in parallel (second await point)
+  const results = await Promise.all(jobs.map((j) => j.promise));
+
+  // Phase 5: Merge results (no awaits)
+  const consumerMap = mergeResults(jobs, results, toolDefinitions, systemMessageTokens);
+
+  // Calculate total tokens
+  const totalTokens = Array.from(consumerMap.values()).reduce(
+    (sum, val) => sum + val.fixed + val.variable,
+    0
+  );
+
+  // Create sorted consumer array (descending by token count)
+  const consumers: TokenConsumer[] = Array.from(consumerMap.entries())
+    .map(([name, counts]) => {
+      const total = counts.fixed + counts.variable;
+      return {
+        name,
+        tokens: total,
+        percentage: totalTokens > 0 ? (total / totalTokens) * 100 : 0,
+        fixedTokens: counts.fixed > 0 ? counts.fixed : undefined,
+        variableTokens: counts.variable > 0 ? counts.variable : undefined,
+      };
+    })
+    .sort((a, b) => b.tokens - a.tokens);
+
+  return {
+    consumers,
+    totalTokens,
+    model,
+    tokenizerName: tokenizer.encoding,
+    usageHistory,
+  };
+}

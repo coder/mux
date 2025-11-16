@@ -1,7 +1,7 @@
 import { shouldRunIntegrationTests, createTestEnvironment, cleanupTestEnvironment } from "./setup";
-import { IPC_CHANNELS } from "../../src/constants/ipc-constants";
+import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
 import { createTempGitRepo, cleanupTempGitRepo, createWorkspace } from "./helpers";
-import type { WorkspaceMetadata } from "../../src/types/workspace";
+import type { WorkspaceMetadata } from "../../src/common/types/workspace";
 
 type WorkspaceCreationResult = Awaited<ReturnType<typeof createWorkspace>>;
 

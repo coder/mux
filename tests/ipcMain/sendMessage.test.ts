@@ -19,8 +19,8 @@ import {
   TEST_IMAGES,
   modelString,
 } from "./helpers";
-import type { StreamDeltaEvent } from "../../src/types/stream";
-import { IPC_CHANNELS } from "../../src/constants/ipc-constants";
+import type { StreamDeltaEvent } from "../../src/common/types/stream";
+import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
 
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -30,7 +30,7 @@ if (shouldRunIntegrationTests()) {
   validateApiKeys(["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]);
 }
 
-import { KNOWN_MODELS } from "@/constants/knownModels";
+import { KNOWN_MODELS } from "@/common/constants/knownModels";
 
 // Test both providers with their respective models
 const PROVIDER_CONFIGS: Array<[string, string]> = [

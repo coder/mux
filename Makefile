@@ -157,18 +157,18 @@ start: node_modules/.installed build-main build-preload build-static ## Build an
 ## Build targets (can run in parallel)
 build: node_modules/.installed src/version.ts build-renderer build-main build-preload build-icons build-static ## Build all targets
 
-build-main: node_modules/.installed dist/main.js ## Build main process
+build-main: node_modules/.installed dist/cli/index.js ## Build main process
 
-dist/main.js: src/version.ts tsconfig.main.json tsconfig.json $(TS_SOURCES)
+dist/cli/index.js: src/cli/index.ts src/desktop/main.ts src/cli/server.ts src/version.ts tsconfig.main.json tsconfig.json $(TS_SOURCES)
 	@echo "Building main process..."
 	@NODE_ENV=production $(TSGO) -p tsconfig.main.json
 	@NODE_ENV=production bun x tsc-alias -p tsconfig.main.json
 
 build-preload: node_modules/.installed dist/preload.js ## Build preload script
 
-dist/preload.js: src/preload.ts $(TS_SOURCES)
+dist/preload.js: src/desktop/preload.ts $(TS_SOURCES)
 	@echo "Building preload script..."
-	@NODE_ENV=production bun build src/preload.ts \
+	@NODE_ENV=production bun build src/desktop/preload.ts \
 		--format=cjs \
 		--target=node \
 		--external=electron \

@@ -1,8 +1,8 @@
 /**
  * Browser API client. Used when running cmux in server mode.
  */
-import { IPC_CHANNELS, getChatChannel } from "@/constants/ipc-constants";
-import type { IPCApi } from "@/types/ipc";
+import { IPC_CHANNELS, getChatChannel } from "@/common/constants/ipc-constants";
+import type { IPCApi } from "@/common/types/ipc";
 
 // Backend URL - defaults to same origin, but can be overridden via VITE_BACKEND_URL
 // This allows frontend (Vite :8080) to connect to backend (:3000) in dev mode
