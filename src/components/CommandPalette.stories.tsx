@@ -105,7 +105,7 @@ const mockCommands: CommandAction[] = [
   {
     id: "help.docs",
     title: "Open Documentation",
-    subtitle: "View cmux documentation",
+    subtitle: "View mux documentation",
     section: "Help",
     keywords: ["help", "docs", "documentation"],
     run: () => action("command-executed")("help.docs"),

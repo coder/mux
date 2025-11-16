@@ -2,17 +2,20 @@ import { existsSync, renameSync, symlinkSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 
+const LEGACY_MUX_DIR_NAME = ".cmux";
+const MUX_DIR_NAME = ".mux";
+
 /**
- * Migrate from .cmux to .mux directory structure.
- * Called on startup to ensure backward compatibility.
+ * Migrate from the legacy ~/.cmux directory into ~/.mux for rebranded installs.
+ * Called on startup to preserve data created by earlier releases.
  *
  * If .mux exists, nothing happens (already migrated).
  * If .cmux exists but .mux doesn't, moves .cmux → .mux and creates symlink.
  * This ensures old scripts/tools referencing ~/.cmux continue working.
  */
-export function migrateCmuxToMux(): void {
-  const oldPath = join(homedir(), ".cmux");
-  const newPath = join(homedir(), ".mux");
+export function migrateLegacyMuxHome(): void {
+  const oldPath = join(homedir(), LEGACY_MUX_DIR_NAME);
+  const newPath = join(homedir(), MUX_DIR_NAME);
 
   // If .mux exists, we're done (already migrated or fresh install)
   if (existsSync(newPath)) {
@@ -45,7 +48,7 @@ export function getMuxHome(): string {
     return process.env.MUX_ROOT;
   }
 
-  const baseName = ".mux";
+  const baseName = MUX_DIR_NAME;
   // Use -dev suffix only when explicitly in development mode
   // eslint-disable-next-line no-restricted-syntax, no-restricted-globals
   const suffix = process.env.NODE_ENV === "development" ? "-dev" : "";

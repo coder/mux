@@ -1,5 +1,5 @@
-// cmux Service Worker for PWA support
-const CACHE_NAME = "cmux-v1";
+// mux Service Worker for PWA support
+const CACHE_NAME = "mux-v1";
 const urlsToCache = ["/", "/index.html"];
 
 // Install event - cache core assets

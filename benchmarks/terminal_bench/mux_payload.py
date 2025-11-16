@@ -10,9 +10,9 @@ from terminal_bench.terminal.tmux_session import TmuxSession
 
 
 def build_app_archive(repo_root: Path, include_paths: Iterable[str]) -> bytes:
-    """Pack the cmux workspace into a gzipped tarball."""
+    """Pack the mux workspace into a gzipped tarball."""
     if not repo_root.exists():
-        raise FileNotFoundError(f"cmux repo root {repo_root} not found")
+        raise FileNotFoundError(f"mux repo root {repo_root} not found")
 
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
@@ -30,7 +30,7 @@ def stage_payload(
     archive_name: str,
     runner_path: Path,
 ) -> None:
-    """Copy the cmux bundle and runner into the task container."""
+    """Copy the mux bundle and runner into the task container."""
     with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as temp_file:
         temp_file.write(archive_bytes)
         temp_path = Path(temp_file.name)

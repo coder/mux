@@ -30,30 +30,30 @@ export PATH="${BUN_INSTALL}/bin:${PATH}"
 
 if ! command -v bun >/dev/null 2>&1; then
   log "installing bun"
-  curl -fsSL "${CMUX_BUN_INSTALL_URL:-https://bun.sh/install}" | bash
+  curl -fsSL "${MUX_BUN_INSTALL_URL:-https://bun.sh/install}" | bash
 fi
 
-CMUX_APP_ROOT="${CMUX_APP_ROOT:-/opt/mux-app}"
-CMUX_CONFIG_ROOT="${CMUX_CONFIG_ROOT:-/root/.mux}"
-CMUX_AGENT_VERSION="{{ version if version is not none else '' }}"
+MUX_APP_ROOT="${MUX_APP_ROOT:-/opt/mux-app}"
+MUX_CONFIG_ROOT="${MUX_CONFIG_ROOT:-/root/.mux}"
+MUX_AGENT_VERSION="{{ version if version is not none else '' }}"
 
-rm -rf "${CMUX_APP_ROOT}"
-if [[ -n "${CMUX_AGENT_VERSION}" ]]; then
-  : "${CMUX_AGENT_GIT_URL:?CMUX_AGENT_GIT_URL required when version is set}"
-  log "cloning mux from ${CMUX_AGENT_GIT_URL} @ ${CMUX_AGENT_VERSION}"
-  git clone --depth 1 --branch "${CMUX_AGENT_VERSION}" "${CMUX_AGENT_GIT_URL}" "${CMUX_APP_ROOT}"
+rm -rf "${MUX_APP_ROOT}"
+if [[ -n "${MUX_AGENT_VERSION}" ]]; then
+  : "${MUX_AGENT_GIT_URL:?MUX_AGENT_GIT_URL required when version is set}"
+  log "cloning mux from ${MUX_AGENT_GIT_URL} @ ${MUX_AGENT_VERSION}"
+  git clone --depth 1 --branch "${MUX_AGENT_VERSION}" "${MUX_AGENT_GIT_URL}" "${MUX_APP_ROOT}"
 else
   log "extracting mux archive"
-  mkdir -p "${CMUX_APP_ROOT}"
-  tar -xzf "/installed-agent/mux-app.tar.gz" -C "${CMUX_APP_ROOT}"
+  mkdir -p "${MUX_APP_ROOT}"
+  tar -xzf "/installed-agent/mux-app.tar.gz" -C "${MUX_APP_ROOT}"
 fi
 
-cd "${CMUX_APP_ROOT}"
+cd "${MUX_APP_ROOT}"
 
 log "installing mux dependencies via bun"
 bun install --frozen-lockfile
 
-mkdir -p "${CMUX_CONFIG_ROOT}"
+mkdir -p "${MUX_CONFIG_ROOT}"
 
 chmod +x /installed-agent/mux-run.sh
 

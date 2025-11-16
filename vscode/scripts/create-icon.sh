@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Create icon.png from the cmux logo for the VS Code extension
+# Create icon.png from the mux logo for the VS Code extension
 
 set -e
 

@@ -6,5 +6,5 @@ import type { RuntimeConfig } from "@/types/runtime";
  */
 export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = {
   type: "local",
-  srcBaseDir: "~/.cmux/src",
+  srcBaseDir: "~/.mux/src",
 } as const;

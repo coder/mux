@@ -1123,7 +1123,7 @@ export class IpcMain {
           const projectSecrets = this.config.getProjectSecrets(metadata.projectPath);
 
           // Create scoped temp directory for this IPC call
-          using tempDir = new DisposableTempDir("cmux-ipc-bash");
+          using tempDir = new DisposableTempDir("mux-ipc-bash");
 
           // Create runtime and compute workspace path
           // Runtime owns the path computation logic

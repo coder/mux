@@ -451,7 +451,7 @@ export class Config {
       const jsonString = JSON.stringify(config, null, 2);
 
       // Add a comment header to the file
-      const contentWithComments = `// Providers configuration for cmux
+      const contentWithComments = `// Providers configuration for mux
 // Configure your AI providers here
 // Example:
 // {

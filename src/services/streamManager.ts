@@ -243,7 +243,7 @@ export class StreamManager extends EventEmitter {
 
   /**
    * Create a temporary directory for a stream token
-   * Use ~/.cmux-tmp instead of system temp directory (e.g., /var/folders/...)
+   * Use ~/.mux-tmp instead of system temp directory (e.g., /var/folders/...)
    * because macOS user-scoped temp paths are extremely long, which leads to:
    * - Agent mistakes when copying/manipulating paths
    * - Harder to read in tool outputs
@@ -254,7 +254,7 @@ export class StreamManager extends EventEmitter {
   public async createTempDirForStream(streamToken: StreamToken, runtime: Runtime): Promise<string> {
     // Create directory and get absolute path (works for both local and remote)
     // Use 'cd' + 'pwd' to resolve ~ to absolute path
-    const command = `mkdir -p ~/.cmux-tmp/${streamToken} && cd ~/.cmux-tmp/${streamToken} && pwd`;
+    const command = `mkdir -p ~/.mux-tmp/${streamToken} && cd ~/.mux-tmp/${streamToken} && pwd`;
     const result = await execBuffered(runtime, command, {
       cwd: "/",
       timeout: 10,
@@ -262,11 +262,11 @@ export class StreamManager extends EventEmitter {
 
     if (result.exitCode !== 0) {
       throw new Error(
-        `Failed to create temp directory ~/.cmux-tmp/${streamToken}: exit code ${result.exitCode}`
+        `Failed to create temp directory ~/.mux-tmp/${streamToken}: exit code ${result.exitCode}`
       );
     }
 
-    // Return absolute path (e.g., "/home/user/.cmux-tmp/abc123")
+    // Return absolute path (e.g., "/home/user/.mux-tmp/abc123")
     return result.stdout.trim();
   }
 

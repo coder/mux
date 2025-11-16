@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { WorkspaceWithContext, getWorkspacePath } from "./cmuxConfig";
+import { WorkspaceWithContext, getWorkspacePath } from "./muxConfig";
 
 /**
  * Check if a Remote-SSH extension is installed

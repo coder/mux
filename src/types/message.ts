@@ -11,7 +11,7 @@ export interface CompactionRequestData {
   continueMessage?: string;
 }
 
-// Frontend-specific metadata stored in cmuxMetadata field
+// Frontend-specific metadata stored in muxMetadata field
 // Backend stores this as-is without interpretation (black-box)
 export type MuxFrontendMetadata =
   | {
@@ -45,6 +45,7 @@ export interface MuxMetadata {
   toolPolicy?: ToolPolicy; // Tool policy active when this message was sent (user messages only)
   mode?: string; // The mode (plan/exec/etc) active when this message was sent (assistant messages only)
   cmuxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
+  muxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
   historicalUsage?: ChatUsageDisplay; // Cumulative usage from all messages before this compaction (only present on compaction summaries)
 }
 

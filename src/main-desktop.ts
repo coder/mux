@@ -18,7 +18,7 @@ import type { Config } from "./config";
 import type { IpcMain } from "./services/ipcMain";
 import { VERSION } from "./version";
 import { IPC_CHANNELS } from "./constants/ipc-constants";
-import { getMuxHome, migrateCmuxToMux } from "./constants/paths";
+import { getMuxHome, migrateLegacyMuxHome } from "./constants/paths";
 import { log } from "./services/log";
 import { parseDebugUpdater } from "./utils/env";
 import assert from "./utils/assert";
@@ -369,7 +369,7 @@ function createWindow() {
       contextIsolation: true,
       preload: path.join(__dirname, "preload.js"),
     },
-    title: "cmux - coder multiplexer",
+    title: "mux - coder multiplexer",
     // Hide menu bar on Linux by default (like VS Code)
     // User can press Alt to toggle it
     autoHideMenuBar: process.platform === "linux",
@@ -493,7 +493,7 @@ if (gotTheLock) {
       console.log("App ready, creating window...");
 
       // Migrate from .cmux to .mux directory structure if needed
-      migrateCmuxToMux();
+      migrateLegacyMuxHome();
 
       // Install React DevTools in development
       if (!app.isPackaged && installExtension && REACT_DEVELOPER_TOOLS) {
