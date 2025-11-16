@@ -1,4 +1,4 @@
-import type { ChatUsageDisplay } from "@/utils/tokens/usageAggregator";
+import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 
 export interface TokenConsumer {
   name: string; // "User", "Assistant", "bash", "readFile", etc.

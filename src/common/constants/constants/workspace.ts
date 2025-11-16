@@ -1,4 +1,4 @@
-import type { RuntimeConfig } from "@/types/runtime";
+import type { RuntimeConfig } from "@/common/types/runtime";
 
 /**
  * Default runtime configuration for local workspaces

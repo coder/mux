@@ -5,7 +5,7 @@
  * Each event has a corresponding type in CustomEventPayloads for type safety
  */
 
-import type { ThinkingLevel } from "@/types/thinking";
+import type { ThinkingLevel } from "@/common/types/thinking";
 
 export const CUSTOM_EVENTS = {
   /**
