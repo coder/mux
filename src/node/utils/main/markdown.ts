@@ -2,15 +2,21 @@ import MarkdownIt from "markdown-it";
 
 type HeadingMatcher = (headingText: string, level: number) => boolean;
 
-function extractSectionByHeading(
+interface SectionBounds {
+  headingStartLine: number;
+  contentStartLine: number;
+  endLine: number;
+  level: number;
+}
+
+function collectSectionBounds(
   markdown: string,
   headingMatcher: HeadingMatcher
-): string | null {
-  if (!markdown) return null;
-
+): { bounds: SectionBounds[]; lines: string[] } {
+  const lines = markdown.split(/\r?\n/);
   const md = new MarkdownIt({ html: false, linkify: false, typographer: false });
   const tokens = md.parse(markdown, {});
-  const lines = markdown.split(/\r?\n/);
+  const bounds: SectionBounds[] = [];
 
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
@@ -23,7 +29,8 @@ function extractSectionByHeading(
     const headingText = (inline.content || "").trim();
     if (!headingMatcher(headingText, level)) continue;
 
-    const headingEndLine = inline.map?.[1] ?? token.map?.[1] ?? (token.map?.[0] ?? 0) + 1;
+    const headingStartLine = token.map?.[0] ?? 0;
+    const headingEndLine = inline.map?.[1] ?? token.map?.[1] ?? headingStartLine + 1;
 
     let endLine = lines.length;
     for (let j = i + 1; j < tokens.length; j++) {
@@ -37,11 +44,36 @@ function extractSectionByHeading(
       }
     }
 
-    const slice = lines.slice(headingEndLine, endLine).join("\n").trim();
-    return slice.length > 0 ? slice : null;
+    bounds.push({ headingStartLine, contentStartLine: headingEndLine, endLine, level });
   }
 
-  return null;
+  return { bounds, lines };
+}
+
+function extractSectionByHeading(markdown: string, headingMatcher: HeadingMatcher): string | null {
+  if (!markdown) return null;
+
+  const { bounds, lines } = collectSectionBounds(markdown, headingMatcher);
+  if (bounds.length === 0) return null;
+
+  const { contentStartLine, endLine } = bounds[0];
+  const slice = lines.slice(contentStartLine, endLine).join("\n").trim();
+  return slice.length > 0 ? slice : null;
+}
+
+function removeSectionsByHeading(markdown: string, headingMatcher: HeadingMatcher): string {
+  if (!markdown) return markdown;
+
+  const { bounds, lines } = collectSectionBounds(markdown, headingMatcher);
+  if (bounds.length === 0) return markdown;
+
+  const updatedLines = [...lines];
+  const sortedBounds = [...bounds].sort((a, b) => b.headingStartLine - a.headingStartLine);
+  for (const { headingStartLine, endLine } of sortedBounds) {
+    updatedLines.splice(headingStartLine, endLine - headingStartLine);
+  }
+
+  return updatedLines.join("\n");
 }
 
 /**
@@ -51,7 +83,10 @@ export function extractModeSection(markdown: string, mode: string): string | nul
   if (!markdown || !mode) return null;
 
   const expectedHeading = `mode: ${mode}`.toLowerCase();
-  return extractSectionByHeading(markdown, (headingText) => headingText.toLowerCase() === expectedHeading);
+  return extractSectionByHeading(
+    markdown,
+    (headingText) => headingText.toLowerCase() === expectedHeading
+  );
 }
 
 /**
@@ -59,6 +94,7 @@ export function extractModeSection(markdown: string, mode: string): string | nul
  * the provided model identifier. Matching is case-insensitive by default unless the regex
  * heading explicitly specifies flags via /pattern/flags syntax.
  */
+
 export function extractModelSection(markdown: string, modelId: string): string | null {
   if (!markdown || !modelId) return null;
 
@@ -90,6 +126,15 @@ export function extractModelSection(markdown: string, modelId: string): string |
     const match = headingPattern.exec(headingText);
     if (!match) return false;
     const regex = compileRegex(match[1] ?? "");
-    return Boolean(regex && regex.test(modelId));
+    return Boolean(regex?.test(modelId));
+  });
+}
+
+export function stripScopedInstructionSections(markdown: string): string {
+  if (!markdown) return markdown;
+
+  return removeSectionsByHeading(markdown, (headingText) => {
+    const normalized = headingText.trim().toLowerCase();
+    return normalized.startsWith("mode:") || normalized.startsWith("model:");
   });
 }

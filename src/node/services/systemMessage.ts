@@ -3,7 +3,11 @@ import {
   readInstructionSet,
   readInstructionSetFromRuntime,
 } from "@/node/utils/main/instructionFiles";
-import { extractModeSection, extractModelSection } from "@/node/utils/main/markdown";
+import {
+  extractModeSection,
+  extractModelSection,
+  stripScopedInstructionSections,
+} from "@/node/utils/main/markdown";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { getMuxHome } from "@/common/constants/paths";
 
@@ -109,8 +113,18 @@ export async function buildSystemMessage(
   const contextInstructions =
     workspaceInstructions ?? (await readInstructionSet(metadata.projectPath));
 
-  // Combine: global + context (workspace takes precedence over project)
-  const customInstructions = [globalInstructions, contextInstructions].filter(Boolean).join("\n\n");
+  // Combine: global + context (workspace takes precedence over project) after stripping scoped sections
+  const sanitizeScopedInstructions = (input?: string | null): string | undefined => {
+    if (!input) return undefined;
+    const stripped = stripScopedInstructionSections(input);
+    return stripped.trim().length > 0 ? stripped : undefined;
+  };
+
+  const customInstructionSources = [
+    sanitizeScopedInstructions(globalInstructions),
+    sanitizeScopedInstructions(contextInstructions),
+  ].filter((value): value is string => Boolean(value));
+  const customInstructions = customInstructionSources.join("\n\n");
 
   // Extract mode-specific section (context first, then global fallback)
   let modeContent: string | null = null;

@@ -4,6 +4,12 @@ import * as path from "path";
 import { buildSystemMessage } from "./systemMessage";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
+
+const extractTagContent = (message: string, tagName: string): string | null => {
+  const pattern = new RegExp(`<${tagName}>\\s*([\\s\\S]*?)\\s*</${tagName}>`, "i");
+  const match = pattern.exec(message);
+  return match ? match[1].trim() : null;
+};
 import { describe, test, expect, beforeEach, afterEach, spyOn, type Mock } from "bun:test";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 
@@ -63,6 +69,10 @@ Use diagrams where appropriate.
 
     const systemMessage = await buildSystemMessage(metadata, runtime, workspaceDir, "plan");
 
+    const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
+    expect(customInstructions).toContain("Always be helpful.");
+    expect(customInstructions).not.toContain("Focus on planning and design.");
+
     // Should include the mode-specific content
     expect(systemMessage).toContain("<plan>");
     expect(systemMessage).toContain("Focus on planning and design");
@@ -99,9 +109,9 @@ Focus on planning and design.
     expect(systemMessage).not.toContain("<plan>");
     expect(systemMessage).not.toContain("</plan>");
 
-    // All instructions are still in <custom-instructions> (both general and mode section)
-    expect(systemMessage).toContain("Always be helpful");
-    expect(systemMessage).toContain("Focus on planning and design");
+    const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
+    expect(customInstructions).toContain("Always be helpful.");
+    expect(customInstructions).not.toContain("Focus on planning and design.");
   });
 
   test("prefers project mode section over global mode section", async () => {
@@ -230,6 +240,9 @@ Respond to Sonnet tickets in two sentences max.
       "anthropic:claude-3.5-sonnet"
     );
 
+    const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
+    expect(customInstructions).not.toContain("Respond to Sonnet tickets in two sentences max.");
+
     expect(systemMessage).toContain("<model-anthropic-claude-3-5-sonnet>");
     expect(systemMessage).toContain("Respond to Sonnet tickets in two sentences max.");
     expect(systemMessage).toContain("</model-anthropic-claude-3-5-sonnet>");
@@ -268,9 +281,143 @@ General details only.
       "openai:gpt-5.1-codex"
     );
 
+    const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
+    expect(customInstructions).not.toContain(
+      "OpenAI's GPT-5.1 Codex models already default to terse replies."
+    );
+
     expect(systemMessage).toContain("<model-openai-gpt-5-1-codex>");
     expect(systemMessage).toContain(
       "OpenAI's GPT-5.1 Codex models already default to terse replies."
     );
+  });
+
+  describe("instruction scoping matrix", () => {
+    interface Scenario {
+      name: string;
+      mdContent: string;
+      mode?: string;
+      model?: string;
+      assert: (message: string) => void;
+    }
+
+    const scopingScenarios: Scenario[] = [
+      {
+        name: "strips scoped sections when no mode or model provided",
+        mdContent: `# Notes
+General guidance for everyone.
+
+## Mode: Plan
+Plan depth instructions.
+
+## Model: sonnet
+Anthropic-only instructions.
+`,
+        assert: (message) => {
+          const custom = extractTagContent(message, "custom-instructions") ?? "";
+          expect(custom).toContain("General guidance for everyone.");
+          expect(custom).not.toContain("Plan depth instructions.");
+          expect(custom).not.toContain("Anthropic-only instructions.");
+          expect(message).not.toContain("Plan depth instructions.");
+          expect(message).not.toContain("Anthropic-only instructions.");
+        },
+      },
+      {
+        name: "injects only the requested mode section",
+        mdContent: `General context for all contributors.
+
+## Mode: Plan
+Plan-only reminders.
+
+## Mode: Exec
+Exec reminders.
+`,
+        mode: "plan",
+        assert: (message) => {
+          const custom = extractTagContent(message, "custom-instructions") ?? "";
+          expect(custom).toContain("General context for all contributors.");
+          expect(custom).not.toContain("Plan-only reminders.");
+          expect(custom).not.toContain("Exec reminders.");
+
+          const planSection = extractTagContent(message, "plan") ?? "";
+          expect(planSection).toContain("Plan-only reminders.");
+          expect(planSection).not.toContain("Exec reminders.");
+        },
+      },
+      {
+        name: "injects only the matching model section",
+        mdContent: `General base instructions.
+
+## Model: sonnet
+Anthropic-only instructions.
+
+## Model: /openai:.*/
+OpenAI-only instructions.
+`,
+        model: "openai:gpt-5.1-codex",
+        assert: (message) => {
+          const custom = extractTagContent(message, "custom-instructions") ?? "";
+          expect(custom).toContain("General base instructions.");
+          expect(custom).not.toContain("Anthropic-only instructions.");
+          expect(custom).not.toContain("OpenAI-only instructions.");
+
+          const openaiSection = extractTagContent(message, "model-openai-gpt-5-1-codex") ?? "";
+          expect(openaiSection).toContain("OpenAI-only instructions.");
+          expect(openaiSection).not.toContain("Anthropic-only instructions.");
+          expect(message).not.toContain("Anthropic-only instructions.");
+        },
+      },
+      {
+        name: "supports simultaneous mode and model scoping",
+        mdContent: `General instructions for everyone.
+
+## Mode: Exec
+Stay focused on implementation details.
+
+## Model: sonnet
+Answer in two sentences max.
+`,
+        mode: "exec",
+        model: "anthropic:claude-3.5-sonnet",
+        assert: (message) => {
+          const custom = extractTagContent(message, "custom-instructions") ?? "";
+          expect(custom).toContain("General instructions for everyone.");
+          expect(custom).not.toContain("Stay focused on implementation details.");
+          expect(custom).not.toContain("Answer in two sentences max.");
+
+          const execSection = extractTagContent(message, "exec") ?? "";
+          expect(execSection).toContain("Stay focused on implementation details.");
+
+          const sonnetSection =
+            extractTagContent(message, "model-anthropic-claude-3-5-sonnet") ?? "";
+          expect(sonnetSection).toContain("Answer in two sentences max.");
+        },
+      },
+    ];
+
+    for (const scenario of scopingScenarios) {
+      test(scenario.name, async () => {
+        await fs.writeFile(path.join(projectDir, "AGENTS.md"), scenario.mdContent);
+
+        const metadata: WorkspaceMetadata = {
+          id: "test-workspace",
+          name: "test-workspace",
+          projectName: "test-project",
+          projectPath: projectDir,
+          runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+        };
+
+        const systemMessage = await buildSystemMessage(
+          metadata,
+          runtime,
+          workspaceDir,
+          scenario.mode,
+          undefined,
+          scenario.model
+        );
+
+        scenario.assert(systemMessage);
+      });
+    }
   });
 });

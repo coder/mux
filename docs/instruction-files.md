@@ -24,6 +24,7 @@ Rules:
 - Workspace instructions are checked first, then global instructions
 - The first matching section wins (at most one section is used)
 - The section's content is everything until the next heading of the same or higher level
+- Mode sections are stripped from the general `<custom-instructions>` block; only the active mode's content is re-sent via its `<mode>` tag.
 - Missing sections are ignored (no error)
 
 <!-- Note to developers: This behavior is implemented in src/services/systemMessage.ts (search for extractModeSection). Keep this documentation in sync with code changes. -->
@@ -71,6 +72,7 @@ Rules:
 - Workspace instructions are evaluated before global instructions; the first matching section wins.
 - Regexes are case-insensitive by default. Use `/pattern/flags` syntax to opt into custom flags (e.g., `/openai:.*codex/i`).
 - Invalid regex patterns are ignored instead of breaking the parse.
+- Model sections are also removed from `<custom-instructions>`; only the first regex match (if any) is injected via its `<model-…>` tag.
 - Only the content under the first matching heading is injected.
 
 <!-- Developers: See extractModelSection in src/node/utils/main/markdown.ts for the implementation. -->
@@ -79,9 +81,11 @@ Example:
 
 ```markdown
 ## Model: sonnet
+
 Be terse and to the point.
 
-## Model: openai:.*codex
+## Model: openai:.\*codex
+
 Use status reporting tools every few minutes.
 ```
 
