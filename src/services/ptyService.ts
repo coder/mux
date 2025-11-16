@@ -8,7 +8,7 @@
 import { log } from "@/services/log";
 import type { Runtime } from "@/runtime/Runtime";
 import type { TerminalSession, TerminalCreateParams, TerminalResizeParams } from "@/types/terminal";
-import type { IPty } from "node-pty";
+import type { IPty } from "@homebridge/node-pty-prebuilt-multiarch";
 import { SSHRuntime, type SSHRuntimeConfig } from "@/runtime/SSHRuntime";
 import { LocalRuntime } from "@/runtime/LocalRuntime";
 import { access } from "fs/promises";
@@ -98,10 +98,10 @@ export class PTYService {
     if (runtime instanceof LocalRuntime) {
       // Local: Use node-pty (dynamically import to avoid crash if not available)
       // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-      let pty: typeof import("node-pty");
+      let pty: typeof import("@homebridge/node-pty-prebuilt-multiarch");
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
-        pty = require("node-pty");
+        pty = require("@homebridge/node-pty-prebuilt-multiarch");
       } catch (err) {
         log.error("node-pty not available - local terminals will not work:", err);
         throw new Error(
@@ -206,10 +206,10 @@ export class PTYService {
 
       // Load node-pty dynamically
       // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-      let pty: typeof import("node-pty");
+      let pty: typeof import("@homebridge/node-pty-prebuilt-multiarch");
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
-        pty = require("node-pty");
+        pty = require("@homebridge/node-pty-prebuilt-multiarch");
       } catch (err) {
         log.error("node-pty not available - SSH terminals will not work:", err);
         throw new Error(
