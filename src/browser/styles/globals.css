@@ -30,6 +30,10 @@
 :root {
   color-scheme: dark;
 
+  font-kerning: normal;
+  font-optical-sizing: auto;
+  font-synthesis: style;
+
   @theme {
     /* Mode Colors */
     --color-plan-mode: hsl(210 70% 40%);
@@ -250,6 +254,19 @@
   /* Theme override hook: redeclare tokens inside this block to swap palettes */
 }
 
+
+h1,
+h2,
+h3 {
+  font-variant-ligatures: common-ligatures contextual;
+}
+
+@supports (text-rendering: optimizeLegibility) {
+  h1,
+  h2 {
+    text-rendering: optimizeLegibility;
+  }
+}
 
 body {
   background-color: var(--color-background);
