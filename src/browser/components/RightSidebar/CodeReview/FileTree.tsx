@@ -7,6 +7,7 @@ import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getFileTreeExpandStateKey } from "@/common/constants/storage";
 import { cn } from "@/common/lib/utils";
+import { FileIcon } from "@/browser/components/FileIcon";
 
 /**
  * Compute read status for a directory by recursively checking all descendant files
@@ -106,6 +107,8 @@ const TreeNodeContent: React.FC<{
     setIsOpen(!isOpen);
   };
 
+  const fallbackFileName = node.path.split("/").pop() ?? "";
+  const fileNameForIcon = node.name && node.name.length > 0 ? node.name : fallbackFileName;
   const isSelected = selectedPath === node.path;
 
   // Compute read status for files and directories
@@ -122,6 +125,8 @@ const TreeNodeContent: React.FC<{
     isUnknownState = readStatus === null;
   }
 
+  const iconOpacity = isFullyRead ? 0.45 : isUnknownState && !isFullyRead ? 0.7 : 1;
+
   return (
     <>
       <div
@@ -135,7 +140,7 @@ const TreeNodeContent: React.FC<{
         {node.isDirectory ? (
           <>
             <span
-              className="inline-block w-3 transition-transform duration-200"
+              className="inline-flex h-4 w-4 shrink-0 items-center justify-center transition-transform duration-200"
               style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)" }}
               data-toggle
               onClick={handleToggleClick}
@@ -176,7 +181,12 @@ const TreeNodeContent: React.FC<{
           </>
         ) : (
           <>
-            <span style={{ width: "12px" }} />
+            <FileIcon
+              fileName={fileNameForIcon}
+              filePath={node.path}
+              className="shrink-0"
+              style={{ opacity: iconOpacity }}
+            />
             <span
               className={cn(
                 "flex-1",
