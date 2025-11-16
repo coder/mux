@@ -10,7 +10,11 @@ import type { PartialService } from "@/node/services/partialService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
-import type { WorkspaceChatMessage, StreamErrorMessage, SendMessageOptions } from "@/common/types/ipc";
+import type {
+  WorkspaceChatMessage,
+  StreamErrorMessage,
+  SendMessageOptions,
+} from "@/common/types/ipc";
 import type { SendMessageError } from "@/common/types/errors";
 import { createUnknownSendMessageError } from "@/node/services/utils/sendMessageError";
 import type { Result } from "@/common/types/result";

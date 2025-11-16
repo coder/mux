@@ -1,7 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { z } from "zod";
 import type { GitStatus } from "@/common/types/workspace";
-import { parseGitShowBranch, type GitCommit, type GitBranchHeader } from "@/node/utils/git/parseGitLog";
+import {
+  parseGitShowBranch,
+  type GitCommit,
+  type GitBranchHeader,
+} from "@/node/utils/git/parseGitLog";
 
 const GitBranchDataSchema = z.object({
   showBranch: z.string(),

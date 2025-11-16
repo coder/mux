@@ -1,5 +1,8 @@
 import type { WorkspaceMetadata } from "@/common/types/workspace";
-import { readInstructionSet, readInstructionSetFromRuntime } from "@/node/utils/main/instructionFiles";
+import {
+  readInstructionSet,
+  readInstructionSetFromRuntime,
+} from "@/node/utils/main/instructionFiles";
 import { extractModeSection } from "@/node/utils/main/markdown";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { getMuxHome } from "@/common/constants/paths";

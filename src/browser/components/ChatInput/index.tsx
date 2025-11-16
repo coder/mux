@@ -39,7 +39,12 @@ import {
 } from "@/browser/utils/slashCommands/suggestions";
 import { TooltipWrapper, Tooltip, HelpIndicator } from "../Tooltip";
 import { ModeSelector } from "../ModeSelector";
-import { matchesKeybind, formatKeybind, KEYBINDS, isEditableElement } from "@/browser/utils/ui/keybinds";
+import {
+  matchesKeybind,
+  formatKeybind,
+  KEYBINDS,
+  isEditableElement,
+} from "@/browser/utils/ui/keybinds";
 import { ModelSelector, type ModelSelectorRef } from "../ModelSelector";
 import { useModelLRU } from "@/browser/hooks/useModelLRU";
 import { VimTextArea } from "../VimTextArea";

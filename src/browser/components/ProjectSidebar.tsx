@@ -6,7 +6,11 @@ import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { DndProvider } from "react-dnd";
 import { HTML5Backend, getEmptyImage } from "react-dnd-html5-backend";
 import { useDrag, useDrop, useDragLayer } from "react-dnd";
-import { sortProjectsByOrder, reorderProjects, normalizeOrder } from "@/common/utils/projectOrdering";
+import {
+  sortProjectsByOrder,
+  reorderProjects,
+  normalizeOrder,
+} from "@/common/utils/projectOrdering";
 import { matchesKeybind, formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { PlatformPaths } from "@/common/utils/paths";
 import {

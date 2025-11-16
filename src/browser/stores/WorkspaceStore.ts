@@ -9,7 +9,12 @@ import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getRetryStateKey } from "@/common/constants/storage";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { useSyncExternalStore } from "react";
-import { isCaughtUpMessage, isStreamError, isDeleteMessage, isMuxMessage } from "@/common/types/ipc";
+import {
+  isCaughtUpMessage,
+  isStreamError,
+  isDeleteMessage,
+  isMuxMessage,
+} from "@/common/types/ipc";
 import { MapStore } from "./MapStore";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";

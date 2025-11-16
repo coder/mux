@@ -27,7 +27,11 @@ import {
 import { getDefaultModelFromLRU } from "@/browser/hooks/useModelLRU";
 import { ensureProvidersConfig } from "@/common/utils/providers/ensureProvidersConfig";
 import { modeToToolPolicy, PLAN_MODE_INSTRUCTION } from "@/browser/utils/ui/modeUtils";
-import { extractAssistantText, extractReasoning, extractToolCalls } from "@/cli/debug/chatExtractors";
+import {
+  extractAssistantText,
+  extractReasoning,
+  extractToolCalls,
+} from "@/cli/debug/chatExtractors";
 import type { ThinkingLevel } from "@/common/types/thinking";
 
 interface CliResult {

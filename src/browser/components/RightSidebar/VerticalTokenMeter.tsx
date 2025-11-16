@@ -1,7 +1,11 @@
 import React from "react";
 import { TooltipWrapper, Tooltip } from "../Tooltip";
 import { TokenMeter } from "./TokenMeter";
-import { type TokenMeterData, formatTokens, getSegmentLabel } from "@/common/utils/tokens/tokenMeterUtils";
+import {
+  type TokenMeterData,
+  formatTokens,
+  getSegmentLabel,
+} from "@/common/utils/tokens/tokenMeterUtils";
 
 const VerticalTokenMeterComponent: React.FC<{ data: TokenMeterData }> = ({ data }) => {
   if (data.segments.length === 0) return null;

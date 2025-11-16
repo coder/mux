@@ -2,7 +2,11 @@ import type { ReactNode } from "react";
 import React, { createContext, useContext } from "react";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { getThinkingLevelKey, getProjectScopeId, GLOBAL_SCOPE_ID } from "@/common/constants/storage";
+import {
+  getThinkingLevelKey,
+  getProjectScopeId,
+  GLOBAL_SCOPE_ID,
+} from "@/common/constants/storage";
 
 interface ThinkingContextType {
   thinkingLevel: ThinkingLevel;

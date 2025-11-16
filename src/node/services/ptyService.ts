@@ -7,7 +7,11 @@
 
 import { log } from "@/node/services/log";
 import type { Runtime } from "@/node/runtime/Runtime";
-import type { TerminalSession, TerminalCreateParams, TerminalResizeParams } from "@/common/types/terminal";
+import type {
+  TerminalSession,
+  TerminalCreateParams,
+  TerminalResizeParams,
+} from "@/common/types/terminal";
 import type { IPty } from "node-pty";
 import { SSHRuntime, type SSHRuntimeConfig } from "@/node/runtime/SSHRuntime";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
