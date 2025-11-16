@@ -189,6 +189,9 @@
   /* Error backgrounds */
   --color-error-bg-dark: hsl(0 33% 13%); /* #3c1f1f - dark error bg */
 
+  /* Radius */
+  --radius: 0.5rem;
+}
 
 /* Light theme overrides using standard CSS selector */
 [data-theme="light"] {
@@ -361,10 +364,6 @@
 
   /* Error backgrounds */
   --color-error-bg-dark: hsl(0 50% 93%);
-
-  /* Radius */
-  --radius: 0.5rem;
-}
 
   /* Radius */
   --radius: 0.5rem;
