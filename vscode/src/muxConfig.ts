@@ -1,10 +1,10 @@
 import * as path from "path";
 import * as os from "os";
-import { Config } from "mux/config";
-import type { WorkspaceMetadata } from "mux/types/workspace";
-import { type ExtensionMetadata, readExtensionMetadata } from "mux/utils/extensionMetadata";
-import { getProjectName } from "mux/utils/runtime/helpers";
-import { createRuntime } from "mux/runtime/runtimeFactory";
+import { Config } from "mux/node/config";
+import type { WorkspaceMetadata } from "mux/common/types/workspace";
+import { type ExtensionMetadata, readExtensionMetadata } from "mux/node/utils/extensionMetadata";
+import { getProjectName } from "mux/node/utils/runtime/helpers";
+import { createRuntime } from "mux/node/runtime/runtimeFactory";
 
 /**
  * Workspace with extension metadata for display in VS Code extension.
