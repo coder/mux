@@ -31,12 +31,31 @@ if [ -d "node_modules/@homebridge/node-pty-prebuilt-multiarch" ]; then
   echo -e "${GREEN}Installing node-pty prebuilds...${NC}"
   cd node_modules/@homebridge/node-pty-prebuilt-multiarch
   
-  # Run the install script using prebuild-install (downloads prebuilts from GitHub)
-  # Check if already installed first
-  if [ -f "build/Release/pty.node" ]; then
-    echo -e "${GREEN}✓ node-pty prebuild already exists (build/Release/pty.node)${NC}"
+  # Check if prebuilds are already available (bundled with package or previously downloaded)
+  # The package looks for binaries in two locations:
+  # 1. prebuilds/<platform>-<arch>/node.abi*.node (bundled for Linux in npm package)
+  # 2. build/Release/pty.node (downloaded via prebuild-install for macOS/Windows)
+  
+  PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
+  ARCH=$(uname -m)
+  
+  # Normalize arch names to match node conventions
+  case "$ARCH" in
+    x86_64) ARCH="x64" ;;
+    aarch64) ARCH="arm64" ;;
+    armv7l) ARCH="arm" ;;
+    i686) ARCH="ia32" ;;
+  esac
+  
+  # Check if bundled prebuilds exist (Linux has these in the npm package)
+  if ls prebuilds/${PLATFORM}-${ARCH}/*.node > /dev/null 2>&1; then
+    echo -e "${GREEN}✓ node-pty prebuilds bundled with package (prebuilds/${PLATFORM}-${ARCH})${NC}"
+  elif [ -f "build/Release/pty.node" ]; then
+    # Downloaded prebuild already exists
+    echo -e "${GREEN}✓ node-pty prebuild already downloaded (build/Release/pty.node)${NC}"
   else
-    echo -e "${YELLOW}Downloading node-pty prebuilds...${NC}"
+    # Need to download prebuilds (macOS/Windows don't ship with bundled binaries)
+    echo -e "${YELLOW}Downloading node-pty prebuilds for ${PLATFORM}-${ARCH}...${NC}"
     # Run prebuild-install (may crash with bun, but still downloads the binary)
     $NODE_BIN ../../prebuild-install/bin.js --verbose > /tmp/node-pty-install.log 2>&1 || true
     
