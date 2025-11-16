@@ -14,7 +14,6 @@ import {
 } from "electron";
 import * as fs from "fs";
 import * as path from "path";
-<<<<<<< HEAD:src/desktop/main.ts
 import type { Config } from "@/node/config";
 import type { IpcMain } from "@/node/services/ipcMain";
 import { VERSION } from "@/version";
