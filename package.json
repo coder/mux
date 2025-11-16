@@ -16,7 +16,6 @@
     "access": "public"
   },
   "scripts": {
-    "postinstall": "./scripts/postinstall.sh",
     "dev": "make dev",
     "prebuild:main": "./scripts/generate-version.sh",
     "build": "make build",
