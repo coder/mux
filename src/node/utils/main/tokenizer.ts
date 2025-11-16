@@ -1,0 +1,206 @@
+import assert from "@/common/utils/assert";
+import CRC32 from "crc-32";
+import { LRUCache } from "lru-cache";
+import { getAvailableTools, getToolSchemas } from "@/common/utils/tools/toolDefinitions";
+import type { CountTokensInput } from "./tokenizer.worker";
+import { models, type ModelName } from "ai-tokenizer";
+import { run } from "./workerPool";
+import { TOKENIZER_MODEL_OVERRIDES, DEFAULT_WARM_MODELS } from "@/common/constants/knownModels";
+
+/**
+ * Public tokenizer interface exposed to callers.
+ * countTokens is async because the heavy lifting happens in a worker thread.
+ */
+export interface Tokenizer {
+  encoding: string;
+  countTokens: (text: string) => Promise<number>;
+}
+
+const encodingPromises = new Map<ModelName, Promise<string>>();
+const inFlightCounts = new Map<string, Promise<number>>();
+const tokenCountCache = new LRUCache<string, number>({
+  maxSize: 250_000,
+  sizeCalculation: () => 1,
+});
+
+// Track which models we've already warned about to avoid log spam
+const warnedModels = new Set<string>();
+
+function normalizeModelKey(modelName: string): ModelName | null {
+  assert(
+    typeof modelName === "string" && modelName.length > 0,
+    "Model name must be a non-empty string"
+  );
+
+  const override = TOKENIZER_MODEL_OVERRIDES[modelName];
+  const normalized =
+    override ?? (modelName.includes(":") ? modelName.replace(":", "/") : modelName);
+
+  if (!(normalized in models)) {
+    // Return null for unknown models - caller can decide to fallback or error
+    return null;
+  }
+  return normalized as ModelName;
+}
+
+/**
+ * Resolves a model string to a ModelName, falling back to a similar model if unknown.
+ * Optionally logs a warning when falling back.
+ */
+function resolveModelName(modelString: string): ModelName {
+  let modelName = normalizeModelKey(modelString);
+
+  if (!modelName) {
+    const provider = modelString.split(":")[0] || "anthropic";
+    const fallbackModel = provider === "anthropic" ? "anthropic/claude-sonnet-4.5" : "openai/gpt-5";
+
+    // Only warn once per unknown model to avoid log spam
+    if (!warnedModels.has(modelString)) {
+      warnedModels.add(modelString);
+      console.warn(
+        `[tokenizer] Unknown model '${modelString}', using ${fallbackModel} tokenizer for approximate token counting`
+      );
+    }
+
+    modelName = fallbackModel as ModelName;
+  }
+
+  return modelName;
+}
+
+function resolveEncoding(modelName: ModelName): Promise<string> {
+  let promise = encodingPromises.get(modelName);
+  if (!promise) {
+    promise = run<string>("encodingName", modelName)
+      .then((result: unknown) => {
+        assert(
+          typeof result === "string" && result.length > 0,
+          "Token encoding name must be a non-empty string"
+        );
+        return result;
+      })
+      .catch((error) => {
+        encodingPromises.delete(modelName);
+        throw error;
+      });
+    encodingPromises.set(modelName, promise);
+  }
+  return promise;
+}
+
+function buildCacheKey(modelName: ModelName, text: string): string {
+  const checksum = CRC32.str(text);
+  return `${modelName}:${checksum}:${text.length}`;
+}
+
+async function countTokensInternal(modelName: ModelName, text: string): Promise<number> {
+  assert(typeof text === "string", "Tokenizer countTokens expects string input");
+  if (text.length === 0) {
+    return 0;
+  }
+
+  const key = buildCacheKey(modelName, text);
+  const cached = tokenCountCache.get(key);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  let pending = inFlightCounts.get(key);
+  if (!pending) {
+    const payload: CountTokensInput = { modelName, input: text };
+    pending = run<number>("countTokens", payload)
+      .then((value: unknown) => {
+        assert(
+          typeof value === "number" && Number.isFinite(value) && value >= 0,
+          "Tokenizer must return a non-negative finite token count"
+        );
+        tokenCountCache.set(key, value);
+        inFlightCounts.delete(key);
+        return value;
+      })
+      .catch((error) => {
+        inFlightCounts.delete(key);
+        throw error;
+      });
+    inFlightCounts.set(key, pending);
+  }
+  return pending;
+}
+
+export function loadTokenizerModules(
+  modelsToWarm: string[] = Array.from(DEFAULT_WARM_MODELS)
+): Promise<Array<PromiseSettledResult<string>>> {
+  return Promise.allSettled(
+    modelsToWarm.map((modelString) => {
+      const modelName = normalizeModelKey(modelString);
+      // Skip unknown models during warmup
+      if (!modelName) {
+        return Promise.reject(new Error(`Unknown model: ${modelString}`));
+      }
+      return resolveEncoding(modelName);
+    })
+  );
+}
+
+export async function getTokenizerForModel(modelString: string): Promise<Tokenizer> {
+  const modelName = resolveModelName(modelString);
+  const encodingName = await resolveEncoding(modelName);
+
+  return {
+    encoding: encodingName,
+    countTokens: (input: string) => countTokensInternal(modelName, input),
+  };
+}
+
+export function countTokens(modelString: string, text: string): Promise<number> {
+  const modelName = resolveModelName(modelString);
+  return countTokensInternal(modelName, text);
+}
+
+export function countTokensBatch(modelString: string, texts: string[]): Promise<number[]> {
+  assert(Array.isArray(texts), "Batch token counting expects an array of strings");
+  const modelName = resolveModelName(modelString);
+  return Promise.all(texts.map((text) => countTokensInternal(modelName, text)));
+}
+
+export function countTokensForData(data: unknown, tokenizer: Tokenizer): Promise<number> {
+  const serialized = JSON.stringify(data);
+  return tokenizer.countTokens(serialized);
+}
+
+export async function getToolDefinitionTokens(
+  toolName: string,
+  modelString: string
+): Promise<number> {
+  try {
+    const availableTools = getAvailableTools(modelString);
+    if (!availableTools.includes(toolName)) {
+      return 0;
+    }
+
+    const toolSchemas = getToolSchemas();
+    const toolSchema = toolSchemas[toolName];
+    if (!toolSchema) {
+      return 40;
+    }
+
+    return countTokens(modelString, JSON.stringify(toolSchema));
+  } catch {
+    const fallbackSizes: Record<string, number> = {
+      bash: 65,
+      file_read: 45,
+      file_edit_replace_string: 70,
+      file_edit_replace_lines: 80,
+      file_edit_insert: 50,
+      web_search: 50,
+      google_search: 50,
+    };
+    return fallbackSizes[toolName] ?? 40;
+  }
+}
+
+export function __resetTokenizerForTests(): void {
+  encodingPromises.clear();
+  tokenCountCache.clear();
+  inFlightCounts.clear();
+}
