@@ -267,6 +267,18 @@ export class StreamingMessageAggregator {
     return this.pendingStreamStartTime;
   }
 
+
+  /**
+   * Clear pending stream-start tracking when send fails before we ever receive stream-start.
+   * Returns true when the internal state changed so callers can trigger updates.
+   */
+  markPendingStreamStartFailed(): boolean {
+    if (this.pendingStreamStartTime === null) {
+      return false;
+    }
+    this.pendingStreamStartTime = null;
+    return true;
+  }
   private setPendingStreamStartTime(time: number | null): void {
     this.pendingStreamStartTime = time;
   }

@@ -18,6 +18,8 @@ declare global {
   }
 }
 
+export const PENDING_STREAM_START_GRACE_PERIOD_MS = 15000; // 15 seconds
+
 /**
  * Check if the debug flag to force all errors to be retryable is enabled
  */
@@ -69,7 +71,7 @@ export function isNonRetryableSendError(error: SendMessageError): boolean {
  * 3. Last message is a user message (indicating we sent it but never got a response)
  *    - This handles app restarts during slow model responses (models can take 30-60s to first token)
  *    - User messages are only at the end when response hasn't started/completed
- *    - EXCEPT: Not if recently sent (<3s ago) - prevents flash during normal send flow
+ *    - EXCEPT: Not if recently sent (within PENDING_STREAM_START_GRACE_PERIOD_MS) - prevents flash during normal send flow
  */
 export function hasInterruptedStream(
   messages: DisplayedMessage[],
@@ -77,12 +79,12 @@ export function hasInterruptedStream(
 ): boolean {
   if (messages.length === 0) return false;
 
-  // Don't show retry barrier if user message was sent very recently (< 3s)
+  // Don't show retry barrier if user message was sent very recently (within the grace period)
   // This prevents flash during normal send flow while stream-start event arrives
-  // After 3s, we assume something is wrong and show the barrier
+  // After the grace period, assume something is wrong and show the barrier
   if (pendingStreamStartTime !== null) {
     const elapsed = Date.now() - pendingStreamStartTime;
-    if (elapsed < 3000) return false;
+    if (elapsed < PENDING_STREAM_START_GRACE_PERIOD_MS) return false;
   }
 
   const lastMessage = messages[messages.length - 1];

@@ -3,6 +3,7 @@ import {
   hasInterruptedStream,
   isEligibleForAutoRetry,
   isNonRetryableSendError,
+  PENDING_STREAM_START_GRACE_PERIOD_MS,
 } from "./retryEligibility";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { SendMessageError } from "@/common/types/errors";
@@ -165,7 +166,7 @@ describe("hasInterruptedStream", () => {
     expect(hasInterruptedStream(messages, null)).toBe(true);
   });
 
-  it("returns false when message was sent very recently (< 3s)", () => {
+  it("returns false when message was sent very recently (within grace period)", () => {
     const messages: DisplayedMessage[] = [
       {
         type: "user",
@@ -194,8 +195,8 @@ describe("hasInterruptedStream", () => {
         historySequence: 3,
       },
     ];
-    // Message sent 1 second ago - still within 3s window
-    const recentTimestamp = Date.now() - 1000;
+    // Message sent 1 second ago - still within grace window
+    const recentTimestamp = Date.now() - (PENDING_STREAM_START_GRACE_PERIOD_MS - 1000);
     expect(hasInterruptedStream(messages, recentTimestamp)).toBe(false);
   });
 
@@ -212,7 +213,7 @@ describe("hasInterruptedStream", () => {
     expect(hasInterruptedStream(messages, null)).toBe(true);
   });
 
-  it("returns false when user message just sent (< 3s ago)", () => {
+  it("returns false when user message just sent (within grace period)", () => {
     const messages: DisplayedMessage[] = [
       {
         type: "user",
@@ -222,11 +223,11 @@ describe("hasInterruptedStream", () => {
         historySequence: 1,
       },
     ];
-    const justSent = Date.now() - 500; // 0.5s ago
+    const justSent = Date.now() - (PENDING_STREAM_START_GRACE_PERIOD_MS - 500);
     expect(hasInterruptedStream(messages, justSent)).toBe(false);
   });
 
-  it("returns true when message sent over 3s ago (stream likely hung)", () => {
+  it("returns true when message sent beyond grace period (stream likely hung)", () => {
     const messages: DisplayedMessage[] = [
       {
         type: "user",
@@ -236,7 +237,7 @@ describe("hasInterruptedStream", () => {
         historySequence: 1,
       },
     ];
-    const longAgo = Date.now() - 4000; // 4s ago - past 3s threshold
+    const longAgo = Date.now() - (PENDING_STREAM_START_GRACE_PERIOD_MS + 1000);
     expect(hasInterruptedStream(messages, longAgo)).toBe(true);
   });
 
@@ -545,7 +546,7 @@ describe("isEligibleForAutoRetry", () => {
       expect(isEligibleForAutoRetry(messages, null)).toBe(true);
     });
 
-    it("returns false when user message sent very recently (< 3s)", () => {
+    it("returns false when user message sent very recently (within grace period)", () => {
       const messages: DisplayedMessage[] = [
         {
           type: "user",
@@ -555,7 +556,7 @@ describe("isEligibleForAutoRetry", () => {
           historySequence: 1,
         },
       ];
-      const justSent = Date.now() - 500; // 0.5s ago
+      const justSent = Date.now() - (PENDING_STREAM_START_GRACE_PERIOD_MS - 500);
       expect(isEligibleForAutoRetry(messages, justSent)).toBe(false);
     });
   });
