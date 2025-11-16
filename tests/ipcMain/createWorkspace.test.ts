@@ -16,20 +16,20 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import { shouldRunIntegrationTests, createTestEnvironment, cleanupTestEnvironment } from "./setup";
 import type { TestEnvironment } from "./setup";
-import { IPC_CHANNELS } from "../../src/constants/ipc-constants";
+import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
 import { createTempGitRepo, cleanupTempGitRepo, generateBranchName } from "./helpers";
-import { detectDefaultTrunkBranch } from "../../src/git";
+import { detectDefaultTrunkBranch } from "../../src/node/git";
 import {
   isDockerAvailable,
   startSSHServer,
   stopSSHServer,
   type SSHServerConfig,
 } from "../runtime/ssh-fixture";
-import type { RuntimeConfig } from "../../src/types/runtime";
-import type { FrontendWorkspaceMetadata } from "../../src/types/workspace";
-import { createRuntime } from "../../src/runtime/runtimeFactory";
-import type { SSHRuntime } from "../../src/runtime/SSHRuntime";
-import { streamToString } from "../../src/runtime/SSHRuntime";
+import type { RuntimeConfig } from "../../src/common/types/runtime";
+import type { FrontendWorkspaceMetadata } from "../../src/common/types/workspace";
+import { createRuntime } from "../../src/node/runtime/runtimeFactory";
+import type { SSHRuntime } from "../../src/node/runtime/SSHRuntime";
+import { streamToString } from "../../src/node/runtime/SSHRuntime";
 
 const execAsync = promisify(exec);
 

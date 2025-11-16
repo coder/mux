@@ -90,7 +90,7 @@ describeOllama("IpcMain Ollama integration tests", () => {
   // Load tokenizer modules and ensure model is available before all tests
   beforeAll(async () => {
     // Load tokenizers (takes ~14s)
-    const { loadTokenizerModules } = await import("../../src/utils/main/tokenizer");
+    const { loadTokenizerModules } = await import("../../src/node/utils/main/tokenizer");
     await loadTokenizerModules();
 
     // Ensure Ollama model is available (idempotent - fast if cached)

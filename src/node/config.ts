@@ -3,12 +3,12 @@ import * as path from "path";
 import * as crypto from "crypto";
 import * as jsonc from "jsonc-parser";
 import writeFileAtomic from "write-file-atomic";
-import type { WorkspaceMetadata, FrontendWorkspaceMetadata } from "./types/workspace";
-import type { Secret, SecretsConfig } from "./types/secrets";
-import type { Workspace, ProjectConfig, ProjectsConfig } from "./types/project";
-import { DEFAULT_RUNTIME_CONFIG } from "./constants/workspace";
-import { getMuxHome } from "./constants/paths";
-import { PlatformPaths } from "./utils/paths";
+import type { WorkspaceMetadata, FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { Secret, SecretsConfig } from "@/common/types/secrets";
+import type { Workspace, ProjectConfig, ProjectsConfig } from "@/common/types/project";
+import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
+import { getMuxHome } from "@/common/constants/paths";
+import { PlatformPaths } from "@/common/utils/paths";
 
 // Re-export project types from dedicated types file (for preload usage)
 export type { Workspace, ProjectConfig, ProjectsConfig };

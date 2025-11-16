@@ -5,10 +5,10 @@ import {
   assertStreamSuccess,
   waitFor,
 } from "./helpers";
-import { HistoryService } from "../../src/services/historyService";
-import { createMuxMessage } from "../../src/types/message";
-import type { DeleteMessage } from "../../src/types/ipc";
-import { IPC_CHANNELS } from "../../src/constants/ipc-constants";
+import { HistoryService } from "../../src/node/services/historyService";
+import { createMuxMessage } from "../../src/common/types/message";
+import type { DeleteMessage } from "../../src/common/types/ipc";
+import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
 
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;

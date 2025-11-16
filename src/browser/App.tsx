@@ -3,7 +3,7 @@ import "./styles/globals.css";
 import { useWorkspaceContext } from "./contexts/WorkspaceContext";
 import { useProjectContext } from "./contexts/ProjectContext";
 import type { WorkspaceSelection } from "./components/ProjectSidebar";
-import type { FrontendWorkspaceMetadata } from "./types/workspace";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { LeftSidebar } from "./components/LeftSidebar";
 import { ProjectCreateModal } from "./components/ProjectCreateModal";
 import { AIView } from "./components/AIView";
@@ -25,11 +25,11 @@ import { ThinkingProvider } from "./contexts/ThinkingContext";
 import { CommandPalette } from "./components/CommandPalette";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
-import type { ThinkingLevel } from "./types/thinking";
-import { CUSTOM_EVENTS } from "./constants/events";
+import type { ThinkingLevel } from "@/common/types/thinking";
+import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceFork";
-import { getThinkingLevelKey } from "./constants/storage";
-import type { BranchListResult } from "./types/ipc";
+import { getThinkingLevelKey } from "@/common/constants/storage";
+import type { BranchListResult } from "@/common/types/ipc";
 import { useTelemetry } from "./hooks/useTelemetry";
 import { useStartWorkspaceCreation, getFirstProjectPath } from "./hooks/useStartWorkspaceCreation";
 

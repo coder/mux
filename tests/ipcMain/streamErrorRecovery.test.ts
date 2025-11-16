@@ -23,7 +23,7 @@ import {
   readChatHistory,
   modelString,
 } from "./helpers";
-import { IPC_CHANNELS } from "../../src/constants/ipc-constants";
+import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
 
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;

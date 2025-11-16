@@ -1,9 +1,9 @@
 import { setupWorkspace, shouldRunIntegrationTests, validateApiKeys } from "./setup";
 import { sendMessageWithModel, createEventCollector, waitFor, modelString } from "./helpers";
-import { IPC_CHANNELS } from "../../src/constants/ipc-constants";
-import type { Result } from "../../src/types/result";
-import type { SendMessageError } from "../../src/types/errors";
-import type { StreamErrorMessage } from "../../src/types/ipc";
+import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
+import type { Result } from "../../src/common/types/result";
+import type { SendMessageError } from "../../src/common/types/errors";
+import type { StreamErrorMessage } from "../../src/common/types/ipc";
 
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;

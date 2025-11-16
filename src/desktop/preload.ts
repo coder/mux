@@ -19,10 +19,10 @@
  */
 
 import { contextBridge, ipcRenderer } from "electron";
-import type { IPCApi, WorkspaceChatMessage, UpdateStatus } from "./types/ipc";
-import type { FrontendWorkspaceMetadata } from "./types/workspace";
-import type { ProjectConfig } from "./types/project";
-import { IPC_CHANNELS, getChatChannel } from "./constants/ipc-constants";
+import type { IPCApi, WorkspaceChatMessage, UpdateStatus } from "@/common/types/ipc";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { ProjectConfig } from "@/common/types/project";
+import { IPC_CHANNELS, getChatChannel } from "@/common/constants/ipc-constants";
 
 // Build the API implementation using the shared interface
 const api: IPCApi = {

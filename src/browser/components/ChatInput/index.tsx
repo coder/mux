@@ -53,7 +53,7 @@ import {
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { MuxFrontendMetadata } from "@/common/types/message";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
-import { setTelemetryEnabled } from "@/telemetry";
+import { setTelemetryEnabled } from "@/node/telemetry";
 import { getTokenCountPromise } from "@/browser/utils/tokenizer/rendererClient";
 import { CreationCenterContent } from "./CreationCenterContent";
 import { CreationControls } from "./CreationControls";

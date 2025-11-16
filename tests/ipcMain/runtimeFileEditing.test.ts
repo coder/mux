@@ -18,7 +18,7 @@ import {
   setupProviders,
   type TestEnvironment,
 } from "./setup";
-import { IPC_CHANNELS } from "../../src/constants/ipc-constants";
+import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
 import {
   createTempGitRepo,
   cleanupTempGitRepo,
@@ -38,8 +38,8 @@ import {
   stopSSHServer,
   type SSHServerConfig,
 } from "../runtime/ssh-fixture";
-import type { RuntimeConfig } from "../../src/types/runtime";
-import type { ToolPolicy } from "../../src/utils/tools/toolPolicy";
+import type { RuntimeConfig } from "../../src/common/types/runtime";
+import type { ToolPolicy } from "../../src/common/utils/tools/toolPolicy";
 
 // Tool policy: Only allow file tools (disable bash to isolate file tool issues)
 const FILE_TOOLS_ONLY: ToolPolicy = [

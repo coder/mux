@@ -1,21 +1,21 @@
 import type { IpcRenderer } from "electron";
-import { IPC_CHANNELS, getChatChannel } from "../../src/constants/ipc-constants";
+import { IPC_CHANNELS, getChatChannel } from "../../src/common/constants/ipc-constants";
 import type {
   SendMessageOptions,
   WorkspaceChatMessage,
   WorkspaceInitEvent,
-} from "../../src/types/ipc";
-import { isInitStart, isInitOutput, isInitEnd } from "../../src/types/ipc";
-import type { Result } from "../../src/types/result";
-import type { SendMessageError } from "../../src/types/errors";
-import type { FrontendWorkspaceMetadata } from "../../src/types/workspace";
+} from "../../src/common/types/ipc";
+import { isInitStart, isInitOutput, isInitEnd } from "../../src/common/types/ipc";
+import type { Result } from "../../src/common/types/result";
+import type { SendMessageError } from "../../src/common/types/errors";
+import type { FrontendWorkspaceMetadata } from "../../src/common/types/workspace";
 import * as path from "path";
 import * as os from "os";
-import { detectDefaultTrunkBranch } from "../../src/git";
+import { detectDefaultTrunkBranch } from "../../src/node/git";
 import type { TestEnvironment } from "./setup";
-import type { RuntimeConfig } from "../../src/types/runtime";
-import { KNOWN_MODELS } from "../../src/constants/knownModels";
-import type { ToolPolicy } from "../../src/utils/tools/toolPolicy";
+import type { RuntimeConfig } from "../../src/common/types/runtime";
+import { KNOWN_MODELS } from "../../src/common/constants/knownModels";
+import type { ToolPolicy } from "../../src/common/utils/tools/toolPolicy";
 
 // Test constants - centralized for consistency across all tests
 export const INIT_HOOK_WAIT_MS = 1500; // Wait for async init hook completion (local runtime)
@@ -94,7 +94,7 @@ export async function createWorkspace(
   projectPath: string,
   branchName: string,
   trunkBranch?: string,
-  runtimeConfig?: import("../../src/types/runtime").RuntimeConfig
+  runtimeConfig?: import("../../src/common/types/runtime").RuntimeConfig
 ): Promise<
   { success: true; metadata: FrontendWorkspaceMetadata } | { success: false; error: string }
 > {
@@ -764,8 +764,8 @@ export async function buildLargeHistory(
     textPrefix?: string;
   } = {}
 ): Promise<void> {
-  const { HistoryService } = await import("../../src/services/historyService");
-  const { createMuxMessage } = await import("../../src/types/message");
+  const { HistoryService } = await import("../../src/node/services/historyService");
+  const { createMuxMessage } = await import("../../src/common/types/message");
 
   // HistoryService only needs getSessionDir, so we can cast the partial config
   const historyService = new HistoryService(config as any);

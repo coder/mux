@@ -16,7 +16,7 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import { shouldRunIntegrationTests, createTestEnvironment, cleanupTestEnvironment } from "./setup";
 import type { TestEnvironment } from "./setup";
-import { IPC_CHANNELS } from "../../src/constants/ipc-constants";
+import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
 import {
   createTempGitRepo,
   cleanupTempGitRepo,
@@ -32,7 +32,7 @@ import {
   stopSSHServer,
   type SSHServerConfig,
 } from "../runtime/ssh-fixture";
-import type { RuntimeConfig } from "../../src/types/runtime";
+import type { RuntimeConfig } from "../../src/common/types/runtime";
 
 const execAsync = promisify(exec);
 

@@ -5,7 +5,7 @@ import {
   setupWorkspace,
   validateApiKeys,
 } from "./setup";
-import { IPC_CHANNELS } from "../../src/constants/ipc-constants";
+import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
 import {
   createTempGitRepo,
   cleanupTempGitRepo,
@@ -15,9 +15,9 @@ import {
   waitFor,
   modelString,
 } from "./helpers";
-import { detectDefaultTrunkBranch } from "../../src/git";
-import { HistoryService } from "../../src/services/historyService";
-import { createMuxMessage } from "../../src/types/message";
+import { detectDefaultTrunkBranch } from "../../src/node/git";
+import { HistoryService } from "../../src/node/services/historyService";
+import { createMuxMessage } from "../../src/common/types/message";
 
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;

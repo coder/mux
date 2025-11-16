@@ -2,10 +2,10 @@
  * HTTP/WebSocket Server for mux
  * Allows accessing mux backend from mobile devices
  */
-import { Config } from "./config";
+import { Config } from "@/node/config";
 import { IPC_CHANNELS } from "@/common/constants/ipc-constants";
-import { IpcMain } from "./services/ipcMain";
-import { migrateCmuxToMux } from "./constants/paths";
+import { IpcMain } from "@/node/services/ipcMain";
+import { migrateCmuxToMux } from "@/common/constants/paths";
 import cors from "cors";
 import type { BrowserWindow, IpcMain as ElectronIpcMain } from "electron";
 import express from "express";
@@ -14,7 +14,7 @@ import * as path from "path";
 import type { RawData } from "ws";
 import { WebSocket, WebSocketServer } from "ws";
 import { Command } from "commander";
-import { validateProjectPath } from "./utils/pathUtils";
+import { validateProjectPath } from "@/node/utils/pathUtils";
 
 // Parse command line arguments
 const program = new Command();

@@ -1,5 +1,5 @@
 import { shouldRunIntegrationTests, createTestEnvironment, cleanupTestEnvironment } from "./setup";
-import { IPC_CHANNELS } from "../../src/constants/ipc-constants";
+import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 

@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { Config } from "../../../src/config";
+import { Config } from "../../../src/node/config";
 
 export interface DemoProjectConfig {
   projectPath: string;
