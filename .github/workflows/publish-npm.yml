@@ -69,6 +69,39 @@ jobs:
       - name: Build application
         run: make build
 
+      - name: Pack npm package for smoke test
+        run: npm pack
+
+      - name: Find package tarball
+        id: find-tarball
+        run: |
+          TARBALL=$(ls mux-*.tgz | head -1)
+          echo "tarball=$TARBALL" >> $GITHUB_OUTPUT
+          echo "Found package: $TARBALL"
+
+      - name: Run smoke test
+        env:
+          PACKAGE_TARBALL: ${{ steps.find-tarball.outputs.tarball }}
+          SERVER_PORT: 3000
+          SERVER_HOST: localhost
+          STARTUP_TIMEOUT: 30
+        run: |
+          ./scripts/smoke-test.sh
+
+      - name: Upload server logs on smoke test failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-logs
+          path: |
+            /tmp/mux-smoke-test-*/server.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Clean up tarball
+        if: always()
+        run: rm -f mux-*.tgz
+
       - name: Check if version exists
         id: check-exists
         run: |
