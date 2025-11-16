@@ -857,9 +857,11 @@ export class StreamingMessageAggregator {
               });
             } else if (isDynamicToolPart(part)) {
               // Determine status based on part state and result
+              // hasFailureResult now checks both error formats:
+              // 1. Tool implementation errors: { success: false, error: "..." }
+              // 2. AI SDK tool-error events: { error: "..." }
               let status: "pending" | "executing" | "completed" | "failed" | "interrupted";
               if (part.state === "output-available") {
-                // Check if result indicates failure (for tools that return { success: boolean })
                 status = hasFailureResult(part.output) ? "failed" : "completed";
               } else if (part.state === "input-available" && message.metadata?.partial) {
                 status = "interrupted";

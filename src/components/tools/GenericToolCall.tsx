@@ -33,6 +33,18 @@ export const GenericToolCall: React.FC<GenericToolCallProps> = ({
 }) => {
   const { expanded, toggleExpanded } = useToolExpansion();
 
+  // Check if result contains an error
+  // Handles two formats:
+  // 1. Tool implementation errors: { success: false, error: "..." }
+  // 2. AI SDK tool-error events: { error: "..." }
+  const hasError =
+    result &&
+    typeof result === "object" &&
+    "error" in result &&
+    typeof result.error === "string" &&
+    result.error.length > 0 &&
+    (!("success" in result) || result.success === false);
+
   const hasDetails = args !== undefined || result !== undefined;
 
   return (
@@ -52,7 +64,16 @@ export const GenericToolCall: React.FC<GenericToolCallProps> = ({
             </DetailSection>
           )}
 
-          {result !== undefined && (
+          {hasError ? (
+            <DetailSection>
+              <DetailLabel>Error</DetailLabel>
+              <div className="text-danger bg-danger-overlay border-danger rounded border-l-2 px-2 py-1.5 text-[11px]">
+                {String((result as { error: string }).error)}
+              </div>
+            </DetailSection>
+          ) : null}
+
+          {result !== undefined && !hasError && (
             <DetailSection>
               <DetailLabel>Result</DetailLabel>
               <DetailContent>{formatValue(result)}</DetailContent>
