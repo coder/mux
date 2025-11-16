@@ -5,7 +5,7 @@ import { initTelemetry, trackAppStarted } from "@/node/telemetry";
 
 // Shims the `window.api` object with the browser API.
 // This occurs if we are not running in Electron.
-import "./browser/api";
+import "./api";
 
 // Initialize telemetry on app startup
 initTelemetry();

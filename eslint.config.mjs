@@ -121,7 +121,7 @@ export default defineConfig([
       "!eslint.config.mjs",
       "vite.config.ts",
       "electron.vite.config.ts",
-      "src/main.tsx",
+      "src/browser/main.tsx",
     ],
   },
   js.configs.recommended,
@@ -368,11 +368,11 @@ export default defineConfig([
   },
   {
     // Frontend architectural boundary - prevent services and tokenizer imports
-    // Note: src/utils/** and src/stores/** are not included because:
+    // Note: src/browser/utils/** and src/browser/stores/** are not included because:
     // - Some utils are shared between main/renderer (e.g., utils/tools registry)
     // - Stores can import from utils/messages which is renderer-safe
-    // - Type-only imports from services are safe (types live in src/types/)
-    files: ["src/components/**", "src/contexts/**", "src/hooks/**", "src/App.tsx"],
+    // - Type-only imports from services are safe (types live in src/common/types/)
+    files: ["src/browser/components/**", "src/browser/contexts/**", "src/browser/hooks/**", "src/browser/App.tsx"],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -405,8 +405,6 @@ export default defineConfig([
       "src/cli/**",
       "src/desktop/**",
       "src/node/**",
-      "src/main.tsx",
-      "src/terminal-window.tsx",
       "**/*.test.ts",
       "**/*.test.tsx",
       // This file is only used by Node.js code (cli/debug) but lives in common/
