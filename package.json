@@ -3,9 +3,9 @@
   "version": "0.5.1",
   "description": "mux - coder multiplexer",
   "author": "Coder",
-  "main": "dist/main.js",
+  "main": "dist/cli/index.js",
   "bin": {
-    "mux": "dist/main.js"
+    "mux": "dist/cli/index.js"
   },
   "license": "AGPL-3.0-only",
   "repository": {
