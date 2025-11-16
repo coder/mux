@@ -16,7 +16,7 @@
     "access": "public"
   },
   "scripts": {
-    "postinstall": "npx @electron/rebuild -f -m node_modules/node-pty",
+    "postinstall": "./scripts/postinstall.sh",
     "dev": "make dev",
     "prebuild:main": "./scripts/generate-version.sh",
     "build": "make build",
@@ -171,6 +171,7 @@
     "dist/**/*.json",
     "dist/**/*.png",
     "dist/assets/**/*",
+    "scripts/postinstall.sh",
     "README.md",
     "LICENSE"
   ],
