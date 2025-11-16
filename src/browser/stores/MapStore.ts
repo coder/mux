@@ -1,3 +1,7 @@
+import { getImportMetaEnv } from "@/browser/utils/importMeta";
+
+const importMetaEnv = getImportMetaEnv<{ DEV?: boolean }>();
+const isDevEnvironment = Boolean(importMetaEnv.DEV);
 /**
  * Integrated versioned cache store with reactive subscriptions.
  *
@@ -42,7 +46,7 @@ export class MapStore<K, V> {
    */
   get(key: K, compute: () => V): V {
     // DEV-mode: Track render depth to detect bump() during render
-    if (import.meta.env.DEV) {
+    if (isDevEnvironment) {
       this.renderDepth++;
       try {
         return this.getImpl(key, compute);
@@ -109,7 +113,7 @@ export class MapStore<K, V> {
    */
   bump(key: K): void {
     // DEV-mode guard: detect bump() during render
-    if (import.meta.env.DEV && this.renderDepth > 0) {
+    if (isDevEnvironment && this.renderDepth > 0) {
       const error = new Error(
         `[MapStore] bump() called during render! This will cause infinite loops.\n` +
           `Key: ${String(key)}\n` +
