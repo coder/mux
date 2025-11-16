@@ -21,7 +21,7 @@
     "build": "make build",
     "start": "make start",
     "typecheck": "make typecheck",
-    "debug": "bun src/debug/index.ts",
+    "debug": "bun src/cli/debug/index.ts",
     "lint": "make lint",
     "lint:fix": "make lint-fix",
     "fmt": "make fmt",
