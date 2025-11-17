@@ -20,7 +20,7 @@ const hasElectron = fs.existsSync(electronPath);
 if (hasElectron) {
   console.log('🔧 Electron detected - rebuilding node-pty for Electron...');
   try {
-    execSync('npx @electron/rebuild -f -m node_modules/node-pty', {
+    execSync('npx @electron/rebuild -f -m . --only node-pty', {
       stdio: 'inherit',
       cwd: path.join(__dirname, '..')
     });
