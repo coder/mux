@@ -1,7 +1,8 @@
 import {
   getShikiHighlighter,
   mapToShikiLang,
-  SHIKI_THEME,
+  SHIKI_DARK_THEME,
+  SHIKI_LIGHT_THEME,
   MAX_DIFF_SIZE_BYTES,
 } from "./shikiHighlighter";
 import type { DiffChunk } from "./diffChunking";
@@ -25,6 +26,8 @@ export interface HighlightedLine {
   originalIndex: number; // Index in original diff
 }
 
+type ThemeMode = "light" | "dark";
+
 export interface HighlightedChunk {
   type: DiffChunk["type"];
   lines: HighlightedLine[];
@@ -37,7 +40,8 @@ export interface HighlightedChunk {
  */
 export async function highlightDiffChunk(
   chunk: DiffChunk,
-  language: string
+  language: string,
+  themeMode: ThemeMode = "dark"
 ): Promise<HighlightedChunk> {
   // Fast path: no highlighting for text files
   if (language === "text" || language === "plaintext") {
@@ -81,9 +85,10 @@ export async function highlightDiffChunk(
       }
     }
 
+    const shikiTheme = themeMode === "light" ? SHIKI_LIGHT_THEME : SHIKI_DARK_THEME;
     const html = highlighter.codeToHtml(code, {
       lang: shikiLang,
-      theme: SHIKI_THEME,
+      theme: shikiTheme,
     });
 
     // Parse HTML to extract line contents

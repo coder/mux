@@ -9,6 +9,7 @@ import { cn } from "@/common/lib/utils";
 import { getLanguageFromPath } from "@/common/utils/git/languageDetector";
 import { Tooltip, TooltipWrapper } from "../Tooltip";
 import { groupDiffLines } from "@/browser/utils/highlighting/diffChunking";
+import { useTheme, type ThemeMode } from "@/browser/contexts/ThemeContext";
 import {
   highlightDiffChunk,
   type HighlightedChunk,
@@ -176,7 +177,8 @@ function useHighlightedDiff(
   content: string,
   language: string,
   oldStart: number,
-  newStart: number
+  newStart: number,
+  themeMode: ThemeMode
 ): HighlightedChunk[] | null {
   const [chunks, setChunks] = useState<HighlightedChunk[] | null>(null);
   // Track if we've already highlighted with real syntax (to prevent downgrading)
@@ -199,7 +201,7 @@ function useHighlightedDiff(
 
       // Highlight each chunk (without search decorations - those are applied later)
       const highlighted = await Promise.all(
-        diffChunks.map((chunk) => highlightDiffChunk(chunk, language))
+        diffChunks.map((chunk) => highlightDiffChunk(chunk, language, themeMode))
       );
 
       if (!cancelled) {
@@ -216,7 +218,7 @@ function useHighlightedDiff(
     return () => {
       cancelled = true;
     };
-  }, [content, language, oldStart, newStart]);
+  }, [content, language, oldStart, newStart, themeMode]);
 
   return chunks;
 }
@@ -240,12 +242,13 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
   maxHeight,
 }) => {
   // Detect language for syntax highlighting (memoized to prevent repeated detection)
+  const { theme } = useTheme();
   const language = React.useMemo(
     () => (filePath ? getLanguageFromPath(filePath) : "text"),
     [filePath]
   );
 
-  const highlightedChunks = useHighlightedDiff(content, language, oldStart, newStart);
+  const highlightedChunks = useHighlightedDiff(content, language, oldStart, newStart, theme);
 
   // Show loading state while highlighting
   if (!highlightedChunks) {
@@ -446,6 +449,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     searchConfig,
     enableHighlighting = true,
   }) => {
+    const { theme } = useTheme();
     const [selection, setSelection] = React.useState<LineSelection | null>(null);
 
     // Detect language for syntax highlighting (memoized to prevent repeated detection)
@@ -459,7 +463,8 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       content,
       enableHighlighting ? language : "text",
       oldStart,
-      newStart
+      newStart,
+      theme
     );
 
     // Build lineData from highlighted chunks (memoized to prevent repeated parsing)

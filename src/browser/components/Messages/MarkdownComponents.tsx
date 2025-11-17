@@ -4,8 +4,10 @@ import { Mermaid } from "./Mermaid";
 import {
   getShikiHighlighter,
   mapToShikiLang,
-  SHIKI_THEME,
+  SHIKI_DARK_THEME,
+  SHIKI_LIGHT_THEME,
 } from "@/browser/utils/highlighting/shikiHighlighter";
+import { useTheme } from "@/browser/contexts/ThemeContext";
 import { extractShikiLines } from "@/browser/utils/highlighting/shiki-shared";
 import { CopyButton } from "@/browser/components/ui/CopyButton";
 
@@ -45,6 +47,7 @@ interface CodeBlockProps {
  */
 const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
   const [highlightedLines, setHighlightedLines] = useState<string[] | null>(null);
+  const { theme: themeMode } = useTheme();
 
   // Split code into lines, removing trailing empty line
   const plainLines = code
@@ -53,6 +56,9 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
 
   useEffect(() => {
     let cancelled = false;
+    const shikiTheme = themeMode === "light" ? SHIKI_LIGHT_THEME : SHIKI_DARK_THEME;
+
+    setHighlightedLines(null);
 
     async function highlight() {
       try {
@@ -79,7 +85,7 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
 
         const html = highlighter.codeToHtml(code, {
           lang: shikiLang,
-          theme: SHIKI_THEME,
+          theme: shikiTheme,
         });
 
         if (!cancelled) {
@@ -100,7 +106,7 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
     return () => {
       cancelled = true;
     };
-  }, [code, language]);
+  }, [code, language, themeMode]);
 
   const lines = highlightedLines ?? plainLines;
 

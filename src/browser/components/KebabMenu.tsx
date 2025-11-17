@@ -115,8 +115,8 @@ export const KebabMenu: React.FC<KebabMenuProps> = ({ items, className }) => {
                   item.disabled
                     ? "bg-dark text-muted-light cursor-not-allowed opacity-50 hover:bg-dark hover:text-muted-light"
                     : item.active
-                      ? "bg-white/15 text-foreground cursor-pointer hover:bg-white/15 hover:text-white"
-                      : "bg-dark text-foreground cursor-pointer hover:bg-white/15 hover:text-white"
+                      ? "bg-white/15 text-foreground cursor-pointer hover:bg-white/15 hover:text-[var(--color-hover-foreground)]"
+                      : "bg-dark text-foreground cursor-pointer hover:bg-white/15 hover:text-[var(--color-hover-foreground)]"
                 )}
               >
                 {item.emoji && (

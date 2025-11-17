@@ -226,7 +226,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
                 className={cn(
                   "w-full py-2.5 px-[15px] border-none border-solid cursor-pointer font-primary text-[13px] font-medium transition-all duration-200",
                   selectedTab === "costs"
-                    ? "text-white bg-separator border-b-2 border-b-plan-mode"
+                    ? "bg-separator border-b-2 border-b-plan-mode text-[var(--color-sidebar-tab-active)]"
                     : "bg-transparent text-secondary border-b-2 border-b-transparent hover:bg-background-secondary hover:text-foreground"
                 )}
                 onClick={() => setSelectedTab("costs")}
@@ -247,7 +247,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
                 className={cn(
                   "w-full py-2.5 px-[15px] border-none border-solid cursor-pointer font-primary text-[13px] font-medium transition-all duration-200",
                   selectedTab === "review"
-                    ? "text-white bg-separator border-b-2 border-b-plan-mode"
+                    ? "bg-separator border-b-2 border-b-plan-mode text-[var(--color-sidebar-tab-active)]"
                     : "bg-transparent text-secondary border-b-2 border-b-transparent hover:bg-background-secondary hover:text-foreground"
                 )}
                 onClick={() => setSelectedTab("review")}
