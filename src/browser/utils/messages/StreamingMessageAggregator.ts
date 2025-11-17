@@ -96,6 +96,8 @@ export class StreamingMessageAggregator {
   // Track when we're waiting for stream-start after user message
   // Prevents retry barrier flash during normal send flow
   // Stores timestamp of when user message was sent (null = no pending stream)
+  // IMPORTANT: We intentionally keep this timestamp until a stream actually starts
+  // (or the user retries) so retry UI/backoff logic doesn't misfire on send failures.
   private pendingStreamStartTime: number | null = null;
 
   // Workspace creation timestamp (used for recency calculation)
@@ -267,17 +269,6 @@ export class StreamingMessageAggregator {
     return this.pendingStreamStartTime;
   }
 
-  /**
-   * Clear pending stream-start tracking when send fails before we ever receive stream-start.
-   * Returns true when the internal state changed so callers can trigger updates.
-   */
-  markPendingStreamStartFailed(): boolean {
-    if (this.pendingStreamStartTime === null) {
-      return false;
-    }
-    this.pendingStreamStartTime = null;
-    return true;
-  }
   private setPendingStreamStartTime(time: number | null): void {
     this.pendingStreamStartTime = time;
   }

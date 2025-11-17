@@ -366,20 +366,6 @@ export class WorkspaceStore {
   }
 
   /**
-   * Notify the aggregator that a pending stream never started (renderer send failure).
-   */
-  markPendingStreamFailed(workspaceId: string): void {
-    const aggregator = this.aggregators.get(workspaceId);
-    if (!aggregator) {
-      return;
-    }
-
-    if (aggregator.markPendingStreamStartFailed()) {
-      this.states.bump(workspaceId);
-    }
-  }
-
-  /**
    * Get recency timestamps for all workspaces (for sorting in command palette).
    * Derived on-demand from individual workspace states.
    */

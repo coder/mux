@@ -62,7 +62,6 @@ import { setTelemetryEnabled } from "@/common/telemetry";
 import { getTokenCountPromise } from "@/browser/utils/tokenizer/rendererClient";
 import { CreationCenterContent } from "./CreationCenterContent";
 import { CreationControls } from "./CreationControls";
-import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { useCreationWorkspace } from "./useCreationWorkspace";
 
 type TokenCountReader = () => number;
@@ -137,7 +136,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   const [mode, setMode] = useMode();
   const { recentModels, addModel, evictModel } = useModelLRU();
   const commandListId = useId();
-  const workspaceStore = useWorkspaceStoreRaw();
   const telemetry = useTelemetry();
   const [vimEnabled, setVimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, {
     listener: true,
@@ -445,12 +443,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     // Workspace variant: full command handling + message send
     if (variant !== "workspace") return; // Type guard
 
-    const notifyPendingSendFailed = () => {
-      setTimeout(() => {
-        workspaceStore.markPendingStreamFailed(props.workspaceId);
-      }, 0);
-    };
-
     try {
       // Parse command
       const parsed = parseCommand(messageText);
@@ -724,7 +716,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           setToast(createErrorToast(result.error));
           // Restore input and images on error so user can try again
           setInput(messageText);
-          notifyPendingSendFailed();
           setImageAttachments(previousImageAttachments);
         } else {
           // Track telemetry for successful message send
@@ -745,7 +736,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             raw: error instanceof Error ? error.message : "Failed to send message",
           })
         );
-        notifyPendingSendFailed();
         setInput(messageText);
         setImageAttachments(previousImageAttachments);
       } finally {
