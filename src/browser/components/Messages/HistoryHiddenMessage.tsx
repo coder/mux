@@ -14,7 +14,7 @@ export const HistoryHiddenMessage: React.FC<HistoryHiddenMessageProps> = ({
   return (
     <div
       className={cn(
-        "my-5 rounded-sm border-l-[3px] border-accent bg-muted/30 px-[15px] py-3",
+        "my-5 rounded-sm border-l-[3px] border-accent bg-[var(--color-message-hidden-bg)] px-[15px] py-3",
         "font-sans text-center text-xs font-normal text-muted",
         className
       )}

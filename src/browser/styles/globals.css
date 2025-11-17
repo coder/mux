@@ -82,9 +82,18 @@
     --color-button-hover: hsl(0 0% 29%);
 
     /* Messages */
-    --color-user-border: hsl(0 0% 45%);
+    --color-user-border: hsla(0 0% 100% / 0.1);
     --color-user-surface: hsla(0 0% 100% / 0.06);
-    --color-user-border-hover: hsl(0 0% 44%);
+    --color-user-border-hover: hsla(0 0% 100% / 0.16);
+    --color-user-text: #f1f5f9;
+    --color-message-debug-bg: rgba(0, 0, 0, 0.3);
+    --color-message-debug-border: rgba(255, 255, 255, 0.1);
+    --color-message-debug-text: rgba(255, 255, 255, 0.8);
+    --color-message-hidden-bg: rgba(255, 255, 255, 0.03);
+    --color-attachment-border: rgba(255, 255, 255, 0.1);
+    --color-line-number-bg: rgba(0, 0, 0, 0.2);
+    --color-line-number-text: rgba(255, 255, 255, 0.4);
+    --color-line-number-border: rgba(255, 255, 255, 0.1);
     --color-assistant-border: hsl(207 45% 40%);
     --color-assistant-border-hover: hsl(207 45% 50%);
     --color-message-header: hsl(0 0% 80%);
@@ -298,6 +307,15 @@
   --color-user-surface: hsl(0 0% 91%);
   --color-user-border: hsl(210 20% 78%);
   --color-user-border-hover: hsl(210 20% 68%);
+  --color-user-text: hsl(210 18% 20%);
+  --color-message-debug-bg: hsl(210 40% 95%);
+  --color-message-debug-border: hsl(210 26% 82%);
+  --color-message-debug-text: hsl(210 28% 32%);
+  --color-message-hidden-bg: hsl(210 36% 94%);
+  --color-attachment-border: hsl(210 24% 82%);
+  --color-line-number-bg: hsl(210 34% 93%);
+  --color-line-number-text: hsl(210 14% 46%);
+  --color-line-number-border: hsl(210 22% 84%);
   --color-assistant-border: hsl(207 65% 50%);
   --color-assistant-border-hover: hsl(207 65% 40%);
   --color-message-header: hsl(210 18% 20%);
@@ -1027,12 +1045,12 @@ span.search-highlight {
 }
 
 .line-number {
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--color-line-number-bg);
   padding: 0 8px 0 6px;
   text-align: right;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--color-line-number-text);
   user-select: none;
-  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  border-right: 1px solid var(--color-line-number-border);
 }
 
 .code-line {
