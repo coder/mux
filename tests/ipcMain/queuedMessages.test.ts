@@ -15,7 +15,6 @@ import {
   QueuedMessageChangedEvent,
   RestoreToInputEvent,
 } from "@/common/types/ipc";
-import type { Result } from "@/common/types/result";
 
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
