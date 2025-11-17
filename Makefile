@@ -90,6 +90,8 @@ all: build
 node_modules/.installed: package.json bun.lock
 	@echo "Dependencies out of date or missing, running bun install..."
 	@bun install
+	@echo "Running postinstall scripts..."
+	@./scripts/postinstall.sh
 	@touch node_modules/.installed
 
 # Legacy target for backwards compatibility
