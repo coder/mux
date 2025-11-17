@@ -449,7 +449,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
 
   const handleSend = async () => {
     // Allow sending if there's text or images
-    if ((!input.trim() && imageAttachments.length === 0) || disabled || isSending || isCompacting) {
+    if ((!input.trim() && imageAttachments.length === 0) || disabled || isSending) {
       return;
     }
 
@@ -849,7 +849,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
       const interruptKeybind = vimEnabled
         ? KEYBINDS.INTERRUPT_STREAM_VIM
         : KEYBINDS.INTERRUPT_STREAM_NORMAL;
-      return `Compacting... (${formatKeybind(interruptKeybind)} cancel | ${formatKeybind(KEYBINDS.ACCEPT_EARLY_COMPACTION)} accept early)`;
+      return `Compacting... (${formatKeybind(interruptKeybind)} cancel | ${formatKeybind(KEYBINDS.ACCEPT_EARLY_COMPACTION)} accept early | ${formatKeybind(KEYBINDS.SEND_MESSAGE)} to queue)`;
     }
 
     // Build hints for normal input
@@ -924,7 +924,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
               onDrop={variant === "workspace" ? handleDrop : undefined}
               suppressKeys={showCommandSuggestions ? COMMAND_SUGGESTION_KEYS : undefined}
               placeholder={placeholder}
-              disabled={!editingMessage && (disabled || isSending || isCompacting)}
+              disabled={!editingMessage && (disabled || isSending)}
               aria-label={editingMessage ? "Edit your last message" : "Message Claude"}
               aria-autocomplete="list"
               aria-controls={
