@@ -16,11 +16,10 @@ const workspaceNameSchema = z.object({
 });
 
 /**
- * Generate workspace name using AI
- * Falls back to timestamp-based name if AI generation fails
- * @param message - The user's first message
- * @param modelString - Model string from send message options (e.g., "anthropic:claude-3-5-sonnet-20241022")
- * @param config - Config instance for provider access
+ * Generate workspace name using AI.
+ * If AI cannot be used (e.g. missing credentials, unsupported provider, invalid model),
+ * this function throws a SendMessageError-compatible object so callers can surface
+ * the same provider error UX used elsewhere in the app.
  */
 export async function generateWorkspaceName(
   message: string,
@@ -31,27 +30,34 @@ export async function generateWorkspaceName(
     const model = getModelForTitleGeneration(modelString, config);
 
     if (!model) {
-      // No providers available, use fallback immediately
-      return createFallbackName();
+      // No usable model — infer error from modelString + providers config like sendMessage does
+      const [providerName, modelId] = modelString.split(":", 2);
+      if (!providerName || !modelId) {
+        throw { type: "invalid_model_string", message: `Invalid model string format: "${modelString}". Expected "provider:model-id"` };
+      }
+      const providers = config.loadProvidersConfig();
+      const hasProvider = Boolean(providers && providers[providerName]);
+      if (!hasProvider || !providers?.[providerName]?.apiKey) {
+        throw { type: "api_key_not_found", provider: providerName };
+      }
+      throw { type: "provider_not_supported", provider: providerName };
     }
 
     const result = await generateObject({
       model,
       schema: workspaceNameSchema,
-      prompt: `Generate a git-safe branch/workspace name for this development task:
-
-"${message}"
-
-Requirements:
-- Git-safe identifier (e.g., "automatic-title-generation")
-- Lowercase, hyphens only, no spaces
-- Concise (2-5 words) and descriptive of the task`,
+      prompt: `Generate a git-safe branch/workspace name for this development task:\n\n"${message}"\n\nRequirements:\n- Git-safe identifier (e.g., "automatic-title-generation")\n- Lowercase, hyphens only, no spaces\n- Concise (2-5 words) and descriptive of the task`,
     });
 
     return validateBranchName(result.object.name);
   } catch (error) {
-    log.error("Failed to generate workspace name with AI, using fallback", error);
-    return createFallbackName();
+    // If error is already a structured SendMessageError, rethrow as-is
+    if (error && typeof error === "object" && "type" in (error as Record<string, unknown>)) {
+      throw error;
+    }
+    const messageText = error instanceof Error ? error.message : String(error);
+    log.error("Failed to generate workspace name with AI", error);
+    throw { type: "unknown", raw: `Failed to generate workspace name: ${messageText}` };
   }
 }
 
@@ -115,6 +121,7 @@ function getModelForTitleGeneration(modelString: string, config: Config): Langua
 
 /**
  * Create fallback name using timestamp
+ * NOTE: Not used by current flow; kept for potential future use.
  */
 function createFallbackName(): string {
   const timestamp = Date.now().toString(36);

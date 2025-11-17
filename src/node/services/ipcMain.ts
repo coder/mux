@@ -23,7 +23,7 @@ import type {
   ImagePart,
   WorkspaceChatMessage,
 } from "@/common/types/ipc";
-import { Ok, Err } from "@/common/types/result";
+import { Ok, Err, type Result } from "@/common/types/result";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import type {
   WorkspaceMetadata,
@@ -240,11 +240,22 @@ export class IpcMain {
     }
   ): Promise<
     | { success: true; workspaceId: string; metadata: FrontendWorkspaceMetadata }
-    | { success: false; error: string }
+    | Result<void, SendMessageError>
   > {
     try {
       // 1. Generate workspace branch name using AI (use same model as message)
-      const branchName = await generateWorkspaceName(message, options.model, this.config);
+      let branchName: string;
+      try {
+        branchName = await generateWorkspaceName(message, options.model, this.config);
+      } catch (e) {
+        // Surface provider error types to the renderer, matching sendMessage behavior
+        const err = e as unknown;
+        if (err && typeof err === "object" && "type" in (err as Record<string, unknown>)) {
+          return Err(err as SendMessageError);
+        }
+        const msg = err instanceof Error ? err.message : String(err);
+        return Err({ type: "unknown", raw: `Failed to generate workspace name: ${msg}` });
+      }
 
       log.debug("Generated workspace name", { branchName });
 
@@ -277,7 +288,7 @@ export class IpcMain {
         }
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
-        return { success: false, error: errorMsg };
+        return Err({ type: "unknown", raw: `Failed to prepare runtime: ${errorMsg}` });
       }
 
       const session = this.getOrCreateSession(workspaceId);
@@ -294,7 +305,7 @@ export class IpcMain {
       });
 
       if (!createResult.success || !createResult.workspacePath) {
-        return { success: false, error: createResult.error ?? "Failed to create workspace" };
+        return Err({ type: "unknown", raw: createResult.error ?? "Failed to create workspace" });
       }
 
       const projectName =
@@ -327,7 +338,7 @@ export class IpcMain {
       const allMetadata = await this.config.getAllWorkspaceMetadata();
       const completeMetadata = allMetadata.find((m) => m.id === workspaceId);
       if (!completeMetadata) {
-        return { success: false, error: "Failed to retrieve workspace metadata" };
+        return Err({ type: "unknown", raw: "Failed to retrieve workspace metadata" });
       }
 
       session.emitMetadata(completeMetadata);
@@ -358,7 +369,7 @@ export class IpcMain {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       log.error("Unexpected error in createWorkspaceForFirstMessage:", error);
-      return { success: false, error: `Failed to create workspace: ${errorMessage}` };
+      return Err({ type: "unknown", raw: `Failed to create workspace: ${errorMessage}` });
     }
   }
 
