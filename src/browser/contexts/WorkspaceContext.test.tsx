@@ -163,7 +163,7 @@ describe("WorkspaceContext", () => {
       result = await ctx().createWorkspace("/gamma", "feature", "main");
     });
 
-    expect(workspaceApi.create).toHaveBeenCalledWith("/gamma", "feature", "main", undefined);
+    expect(workspaceApi.create).toHaveBeenCalledWith("/gamma", "feature", "main", undefined, undefined);
     expect(projectsApi.list).toHaveBeenCalled();
     expect(result!.workspaceId).toBe("ws-new");
     expect(result!.projectPath).toBe("/gamma");
