@@ -30,7 +30,7 @@ describe("buildSystemMessage", () => {
     mockHomedir.mockReturnValue(tempDir);
 
     // Create a local runtime for tests
-    runtime = new LocalRuntime(tempDir);
+    runtime = new LocalRuntime({ type: "worktree", srcBaseDir: tempDir });
   });
 
   afterEach(async () => {

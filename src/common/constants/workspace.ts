@@ -5,6 +5,6 @@ import type { RuntimeConfig } from "@/common/types/runtime";
  * Used when no runtime config is specified
  */
 export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = {
-  type: "local",
+  type: "worktree",
   srcBaseDir: "~/.mux/src",
 } as const;

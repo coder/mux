@@ -14,7 +14,7 @@ import type { SSHServerConfig } from "./ssh-fixture";
 /**
  * Runtime type for test matrix
  */
-export type RuntimeType = "local" | "ssh";
+export type RuntimeType = "worktree" | "ssh";
 
 /**
  * Create runtime instance based on type
@@ -25,10 +25,11 @@ export function createTestRuntime(
   sshConfig?: SSHServerConfig
 ): Runtime {
   switch (type) {
-    case "local":
+    case "worktree": {
       // Resolve symlinks (e.g., /tmp -> /private/tmp on macOS) to match git worktree paths
       const resolvedWorkdir = realpathSync(workdir);
-      return new LocalRuntime(resolvedWorkdir);
+      return new LocalRuntime({ type: "worktree", srcBaseDir: resolvedWorkdir });
+    }
     case "ssh":
       if (!sshConfig) {
         throw new Error("SSH config required for SSH runtime");

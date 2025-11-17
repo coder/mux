@@ -354,7 +354,7 @@ describe("file_read tool", () => {
     const tool = createFileReadTool({
       ...getTestDeps(),
       cwd: subDir,
-      runtime: new LocalRuntime(process.cwd()),
+      runtime: new LocalRuntime({ type: "worktree", srcBaseDir: process.cwd() }),
       runtimeTempDir: "/tmp",
     });
     const args: FileReadToolArgs = {

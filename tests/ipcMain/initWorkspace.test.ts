@@ -477,7 +477,7 @@ describeIntegration("Init Queue - Runtime Matrix", () => {
   }, 30000);
 
   // Test matrix: Run tests for both local and SSH runtimes
-  describe.each<{ type: "local" | "ssh" }>([{ type: "local" }, { type: "ssh" }])(
+  describe.each<{ type: "worktree" | "ssh" }>([{ type: "worktree" }, { type: "ssh" }])(
     "Runtime: $type",
     ({ type }) => {
       // Helper to build runtime config

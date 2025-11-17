@@ -27,8 +27,13 @@ export function normalizeRuntimePreference(runtime: string | undefined): string 
   }
 
   const lower = trimmed.toLowerCase();
-  if (lower === RUNTIME_MODE.LOCAL) {
+  const normalized = lower.replace(/[\s_()-]/g, "");
+  if (normalized === RUNTIME_MODE.WORKTREE) {
     return undefined;
+  }
+
+  if (normalized === RUNTIME_MODE.LOCAL || normalized === "localinplace") {
+    return RUNTIME_MODE.LOCAL;
   }
 
   if (lower === RUNTIME_MODE.SSH) {

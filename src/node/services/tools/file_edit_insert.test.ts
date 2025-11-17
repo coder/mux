@@ -17,7 +17,7 @@ function createTestTool(cwd: string) {
   return createFileEditInsertTool({
     ...getTestDeps(),
     cwd,
-    runtime: createRuntime({ type: "local", srcBaseDir: cwd }),
+    runtime: createRuntime({ type: "worktree", srcBaseDir: cwd }),
     runtimeTempDir: cwd,
   });
 }

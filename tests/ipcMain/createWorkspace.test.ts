@@ -29,6 +29,7 @@ import type { RuntimeConfig } from "../../src/common/types/runtime";
 import type { FrontendWorkspaceMetadata } from "../../src/common/types/workspace";
 import { createRuntime } from "../../src/node/runtime/runtimeFactory";
 import type { SSHRuntime } from "../../src/node/runtime/SSHRuntime";
+import { Config } from "../../src/node/config";
 import { streamToString } from "../../src/node/runtime/SSHRuntime";
 
 const execAsync = promisify(exec);
@@ -175,7 +176,7 @@ describeIntegration("WORKSPACE_CREATE with both runtimes", () => {
   }, 30000);
 
   // Test matrix: Run tests for both local and SSH runtimes
-  describe.each<{ type: "local" | "ssh" }>([{ type: "local" }, { type: "ssh" }])(
+  describe.each<{ type: "worktree" | "ssh" }>([{ type: "worktree" }, { type: "ssh" }])(
     "Runtime: $type",
     ({ type }) => {
       // Helper to build runtime config
@@ -633,9 +634,13 @@ exit 1
                 const workspace = projectWorkspaces.find((w) => w.name === branchName);
 
                 expect(workspace).toBeDefined();
-                expect(workspace?.runtimeConfig?.srcBaseDir).toBeDefined();
-                expect(workspace?.runtimeConfig?.srcBaseDir).toMatch(/^\/home\//);
-                expect(workspace?.runtimeConfig?.srcBaseDir).not.toContain("~");
+                const runtimeCfg = workspace?.runtimeConfig;
+                expect(runtimeCfg?.type).toBe("ssh");
+                if (!runtimeCfg || runtimeCfg.type !== "ssh") {
+                  throw new Error("Expected SSH runtime config with resolved srcBaseDir");
+                }
+                expect(runtimeCfg.srcBaseDir).toMatch(/^\/home\//);
+                expect(runtimeCfg.srcBaseDir).not.toContain("~");
 
                 await cleanup();
               } finally {
@@ -690,9 +695,13 @@ exit 1
                 const workspace = projectWorkspaces.find((w) => w.name === branchName);
 
                 expect(workspace).toBeDefined();
-                expect(workspace?.runtimeConfig?.srcBaseDir).toBeDefined();
-                expect(workspace?.runtimeConfig?.srcBaseDir).toMatch(/^\/home\//);
-                expect(workspace?.runtimeConfig?.srcBaseDir).not.toContain("~");
+                const runtimeCfg = workspace?.runtimeConfig;
+                expect(runtimeCfg?.type).toBe("ssh");
+                if (!runtimeCfg || runtimeCfg.type !== "ssh") {
+                  throw new Error("Expected SSH runtime config with resolved srcBaseDir");
+                }
+                expect(runtimeCfg.srcBaseDir).toMatch(/^\/home\//);
+                expect(runtimeCfg.srcBaseDir).not.toContain("~");
 
                 await cleanup();
               } finally {
@@ -889,5 +898,142 @@ exit 1
       },
       TEST_TIMEOUT_MS
     );
+  });
+});
+
+describe("Local runtime (in-place)", () => {
+  const config = new Config();
+
+  const worktreeExists = async (dir: string): Promise<boolean> => {
+    try {
+      await fs.access(dir);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  test("reuses project directory without creating a worktree", async () => {
+    const env = await createTestEnvironment();
+    const projectPath = await createTempGitRepo();
+    let cleanupWorkspace: (() => Promise<void>) | undefined;
+
+    try {
+      const branchName = generateBranchName("local-mode");
+      const trunkBranch = await detectDefaultTrunkBranch(projectPath);
+
+      const { result, cleanup } = await createWorkspaceWithCleanup(
+        env,
+        projectPath,
+        branchName,
+        trunkBranch,
+        { type: "local" }
+      );
+      cleanupWorkspace = cleanup;
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        throw new Error(result.error ?? "Workspace creation failed");
+      }
+
+      expect(result.metadata.runtimeConfig.type).toBe("local");
+      expect(result.metadata.namedWorkspacePath).toBe(projectPath);
+
+      const expectedWorktreeDir = path.join(config.srcDir, path.basename(projectPath), branchName);
+      expect(await worktreeExists(expectedWorktreeDir)).toBe(false);
+
+      await cleanup();
+      cleanupWorkspace = undefined;
+    } finally {
+      if (cleanupWorkspace) {
+        await cleanupWorkspace();
+      }
+      await cleanupTestEnvironment(env);
+      await cleanupTempGitRepo(projectPath);
+    }
+  });
+
+  test("prevents creating multiple local workspaces per project", async () => {
+    const env = await createTestEnvironment();
+    const projectPath = await createTempGitRepo();
+    let cleanupWorkspace: (() => Promise<void>) | undefined;
+
+    try {
+      const branchName = generateBranchName("local-primary");
+      const trunkBranch = await detectDefaultTrunkBranch(projectPath);
+
+      const first = await createWorkspaceWithCleanup(env, projectPath, branchName, trunkBranch, {
+        type: "local",
+      });
+      cleanupWorkspace = first.cleanup;
+      expect(first.result.success).toBe(true);
+      if (!first.result.success) {
+        throw new Error(first.result.error ?? "First local workspace failed");
+      }
+
+      const second = await createWorkspaceWithCleanup(
+        env,
+        projectPath,
+        generateBranchName("local-second"),
+        trunkBranch,
+        { type: "local" }
+      );
+
+      expect(second.result.success).toBe(false);
+      if (second.result.success) {
+        await second.cleanup();
+        throw new Error("Second local workspace should not succeed");
+      }
+      expect(second.result.error).toContain("local workspace");
+
+      await first.cleanup();
+      cleanupWorkspace = undefined;
+    } finally {
+      if (cleanupWorkspace) {
+        await cleanupWorkspace();
+      }
+      await cleanupTestEnvironment(env);
+      await cleanupTempGitRepo(projectPath);
+    }
+  });
+
+  test("removing local workspace keeps project files intact", async () => {
+    const env = await createTestEnvironment();
+    const projectPath = await createTempGitRepo();
+    let cleanupWorkspace: (() => Promise<void>) | undefined;
+
+    try {
+      const branchName = generateBranchName("local-cleanup");
+      const trunkBranch = await detectDefaultTrunkBranch(projectPath);
+
+      const { result, cleanup } = await createWorkspaceWithCleanup(
+        env,
+        projectPath,
+        branchName,
+        trunkBranch,
+        { type: "local" }
+      );
+      cleanupWorkspace = cleanup;
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        throw new Error(result.error ?? "Workspace creation failed");
+      }
+
+      const sentinelPath = path.join(projectPath, "sentinel.txt");
+      await fs.writeFile(sentinelPath, "keep me");
+
+      await cleanup();
+      cleanupWorkspace = undefined;
+
+      const contents = await fs.readFile(sentinelPath, "utf-8");
+      expect(contents).toBe("keep me");
+    } finally {
+      if (cleanupWorkspace) {
+        await cleanupWorkspace();
+      }
+      await cleanupTestEnvironment(env);
+      await cleanupTempGitRepo(projectPath);
+    }
   });
 });

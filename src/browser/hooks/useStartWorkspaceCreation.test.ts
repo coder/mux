@@ -21,11 +21,17 @@ type PersistFn = typeof updatePersistedState;
 type PersistCall = [string, unknown, unknown?];
 
 describe("normalizeRuntimePreference", () => {
-  test("returns undefined for local or empty runtime", () => {
+  test("returns undefined for empty or worktree runtime", () => {
     expect(normalizeRuntimePreference(undefined)).toBeUndefined();
     expect(normalizeRuntimePreference(" ")).toBeUndefined();
-    expect(normalizeRuntimePreference("local")).toBeUndefined();
-    expect(normalizeRuntimePreference("LOCAL")).toBeUndefined();
+    expect(normalizeRuntimePreference("worktree")).toBeUndefined();
+    expect(normalizeRuntimePreference("WORKTREE")).toBeUndefined();
+  });
+
+  test("normalizes local runtime tokens", () => {
+    expect(normalizeRuntimePreference("local")).toBe("local");
+    expect(normalizeRuntimePreference("LOCAL")).toBe("local");
+    expect(normalizeRuntimePreference(" local-in-place ")).toBe("local");
   });
 
   test("normalizes ssh runtimes", () => {

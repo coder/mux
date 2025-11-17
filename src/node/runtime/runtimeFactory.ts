@@ -8,8 +8,9 @@ import type { RuntimeConfig } from "@/common/types/runtime";
  */
 export function createRuntime(config: RuntimeConfig): Runtime {
   switch (config.type) {
+    case "worktree":
     case "local":
-      return new LocalRuntime(config.srcBaseDir);
+      return new LocalRuntime(config);
 
     case "ssh":
       return new SSHRuntime({

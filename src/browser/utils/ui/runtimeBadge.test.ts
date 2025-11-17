@@ -7,10 +7,17 @@ describe("extractSshHostname", () => {
     expect(extractSshHostname(undefined)).toBeNull();
   });
 
+  it("should return null for worktree runtime", () => {
+    const config: RuntimeConfig = {
+      type: "worktree",
+      srcBaseDir: "/home/user/.mux/src",
+    };
+    expect(extractSshHostname(config)).toBeNull();
+  });
+
   it("should return null for local runtime", () => {
     const config: RuntimeConfig = {
       type: "local",
-      srcBaseDir: "/home/user/.mux/src",
     };
     expect(extractSshHostname(config)).toBeNull();
   });

@@ -9,7 +9,8 @@
 # Features
 
 - [Workspaces](./workspaces.md)
-  - [Local](./local.md)
+  - [Worktree](./worktree.md)
+  - [Local (In-Place)](./local-in-place.md)
   - [SSH](./ssh.md)
   - [Forking](./fork.md)
   - [Init Hooks](./init-hooks.md)

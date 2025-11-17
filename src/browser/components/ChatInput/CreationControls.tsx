@@ -22,7 +22,7 @@ export function CreationControls(props: CreationControlsProps) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
       {/* Trunk Branch Selector */}
-      {props.branches.length > 0 && (
+      {props.branches.length > 0 && props.runtimeMode !== RUNTIME_MODE.LOCAL && (
         <div className="flex items-center gap-1" data-component="TrunkBranchGroup">
           <label htmlFor="trunk-branch" className="text-muted text-xs">
             From:
@@ -44,12 +44,14 @@ export function CreationControls(props: CreationControlsProps) {
         <Select
           value={props.runtimeMode}
           options={[
-            { value: RUNTIME_MODE.LOCAL, label: "Local" },
+            { value: RUNTIME_MODE.WORKTREE, label: "Worktree" },
+            { value: RUNTIME_MODE.LOCAL, label: "Local (in-place)" },
             { value: RUNTIME_MODE.SSH, label: "SSH" },
           ]}
           onChange={(newMode) => {
             const mode = newMode as RuntimeMode;
-            props.onRuntimeChange(mode, mode === RUNTIME_MODE.LOCAL ? "" : props.sshHost);
+            const nextHost = mode === RUNTIME_MODE.SSH ? props.sshHost : "";
+            props.onRuntimeChange(mode, nextHost);
           }}
           disabled={props.disabled}
           aria-label="Runtime mode"
@@ -69,7 +71,8 @@ export function CreationControls(props: CreationControlsProps) {
           <Tooltip className="tooltip" align="center" width="wide">
             <strong>Runtime:</strong>
             <br />
-            • Local: git worktree in ~/.mux/src
+            • Worktree: git worktree in ~/.mux/src
+            <br />• Local (in-place): work directly in the project directory
             <br />• SSH: remote clone in ~/mux on SSH host
           </Tooltip>
         </TooltipWrapper>

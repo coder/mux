@@ -54,7 +54,7 @@ export function createTestToolConfig(
 ): ToolConfiguration {
   return {
     cwd: tempDir,
-    runtime: new LocalRuntime(tempDir),
+    runtime: new LocalRuntime({ type: "worktree", srcBaseDir: tempDir }),
     runtimeTempDir: tempDir,
     niceness: options?.niceness,
   };

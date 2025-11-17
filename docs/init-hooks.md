@@ -34,8 +34,8 @@ Init hooks receive the following environment variables:
 - `MUX_PROJECT_PATH` - Absolute path to the project root on the **local machine**
   - Always refers to your local project path, even on SSH workspaces
   - Useful for logging, debugging, or runtime-specific logic
-- `MUX_RUNTIME` - Runtime type: `"local"` or `"ssh"`
-  - Use this to detect whether the hook is running locally or remotely
+- `MUX_RUNTIME` - Runtime type: `"worktree"`, `"local"`, or `"ssh"`
+  - Use this to detect whether the hook is running in a worktree, directly in your project directory, or on a remote machine
 
 **Note for SSH workspaces:** Since the project is synced to the remote machine, files exist in both locations. The init hook runs in the workspace directory (`$PWD`), so use relative paths to reference project files:
 
@@ -54,11 +54,17 @@ if [ -f "../.env" ]; then
 fi
 
 # Runtime-specific behavior
-if [ "$MUX_RUNTIME" = "local" ]; then
-  echo "Running on local machine"
-else
-  echo "Running on SSH remote"
-fi
+case "$MUX_RUNTIME" in
+  worktree)
+    echo "Running in local worktree"
+    ;;
+  local)
+    echo "Running directly in project directory"
+    ;;
+  ssh)
+    echo "Running on SSH remote"
+    ;;
+esac
 
 bun install
 ```

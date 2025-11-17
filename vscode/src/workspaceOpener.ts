@@ -16,7 +16,7 @@ function isRemoteSshInstalled(): boolean {
  * Open an SSH workspace in a new VS Code window
  */
 export async function openWorkspace(workspace: WorkspaceWithContext) {
-  if (workspace.runtimeConfig.type === "local") {
+  if (workspace.runtimeConfig.type !== "ssh") {
     const workspacePath = getWorkspacePath(workspace);
     const uri = vscode.Uri.file(workspacePath);
 

@@ -1,6 +1,6 @@
-# Local Workspaces
+# Worktree Workspaces
 
-Local workspaces use [git worktrees](https://git-scm.com/docs/git-worktree) on your local machine. Worktrees share the `.git` directory with your main repository while maintaining independent working changes and checkout state.
+Worktree workspaces use [git worktrees](https://git-scm.com/docs/git-worktree) on your local machine. Worktrees share the `.git` directory with your main repository while maintaining independent working changes and checkout state.
 
 ## How Worktrees Work
 
@@ -10,7 +10,7 @@ It's important to note that a **worktree is not locked to a branch**. The agent 
 
 ## Filesystem Layout
 
-Local workspaces are stored in `~/.mux/src/<project-name>/<workspace-name>`.
+Worktree workspaces are stored in `~/.mux/src/<project-name>/<workspace-name>`.
 
 Example layout:
 

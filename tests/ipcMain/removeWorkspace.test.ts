@@ -124,7 +124,7 @@ describeIntegration("Workspace deletion integration tests", () => {
   }, 30000);
 
   // Test matrix: Run tests for both local and SSH runtimes
-  describe.each<{ type: "local" | "ssh" }>([{ type: "local" }, { type: "ssh" }])(
+  describe.each<{ type: "worktree" | "ssh" }>([{ type: "worktree" }, { type: "ssh" }])(
     "Runtime: $type",
     ({ type }) => {
       const TEST_TIMEOUT = type === "ssh" ? TEST_TIMEOUT_SSH_MS : TEST_TIMEOUT_LOCAL_MS;
@@ -354,7 +354,7 @@ describeIntegration("Workspace deletion integration tests", () => {
       );
 
       // Submodule tests only apply to local runtime (SSH doesn't use git worktrees)
-      if (type === "local") {
+      if (type === "worktree") {
         test.concurrent(
           "should successfully delete clean workspace with submodule",
           async () => {

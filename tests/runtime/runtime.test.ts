@@ -48,13 +48,13 @@ describeIntegration("Runtime integration tests", () => {
     }
   }, 30000);
 
-  // Test matrix: Run all tests for both local and SSH runtimes
-  describe.each<{ type: RuntimeType }>([{ type: "local" }, { type: "ssh" }])(
+  // Test matrix: Run all tests for both worktree and SSH runtimes
+  describe.each<{ type: RuntimeType }>([{ type: "worktree" }, { type: "ssh" }])(
     "Runtime: $type",
     ({ type }) => {
       // Helper to create runtime for this test type
       // Use a base working directory - TestWorkspace will create subdirectories as needed
-      // For local runtime, use os.tmpdir() which matches where TestWorkspace creates directories
+      // For worktree runtime, use os.tmpdir() which matches where TestWorkspace creates directories
       const getBaseWorkdir = () => (type === "ssh" ? sshConfig!.workdir : os.tmpdir());
       const createRuntime = (): Runtime => createTestRuntime(type, getBaseWorkdir(), sshConfig);
 
@@ -797,7 +797,7 @@ describeIntegration("Runtime integration tests", () => {
           // - Local: Use git worktree (managed by git)
           // - SSH: Create plain directory (not a git worktree)
           const worktree1Path = getWorkspacePath("worktree-1");
-          if (type === "local") {
+          if (type === "worktree") {
             await execBuffered(runtime, `git worktree add -b feature-branch "${worktree1Path}"`, {
               cwd: workspace.path,
               timeout: 30,
@@ -851,7 +851,7 @@ describeIntegration("Runtime integration tests", () => {
             expect(newPathCheck.stdout.trim()).toBe("exists");
 
             // Verify contents were preserved
-            if (type === "local") {
+            if (type === "worktree") {
               // For local, verify git worktree list shows updated path
               const worktreeList = await execBuffered(runtime, "git worktree list", {
                 cwd: workspace.path,
@@ -874,7 +874,7 @@ describeIntegration("Runtime integration tests", () => {
           }
 
           // Cleanup
-          if (type === "local") {
+          if (type === "worktree") {
             // Remove git worktree before workspace cleanup
             await execBuffered(
               runtime,
@@ -932,7 +932,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.success).toBe(false);
           if (!result.success) {
             // Error message differs between local (git worktree) and SSH (mv command)
-            if (type === "local") {
+            if (type === "worktree") {
               expect(result.error).toContain("Failed to move worktree");
             } else {
               expect(result.error).toContain("Failed to rename directory");
@@ -982,7 +982,7 @@ describeIntegration("Runtime integration tests", () => {
           // - Local: Use git worktree (managed by git)
           // - SSH: Create plain directory (not a git worktree)
           const worktree1Path = getWorkspacePath("worktree-delete-test");
-          if (type === "local") {
+          if (type === "worktree") {
             await execBuffered(
               runtime,
               `git worktree add -b delete-test-branch "${worktree1Path}"`,
@@ -1040,7 +1040,7 @@ describeIntegration("Runtime integration tests", () => {
             expect(afterCheck.stdout.trim()).toBe("missing");
 
             // For local, verify git worktree list doesn't show the deleted worktree
-            if (type === "local") {
+            if (type === "worktree") {
               const worktreeList = await execBuffered(runtime, "git worktree list", {
                 cwd: workspace.path,
                 timeout: 30,
@@ -1127,7 +1127,7 @@ describeIntegration("Runtime integration tests", () => {
           await using workspace = await TestWorkspace.create(runtime, type);
 
           // Initialize a git repository (needed for local worktree commands)
-          if (type === "local") {
+          if (type === "worktree") {
             await execBuffered(runtime, "git init", {
               cwd: workspace.path,
               timeout: 30,

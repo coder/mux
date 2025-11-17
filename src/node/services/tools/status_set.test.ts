@@ -8,7 +8,7 @@ import { STATUS_MESSAGE_MAX_LENGTH } from "@/common/constants/toolLimits";
 describe("status_set tool validation", () => {
   const mockConfig: ToolConfiguration = {
     cwd: "/test",
-    runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+    runtime: createRuntime({ type: "worktree", srcBaseDir: "/tmp" }),
     runtimeTempDir: "/tmp",
   };
 

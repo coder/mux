@@ -5,6 +5,7 @@ import * as jsonc from "jsonc-parser";
 import writeFileAtomic from "write-file-atomic";
 import type { WorkspaceMetadata, FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { Secret, SecretsConfig } from "@/common/types/secrets";
+import type { RuntimeConfig } from "@/common/types/runtime";
 import type { Workspace, ProjectConfig, ProjectsConfig } from "@/common/types/project";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { getMuxHome } from "@/common/constants/paths";
@@ -35,6 +36,25 @@ export class Config {
   private readonly providersFile: string;
   private readonly secretsFile: string;
 
+  private normalizeRuntimeConfig(runtimeConfig?: RuntimeConfig): RuntimeConfig {
+    if (!runtimeConfig) {
+      return DEFAULT_RUNTIME_CONFIG;
+    }
+
+    if (runtimeConfig.type === "local") {
+      const maybeSrcBaseDir = (runtimeConfig as { srcBaseDir?: unknown }).srcBaseDir;
+      if (typeof maybeSrcBaseDir === "string") {
+        return {
+          type: "worktree",
+          srcBaseDir: maybeSrcBaseDir,
+        };
+      }
+      return runtimeConfig;
+    }
+
+    return runtimeConfig;
+  }
+
   constructor(rootDir?: string) {
     this.rootDir = rootDir ?? getMuxHome();
     this.sessionsDir = path.join(this.rootDir, "sessions");
@@ -55,6 +75,12 @@ export class Config {
           const projectsMap = new Map<string, ProjectConfig>(
             parsed.projects as Array<[string, ProjectConfig]>
           );
+
+          for (const projectConfig of projectsMap.values()) {
+            for (const workspace of projectConfig.workspaces) {
+              workspace.runtimeConfig = this.normalizeRuntimeConfig(workspace.runtimeConfig);
+            }
+          }
           return {
             projects: projectsMap,
           };
@@ -257,7 +283,7 @@ export class Config {
               // GUARANTEE: All workspaces must have createdAt (assign now if missing)
               createdAt: workspace.createdAt ?? new Date().toISOString(),
               // GUARANTEE: All workspaces must have runtimeConfig (apply default if missing)
-              runtimeConfig: workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
+              runtimeConfig: this.normalizeRuntimeConfig(workspace.runtimeConfig),
             };
 
             // Migrate missing createdAt to config for next load
@@ -295,7 +321,7 @@ export class Config {
             metadata.createdAt ??= new Date().toISOString();
 
             // GUARANTEE: All workspaces must have runtimeConfig
-            metadata.runtimeConfig ??= DEFAULT_RUNTIME_CONFIG;
+            metadata.runtimeConfig = this.normalizeRuntimeConfig(metadata.runtimeConfig);
 
             // Migrate to config for next load
             workspace.id = metadata.id;
@@ -319,7 +345,7 @@ export class Config {
               // GUARANTEE: All workspaces must have createdAt
               createdAt: new Date().toISOString(),
               // GUARANTEE: All workspaces must have runtimeConfig
-              runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+              runtimeConfig: this.normalizeRuntimeConfig(undefined),
             };
 
             // Save to config for next load
@@ -343,7 +369,7 @@ export class Config {
             // GUARANTEE: All workspaces must have createdAt (even in error cases)
             createdAt: new Date().toISOString(),
             // GUARANTEE: All workspaces must have runtimeConfig (even in error cases)
-            runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+            runtimeConfig: this.normalizeRuntimeConfig(undefined),
           };
           workspaceMetadata.push(this.addPathsToMetadata(metadata, workspace.path, projectPath));
         }
@@ -377,15 +403,27 @@ export class Config {
       // Check if workspace already exists (by ID)
       const existingIndex = project.workspaces.findIndex((w) => w.id === metadata.id);
 
-      // Compute workspace path - this is only for legacy config migration
-      // New code should use Runtime.getWorkspacePath() directly
+      const normalizedRuntimeConfig = this.normalizeRuntimeConfig(metadata.runtimeConfig);
       const projectName = this.getProjectName(projectPath);
-      const workspacePath = path.join(this.srcDir, projectName, metadata.name);
+      let workspacePath: string;
+      if (normalizedRuntimeConfig.type === "local") {
+        workspacePath = metadata.projectPath;
+      } else if (normalizedRuntimeConfig.type === "worktree") {
+        workspacePath = path.join(normalizedRuntimeConfig.srcBaseDir, projectName, metadata.name);
+      } else {
+        workspacePath = path.posix.join(
+          normalizedRuntimeConfig.srcBaseDir,
+          projectName,
+          metadata.name
+        );
+      }
+
       const workspaceEntry: Workspace = {
         path: workspacePath,
         id: metadata.id,
         name: metadata.name,
         createdAt: metadata.createdAt,
+        runtimeConfig: normalizedRuntimeConfig,
       };
 
       if (existingIndex >= 0) {

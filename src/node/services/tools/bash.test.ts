@@ -198,7 +198,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd()),
+      runtime: new LocalRuntime({ type: "worktree", srcBaseDir: process.cwd() }),
       runtimeTempDir: tempDir.path,
       overflow_policy: "truncate",
     });
@@ -231,7 +231,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd()),
+      runtime: new LocalRuntime({ type: "worktree", srcBaseDir: process.cwd() }),
       runtimeTempDir: tempDir.path,
       overflow_policy: "truncate",
     });
@@ -268,7 +268,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd()),
+      runtime: new LocalRuntime({ type: "worktree", srcBaseDir: process.cwd() }),
       runtimeTempDir: tempDir.path,
       // overflow_policy not specified - should default to tmpfile
     });
@@ -302,7 +302,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd()),
+      runtime: new LocalRuntime({ type: "worktree", srcBaseDir: process.cwd() }),
       runtimeTempDir: tempDir.path,
     });
 
@@ -355,7 +355,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd()),
+      runtime: new LocalRuntime({ type: "worktree", srcBaseDir: process.cwd() }),
       runtimeTempDir: tempDir.path,
     });
 
@@ -399,7 +399,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd()),
+      runtime: new LocalRuntime({ type: "worktree", srcBaseDir: process.cwd() }),
       runtimeTempDir: tempDir.path,
     });
 
@@ -442,7 +442,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd()),
+      runtime: new LocalRuntime({ type: "worktree", srcBaseDir: process.cwd() }),
       runtimeTempDir: tempDir.path,
     });
 
@@ -483,7 +483,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd()),
+      runtime: new LocalRuntime({ type: "worktree", srcBaseDir: process.cwd() }),
       runtimeTempDir: tempDir.path,
     });
 
@@ -514,7 +514,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd()),
+      runtime: new LocalRuntime({ type: "worktree", srcBaseDir: process.cwd() }),
       runtimeTempDir: tempDir.path,
     });
 

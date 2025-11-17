@@ -41,7 +41,7 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
   let streamManager: StreamManager;
   let mockHistoryService: HistoryService;
   let mockPartialService: PartialService;
-  const runtime = createRuntime({ type: "local", srcBaseDir: "/tmp" });
+  const runtime = createRuntime({ type: "worktree", srcBaseDir: "/tmp" });
 
   beforeEach(() => {
     mockHistoryService = createMockHistoryService();

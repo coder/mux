@@ -9,6 +9,7 @@ import type { HistoryService } from "@/node/services/historyService";
 import type { PartialService } from "@/node/services/partialService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
+import type { RuntimeConfig } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type {
   WorkspaceChatMessage,
@@ -189,9 +190,7 @@ export class AgentSession {
       const expectedPath = isInPlace
         ? metadata.projectPath
         : (() => {
-            const runtime = createRuntime(
-              metadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir }
-            );
+            const runtime = createRuntime(metadata.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG);
             return runtime.getWorkspacePath(metadata.projectPath, metadata.name);
           })();
       assert(
@@ -230,12 +229,16 @@ export class AgentSession {
           : PlatformPaths.basename(normalizedWorkspacePath) || "unknown";
     }
 
+    const runtimeConfig: RuntimeConfig = isUnderSrcBaseDir
+      ? DEFAULT_RUNTIME_CONFIG
+      : { type: "local" };
+
     const metadata: WorkspaceMetadata = {
       id: this.workspaceId,
       name: workspaceName,
       projectName: derivedProjectName,
       projectPath: derivedProjectPath,
-      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+      runtimeConfig,
     };
 
     // Write metadata directly to config.json (single source of truth)
