@@ -18,7 +18,7 @@ ELECTRON_PATH="$PROJECT_ROOT/node_modules/electron"
 
 if [ -d "$ELECTRON_PATH" ]; then
   echo "🔧 Electron detected - rebuilding node-pty for Electron..."
-  
+
   # Try npx first, fallback to bunx
   if command -v npx >/dev/null 2>&1; then
     npx @electron/rebuild -f -m node_modules/node-pty || {
@@ -40,7 +40,7 @@ if [ -d "$ELECTRON_PATH" ]; then
     echo "   Run 'make rebuild-native' manually to fix."
     exit 0
   fi
-  
+
   echo "✅ Native modules rebuilt successfully"
 else
   echo "🌐 Server mode detected - using prebuilt binaries"
