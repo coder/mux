@@ -539,7 +539,7 @@ export const ActiveWorkspaceWithChat: Story = {
           apiOverrides: {
             providers: {
               setProviderConfig: () => Promise.resolve({ success: true, data: undefined }),
-              list: () => Promise.resolve(["anthropic", "openai"]),
+              list: () => Promise.resolve(["anthropic", "openai", "xai"]),
             },
             workspace: {
               create: (projectPath: string, branchName: string) =>

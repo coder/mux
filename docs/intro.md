@@ -9,7 +9,7 @@
 mux helps you work with multiple coding assistants more effectively via:
 
 - Isolated workspaces with central view on git status updates
-- Multi-model (`sonnet-4-*`, `gpt-5-*`, `opus-4-*`) support
+- Multi-model (`sonnet-4-*`, `grok-*`, `gpt-5-*`, `opus-4-*`) support
 - Supporting UI and keybinds for efficiently managing a suite of agents
 - Rich markdown outputs (mermaid diagrams, LaTeX, etc.)
 

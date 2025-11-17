@@ -54,6 +54,18 @@ const buildProvidersFromEnv = (env: NodeJS.ProcessEnv): ProvidersConfig => {
     providers.openrouter = { apiKey: openRouterKey };
   }
 
+  const xaiKey = trim(env.XAI_API_KEY);
+  if (xaiKey.length > 0) {
+    const entry: ProviderConfig = { apiKey: xaiKey };
+
+    const baseUrl = trim(env.XAI_BASE_URL);
+    if (baseUrl.length > 0) {
+      entry.baseUrl = baseUrl;
+    }
+
+    providers.xai = entry;
+  }
+
   if (!providers.openai) {
     const azureKey = trim(env.AZURE_OPENAI_API_KEY);
     const azureEndpoint = trim(env.AZURE_OPENAI_ENDPOINT);

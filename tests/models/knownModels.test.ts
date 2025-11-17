@@ -15,9 +15,16 @@ describe("Known Models Integration", () => {
 
     for (const [key, model] of Object.entries(KNOWN_MODELS)) {
       const modelId = model.providerModelId;
+      const candidateModelIds = [modelId];
+
+      if (model.provider === "xai") {
+        candidateModelIds.push(`xai/${modelId}`);
+      }
+
+      const hasMatch = candidateModelIds.some((candidateId) => candidateId in modelsJson);
 
       // Check if model exists in models.json
-      if (!(modelId in modelsJson)) {
+      if (!hasMatch) {
         missingModels.push(`${key}: ${model.provider}:${modelId}`);
       }
     }
@@ -32,13 +39,21 @@ describe("Known Models Integration", () => {
   });
 
   test("all known models have required metadata", () => {
-    for (const [key, model] of Object.entries(KNOWN_MODELS)) {
+    for (const model of Object.values(KNOWN_MODELS)) {
       const modelId = model.providerModelId;
-      const modelData = modelsJson[modelId as keyof typeof modelsJson] as Record<string, unknown>;
+      const candidateModelIds = [modelId];
 
-      expect(modelData).toBeDefined();
+      if (model.provider === "xai") {
+        candidateModelIds.push(`xai/${modelId}`);
+      }
+
+      const modelDataEntry = candidateModelIds
+        .map((candidateId) => modelsJson[candidateId as keyof typeof modelsJson])
+        .find((entry) => entry !== undefined) as Record<string, unknown> | undefined;
+
+      expect(modelDataEntry).toBeDefined();
       // Check that basic metadata fields exist (not all models have all fields)
-      expect(typeof modelData.litellm_provider).toBe("string");
+      expect(typeof modelDataEntry?.litellm_provider).toBe("string");
     }
   });
 });

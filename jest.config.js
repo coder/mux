@@ -5,8 +5,9 @@ module.exports = {
   collectCoverageFrom: [
     "src/**/*.ts",
     "!src/**/*.d.ts",
+    "!src/browser/**/*.ts",
+    "!src/cli/**/*.ts",
     "!src/desktop/preload.ts",
-    "!src/cli/index.ts",
     "!src/desktop/main.ts",
   ],
   setupFilesAfterEnv: ["<rootDir>/tests/setup.ts"],

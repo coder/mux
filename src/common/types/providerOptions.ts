@@ -1,3 +1,5 @@
+import type { XaiProviderOptions } from "@ai-sdk/xai";
+
 /**
  * Mux provider-specific options that get passed through the stack.
  * Used by both frontend and backend to configure provider-specific features
@@ -54,6 +56,14 @@ export interface OpenRouterProviderOptions {}
 /**
  * Mux provider options - used by both frontend and backend
  */
+/**
+ * xAI-specific options
+ */
+export interface XaiProviderOverrides {
+  /** Override Grok search parameters (defaults to auto search with citations) */
+  searchParameters?: XaiProviderOptions["searchParameters"];
+}
+
 export interface MuxProviderOptions {
   /** Provider-specific options */
   anthropic?: AnthropicProviderOptions;
@@ -61,4 +71,5 @@ export interface MuxProviderOptions {
   google?: GoogleProviderOptions;
   ollama?: OllamaProviderOptions;
   openrouter?: OpenRouterProviderOptions;
+  xai?: XaiProviderOverrides;
 }

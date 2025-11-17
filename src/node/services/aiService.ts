@@ -1,6 +1,7 @@
 import * as fs from "fs/promises";
 import * as os from "os";
 import { EventEmitter } from "events";
+import type { XaiProviderOptions } from "@ai-sdk/xai";
 import { convertToModelMessages, type LanguageModel } from "ai";
 import { applyToolOutputRedaction } from "@/browser/utils/messages/applyToolOutputRedaction";
 import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
@@ -297,7 +298,7 @@ export class AIService extends EventEmitter {
 
         // Add 1M context beta header if requested
         const use1MContext = muxProviderOptions?.anthropic?.use1MContext;
-        const existingHeaders = providerConfig.headers as Record<string, string> | undefined;
+        const existingHeaders = providerConfig.headers;
         const headers =
           use1MContext && existingHeaders
             ? { ...existingHeaders, "anthropic-beta": "context-1m-2025-08-07" }
@@ -425,6 +426,43 @@ export class AIService extends EventEmitter {
         return Ok(provider(modelId));
       }
 
+      // Handle xAI provider
+      if (providerName === "xai") {
+        if (!providerConfig.apiKey) {
+          return Err({
+            type: "api_key_not_found",
+            provider: providerName,
+          });
+        }
+
+        const baseFetch = getProviderFetch(providerConfig);
+        const { apiKey, baseURL, headers, ...extraOptions } = providerConfig;
+
+        const { searchParameters, ...restOptions } = extraOptions as {
+          searchParameters?: Record<string, unknown>;
+        } & Record<string, unknown>;
+
+        if (searchParameters && muxProviderOptions) {
+          const existingXaiOverrides = muxProviderOptions.xai ?? {};
+          muxProviderOptions.xai = {
+            ...existingXaiOverrides,
+            searchParameters:
+              existingXaiOverrides.searchParameters ??
+              (searchParameters as XaiProviderOptions["searchParameters"]),
+          };
+        }
+
+        const { createXai } = await PROVIDER_REGISTRY.xai();
+        const provider = createXai({
+          apiKey,
+          baseURL,
+          headers,
+          ...restOptions,
+          fetch: baseFetch,
+        });
+        return Ok(provider(modelId));
+      }
+
       // Handle Ollama provider
       if (providerName === "ollama") {
         // Ollama doesn't require API key - it's a local service
@@ -492,7 +530,7 @@ export class AIService extends EventEmitter {
         const provider = createOpenRouter({
           apiKey,
           baseURL: baseUrl,
-          headers: headers as Record<string, string> | undefined,
+          headers,
           fetch: baseFetch,
           extraBody,
         });
@@ -550,8 +588,10 @@ export class AIService extends EventEmitter {
       // This is idempotent - won't double-commit if already in chat.jsonl
       await this.partialService.commitToHistory(workspaceId);
 
+      const effectiveMuxProviderOptions: MuxProviderOptions = muxProviderOptions ?? {};
+
       // Create model instance with early API key validation
-      const modelResult = await this.createModel(modelString, muxProviderOptions);
+      const modelResult = await this.createModel(modelString, effectiveMuxProviderOptions);
       if (!modelResult.success) {
         return Err(modelResult.error);
       }
@@ -731,10 +771,10 @@ export class AIService extends EventEmitter {
 
       const forceContextLimitError =
         modelString.startsWith("openai:") &&
-        muxProviderOptions?.openai?.forceContextLimitError === true;
+        effectiveMuxProviderOptions.openai?.forceContextLimitError === true;
       const simulateToolPolicyNoop =
         modelString.startsWith("openai:") &&
-        muxProviderOptions?.openai?.simulateToolPolicyNoop === true;
+        effectiveMuxProviderOptions.openai?.simulateToolPolicyNoop === true;
 
       if (forceContextLimitError) {
         const errorMessage =
@@ -855,7 +895,8 @@ export class AIService extends EventEmitter {
         modelString,
         thinkingLevel ?? "off",
         filteredMessages,
-        (id) => this.streamManager.isResponseIdLost(id)
+        (id) => this.streamManager.isResponseIdLost(id),
+        effectiveMuxProviderOptions
       );
 
       // Delegate to StreamManager with model instance, system message, tools, historySequence, and initial metadata

@@ -36,7 +36,7 @@ Here are some specific use cases we enable:
 - **Isolated workspaces** with central view on git divergence
   - **Local**: git worktrees on your local machine ([docs](https://cmux.io/local.html))
   - **SSH**: regular git clones on a remote server ([docs](https://cmux.io/ssh.html))
-- **Multi-model** (`sonnet-4-*`, `gpt-5-*`, `opus-4-*`)
+- **Multi-model** (`sonnet-4-*`, `grok-*`, `gpt-5-*`, `opus-4-*`)
   - Ollama supported for local LLMs ([docs](https://cmux.io/models.html#ollama-local))
   - OpenRouter supported for long-tail of LLMs ([docs](https://cmux.io/models.html#openrouter-cloud))
 - **VS Code Extension**: Jump into mux workspaces directly from VS Code ([docs](https://cmux.io/vscode-extension.html))

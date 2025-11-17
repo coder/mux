@@ -433,8 +433,24 @@ export function assertStreamSuccess(collector: EventCollector): void {
       );
     }
     collector.logEventDiagnostics("Stream did not emit stream-end event");
+    const eventSummary = allEvents
+      .map((event, idx) => {
+        const type = "type" in event ? (event as { type?: string }).type ?? "unknown" : "unknown";
+        if (type === "stream-delta") {
+          return `[${idx}] stream-delta`;
+        }
+        if (type === "tool-call-start" && "toolName" in event) {
+          return `[${idx}] tool-call-start:${(event as { toolName?: string }).toolName ?? "unknown"}`;
+        }
+        if (type === "tool-call-end" && "toolName" in event) {
+          return `[${idx}] tool-call-end:${(event as { toolName?: string }).toolName ?? "unknown"}`;
+        }
+        return `[${idx}] ${type}`;
+      })
+      .slice(-20)
+      .join(", ");
     throw new Error(
-      `Stream did not emit stream-end event.\n` + `See detailed event diagnostics above.`
+      `Stream did not emit stream-end event.\nRecent events: ${eventSummary}`
     );
   }
 

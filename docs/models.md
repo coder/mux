@@ -49,6 +49,30 @@ Access Gemini models directly via Google's generative AI API:
 
 TODO: add issue link here.
 
+#### xAI (Grok)
+
+Frontier reasoning models from xAI with built-in search orchestration:
+
+- `xai:grok-4`
+- `xai:grok-3-mini`
+
+**Setup:**
+
+1. Create an API key at [console.x.ai](https://console.x.ai/)
+2. Add to `~/.mux/providers.jsonc`:
+
+```jsonc
+{
+  "xai": {
+    "apiKey": "sk-xai-...",
+  },
+}
+```
+
+**Search orchestration:**
+
+Mux enables Grok's live search by default using `mode: "auto"` with citations. Add [`searchParameters`](https://docs.x.ai/docs/resources/search) to `providers.jsonc` if you want to customize the defaults (e.g., regional focus, time filters, or disabling search entirely per workspace).
+
 #### OpenRouter (Cloud)
 
 Access 300+ models from multiple providers through a single API:
@@ -166,6 +190,10 @@ All providers are configured in `~/.mux/providers.jsonc`. Example configurations
   // Required for Google models
   "google": {
     "apiKey": "AIza...",
+  },
+  // Required for Grok models
+  "xai": {
+    "apiKey": "sk-xai-...",
   },
   // Required for OpenRouter models
   "openrouter": {

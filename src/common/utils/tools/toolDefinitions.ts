@@ -21,6 +21,11 @@ const FILE_EDIT_FILE_PATH = z
   .string()
   .describe("Path to the file to edit (absolute or relative to the current workspace)");
 
+interface ToolDefinition {
+  description: string;
+  schema: z.ZodTypeAny;
+}
+
 interface ToolSchema {
   name: string;
   description: string;
@@ -228,7 +233,7 @@ export const TOOL_DEFINITIONS = {
       })
       .strict(),
   },
-} as const;
+} satisfies Record<string, ToolDefinition>;
 
 /**
  * Get tool definition schemas for token counting
@@ -243,7 +248,8 @@ export function getToolSchemas(): Record<string, ToolSchema> {
       {
         name,
         description: def.description,
-        inputSchema: zodToJsonSchema(def.schema) as ToolSchema["inputSchema"],
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+        inputSchema: zodToJsonSchema(def.schema as any) as ToolSchema["inputSchema"],
       },
     ])
   );
