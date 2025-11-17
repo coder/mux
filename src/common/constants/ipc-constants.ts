@@ -34,6 +34,8 @@ export const IPC_CHANNELS = {
   WORKSPACE_GET_INFO: "workspace:getInfo",
   WORKSPACE_EXECUTE_BASH: "workspace:executeBash",
   WORKSPACE_OPEN_TERMINAL: "workspace:openTerminal",
+  WORKSPACE_CHAT_GET_HISTORY: "workspace:chat:getHistory",
+  WORKSPACE_CHAT_GET_FULL_REPLAY: "workspace:chat:getFullReplay",
 
   // Terminal channels
   TERMINAL_CREATE: "terminal:create",
@@ -65,6 +67,11 @@ export const IPC_CHANNELS = {
   WORKSPACE_CHAT_PREFIX: "workspace:chat:",
   WORKSPACE_METADATA: "workspace:metadata",
   WORKSPACE_METADATA_SUBSCRIBE: "workspace:metadata:subscribe",
+  WORKSPACE_METADATA_UNSUBSCRIBE: "workspace:metadata:unsubscribe",
+  WORKSPACE_ACTIVITY: "workspace:activity",
+  WORKSPACE_ACTIVITY_SUBSCRIBE: "workspace:activity:subscribe",
+  WORKSPACE_ACTIVITY_UNSUBSCRIBE: "workspace:activity:unsubscribe",
+  WORKSPACE_ACTIVITY_LIST: "workspace:activity:list",
 } as const;
 
 // Helper functions for dynamic channels

@@ -1,7 +1,6 @@
 import { useThinkingLevel } from "./useThinkingLevel";
 import { useMode } from "@/browser/contexts/ModeContext";
 import { usePersistedState } from "./usePersistedState";
-import { useModelLRU } from "./useModelLRU";
 import { modeToToolPolicy, PLAN_MODE_INSTRUCTION } from "@/common/utils/ui/modeUtils";
 import { getModelKey } from "@/common/constants/storage";
 import type { SendMessageOptions } from "@/common/types/ipc";
@@ -11,6 +10,7 @@ import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 import { useProviderOptions } from "./useProviderOptions";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 /**
  * Construct SendMessageOptions from raw values
@@ -56,10 +56,9 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptions {
   const [thinkingLevel] = useThinkingLevel();
   const [mode] = useMode();
   const { options: providerOptions } = useProviderOptions();
-  const { recentModels } = useModelLRU();
   const [preferredModel] = usePersistedState<string>(
     getModelKey(workspaceId),
-    recentModels[0], // Most recently used model (LRU is never empty)
+    WORKSPACE_DEFAULTS.model, // Hard-coded default (LRU is UI convenience)
     { listener: true } // Listen for changes from ModelSelector and other sources
   );
 
@@ -68,7 +67,7 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptions {
     thinkingLevel,
     preferredModel,
     providerOptions,
-    recentModels[0]
+    WORKSPACE_DEFAULTS.model
   );
 }
 

@@ -3,6 +3,7 @@
  */
 import { IPC_CHANNELS, getChatChannel } from "@/common/constants/ipc-constants";
 import type { IPCApi } from "@/common/types/ipc";
+import type { WorkspaceActivitySnapshot } from "@/common/types/workspace";
 
 // Backend URL - defaults to same origin, but can be overridden via VITE_BACKEND_URL
 // This allows frontend (Vite :8080) to connect to backend (:3000) in dev mode
@@ -39,6 +40,25 @@ async function invokeIPC<T>(channel: string, ...args: unknown[]): Promise<T> {
 
   // Success - unwrap and return the data
   return result.data as T;
+}
+
+function parseWorkspaceActivity(value: unknown): WorkspaceActivitySnapshot | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const recency =
+    typeof record.recency === "number" && Number.isFinite(record.recency) ? record.recency : null;
+  if (recency === null) {
+    return null;
+  }
+  const streaming = record.streaming === true;
+  const lastModel = typeof record.lastModel === "string" ? record.lastModel : null;
+  return {
+    recency,
+    streaming,
+    lastModel,
+  };
 }
 
 // WebSocket connection manager
@@ -119,6 +139,13 @@ class WebSocketManager {
             channel: "workspace:metadata",
           })
         );
+      } else if (channel === IPC_CHANNELS.WORKSPACE_ACTIVITY) {
+        this.ws.send(
+          JSON.stringify({
+            type: "subscribe",
+            channel: "workspace:activity",
+          })
+        );
       }
     }
   }
@@ -138,6 +165,13 @@ class WebSocketManager {
           JSON.stringify({
             type: "unsubscribe",
             channel: "workspace:metadata",
+          })
+        );
+      } else if (channel === IPC_CHANNELS.WORKSPACE_ACTIVITY) {
+        this.ws.send(
+          JSON.stringify({
+            type: "unsubscribe",
+            channel: "workspace:activity",
           })
         );
       }
@@ -238,6 +272,45 @@ const webApi: IPCApi = {
     executeBash: (workspaceId, script, options) =>
       invokeIPC(IPC_CHANNELS.WORKSPACE_EXECUTE_BASH, workspaceId, script, options),
     openTerminal: (workspaceId) => invokeIPC(IPC_CHANNELS.WORKSPACE_OPEN_TERMINAL, workspaceId),
+    activity: {
+      list: async (): Promise<Record<string, WorkspaceActivitySnapshot>> => {
+        const response = await invokeIPC<Record<string, unknown>>(
+          IPC_CHANNELS.WORKSPACE_ACTIVITY_LIST
+        );
+        const result: Record<string, WorkspaceActivitySnapshot> = {};
+        if (response && typeof response === "object") {
+          for (const [workspaceId, value] of Object.entries(response)) {
+            if (typeof workspaceId !== "string") {
+              continue;
+            }
+            const parsed = parseWorkspaceActivity(value);
+            if (parsed) {
+              result[workspaceId] = parsed;
+            }
+          }
+        }
+        return result;
+      },
+      subscribe: (callback) =>
+        wsManager.on(IPC_CHANNELS.WORKSPACE_ACTIVITY, (data) => {
+          if (!data || typeof data !== "object") {
+            return;
+          }
+          const record = data as { workspaceId?: string; activity?: unknown };
+          if (typeof record.workspaceId !== "string") {
+            return;
+          }
+          if (record.activity === null) {
+            callback({ workspaceId: record.workspaceId, activity: null });
+            return;
+          }
+          const activity = parseWorkspaceActivity(record.activity);
+          if (!activity) {
+            return;
+          }
+          callback({ workspaceId: record.workspaceId, activity });
+        }),
+    },
 
     onChat: (workspaceId, callback) => {
       const channel = getChatChannel(workspaceId);

@@ -45,7 +45,7 @@ include fmt.mk
 
 .PHONY: all build dev start clean help
 .PHONY: build-renderer version build-icons build-static
-.PHONY: lint lint-fix typecheck static-check
+.PHONY: lint lint-fix typecheck typecheck-react-native static-check
 .PHONY: test test-unit test-integration test-watch test-coverage test-e2e smoke-test
 .PHONY: dist dist-mac dist-win dist-linux
 .PHONY: vscode-ext vscode-ext-install
@@ -91,6 +91,12 @@ node_modules/.installed: package.json bun.lock
 	@echo "Dependencies out of date or missing, running bun install..."
 	@bun install
 	@touch node_modules/.installed
+
+# Mobile dependencies - separate from main project
+mobile/node_modules/.installed: mobile/package.json mobile/bun.lock
+	@echo "Installing mobile dependencies..."
+	@cd mobile && bun install
+	@touch mobile/node_modules/.installed
 
 # Legacy target for backwards compatibility
 ensure-deps: node_modules/.installed
@@ -227,6 +233,10 @@ typecheck: node_modules/.installed src/version.ts
 		"$(TSGO) --noEmit" \
 		"$(TSGO) --noEmit -p tsconfig.main.json"
 endif
+
+typecheck-react-native: mobile/node_modules/.installed ## Run TypeScript type checking for React Native app
+	@echo "Type checking React Native app..."
+	@cd mobile && bunx tsc --noEmit
 
 check-deadcode: node_modules/.installed ## Check for potential dead code (manual only, not in static-check)
 	@echo "Checking for potential dead code with ts-prune..."

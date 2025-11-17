@@ -7,6 +7,7 @@ import {
   type ExtensionMetadataFile,
   getExtensionMetadataPath,
 } from "@/node/utils/extensionMetadata";
+import type { WorkspaceActivitySnapshot } from "@/common/types/workspace";
 
 /**
  * Stateless service for managing workspace metadata used by VS Code extension integration.
@@ -24,13 +25,20 @@ import {
  * - Read-heavy workload: extension reads, main app writes on user interactions
  */
 
-export interface WorkspaceMetadata extends ExtensionMetadata {
+export interface ExtensionWorkspaceMetadata extends ExtensionMetadata {
   workspaceId: string;
   updatedAt: number;
 }
 
 export class ExtensionMetadataService {
   private readonly filePath: string;
+  private toSnapshot(entry: ExtensionMetadata): WorkspaceActivitySnapshot {
+    return {
+      recency: entry.recency,
+      streaming: entry.streaming,
+      lastModel: entry.lastModel ?? null,
+    };
+  }
 
   constructor(filePath?: string) {
     this.filePath = filePath ?? getExtensionMetadataPath();
@@ -90,7 +98,10 @@ export class ExtensionMetadataService {
    * Update the recency timestamp for a workspace.
    * Call this on user messages or other interactions.
    */
-  async updateRecency(workspaceId: string, timestamp: number = Date.now()): Promise<void> {
+  async updateRecency(
+    workspaceId: string,
+    timestamp: number = Date.now()
+  ): Promise<WorkspaceActivitySnapshot> {
     const data = await this.load();
 
     if (!data.workspaces[workspaceId]) {
@@ -104,13 +115,22 @@ export class ExtensionMetadataService {
     }
 
     await this.save(data);
+    const workspace = data.workspaces[workspaceId];
+    if (!workspace) {
+      throw new Error(`Workspace ${workspaceId} metadata missing after update.`);
+    }
+    return this.toSnapshot(workspace);
   }
 
   /**
    * Set the streaming status for a workspace.
    * Call this when streams start/end.
    */
-  async setStreaming(workspaceId: string, streaming: boolean, model?: string): Promise<void> {
+  async setStreaming(
+    workspaceId: string,
+    streaming: boolean,
+    model?: string
+  ): Promise<WorkspaceActivitySnapshot> {
     const data = await this.load();
     const now = Date.now();
 
@@ -128,12 +148,17 @@ export class ExtensionMetadataService {
     }
 
     await this.save(data);
+    const workspace = data.workspaces[workspaceId];
+    if (!workspace) {
+      throw new Error(`Workspace ${workspaceId} metadata missing after streaming update.`);
+    }
+    return this.toSnapshot(workspace);
   }
 
   /**
    * Get metadata for a single workspace.
    */
-  async getMetadata(workspaceId: string): Promise<WorkspaceMetadata | null> {
+  async getMetadata(workspaceId: string): Promise<ExtensionWorkspaceMetadata | null> {
     const data = await this.load();
     const entry = data.workspaces[workspaceId];
     if (!entry) return null;
@@ -149,9 +174,9 @@ export class ExtensionMetadataService {
    * Get all workspace metadata, ordered by recency.
    * Used by VS Code extension to sort workspace list.
    */
-  async getAllMetadata(): Promise<Map<string, WorkspaceMetadata>> {
+  async getAllMetadata(): Promise<Map<string, ExtensionWorkspaceMetadata>> {
     const data = await this.load();
-    const map = new Map<string, WorkspaceMetadata>();
+    const map = new Map<string, ExtensionWorkspaceMetadata>();
 
     // Convert to array, sort by recency, then create map
     const entries = Object.entries(data.workspaces);
@@ -199,5 +224,14 @@ export class ExtensionMetadataService {
     if (modified) {
       await this.save(data);
     }
+  }
+
+  async getAllSnapshots(): Promise<Map<string, WorkspaceActivitySnapshot>> {
+    const data = await this.load();
+    const map = new Map<string, WorkspaceActivitySnapshot>();
+    for (const [workspaceId, entry] of Object.entries(data.workspaces)) {
+      map.set(workspaceId, this.toSnapshot(entry));
+    }
+    return map;
   }
 }

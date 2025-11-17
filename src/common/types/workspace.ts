@@ -76,6 +76,15 @@ export interface FrontendWorkspaceMetadata extends WorkspaceMetadata {
   namedWorkspacePath: string;
 }
 
+export interface WorkspaceActivitySnapshot {
+  /** Unix ms timestamp of last user interaction */
+  recency: number;
+  /** Whether workspace currently has an active stream */
+  streaming: boolean;
+  /** Last model sent from this workspace */
+  lastModel: string | null;
+}
+
 /**
  * @deprecated Use FrontendWorkspaceMetadata instead
  */

@@ -5,8 +5,8 @@ import type { SendMessageOptions } from "@/common/types/ipc";
 import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
-import { getDefaultModelFromLRU } from "@/browser/hooks/useModelLRU";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 /**
  * Read provider options from localStorage
@@ -36,17 +36,17 @@ function getProviderOptions(): MuxProviderOptions {
  * This ensures DRY - single source of truth for option extraction.
  */
 export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptions {
-  // Read model preference (workspace-specific), fallback to most recent from LRU
-  const model = readPersistedState<string>(getModelKey(workspaceId), getDefaultModelFromLRU());
+  // Read model preference (workspace-specific), fallback to immutable defaults
+  const model = readPersistedState<string>(getModelKey(workspaceId), WORKSPACE_DEFAULTS.model);
 
   // Read thinking level (workspace-specific)
   const thinkingLevel = readPersistedState<ThinkingLevel>(
     getThinkingLevelKey(workspaceId),
-    "medium"
+    WORKSPACE_DEFAULTS.thinkingLevel
   );
 
   // Read mode (workspace-specific)
-  const mode = readPersistedState<UIMode>(getModeKey(workspaceId), "exec");
+  const mode = readPersistedState<UIMode>(getModeKey(workspaceId), WORKSPACE_DEFAULTS.mode);
 
   // Get provider options
   const providerOptions = getProviderOptions();

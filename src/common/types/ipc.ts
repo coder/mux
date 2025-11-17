@@ -1,5 +1,9 @@
 import type { Result } from "./result";
-import type { FrontendWorkspaceMetadata, WorkspaceMetadata } from "./workspace";
+import type {
+  FrontendWorkspaceMetadata,
+  WorkspaceMetadata,
+  WorkspaceActivitySnapshot,
+} from "./workspace";
 import type { MuxMessage, MuxFrontendMetadata } from "./message";
 import type { ChatStats } from "./chatStats";
 import type { ProjectConfig } from "@/node/config";
@@ -333,6 +337,15 @@ export interface IPCApi {
     onMetadata(
       callback: (data: { workspaceId: string; metadata: FrontendWorkspaceMetadata }) => void
     ): () => void;
+    activity: {
+      list(): Promise<Record<string, WorkspaceActivitySnapshot>>;
+      subscribe(
+        callback: (payload: {
+          workspaceId: string;
+          activity: WorkspaceActivitySnapshot | null;
+        }) => void
+      ): () => void;
+    };
   };
   window: {
     setTitle(title: string): Promise<void>;

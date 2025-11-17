@@ -1,4 +1,7 @@
-import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type {
+  FrontendWorkspaceMetadata,
+  WorkspaceActivitySnapshot,
+} from "@/common/types/workspace";
 import type { IPCApi } from "@/common/types/ipc";
 import type { ProjectConfig } from "@/common/types/project";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
@@ -935,12 +938,19 @@ interface MockAPIOptions {
 }
 
 // Mock type helpers - only include methods used in tests
-type MockedWorkspaceAPI = Pick<
-  {
-    [K in keyof IPCApi["workspace"]]: ReturnType<typeof mock<IPCApi["workspace"][K]>>;
-  },
-  "create" | "list" | "remove" | "rename" | "getInfo" | "onMetadata" | "onChat"
->;
+interface MockedWorkspaceAPI {
+  create: ReturnType<typeof mock<IPCApi["workspace"]["create"]>>;
+  list: ReturnType<typeof mock<IPCApi["workspace"]["list"]>>;
+  remove: ReturnType<typeof mock<IPCApi["workspace"]["remove"]>>;
+  rename: ReturnType<typeof mock<IPCApi["workspace"]["rename"]>>;
+  getInfo: ReturnType<typeof mock<IPCApi["workspace"]["getInfo"]>>;
+  onMetadata: ReturnType<typeof mock<IPCApi["workspace"]["onMetadata"]>>;
+  onChat: ReturnType<typeof mock<IPCApi["workspace"]["onChat"]>>;
+  activity: {
+    list: ReturnType<typeof mock<IPCApi["workspace"]["activity"]["list"]>>;
+    subscribe: ReturnType<typeof mock<IPCApi["workspace"]["activity"]["subscribe"]>>;
+  };
+}
 
 // Just type the list method directly since Pick with conditional types causes issues
 interface MockedProjectsAPI {
@@ -967,6 +977,17 @@ function createMockAPI(options: MockAPIOptions = {}) {
   }
 
   // Create workspace API with proper types
+  const defaultActivityList: IPCApi["workspace"]["activity"]["list"] = () =>
+    Promise.resolve({} as Record<string, WorkspaceActivitySnapshot>);
+  const defaultActivitySubscribe: IPCApi["workspace"]["activity"]["subscribe"] = () => () =>
+    undefined;
+
+  const workspaceActivity = options.workspace?.activity;
+  const activityListImpl: IPCApi["workspace"]["activity"]["list"] =
+    workspaceActivity?.list?.bind(workspaceActivity) ?? defaultActivityList;
+  const activitySubscribeImpl: IPCApi["workspace"]["activity"]["subscribe"] =
+    workspaceActivity?.subscribe?.bind(workspaceActivity) ?? defaultActivitySubscribe;
+
   const workspace: MockedWorkspaceAPI = {
     create: mock(
       options.workspace?.create ??
@@ -1002,6 +1023,10 @@ function createMockAPI(options: MockAPIOptions = {}) {
           // Empty cleanup function
         })
     ),
+    activity: {
+      list: mock(activityListImpl),
+      subscribe: mock(activitySubscribeImpl),
+    },
   };
 
   // Create projects API with proper types

@@ -6,6 +6,7 @@ import { StreamingBarrier } from "./Messages/ChatBarrier/StreamingBarrier";
 import { RetryBarrier } from "./Messages/ChatBarrier/RetryBarrier";
 import { PinnedTodoList } from "./PinnedTodoList";
 import { getAutoRetryKey, VIM_ENABLED_KEY } from "@/common/constants/storage";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { ChatInput, type ChatInputAPI } from "./ChatInput/index";
 import { RightSidebar, type TabType } from "./RightSidebar";
 import { useResizableSidebar } from "@/browser/hooks/useResizableSidebar";
@@ -107,9 +108,13 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
   // Auto-retry state - minimal setter for keybinds and message sent handler
   // RetryBarrier manages its own state, but we need this for interrupt keybind
-  const [, setAutoRetry] = usePersistedState<boolean>(getAutoRetryKey(workspaceId), true, {
-    listener: true,
-  });
+  const [, setAutoRetry] = usePersistedState<boolean>(
+    getAutoRetryKey(workspaceId),
+    WORKSPACE_DEFAULTS.autoRetry,
+    {
+      listener: true,
+    }
+  );
 
   // Vim mode state - needed for keybind selection (Ctrl+C in vim, Esc otherwise)
   const [vimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, { listener: true });

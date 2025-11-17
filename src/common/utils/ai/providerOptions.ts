@@ -173,7 +173,7 @@ export function buildProviderOptions(
       openai: {
         parallelToolCalls: true, // Always enable concurrent tool execution
         // TODO: allow this to be configured
-        serviceTier: "priority", // Always use priority tier for best performance
+        serviceTier: "auto", // Always use priority tier for best performance
         truncation: "auto", // Automatically truncate conversation to fit context window
         // Conditionally add reasoning configuration
         ...(reasoningEffort && {

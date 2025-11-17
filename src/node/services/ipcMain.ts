@@ -17,10 +17,20 @@ import { IPC_CHANNELS, getChatChannel } from "@/common/constants/ipc-constants";
 import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { SendMessageError } from "@/common/types/errors";
-import type { SendMessageOptions, DeleteMessage, ImagePart } from "@/common/types/ipc";
+import type {
+  SendMessageOptions,
+  DeleteMessage,
+  ImagePart,
+  WorkspaceChatMessage,
+} from "@/common/types/ipc";
 import { Ok, Err } from "@/common/types/result";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
-import type { WorkspaceMetadata, FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type {
+  WorkspaceMetadata,
+  FrontendWorkspaceMetadata,
+  WorkspaceActivitySnapshot,
+} from "@/common/types/workspace";
+import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import { createBashTool } from "@/node/services/tools/bash";
 import type { BashToolResult } from "@/common/types/tools";
 import { secretsToRecord } from "@/common/types/secrets";
@@ -123,24 +133,76 @@ export class IpcMain {
       isObj(v) && "workspaceId" in v && typeof v.workspaceId === "string";
     const isStreamStartEvent = (v: unknown): v is { workspaceId: string; model: string } =>
       isWorkspaceEvent(v) && "model" in v && typeof v.model === "string";
+    const isStreamEndEvent = (v: unknown): v is StreamEndEvent =>
+      isWorkspaceEvent(v) &&
+      (!("metadata" in (v as Record<string, unknown>)) || isObj((v as StreamEndEvent).metadata));
+    const isStreamAbortEvent = (v: unknown): v is StreamAbortEvent => isWorkspaceEvent(v);
+    const extractTimestamp = (event: StreamEndEvent | { metadata?: { timestamp?: number } }) => {
+      const raw = event.metadata?.timestamp;
+      return typeof raw === "number" && Number.isFinite(raw) ? raw : Date.now();
+    };
 
     // Update streaming status and recency on stream start
     this.aiService.on("stream-start", (data: unknown) => {
       if (isStreamStartEvent(data)) {
-        // Fire and forget - don't block event handler
-        void this.extensionMetadata.setStreaming(data.workspaceId, true, data.model);
+        void this.updateStreamingStatus(data.workspaceId, true, data.model);
       }
     });
 
-    // Clear streaming status on stream end/abort
-    const handleStreamStop = (data: unknown) => {
-      if (isWorkspaceEvent(data)) {
-        // Fire and forget - don't block event handler
-        void this.extensionMetadata.setStreaming(data.workspaceId, false);
+    this.aiService.on("stream-end", (data: unknown) => {
+      if (isStreamEndEvent(data)) {
+        void this.handleStreamCompletion(data.workspaceId, extractTimestamp(data));
       }
-    };
-    this.aiService.on("stream-end", handleStreamStop);
-    this.aiService.on("stream-abort", handleStreamStop);
+    });
+
+    this.aiService.on("stream-abort", (data: unknown) => {
+      if (isStreamAbortEvent(data)) {
+        void this.updateStreamingStatus(data.workspaceId, false);
+      }
+    });
+  }
+
+  private emitWorkspaceActivity(
+    workspaceId: string,
+    snapshot: WorkspaceActivitySnapshot | null
+  ): void {
+    if (!this.mainWindow) {
+      return;
+    }
+    this.mainWindow.webContents.send(IPC_CHANNELS.WORKSPACE_ACTIVITY, {
+      workspaceId,
+      activity: snapshot,
+    });
+  }
+
+  private async updateRecencyTimestamp(workspaceId: string, timestamp?: number): Promise<void> {
+    try {
+      const snapshot = await this.extensionMetadata.updateRecency(
+        workspaceId,
+        timestamp ?? Date.now()
+      );
+      this.emitWorkspaceActivity(workspaceId, snapshot);
+    } catch (error) {
+      log.error("Failed to update workspace recency", { workspaceId, error });
+    }
+  }
+
+  private async updateStreamingStatus(
+    workspaceId: string,
+    streaming: boolean,
+    model?: string
+  ): Promise<void> {
+    try {
+      const snapshot = await this.extensionMetadata.setStreaming(workspaceId, streaming, model);
+      this.emitWorkspaceActivity(workspaceId, snapshot);
+    } catch (error) {
+      log.error("Failed to update workspace streaming status", { workspaceId, error });
+    }
+  }
+
+  private async handleStreamCompletion(workspaceId: string, timestamp: number): Promise<void> {
+    await this.updateRecencyTimestamp(workspaceId, timestamp);
+    await this.updateStreamingStatus(workspaceId, false);
   }
 
   /**
@@ -618,6 +680,21 @@ export class IpcMain {
       }
     );
 
+    // Provide chat history and replay helpers for server mode
+    ipcMain.handle(IPC_CHANNELS.WORKSPACE_CHAT_GET_HISTORY, async (_event, workspaceId: string) => {
+      return await this.getWorkspaceChatHistory(workspaceId);
+    });
+    ipcMain.handle(
+      IPC_CHANNELS.WORKSPACE_CHAT_GET_FULL_REPLAY,
+      async (_event, workspaceId: string) => {
+        return await this.getFullReplayEvents(workspaceId);
+      }
+    );
+    ipcMain.handle(IPC_CHANNELS.WORKSPACE_ACTIVITY_LIST, async () => {
+      const snapshots = await this.extensionMetadata.getAllSnapshots();
+      return Object.fromEntries(snapshots.entries());
+    });
+
     ipcMain.handle(
       IPC_CHANNELS.WORKSPACE_REMOVE,
       async (_event, workspaceId: string, options?: { force?: boolean }) => {
@@ -956,7 +1033,7 @@ export class IpcMain {
           const session = this.getOrCreateSession(workspaceId);
 
           // Update recency on user message (fire and forget)
-          void this.extensionMetadata.updateRecency(workspaceId);
+          void this.updateRecencyTimestamp(workspaceId);
 
           // Queue new messages during streaming, but allow edits through
           if (this.aiService.isStreaming(workspaceId) && !options?.editMessageId) {
@@ -1737,6 +1814,26 @@ export class IpcMain {
         }
       })();
     });
+
+    ipcMain.on(IPC_CHANNELS.WORKSPACE_ACTIVITY_SUBSCRIBE, () => {
+      void (async () => {
+        try {
+          const snapshots = await this.extensionMetadata.getAllSnapshots();
+          for (const [workspaceId, activity] of snapshots.entries()) {
+            this.mainWindow?.webContents.send(IPC_CHANNELS.WORKSPACE_ACTIVITY, {
+              workspaceId,
+              activity,
+            });
+          }
+        } catch (error) {
+          log.error("Failed to emit current workspace activity", error);
+        }
+      })();
+    });
+
+    ipcMain.on(IPC_CHANNELS.WORKSPACE_ACTIVITY_UNSUBSCRIBE, () => {
+      // No-op; included for API completeness
+    });
   }
 
   /**
@@ -1959,5 +2056,22 @@ export class IpcMain {
       }
     }
     return null;
+  }
+
+  private async getWorkspaceChatHistory(workspaceId: string): Promise<WorkspaceChatMessage[]> {
+    const historyResult = await this.historyService.getHistory(workspaceId);
+    if (historyResult.success) {
+      return historyResult.data;
+    }
+    return [];
+  }
+
+  private async getFullReplayEvents(workspaceId: string): Promise<WorkspaceChatMessage[]> {
+    const session = this.getOrCreateSession(workspaceId);
+    const events: WorkspaceChatMessage[] = [];
+    await session.replayHistory(({ message }) => {
+      events.push(message);
+    });
+    return events;
   }
 }

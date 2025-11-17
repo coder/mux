@@ -122,3 +122,4 @@ test_hot_reload.sh
 # mdBook auto-generated assets
 docs/theme/pagetoc.css
 docs/theme/pagetoc.js
+mobile/.expo/

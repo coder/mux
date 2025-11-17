@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "allowJs": false,
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "types": ["react", "react-native"],
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["../src/*"]
+    }
+  },
+  "include": [
+    "./**/*.ts",
+    "./**/*.tsx",
+    "./**/*.d.ts",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts",
+    "../src/types/**/*.ts",
+    "../src/utils/messages/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "../src/**/*.test.ts",
+    "../src/**/*.test.tsx"
+  ],
+  "extends": "expo/tsconfig.base"
+}

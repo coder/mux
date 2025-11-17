@@ -22,13 +22,13 @@ if [ -n "$PNG_FILES" ]; then
   exit 1
 fi
 
-ESLINT_PATTERN='src/**/*.{ts,tsx}'
+ESLINT_PATTERNS=('src/**/*.{ts,tsx}')
 
 if [ "$1" = "--fix" ]; then
   echo "Running bun x eslint with --fix..."
-  bun x eslint --cache --max-warnings 0 "$ESLINT_PATTERN" --fix
+  bun x eslint --cache --max-warnings 0 "${ESLINT_PATTERNS[@]}" --fix
 else
   echo "Running eslint..."
-  bun x eslint --cache --max-warnings 0 "$ESLINT_PATTERN"
+  bun x eslint --cache --max-warnings 0 "${ESLINT_PATTERNS[@]}"
   echo "ESLint checks passed!"
 fi

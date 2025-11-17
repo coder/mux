@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "mux-mobile",
+    "slug": "mux-mobile",
+    "version": "0.0.1",
+    "scheme": "mux",
+    "orientation": "portrait",
+    "platforms": ["ios", "android"],
+    "newArchEnabled": true,
+    "jsEngine": "hermes",
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "mux": {
+        "baseUrl": "http://100.114.78.86:3000",
+        "authToken": ""
+      }
+    },
+    "plugins": ["expo-router", "expo-secure-store"],
+    "ios": {
+      "bundleIdentifier": "com.coder.mux-mobile"
+    }
+  }
+}

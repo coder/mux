@@ -20,7 +20,10 @@
 
 import { contextBridge, ipcRenderer } from "electron";
 import type { IPCApi, WorkspaceChatMessage, UpdateStatus } from "@/common/types/ipc";
-import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type {
+  FrontendWorkspaceMetadata,
+  WorkspaceActivitySnapshot,
+} from "@/common/types/workspace";
 import type { ProjectConfig } from "@/common/types/project";
 import { IPC_CHANNELS, getChatChannel } from "@/common/constants/ipc-constants";
 
@@ -127,6 +130,28 @@ const api: IPCApi = {
         ipcRenderer.removeListener(IPC_CHANNELS.WORKSPACE_METADATA, handler);
         ipcRenderer.send(`workspace:metadata:unsubscribe`);
       };
+    },
+    activity: {
+      list: () => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_ACTIVITY_LIST),
+      subscribe: (
+        callback: (payload: {
+          workspaceId: string;
+          activity: WorkspaceActivitySnapshot | null;
+        }) => void
+      ) => {
+        const handler = (
+          _event: unknown,
+          data: { workspaceId: string; activity: WorkspaceActivitySnapshot | null }
+        ) => callback(data);
+
+        ipcRenderer.on(IPC_CHANNELS.WORKSPACE_ACTIVITY, handler);
+        ipcRenderer.send(IPC_CHANNELS.WORKSPACE_ACTIVITY_SUBSCRIBE);
+
+        return () => {
+          ipcRenderer.removeListener(IPC_CHANNELS.WORKSPACE_ACTIVITY, handler);
+          ipcRenderer.send(IPC_CHANNELS.WORKSPACE_ACTIVITY_UNSUBSCRIBE);
+        };
+      },
     },
   },
   window: {

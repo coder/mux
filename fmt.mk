@@ -6,7 +6,7 @@
 .PHONY: fmt fmt-check fmt-prettier fmt-prettier-check fmt-shell fmt-shell-check fmt-nix fmt-nix-check fmt-python fmt-python-check
 
 # Centralized patterns - single source of truth
-PRETTIER_PATTERNS := 'src/**/*.{ts,tsx,json}' 'tests/**/*.ts' 'docs/**/*.md' 'package.json' 'tsconfig*.json' 'README.md'
+PRETTIER_PATTERNS := 'src/**/*.{ts,tsx,json}' 'mobile/**/*.{ts,tsx,json}' 'tests/**/*.ts' 'docs/**/*.md' 'package.json' 'tsconfig*.json' 'README.md'
 SHELL_SCRIPTS := scripts
 PYTHON_DIRS := benchmarks
 

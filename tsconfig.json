@@ -15,7 +15,8 @@
     "sourceMap": true,
     "inlineSources": true,
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@shared/*": ["./src/*"]
     }
   },
   "watchOptions": {
