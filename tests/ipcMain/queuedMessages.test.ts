@@ -15,7 +15,7 @@ import {
   QueuedMessageChangedEvent,
   RestoreToInputEvent,
 } from "@/common/types/ipc";
-import { Result } from "@/common/types/result";
+import type { Result } from "@/common/types/result";
 
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -40,21 +40,6 @@ async function getQueuedMessages(collector: EventCollector, timeoutMs = 5000): P
   // Return messages from the most recent event
   const latestEvent = queuedEvents[queuedEvents.length - 1];
   return latestEvent.queuedMessages;
-}
-
-// Helper: Clear queue via IPC
-async function clearQueuedMessages(
-  mockIpcRenderer: { invoke: (channel: string, ...args: unknown[]) => Promise<unknown> },
-  workspaceId: string
-): Promise<void> {
-  const result = (await mockIpcRenderer.invoke(
-    IPC_CHANNELS.WORKSPACE_QUEUE_CLEAR,
-    workspaceId
-  )) as Result<void, string>;
-
-  if (!result.success) {
-    throw new Error(`Failed to clear queue: ${result.error}`);
-  }
 }
 
 // Helper: Wait for queued-message-changed event
@@ -97,7 +82,7 @@ describeIntegration("IpcMain queuedMessages integration tests", () => {
           env.mockIpcRenderer,
           workspaceId,
           "Say 'FIRST' and nothing else",
-          modelString("anthropic", "claude-sonnet-4")
+          modelString("anthropic", "claude-sonnet-4-5")
         );
 
         const collector1 = createEventCollector(env.sentEvents, workspaceId);
@@ -108,7 +93,7 @@ describeIntegration("IpcMain queuedMessages integration tests", () => {
           env.mockIpcRenderer,
           workspaceId,
           "Say 'SECOND' and nothing else",
-          modelString("anthropic", "claude-sonnet-4")
+          modelString("anthropic", "claude-sonnet-4-5")
         );
         expect(queueResult.success).toBe(true);
 
@@ -159,7 +144,7 @@ describeIntegration("IpcMain queuedMessages integration tests", () => {
           env.mockIpcRenderer,
           workspaceId,
           "Count to 10 slowly",
-          modelString("anthropic", "claude-sonnet-4")
+          modelString("anthropic", "claude-sonnet-4-5")
         );
 
         const collector = createEventCollector(env.sentEvents, workspaceId);
@@ -170,7 +155,7 @@ describeIntegration("IpcMain queuedMessages integration tests", () => {
           env.mockIpcRenderer,
           workspaceId,
           "This message should be restored",
-          modelString("anthropic", "claude-sonnet-4")
+          modelString("anthropic", "claude-sonnet-4-5")
         );
 
         // Verify message was queued
@@ -213,7 +198,7 @@ describeIntegration("IpcMain queuedMessages integration tests", () => {
           env.mockIpcRenderer,
           workspaceId,
           "Say 'FIRST' and nothing else",
-          modelString("anthropic", "claude-sonnet-4")
+          modelString("anthropic", "claude-sonnet-4-5")
         );
 
         const collector1 = createEventCollector(env.sentEvents, workspaceId);
@@ -257,7 +242,7 @@ describeIntegration("IpcMain queuedMessages integration tests", () => {
           env.mockIpcRenderer,
           workspaceId,
           "Say 'FIRST' and nothing else",
-          modelString("anthropic", "claude-sonnet-4")
+          modelString("anthropic", "claude-sonnet-4-5")
         );
 
         const collector1 = createEventCollector(env.sentEvents, workspaceId);
@@ -316,7 +301,7 @@ describeIntegration("IpcMain queuedMessages integration tests", () => {
           env.mockIpcRenderer,
           workspaceId,
           "Say 'FIRST' and nothing else",
-          modelString("anthropic", "claude-sonnet-4")
+          modelString("anthropic", "claude-sonnet-4-5")
         );
 
         const collector1 = createEventCollector(env.sentEvents, workspaceId);
@@ -375,7 +360,7 @@ describeIntegration("IpcMain queuedMessages integration tests", () => {
           env.mockIpcRenderer,
           workspaceId,
           "Say 'FIRST' and nothing else",
-          modelString("anthropic", "claude-sonnet-4")
+          modelString("anthropic", "claude-sonnet-4-5")
         );
 
         const collector1 = createEventCollector(env.sentEvents, workspaceId);
@@ -433,7 +418,7 @@ describeIntegration("IpcMain queuedMessages integration tests", () => {
           env.mockIpcRenderer,
           workspaceId,
           "Say 'FIRST' and nothing else",
-          modelString("anthropic", "claude-sonnet-4")
+          modelString("anthropic", "claude-sonnet-4-5")
         );
 
         const collector1 = createEventCollector(env.sentEvents, workspaceId);
