@@ -478,13 +478,13 @@ const AIViewInner: React.FC<AIViewProps> = ({
                   }
                 />
               )}
+              {workspaceState?.queuedMessage && (
+                <QueuedMessage
+                  message={workspaceState.queuedMessage}
+                  onEdit={() => void handleEditQueuedMessage()}
+                />
+              )}
             </div>
-            {workspaceState?.queuedMessage && (
-              <QueuedMessage
-                message={workspaceState.queuedMessage}
-                onEdit={() => void handleEditQueuedMessage()}
-              />
-            )}
           </div>
           {!autoScroll && (
             <button
