@@ -9,7 +9,7 @@
 # Server mode (no Electron):
 #   - Uses Node.js/Bun prebuilt binaries (no rebuild needed)
 
-set -euo pipefail
+set -e
 
 # Get script directory (works in both sh and bash)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
