@@ -42,7 +42,7 @@
     "storybook": "make storybook",
     "storybook:build": "make storybook-build",
     "test:storybook": "make test-storybook",
-    "postinstall": "node scripts/postinstall.js"
+    "postinstall": "sh scripts/postinstall.sh"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.44",
@@ -222,6 +222,7 @@
       "icon": "build/icon.png",
       "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
-    "npmRebuild": false
+    "npmRebuild": true,
+    "buildDependenciesFromSource": false
   }
 }
