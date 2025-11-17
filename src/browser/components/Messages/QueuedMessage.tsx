@@ -15,11 +15,11 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = ({ message, className
 
   const buttons: ButtonConfig[] = onEdit
     ? [
-          {
-            label: "Edit",
-            onClick: onEdit,
-            icon: <Pencil />,
-          },
+        {
+          label: "Edit",
+          onClick: onEdit,
+          icon: <Pencil />,
+        },
       ]
     : [];
 

@@ -14,6 +14,7 @@ import type {
   WorkspaceChatMessage,
   StreamErrorMessage,
   SendMessageOptions,
+  ImagePart,
 } from "@/common/types/ipc";
 import type { SendMessageError } from "@/common/types/errors";
 import { createUnknownSendMessageError } from "@/node/services/utils/sendMessageError";
@@ -22,11 +23,6 @@ import { Ok, Err } from "@/common/types/result";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { MessageQueue } from "./messageQueue";
-
-interface ImagePart {
-  url: string;
-  mediaType: string;
-}
 
 export interface AgentSessionChatEvent {
   workspaceId: string;

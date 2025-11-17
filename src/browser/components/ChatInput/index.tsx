@@ -861,7 +861,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
       hints.push(`${formatKeybind(interruptKeybind)} to interrupt`);
     }
     hints.push(`${formatKeybind(KEYBINDS.SEND_MESSAGE)} to ${canInterrupt ? "queue" : "send"}`);
-    hints.push(`${formatKeybind(KEYBINDS.SEND_MESSAGE)} to send`);
     hints.push(`${formatKeybind(KEYBINDS.OPEN_MODEL_SELECTOR)} to change model`);
     hints.push(`/vim to toggle Vim mode (${vimEnabled ? "on" : "off"})`);
 
