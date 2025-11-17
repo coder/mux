@@ -12,7 +12,7 @@ import type {
   TerminalCreateParams,
   TerminalResizeParams,
 } from "@/common/types/terminal";
-import type { IPty } from "@homebridge/node-pty-prebuilt-multiarch";
+import type { IPty } from "node-pty";
 import { SSHRuntime, type SSHRuntimeConfig } from "@/node/runtime/SSHRuntime";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { access } from "fs/promises";
@@ -102,14 +102,16 @@ export class PTYService {
     if (runtime instanceof LocalRuntime) {
       // Local: Use node-pty (dynamically import to avoid crash if not available)
       // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-      let pty: typeof import("@homebridge/node-pty-prebuilt-multiarch");
+      let pty: typeof import("node-pty");
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
-        pty = require("@homebridge/node-pty-prebuilt-multiarch");
+        pty = require("node-pty");
       } catch (err) {
         log.error("node-pty not available - local terminals will not work:", err);
         throw new Error(
-          "Local terminals are not available. node-pty failed to load (likely due to Electron ABI version mismatch). Use SSH workspaces for terminal access."
+          process.versions.electron
+            ? "Local terminals are not available. node-pty failed to load (likely due to Electron ABI version mismatch). Run 'make rebuild-native' to rebuild native modules."
+            : "Local terminals are not available. node-pty failed to load. Ensure native dependencies are installed."
         );
       }
 
@@ -210,14 +212,16 @@ export class PTYService {
 
       // Load node-pty dynamically
       // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-      let pty: typeof import("@homebridge/node-pty-prebuilt-multiarch");
+      let pty: typeof import("node-pty");
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
-        pty = require("@homebridge/node-pty-prebuilt-multiarch");
+        pty = require("node-pty");
       } catch (err) {
         log.error("node-pty not available - SSH terminals will not work:", err);
         throw new Error(
-          "SSH terminals are not available. node-pty failed to load (likely due to Electron ABI version mismatch)."
+          process.versions.electron
+            ? "SSH terminals are not available. node-pty failed to load (likely due to Electron ABI version mismatch). Run 'make rebuild-native' to rebuild native modules."
+            : "SSH terminals are not available. node-pty failed to load. Ensure native dependencies are installed."
         );
       }
 

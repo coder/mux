@@ -41,7 +41,8 @@
     "docs:watch": "make docs-watch",
     "storybook": "make storybook",
     "storybook:build": "make storybook-build",
-    "test:storybook": "make test-storybook"
+    "test:storybook": "make test-storybook",
+    "postinstall": "node scripts/postinstall.js"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.44",
@@ -72,7 +73,7 @@
     "minimist": "^1.2.8",
     "motion": "^12.23.24",
     "ollama-ai-provider-v2": "^1.5.4",
-    "@homebridge/node-pty-prebuilt-multiarch": "^0.11.14",
+    "node-pty": "1.1.0-beta39",
     "rehype-harden": "^1.1.5",
     "shescape": "^2.1.6",
     "source-map-support": "^0.5.21",
@@ -118,7 +119,6 @@
     "cmdk": "^1.0.0",
     "concurrently": "^8.2.0",
     "dotenv": "^17.2.3",
-    "electron": "^38.2.1",
     "electron-builder": "^24.6.0",
     "electron-devtools-installer": "^4.0.0",
     "electron-mock-ipc": "^0.3.12",
@@ -161,6 +161,9 @@
     "vite-plugin-svgr": "^4.5.0",
     "vite-plugin-top-level-await": "^1.6.0"
   },
+  "optionalDependencies": {
+    "electron": "^38.2.1"
+  },
   "files": [
     "dist/**/*.js",
     "dist/**/*.js.map",
@@ -191,7 +194,8 @@
     ],
     "asarUnpack": [
       "dist/**/*.wasm",
-      "dist/**/*.map"
+      "dist/**/*.map",
+      "**/node_modules/node-pty/build/**/*"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
