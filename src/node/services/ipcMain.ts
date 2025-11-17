@@ -17,7 +17,7 @@ import { IPC_CHANNELS, getChatChannel } from "@/common/constants/ipc-constants";
 import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { SendMessageError } from "@/common/types/errors";
-import type { SendMessageOptions, DeleteMessage } from "@/common/types/ipc";
+import type { SendMessageOptions, DeleteMessage, ImagePart } from "@/common/types/ipc";
 import { Ok, Err } from "@/common/types/result";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import type { WorkspaceMetadata, FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -883,7 +883,7 @@ export class IpcMain {
         workspaceId: string | null,
         message: string,
         options?: SendMessageOptions & {
-          imageParts?: Array<{ url: string; mediaType: string }>;
+          imageParts?: ImagePart[];
           runtimeConfig?: RuntimeConfig;
           projectPath?: string;
           trunkBranch?: string;
@@ -915,6 +915,12 @@ export class IpcMain {
 
           // Update recency on user message (fire and forget)
           void this.extensionMetadata.updateRecency(workspaceId);
+
+          // Queue new messages during streaming, but allow edits through
+          if (this.aiService.isStreaming(workspaceId) && !options?.editMessageId) {
+            session.queueMessage(message, options);
+            return Ok(undefined);
+          }
 
           const result = await session.sendMessage(message, options);
           if (!result.success) {
@@ -993,6 +999,18 @@ export class IpcMain {
         }
       }
     );
+
+    ipcMain.handle(IPC_CHANNELS.WORKSPACE_QUEUE_CLEAR, (_event, workspaceId: string) => {
+      try {
+        const session = this.getOrCreateSession(workspaceId);
+        session.clearQueue();
+        return { success: true };
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        log.error("Unexpected error in clearQueue handler:", error);
+        return { success: false, error: `Failed to clear queue: ${errorMessage}` };
+      }
+    });
 
     ipcMain.handle(
       IPC_CHANNELS.WORKSPACE_TRUNCATE_HISTORY,

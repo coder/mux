@@ -225,6 +225,7 @@ const webApi: IPCApi = {
       invokeIPC(IPC_CHANNELS.WORKSPACE_RESUME_STREAM, workspaceId, options),
     interruptStream: (workspaceId, options) =>
       invokeIPC(IPC_CHANNELS.WORKSPACE_INTERRUPT_STREAM, workspaceId, options),
+    clearQueue: (workspaceId) => invokeIPC(IPC_CHANNELS.WORKSPACE_QUEUE_CLEAR, workspaceId),
     truncateHistory: (workspaceId, percentage) =>
       invokeIPC(IPC_CHANNELS.WORKSPACE_TRUNCATE_HISTORY, workspaceId, percentage),
     replaceChatHistory: (workspaceId, summaryMessage) =>

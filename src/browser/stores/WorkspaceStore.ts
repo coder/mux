@@ -1,5 +1,5 @@
 import assert from "@/common/utils/assert";
-import type { MuxMessage, DisplayedMessage } from "@/common/types/message";
+import type { MuxMessage, DisplayedMessage, QueuedMessage } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { WorkspaceChatMessage } from "@/common/types/ipc";
@@ -14,6 +14,8 @@ import {
   isStreamError,
   isDeleteMessage,
   isMuxMessage,
+  isQueuedMessageChanged,
+  isRestoreToInput,
 } from "@/common/types/ipc";
 import { MapStore } from "./MapStore";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
@@ -32,6 +34,7 @@ import { createFreshRetryState } from "@/browser/utils/messages/retryState";
 export interface WorkspaceState {
   name: string; // User-facing workspace name (e.g., "feature-branch")
   messages: DisplayedMessage[];
+  queuedMessage: QueuedMessage | null;
   canInterrupt: boolean;
   isCompacting: boolean;
   loading: boolean;
@@ -111,6 +114,7 @@ export class WorkspaceStore {
   private historicalMessages = new Map<string, MuxMessage[]>();
   private pendingStreamEvents = new Map<string, WorkspaceChatMessage[]>();
   private workspaceMetadata = new Map<string, FrontendWorkspaceMetadata>(); // Store metadata for name lookup
+  private queuedMessages = new Map<string, QueuedMessage | null>(); // Cached queued messages
 
   /**
    * Map of event types to their handlers. This is the single source of truth for:
@@ -200,6 +204,36 @@ export class WorkspaceStore {
     "init-end": (workspaceId, aggregator, data) => {
       aggregator.handleMessage(data);
       this.states.bump(workspaceId);
+    },
+    "queued-message-changed": (workspaceId, _aggregator, data) => {
+      if (!isQueuedMessageChanged(data)) return;
+
+      // Create QueuedMessage once here instead of on every render
+      // Use displayText which handles slash commands (shows /compact instead of expanded prompt)
+      // Show queued message if there's text OR images (support image-only queued messages)
+      const hasContent = data.queuedMessages.length > 0 || (data.imageParts?.length ?? 0) > 0;
+      const queuedMessage: QueuedMessage | null = hasContent
+        ? {
+            id: `queued-${workspaceId}`,
+            content: data.displayText,
+            imageParts: data.imageParts,
+          }
+        : null;
+
+      this.queuedMessages.set(workspaceId, queuedMessage);
+      this.states.bump(workspaceId);
+    },
+    "restore-to-input": (workspaceId, _aggregator, data) => {
+      if (!isRestoreToInput(data)) return;
+
+      // Use INSERT_TO_CHAT_INPUT event with mode="replace"
+      window.dispatchEvent(
+        createCustomEvent(CUSTOM_EVENTS.INSERT_TO_CHAT_INPUT, {
+          text: data.text,
+          mode: "replace",
+          imageParts: data.imageParts,
+        })
+      );
     },
   };
 
@@ -305,6 +339,7 @@ export class WorkspaceStore {
       return {
         name: metadata?.name ?? workspaceId, // Fall back to ID if metadata missing
         messages: aggregator.getDisplayedMessages(),
+        queuedMessage: this.queuedMessages.get(workspaceId) ?? null,
         canInterrupt: activeStreams.length > 0,
         isCompacting: aggregator.isCompacting(),
         loading: !hasMessages && !isCaughtUp,

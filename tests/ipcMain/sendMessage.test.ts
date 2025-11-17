@@ -1512,7 +1512,7 @@ describe.each(PROVIDER_CONFIGS)("%s:%s image support", (provider, model) => {
         // Send message with image attachment
         const result = await sendMessage(env.mockIpcRenderer, workspaceId, "What color is this?", {
           model: modelString(provider, model),
-          imageParts: [{ url: TEST_IMAGES.RED_PIXEL, mediaType: "image/png" }],
+          imageParts: [TEST_IMAGES.RED_PIXEL],
         });
 
         expect(result.success).toBe(true);
@@ -1549,7 +1549,7 @@ describe.each(PROVIDER_CONFIGS)("%s:%s image support", (provider, model) => {
         // Send message with image
         const result = await sendMessage(env.mockIpcRenderer, workspaceId, "Describe this", {
           model: modelString(provider, model),
-          imageParts: [{ url: TEST_IMAGES.BLUE_PIXEL, mediaType: "image/png" }],
+          imageParts: [TEST_IMAGES.BLUE_PIXEL],
         });
 
         expect(result.success).toBe(true);
@@ -1569,7 +1569,7 @@ describe.each(PROVIDER_CONFIGS)("%s:%s image support", (provider, model) => {
           const imagePart = userMessage.parts.find((p: { type: string }) => p.type === "file");
           expect(imagePart).toBeDefined();
           if (imagePart) {
-            expect(imagePart.url).toBe(TEST_IMAGES.BLUE_PIXEL);
+            expect(imagePart.url).toBe(TEST_IMAGES.BLUE_PIXEL.url);
             expect(imagePart.mediaType).toBe("image/png");
           }
         }

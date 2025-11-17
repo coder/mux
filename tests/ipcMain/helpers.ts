@@ -1,6 +1,7 @@
 import type { IpcRenderer } from "electron";
 import { IPC_CHANNELS, getChatChannel } from "../../src/common/constants/ipc-constants";
 import type {
+  ImagePart,
   SendMessageOptions,
   WorkspaceChatMessage,
   WorkspaceInitEvent,
@@ -58,7 +59,7 @@ export async function sendMessage(
   mockIpcRenderer: IpcRenderer,
   workspaceId: string,
   message: string,
-  options?: SendMessageOptions & { imageParts?: Array<{ url: string; mediaType: string }> }
+  options?: SendMessageOptions & { imageParts?: ImagePart[] }
 ): Promise<Result<void, SendMessageError>> {
   return (await mockIpcRenderer.invoke(
     IPC_CHANNELS.WORKSPACE_SEND_MESSAGE,
@@ -652,12 +653,16 @@ export async function readChatHistory(
 /**
  * Test image fixtures (1x1 pixel PNGs)
  */
-export const TEST_IMAGES = {
-  RED_PIXEL:
-    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
-  BLUE_PIXEL:
-    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAEBgIApD5fRAAAAABJRU5ErkJggg==",
-} as const;
+export const TEST_IMAGES: Record<string, ImagePart> = {
+  RED_PIXEL: {
+    url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
+    mediaType: "image/png",
+  },
+  BLUE_PIXEL: {
+    url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAEBgIApD5fRAAAAABJRU5ErkJggg==",
+    mediaType: "image/png",
+  },
+};
 
 /**
  * Wait for a file to NOT exist with retry logic

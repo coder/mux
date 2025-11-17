@@ -12,6 +12,7 @@ interface MessageRendererProps {
   message: DisplayedMessage;
   className?: string;
   onEditUserMessage?: (messageId: string, content: string) => void;
+  onEditQueuedMessage?: () => void;
   workspaceId?: string;
   isCompacting?: boolean;
 }

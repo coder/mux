@@ -96,6 +96,7 @@ function createTokenCountResource(promise: Promise<number>): TokenCountReader {
 
 // Import types from local types file
 import type { ChatInputProps, ChatInputAPI } from "./types";
+import type { ImagePart } from "@/common/types/ipc";
 export type { ChatInputProps, ChatInputAPI };
 
 export const ChatInput: React.FC<ChatInputProps> = (props) => {
@@ -225,6 +226,16 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     [setInput]
   );
 
+  // Method to restore images to input (used by queued message edit)
+  const restoreImages = useCallback((images: ImagePart[]) => {
+    const attachments: ImageAttachment[] = images.map((img, index) => ({
+      id: `restored-${Date.now()}-${index}`,
+      url: img.url,
+      mediaType: img.mediaType,
+    }));
+    setImageAttachments(attachments);
+  }, []);
+
   // Provide API to parent via callback
   useEffect(() => {
     if (props.onReady) {
@@ -232,9 +243,10 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         focus: focusMessageInput,
         restoreText,
         appendText,
+        restoreImages,
       });
     }
-  }, [props.onReady, focusMessageInput, restoreText, appendText, props]);
+  }, [props.onReady, focusMessageInput, restoreText, appendText, restoreImages, props]);
 
   useEffect(() => {
     const handleGlobalKeyDown = (event: KeyboardEvent) => {
@@ -305,18 +317,31 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     };
   }, []);
 
-  // Allow external components (e.g., CommandPalette) to insert text
+  // Allow external components (e.g., CommandPalette, Queued message edits) to insert text
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { text?: string } | undefined;
-      if (!detail?.text) return;
-      setInput(detail.text);
-      setTimeout(() => inputRef.current?.focus(), 0);
+      const customEvent = e as CustomEvent<{
+        text: string;
+        mode?: "append" | "replace";
+        imageParts?: ImagePart[];
+      }>;
+
+      const { text, mode = "append", imageParts } = customEvent.detail;
+
+      if (mode === "replace") {
+        restoreText(text);
+      } else {
+        appendText(text);
+      }
+
+      if (imageParts && imageParts.length > 0) {
+        restoreImages(imageParts);
+      }
     };
     window.addEventListener(CUSTOM_EVENTS.INSERT_TO_CHAT_INPUT, handler as EventListener);
     return () =>
       window.removeEventListener(CUSTOM_EVENTS.INSERT_TO_CHAT_INPUT, handler as EventListener);
-  }, [setInput]);
+  }, [appendText, restoreText, restoreImages]);
 
   // Allow external components to open the Model Selector
   useEffect(() => {
@@ -835,6 +860,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         : KEYBINDS.INTERRUPT_STREAM_NORMAL;
       hints.push(`${formatKeybind(interruptKeybind)} to interrupt`);
     }
+    hints.push(`${formatKeybind(KEYBINDS.SEND_MESSAGE)} to ${canInterrupt ? "queue" : "send"}`);
     hints.push(`${formatKeybind(KEYBINDS.SEND_MESSAGE)} to send`);
     hints.push(`${formatKeybind(KEYBINDS.OPEN_MODEL_SELECTOR)} to change model`);
     hints.push(`/vim to toggle Vim mode (${vimEnabled ? "on" : "off"})`);

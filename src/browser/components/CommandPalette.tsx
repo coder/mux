@@ -197,7 +197,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
             shortcutHint: `${formatKeybind(KEYBINDS.SEND_MESSAGE)} to insert`,
             run: () => {
               const text = s.replacement;
-              window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.INSERT_TO_CHAT_INPUT, { text }));
+              window.dispatchEvent(
+                createCustomEvent(CUSTOM_EVENTS.INSERT_TO_CHAT_INPUT, {
+                  text,
+                  mode: "append",
+                })
+              );
             },
           })),
         },

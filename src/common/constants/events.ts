@@ -6,6 +6,7 @@
  */
 
 import type { ThinkingLevel } from "@/common/types/thinking";
+import type { ImagePart } from "../types/ipc";
 
 export const CUSTOM_EVENTS = {
   /**
@@ -16,7 +17,7 @@ export const CUSTOM_EVENTS = {
 
   /**
    * Event to insert text into the chat input
-   * Detail: { text: string }
+   * Detail: { text: string, mode?: "replace" | "append", imageParts?: ImagePart[] }
    */
   INSERT_TO_CHAT_INPUT: "mux:insertToChatInput",
 
@@ -68,6 +69,8 @@ export interface CustomEventPayloads {
   };
   [CUSTOM_EVENTS.INSERT_TO_CHAT_INPUT]: {
     text: string;
+    mode?: "replace" | "append";
+    imageParts?: ImagePart[];
   };
   [CUSTOM_EVENTS.OPEN_MODEL_SELECTOR]: never; // No payload
   [CUSTOM_EVENTS.RESUME_CHECK_REQUESTED]: {

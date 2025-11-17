@@ -27,6 +27,7 @@ import type { DisplayedMessage } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { useAIViewKeybinds } from "@/browser/hooks/useAIViewKeybinds";
 import { evictModelFromLRU } from "@/browser/hooks/useModelLRU";
+import { QueuedMessage } from "./Messages/QueuedMessage";
 
 interface AIViewProps {
   workspaceId: string;
@@ -141,8 +142,28 @@ const AIViewInner: React.FC<AIViewProps> = ({
     setEditingMessage({ id: messageId, content });
   }, []);
 
-  const handleEditLastUserMessage = useCallback(() => {
+  const handleEditQueuedMessage = useCallback(async () => {
+    const queuedMessage = workspaceState?.queuedMessage;
+    if (!queuedMessage) return;
+
+    await window.api.workspace.clearQueue(workspaceId);
+    chatInputAPI.current?.restoreText(queuedMessage.content);
+
+    // Restore images if present
+    if (queuedMessage.imageParts && queuedMessage.imageParts.length > 0) {
+      chatInputAPI.current?.restoreImages(queuedMessage.imageParts);
+    }
+  }, [workspaceId, workspaceState?.queuedMessage, chatInputAPI]);
+
+  const handleEditLastUserMessage = useCallback(async () => {
     if (!workspaceState) return;
+
+    if (workspaceState.queuedMessage) {
+      await handleEditQueuedMessage();
+      return;
+    }
+
+    // Otherwise, edit last user message
     const mergedMessages = mergeConsecutiveStreamErrors(workspaceState.messages);
     const lastUserMessage = [...mergedMessages]
       .reverse()
@@ -159,7 +180,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
         element?.scrollIntoView({ behavior: "smooth", block: "center" });
       });
     }
-  }, [workspaceState, contentRef, setAutoScroll]);
+  }, [workspaceState, contentRef, setAutoScroll, handleEditQueuedMessage]);
 
   const handleCancelEdit = useCallback(() => {
     setEditingMessage(undefined);
@@ -458,6 +479,12 @@ const AIViewInner: React.FC<AIViewProps> = ({
                 />
               )}
             </div>
+            {workspaceState?.queuedMessage && (
+              <QueuedMessage
+                message={workspaceState.queuedMessage}
+                onEdit={() => void handleEditQueuedMessage()}
+              />
+            )}
           </div>
           {!autoScroll && (
             <button
@@ -479,7 +506,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
           isCompacting={isCompacting}
           editingMessage={editingMessage}
           onCancelEdit={handleCancelEdit}
-          onEditLastUserMessage={handleEditLastUserMessage}
+          onEditLastUserMessage={() => void handleEditLastUserMessage()}
           canInterrupt={canInterrupt}
           onReady={handleChatInputReady}
         />
