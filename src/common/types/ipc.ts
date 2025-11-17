@@ -188,6 +188,7 @@ export interface SendMessageOptions {
   maxOutputTokens?: number;
   providerOptions?: MuxProviderOptions;
   mode?: string; // Mode name - frontend narrows to specific values, backend accepts any string
+  fetchLatest?: boolean;
   muxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
 }
 
@@ -233,7 +234,8 @@ export interface IPCApi {
       projectPath: string,
       branchName: string,
       trunkBranch: string,
-      runtimeConfig?: RuntimeConfig
+      runtimeConfig?: RuntimeConfig,
+      options?: { fetchLatest?: boolean }
     ): Promise<
       { success: true; metadata: FrontendWorkspaceMetadata } | { success: false; error: string }
     >;
@@ -260,6 +262,7 @@ export interface IPCApi {
         runtimeConfig?: RuntimeConfig;
         projectPath?: string; // Required when workspaceId is null
         trunkBranch?: string; // Optional - trunk branch to branch from (when workspaceId is null)
+        fetchLatest?: boolean; // Optional - fetch origin before branching (when workspaceId is null)
       }
     ): Promise<
       | Result<void, SendMessageError>

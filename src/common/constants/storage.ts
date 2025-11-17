@@ -109,6 +109,15 @@ export function getTrunkBranchKey(projectPath: string): string {
 }
 
 /**
+ * Get the localStorage key for the fetch-latest preference for a project
+ * Stores the last fetch option state when creating a workspace
+ * Format: "fetchLatest:{projectPath}"
+ */
+export function getFetchLatestKey(projectPath: string): string {
+  return `fetchLatest:${projectPath}`;
+}
+
+/**
  * Get the localStorage key for the 1M context preference (global)
  * Format: "use1MContext"
  */

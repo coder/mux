@@ -547,12 +547,79 @@ export class SSHRuntime implements Runtime {
   private async syncProjectToRemote(
     projectPath: string,
     workspacePath: string,
+    trunkBranch: string,
     initLogger: InitLogger,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    fetchLatest = false
   ): Promise<void> {
     // Short-circuit if already aborted
     if (abortSignal?.aborted) {
       throw new Error("Sync operation aborted before starting");
+    }
+
+    if (fetchLatest) {
+      initLogger.logStep("Fetching latest from origin...");
+      try {
+        using proc = execAsync(
+          `cd ${shescape.quote(projectPath)} && git fetch origin --prune`
+        );
+        await proc.result;
+        initLogger.logStep("Origin fetch complete");
+
+        try {
+          using remoteRevProc = execAsync(
+            `git -C "${projectPath}" rev-parse --verify "refs/remotes/origin/${trunkBranch}"`
+          );
+          const { stdout: remoteStdout } = await remoteRevProc.result;
+          const remoteRef = remoteStdout.trim();
+
+          let localRef: string | null = null;
+          try {
+            using localRevProc = execAsync(
+              `git -C "${projectPath}" rev-parse --verify "refs/heads/${trunkBranch}"`
+            );
+            const { stdout: localStdout } = await localRevProc.result;
+            localRef = localStdout.trim();
+          } catch {
+            // Local branch missing - we'll create it from the remote ref below
+          }
+
+          let canUpdate = true;
+          if (localRef) {
+            if (localRef === remoteRef) {
+              canUpdate = false; // Already up to date
+            } else {
+              try {
+                using ffCheckProc = execAsync(
+                  `git -C "${projectPath}" merge-base --is-ancestor ${localRef} ${remoteRef}`
+                );
+                await ffCheckProc.result;
+              } catch {
+                canUpdate = false;
+                initLogger.logStderr(
+                  `Skipping fast-forward of ${trunkBranch}: local branch has diverged from origin/${trunkBranch}`
+                );
+              }
+            }
+          }
+
+          if (canUpdate) {
+            using updateRefProc = execAsync(
+              `git -C "${projectPath}" update-ref refs/heads/${trunkBranch} ${remoteRef}`
+            );
+            await updateRefProc.result;
+            initLogger.logStep(`Fast-forwarded ${trunkBranch} to origin/${trunkBranch}`);
+          }
+        } catch (error) {
+          initLogger.logStderr(
+            `Unable to fast-forward ${trunkBranch} to origin/${trunkBranch}: ${getErrorMessage(error)}`
+          );
+        }
+      } catch (error) {
+        const errorMsg = getErrorMessage(error);
+        initLogger.logStderr(`Failed to fetch origin: ${errorMsg}`);
+        throw new Error(`Failed to fetch origin: ${errorMsg}`);
+      }
     }
 
     // Use timestamp-based bundle path to avoid conflicts (simpler than $$)
@@ -856,13 +923,28 @@ export class SSHRuntime implements Runtime {
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, trunkBranch, workspacePath, initLogger, abortSignal } = params;
+    const {
+      projectPath,
+      branchName,
+      trunkBranch,
+      workspacePath,
+      initLogger,
+      abortSignal,
+      fetchLatest = false,
+    } = params;
 
     try {
       // 1. Sync project to remote (opportunistic rsync with scp fallback)
       initLogger.logStep("Syncing project files to remote...");
       try {
-        await this.syncProjectToRemote(projectPath, workspacePath, initLogger, abortSignal);
+        await this.syncProjectToRemote(
+          projectPath,
+          workspacePath,
+          trunkBranch,
+          initLogger,
+          abortSignal,
+          fetchLatest
+        );
       } catch (error) {
         const errorMsg = getErrorMessage(error);
         initLogger.logStderr(`Failed to sync project: ${errorMsg}`);

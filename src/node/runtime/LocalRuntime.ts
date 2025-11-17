@@ -318,7 +318,7 @@ export class LocalRuntime implements Runtime {
   }
 
   async createWorkspace(params: WorkspaceCreationParams): Promise<WorkspaceCreationResult> {
-    const { projectPath, branchName, trunkBranch, initLogger } = params;
+    const { projectPath, branchName, trunkBranch, initLogger, fetchLatest = false } = params;
 
     try {
       // Compute workspace path using the canonical method
@@ -344,6 +344,32 @@ export class LocalRuntime implements Runtime {
         // Workspace doesn't exist, proceed with creation
       }
 
+      if (fetchLatest) {
+        initLogger.logStep("Fetching latest from origin...");
+        try {
+          using proc = execAsync(`git -C "${projectPath}" fetch origin --prune`);
+          await proc.result;
+          initLogger.logStep("Origin fetch complete");
+        } catch (error) {
+          const errorMessage = getErrorMessage(error);
+          return {
+            success: false,
+            error: `Failed to fetch origin: ${errorMessage}`,
+          };
+        }
+      }
+
+      let baseRef = trunkBranch;
+      if (fetchLatest) {
+        try {
+          using proc = execAsync(`git -C "${projectPath}" rev-parse --verify "origin/${trunkBranch}"`);
+          await proc.result;
+          baseRef = `origin/${trunkBranch}`;
+        } catch {
+          // Remote branch missing - fall back to local trunk branch
+        }
+      }
+
       // Check if branch exists locally
       const localBranches = await listLocalBranches(projectPath);
       const branchExists = localBranches.includes(branchName);
@@ -358,7 +384,7 @@ export class LocalRuntime implements Runtime {
       } else {
         // Branch doesn't exist, create it from trunk
         using proc = execAsync(
-          `git -C "${projectPath}" worktree add -b "${branchName}" "${workspacePath}" "${trunkBranch}"`
+          `git -C "${projectPath}" worktree add -b "${branchName}" "${workspacePath}" "${baseRef}"`
         );
         await proc.result;
       }

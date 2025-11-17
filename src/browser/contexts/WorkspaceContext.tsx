@@ -222,7 +222,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       projectPath: string,
       branchName: string,
       trunkBranch: string,
-      runtimeConfig?: RuntimeConfig
+      runtimeConfig?: RuntimeConfig,
+      options?: { fetchLatest?: boolean }
     ) => {
       console.assert(
         typeof trunkBranch === "string" && trunkBranch.trim().length > 0,
@@ -232,7 +233,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         projectPath,
         branchName,
         trunkBranch,
-        runtimeConfig
+        runtimeConfig,
+        options
       );
       if (result.success) {
         // Backend has already updated the config - reload projects to get updated state

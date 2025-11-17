@@ -94,7 +94,8 @@ export async function createWorkspace(
   projectPath: string,
   branchName: string,
   trunkBranch?: string,
-  runtimeConfig?: import("../../src/common/types/runtime").RuntimeConfig
+  runtimeConfig?: import("../../src/common/types/runtime").RuntimeConfig,
+  options?: { fetchLatest?: boolean }
 ): Promise<
   { success: true; metadata: FrontendWorkspaceMetadata } | { success: false; error: string }
 > {
@@ -108,7 +109,8 @@ export async function createWorkspace(
     projectPath,
     branchName,
     resolvedTrunk,
-    runtimeConfig
+    runtimeConfig,
+    options
   )) as { success: true; metadata: FrontendWorkspaceMetadata } | { success: false; error: string };
 }
 
@@ -146,7 +148,8 @@ export async function createWorkspaceWithInit(
   branchName: string,
   runtimeConfig?: RuntimeConfig,
   waitForInit: boolean = false,
-  isSSH: boolean = false
+  isSSH: boolean = false,
+  options?: { fetchLatest?: boolean }
 ): Promise<{ workspaceId: string; workspacePath: string; cleanup: () => Promise<void> }> {
   const trunkBranch = await detectDefaultTrunkBranch(projectPath);
 
@@ -155,7 +158,8 @@ export async function createWorkspaceWithInit(
     projectPath,
     branchName,
     trunkBranch,
-    runtimeConfig
+    runtimeConfig,
+    options
   );
 
   if (!result.success) {

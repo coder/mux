@@ -1,3 +1,4 @@
+import * as os from "os";
 /**
  * Integration tests for WORKSPACE_CREATE IPC handler
  *
@@ -128,7 +129,8 @@ async function createWorkspaceWithCleanup(
   projectPath: string,
   branchName: string,
   trunkBranch: string,
-  runtimeConfig?: RuntimeConfig
+  runtimeConfig?: RuntimeConfig,
+  options?: { fetchLatest?: boolean }
 ): Promise<{
   result:
     | { success: true; metadata: FrontendWorkspaceMetadata }
@@ -140,7 +142,8 @@ async function createWorkspaceWithCleanup(
     projectPath,
     branchName,
     trunkBranch,
-    runtimeConfig
+    runtimeConfig,
+    options
   );
 
   const cleanup = async () => {
@@ -362,6 +365,127 @@ describeIntegration("WORKSPACE_CREATE with both runtimes", () => {
           },
           TEST_TIMEOUT_MS
         );
+
+        test.concurrent(
+          "bases new workspace branch on origin head when fetchLatest is enabled",
+          async () => {
+            const env = await createTestEnvironment();
+            const tempGitRepo = await createTempGitRepo();
+            const remoteBareDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-remote-bare-"));
+            const remoteCloneBase = await fs.mkdtemp(path.join(os.tmpdir(), "mux-remote-clone-"));
+            const remoteCloneDir = path.join(remoteCloneBase, "clone");
+
+            let cleanupBaseline: (() => Promise<void>) | undefined;
+            let cleanupFetch: (() => Promise<void>) | undefined;
+
+            try {
+              await execAsync("git init --bare .", { cwd: remoteBareDir });
+
+              const trunkBranch = await detectDefaultTrunkBranch(tempGitRepo);
+              await execAsync(`git remote add origin "${remoteBareDir}"`, { cwd: tempGitRepo });
+              await execAsync(`git push -u origin ${trunkBranch}`, { cwd: tempGitRepo });
+
+              await execAsync(`git clone "${remoteBareDir}" "${remoteCloneDir}"`);
+              await execAsync(`git config user.email "test@example.com"`, { cwd: remoteCloneDir });
+              await execAsync(`git config user.name "Test User"`, { cwd: remoteCloneDir });
+              await execAsync(`echo "remote" >> REMOTE.md`, { cwd: remoteCloneDir });
+              await execAsync(`git add REMOTE.md`, { cwd: remoteCloneDir });
+              await execAsync(`git commit -m "Upstream commit"`, { cwd: remoteCloneDir });
+              await execAsync(`git push origin ${trunkBranch}`, { cwd: remoteCloneDir });
+
+              const remoteHead = (
+                await execAsync(`git rev-parse HEAD`, { cwd: remoteCloneDir })
+              ).stdout.trim();
+              const localHeadBefore = (
+                await execAsync(`git rev-parse ${trunkBranch}`, { cwd: tempGitRepo })
+              ).stdout.trim();
+              expect(remoteHead).not.toBe(localHeadBefore);
+
+              const baselineBranchName = generateBranchName("no-fetch");
+              const baselineRuntimeConfig = getRuntimeConfig(baselineBranchName);
+              const baseline = await createWorkspaceWithCleanup(
+                env,
+                tempGitRepo,
+                baselineBranchName,
+                trunkBranch,
+                baselineRuntimeConfig,
+                { fetchLatest: false }
+              );
+              cleanupBaseline = baseline.cleanup;
+              expect(baseline.result.success).toBe(true);
+              if (!baseline.result.success) {
+                throw new Error(
+                  `Baseline workspace creation failed: ${baseline.result.error ?? "unknown error"}`
+                );
+              }
+
+              if (type === "ssh") {
+                await new Promise((resolve) => setTimeout(resolve, getInitWaitTime()));
+              }
+
+              const baselineHeadResult = await env.mockIpcRenderer.invoke(
+                IPC_CHANNELS.WORKSPACE_EXECUTE_BASH,
+                baseline.result.metadata.id,
+                "git rev-parse HEAD"
+              );
+              expect(baselineHeadResult.success).toBe(true);
+              expect(baselineHeadResult.data.success).toBe(true);
+              const baselineHead = baselineHeadResult.data.output.trim();
+              expect(baselineHead).toBe(localHeadBefore);
+
+              await cleanupBaseline();
+              cleanupBaseline = undefined;
+
+              const fetchBranchName = generateBranchName("fetch-latest");
+              const fetchRuntimeConfig = getRuntimeConfig(fetchBranchName);
+              const fetchWorkspace = await createWorkspaceWithCleanup(
+                env,
+                tempGitRepo,
+                fetchBranchName,
+                trunkBranch,
+                fetchRuntimeConfig,
+                { fetchLatest: true }
+              );
+              cleanupFetch = fetchWorkspace.cleanup;
+              expect(fetchWorkspace.result.success).toBe(true);
+              if (!fetchWorkspace.result.success) {
+                throw new Error(
+                  `Fetch-enabled workspace creation failed: ${fetchWorkspace.result.error ?? "unknown error"}`
+                );
+              }
+
+              if (type === "ssh") {
+                await new Promise((resolve) => setTimeout(resolve, getInitWaitTime()));
+              }
+
+              const fetchHeadResult = await env.mockIpcRenderer.invoke(
+                IPC_CHANNELS.WORKSPACE_EXECUTE_BASH,
+                fetchWorkspace.result.metadata.id,
+                "git rev-parse HEAD"
+              );
+              expect(fetchHeadResult.success).toBe(true);
+              expect(fetchHeadResult.data.success).toBe(true);
+              const fetchHead = fetchHeadResult.data.output.trim();
+              expect(fetchHead).toBe(remoteHead);
+
+              await cleanupFetch();
+              cleanupFetch = undefined;
+            } finally {
+              if (cleanupBaseline) {
+                await cleanupBaseline();
+              }
+              if (cleanupFetch) {
+                await cleanupFetch();
+              }
+              await cleanupTestEnvironment(env);
+              await cleanupTempGitRepo(tempGitRepo);
+              await cleanupTempGitRepo(remoteCloneBase);
+              await cleanupTempGitRepo(remoteBareDir);
+            }
+          },
+          TEST_TIMEOUT_MS
+        );
+
       });
 
       describe("Init hook execution", () => {
@@ -370,7 +494,6 @@ describeIntegration("WORKSPACE_CREATE with both runtimes", () => {
           async () => {
             const env = await createTestEnvironment();
             const tempGitRepo = await createTempGitRepo();
-
             try {
               // Create and commit init hook
               await createInitHook(

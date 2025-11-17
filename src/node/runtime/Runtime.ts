@@ -121,6 +121,8 @@ export interface WorkspaceCreationParams {
   directoryName: string;
   /** Logger for streaming creation progress and init hook output */
   initLogger: InitLogger;
+  /** Whether to fetch remote updates before branching */
+  fetchLatest?: boolean;
   /** Optional abort signal for cancellation */
   abortSignal?: AbortSignal;
 }
@@ -149,6 +151,8 @@ export interface WorkspaceInitParams {
   workspacePath: string;
   /** Logger for streaming initialization progress and output */
   initLogger: InitLogger;
+  /** Whether to fetch remote updates before branching */
+  fetchLatest?: boolean;
   /** Optional abort signal for cancellation */
   abortSignal?: AbortSignal;
 }

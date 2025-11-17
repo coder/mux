@@ -7,6 +7,8 @@ interface CreationControlsProps {
   branches: string[];
   trunkBranch: string;
   onTrunkBranchChange: (branch: string) => void;
+  fetchLatest: boolean;
+  onFetchLatestChange: (value: boolean) => void;
   runtimeMode: RuntimeMode;
   sshHost: string;
   onRuntimeChange: (mode: RuntimeMode, host: string) => void;
@@ -71,6 +73,30 @@ export function CreationControls(props: CreationControlsProps) {
             <br />
             • Local: git worktree in ~/.mux/src
             <br />• SSH: remote clone in ~/mux on SSH host
+          </Tooltip>
+        </TooltipWrapper>
+      </div>
+
+      {/* Fetch latest option */}
+      <div className="flex items-center gap-1" data-component="FetchLatestGroup">
+        <label className="flex items-center gap-1 text-xs text-muted" htmlFor="fetch-latest">
+          <input
+            id="fetch-latest"
+            type="checkbox"
+            className="accent-accent h-3.5 w-3.5"
+            checked={props.fetchLatest}
+            onChange={(event) => props.onFetchLatestChange(event.target.checked)}
+            disabled={props.disabled}
+          />
+          Fetch latest
+        </label>
+        <TooltipWrapper inline>
+          <span className="text-muted cursor-help text-xs">?</span>
+          <Tooltip className="tooltip" align="center" width="wide">
+            <strong>Fetch latest:</strong>
+            <br />
+            Runs <code>git fetch origin --prune</code> before branching so new workspaces start from
+            the freshest remote state.
           </Tooltip>
         </TooltipWrapper>
       </div>

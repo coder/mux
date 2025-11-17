@@ -211,8 +211,15 @@ const webApi: IPCApi = {
   },
   workspace: {
     list: () => invokeIPC(IPC_CHANNELS.WORKSPACE_LIST),
-    create: (projectPath, branchName, trunkBranch) =>
-      invokeIPC(IPC_CHANNELS.WORKSPACE_CREATE, projectPath, branchName, trunkBranch),
+    create: (projectPath, branchName, trunkBranch, runtimeConfig, options) =>
+      invokeIPC(
+        IPC_CHANNELS.WORKSPACE_CREATE,
+        projectPath,
+        branchName,
+        trunkBranch,
+        runtimeConfig,
+        options
+      ),
     remove: (workspaceId, options) =>
       invokeIPC(IPC_CHANNELS.WORKSPACE_REMOVE, workspaceId, options),
     rename: (workspaceId, newName) =>

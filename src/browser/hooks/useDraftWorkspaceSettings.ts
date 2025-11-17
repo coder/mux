@@ -13,6 +13,7 @@ import {
   getModelKey,
   getRuntimeKey,
   getTrunkBranchKey,
+  getFetchLatestKey,
   getProjectScopeId,
 } from "@/common/constants/storage";
 import type { UIMode } from "@/common/types/mode";
@@ -33,6 +34,7 @@ export interface DraftWorkspaceSettings {
   runtimeMode: RuntimeMode;
   sshHost: string;
   trunkBranch: string;
+  fetchLatest: boolean;
 }
 
 /**
@@ -52,6 +54,7 @@ export function useDraftWorkspaceSettings(
   settings: DraftWorkspaceSettings;
   setRuntimeOptions: (mode: RuntimeMode, host: string) => void;
   setTrunkBranch: (branch: string) => void;
+  setFetchLatest: (value: boolean) => void;
   getRuntimeString: () => string | undefined;
 } {
   // Global AI settings (read-only from global state)
@@ -74,7 +77,13 @@ export function useDraftWorkspaceSettings(
     { listener: true }
   );
 
-  // Project-scoped trunk branch preference (persisted per project)
+  // Project-scoped workspace creation preferences (persisted per project)
+  const [fetchLatest, setFetchLatest] = usePersistedState<boolean>(
+    getFetchLatestKey(projectPath),
+    false,
+    { listener: true }
+  );
+
   const [trunkBranch, setTrunkBranch] = usePersistedState<string>(
     getTrunkBranchKey(projectPath),
     "",
@@ -112,9 +121,11 @@ export function useDraftWorkspaceSettings(
       runtimeMode,
       sshHost,
       trunkBranch,
+      fetchLatest,
     },
     setRuntimeOptions,
     setTrunkBranch,
+    setFetchLatest,
     getRuntimeString,
   };
 }

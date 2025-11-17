@@ -36,6 +36,8 @@ interface UseCreationWorkspaceReturn {
   branches: string[];
   trunkBranch: string;
   setTrunkBranch: (branch: string) => void;
+  fetchLatest: boolean;
+  setFetchLatest: (value: boolean) => void;
   runtimeMode: RuntimeMode;
   sshHost: string;
   setRuntimeOptions: (mode: RuntimeMode, host: string) => void;
@@ -62,7 +64,7 @@ export function useCreationWorkspace({
   const [isSending, setIsSending] = useState(false);
 
   // Centralized draft workspace settings with automatic persistence
-  const { settings, setRuntimeOptions, setTrunkBranch, getRuntimeString } =
+  const { settings, setRuntimeOptions, setTrunkBranch, setFetchLatest, getRuntimeString } =
     useDraftWorkspaceSettings(projectPath, branches, recommendedTrunk);
 
   // Get send options from shared hook (uses project-scoped storage key)
@@ -107,6 +109,7 @@ export function useCreationWorkspace({
           runtimeConfig,
           projectPath, // Pass projectPath when workspaceId is null
           trunkBranch: settings.trunkBranch, // Pass selected trunk branch from settings
+          fetchLatest: settings.fetchLatest, // Fetch remote updates before branching when requested
         });
 
         if (!result.success) {
@@ -139,6 +142,7 @@ export function useCreationWorkspace({
       getRuntimeString,
       sendMessageOptions,
       settings.trunkBranch,
+      settings.fetchLatest,
     ]
   );
 
@@ -146,6 +150,8 @@ export function useCreationWorkspace({
     branches,
     trunkBranch: settings.trunkBranch,
     setTrunkBranch,
+    fetchLatest: settings.fetchLatest,
+    setFetchLatest,
     runtimeMode: settings.runtimeMode,
     sshHost: settings.sshHost,
     setRuntimeOptions,

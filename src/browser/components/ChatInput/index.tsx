@@ -993,6 +993,8 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 branches={creationState.branches}
                 trunkBranch={creationState.trunkBranch}
                 onTrunkBranchChange={creationState.setTrunkBranch}
+                fetchLatest={creationState.fetchLatest}
+                onFetchLatestChange={creationState.setFetchLatest}
                 runtimeMode={creationState.runtimeMode}
                 sshHost={creationState.sshHost}
                 onRuntimeChange={creationState.setRuntimeOptions}
