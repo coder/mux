@@ -222,7 +222,7 @@
       "icon": "build/icon.png",
       "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
-    "npmRebuild": true,
+    "npmRebuild": false,
     "buildDependenciesFromSource": false
   }
 }
