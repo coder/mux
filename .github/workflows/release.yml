@@ -3,13 +3,36 @@ name: Release
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: write # Required for electron-builder to upload release assets
 
+env:
+  RELEASE_TAG: ${{ github.event.release.tag_name || github.ref_name }}
+
 jobs:
+  preflight:
+    name: Validate release target
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure release tag context
+        run: |
+          if [ -z "$RELEASE_TAG" ]; then
+            echo "::error::RELEASE_TAG is empty. Ensure this workflow runs on a release event or refs/tags/* ref."
+            exit 1
+          fi
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [[ "$GITHUB_REF" != refs/tags/* ]]; then
+            echo "::error::workflow_dispatch runs must target a tag ref. Current ref: $GITHUB_REF"
+            exit 1
+          fi
+
+          echo "Publishing tag $RELEASE_TAG"
+
   build-macos:
     name: Build and Release macOS
+    needs: preflight
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-macos-15' || 'macos-latest' }}
     steps:
       - name: Checkout code
@@ -38,6 +61,7 @@ jobs:
 
   build-linux:
     name: Build and Release Linux
+    needs: preflight
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - name: Checkout code
@@ -57,6 +81,7 @@ jobs:
 
   build-vscode-extension:
     name: Build and Release VS Code Extension
+    needs: preflight
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - name: Checkout code
@@ -72,20 +97,25 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload ${{ github.event.release.tag_name }} \
+          gh release upload "$RELEASE_TAG" \
             vscode/mux-*.vsix \
             --clobber
 
       - name: Publish to VS Code Marketplace
-        if: ${{ secrets.VSCE_PAT != '' }}
         working-directory: vscode
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
-          bunx vsce publish -p $VSCE_PAT
+          if [ -z "$VSCE_PAT" ]; then
+            echo "VSCE_PAT secret is not set; skipping VS Code Marketplace publish."
+            exit 0
+          fi
+
+          bunx vsce publish -p "$VSCE_PAT"
 
   build-windows:
     name: Build and Release Windows
+    needs: preflight
     runs-on: windows-latest
     steps:
       - name: Checkout code
