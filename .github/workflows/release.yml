@@ -77,7 +77,7 @@ jobs:
             --clobber
 
       - name: Publish to VS Code Marketplace
-        if: secrets.VSCE_PAT != ''
+        if: ${{ secrets.VSCE_PAT != '' }}
         working-directory: vscode
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
