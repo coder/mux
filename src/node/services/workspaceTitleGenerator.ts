@@ -45,6 +45,14 @@ export async function generateWorkspaceName(
       if (!hasApiKey) {
         return Err({ type: "api_key_not_found", provider: providerName });
       }
+      // For non-Anthropic/OpenAI providers (e.g., OpenRouter, Azure, Fireworks, Ollama),
+      // we allow workspace creation to proceed with a temporary fallback name.
+      if (providerName !== "anthropic" && providerName !== "openai") {
+        log.info(
+          `Title generation not supported for provider "${providerName}"; using temporary fallback name.`
+        );
+        return Ok(createFallbackName());
+      }
       return Err({ type: "provider_not_supported", provider: providerName });
     }
 
@@ -118,6 +126,14 @@ function getModelForTitleGeneration(modelString: string, config: Config): Langua
     log.error(`Failed to create model for title generation`, error);
     return null;
   }
+}
+
+/**
+ * Create fallback name using timestamp (used for providers without title support)
+ */
+function createFallbackName(): string {
+  const timestamp = Date.now().toString(36);
+  return `chat-${timestamp}`;
 }
 
 /**
