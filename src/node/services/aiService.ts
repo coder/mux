@@ -251,7 +251,7 @@ export class AIService extends EventEmitter {
    * constructor, ensuring automatic parity with Vercel AI SDK - any configuration options
    * supported by the provider will work without modification.
    */
-  private async createModel(
+  async createModel(
     modelString: string,
     muxProviderOptions?: MuxProviderOptions
   ): Promise<Result<LanguageModel, SendMessageError>> {

@@ -248,7 +248,7 @@ export class IpcMain {
       {
         const isErrLike = (v: unknown): v is { type: string } =>
           typeof v === "object" && v !== null && "type" in v;
-        const nameResult = await generateWorkspaceName(message, options.model, this.config);
+        const nameResult = await generateWorkspaceName(message, options.model, this.aiService);
         if (!nameResult.success) {
           const err = nameResult.error;
           if (isErrLike(err)) {
@@ -996,7 +996,7 @@ export class IpcMain {
               const nameResult = await generateWorkspaceName(
                 messageText,
                 "anthropic:claude-sonnet-4-5", // Use reasonable default model
-                this.config
+                this.aiService
               );
               if (nameResult.success) {
                 const branchName = nameResult.data;
