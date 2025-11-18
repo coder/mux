@@ -43,7 +43,7 @@ interface UseCreationWorkspaceReturn {
   toast: Toast | null;
   setToast: (toast: Toast | null) => void;
   isSending: boolean;
-  handleSend: (message: string) => Promise<void>;
+  handleSend: (message: string) => Promise<boolean>;
 }
 
 /**
@@ -89,8 +89,8 @@ export function useCreationWorkspace({
   }, [projectPath]);
 
   const handleSend = useCallback(
-    async (message: string) => {
-      if (!message.trim() || isSending) return;
+    async (message: string): Promise<boolean> => {
+      if (!message.trim() || isSending) return false;
 
       setIsSending(true);
       setToast(null);
@@ -113,7 +113,7 @@ export function useCreationWorkspace({
         if (!result.success) {
           setToast(createErrorToast(result.error));
           setIsSending(false);
-          return;
+          return false;
         }
 
         // Check if this is a workspace creation result (has metadata field)
@@ -122,6 +122,8 @@ export function useCreationWorkspace({
           // Settings are already persisted via useDraftWorkspaceSettings
           // Notify parent to switch workspace (clears input via parent unmount)
           onWorkspaceCreated(result.metadata);
+          setIsSending(false);
+          return true;
         } else {
           // This shouldn't happen for null workspaceId, but handle gracefully
           setToast({
@@ -130,6 +132,7 @@ export function useCreationWorkspace({
             message: "Unexpected response from server",
           });
           setIsSending(false);
+          return false;
         }
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
@@ -139,6 +142,7 @@ export function useCreationWorkspace({
           message: `Failed to create workspace: ${errorMessage}`,
         });
         setIsSending(false);
+        return false;
       }
     },
     [

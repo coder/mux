@@ -463,8 +463,13 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     if (variant === "creation") {
       // Creation variant: simple message send + workspace creation
       setIsSending(true);
-      setInput(""); // Clear input immediately (will be restored by parent if creation fails)
-      await creationState.handleSend(messageText);
+      const ok = await creationState.handleSend(messageText);
+      if (ok) {
+        setInput("");
+        if (inputRef.current) {
+          inputRef.current.style.height = "36px";
+        }
+      }
       setIsSending(false);
       return;
     }
