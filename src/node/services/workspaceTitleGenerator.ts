@@ -40,19 +40,24 @@ export async function generateWorkspaceName(
           message: `Invalid model string format: "${modelString}". Expected "provider:model-id"`,
         });
       }
-      const providers = config.loadProvidersConfig();
-      const hasApiKey = providers?.[providerName]?.apiKey;
-      if (!hasApiKey) {
-        return Err({ type: "api_key_not_found", provider: providerName });
-      }
+
       // For non-Anthropic/OpenAI providers (e.g., OpenRouter, Azure, Fireworks, Ollama),
-      // we allow workspace creation to proceed with a temporary fallback name.
+      // title generation isn't supported. Do NOT block workspace creation — use a
+      // temporary fallback name and let the subsequent send surface any provider issues.
       if (providerName !== "anthropic" && providerName !== "openai") {
         log.info(
           `Title generation not supported for provider "${providerName}"; using temporary fallback name.`
         );
         return Ok(createFallbackName());
       }
+
+      // Anthropic/OpenAI path: require API key so we can actually generate a title
+      const providers = config.loadProvidersConfig();
+      const hasApiKey = providers?.[providerName]?.apiKey;
+      if (!hasApiKey) {
+        return Err({ type: "api_key_not_found", provider: providerName });
+      }
+
       return Err({ type: "provider_not_supported", provider: providerName });
     }
 
