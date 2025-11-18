@@ -17,14 +17,14 @@ import { TOOL_EDIT_WARNING } from "@/common/types/tools";
 
 import { zodToJsonSchema } from "zod-to-json-schema";
 
-const FILE_EDIT_FILE_PATH = z
-  .string()
-  .describe("Path to the file to edit (absolute or relative to the current workspace)");
-
 interface ToolDefinition {
   description: string;
   schema: z.ZodTypeAny;
 }
+
+const FILE_EDIT_FILE_PATH = z
+  .string()
+  .describe("Path to the file to edit (absolute or relative to the current workspace)");
 
 interface ToolSchema {
   name: string;

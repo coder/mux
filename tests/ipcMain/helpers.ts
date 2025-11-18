@@ -435,7 +435,7 @@ export function assertStreamSuccess(collector: EventCollector): void {
     collector.logEventDiagnostics("Stream did not emit stream-end event");
     const eventSummary = allEvents
       .map((event, idx) => {
-        const type = "type" in event ? (event as { type?: string }).type ?? "unknown" : "unknown";
+        const type = "type" in event ? ((event as { type?: string }).type ?? "unknown") : "unknown";
         if (type === "stream-delta") {
           return `[${idx}] stream-delta`;
         }
@@ -449,9 +449,7 @@ export function assertStreamSuccess(collector: EventCollector): void {
       })
       .slice(-20)
       .join(", ");
-    throw new Error(
-      `Stream did not emit stream-end event.\nRecent events: ${eventSummary}`
-    );
+    throw new Error(`Stream did not emit stream-end event.\nRecent events: ${eventSummary}`);
   }
 
   // Check for errors
