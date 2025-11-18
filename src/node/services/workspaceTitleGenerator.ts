@@ -5,6 +5,9 @@ import { log } from "./log";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { MODEL_NAMES } from "@/common/constants/knownModels";
+import type { Result } from "@/common/types/result";
+import { Ok, Err } from "@/common/types/result";
+import type { SendMessageError } from "@/common/types/errors";
 
 const workspaceNameSchema = z.object({
   name: z
@@ -18,29 +21,31 @@ const workspaceNameSchema = z.object({
 /**
  * Generate workspace name using AI.
  * If AI cannot be used (e.g. missing credentials, unsupported provider, invalid model),
- * this function throws a SendMessageError-compatible object so callers can surface
- * the same provider error UX used elsewhere in the app.
+ * returns a SendMessageError so callers can surface the standard provider error UX.
  */
 export async function generateWorkspaceName(
   message: string,
   modelString: string,
   config: Config
-): Promise<string> {
+): Promise<Result<string, SendMessageError>> {
   try {
     const model = getModelForTitleGeneration(modelString, config);
 
     if (!model) {
-      // No usable model — infer error from modelString + providers config like sendMessage does
+      // Infer error from provider + config (mirrors createModel in aiService)
       const [providerName, modelId] = modelString.split(":", 2);
       if (!providerName || !modelId) {
-        throw { type: "invalid_model_string", message: `Invalid model string format: "${modelString}". Expected "provider:model-id"` };
+        return Err({
+          type: "invalid_model_string",
+          message: `Invalid model string format: "${modelString}". Expected "provider:model-id"`,
+        });
       }
       const providers = config.loadProvidersConfig();
-      const hasProvider = Boolean(providers && providers[providerName]);
-      if (!hasProvider || !providers?.[providerName]?.apiKey) {
-        throw { type: "api_key_not_found", provider: providerName };
+      const hasApiKey = providers?.[providerName]?.apiKey;
+      if (!hasApiKey) {
+        return Err({ type: "api_key_not_found", provider: providerName });
       }
-      throw { type: "provider_not_supported", provider: providerName };
+      return Err({ type: "provider_not_supported", provider: providerName });
     }
 
     const result = await generateObject({
@@ -49,15 +54,11 @@ export async function generateWorkspaceName(
       prompt: `Generate a git-safe branch/workspace name for this development task:\n\n"${message}"\n\nRequirements:\n- Git-safe identifier (e.g., "automatic-title-generation")\n- Lowercase, hyphens only, no spaces\n- Concise (2-5 words) and descriptive of the task`,
     });
 
-    return validateBranchName(result.object.name);
+    return Ok(validateBranchName(result.object.name));
   } catch (error) {
-    // If error is already a structured SendMessageError, rethrow as-is
-    if (error && typeof error === "object" && "type" in (error as Record<string, unknown>)) {
-      throw error;
-    }
     const messageText = error instanceof Error ? error.message : String(error);
     log.error("Failed to generate workspace name with AI", error);
-    throw { type: "unknown", raw: `Failed to generate workspace name: ${messageText}` };
+    return Err({ type: "unknown", raw: `Failed to generate workspace name: ${messageText}` });
   }
 }
 
@@ -117,15 +118,6 @@ function getModelForTitleGeneration(modelString: string, config: Config): Langua
     log.error(`Failed to create model for title generation`, error);
     return null;
   }
-}
-
-/**
- * Create fallback name using timestamp
- * NOTE: Not used by current flow; kept for potential future use.
- */
-function createFallbackName(): string {
-  const timestamp = Date.now().toString(36);
-  return `chat-${timestamp}`;
 }
 
 /**

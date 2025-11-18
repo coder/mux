@@ -245,16 +245,27 @@ export class IpcMain {
     try {
       // 1. Generate workspace branch name using AI (use same model as message)
       let branchName: string;
-      try {
-        branchName = await generateWorkspaceName(message, options.model, this.config);
-      } catch (e) {
-        // Surface provider error types to the renderer, matching sendMessage behavior
-        const err = e as unknown;
-        if (err && typeof err === "object" && "type" in (err as Record<string, unknown>)) {
-          return Err(err as SendMessageError);
+      {
+        const isErrLike = (v: unknown): v is { type: string } =>
+          typeof v === "object" && v !== null && "type" in v;
+        const nameResult = await generateWorkspaceName(message, options.model, this.config);
+        if (!nameResult.success) {
+          const err = nameResult.error;
+          if (isErrLike(err)) {
+            return Err(err);
+          }
+          const toSafeString = (v: unknown): string => {
+            if (v instanceof Error) return v.message;
+            try {
+              return JSON.stringify(v);
+            } catch {
+              return String(v);
+            }
+          };
+          const msg = toSafeString(err);
+          return Err({ type: "unknown", raw: `Failed to generate workspace name: ${msg}` });
         }
-        const msg = err instanceof Error ? err.message : String(err);
-        return Err({ type: "unknown", raw: `Failed to generate workspace name: ${msg}` });
+        branchName = nameResult.data;
       }
 
       log.debug("Generated workspace name", { branchName });
@@ -982,20 +993,35 @@ export class IpcMain {
             const messageText = textParts.map((p) => p.text).join(" ");
 
             if (messageText.trim()) {
-              const branchName = await generateWorkspaceName(
+              const nameResult = await generateWorkspaceName(
                 messageText,
                 "anthropic:claude-sonnet-4-5", // Use reasonable default model
                 this.config
               );
+              if (nameResult.success) {
+                const branchName = nameResult.data;
+                // Update config with regenerated name
+                await this.config.updateWorkspaceMetadata(workspaceId, {
+                  name: branchName,
+                });
 
-              // Update config with regenerated name
-              await this.config.updateWorkspaceMetadata(workspaceId, {
-                name: branchName,
-              });
-
-              // Return updated metadata
-              metadata.name = branchName;
-              log.info(`Regenerated workspace name: ${branchName}`);
+                // Return updated metadata
+                metadata.name = branchName;
+                log.info(`Regenerated workspace name: ${branchName}`);
+              } else {
+                log.info(
+                  `Skipping title regeneration for ${workspaceId}: ${
+                    (
+                      nameResult.error as {
+                        type?: string;
+                        provider?: string;
+                        message?: string;
+                        raw?: string;
+                      }
+                    ).type ?? "unknown"
+                  }`
+                );
+              }
             }
           }
         } catch (error) {
