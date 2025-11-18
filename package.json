@@ -176,6 +176,7 @@
     "dist/**/*.json",
     "dist/**/*.png",
     "dist/assets/**/*",
+    "scripts/postinstall.sh",
     "README.md",
     "LICENSE"
   ],
