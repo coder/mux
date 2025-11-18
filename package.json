@@ -41,8 +41,7 @@
     "docs:watch": "make docs-watch",
     "storybook": "make storybook",
     "storybook:build": "make storybook-build",
-    "test:storybook": "make test-storybook",
-    "postinstall": "sh scripts/postinstall.sh"
+    "test:storybook": "make test-storybook"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.44",
@@ -74,7 +73,6 @@
     "motion": "^12.23.24",
     "node-pty": "1.1.0-beta39",
     "ollama-ai-provider-v2": "^1.5.4",
-    "node-pty": "1.1.0-beta39",
     "rehype-harden": "^1.1.5",
     "shescape": "^2.1.6",
     "source-map-support": "^0.5.21",
@@ -177,7 +175,6 @@
     "dist/**/*.json",
     "dist/**/*.png",
     "dist/assets/**/*",
-    "scripts/postinstall.sh",
     "README.md",
     "LICENSE"
   ],
