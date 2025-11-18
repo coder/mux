@@ -4,7 +4,8 @@ import type { Config } from "@/node/config";
 import { log } from "./log";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
-import { MODEL_NAMES } from "@/common/constants/knownModels";
+import { PROVIDER_REGISTRY } from "@/common/constants/providers";
+
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { SendMessageError } from "@/common/types/errors";
@@ -29,7 +30,7 @@ export async function generateWorkspaceName(
   config: Config
 ): Promise<Result<string, SendMessageError>> {
   try {
-    const model = getModelForTitleGeneration(modelString, config);
+    const model = await getModelForTitleGeneration(modelString, config);
 
     if (!model) {
       // Infer error from provider + config (mirrors createModel in aiService)
@@ -41,23 +42,19 @@ export async function generateWorkspaceName(
         });
       }
 
-      // For non-Anthropic/OpenAI providers (e.g., OpenRouter, Azure, Fireworks, Ollama),
-      // title generation isn't supported. Do NOT block workspace creation — use a
-      // temporary fallback name and let the subsequent send surface any provider issues.
-      if (providerName !== "anthropic" && providerName !== "openai") {
-        log.info(
-          `Title generation not supported for provider "${providerName}"; using temporary fallback name.`
-        );
-        return Ok(createFallbackName());
-      }
-
-      // Anthropic/OpenAI path: require API key so we can actually generate a title
       const providers = config.loadProvidersConfig();
-      const hasApiKey = providers?.[providerName]?.apiKey;
-      if (!hasApiKey) {
+
+      // Require API keys for providers that need them
+      if (
+        (providerName === "anthropic" ||
+          providerName === "openai" ||
+          providerName === "openrouter") &&
+        !providers?.[providerName]?.apiKey
+      ) {
         return Err({ type: "api_key_not_found", provider: providerName });
       }
 
+      // Unknown/unsupported provider
       return Err({ type: "provider_not_supported", provider: providerName });
     }
 
@@ -80,7 +77,10 @@ export async function generateWorkspaceName(
  * Priority: Haiku 4.5 (Anthropic) → GPT-5-mini (OpenAI) → fallback to user's model
  * Falls back to null if no provider configured
  */
-function getModelForTitleGeneration(modelString: string, config: Config): LanguageModel | null {
+async function getModelForTitleGeneration(
+  modelString: string,
+  config: Config
+): Promise<LanguageModel | null> {
   const providersConfig = config.loadProvidersConfig();
 
   if (!providersConfig) {
@@ -88,57 +88,54 @@ function getModelForTitleGeneration(modelString: string, config: Config): Langua
   }
 
   try {
-    // Try Anthropic Haiku first (fastest/cheapest)
-    if (providersConfig.anthropic?.apiKey) {
-      const provider = createAnthropic({
-        apiKey: String(providersConfig.anthropic.apiKey),
-      });
-      return provider(MODEL_NAMES.anthropic.HAIKU);
-    }
-
-    // Try OpenAI GPT-5-mini second
-    if (providersConfig.openai?.apiKey) {
-      const provider = createOpenAI({
-        apiKey: String(providersConfig.openai.apiKey),
-      });
-      return provider(MODEL_NAMES.openai.GPT_MINI);
-    }
-
-    // Parse user's model as fallback
+    // Use exactly what the user selected. Prefer their model over any defaults.
     const [providerName, modelId] = modelString.split(":", 2);
     if (!providerName || !modelId) {
       log.error("Invalid model string format:", modelString);
       return null;
     }
 
-    if (providerName === "anthropic" && providersConfig.anthropic?.apiKey) {
-      const provider = createAnthropic({
-        apiKey: String(providersConfig.anthropic.apiKey),
+    if (providerName === "anthropic") {
+      if (!providersConfig.anthropic?.apiKey) return null;
+      const provider = createAnthropic({ apiKey: String(providersConfig.anthropic.apiKey) });
+      return provider(modelId);
+    }
+
+    if (providerName === "openai") {
+      if (!providersConfig.openai?.apiKey) return null;
+      const provider = createOpenAI({ apiKey: String(providersConfig.openai.apiKey) });
+      // Use Responses API model variant to match aiService
+      return provider.responses(modelId);
+    }
+
+    if (providerName === "openrouter") {
+      if (!providersConfig.openrouter?.apiKey) return null;
+      const { createOpenRouter } = await PROVIDER_REGISTRY.openrouter();
+      const provider = createOpenRouter({
+        apiKey: String(providersConfig.openrouter.apiKey),
+        baseURL: providersConfig.openrouter.baseUrl,
+        headers: providersConfig.openrouter.headers as Record<string, string> | undefined,
       });
       return provider(modelId);
     }
 
-    if (providerName === "openai" && providersConfig.openai?.apiKey) {
-      const provider = createOpenAI({
-        apiKey: String(providersConfig.openai.apiKey),
+    if (providerName === "ollama") {
+      const { createOllama } = await PROVIDER_REGISTRY.ollama();
+      const provider = createOllama({
+        baseURL: (providersConfig.ollama?.baseUrl ?? providersConfig.ollama?.baseURL) as
+          | string
+          | undefined,
       });
       return provider(modelId);
     }
 
-    log.error(`Provider ${providerName} not configured or not supported`);
+    // Unknown provider
+    log.error(`Provider ${providerName} not configured or not supported for titles`);
     return null;
   } catch (error) {
     log.error(`Failed to create model for title generation`, error);
     return null;
   }
-}
-
-/**
- * Create fallback name using timestamp (used for providers without title support)
- */
-function createFallbackName(): string {
-  const timestamp = Date.now().toString(36);
-  return `chat-${timestamp}`;
 }
 
 /**
