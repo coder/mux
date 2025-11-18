@@ -109,7 +109,7 @@ export class PTYService {
         // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
         pty = require("@lydell/node-pty");
         log.debug("Using @lydell/node-pty (prebuilt binaries)");
-      } catch (lydellErr) {
+      } catch {
         try {
           // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
           pty = require("node-pty");
@@ -227,7 +227,7 @@ export class PTYService {
         // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
         pty = require("@lydell/node-pty");
         log.debug("Using @lydell/node-pty for SSH (prebuilt binaries)");
-      } catch (lydellErr) {
+      } catch {
         try {
           // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
           pty = require("node-pty");
