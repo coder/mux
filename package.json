@@ -72,6 +72,7 @@
     "markdown-it": "^14.1.0",
     "minimist": "^1.2.8",
     "motion": "^12.23.24",
+    "node-pty": "1.1.0-beta39",
     "ollama-ai-provider-v2": "^1.5.4",
     "node-pty": "1.1.0-beta39",
     "rehype-harden": "^1.1.5",
@@ -85,6 +86,7 @@
     "zod-to-json-schema": "^3.24.6"
   },
   "devDependencies": {
+    "electron": "^38.2.1",
     "@electron/rebuild": "^4.0.1",
     "@eslint/js": "^9.36.0",
     "@playwright/test": "^1.56.0",
@@ -162,7 +164,7 @@
     "vite-plugin-top-level-await": "^1.6.0"
   },
   "optionalDependencies": {
-    "electron": "^38.2.1"
+    "@lydell/node-pty": "1.1.0"
   },
   "files": [
     "dist/**/*.js",

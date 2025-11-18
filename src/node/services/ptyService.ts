@@ -100,19 +100,28 @@ export class PTYService {
     );
 
     if (runtime instanceof LocalRuntime) {
-      // Local: Use node-pty (dynamically import to avoid crash if not available)
+      // Local: Use node-pty or @lydell/node-pty
+      // Try @lydell/node-pty first (server mode with prebuilds)
+      // Fall back to node-pty (desktop mode after electron-rebuild)
       // eslint-disable-next-line @typescript-eslint/consistent-type-imports
       let pty: typeof import("node-pty");
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
-        pty = require("node-pty");
-      } catch (err) {
-        log.error("node-pty not available - local terminals will not work:", err);
-        throw new Error(
-          process.versions.electron
-            ? "Local terminals are not available. node-pty failed to load (likely due to Electron ABI version mismatch). Run 'make rebuild-native' to rebuild native modules."
-            : "Local terminals are not available. node-pty failed to load. Ensure native dependencies are installed."
-        );
+        pty = require("@lydell/node-pty");
+        log.debug("Using @lydell/node-pty (prebuilt binaries)");
+      } catch (lydellErr) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
+          pty = require("node-pty");
+          log.debug("Using node-pty (rebuilt for Electron)");
+        } catch (err) {
+          log.error("Neither @lydell/node-pty nor node-pty available:", err);
+          throw new Error(
+            process.versions.electron
+              ? "Local terminals are not available. node-pty failed to load (likely due to Electron ABI version mismatch). Run 'make rebuild-native' to rebuild native modules."
+              : "Local terminals are not available. No prebuilt binaries found for your platform. Supported: linux-x64, linux-arm64, darwin-x64, darwin-arm64, win32-x64."
+          );
+        }
       }
 
       // Validate workspace path exists
@@ -210,19 +219,27 @@ export class PTYService {
       log.info(`[PTY] SSH terminal for ${sessionId}: ssh ${sshArgs.join(" ")}`);
       log.info(`[PTY] SSH terminal size: ${params.cols}x${params.rows}`);
 
-      // Load node-pty dynamically
+      // Load node-pty or @lydell/node-pty dynamically
+      // Try @lydell/node-pty first (server mode), fall back to node-pty (desktop)
       // eslint-disable-next-line @typescript-eslint/consistent-type-imports
       let pty: typeof import("node-pty");
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
-        pty = require("node-pty");
-      } catch (err) {
-        log.error("node-pty not available - SSH terminals will not work:", err);
-        throw new Error(
-          process.versions.electron
-            ? "SSH terminals are not available. node-pty failed to load (likely due to Electron ABI version mismatch). Run 'make rebuild-native' to rebuild native modules."
-            : "SSH terminals are not available. node-pty failed to load. Ensure native dependencies are installed."
-        );
+        pty = require("@lydell/node-pty");
+        log.debug("Using @lydell/node-pty for SSH (prebuilt binaries)");
+      } catch (lydellErr) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
+          pty = require("node-pty");
+          log.debug("Using node-pty for SSH (rebuilt for Electron)");
+        } catch (err) {
+          log.error("Neither @lydell/node-pty nor node-pty available:", err);
+          throw new Error(
+            process.versions.electron
+              ? "SSH terminals are not available. node-pty failed to load (likely due to Electron ABI version mismatch). Run 'make rebuild-native' to rebuild native modules."
+              : "SSH terminals are not available. No prebuilt binaries found for your platform. Supported: linux-x64, linux-arm64, darwin-x64, darwin-arm64, win32-x64."
+          );
+        }
       }
 
       let ptyProcess: IPty;
