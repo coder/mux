@@ -17,7 +17,9 @@ describe("Known Models Integration", () => {
       const modelId = model.providerModelId;
 
       // Check if model exists in models.json
-      if (!(modelId in modelsJson)) {
+      // xAI models are prefixed with "xai/" in models.json
+      const lookupKey = model.provider === "xai" ? `xai/${modelId}` : modelId;
+      if (!(lookupKey in modelsJson)) {
         missingModels.push(`${key}: ${model.provider}:${modelId}`);
       }
     }
@@ -34,7 +36,9 @@ describe("Known Models Integration", () => {
   test("all known models have required metadata", () => {
     for (const [key, model] of Object.entries(KNOWN_MODELS)) {
       const modelId = model.providerModelId;
-      const modelData = modelsJson[modelId as keyof typeof modelsJson] as Record<string, unknown>;
+      // xAI models are prefixed with "xai/" in models.json
+      const lookupKey = model.provider === "xai" ? `xai/${modelId}` : modelId;
+      const modelData = modelsJson[lookupKey as keyof typeof modelsJson] as Record<string, unknown>;
 
       expect(modelData).toBeDefined();
       // Check that basic metadata fields exist (not all models have all fields)
