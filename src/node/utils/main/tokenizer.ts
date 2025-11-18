@@ -52,7 +52,12 @@ function resolveModelName(modelString: string): ModelName {
 
   if (!modelName) {
     const provider = modelString.split(":")[0] || "anthropic";
-    const fallbackModel = provider === "anthropic" ? "anthropic/claude-sonnet-4.5" : "openai/gpt-5";
+    const fallbackModel =
+      provider === "anthropic"
+        ? "anthropic/claude-sonnet-4.5"
+        : provider === "google"
+          ? "google/gemini-2.5-pro"
+          : "openai/gpt-5";
 
     // Only warn once per unknown model to avoid log spam
     if (!warnedModels.has(modelString)) {

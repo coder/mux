@@ -28,6 +28,13 @@ export async function importOllama() {
 }
 
 /**
+ * Dynamically import the Google provider package
+ */
+export async function importGoogle() {
+  return await import("@ai-sdk/google");
+}
+
+/**
  * Dynamically import the OpenRouter provider package
  */
 export async function importOpenRouter() {
@@ -50,6 +57,7 @@ export async function importOpenRouter() {
 export const PROVIDER_REGISTRY = {
   anthropic: importAnthropic,
   openai: importOpenAI,
+  google: importGoogle,
   ollama: importOllama,
   openrouter: importOpenRouter,
 } as const;

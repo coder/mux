@@ -21,6 +21,28 @@ GPT-5 family of models:
 
 - `openai:gpt-5`
 - `openai:gpt-5-pro`
+
+#### Google (Cloud)
+
+Access Gemini models directly via Google's generative AI API:
+
+- `google:gemini-3-pro-preview`
+- `google:gemini-2.5-pro`
+- `google:gemini-2.5-flash`
+
+**Setup:**
+
+1. Get your API key from [Google AI Studio](https://aistudio.google.com/)
+2. Add to `~/.mux/providers.jsonc`:
+
+```jsonc
+{
+  "google": {
+    "apiKey": "AIza...",
+  },
+}
+```
+
 - `openai:gpt-5-codex`
 
 **Note:** Anthropic models are better supported than GPT-5 class models due to an outstanding issue in the Vercel AI SDK.
@@ -140,6 +162,10 @@ All providers are configured in `~/.mux/providers.jsonc`. Example configurations
   // Required for OpenAI models
   "openai": {
     "apiKey": "sk-...",
+  },
+  // Required for Google models
+  "google": {
+    "apiKey": "AIza...",
   },
   // Required for OpenRouter models
   "openrouter": {

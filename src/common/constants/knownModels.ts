@@ -2,7 +2,7 @@
  * Centralized model metadata. Update model versions here and everywhere else will follow.
  */
 
-type ModelProvider = "anthropic" | "openai";
+type ModelProvider = "anthropic" | "openai" | "google";
 
 interface KnownModelDefinition {
   /** Provider identifier used by SDK factories */
@@ -51,6 +51,7 @@ const MODEL_DEFINITIONS = {
     providerModelId: "gpt-5.1",
     aliases: ["gpt-5.1"],
     warm: true,
+    tokenizerOverride: "openai/gpt-5",
   },
   GPT_PRO: {
     provider: "openai",
@@ -62,11 +63,18 @@ const MODEL_DEFINITIONS = {
     providerModelId: "gpt-5.1-codex",
     aliases: ["codex"],
     warm: true,
+    tokenizerOverride: "openai/gpt-5",
   },
   GPT_MINI: {
     provider: "openai",
     providerModelId: "gpt-5.1-codex-mini",
     aliases: ["codex-mini"],
+  },
+  GEMINI_3_PRO: {
+    provider: "google",
+    providerModelId: "gemini-3-pro-preview",
+    aliases: ["gemini-3", "gemini-3-pro"],
+    tokenizerOverride: "google/gemini-2.5-pro",
   },
 } as const satisfies Record<string, KnownModelDefinition>;
 
