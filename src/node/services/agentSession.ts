@@ -408,20 +408,18 @@ export class AgentSession {
     forward("stream-delta", (payload) => this.emitChatEvent(payload));
     forward("tool-call-start", (payload) => this.emitChatEvent(payload));
     forward("tool-call-delta", (payload) => this.emitChatEvent(payload));
-    forward("tool-call-end", (payload) => this.emitChatEvent(payload));
+    forward("tool-call-end", (payload) => {
+      this.emitChatEvent(payload);
+      // Tool call completed: auto-send queued messages
+      this.sendQueuedMessages();
+    });
     forward("reasoning-delta", (payload) => this.emitChatEvent(payload));
     forward("reasoning-end", (payload) => this.emitChatEvent(payload));
 
     forward("stream-end", (payload) => {
       this.emitChatEvent(payload);
       // Stream end: auto-send queued messages
-      if (!this.messageQueue.isEmpty()) {
-        const { message, options } = this.messageQueue.produceMessage();
-        this.messageQueue.clear();
-        this.emitQueuedMessageChanged();
-
-        void this.sendMessage(message, options);
-      }
+      this.sendQueuedMessages();
     });
 
     forward("stream-abort", (payload) => {
@@ -527,6 +525,20 @@ export class AgentSession {
       displayText: this.messageQueue.getDisplayText(),
       imageParts: this.messageQueue.getImageParts(),
     });
+  }
+
+  /**
+   * Send queued messages if any exist.
+   * Called when tool execution completes or stream ends.
+   */
+  private sendQueuedMessages(): void {
+    if (!this.messageQueue.isEmpty()) {
+      const { message, options } = this.messageQueue.produceMessage();
+      this.messageQueue.clear();
+      this.emitQueuedMessageChanged();
+
+      void this.sendMessage(message, options);
+    }
   }
 
   private assertNotDisposed(operation: string): void {
