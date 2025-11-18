@@ -163,6 +163,8 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     [tokenCountPromise]
   );
   const hasTypedText = input.trim().length > 0;
+  const hasImages = imageAttachments.length > 0;
+  const canSend = (hasTypedText || hasImages) && !disabled && !isSending;
   // Setter for model - updates localStorage directly so useSendMessageOptions picks it up
   const setPreferredModel = useCallback(
     (model: string) => {
@@ -449,8 +451,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   );
 
   const handleSend = async () => {
-    // Allow sending if there's text or images
-    if ((!input.trim() && imageAttachments.length === 0) || disabled || isSending) {
+    if (!canSend) {
       return;
     }
 
@@ -933,6 +934,20 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
               }
               aria-expanded={showCommandSuggestions && commandSuggestions.length > 0}
             />
+            <TooltipWrapper inline>
+              <button
+                type="button"
+                onClick={() => void handleSend()}
+                disabled={!canSend}
+                aria-label="Send message"
+                className="bg-accent hover:bg-accent-dark disabled:opacity-50 disabled:hover:bg-accent cursor-pointer rounded border-none px-3 py-1 text-[13px] text-white transition-colors duration-200"
+              >
+                Send
+              </button>
+              <Tooltip className="tooltip" align="center">
+                Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})
+              </Tooltip>
+            </TooltipWrapper>
           </div>
 
           {/* Image attachments - workspace only */}
