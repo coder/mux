@@ -266,6 +266,12 @@ export function createChatEventExpander(): ChatEventExpander {
       }
       (msg as any).isLastPartOfMessage = index === displayed.length - 1;
 
+      // Fix: Running tools show as "interrupted" because they are partial.
+      // If the stream is active, they should be "executing".
+      if (msg.type === "tool" && msg.status === "interrupted" && options.isStreaming) {
+        (msg as any).status = "executing";
+      }
+
       return msg;
     });
   };
