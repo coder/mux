@@ -53,8 +53,8 @@ TODO: add issue link here.
 
 Frontier reasoning models from xAI with built-in search orchestration:
 
-- `xai:grok-4`
-- `xai:grok-3-mini`
+- `xai:grok-4` — Fast unified model (switches between reasoning/non-reasoning based on thinking toggle)
+- `xai:grok-code` — Optimized for coding tasks
 
 **Setup:**
 

@@ -78,13 +78,13 @@ const MODEL_DEFINITIONS = {
   },
   GROK_4: {
     provider: "xai",
-    providerModelId: "grok-4",
+    providerModelId: "grok-4-fast-non-reasoning",
     aliases: ["grok", "grok-4"],
   },
-  GROK_3_MINI: {
+  GROK_CODE: {
     provider: "xai",
-    providerModelId: "grok-3-mini",
-    aliases: ["grok-mini"],
+    providerModelId: "grok-code-fast-1",
+    aliases: ["grok-code"],
   },
 } as const satisfies Record<string, KnownModelDefinition>;
 

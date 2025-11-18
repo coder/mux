@@ -590,8 +590,24 @@ export class AIService extends EventEmitter {
 
       const effectiveMuxProviderOptions: MuxProviderOptions = muxProviderOptions ?? {};
 
+      // For xAI models, swap between reasoning and non-reasoning variants based on thinkingLevel
+      // Similar to how OpenAI handles reasoning vs non-reasoning models
+      let effectiveModelString = modelString;
+      const [providerName, modelId] = parseModelString(modelString);
+      if (providerName === "xai" && modelId === "grok-4-fast-non-reasoning") {
+        // If thinking is enabled, use reasoning variant
+        if (thinkingLevel && thinkingLevel !== "off") {
+          effectiveModelString = "xai:grok-4-fast-reasoning";
+          log.debug("Swapping xAI model to reasoning variant", {
+            original: modelString,
+            effective: effectiveModelString,
+            thinkingLevel,
+          });
+        }
+      }
+
       // Create model instance with early API key validation
-      const modelResult = await this.createModel(modelString, effectiveMuxProviderOptions);
+      const modelResult = await this.createModel(effectiveModelString, effectiveMuxProviderOptions);
       if (!modelResult.success) {
         return Err(modelResult.error);
       }
@@ -599,8 +615,7 @@ export class AIService extends EventEmitter {
       // Dump original messages for debugging
       log.debug_obj(`${workspaceId}/1_original_messages.json`, messages);
 
-      // Extract provider name from modelString (e.g., "anthropic:claude-opus-4-1" -> "anthropic")
-      const [providerName] = parseModelString(modelString);
+      // Use the provider name already extracted above (providerName variable)
 
       // Get tool names early for mode transition sentinel (stub config, no workspace context needed)
       const earlyRuntime = createRuntime({ type: "local", srcBaseDir: process.cwd() });
