@@ -26,9 +26,8 @@ import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { MessageQueue } from "./messageQueue";
 import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
-import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
-import { createDisplayUsage } from "@/common/utils/tokens/tokenStatsCalculator";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
+import { accUsageHistory } from "@/common/utils/tokens/displayUsage";
 
 export interface AgentSessionChatEvent {
   workspaceId: string;
@@ -702,36 +701,7 @@ export class AgentSession {
       return Err(`Failed to get history for usage calculation: ${historyResult.error}`);
     }
 
-    // Calculate cumulative historical usage from all messages
-    const usageHistory: ChatUsageDisplay[] = [];
-    let cumulativeHistorical: ChatUsageDisplay | undefined;
-
-    for (const msg of historyResult.data) {
-      if (msg.role === "assistant") {
-        // Accumulate historical usage from previous compactions
-        if (msg.metadata?.historicalUsage) {
-          cumulativeHistorical = msg.metadata.historicalUsage;
-        }
-
-        // Add current message's usage
-        if (msg.metadata?.usage && msg.metadata.model) {
-          const displayUsage = createDisplayUsage(
-            msg.metadata.usage,
-            msg.metadata.model,
-            msg.metadata.providerMetadata
-          );
-          if (displayUsage) {
-            usageHistory.push(displayUsage);
-          }
-        }
-      }
-    }
-
-    // If we have historical usage from a compaction, prepend it to history
-    // This ensures costs from pre-compaction messages are included in totals
-    if (cumulativeHistorical) {
-      usageHistory.unshift(cumulativeHistorical);
-    }
+    const usageHistory = accUsageHistory(historyResult.data, undefined);
 
     const historicalUsage = usageHistory.length > 0 ? sumUsageHistory(usageHistory) : undefined;
 
