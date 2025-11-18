@@ -6,9 +6,11 @@
 
 import type { AnthropicProviderOptions } from "@ai-sdk/anthropic";
 import type { OpenAIResponsesProviderOptions } from "@ai-sdk/openai";
+import type { GoogleGenerativeAIProviderOptions } from "@ai-sdk/google";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import {
   ANTHROPIC_THINKING_BUDGETS,
+  GEMINI_THINKING_BUDGETS,
   OPENAI_REASONING_EFFORT,
   OPENROUTER_REASONING_EFFORT,
 } from "@/common/types/thinking";
@@ -34,6 +36,17 @@ type ExtendedOpenAIResponsesProviderOptions = OpenAIResponsesProviderOptions & {
 };
 
 /**
+ * Extended Google provider options to include thinkingLevel
+ *
+ * NOTE: The SDK types don't yet include this parameter, but it's supported by the Gemini 3 API.
+ */
+type ExtendedGoogleProviderOptions = GoogleGenerativeAIProviderOptions & {
+  thinkingConfig?: {
+    thinkingLevel?: ThinkingLevel;
+  };
+};
+
+/**
  * OpenRouter reasoning options
  * @see https://openrouter.ai/docs/use-cases/reasoning-tokens
  */
@@ -51,6 +64,7 @@ interface OpenRouterReasoningOptions {
 type ProviderOptions =
   | { anthropic: AnthropicProviderOptions }
   | { openai: ExtendedOpenAIResponsesProviderOptions }
+  | { google: ExtendedGoogleProviderOptions }
   | { openrouter: OpenRouterReasoningOptions }
   | Record<string, never>; // Empty object for unsupported providers
 
@@ -205,10 +219,35 @@ export function buildProviderOptions(
 
   // Build Google-specific options
   if (provider === "google") {
-    // Google Gemini models don't currently support the same thinking/reasoning
-    // configuration as Anthropic/OpenAI, so return empty options for now
-    log.debug("buildProviderOptions: Google config - no specific options yet");
-    return {};
+    const isGemini3 = modelString.includes("gemini-3");
+    let thinkingConfig: ExtendedGoogleProviderOptions["thinkingConfig"];
+
+    if (isGemini3) {
+      // Gemini 3 uses thinkingLevel (low/high)
+      thinkingConfig = {
+        includeThoughts: true,
+        thinkingLevel: effectiveThinking === "medium" ? "low" : effectiveThinking,
+      };
+    } else if (effectiveThinking !== "off") {
+      // Gemini 2.5 uses thinkingBudget
+      const budget = GEMINI_THINKING_BUDGETS[effectiveThinking];
+      if (budget > 0) {
+        thinkingConfig = {
+          includeThoughts: true,
+          thinkingBudget: budget,
+        };
+      }
+    }
+
+    const googleOptions: ExtendedGoogleProviderOptions = {
+      ...(thinkingConfig && { thinkingConfig }),
+    };
+
+    const options: ProviderOptions = {
+      google: googleOptions,
+    };
+    log.debug("buildProviderOptions: Google options", options);
+    return options;
   }
 
   // Build OpenRouter-specific options

@@ -8,8 +8,10 @@ import { getModelKey } from "@/common/constants/storage";
 import type { SendMessageOptions } from "@/common/types/ipc";
 import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
+import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
+import { useProviderOptions } from "./useProviderOptions";
 
 /**
  * Construct SendMessageOptions from raw values
@@ -20,6 +22,7 @@ function constructSendMessageOptions(
   thinkingLevel: ThinkingLevel,
   preferredModel: string | null | undefined,
   use1M: boolean,
+  providerOptions: MuxProviderOptions,
   fallbackModel: string
 ): SendMessageOptions {
   const additionalSystemInstructions = mode === "plan" ? PLAN_MODE_INSTRUCTION : undefined;
@@ -38,7 +41,9 @@ function constructSendMessageOptions(
     toolPolicy: modeToToolPolicy(mode),
     additionalSystemInstructions,
     providerOptions: {
+      ...providerOptions,
       anthropic: {
+        ...providerOptions.anthropic,
         use1MContext: use1M,
       },
     },
@@ -59,6 +64,7 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptions {
   const [use1M] = use1MContext();
   const [thinkingLevel] = useThinkingLevel();
   const [mode] = useMode();
+  const { options: providerOptions } = useProviderOptions();
   const { recentModels } = useModelLRU();
   const [preferredModel] = usePersistedState<string>(
     getModelKey(workspaceId),
@@ -66,7 +72,14 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptions {
     { listener: true } // Listen for changes from ModelSelector and other sources
   );
 
-  return constructSendMessageOptions(mode, thinkingLevel, preferredModel, use1M, recentModels[0]);
+  return constructSendMessageOptions(
+    mode,
+    thinkingLevel,
+    preferredModel,
+    use1M,
+    providerOptions,
+    recentModels[0]
+  );
 }
 
 /**

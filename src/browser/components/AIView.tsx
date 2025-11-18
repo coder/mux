@@ -15,7 +15,8 @@ import {
 } from "@/browser/utils/messages/messageUtils";
 import { hasInterruptedStream } from "@/browser/utils/messages/retryEligibility";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
-import { ModeProvider } from "@/browser/contexts/ModeContext";
+import { ModeProvider } from "@/browser/contexts/ModeContext";import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsContext";
+
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
@@ -531,9 +532,11 @@ const AIViewInner: React.FC<AIViewProps> = ({
 export const AIView: React.FC<AIViewProps> = (props) => {
   return (
     <ModeProvider workspaceId={props.workspaceId}>
-      <ThinkingProvider workspaceId={props.workspaceId}>
-        <AIViewInner {...props} />
-      </ThinkingProvider>
+      <ProviderOptionsProvider>
+        <ThinkingProvider workspaceId={props.workspaceId}>
+          <AIViewInner {...props} />
+        </ThinkingProvider>
+      </ProviderOptionsProvider>
     </ModeProvider>
   );
 };

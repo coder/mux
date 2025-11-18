@@ -16,7 +16,7 @@ import { parseCommand } from "@/browser/utils/slashCommands/parser";
 import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useMode } from "@/browser/contexts/ModeContext";
 import { ThinkingSliderComponent } from "../ThinkingSlider";
-import { Context1MCheckbox } from "../Context1MCheckbox";
+import { ModelSettings } from "../ModelSettings";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import {
   getModelKey,
@@ -97,6 +97,7 @@ function createTokenCountResource(promise: Promise<number>): TokenCountReader {
 // Import types from local types file
 import type { ChatInputProps, ChatInputAPI } from "./types";
 import type { ImagePart } from "@/common/types/ipc";
+
 export type { ChatInputProps, ChatInputAPI };
 
 export const ChatInput: React.FC<ChatInputProps> = (props) => {
@@ -176,15 +177,15 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   const creationState = useCreationWorkspace(
     variant === "creation"
       ? {
-          projectPath: props.projectPath,
-          onWorkspaceCreated: props.onWorkspaceCreated,
-        }
+        projectPath: props.projectPath,
+        onWorkspaceCreated: props.onWorkspaceCreated,
+      }
       : {
-          // Dummy values for workspace variant (never used)
-          projectPath: "",
-          // eslint-disable-next-line @typescript-eslint/no-empty-function
-          onWorkspaceCreated: () => {},
-        }
+        // Dummy values for workspace variant (never used)
+        projectPath: "",
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        onWorkspaceCreated: () => { },
+      }
   );
 
   const focusMessageInput = useCallback(() => {
@@ -987,9 +988,8 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 <ThinkingSliderComponent modelString={preferredModel} />
               </div>
 
-              {/* Context 1M Checkbox - always visible */}
-              <div className="flex items-center" data-component="Context1MGroup">
-                <Context1MCheckbox modelString={preferredModel} />
+              <div className="flex items-center ml-4" data-component="ModelSettingsGroup">
+                <ModelSettings provider={(preferredModel || "").split(":")[0]} />
               </div>
 
               {preferredModel && (
@@ -1009,7 +1009,9 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 </div>
               )}
 
-              <ModeSelector mode={mode} onChange={setMode} className="ml-auto" />
+              <div className="flex items-center gap-2 ml-auto" data-component="ModelControls">
+                <ModeSelector mode={mode} onChange={setMode} />
+              </div>
             </div>
 
             {/* Creation controls - second row for creation variant */}
