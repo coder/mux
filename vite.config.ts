@@ -89,7 +89,7 @@ export default defineConfig(({ mode }) => ({
     host: devServerHost, // Configurable via MUX_VITE_HOST (defaults to 127.0.0.1 for security)
     port: devServerPort,
     strictPort: true,
-    allowedHosts: devServerHost === "0.0.0.0" ? [".ts.net"] : ["localhost", "127.0.0.1"],
+    allowedHosts: true, // Allow all hosts for dev server (secure by default via MUX_VITE_HOST)
     sourcemapIgnoreList: () => false, // Show all sources in DevTools
     
     watch: {
