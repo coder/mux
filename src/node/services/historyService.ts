@@ -418,12 +418,12 @@ export class HistoryService {
     });
   }
 
-  async clearHistory(workspaceId: string): Promise<Result<void>> {
+  async clearHistory(workspaceId: string): Promise<Result<number[], string>> {
     const result = await this.truncateHistory(workspaceId, 1.0);
     if (!result.success) {
       return Err(result.error);
     }
-    return Ok(undefined);
+    return Ok(result.data);
   }
 
   /**

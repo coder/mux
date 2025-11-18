@@ -12,7 +12,6 @@
  */
 
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
-import { getCancelledCompactionKey } from "@/common/constants/storage";
 
 /**
  * Check if the workspace is currently in a compaction stream
@@ -55,19 +54,14 @@ export function getCompactionCommand(aggregator: StreamingMessageAggregator): st
  * Cancel compaction (Ctrl+C flow)
  *
  * Aborts the compaction stream and puts user in edit mode for compaction-request:
- * - Interrupts stream with abandonPartial flag (deletes partial, doesn't commit)
- * - Skips compaction (via localStorage marker checked by handleCompactionAbort)
+ * - Interrupts stream with abandonPartial=true flag (backend skips compaction)
  * - Enters edit mode on compaction-request message
  * - Restores original /compact command to input for re-editing
  * - Leaves compaction-request message in history (can edit or delete it)
  *
  * Flow:
- * 1. Store cancellation marker in localStorage with compactionRequestId for verification
- * 2. Interrupt stream with {abandonPartial: true} - backend deletes partial
- * 3. handleCompactionAbort checks localStorage, verifies compactionRequestId, skips compaction
- * 4. Enter edit mode on compaction-request message with original command
- *
- * Reload-safe: localStorage persists across reloads, compactionRequestId ensures freshness
+ * 1. Interrupt stream with {abandonPartial: true} - backend detects and skips compaction
+ * 2. Enter edit mode on compaction-request message with original command
  */
 export async function cancelCompaction(
   workspaceId: string,
@@ -86,21 +80,8 @@ export async function cancelCompaction(
     return false;
   }
 
-  // CRITICAL: Store cancellation marker in localStorage BEFORE interrupt
-  // Use the compaction-request user message ID (stable across retries)
-  // This persists across reloads and verifies we're cancelling the right compaction
-  const storageKey = getCancelledCompactionKey(workspaceId);
-  localStorage.setItem(
-    storageKey,
-    JSON.stringify({
-      compactionRequestId: compactionRequestMsg.id,
-      timestamp: Date.now(),
-    })
-  );
-
   // Interrupt stream with abandonPartial flag
-  // This tells backend to DELETE the partial instead of committing it
-  // Result: history ends with the compaction-request user message (which is fine - just a user message)
+  // Backend detects this and skips compaction (Ctrl+C flow)
   await window.api.workspace.interruptStream(workspaceId, { abandonPartial: true });
 
   // Enter edit mode on the compaction-request message with original command

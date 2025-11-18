@@ -56,6 +56,7 @@ export interface StreamAbortEvent {
     usage?: LanguageModelV2Usage;
     duration?: number;
   };
+  abandonPartial?: boolean;
 }
 
 export interface ErrorEvent {

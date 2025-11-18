@@ -1,6 +1,5 @@
 import assert from "@/common/utils/assert";
 import type { MuxMessage, DisplayedMessage, QueuedMessage } from "@/common/types/message";
-import { createMuxMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { WorkspaceChatMessage } from "@/common/types/ipc";
 import type { TodoItem } from "@/common/types/tools";
@@ -18,17 +17,11 @@ import {
   isRestoreToInput,
 } from "@/common/types/ipc";
 import { MapStore } from "./MapStore";
-import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
+import { getUsageHistory } from "@/common/utils/tokens/displayUsage";
 import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
-import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import type { TokenConsumer } from "@/common/types/chatStats";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
-import { getCancelledCompactionKey } from "@/common/constants/storage";
-import {
-  isCompactingStream,
-  findCompactionRequestMessage,
-} from "@/common/utils/compaction/handler";
 import { createFreshRetryState } from "@/browser/utils/messages/retryState";
 
 export interface WorkspaceState {
@@ -149,10 +142,6 @@ export class WorkspaceStore {
       aggregator.handleStreamEnd(data as never);
       aggregator.clearTokenState((data as { messageId: string }).messageId);
 
-      if (this.handleCompactionCompletion(workspaceId, aggregator, data)) {
-        return;
-      }
-
       // Reset retry state on successful stream completion
       updatePersistedState(getRetryStateKey(workspaceId), createFreshRetryState());
 
@@ -163,10 +152,6 @@ export class WorkspaceStore {
     "stream-abort": (workspaceId, aggregator, data) => {
       aggregator.clearTokenState((data as { messageId: string }).messageId);
       aggregator.handleStreamAbort(data as never);
-
-      if (this.handleCompactionAbort(workspaceId, aggregator, data)) {
-        return;
-      }
 
       this.states.bump(workspaceId);
       this.dispatchResumeCheck(workspaceId);
@@ -446,42 +431,8 @@ export class WorkspaceStore {
       const aggregator = this.assertGet(workspaceId);
 
       const messages = aggregator.getAllMessages();
-
-      // Extract usage from assistant messages
-      const usageHistory: ChatUsageDisplay[] = [];
-      let cumulativeHistorical: ChatUsageDisplay | undefined;
-
-      for (const msg of messages) {
-        if (msg.role === "assistant") {
-          // Check for historical usage from compaction summaries
-          // This preserves costs from messages deleted during compaction
-          if (msg.metadata?.historicalUsage) {
-            cumulativeHistorical = msg.metadata.historicalUsage;
-          }
-
-          // Extract current message's usage
-          if (msg.metadata?.usage) {
-            // Use the model from this specific message (not global)
-            const model = msg.metadata.model ?? aggregator.getCurrentModel() ?? "unknown";
-
-            const usage = createDisplayUsage(
-              msg.metadata.usage,
-              model,
-              msg.metadata.providerMetadata
-            );
-
-            if (usage) {
-              usageHistory.push(usage);
-            }
-          }
-        }
-      }
-
-      // If we have historical usage from a compaction, prepend it to history
-      // This ensures costs from pre-compaction messages are included in totals
-      if (cumulativeHistorical) {
-        usageHistory.unshift(cumulativeHistorical);
-      }
+      const model = aggregator.getCurrentModel();
+      const usageHistory = getUsageHistory(messages, model);
 
       // Calculate total from usage history (now includes historical)
       const totalTokens = usageHistory.reduce(
@@ -542,169 +493,6 @@ export class WorkspaceStore {
    */
   subscribeConsumers(workspaceId: string, listener: () => void): () => void {
     return this.consumersStore.subscribeKey(workspaceId, listener);
-  }
-
-  /**
-   * Handle compact_summary tool completion.
-   * Returns true if compaction was handled (caller should early return).
-   */
-  // Track processed compaction-request IDs to dedupe performCompaction across duplicated events
-  private processedCompactionRequestIds = new Set<string>();
-
-  private handleCompactionCompletion(
-    workspaceId: string,
-    aggregator: StreamingMessageAggregator,
-    data: WorkspaceChatMessage
-  ): boolean {
-    // Type guard: only StreamEndEvent has messageId
-    if (!("messageId" in data)) return false;
-
-    // Check if this was a compaction stream
-    if (!isCompactingStream(aggregator)) {
-      return false;
-    }
-
-    // Extract the compaction-request message to identify this compaction run
-    const compactionRequestMsg = findCompactionRequestMessage(aggregator);
-    if (!compactionRequestMsg) {
-      return false;
-    }
-
-    // Dedupe: If we've already processed this compaction-request, skip re-running
-    if (this.processedCompactionRequestIds.has(compactionRequestMsg.id)) {
-      return true; // Already handled compaction for this request
-    }
-
-    // Extract the summary text from the assistant's response
-    const summary = aggregator.getCompactionSummary(data.messageId);
-    if (!summary) {
-      console.warn("[WorkspaceStore] Compaction completed but no summary text found");
-      return false;
-    }
-
-    // Mark this compaction-request as processed before performing compaction
-    this.processedCompactionRequestIds.add(compactionRequestMsg.id);
-
-    this.performCompaction(workspaceId, aggregator, data, summary);
-    return true;
-  }
-
-  /**
-   * Handle interruption of a compaction stream (StreamAbortEvent).
-   *
-   * Two distinct flows trigger this:
-   * - **Ctrl+A (accept early)**: Perform compaction with [truncated] sentinel
-   * - **Ctrl+C (cancel)**: Skip compaction, let cancelCompaction handle cleanup
-   *
-   * Uses localStorage to distinguish flows:
-   * - Checks for cancellation marker in localStorage
-   * - Verifies messageId matches for freshness
-   * - Reload-safe: localStorage persists across page reloads
-   */
-  private handleCompactionAbort(
-    workspaceId: string,
-    aggregator: StreamingMessageAggregator,
-    data: WorkspaceChatMessage
-  ): boolean {
-    // Type guard: only StreamAbortEvent has messageId
-    if (!("messageId" in data)) return false;
-
-    // Check if this was a compaction stream
-    if (!isCompactingStream(aggregator)) {
-      return false;
-    }
-
-    // Get the compaction request message for ID verification
-    const compactionRequestMsg = findCompactionRequestMessage(aggregator);
-    if (!compactionRequestMsg) {
-      return false;
-    }
-
-    // Ctrl+C flow: Check localStorage for cancellation marker
-    // Verify compaction-request user message ID matches (stable across retries)
-    const storageKey = getCancelledCompactionKey(workspaceId);
-    const cancelData = localStorage.getItem(storageKey);
-    if (cancelData) {
-      try {
-        const parsed = JSON.parse(cancelData) as { compactionRequestId: string; timestamp: number };
-        if (parsed.compactionRequestId === compactionRequestMsg.id) {
-          // This is a cancelled compaction - clean up marker and skip compaction
-          localStorage.removeItem(storageKey);
-          return false; // Skip compaction, cancelCompaction() handles cleanup
-        }
-      } catch (error) {
-        console.error("[WorkspaceStore] Failed to parse cancellation data:", error);
-      }
-      // If compactionRequestId doesn't match or parse failed, clean up stale data
-      localStorage.removeItem(storageKey);
-    }
-
-    // Ctrl+A flow: Accept early with [truncated] sentinel
-    const partialSummary = aggregator.getCompactionSummary(data.messageId);
-    if (!partialSummary) {
-      console.warn("[WorkspaceStore] Compaction aborted but no partial summary found");
-      return false;
-    }
-
-    // Append [truncated] sentinel on new line to indicate incomplete summary
-    const truncatedSummary = partialSummary.trim() + "\n\n[truncated]";
-
-    this.performCompaction(workspaceId, aggregator, data, truncatedSummary);
-    return true;
-  }
-
-  /**
-   * Perform history compaction by replacing chat history with summary message.
-   * Type-safe: only called when we've verified data is a StreamEndEvent.
-   */
-  private performCompaction(
-    workspaceId: string,
-    aggregator: StreamingMessageAggregator,
-    data: WorkspaceChatMessage,
-    summary: string
-  ): void {
-    // Extract metadata safely with type guard
-    const metadata = "metadata" in data ? data.metadata : undefined;
-
-    // Calculate cumulative historical usage before replacing history
-    // This preserves costs from all messages that are about to be deleted
-    const currentUsage = this.getWorkspaceUsage(workspaceId);
-    const historicalUsage =
-      currentUsage.usageHistory.length > 0 ? sumUsageHistory(currentUsage.usageHistory) : undefined;
-
-    const summaryMessage = createMuxMessage(
-      `summary-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-      "assistant",
-      summary,
-      {
-        timestamp: Date.now(),
-        compacted: true,
-        model: aggregator.getCurrentModel(),
-        usage: metadata?.usage,
-        historicalUsage, // Store cumulative costs from all pre-compaction messages
-        providerMetadata:
-          metadata && "providerMetadata" in metadata
-            ? (metadata.providerMetadata as Record<string, unknown> | undefined)
-            : undefined,
-        duration: metadata?.duration,
-        systemMessageTokens:
-          metadata && "systemMessageTokens" in metadata
-            ? (metadata.systemMessageTokens as number | undefined)
-            : undefined,
-        muxMetadata: { type: "normal" },
-      }
-    );
-
-    void (async () => {
-      try {
-        await window.api.workspace.replaceChatHistory(workspaceId, summaryMessage);
-      } catch (error) {
-        console.error("[WorkspaceStore] Failed to replace history:", error);
-      } finally {
-        this.states.bump(workspaceId);
-        this.checkAndBumpRecencyIfChanged();
-      }
-    })();
   }
 
   /**

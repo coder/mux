@@ -1098,7 +1098,7 @@ export class IpcMain {
         log.debug("interruptStream handler: Received", { workspaceId, options });
         try {
           const session = this.getOrCreateSession(workspaceId);
-          const stopResult = await session.interruptStream();
+          const stopResult = await session.interruptStream(options?.abandonPartial);
           if (!stopResult.success) {
             log.error("Failed to stop stream:", stopResult.error);
             return { success: false, error: stopResult.error };
@@ -1182,19 +1182,12 @@ export class IpcMain {
         }
 
         try {
-          // Get all existing messages to collect their historySequence numbers
-          const historyResult = await this.historyService.getHistory(workspaceId);
-          const deletedSequences = historyResult.success
-            ? historyResult.data
-                .map((msg) => msg.metadata?.historySequence ?? -1)
-                .filter((s) => s >= 0)
-            : [];
-
           // Clear entire history
           const clearResult = await this.historyService.clearHistory(workspaceId);
           if (!clearResult.success) {
             return Err(`Failed to clear history: ${clearResult.error}`);
           }
+          const deletedSequences = clearResult.data;
 
           // Append the summary message to history (gets historySequence assigned by backend)
           // Frontend provides the message with all metadata (compacted, timestamp, etc.)

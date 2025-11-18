@@ -955,12 +955,12 @@ export class AIService extends EventEmitter {
     }
   }
 
-  async stopStream(workspaceId: string): Promise<Result<void>> {
+  async stopStream(workspaceId: string, abandonPartial?: boolean): Promise<Result<void>> {
     if (this.mockModeEnabled && this.mockScenarioPlayer) {
       this.mockScenarioPlayer.stop(workspaceId);
       return Ok(undefined);
     }
-    return this.streamManager.stopStream(workspaceId);
+    return this.streamManager.stopStream(workspaceId, abandonPartial);
   }
 
   /**

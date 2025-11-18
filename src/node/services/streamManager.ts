@@ -225,7 +225,7 @@ export class StreamManager extends EventEmitter {
     const existing = this.workspaceStreams.get(workspaceId);
 
     if (existing && existing.state !== StreamState.IDLE) {
-      await this.cancelStreamSafely(workspaceId, existing);
+      await this.cancelStreamSafely(workspaceId, existing, undefined);
     }
 
     // Generate unique token for this stream (8 hex chars for context efficiency)
@@ -408,7 +408,8 @@ export class StreamManager extends EventEmitter {
 
   private async cancelStreamSafely(
     workspaceId: WorkspaceId,
-    streamInfo: WorkspaceStreamInfo
+    streamInfo: WorkspaceStreamInfo,
+    abandonPartial?: boolean
   ): Promise<void> {
     try {
       streamInfo.state = StreamState.STOPPING;
@@ -432,6 +433,7 @@ export class StreamManager extends EventEmitter {
         workspaceId: workspaceId as string,
         messageId: streamInfo.messageId,
         metadata: { usage, duration },
+        abandonPartial,
       });
 
       // Clean up immediately
@@ -1318,13 +1320,13 @@ export class StreamManager extends EventEmitter {
   /**
    * Stops an active stream for a workspace
    */
-  async stopStream(workspaceId: string): Promise<Result<void>> {
+  async stopStream(workspaceId: string, abandonPartial?: boolean): Promise<Result<void>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
     try {
       const streamInfo = this.workspaceStreams.get(typedWorkspaceId);
       if (streamInfo) {
-        await this.cancelStreamSafely(typedWorkspaceId, streamInfo);
+        await this.cancelStreamSafely(typedWorkspaceId, streamInfo, abandonPartial);
       }
       return Ok(undefined);
     } catch (error) {
