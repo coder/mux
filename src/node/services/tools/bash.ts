@@ -136,7 +136,8 @@ function formatResult(
   truncated: boolean,
   overflowReason: string | null,
   wall_duration_ms: number,
-  overflowPolicy: "tmpfile" | "truncate"
+  overflowPolicy: "tmpfile" | "truncate",
+  effectiveTimeout: number
 ): BashToolResult {
   const output = lines.join("\n");
 
@@ -153,7 +154,7 @@ function formatResult(
   if (exitCode === EXIT_CODE_TIMEOUT) {
     return {
       success: false,
-      error: "Command exceeded timeout",
+      error: `Command exceeded timeout of ${effectiveTimeout} seconds. You can increase the timeout by setting the \`timeout_secs\` parameter on the tool call. Do not use the \`timeout\` bash command to increase the timeout.`,
       exitCode: -1,
       wall_duration_ms,
     };
@@ -457,7 +458,8 @@ File will be automatically cleaned up when stream ends.`;
         truncated,
         overflowReason,
         wall_duration_ms,
-        config.overflow_policy ?? "tmpfile"
+        config.overflow_policy ?? "tmpfile",
+        effectiveTimeout
       );
     },
   });
