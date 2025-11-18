@@ -92,7 +92,7 @@ export function createDisplayUsage(
   };
 }
 
-export function getUsageHistory(
+export function accUsageHistory(
   messages: MuxMessage[],
   fallbackModel?: string
 ): ChatUsageDisplay[] {
@@ -112,7 +112,6 @@ export function getUsageHistory(
       if (msg.metadata?.usage) {
         // Use the model from this specific message (not global)
         const model = msg.metadata.model ?? fallbackModel ?? "unknown";
-
         const usage = createDisplayUsage(msg.metadata.usage, model, msg.metadata.providerMetadata);
 
         if (usage) {
