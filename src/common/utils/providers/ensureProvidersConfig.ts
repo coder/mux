@@ -78,6 +78,18 @@ const buildProvidersFromEnv = (env: NodeJS.ProcessEnv): ProvidersConfig => {
     }
   }
 
+  const googleKey = trim(env.GOOGLE_API_KEY);
+  if (googleKey.length > 0) {
+    const entry: ProviderConfig = { apiKey: googleKey };
+
+    const baseUrl = trim(env.GOOGLE_BASE_URL);
+    if (baseUrl.length > 0) {
+      entry.baseUrl = baseUrl;
+    }
+
+    providers.google = entry;
+  }
+
   return providers;
 };
 
@@ -102,7 +114,7 @@ export const ensureProvidersConfig = (
   const providersFromEnv = buildProvidersFromEnv(env);
   if (!hasAnyConfiguredProvider(providersFromEnv)) {
     throw new Error(
-      "No provider credentials found. Configure providers.jsonc or set ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY."
+      "No provider credentials found. Configure providers.jsonc or set ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY / GOOGLE_API_KEY."
     );
   }
 

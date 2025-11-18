@@ -203,6 +203,14 @@ export function buildProviderOptions(
     return options;
   }
 
+  // Build Google-specific options
+  if (provider === "google") {
+    // Google Gemini models don't currently support the same thinking/reasoning
+    // configuration as Anthropic/OpenAI, so return empty options for now
+    log.debug("buildProviderOptions: Google config - no specific options yet");
+    return {};
+  }
+
   // Build OpenRouter-specific options
   if (provider === "openrouter") {
     const reasoningEffort = OPENROUTER_REASONING_EFFORT[effectiveThinking];

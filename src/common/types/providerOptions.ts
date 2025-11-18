@@ -30,6 +30,12 @@ export interface OpenAIProviderOptions {
 }
 
 /**
+ * Google-specific options
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface GoogleProviderOptions {}
+
+/**
  * Ollama-specific options
  * Currently empty - Ollama is a local service and doesn't require special options.
  * This interface is provided for future extensibility.
@@ -52,6 +58,7 @@ export interface MuxProviderOptions {
   /** Provider-specific options */
   anthropic?: AnthropicProviderOptions;
   openai?: OpenAIProviderOptions;
+  google?: GoogleProviderOptions;
   ollama?: OllamaProviderOptions;
   openrouter?: OpenRouterProviderOptions;
 }

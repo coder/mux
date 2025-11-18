@@ -46,6 +46,7 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.44",
+    "@ai-sdk/google": "^2.0.28",
     "@ai-sdk/openai": "^2.0.66",
     "@openrouter/ai-sdk-provider": "^1.2.2",
     "ghostty-web": "^0.1.1",

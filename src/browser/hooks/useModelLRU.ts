@@ -3,14 +3,14 @@ import { usePersistedState, readPersistedState, updatePersistedState } from "./u
 import { MODEL_ABBREVIATIONS } from "@/browser/utils/slashCommands/registry";
 import { defaultModel } from "@/common/utils/ai/models";
 
-const MAX_LRU_SIZE = 8;
+const MAX_LRU_SIZE = 12;
 const LRU_KEY = "model-lru";
 
 // Default models from abbreviations (for initial LRU population)
-// Ensure defaultModel is first, then fill with other abbreviations
+// Ensure defaultModel is first, then fill with other abbreviations (deduplicated)
 const DEFAULT_MODELS = [
   defaultModel,
-  ...Object.values(MODEL_ABBREVIATIONS).filter((m) => m !== defaultModel),
+  ...Array.from(new Set(Object.values(MODEL_ABBREVIATIONS))).filter((m) => m !== defaultModel),
 ].slice(0, MAX_LRU_SIZE);
 function persistModels(models: string[]): void {
   updatePersistedState(LRU_KEY, models.slice(0, MAX_LRU_SIZE));

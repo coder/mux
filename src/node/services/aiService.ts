@@ -407,6 +407,24 @@ export class AIService extends EventEmitter {
         return Ok(model);
       }
 
+      // Handle Google provider
+      if (providerName === "google") {
+        if (!providerConfig.apiKey) {
+          return Err({
+            type: "api_key_not_found",
+            provider: providerName,
+          });
+        }
+
+        // Lazy-load Google provider to reduce startup time
+        const { createGoogleGenerativeAI } = await PROVIDER_REGISTRY.google();
+        const provider = createGoogleGenerativeAI({
+          ...providerConfig,
+          fetch: getProviderFetch(providerConfig),
+        });
+        return Ok(provider(modelId));
+      }
+
       // Handle Ollama provider
       if (providerName === "ollama") {
         // Ollama doesn't require API key - it's a local service
