@@ -1,4 +1,3 @@
-import { use1MContext } from "./use1MContext";
 import { useThinkingLevel } from "./useThinkingLevel";
 import { useMode } from "@/browser/contexts/ModeContext";
 import { usePersistedState } from "./usePersistedState";
@@ -21,7 +20,6 @@ function constructSendMessageOptions(
   mode: UIMode,
   thinkingLevel: ThinkingLevel,
   preferredModel: string | null | undefined,
-  use1M: boolean,
   providerOptions: MuxProviderOptions,
   fallbackModel: string
 ): SendMessageOptions {
@@ -40,13 +38,7 @@ function constructSendMessageOptions(
     mode: mode === "exec" || mode === "plan" ? mode : "exec", // Only pass exec/plan to backend
     toolPolicy: modeToToolPolicy(mode),
     additionalSystemInstructions,
-    providerOptions: {
-      ...providerOptions,
-      anthropic: {
-        ...providerOptions.anthropic,
-        use1MContext: use1M,
-      },
-    },
+    providerOptions,
   };
 }
 
@@ -61,7 +53,6 @@ function constructSendMessageOptions(
  * propagate automatically to all components using this hook.
  */
 export function useSendMessageOptions(workspaceId: string): SendMessageOptions {
-  const [use1M] = use1MContext();
   const [thinkingLevel] = useThinkingLevel();
   const [mode] = useMode();
   const { options: providerOptions } = useProviderOptions();
@@ -76,7 +67,6 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptions {
     mode,
     thinkingLevel,
     preferredModel,
-    use1M,
     providerOptions,
     recentModels[0]
   );

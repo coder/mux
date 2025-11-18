@@ -301,7 +301,6 @@ function createDraftSettingsHarness(
         model: "gpt-4",
         thinkingLevel: "medium",
         mode: "exec",
-        use1M: false,
         runtimeMode: state.runtimeMode,
         sshHost: state.sshHost,
         trunkBranch: state.trunkBranch,

@@ -1,7 +1,7 @@
 import React from "react";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
-import { use1MContext } from "@/browser/hooks/use1MContext";
+import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useResizeObserver } from "@/browser/hooks/useResizeObserver";
 import { CostsTab } from "./RightSidebar/CostsTab";
 import { VerticalTokenMeter } from "./RightSidebar/VerticalTokenMeter";
@@ -124,7 +124,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   }, [setSelectedTab, selectedTab]);
 
   const usage = useWorkspaceUsage(workspaceId);
-  const [use1M] = use1MContext();
+  const { options } = useProviderOptions();
+  const use1M = options.anthropic?.use1MContext ?? false;
   const chatAreaSize = useResizeObserver(chatAreaRef);
 
   const baseId = `right-sidebar-${workspaceId}`;
