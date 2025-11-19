@@ -29,9 +29,10 @@ import {
   handleNewCommand,
   handleCompactCommand,
   forkWorkspace,
-  prepareCompactionMessage,
   type CommandHandlerContext,
 } from "@/browser/utils/chatCommands";
+import { createCompactionRequest } from "@/common/utils/compaction";
+import { resolveCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import {
   getSlashCommandSuggestions,
@@ -702,17 +703,23 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         if (editingMessage && messageText.startsWith("/")) {
           const parsed = parseCommand(messageText);
           if (parsed?.type === "compact") {
+            // Resolve model with sticky preference handling
+            const effectiveModel = resolveCompactionModel(parsed.model) ?? sendMessageOptions.model;
+            
             const {
               messageText: regeneratedText,
               metadata,
               sendOptions,
-            } = prepareCompactionMessage({
-              workspaceId: props.workspaceId,
-              maxOutputTokens: parsed.maxOutputTokens,
-              continueMessage: parsed.continueMessage,
-              imageParts,
-              model: parsed.model,
-              sendMessageOptions,
+            } = createCompactionRequest({
+              baseOptions: { 
+                ...sendMessageOptions, 
+                model: effectiveModel,
+                maxOutputTokens: parsed.maxOutputTokens,
+              },
+              continueMessage: parsed.continueMessage
+                ? { text: parsed.continueMessage, imageParts }
+                : undefined,
+              rawCommand: messageText,
             });
             actualMessageText = regeneratedText;
             muxMetadata = metadata;

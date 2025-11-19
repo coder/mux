@@ -14,10 +14,9 @@ import { RUNTIME_MODE, SSH_RUNTIME_PREFIX } from "@/common/types/runtime";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import type { Toast } from "@/browser/components/ChatInputToast";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
-import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
 import { resolveCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
 import { getRuntimeKey } from "@/common/constants/storage";
-import { prepareCompactionMessage as prepareCompactionMessageCommon } from "@/common/utils/compaction";
+import { createCompactionRequest } from "@/common/utils/compaction";
 import { ImageAttachment } from "../components/ImageAttachments";
 
 // ============================================================================
@@ -192,49 +191,23 @@ export interface CompactionResult {
 }
 
 /**
- * Prepare compaction message from options
- * Returns the actual message text (summarization request), metadata, and options
+ * Execute a compaction command
  */
-export function prepareCompactionMessage(options: CompactionOptions): {
-  messageText: string;
-  metadata: MuxFrontendMetadata;
-  sendOptions: SendMessageOptions;
-} {
+export async function executeCompaction(options: CompactionOptions): Promise<CompactionResult> {
   // Handle model preference (sticky globally)
-  const effectiveModel = resolveCompactionModel(options.model);
+  const effectiveModel = resolveCompactionModel(options.model) ?? options.sendMessageOptions.model;
 
-  // Use common compaction message preparation
-  const { messageText, metadata } = prepareCompactionMessageCommon({
-    maxOutputTokens: options.maxOutputTokens,
-    model: effectiveModel,
+  // Use shared factory to create compaction request with proper overrides
+  const { messageText, sendOptions } = createCompactionRequest({
+    baseOptions: { ...options.sendMessageOptions, model: effectiveModel },
     continueMessage: options.continueMessage
       ? { text: options.continueMessage, imageParts: options.imageParts }
       : undefined,
     rawCommand: formatCompactionCommand(options),
   });
 
-  // Apply compaction overrides (metadata is always compaction-request type here)
-  const compactionMetadata = metadata as Extract<
-    MuxFrontendMetadata,
-    { type: "compaction-request" }
-  >;
-  const sendOptions = applyCompactionOverrides(
-    options.sendMessageOptions,
-    compactionMetadata.parsed
-  );
-
-  return { messageText, metadata, sendOptions };
-}
-
-/**
- * Execute a compaction command
- */
-export async function executeCompaction(options: CompactionOptions): Promise<CompactionResult> {
-  const { messageText, metadata, sendOptions } = prepareCompactionMessage(options);
-
   const result = await window.api.workspace.sendMessage(options.workspaceId, messageText, {
     ...sendOptions,
-    muxMetadata: metadata,
     editMessageId: options.editMessageId,
   });
 

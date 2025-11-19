@@ -8,7 +8,7 @@ import {
   isEligibleForAutoRetry,
   isNonRetryableSendError,
 } from "@/browser/utils/messages/retryEligibility";
-import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
+import { applyCompactionOverrides } from "@/common/utils/compaction";
 import type { SendMessageError } from "@/common/types/errors";
 import {
   createFailedRetryState,

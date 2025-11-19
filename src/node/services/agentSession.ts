@@ -25,7 +25,7 @@ import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { MessageQueue } from "./messageQueue";
 import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
-import { prepareCompactionMessage } from "@/common/utils/compaction";
+import { createCompactionRequest } from "@/common/utils/compaction";
 
 export interface AgentSessionChatEvent {
   workspaceId: string;
@@ -282,24 +282,14 @@ export class AgentSession {
         return Err(createUnknownSendMessageError("No model specified for auto-compaction."));
       }
 
-      // Prepare compaction with continueMessage
-      const { messageText, metadata } = prepareCompactionMessage({
-        model: options.model,
-        // To match a manual compaction with a continue message
+      // Create compaction request with proper overrides
+      const { messageText, sendOptions } = createCompactionRequest({
+        baseOptions: options,
+        continueMessage: { text: trimmedMessage, imageParts },
         rawCommand: `/compact\n${trimmedMessage}`,
-        continueMessage: { text: trimmedMessage, imageParts }
       });
 
-      const compactionOptions = {
-        model: options.model,
-        thinkingLevel: options.thinkingLevel,
-        toolPolicy: options.toolPolicy,
-        additionalSystemInstructions: options.additionalSystemInstructions,
-        mode: options.mode,
-        muxMetadata: metadata,
-      };
-
-      return this.sendMessage(messageText, compactionOptions);
+      return this.sendMessage(messageText, sendOptions);
     }
 
     if (
