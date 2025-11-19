@@ -17,7 +17,7 @@ import {
   isRestoreToInput,
 } from "@/common/types/ipc";
 import { MapStore } from "./MapStore";
-import { accUsageHistory } from "@/common/utils/tokens/displayUsage";
+import { cumUsageHistory } from "@/common/utils/tokens/displayUsage";
 import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import type { TokenConsumer } from "@/common/types/chatStats";
@@ -432,7 +432,7 @@ export class WorkspaceStore {
 
       const messages = aggregator.getAllMessages();
       const model = aggregator.getCurrentModel();
-      const usageHistory = accUsageHistory(messages, model);
+      const usageHistory = cumUsageHistory(messages, model);
 
       // Calculate total from usage history (now includes historical)
       const totalTokens = usageHistory.reduce(
