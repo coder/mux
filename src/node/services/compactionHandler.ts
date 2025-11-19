@@ -7,11 +7,7 @@ import { Ok, Err } from "@/common/types/result";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { cumUsageHistory } from "@/common/utils/tokens/displayUsage";
 import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
-<<<<<<< Updated upstream
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
-=======
-import { createMuxMessage } from "@/common/types/message";
->>>>>>> Stashed changes
 import { getModelStats } from "@/common/utils/tokens/modelStats";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
 

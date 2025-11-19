@@ -56,7 +56,6 @@ export interface StreamAbortEvent {
   metadata: {
     usage?: LanguageModelV2Usage;
     duration?: number;
-    willCompactOnNextMessage?: boolean;
   };
   willCompactOnNextMessage?: boolean;
   abandonPartial?: boolean;

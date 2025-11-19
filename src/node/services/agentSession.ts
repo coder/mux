@@ -495,11 +495,7 @@ export class AgentSession {
       if (!handled) {
         const shouldCompact = await this.compactionHandler.checkAndUpdateAutoCompactionFlag();
         if (shouldCompact) {
-<<<<<<< Updated upstream
           event.willCompactOnNextMessage = true;
-=======
-          event.metadata.willCompactOnNextMessage = true;
->>>>>>> Stashed changes
         }
         this.emitChatEvent(event);
       }
