@@ -46,7 +46,7 @@ export const ModelSettings: React.FC<ModelSettingsProps> = ({ provider }) => {
   }
 
   if (provider === "openai") {
-    if (process.env.NODE_ENV === "development") {
+    if (import.meta.env.DEV) {
       return renderOption(
         "openai-trunc",
         "No Trunc",
