@@ -499,6 +499,27 @@ export class AIService extends EventEmitter {
         return Ok(provider(modelId));
       }
 
+      // Handle Vercel AI Gateway provider
+      if (providerName === "gateway") {
+        if (!providerConfig.apiKey) {
+          return Err({
+            type: "api_key_not_found",
+            provider: providerName,
+          });
+        }
+        const baseFetch = getProviderFetch(providerConfig);
+
+        // Lazy-load Gateway provider to reduce startup time
+        const { createGateway } = await PROVIDER_REGISTRY.gateway();
+        const provider = createGateway({
+          apiKey: providerConfig.apiKey,
+          baseURL: providerConfig.baseUrl,
+          headers: providerConfig.headers as Record<string, string> | undefined,
+          fetch: baseFetch,
+        });
+        return Ok(provider(modelId));
+      }
+
       return Err({
         type: "provider_not_supported",
         provider: providerName,

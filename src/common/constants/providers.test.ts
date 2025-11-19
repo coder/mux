@@ -28,4 +28,16 @@ describe("Provider Registry", () => {
     expect(isValidProvider("")).toBe(false);
     expect(isValidProvider("gpt-4")).toBe(false);
   });
+
+  test("gateway provider is registered", () => {
+    expect(SUPPORTED_PROVIDERS).toContain("gateway");
+    expect(isValidProvider("gateway")).toBe(true);
+  });
+
+  test("gateway provider can be imported", async () => {
+    const gatewayModule = await PROVIDER_REGISTRY.gateway();
+    expect(gatewayModule).toBeDefined();
+    expect(gatewayModule.createGateway).toBeDefined();
+    expect(typeof gatewayModule.createGateway).toBe("function");
+  });
 });

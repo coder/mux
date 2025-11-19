@@ -49,6 +49,52 @@ Access Gemini models directly via Google's generative AI API:
 
 TODO: add issue link here.
 
+#### Vercel AI Gateway (Cloud)
+
+Access hundreds of AI models through Vercel's unified gateway with automatic failover and monitoring:
+
+- `gateway:openai/gpt-5`
+- `gateway:anthropic/claude-sonnet-4-5`
+- `gateway:xai/grok-4`
+- `gateway:google/gemini-3-pro-preview`
+- Any model from [Vercel AI Gateway Models](https://vercel.com/docs/ai-gateway/models-and-providers)
+
+**Setup:**
+
+1. Get your API key from [Vercel AI Gateway](https://vercel.com/ai-gateway)
+2. Add to `~/.mux/providers.jsonc`:
+
+```jsonc
+{
+  "gateway": {
+    "apiKey": "vai_...",
+  },
+}
+```
+
+**Features:**
+
+- **Unified API**: Access 100+ models from OpenAI, Anthropic, xAI, Google, and more
+- **High Reliability**: Automatic failover to other providers if one fails
+- **No Markup**: Tokens cost the same as directly from providers (0% markup with BYOK)
+- **Spend Monitoring**: Track usage across providers
+- **Provider Routing**: Configure fallback chains and model preferences
+
+**Bring Your Own Key (BYOK):**
+
+You can configure your own provider credentials through the Vercel dashboard to use existing provider accounts:
+
+```jsonc
+{
+  "gateway": {
+    "apiKey": "vai_...",
+    // BYOK credentials configured through Vercel dashboard
+  },
+}
+```
+
+See [Vercel AI Gateway Documentation](https://vercel.com/docs/ai-gateway) for details.
+
 #### OpenRouter (Cloud)
 
 Access 300+ models from multiple providers through a single API:
@@ -166,6 +212,10 @@ All providers are configured in `~/.mux/providers.jsonc`. Example configurations
   // Required for Google models
   "google": {
     "apiKey": "AIza...",
+  },
+  // Required for Vercel AI Gateway models
+  "gateway": {
+    "apiKey": "vai_...",
   },
   // Required for OpenRouter models
   "openrouter": {

@@ -42,6 +42,13 @@ export async function importOpenRouter() {
 }
 
 /**
+ * Dynamically import the Vercel AI Gateway provider package
+ */
+export async function importGateway() {
+  return await import("@ai-sdk/gateway");
+}
+
+/**
  * Centralized provider registry mapping provider names to their import functions
  *
  * This is the single source of truth for supported providers. By mapping to import
@@ -60,6 +67,7 @@ export const PROVIDER_REGISTRY = {
   google: importGoogle,
   ollama: importOllama,
   openrouter: importOpenRouter,
+  gateway: importGateway,
 } as const;
 
 /**
