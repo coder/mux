@@ -1,4 +1,3 @@
-
 import { createChatEventProcessor } from "./ChatEventProcessor";
 import type { WorkspaceChatMessage } from "@/common/types/ipc";
 
@@ -43,7 +42,7 @@ describe("ChatEventProcessor - Reasoning Delta", () => {
     const messages = processor.getMessages();
     expect(messages).toHaveLength(1);
     const message = messages[0];
-    
+
     // Before fix: fails (3 parts)
     // After fix: succeeds (1 part)
     expect(message.parts).toHaveLength(1);
@@ -60,14 +59,14 @@ describe("ChatEventProcessor - Reasoning Delta", () => {
 
     // Start stream
     processor.handleEvent({
-        type: "stream-start",
-        workspaceId: "ws-1",
-        messageId,
-        role: "assistant",
-        model: "gpt-4",
-        timestamp: 1000,
-        historySequence: 1,
-      } as WorkspaceChatMessage);
+      type: "stream-start",
+      workspaceId: "ws-1",
+      messageId,
+      role: "assistant",
+      model: "gpt-4",
+      timestamp: 1000,
+      historySequence: 1,
+    } as WorkspaceChatMessage);
 
     // Reasoning 1
     processor.handleEvent({
@@ -79,11 +78,11 @@ describe("ChatEventProcessor - Reasoning Delta", () => {
 
     // Text delta (interruption - although usually reasoning comes before text)
     processor.handleEvent({
-        type: "stream-delta",
-        messageId,
-        delta: "Some text",
-        timestamp: 1002,
-      } as WorkspaceChatMessage);
+      type: "stream-delta",
+      messageId,
+      delta: "Some text",
+      timestamp: 1002,
+    } as WorkspaceChatMessage);
 
     // Reasoning 2
     processor.handleEvent({
@@ -95,14 +94,11 @@ describe("ChatEventProcessor - Reasoning Delta", () => {
 
     const messages = processor.getMessages();
     const parts = messages[0].parts;
-    
+
     // Should have: Reasoning "Part 1", Text "Some text", Reasoning "Part 2"
     expect(parts).toHaveLength(3);
-    expect(parts[0].type).toBe("reasoning");
-    expect((parts[0] as any).text).toBe("Part 1");
-    expect(parts[1].type).toBe("text");
-    expect((parts[1] as any).text).toBe("Some text");
-    expect(parts[2].type).toBe("reasoning");
-    expect((parts[2] as any).text).toBe("Part 2");
+    expect(parts[0]).toMatchObject({ type: "reasoning", text: "Part 1" });
+    expect(parts[1]).toMatchObject({ type: "text", text: "Some text" });
+    expect(parts[2]).toMatchObject({ type: "reasoning", text: "Part 2" });
   });
 });
