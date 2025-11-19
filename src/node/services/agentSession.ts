@@ -280,9 +280,13 @@ export class AgentSession {
         return Err(createUnknownSendMessageError("No model specified for auto-compaction."));
       }
 
+      // Strip imageParts from compaction request, only upload
+      // images as part of the continue message, post-compaction
+      const { imageParts: _, ...baseOptionsWithoutImages } = options;
+
       // Create compaction request with proper overrides
       const { messageText, sendOptions } = createCompactionRequest({
-        baseOptions: options,
+        baseOptions: baseOptionsWithoutImages,
         continueMessage: { text: trimmedMessage, imageParts },
         rawCommand: "/compact",
       });
