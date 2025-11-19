@@ -32,16 +32,16 @@ Open or create `~/.mux/providers.jsonc` and add the `cloudflareGateway` configur
     "apiKey": "sk-ant-...",
     "cloudflareGateway": {
       "accountId": "your-cloudflare-account-id",
-      "gatewayName": "my-mux-gateway"
-    }
+      "gatewayName": "my-mux-gateway",
+    },
   },
   "openai": {
     "apiKey": "sk-...",
     "cloudflareGateway": {
       "accountId": "your-cloudflare-account-id",
-      "gatewayName": "my-mux-gateway"
-    }
-  }
+      "gatewayName": "my-mux-gateway",
+    },
+  },
 }
 ```
 
@@ -67,20 +67,20 @@ You can configure different gateways for different providers:
     "apiKey": "sk-ant-...",
     "cloudflareGateway": {
       "accountId": "account-id-1",
-      "gatewayName": "production-gateway"
-    }
+      "gatewayName": "production-gateway",
+    },
   },
   "openai": {
     "apiKey": "sk-...",
     "cloudflareGateway": {
       "accountId": "account-id-2",
-      "gatewayName": "testing-gateway"
-    }
+      "gatewayName": "testing-gateway",
+    },
   },
   // Ollama without gateway (direct connection)
   "ollama": {
-    "baseUrl": "http://localhost:11434/api"
-  }
+    "baseUrl": "http://localhost:11434/api",
+  },
 }
 ```
 
@@ -93,6 +93,7 @@ You can use Cloudflare AI Gateway for some providers and direct connections for 
 When `cloudflareGateway` is configured:
 
 1. mux constructs the Cloudflare AI Gateway URL:
+
    ```
    https://gateway.ai.cloudflare.com/v1/{accountId}/{gatewayName}/{provider}
    ```
