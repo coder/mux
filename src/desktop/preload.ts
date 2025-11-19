@@ -54,13 +54,14 @@ const api: IPCApi = {
   },
   workspace: {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_LIST),
-    create: (projectPath, branchName, trunkBranch: string, runtimeConfig?) =>
+    create: (projectPath, branchName, trunkBranch: string, runtimeConfig?, options?) =>
       ipcRenderer.invoke(
         IPC_CHANNELS.WORKSPACE_CREATE,
         projectPath,
         branchName,
         trunkBranch,
-        runtimeConfig
+        runtimeConfig,
+        options
       ),
     remove: (workspaceId: string, options?: { force?: boolean }) =>
       ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_REMOVE, workspaceId, options),

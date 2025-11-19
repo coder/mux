@@ -219,6 +219,7 @@ export class IpcMain {
         trunkBranch: recommendedTrunk,
         directoryName: branchName,
         initLogger,
+        fetchLatest: options.fetchLatest ?? false,
       });
 
       if (!createResult.success || !createResult.workspacePath) {
@@ -267,6 +268,7 @@ export class IpcMain {
           trunkBranch: recommendedTrunk,
           workspacePath: createResult.workspacePath,
           initLogger,
+          fetchLatest: options.fetchLatest ?? false,
         })
         .catch((error: unknown) => {
           const errorMsg = error instanceof Error ? error.message : String(error);
@@ -435,7 +437,8 @@ export class IpcMain {
         projectPath: string,
         branchName: string,
         trunkBranch: string,
-        runtimeConfig?: RuntimeConfig
+        runtimeConfig?: RuntimeConfig,
+        options?: { fetchLatest?: boolean }
       ) => {
         // Validate workspace name
         const validation = validateWorkspaceName(branchName);
@@ -499,6 +502,7 @@ export class IpcMain {
           trunkBranch: normalizedTrunkBranch,
           directoryName: branchName, // Use branch name as directory name
           initLogger,
+          fetchLatest: options?.fetchLatest ?? false,
         });
 
         if (!createResult.success || !createResult.workspacePath) {
@@ -560,6 +564,7 @@ export class IpcMain {
             trunkBranch: normalizedTrunkBranch,
             workspacePath: createResult.workspacePath,
             initLogger,
+            fetchLatest: options?.fetchLatest ?? false,
           })
           .catch((error: unknown) => {
             const errorMsg = error instanceof Error ? error.message : String(error);

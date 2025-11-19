@@ -71,6 +71,7 @@ export interface CreateWorkspaceOptions {
   runtime?: string;
   startMessage?: string;
   sendMessageOptions?: SendMessageOptions;
+  fetchLatest?: boolean;
 }
 
 export interface CreateWorkspaceResult {
@@ -107,12 +108,15 @@ export async function createNewWorkspace(
 
   // Parse runtime config if provided
   const runtimeConfig = parseRuntimeString(effectiveRuntime, options.workspaceName);
+  const creationOptions =
+    options.fetchLatest !== undefined ? { fetchLatest: options.fetchLatest } : undefined;
 
   const result = await window.api.workspace.create(
     options.projectPath,
     options.workspaceName,
     effectiveTrunk,
-    runtimeConfig
+    runtimeConfig,
+    creationOptions
   );
 
   if (!result.success) {
