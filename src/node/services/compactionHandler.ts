@@ -28,7 +28,7 @@ export class CompactionHandler {
   private readonly workspaceId: string;
   private readonly historyService: HistoryService;
   private readonly emitter: EventEmitter;
-  private readonly processedIds: Set<string> = new Set<string>();
+  private readonly processedCompactionRequestIds: Set<string> = new Set<string>();
 
   constructor(options: CompactionHandlerOptions) {
     this.workspaceId = options.workspaceId;
@@ -118,7 +118,7 @@ export class CompactionHandler {
     }
 
     // Dedupe: If we've already processed this compaction-request, skip
-    if (this.processedIds.has(lastUserMsg.id)) {
+    if (this.processedCompactionRequestIds.has(lastUserMsg.id)) {
       return true;
     }
 
@@ -128,7 +128,7 @@ export class CompactionHandler {
       .join("");
 
     // Mark as processed before performing compaction
-    this.processedIds.add(lastUserMsg.id);
+    this.processedCompactionRequestIds.add(lastUserMsg.id);
 
     const result = await this.performCompaction(summary, event.metadata);
     if (!result.success) {
