@@ -10,6 +10,7 @@ import type { BashToolResult } from "./tools";
 import type { Secret } from "./secrets";
 import type { MuxProviderOptions } from "./providerOptions";
 import type { RuntimeConfig } from "./runtime";
+import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import type { TerminalSession, TerminalCreateParams, TerminalResizeParams } from "./terminal";
 import type {
   StreamStartEvent,
@@ -243,6 +244,9 @@ export interface IPCApi {
       value: string
     ): Promise<Result<void, string>>;
     list(): Promise<string[]>;
+  };
+  fs?: {
+    listDirectory(root: string): Promise<FileTreeNode>;
   };
   projects: {
     create(

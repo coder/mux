@@ -358,6 +358,37 @@ export class IpcMain {
    * @param ipcMain - Electron's ipcMain module
    * @param mainWindow - The main BrowserWindow for sending events
    */
+  private registerFsHandlers(ipcMain: ElectronIpcMain): void {
+    ipcMain.handle(IPC_CHANNELS.FS_LIST_DIRECTORY, async (_event, root: string) => {
+      try {
+        const normalizedRoot = path.resolve(root || ".");
+        const entries = await fsPromises.readdir(normalizedRoot, { withFileTypes: true });
+
+        const children = entries
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => {
+            const entryPath = path.join(normalizedRoot, entry.name);
+            return {
+              name: entry.name,
+              path: entryPath,
+              isDirectory: true,
+              children: [],
+            };
+          });
+
+        return {
+          name: normalizedRoot,
+          path: normalizedRoot,
+          isDirectory: true,
+          children,
+        };
+      } catch (error) {
+        log.error("FS_LIST_DIRECTORY failed:", error);
+        throw error instanceof Error ? error : new Error(String(error));
+      }
+    });
+  }
+
   register(ipcMain: ElectronIpcMain, mainWindow: BrowserWindow): void {
     // Always update the window reference (windows can be recreated on macOS)
     this.mainWindow = mainWindow;
@@ -373,6 +404,7 @@ export class IpcMain {
     this.registerTokenizerHandlers(ipcMain);
     this.registerWorkspaceHandlers(ipcMain);
     this.registerProviderHandlers(ipcMain);
+    this.registerFsHandlers(ipcMain);
     this.registerProjectHandlers(ipcMain);
     this.registerTerminalHandlers(ipcMain, mainWindow);
     this.registerSubscriptionHandlers(ipcMain);

@@ -193,6 +193,9 @@ const webApi: IPCApi = {
     calculateStats: (messages, model) =>
       invokeIPC(IPC_CHANNELS.TOKENIZER_CALCULATE_STATS, messages, model),
   },
+  fs: {
+    listDirectory: (root) => invokeIPC(IPC_CHANNELS.FS_LIST_DIRECTORY, root),
+  },
   providers: {
     setProviderConfig: (provider, keyPath, value) =>
       invokeIPC(IPC_CHANNELS.PROVIDERS_SET_CONFIG, provider, keyPath, value),

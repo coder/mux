@@ -39,6 +39,10 @@ const api: IPCApi = {
       ipcRenderer.invoke(IPC_CHANNELS.PROVIDERS_SET_CONFIG, provider, keyPath, value),
     list: () => ipcRenderer.invoke(IPC_CHANNELS.PROVIDERS_LIST),
   },
+  fs: {
+    listDirectory: (root: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.FS_LIST_DIRECTORY, root),
+  },
   projects: {
     create: (projectPath) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_CREATE, projectPath),
     pickDirectory: () => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_PICK_DIRECTORY),
