@@ -1,5 +1,5 @@
 import assert from "@/common/utils/assert";
-import { dialog, BrowserWindow, type IpcMain as ElectronIpcMain } from "electron";
+import type { BrowserWindow, IpcMain as ElectronIpcMain, IpcMainInvokeEvent } from "electron";
 import { spawn, spawnSync } from "child_process";
 import * as fsPromises from "fs/promises";
 import * as path from "path";
@@ -58,6 +58,8 @@ export class IpcMain {
   private readonly ptyService: PTYService;
   private terminalWindowManager?: TerminalWindowManager;
   private readonly sessions = new Map<string, AgentSession>();
+  private projectDirectoryPicker?: (event: IpcMainInvokeEvent) => Promise<string | null>;
+
   private readonly sessionSubscriptions = new Map<
     string,
     { chat: () => void; metadata: () => void }
@@ -93,6 +95,16 @@ export class IpcMain {
    */
   async initialize(): Promise<void> {
     await this.extensionMetadata.initialize();
+  }
+
+  /**
+   * Configure a picker used to select project directories (desktop mode only).
+   * Server mode does not provide a native directory picker.
+   */
+  setProjectDirectoryPicker(
+    picker: (event: IpcMainInvokeEvent) => Promise<string | null>
+  ): void {
+    this.projectDirectoryPicker = picker;
   }
 
   /**
@@ -1399,27 +1411,23 @@ export class IpcMain {
   }
 
   private registerProjectHandlers(ipcMain: ElectronIpcMain): void {
-    ipcMain.handle(IPC_CHANNELS.PROJECT_PICK_DIRECTORY, async (event) => {
-      if (!event?.sender) {
-        return null;
+    ipcMain.handle(
+      IPC_CHANNELS.PROJECT_PICK_DIRECTORY,
+      async (event: IpcMainInvokeEvent | null) => {
+        if (!event?.sender || !this.projectDirectoryPicker) {
+          // In server mode (HttpIpcMainAdapter), there is no BrowserWindow / sender.
+          // The browser uses the web-based directory picker instead.
+          return null;
+        }
+
+        try {
+          return await this.projectDirectoryPicker(event);
+        } catch (error) {
+          log.error("Failed to pick directory:", error);
+          return null;
+        }
       }
-
-      try {
-        const win = BrowserWindow.fromWebContents(event.sender);
-        if (!win) return null;
-
-        const res = await dialog.showOpenDialog(win, {
-          properties: ["openDirectory", "createDirectory", "showHiddenFiles"],
-          title: "Select Project Directory",
-          buttonLabel: "Select Project",
-        });
-
-        return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0];
-      } catch (error) {
-        log.error("Failed to pick directory:", error);
-        return null;
-      }
-    });
+    );
 
     ipcMain.handle(IPC_CHANNELS.PROJECT_CREATE, async (_event, projectPath: string) => {
       try {
