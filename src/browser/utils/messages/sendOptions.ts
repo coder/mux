@@ -19,11 +19,7 @@ function getProviderOptions(): MuxProviderOptions {
   const openai = readPersistedState<MuxProviderOptions["openai"]>("provider_options_openai", {
     disableAutoTruncation: false,
   });
-  const google = readPersistedState<MuxProviderOptions["google"]>("provider_options_google", {
-    useSearchGrounding: false,
-    useUrlContext: false,
-    includeThoughts: false,
-  });
+  const google = readPersistedState<MuxProviderOptions["google"]>("provider_options_google", {});
 
   return {
     anthropic,

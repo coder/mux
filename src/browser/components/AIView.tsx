@@ -15,7 +15,8 @@ import {
 } from "@/browser/utils/messages/messageUtils";
 import { hasInterruptedStream } from "@/browser/utils/messages/retryEligibility";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
-import { ModeProvider } from "@/browser/contexts/ModeContext";import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsContext";
+import { ModeProvider } from "@/browser/contexts/ModeContext";
+import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsContext";
 
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useAutoScroll } from "@/browser/hooks/useAutoScroll";

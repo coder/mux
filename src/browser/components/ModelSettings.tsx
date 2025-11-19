@@ -7,7 +7,7 @@ interface ModelSettingsProps {
 }
 
 export const ModelSettings: React.FC<ModelSettingsProps> = ({ provider }) => {
-  const { options, setAnthropicOptions, setOpenAIOptions, setGoogleOptions } = useProviderOptions();
+  const { options, setAnthropicOptions, setOpenAIOptions } = useProviderOptions();
 
   const renderOption = (
     id: string,
@@ -52,27 +52,6 @@ export const ModelSettings: React.FC<ModelSettingsProps> = ({ provider }) => {
       options.openai?.disableAutoTruncation ?? false,
       (checked) => setOpenAIOptions({ ...options.openai, disableAutoTruncation: checked }),
       "Disable Auto-Truncation (Testing only)"
-    );
-  }
-
-  if (provider === "google") {
-    return (
-      <div className="flex flex-row gap-4">
-        {renderOption(
-          "google-search",
-          "Search",
-          options.google?.useSearchGrounding ?? false,
-          (checked) => setGoogleOptions({ ...options.google, useSearchGrounding: checked }),
-          "Use Google Search Grounding"
-        )}
-        {renderOption(
-          "google-url",
-          "URL",
-          options.google?.useUrlContext ?? false,
-          (checked) => setGoogleOptions({ ...options.google, useUrlContext: checked }),
-          "Use URL Context tool for reading web pages"
-        )}
-      </div>
     );
   }
 

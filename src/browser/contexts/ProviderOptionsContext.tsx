@@ -27,11 +27,7 @@ export function ProviderOptionsProvider({ children }: { children: React.ReactNod
 
   const [googleOptions, setGoogleOptions] = usePersistedState<MuxProviderOptions["google"]>(
     "provider_options_google",
-    {
-      useSearchGrounding: false,
-      useUrlContext: false,
-      includeThoughts: false,
-    }
+    {}
   );
 
   const value = {

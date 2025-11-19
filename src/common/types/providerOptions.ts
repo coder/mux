@@ -32,19 +32,8 @@ export interface OpenAIProviderOptions {
 /**
  * Google-specific options
  */
-
-export interface GoogleProviderOptions {
-  /** Enable Google Search grounding */
-  useSearchGrounding?: boolean;
-  /** Enable URL context tool for reading web pages */
-  useUrlContext?: boolean;
-  /** Include thoughts in the response (e.g. for gemini-3-pro-preview) */
-  includeThoughts?: boolean;
-  /** Thinking level for Gemini 3+ models */
-  thinkingLevel?: "low" | "high";
-  /** Thinking budget (token count) for Gemini 2.5 models */
-  thinkingBudget?: number;
-}
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface GoogleProviderOptions {}
 
 /**
  * Ollama-specific options

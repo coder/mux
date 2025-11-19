@@ -338,7 +338,7 @@ function AppInner() {
 
       const recommended =
         typeof branchResult?.recommendedTrunk === "string" &&
-          sanitizedBranches.includes(branchResult.recommendedTrunk)
+        sanitizedBranches.includes(branchResult.recommendedTrunk)
           ? branchResult.recommendedTrunk
           : (sanitizedBranches[0] ?? "");
 
@@ -578,9 +578,9 @@ function AppInner() {
                           onCancel={
                             pendingNewWorkspaceProject
                               ? () => {
-                                // User cancelled workspace creation - clear pending state
-                                clearPendingWorkspaceCreation();
-                              }
+                                  // User cancelled workspace creation - clear pending state
+                                  clearPendingWorkspaceCreation();
+                                }
                               : undefined
                           }
                         />

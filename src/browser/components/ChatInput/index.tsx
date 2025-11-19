@@ -177,15 +177,15 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   const creationState = useCreationWorkspace(
     variant === "creation"
       ? {
-        projectPath: props.projectPath,
-        onWorkspaceCreated: props.onWorkspaceCreated,
-      }
+          projectPath: props.projectPath,
+          onWorkspaceCreated: props.onWorkspaceCreated,
+        }
       : {
-        // Dummy values for workspace variant (never used)
-        projectPath: "",
-        // eslint-disable-next-line @typescript-eslint/no-empty-function
-        onWorkspaceCreated: () => { },
-      }
+          // Dummy values for workspace variant (never used)
+          projectPath: "",
+          // eslint-disable-next-line @typescript-eslint/no-empty-function
+          onWorkspaceCreated: () => {},
+        }
   );
 
   const focusMessageInput = useCallback(() => {
@@ -988,7 +988,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 <ThinkingSliderComponent modelString={preferredModel} />
               </div>
 
-              <div className="flex items-center ml-4" data-component="ModelSettingsGroup">
+              <div className="ml-4 flex items-center" data-component="ModelSettingsGroup">
                 <ModelSettings provider={(preferredModel || "").split(":")[0]} />
               </div>
 
@@ -1009,7 +1009,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 </div>
               )}
 
-              <div className="flex items-center gap-2 ml-auto" data-component="ModelControls">
+              <div className="ml-auto flex items-center gap-2" data-component="ModelControls">
                 <ModeSelector mode={mode} onChange={setMode} />
               </div>
             </div>

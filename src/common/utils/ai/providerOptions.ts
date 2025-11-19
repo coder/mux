@@ -36,17 +36,6 @@ type ExtendedOpenAIResponsesProviderOptions = OpenAIResponsesProviderOptions & {
 };
 
 /**
- * Extended Google provider options to include thinkingLevel
- *
- * NOTE: The SDK types don't yet include this parameter, but it's supported by the Gemini 3 API.
- */
-type ExtendedGoogleProviderOptions = GoogleGenerativeAIProviderOptions & {
-  thinkingConfig?: {
-    thinkingLevel?: ThinkingLevel;
-  };
-};
-
-/**
  * OpenRouter reasoning options
  * @see https://openrouter.ai/docs/use-cases/reasoning-tokens
  */
@@ -64,7 +53,7 @@ interface OpenRouterReasoningOptions {
 type ProviderOptions =
   | { anthropic: AnthropicProviderOptions }
   | { openai: ExtendedOpenAIResponsesProviderOptions }
-  | { google: ExtendedGoogleProviderOptions }
+  | { google: GoogleGenerativeAIProviderOptions }
   | { openrouter: OpenRouterReasoningOptions }
   | Record<string, never>; // Empty object for unsupported providers
 
@@ -220,31 +209,29 @@ export function buildProviderOptions(
   // Build Google-specific options
   if (provider === "google") {
     const isGemini3 = modelString.includes("gemini-3");
-    let thinkingConfig: ExtendedGoogleProviderOptions["thinkingConfig"];
+    let thinkingConfig: GoogleGenerativeAIProviderOptions["thinkingConfig"];
 
-    if (isGemini3) {
-      // Gemini 3 uses thinkingLevel (low/high)
+    if (effectiveThinking !== "off") {
       thinkingConfig = {
         includeThoughts: true,
-        thinkingLevel: effectiveThinking === "medium" ? "low" : effectiveThinking,
       };
-    } else if (effectiveThinking !== "off") {
-      // Gemini 2.5 uses thinkingBudget
-      const budget = GEMINI_THINKING_BUDGETS[effectiveThinking];
-      if (budget > 0) {
-        thinkingConfig = {
-          includeThoughts: true,
-          thinkingBudget: budget,
-        };
+
+      if (isGemini3) {
+        // Gemini 3 uses thinkingLevel (low/high)
+        thinkingConfig.thinkingLevel = effectiveThinking === "medium" ? "low" : effectiveThinking;
+      } else {
+        // Gemini 2.5 uses thinkingBudget
+        const budget = GEMINI_THINKING_BUDGETS[effectiveThinking];
+        if (budget > 0) {
+          thinkingConfig.thinkingBudget = budget;
+        }
       }
     }
 
-    const googleOptions: ExtendedGoogleProviderOptions = {
-      ...(thinkingConfig && { thinkingConfig }),
-    };
-
     const options: ProviderOptions = {
-      google: googleOptions,
+      google: {
+        thinkingConfig,
+      },
     };
     log.debug("buildProviderOptions: Google options", options);
     return options;

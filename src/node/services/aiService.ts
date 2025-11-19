@@ -704,34 +704,6 @@ export class AIService extends EventEmitter {
       // Apply tool policy to filter tools (if policy provided)
       const tools = applyToolPolicy(allTools, toolPolicy);
 
-      // Inject Google Search tool if requested
-      if (modelString.startsWith("google:") && muxProviderOptions?.google?.useSearchGrounding) {
-        log.debug("AIService.streamMessage: muxProviderOptions", { muxProviderOptions });
-
-        try {
-          // Dynamically import Google provider to access tools
-          const { google } = await PROVIDER_REGISTRY.google();
-          // Inject google_search tool
-          tools.google_search = google.tools.googleSearch({});
-          log.debug("Injected google_search tool", { workspaceId, model: modelString });
-        } catch (err) {
-          log.error("Failed to inject google_search tool", err);
-        }
-      }
-
-      // Inject URL Context tool if requested
-      if (modelString.startsWith("google:") && muxProviderOptions?.google?.useUrlContext) {
-        try {
-          // Dynamically import Google provider to access tools
-          const { google } = await PROVIDER_REGISTRY.google();
-          // Inject url_context tool
-          tools.url_context = google.tools.urlContext({});
-          log.debug("Injected url_context tool", { workspaceId, model: modelString });
-        } catch (err) {
-          log.error("Failed to inject url_context tool", err);
-        }
-      }
-
       log.info("AIService.streamMessage: tool configuration", {
         workspaceId,
         model: modelString,
