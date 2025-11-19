@@ -1046,6 +1046,10 @@ export class IpcMain {
           this.mainWindow.webContents.send(getChatChannel(workspaceId), deleteMessage);
         }
 
+        // Check if auto-compaction should trigger after truncate
+        const session = this.getOrCreateSession(workspaceId);
+        await session.checkAndUpdateAutoCompactionFlag();
+
         return { success: true, data: undefined };
       }
     );

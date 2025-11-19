@@ -270,6 +270,7 @@ export class CompactionHandler {
     }
 
     // Trigger if we're at or above 70% of the limit
+    // TODO: make configurable
     const threshold = maxInputTokens * 0.7;
     return totalTokens >= threshold;
   }
@@ -284,6 +285,7 @@ export class CompactionHandler {
       this.willCompactNext = true;
       return true;
     }
+    this.willCompactNext = false;
     return false;
   }
 

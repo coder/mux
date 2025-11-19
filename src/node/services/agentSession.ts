@@ -276,8 +276,6 @@ export class AgentSession {
       this.compactionHandler.getWillCompactNext() &&
       options?.muxMetadata?.type !== "compaction-request"
     ) {
-      this.compactionHandler.clearWillCompactNext();
-
       if (!options?.model) {
         return Err(createUnknownSendMessageError("No model specified for auto-compaction."));
       }
@@ -286,7 +284,7 @@ export class AgentSession {
       const { messageText, sendOptions } = createCompactionRequest({
         baseOptions: options,
         continueMessage: { text: trimmedMessage, imageParts },
-        rawCommand: `/compact\n${trimmedMessage}`,
+        rawCommand: "/compact",
       });
 
       return this.sendMessage(messageText, sendOptions);
@@ -402,6 +400,11 @@ export class AgentSession {
     return Ok(undefined);
   }
 
+  async checkAndUpdateAutoCompactionFlag(): Promise<boolean> {
+    this.assertNotDisposed("checkAndUpdateAutoCompactionFlag");
+    return this.compactionHandler.checkAndUpdateAutoCompactionFlag();
+  }
+
   private async streamWithHistory(
     modelString: string,
     options?: SendMessageOptions
@@ -473,7 +476,7 @@ export class AgentSession {
       const event = payload as StreamEndEvent;
       const handled = await this.compactionHandler.handleCompletion(event);
       if (!handled) {
-        const shouldCompact = await this.compactionHandler.checkAndUpdateAutoCompactionFlag();
+        const shouldCompact = await this.checkAndUpdateAutoCompactionFlag();
         if (shouldCompact) {
           event.willCompactOnNextMessage = true;
         }
@@ -487,7 +490,7 @@ export class AgentSession {
       const event = payload as StreamAbortEvent;
       const handled = await this.compactionHandler.handleAbort(event);
       if (!handled) {
-        const shouldCompact = await this.compactionHandler.checkAndUpdateAutoCompactionFlag();
+        const shouldCompact = await this.checkAndUpdateAutoCompactionFlag();
         if (shouldCompact) {
           event.willCompactOnNextMessage = true;
         }
