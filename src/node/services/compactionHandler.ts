@@ -7,7 +7,7 @@ import { Ok, Err } from "@/common/types/result";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { cumUsageHistory } from "@/common/utils/tokens/displayUsage";
 import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
-import { createMuxMessage } from "@/common/types/message";
+import { createMuxMessage, MuxMessage } from "@/common/types/message";
 
 interface CompactionHandlerOptions {
   workspaceId: string;
@@ -80,7 +80,7 @@ export class CompactionHandler {
     const truncatedSummary = partialSummary.trim() + "\n\n[truncated]";
 
     // Perform compaction with truncated summary
-    const result = await this.performCompaction(truncatedSummary, {
+    const result = await this.performCompaction(truncatedSummary, messages, {
       model: lastMessage.metadata?.model ?? "unknown",
       usage: event.metadata?.usage,
       duration: event.metadata?.duration,
@@ -130,7 +130,7 @@ export class CompactionHandler {
     // Mark as processed before performing compaction
     this.processedCompactionRequestIds.add(lastUserMsg.id);
 
-    const result = await this.performCompaction(summary, event.metadata);
+    const result = await this.performCompaction(summary, messages,event.metadata);
     if (!result.success) {
       console.error("[CompactionHandler] Compaction failed:", result.error);
       return false;
@@ -153,6 +153,7 @@ export class CompactionHandler {
    */
   private async performCompaction(
     summary: string,
+    messages: MuxMessage[],
     metadata: {
       model: string;
       usage?: LanguageModelV2Usage;
@@ -161,13 +162,7 @@ export class CompactionHandler {
       systemMessageTokens?: number;
     }
   ): Promise<Result<void, string>> {
-    // Get all messages to calculate cumulative usage
-    const historyResult = await this.historyService.getHistory(this.workspaceId);
-    if (!historyResult.success) {
-      return Err(`Failed to get history for usage calculation: ${historyResult.error}`);
-    }
-
-    const usageHistory = cumUsageHistory(historyResult.data, undefined);
+    const usageHistory = cumUsageHistory(messages, undefined);
 
     const historicalUsage = usageHistory.length > 0 ? sumUsageHistory(usageHistory) : undefined;
 
