@@ -9,6 +9,7 @@ export const IPC_CHANNELS = {
   PROVIDERS_LIST: "providers:list",
 
   // Project channels
+  PROJECT_PICK_DIRECTORY: "project:pickDirectory",
   PROJECT_CREATE: "project:create",
   PROJECT_REMOVE: "project:remove",
   PROJECT_LIST: "project:list",

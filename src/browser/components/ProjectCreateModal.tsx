@@ -21,6 +21,9 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
 }) => {
   const [path, setPath] = useState("");
   const [error, setError] = useState("");
+  // Detect desktop environment where native directory picker is available
+  const isDesktop =
+    window.api.platform !== "browser" && typeof window.api.projects.pickDirectory === "function";
   const [isCreating, setIsCreating] = useState(false);
 
   const handleCancel = useCallback(() => {
@@ -28,6 +31,18 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
     setError("");
     onClose();
   }, [onClose]);
+
+  const handleBrowse = useCallback(async () => {
+    try {
+      const selectedPath = await window.api.projects.pickDirectory();
+      if (selectedPath) {
+        setPath(selectedPath);
+        setError("");
+      }
+    } catch (err) {
+      console.error("Failed to pick directory:", err);
+    }
+  }, []);
 
   const handleSelect = useCallback(async () => {
     const trimmedPath = path.trim();
@@ -96,19 +111,31 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
       onClose={handleCancel}
       isLoading={isCreating}
     >
-      <input
-        type="text"
-        value={path}
-        onChange={(e) => {
-          setPath(e.target.value);
-          setError("");
-        }}
-        onKeyDown={handleKeyDown}
-        placeholder="/home/user/projects/my-project"
-        autoFocus
-        disabled={isCreating}
-        className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-muted mb-5 w-full rounded border px-3 py-2 font-mono text-sm text-white focus:outline-none disabled:opacity-50"
-      />
+      <div className="mb-5 flex gap-2">
+        <input
+          type="text"
+          value={path}
+          onChange={(e) => {
+            setPath(e.target.value);
+            setError("");
+          }}
+          onKeyDown={handleKeyDown}
+          placeholder="/home/user/projects/my-project"
+          autoFocus
+          disabled={isCreating}
+          className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-muted w-full flex-1 rounded border px-3 py-2 font-mono text-sm text-white focus:outline-none disabled:opacity-50"
+        />
+        {isDesktop && (
+          <button
+            type="button"
+            onClick={() => void handleBrowse()}
+            disabled={isCreating}
+            className="bg-border-medium hover:bg-border-darker border-border-medium rounded border px-4 text-sm font-medium text-white transition-colors disabled:opacity-50"
+          >
+            Browse...
+          </button>
+        )}
+      </div>
       {error && <div className="text-error -mt-3 mb-3 text-xs">{error}</div>}
       <ModalActions>
         <CancelButton onClick={handleCancel} disabled={isCreating}>

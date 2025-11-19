@@ -41,6 +41,7 @@ const api: IPCApi = {
   },
   projects: {
     create: (projectPath) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_CREATE, projectPath),
+    pickDirectory: () => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_PICK_DIRECTORY),
     remove: (projectPath) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_REMOVE, projectPath),
     list: (): Promise<Array<[string, ProjectConfig]>> =>
       ipcRenderer.invoke(IPC_CHANNELS.PROJECT_LIST),

@@ -1,5 +1,5 @@
 import assert from "@/common/utils/assert";
-import type { IpcMain as ElectronIpcMain, BrowserWindow } from "electron";
+import { dialog, BrowserWindow, type IpcMain as ElectronIpcMain } from "electron";
 import { spawn, spawnSync } from "child_process";
 import * as fsPromises from "fs/promises";
 import * as path from "path";
@@ -1367,6 +1367,28 @@ export class IpcMain {
   }
 
   private registerProjectHandlers(ipcMain: ElectronIpcMain): void {
+    ipcMain.handle(IPC_CHANNELS.PROJECT_PICK_DIRECTORY, async (event) => {
+      if (!event?.sender) {
+        return null;
+      }
+
+      try {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (!win) return null;
+
+        const res = await dialog.showOpenDialog(win, {
+          properties: ["openDirectory", "createDirectory", "showHiddenFiles"],
+          title: "Select Project Directory",
+          buttonLabel: "Select Project",
+        });
+
+        return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0];
+      } catch (error) {
+        log.error("Failed to pick directory:", error);
+        return null;
+      }
+    });
+
     ipcMain.handle(IPC_CHANNELS.PROJECT_CREATE, async (_event, projectPath: string) => {
       try {
         // Validate and expand path (handles tilde, checks existence and directory status)

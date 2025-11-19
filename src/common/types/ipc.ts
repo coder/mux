@@ -248,6 +248,7 @@ export interface IPCApi {
     create(
       projectPath: string
     ): Promise<Result<{ projectConfig: ProjectConfig; normalizedPath: string }, string>>;
+    pickDirectory(): Promise<string | null>;
     remove(projectPath: string): Promise<Result<void, string>>;
     list(): Promise<Array<[string, ProjectConfig]>>;
     listBranches(projectPath: string): Promise<BranchListResult>;

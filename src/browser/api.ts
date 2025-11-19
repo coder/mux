@@ -200,6 +200,7 @@ const webApi: IPCApi = {
   },
   projects: {
     create: (projectPath) => invokeIPC(IPC_CHANNELS.PROJECT_CREATE, projectPath),
+    pickDirectory: () => Promise.resolve(null),
     remove: (projectPath) => invokeIPC(IPC_CHANNELS.PROJECT_REMOVE, projectPath),
     list: () => invokeIPC(IPC_CHANNELS.PROJECT_LIST),
     listBranches: (projectPath) => invokeIPC(IPC_CHANNELS.PROJECT_LIST_BRANCHES, projectPath),
