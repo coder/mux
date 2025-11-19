@@ -46,12 +46,7 @@ describe("getThinkingPolicyForModel", () => {
       "medium",
       "high",
     ]);
-    expect(getThinkingPolicyForModel("google:gemini-3-pro-preview-11-2025")).toEqual([
-      "off",
-      "low",
-      "medium",
-      "high",
-    ]);
+    expect(getThinkingPolicyForModel("google:gemini-3-pro-preview")).toEqual(["low", "high"]);
   });
 });
 
