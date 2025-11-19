@@ -26,6 +26,7 @@
 
 - [Prompting Tips](./prompting-tips.md)
 - [System Prompt](./system-prompt.md)
+- [Cloudflare AI Gateway](./cloudflare-ai-gateway.md)
 - [Telemetry](./telemetry.md)
 
 # Development

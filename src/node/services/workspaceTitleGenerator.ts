@@ -1,10 +1,44 @@
 import { generateObject, type LanguageModel } from "ai";
 import { z } from "zod";
-import type { Config } from "@/node/config";
+import type { Config, ProviderConfig } from "@/node/config";
 import { log } from "./log";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { MODEL_NAMES } from "@/common/constants/knownModels";
+
+/**
+ * Build configuration with Cloudflare AI Gateway support
+ * @param providerConfig - Provider configuration from providers.jsonc
+ * @param providerName - Provider name (openai, anthropic, etc.)
+ * @returns Configuration object with baseURL set if gateway is configured
+ */
+function buildProviderConfig(
+  providerConfig: ProviderConfig,
+  providerName: string
+): Record<string, unknown> {
+  const { cloudflareGateway, baseUrl, ...rest } = providerConfig;
+
+  // If Cloudflare AI Gateway is configured, use it as baseURL
+  if (cloudflareGateway && typeof cloudflareGateway === "object") {
+    const { accountId, gatewayName } = cloudflareGateway as {
+      accountId?: string;
+      gatewayName?: string;
+    };
+    if (accountId && gatewayName) {
+      return {
+        ...rest,
+        baseURL: `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayName}/${providerName}`,
+      };
+    }
+  }
+
+  // Otherwise use baseUrl if provided (mapped to baseURL)
+  if (baseUrl) {
+    return { ...rest, baseURL: baseUrl };
+  }
+
+  return rest;
+}
 
 const workspaceNameSchema = z.object({
   name: z
@@ -70,17 +104,15 @@ function getModelForTitleGeneration(modelString: string, config: Config): Langua
   try {
     // Try Anthropic Haiku first (fastest/cheapest)
     if (providersConfig.anthropic?.apiKey) {
-      const provider = createAnthropic({
-        apiKey: String(providersConfig.anthropic.apiKey),
-      });
+      const config = buildProviderConfig(providersConfig.anthropic, "anthropic");
+      const provider = createAnthropic(config);
       return provider(MODEL_NAMES.anthropic.HAIKU);
     }
 
     // Try OpenAI GPT-5-mini second
     if (providersConfig.openai?.apiKey) {
-      const provider = createOpenAI({
-        apiKey: String(providersConfig.openai.apiKey),
-      });
+      const config = buildProviderConfig(providersConfig.openai, "openai");
+      const provider = createOpenAI(config);
       return provider(MODEL_NAMES.openai.GPT_MINI);
     }
 
@@ -92,16 +124,14 @@ function getModelForTitleGeneration(modelString: string, config: Config): Langua
     }
 
     if (providerName === "anthropic" && providersConfig.anthropic?.apiKey) {
-      const provider = createAnthropic({
-        apiKey: String(providersConfig.anthropic.apiKey),
-      });
+      const config = buildProviderConfig(providersConfig.anthropic, "anthropic");
+      const provider = createAnthropic(config);
       return provider(modelId);
     }
 
     if (providerName === "openai" && providersConfig.openai?.apiKey) {
-      const provider = createOpenAI({
-        apiKey: String(providersConfig.openai.apiKey),
-      });
+      const config = buildProviderConfig(providersConfig.openai, "openai");
+      const provider = createOpenAI(config);
       return provider(modelId);
     }
 

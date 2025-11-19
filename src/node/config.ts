@@ -16,6 +16,13 @@ export type { Workspace, ProjectConfig, ProjectsConfig };
 export interface ProviderConfig {
   apiKey?: string;
   baseUrl?: string;
+  /** Cloudflare AI Gateway configuration */
+  cloudflareGateway?: {
+    /** Cloudflare account ID */
+    accountId: string;
+    /** Gateway name (created in Cloudflare dashboard) */
+    gatewayName: string;
+  };
   [key: string]: unknown;
 }
 
@@ -463,6 +470,24 @@ export class Config {
 //   },
 //   "ollama": {
 //     "baseUrl": "http://localhost:11434/api"  // Optional - only needed for remote/custom URL
+//   }
+// }
+//
+// Cloudflare AI Gateway example:
+// {
+//   "anthropic": {
+//     "apiKey": "sk-ant-...",
+//     "cloudflareGateway": {
+//       "accountId": "your-cloudflare-account-id",
+//       "gatewayName": "your-gateway-name"
+//     }
+//   },
+//   "openai": {
+//     "apiKey": "sk-...",
+//     "cloudflareGateway": {
+//       "accountId": "your-cloudflare-account-id",
+//       "gatewayName": "your-gateway-name"
+//     }
 //   }
 // }
 ${jsonString}`;

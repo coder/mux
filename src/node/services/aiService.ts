@@ -132,6 +132,21 @@ function parseModelString(modelString: string): [string, string] {
   return [providerName, modelId];
 }
 
+/**
+ * Construct Cloudflare AI Gateway URL for a provider
+ * @param accountId - Cloudflare account ID
+ * @param gatewayName - Gateway name from Cloudflare dashboard
+ * @param provider - Provider name (openai, anthropic, google, etc.)
+ * @returns Gateway URL for the provider
+ */
+function buildCloudflareGatewayURL(
+  accountId: string,
+  gatewayName: string,
+  provider: string
+): string {
+  return `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayName}/${provider}`;
+}
+
 export class AIService extends EventEmitter {
   private readonly streamManager: StreamManager;
   private readonly historyService: HistoryService;
@@ -280,10 +295,34 @@ export class AIService extends EventEmitter {
       let providerConfig = providersConfig?.[providerName] ?? {};
 
       // Map baseUrl to baseURL if present (SDK expects baseURL)
-      const { baseUrl, ...configWithoutBaseUrl } = providerConfig;
-      providerConfig = baseUrl
-        ? { ...configWithoutBaseUrl, baseURL: baseUrl }
-        : configWithoutBaseUrl;
+      const { baseUrl, cloudflareGateway, ...configWithoutBaseUrl } = providerConfig;
+
+      // If Cloudflare AI Gateway is configured, use it as baseURL (takes precedence over baseUrl)
+      if (cloudflareGateway && typeof cloudflareGateway === "object") {
+        const { accountId, gatewayName } = cloudflareGateway as {
+          accountId?: string;
+          gatewayName?: string;
+        };
+        if (accountId && gatewayName) {
+          providerConfig = {
+            ...configWithoutBaseUrl,
+            baseURL: buildCloudflareGatewayURL(accountId, gatewayName, providerName),
+          };
+          log.info("Using Cloudflare AI Gateway", {
+            provider: providerName,
+            accountId,
+            gatewayName,
+          });
+        } else {
+          providerConfig = baseUrl
+            ? { ...configWithoutBaseUrl, baseURL: baseUrl }
+            : configWithoutBaseUrl;
+        }
+      } else {
+        providerConfig = baseUrl
+          ? { ...configWithoutBaseUrl, baseURL: baseUrl }
+          : configWithoutBaseUrl;
+      }
 
       // Handle Anthropic provider
       if (providerName === "anthropic") {
