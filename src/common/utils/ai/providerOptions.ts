@@ -19,23 +19,6 @@ import type { MuxMessage } from "@/common/types/message";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 
 /**
- * Extended OpenAI Responses provider options to include truncation
- *
- * NOTE: The SDK types don't yet include this parameter, but it's supported by the OpenAI API.
- * However, the @ai-sdk/openai v2.0.40 implementation does NOT pass truncation from provider
- * options - it only sets it based on modelConfig.requiredAutoTruncation.
- *
- * This type extension is prepared for a future SDK update that will properly map the
- * truncation parameter from provider options to the API request.
- *
- * Current behavior: OpenAI models will NOT use truncation: "auto" until the SDK is updated.
- * Workaround: Use /clear or /compact commands to manage conversation history.
- */
-type ExtendedOpenAIResponsesProviderOptions = OpenAIResponsesProviderOptions & {
-  truncation?: "auto" | "disabled";
-};
-
-/**
  * OpenRouter reasoning options
  * @see https://openrouter.ai/docs/use-cases/reasoning-tokens
  */
@@ -52,7 +35,7 @@ interface OpenRouterReasoningOptions {
  */
 type ProviderOptions =
   | { anthropic: AnthropicProviderOptions }
-  | { openai: ExtendedOpenAIResponsesProviderOptions }
+  | { openai: OpenAIResponsesProviderOptions }
   | { google: GoogleGenerativeAIProviderOptions }
   | { openrouter: OpenRouterReasoningOptions }
   | Record<string, never>; // Empty object for unsupported providers

@@ -46,13 +46,15 @@ export const ModelSettings: React.FC<ModelSettingsProps> = ({ provider }) => {
   }
 
   if (provider === "openai") {
-    return renderOption(
-      "openai-trunc",
-      "No Trunc",
-      options.openai?.disableAutoTruncation ?? false,
-      (checked) => setOpenAIOptions({ ...options.openai, disableAutoTruncation: checked }),
-      "Disable Auto-Truncation (Testing only)"
-    );
+    if (process.env.NODE_ENV === "development") {
+      return renderOption(
+        "openai-trunc",
+        "No Trunc",
+        options.openai?.disableAutoTruncation ?? false,
+        (checked) => setOpenAIOptions({ ...options.openai, disableAutoTruncation: checked }),
+        "Disable Auto-Truncation (Only visible in Dev mode)"
+      );
+    }
   }
 
   return null;
