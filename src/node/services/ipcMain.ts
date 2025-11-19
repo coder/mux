@@ -1777,9 +1777,9 @@ export class IpcMain {
           const sshCommand = `ssh ${sshBaseArgs.join(" ")} '${remoteCommand.replace(/'/g, "'\\''")}'`;
           args = ["-n", "-a", "Ghostty", "--args", `--command=${sshCommand}`];
         } else {
-          // Ghostty: Use -n to open new window, pass working directory via --args
+          // Ghostty: Pass workspacePath to 'open -a Ghostty' to open in new tab
           if (config.type !== "local") throw new Error("Expected local config");
-          args = ["-n", "-a", "Ghostty", "--args", `--working-directory=${config.workspacePath}`];
+          args = ["-a", "Ghostty", config.workspacePath];
         }
         log.info(`Opening ${logPrefix}: ${cmd} ${args.join(" ")}`);
         const child = spawn(cmd, args, {
