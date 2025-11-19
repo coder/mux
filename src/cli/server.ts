@@ -165,13 +165,14 @@ function rawDataToString(rawData: RawData): string {
     return Promise.resolve(launchProjectPath);
   });
 
-  if (ADD_PROJECT_PATH) {
-    void initializeProject(ADD_PROJECT_PATH, httpIpcMain);
-  }
   ipcMainService.register(
     httpIpcMain as unknown as ElectronIpcMain,
     mockWindow as unknown as BrowserWindow
   );
+
+  if (ADD_PROJECT_PATH) {
+    void initializeProject(ADD_PROJECT_PATH, httpIpcMain);
+  }
 
   app.use(express.static(path.join(__dirname, "..")));
 

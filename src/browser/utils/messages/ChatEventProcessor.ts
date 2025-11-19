@@ -251,11 +251,17 @@ export function createChatEventProcessor(): ChatEventProcessor {
         console.error("Received reasoning-delta for unknown message", event.messageId);
         return;
       }
-      message.parts.push({
-        type: "reasoning",
-        text: event.delta,
-        timestamp: event.timestamp,
-      });
+
+      const lastPart = message.parts.at(-1);
+      if (lastPart?.type === "reasoning") {
+        lastPart.text += event.delta;
+      } else {
+        message.parts.push({
+          type: "reasoning",
+          text: event.delta,
+          timestamp: event.timestamp,
+        });
+      }
       return;
     }
 
