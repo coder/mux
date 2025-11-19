@@ -2,7 +2,7 @@ import React from "react";
 import { cn } from "@/common/lib/utils";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
-import { use1MContext } from "@/browser/hooks/use1MContext";
+import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useResizeObserver } from "@/browser/hooks/useResizeObserver";
 import { CostsTab } from "./RightSidebar/CostsTab";
 import { VerticalTokenMeter } from "./RightSidebar/VerticalTokenMeter";
@@ -15,7 +15,8 @@ interface ChatMetaSidebarProps {
 
 const ChatMetaSidebarComponent: React.FC<ChatMetaSidebarProps> = ({ workspaceId, chatAreaRef }) => {
   const usage = useWorkspaceUsage(workspaceId);
-  const [use1M] = use1MContext();
+  const { options } = useProviderOptions();
+  const use1M = options.anthropic?.use1MContext ?? false;
   const chatAreaSize = useResizeObserver(chatAreaRef);
 
   const lastUsage = usage?.usageHistory[usage.usageHistory.length - 1];

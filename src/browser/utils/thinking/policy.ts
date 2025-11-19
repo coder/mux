@@ -37,6 +37,11 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
     return ["high"];
   }
 
+  // Gemini 3 Pro only supports "low" and "high" reasoning levels
+  if (modelString.includes("gemini-3")) {
+    return ["low", "high"];
+  }
+
   // Default policy: all levels selectable
   return ["off", "low", "medium", "high"];
 }

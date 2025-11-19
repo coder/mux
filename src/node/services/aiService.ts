@@ -703,6 +703,7 @@ export class AIService extends EventEmitter {
 
       // Apply tool policy to filter tools (if policy provided)
       const tools = applyToolPolicy(allTools, toolPolicy);
+
       log.info("AIService.streamMessage: tool configuration", {
         workspaceId,
         model: modelString,

@@ -7,7 +7,7 @@
 
 const LITELLM_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
-const OUTPUT_PATH = "src/utils/tokens/models.json";
+const OUTPUT_PATH = "src/common/utils/tokens/models.json";
 
 async function updateModels() {
   console.log(`Fetching model data from ${LITELLM_URL}...`);

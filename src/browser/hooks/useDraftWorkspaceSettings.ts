@@ -1,6 +1,5 @@
 import { useEffect } from "react";
 import { usePersistedState } from "./usePersistedState";
-import { use1MContext } from "./use1MContext";
 import { useThinkingLevel } from "./useThinkingLevel";
 import { useMode } from "@/browser/contexts/ModeContext";
 import { useModelLRU } from "./useModelLRU";
@@ -27,7 +26,6 @@ export interface DraftWorkspaceSettings {
   model: string;
   thinkingLevel: ThinkingLevel;
   mode: UIMode;
-  use1M: boolean;
 
   // Workspace creation settings (project-specific)
   runtimeMode: RuntimeMode;
@@ -55,7 +53,6 @@ export function useDraftWorkspaceSettings(
   getRuntimeString: () => string | undefined;
 } {
   // Global AI settings (read-only from global state)
-  const [use1M] = use1MContext();
   const [thinkingLevel] = useThinkingLevel();
   const [mode] = useMode();
   const { recentModels } = useModelLRU();
@@ -108,7 +105,6 @@ export function useDraftWorkspaceSettings(
       model,
       thinkingLevel,
       mode,
-      use1M,
       runtimeMode,
       sshHost,
       trunkBranch,

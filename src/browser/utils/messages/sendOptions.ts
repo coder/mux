@@ -1,9 +1,4 @@
-import {
-  getModelKey,
-  getThinkingLevelKey,
-  getModeKey,
-  USE_1M_CONTEXT_KEY,
-} from "@/common/constants/storage";
+import { getModelKey, getThinkingLevelKey, getModeKey } from "@/common/constants/storage";
 import { modeToToolPolicy, PLAN_MODE_INSTRUCTION } from "@/common/utils/ui/modeUtils";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import type { SendMessageOptions } from "@/common/types/ipc";
@@ -11,6 +6,27 @@ import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 import { getDefaultModelFromLRU } from "@/browser/hooks/useModelLRU";
+import type { MuxProviderOptions } from "@/common/types/providerOptions";
+
+/**
+ * Read provider options from localStorage
+ */
+function getProviderOptions(): MuxProviderOptions {
+  const anthropic = readPersistedState<MuxProviderOptions["anthropic"]>(
+    "provider_options_anthropic",
+    { use1MContext: false }
+  );
+  const openai = readPersistedState<MuxProviderOptions["openai"]>("provider_options_openai", {
+    disableAutoTruncation: false,
+  });
+  const google = readPersistedState<MuxProviderOptions["google"]>("provider_options_google", {});
+
+  return {
+    anthropic,
+    openai,
+    google,
+  };
+}
 
 /**
  * Get send options from localStorage
@@ -32,8 +48,8 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
   // Read mode (workspace-specific)
   const mode = readPersistedState<UIMode>(getModeKey(workspaceId), "exec");
 
-  // Read 1M context (global)
-  const use1M = readPersistedState<boolean>(USE_1M_CONTEXT_KEY, false);
+  // Get provider options
+  const providerOptions = getProviderOptions();
 
   // Plan mode system instructions
   const additionalSystemInstructions = mode === "plan" ? PLAN_MODE_INSTRUCTION : undefined;
@@ -46,10 +62,6 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
     thinkingLevel: effectiveThinkingLevel,
     toolPolicy: modeToToolPolicy(mode),
     additionalSystemInstructions,
-    providerOptions: {
-      anthropic: {
-        use1MContext: use1M,
-      },
-    },
+    providerOptions,
   };
 }
