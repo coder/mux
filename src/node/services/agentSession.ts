@@ -485,7 +485,7 @@ export class AgentSession {
       if (!handled) {
         const shouldCompact = await this.compactionHandler.checkAndUpdateAutoCompactionFlag();
         if (shouldCompact) {
-          event.metadata.willCompactOnNextMessage = true;
+          event.willCompactOnNextMessage = true;
         }
         this.emitChatEvent(event);
       }

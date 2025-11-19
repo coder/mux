@@ -464,7 +464,7 @@ export class StreamingMessageAggregator {
     }
 
     // Update willCompactNext flag from metadata
-    this.willCompactNext = data.metadata.willCompactOnNextMessage ?? false;
+    this.willCompactNext = data.willCompactOnNextMessage ?? false;
 
     this.invalidateCache();
   }
@@ -483,6 +483,8 @@ export class StreamingMessageAggregator {
           ...data.metadata, // Spread abort metadata (usage, duration)
         };
       }
+
+      this.willCompactNext = data.willCompactOnNextMessage ?? false;
 
       // Clean up stream-scoped state (active stream tracking, TODOs)
       this.cleanupStreamState(data.messageId);
