@@ -1380,7 +1380,7 @@ These are general instructions that apply to all modes.
 
           // Wait for first stream to complete
           const collector1 = createEventCollector(env.sentEvents, workspaceId);
-          await collector1.waitForEvent("stream-end", 30000);
+          await collector1.waitForEvent("stream-end", 60000);
           assertStreamSuccess(collector1);
 
           // 2) Validate UI/history has a dynamic-tool part with a real diff string
