@@ -75,7 +75,6 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
       .filter((child) => child.isDirectory)
       .map((child) => ({ name: child.name, path: child.path })) ?? [];
 
-
   return (
     <Modal
       isOpen={isOpen}
@@ -98,10 +97,7 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
         <CancelButton onClick={onClose} disabled={isLoading}>
           Cancel
         </CancelButton>
-        <PrimaryButton
-          onClick={() => void handleConfirm()}
-          disabled={isLoading || !root}
-        >
+        <PrimaryButton onClick={() => void handleConfirm()} disabled={isLoading || !root}>
           Select
         </PrimaryButton>
       </ModalActions>

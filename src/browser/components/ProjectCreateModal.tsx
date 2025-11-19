@@ -37,13 +37,10 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
     onClose();
   }, [onClose]);
 
-  const handleWebPickerPathSelected = useCallback(
-    (selected: string) => {
-      setPath(selected);
-      setError("");
-    },
-    []
-  );
+  const handleWebPickerPathSelected = useCallback((selected: string) => {
+    setPath(selected);
+    setError("");
+  }, []);
 
   const handleBrowse = useCallback(async () => {
     try {
