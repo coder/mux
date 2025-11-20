@@ -86,22 +86,24 @@ describe("cacheStrategy", () => {
   });
 
   describe("createCachedSystemMessage", () => {
-  describe("integration with streamText parameters", () => {
-    it("should handle empty system message correctly", () => {
-      // When system message is converted to cached message, the system parameter
-      // should be undefined, not empty string, to avoid Anthropic API error
-      const systemContent = "You are a helpful assistant";
-      const cachedMessage = createCachedSystemMessage(systemContent, "anthropic:claude-3-5-sonnet");
-      
-      expect(cachedMessage).toBeDefined();
-      expect(cachedMessage?.role).toBe("system");
-      expect(cachedMessage?.content).toBe(systemContent);
-      
-      // When using this cached message, system parameter should be set to undefined
-      // Example: system: cachedMessage ? undefined : originalSystem
-    });
-  });
+    describe("integration with streamText parameters", () => {
+      it("should handle empty system message correctly", () => {
+        // When system message is converted to cached message, the system parameter
+        // should be undefined, not empty string, to avoid Anthropic API error
+        const systemContent = "You are a helpful assistant";
+        const cachedMessage = createCachedSystemMessage(
+          systemContent,
+          "anthropic:claude-3-5-sonnet"
+        );
 
+        expect(cachedMessage).toBeDefined();
+        expect(cachedMessage?.role).toBe("system");
+        expect(cachedMessage?.content).toBe(systemContent);
+
+        // When using this cached message, system parameter should be set to undefined
+        // Example: system: cachedMessage ? undefined : originalSystem
+      });
+    });
 
     it("should return null for non-Anthropic models", () => {
       const result = createCachedSystemMessage("You are a helpful assistant", "openai:gpt-4");
@@ -138,7 +140,7 @@ describe("cacheStrategy", () => {
         inputSchema: z.object({
           path: z.string(),
         }),
-        execute: async () => ({ success: true }),
+        execute: () => Promise.resolve({ success: true }),
       }),
       writeFile: tool({
         description: "Write a file",
@@ -146,7 +148,7 @@ describe("cacheStrategy", () => {
           path: z.string(),
           content: z.string(),
         }),
-        execute: async () => ({ success: true }),
+        execute: () => Promise.resolve({ success: true }),
       }),
     };
 

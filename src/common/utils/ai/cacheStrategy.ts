@@ -82,7 +82,7 @@ export function applyCacheControlToTools<T extends Record<string, Tool>>(
   }
 
   // Clone tools and add cache control to each tool
-  const cachedTools = {} as T;
+  const cachedTools = {} as unknown as T;
   for (const [key, tool] of Object.entries(tools)) {
     // Use unknown as intermediate type for safe casting
     const cachedTool = {

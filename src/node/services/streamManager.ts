@@ -32,7 +32,10 @@ import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { StreamingTokenTracker } from "@/node/utils/main/StreamingTokenTracker";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { execBuffered } from "@/node/utils/runtime/helpers";
-import { createCachedSystemMessage, applyCacheControlToTools } from "@/common/utils/ai/cacheStrategy";
+import {
+  createCachedSystemMessage,
+  applyCacheControlToTools,
+} from "@/common/utils/ai/cacheStrategy";
 
 // Type definitions for stream parts with extended properties
 interface ReasoningDeltaPart {
@@ -490,7 +493,7 @@ export class StreamManager extends EventEmitter {
     let finalMessages = messages;
     let finalTools = tools;
     let finalSystem: string | undefined = system;
-    
+
     // For Anthropic models, convert system message to a cached message at the start
     const cachedSystemMessage = createCachedSystemMessage(system, modelString);
     if (cachedSystemMessage) {
@@ -499,7 +502,7 @@ export class StreamManager extends EventEmitter {
       finalMessages = [cachedSystemMessage, ...messages];
       finalSystem = undefined;
     }
-    
+
     // Apply cache control to tools for Anthropic models
     if (tools) {
       finalTools = applyCacheControlToTools(tools, modelString);
