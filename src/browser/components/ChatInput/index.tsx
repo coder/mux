@@ -1028,7 +1028,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                     )}
                   >
                     <SendHorizontal className="h-3.5 w-3.5" strokeWidth={2.5} />
-                    <span>Send</span>
                   </button>
                   <Tooltip className="tooltip" align="center">
                     Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})
