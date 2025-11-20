@@ -78,8 +78,8 @@ const MODEL_DEFINITIONS = {
   },
   GROK_4_1: {
     provider: "xai",
-    providerModelId: "grok-4.1-fast-non-reasoning",
-    aliases: ["grok", "grok-4", "grok-4.1"],
+    providerModelId: "grok-4-1-fast-non-reasoning",
+    aliases: ["grok", "grok-4", "grok-4.1", "grok-4-1"],
   },
   GROK_CODE: {
     provider: "xai",
