@@ -101,9 +101,7 @@ export class IpcMain {
    * Configure a picker used to select project directories (desktop mode only).
    * Server mode does not provide a native directory picker.
    */
-  setProjectDirectoryPicker(
-    picker: (event: IpcMainInvokeEvent) => Promise<string | null>
-  ): void {
+  setProjectDirectoryPicker(picker: (event: IpcMainInvokeEvent) => Promise<string | null>): void {
     this.projectDirectoryPicker = picker;
   }
 
