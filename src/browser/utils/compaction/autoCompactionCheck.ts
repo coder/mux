@@ -40,7 +40,7 @@ const WARNING_ADVANCE_PERCENT = 10;
  * @param use1M - Whether 1M context is enabled
  * @param threshold - Usage percentage threshold (0.0-1.0, default 0.7 = 70%)
  * @param warningAdvancePercent - Show warning this many percentage points before threshold (default 10)
- * @returns Check result with shouldAutoCompact flag, warning flag, and usage details
+ * @returns Check result with warning flag and usage percentage
  */
 export function shouldAutoCompact(
   usage: WorkspaceUsageState | undefined,
@@ -53,16 +53,6 @@ export function shouldAutoCompact(
 
   // No usage data yet - safe default (don't trigger on first message)
   if (!usage || usage.usageHistory.length === 0) {
-    return {
-      shouldShowWarning: false,
-      usagePercentage: 0,
-      thresholdPercentage,
-    };
-  }
-
-  // Get last usage (most recent API response)
-  const lastUsage = usage.usageHistory[usage.usageHistory.length - 1];
-  if (!lastUsage) {
     return {
       shouldShowWarning: false,
       usagePercentage: 0,
@@ -83,16 +73,8 @@ export function shouldAutoCompact(
     };
   }
 
-  // Calculate total tokens used in last request
-  const totalUsed =
-    lastUsage.input.tokens +
-    lastUsage.cached.tokens +
-    lastUsage.cacheCreate.tokens +
-    lastUsage.output.tokens +
-    lastUsage.reasoning.tokens;
-
-  // Calculate usage percentage
-  const usagePercentage = (totalUsed / maxTokens) * 100;
+  // Calculate usage percentage from cumulative conversation total
+  const usagePercentage = (usage.totalTokens / maxTokens) * 100;
 
   // Show warning if within advance window (e.g., 60% for 70% threshold with 10% advance)
   const shouldShowWarning = usagePercentage >= thresholdPercentage - warningAdvancePercent;

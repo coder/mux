@@ -21,7 +21,7 @@ import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
 import { resolveCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
 import { getRuntimeKey } from "@/common/constants/storage";
-import { ImageAttachment } from "../components/ImageAttachments";
+import type { ImageAttachment } from "../components/ImageAttachments";
 
 // ============================================================================
 // Workspace Creation
