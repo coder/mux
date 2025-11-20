@@ -507,6 +507,156 @@ describe("StreamManager - previousResponseId recovery", () => {
 
     recordMethod.call(streamManager, apiError, { messageId: "msg-2", model: "openai:gpt-mini" });
 
+
+
+describe("StreamManager - Anthropic Cache Control", () => {
+  describe("cache control application", () => {
+    test("should apply cache control to system message for Anthropic models", () => {
+      const { createCachedSystemMessage } = require("@/common/utils/ai/cacheStrategy");
+      
+      const system = "You are a helpful assistant";
+      const modelString = "anthropic:claude-3-5-sonnet-20241022";
+      
+      const cachedSystemMessage = createCachedSystemMessage(system, modelString);
+      
+      expect(cachedSystemMessage).toBeDefined();
+      expect(cachedSystemMessage?.role).toBe("system");
+      expect(cachedSystemMessage?.providerOptions?.anthropic?.cacheControl).toEqual({
+        type: "ephemeral"
+      });
+    });
+
+    test("should apply cache control to tools for Anthropic models", () => {
+      const { applyCacheControlToTools } = require("@/common/utils/ai/cacheStrategy");
+      const { tool } = require("ai");
+      const { z } = require("zod");
+      
+      const tools: Record<string, any> = {
+        testTool: tool({
+          description: "A test tool",
+          inputSchema: z.object({ input: z.string() }),
+          execute: async () => ({ result: "test" })
+        })
+      };
+      
+      const cachedTools = applyCacheControlToTools(tools, "anthropic:claude-3-5-sonnet");
+      
+      expect(cachedTools.testTool).toBeDefined();
+      expect((cachedTools.testTool as any).providerOptions?.anthropic?.cacheControl).toEqual({
+        type: "ephemeral"
+      });
+    });
+
+    test("should apply cache control to messages for Anthropic models", () => {
+      const { applyCacheControl } = require("@/common/utils/ai/cacheStrategy");
+      
+      const messages = [
+        { role: "user", content: "First message" },
+        { role: "assistant", content: "First response" },
+        { role: "user", content: "Second message" }
+      ];
+      
+      const cachedMessages = applyCacheControl(messages, "anthropic:claude-3-5-sonnet");
+      
+      // Cache control should be on second-to-last message (index 1)
+      expect(cachedMessages[0].providerOptions).toBeUndefined();
+      expect(cachedMessages[1].providerOptions?.anthropic?.cacheControl).toEqual({
+        type: "ephemeral"
+      });
+      expect(cachedMessages[2].providerOptions).toBeUndefined();
+    });
+
+    test("should not apply cache control for non-Anthropic models", () => {
+      const { createCachedSystemMessage, applyCacheControlToTools, applyCacheControl } = 
+        require("@/common/utils/ai/cacheStrategy");
+      const { tool } = require("ai");
+      const { z } = require("zod");
+      
+      const system = "You are a helpful assistant";
+      const messages = [
+        { role: "user", content: "Test" },
+        { role: "assistant", content: "Response" }
+      ];
+      const tools = {
+        testTool: tool({
+          description: "Test",
+          inputSchema: z.object({ input: z.string() }),
+          execute: async () => ({ result: "test" })
+        })
+      };
+      
+      // OpenAI model - should return null/unchanged
+      const cachedSystem = createCachedSystemMessage(system, "openai:gpt-4");
+      const cachedTools = applyCacheControlToTools(tools, "openai:gpt-4");
+      const cachedMessages = applyCacheControl(messages, "openai:gpt-4");
+      
+      expect(cachedSystem).toBeNull();
+      expect(cachedTools).toEqual(tools);
+      expect(cachedMessages).toEqual(messages);
+    });
+  });
+
+  describe("system message handling", () => {
+    test("should convert system string to undefined when using cached system message", () => {
+      const { createCachedSystemMessage } = require("@/common/utils/ai/cacheStrategy");
+      
+      const system = "You are a helpful assistant";
+      const modelString = "anthropic:claude-3-5-sonnet";
+      
+      // Simulate streamManager logic
+      const cachedSystemMessage = createCachedSystemMessage(system, modelString);
+      const finalSystem = cachedSystemMessage ? undefined : system;
+      
+      // When cached system message exists, finalSystem should be undefined
+      expect(cachedSystemMessage).toBeDefined();
+      expect(finalSystem).toBeUndefined();
+    });
+
+    test("should keep system string when not using Anthropic", () => {
+      const { createCachedSystemMessage } = require("@/common/utils/ai/cacheStrategy");
+      
+      const system = "You are a helpful assistant";
+      const modelString = "openai:gpt-4";
+      
+      // Simulate streamManager logic
+      const cachedSystemMessage = createCachedSystemMessage(system, modelString);
+      const finalSystem = cachedSystemMessage ? undefined : system;
+      
+      // When cached system message doesn't exist, keep original system
+      expect(cachedSystemMessage).toBeNull();
+      expect(finalSystem).toBe(system);
+    });
+  });
+
+  describe("cache control structure validation", () => {
+    test("should create correct cache control structure", () => {
+      const { createCachedSystemMessage } = require("@/common/utils/ai/cacheStrategy");
+      
+      const expectedCacheControl = {
+        type: "ephemeral" as const
+      };
+      
+      const cachedMessage = createCachedSystemMessage("test", "anthropic:claude-3-5-sonnet");
+      
+      expect(cachedMessage?.providerOptions).toEqual({
+        anthropic: {
+          cacheControl: expectedCacheControl
+        }
+      });
+    });
+
+    test("should not include TTL in cache control", () => {
+      const { createCachedSystemMessage } = require("@/common/utils/ai/cacheStrategy");
+      
+      const cachedMessage = createCachedSystemMessage("test", "anthropic:claude-3-5-sonnet");
+      
+      const cacheControl = cachedMessage?.providerOptions?.anthropic?.cacheControl;
+      expect(cacheControl).toBeDefined();
+      expect(cacheControl).not.toHaveProperty("ttl");
+      expect(Object.keys(cacheControl!)).toEqual(["type"]);
+    });
+  });
+});
     expect(streamManager.isResponseIdLost("resp_cafebabe")).toBe(true);
   });
 });
