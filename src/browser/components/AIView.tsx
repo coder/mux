@@ -35,6 +35,7 @@ import { QueuedMessage } from "./Messages/QueuedMessage";
 import { CompactionWarning } from "./CompactionWarning";
 import { shouldAutoCompact } from "@/browser/utils/compaction/autoCompactionCheck";
 import { use1MContext } from "@/browser/hooks/use1MContext";
+import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
 
 interface AIViewProps {
   workspaceId: string;
@@ -80,6 +81,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const aggregator = useWorkspaceAggregator(workspaceId);
   const workspaceUsage = useWorkspaceUsage(workspaceId);
   const [use1M] = use1MContext();
+  const { enabled: autoCompactionEnabled, threshold: autoCompactionThreshold } =
+    useAutoCompactionSettings(workspaceId);
   const handledModelErrorsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -320,9 +323,13 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Get active stream message ID for token counting
   const activeStreamMessageId = aggregator.getActiveStreamMessageId();
 
-  const autoCompactionCheck = currentModel
-    ? shouldAutoCompact(workspaceUsage, currentModel, use1M)
-    : { shouldShowWarning: false, usagePercentage: 0, thresholdPercentage: 70 };
+  const autoCompactionCheck = shouldAutoCompact(
+    workspaceUsage,
+    currentModel,
+    use1M,
+    autoCompactionEnabled,
+    autoCompactionThreshold / 100
+  );
 
   // Show warning when: shouldShowWarning flag is true AND not currently compacting
   const shouldShowCompactionWarning = !isCompacting && autoCompactionCheck.shouldShowWarning;

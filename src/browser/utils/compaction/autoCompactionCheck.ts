@@ -18,16 +18,14 @@
 import type { WorkspaceUsageState } from "@/browser/stores/WorkspaceStore";
 import { getModelStats } from "@/common/utils/tokens/modelStats";
 import { supports1MContext } from "@/common/utils/ai/models";
+import { DEFAULT_AUTO_COMPACTION_THRESHOLD } from "@/common/constants/ui";
 
 export interface AutoCompactionCheckResult {
   shouldShowWarning: boolean;
   usagePercentage: number;
   thresholdPercentage: number;
+  enabled: boolean;
 }
-
-// Auto-compaction threshold (0.7 = 70%)
-// TODO: Make this configurable via settings
-const AUTO_COMPACTION_THRESHOLD = 0.7;
 
 // Show warning this many percentage points before threshold
 const WARNING_ADVANCE_PERCENT = 10;
@@ -36,20 +34,32 @@ const WARNING_ADVANCE_PERCENT = 10;
  * Check if auto-compaction should trigger based on token usage
  *
  * @param usage - Current workspace usage state (from useWorkspaceUsage)
- * @param model - Current model string
+ * @param model - Current model string (optional - returns safe default if not provided)
  * @param use1M - Whether 1M context is enabled
+ * @param enabled - Whether auto-compaction is enabled for this workspace
  * @param threshold - Usage percentage threshold (0.0-1.0, default 0.7 = 70%)
  * @param warningAdvancePercent - Show warning this many percentage points before threshold (default 10)
  * @returns Check result with warning flag and usage percentage
  */
 export function shouldAutoCompact(
   usage: WorkspaceUsageState | undefined,
-  model: string,
+  model: string | null | undefined,
   use1M: boolean,
-  threshold: number = AUTO_COMPACTION_THRESHOLD,
+  enabled = true,
+  threshold: number = DEFAULT_AUTO_COMPACTION_THRESHOLD,
   warningAdvancePercent: number = WARNING_ADVANCE_PERCENT
 ): AutoCompactionCheckResult {
   const thresholdPercentage = threshold * 100;
+
+  // Short-circuit if auto-compaction is disabled
+  if (!enabled || !model) {
+    return {
+      shouldShowWarning: false,
+      usagePercentage: 0,
+      thresholdPercentage,
+      enabled: false,
+    };
+  }
 
   // No usage data yet - safe default (don't trigger on first message)
   if (!usage || usage.usageHistory.length === 0) {
@@ -57,6 +67,7 @@ export function shouldAutoCompact(
       shouldShowWarning: false,
       usagePercentage: 0,
       thresholdPercentage,
+      enabled: true,
     };
   }
 
@@ -70,6 +81,7 @@ export function shouldAutoCompact(
       shouldShowWarning: false,
       usagePercentage: 0,
       thresholdPercentage,
+      enabled: true,
     };
   }
 
@@ -83,5 +95,6 @@ export function shouldAutoCompact(
     shouldShowWarning,
     usagePercentage,
     thresholdPercentage,
+    enabled: true,
   };
 }

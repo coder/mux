@@ -1,7 +1,7 @@
 import React from "react";
 import { use1MContext } from "@/browser/hooks/use1MContext";
 import { supports1MContext } from "@/common/utils/ai/models";
-import { TooltipWrapper, Tooltip } from "./Tooltip";
+import { TooltipWrapper, Tooltip, HelpIndicator } from "./Tooltip";
 
 interface Context1MCheckboxProps {
   modelString: string;
@@ -22,7 +22,7 @@ export const Context1MCheckbox: React.FC<Context1MCheckboxProps> = ({ modelStrin
         1M
       </label>
       <TooltipWrapper inline>
-        <span className="text-muted flex cursor-help items-center text-[10px] leading-none">?</span>
+        <HelpIndicator>?</HelpIndicator>
         <Tooltip className="tooltip" align="center" width="auto">
           Enable 1M token context window (beta feature for Claude Sonnet 4/4.5)
         </Tooltip>
