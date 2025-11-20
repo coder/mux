@@ -23340,7 +23340,7 @@
     "supports_tool_choice": true,
     "supports_web_search": true
   },
-  "xai/grok-4-1-fast-non-reasoning": {
+  "xai/grok-4-1-fast": {
     "litellm_provider": "xai",
     "max_input_tokens": 2e6,
     "max_output_tokens": 2e6,
