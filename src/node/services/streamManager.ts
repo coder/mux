@@ -489,14 +489,15 @@ export class StreamManager extends EventEmitter {
     // Apply cache control for Anthropic models
     let finalMessages = messages;
     let finalTools = tools;
-    let finalSystem = system;
+    let finalSystem: string | undefined = system;
     
     // For Anthropic models, convert system message to a cached message at the start
     const cachedSystemMessage = createCachedSystemMessage(system, modelString);
     if (cachedSystemMessage) {
-      // Prepend cached system message and clear the system parameter
+      // Prepend cached system message and set system parameter to undefined
+      // Note: Must be undefined, not empty string, to avoid Anthropic API error
       finalMessages = [cachedSystemMessage, ...messages];
-      finalSystem = "";
+      finalSystem = undefined;
     }
     
     // Apply cache control to tools for Anthropic models
