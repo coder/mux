@@ -17,6 +17,7 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
   onClose,
   onSelectPath,
 }) => {
+  type FsListDirectoryResponse = FileTreeNode & { success?: boolean; error?: unknown };
   const [root, setRoot] = useState<FileTreeNode | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +33,19 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
     setError(null);
 
     try {
-      const tree = await api.fs.listDirectory(path);
+      const tree = (await api.fs.listDirectory(path)) as FsListDirectoryResponse;
+
+      // In browser/server mode, HttpIpcMainAdapter wraps handler errors as
+      // { success: false, error }, and invokeIPC returns that object instead
+      // of throwing. Detect that shape and surface a friendly error instead
+      // of crashing when accessing tree.children.
+      if (tree.success === false) {
+        const errorMessage = typeof tree.error === "string" ? tree.error : "Unknown error";
+        setError(`Failed to load directory: ${errorMessage}`);
+        setRoot(null);
+        return;
+      }
+
       setRoot(tree);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
