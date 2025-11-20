@@ -25,7 +25,7 @@ export const CompactionWarning: React.FC<{
   const remaining = props.thresholdPercentage - props.usagePercentage;
 
   const message = willCompactNext
-    ? "⚠️ Approaching context limit. Next message will trigger auto-compaction."
+    ? "⚠️ Context limit reached. Next message will trigger auto-compaction."
     : `Context left until Auto-Compact: ${Math.round(remaining)}%`;
 
   return (
