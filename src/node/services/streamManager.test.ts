@@ -507,7 +507,9 @@ describe("StreamManager - previousResponseId recovery", () => {
 
     recordMethod.call(streamManager, apiError, { messageId: "msg-2", model: "openai:gpt-mini" });
 
-
+    expect(streamManager.isResponseIdLost("resp_cafebabe")).toBe(true);
+  });
+});
 
 describe("StreamManager - Anthropic Cache Control", () => {
   describe("cache control application", () => {
@@ -655,8 +657,5 @@ describe("StreamManager - Anthropic Cache Control", () => {
       expect(cacheControl).not.toHaveProperty("ttl");
       expect(Object.keys(cacheControl!)).toEqual(["type"]);
     });
-  });
-});
-    expect(streamManager.isResponseIdLost("resp_cafebabe")).toBe(true);
   });
 });
