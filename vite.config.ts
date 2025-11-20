@@ -14,6 +14,10 @@ const devServerHost = process.env.MUX_VITE_HOST ?? "127.0.0.1"; // Secure by def
 const devServerPort = Number(process.env.MUX_VITE_PORT ?? "5173");
 const previewPort = Number(process.env.MUX_VITE_PREVIEW_PORT ?? "4173");
 
+// Allow localhost, 127.0.0.1, and all *.coder domains
+// When host is 0.0.0.0, use undefined to allow all hosts (Vite's default for wildcard bind)
+const allowedHosts = devServerHost === "0.0.0.0" ? undefined : ["localhost", "127.0.0.1", ".coder"];
+
 const alias: Record<string, string> = {
   "@": path.resolve(__dirname, "./src"),
 };
@@ -89,7 +93,7 @@ export default defineConfig(({ mode }) => ({
     host: devServerHost, // Configurable via MUX_VITE_HOST (defaults to 127.0.0.1 for security)
     port: devServerPort,
     strictPort: true,
-    allowedHosts: devServerHost === "0.0.0.0" ? undefined : ["localhost", "127.0.0.1"],
+    allowedHosts,
     sourcemapIgnoreList: () => false, // Show all sources in DevTools
     
     watch: {
@@ -116,8 +120,7 @@ export default defineConfig(({ mode }) => ({
           pollInterval: 100
         }
       })
-    },
-    
+    },	
     hmr: {
       // Configure HMR to use the correct host for remote access
       host: devServerHost,
@@ -129,7 +132,7 @@ export default defineConfig(({ mode }) => ({
     host: "127.0.0.1",
     port: previewPort,
     strictPort: true,
-    allowedHosts: ["localhost", "127.0.0.1"],
+    allowedHosts: ["localhost", "127.0.0.1", ".coder"],
   },
   optimizeDeps: {
     esbuildOptions: {

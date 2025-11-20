@@ -5,8 +5,17 @@ import { IPC_CHANNELS, getChatChannel } from "@/common/constants/ipc-constants";
 import type { IPCApi } from "@/common/types/ipc";
 
 // Backend URL - defaults to same origin, but can be overridden via VITE_BACKEND_URL
-// This allows frontend (Vite :8080) to connect to backend (:3000) in dev mode
-const API_BASE = import.meta.env.VITE_BACKEND_URL ?? window.location.origin;
+// This allows frontend (Vite :5173) to connect to backend (:3000) in dev mode
+let API_BASE = import.meta.env.VITE_BACKEND_URL ?? window.location.origin;
+
+// Fix 0.0.0.0 addresses (server bind address) to use actual client hostname
+// 0.0.0.0 is not a valid client target - replace with window.location.hostname
+if (API_BASE.includes("://0.0.0.0:")) {
+  const port = API_BASE.split(":").pop();
+  const protocol = API_BASE.startsWith("https") ? "https" : "http";
+  API_BASE = `${protocol}://${window.location.hostname}:${port}`;
+}
+
 const WS_BASE = API_BASE.replace("http://", "ws://").replace("https://", "wss://");
 
 interface InvokeResponse<T> {
