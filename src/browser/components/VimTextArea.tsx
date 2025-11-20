@@ -239,7 +239,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
             )}
           />
           {trailingAction && (
-            <div className="pointer-events-none absolute right-3 bottom-1.5 flex items-center">
+            <div className="pointer-events-none absolute right-3.5 bottom-2.5 flex items-center">
               <div className="pointer-events-auto">{trailingAction}</div>
             </div>
           )}
