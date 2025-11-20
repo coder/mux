@@ -594,7 +594,7 @@ export class AIService extends EventEmitter {
       // Similar to how OpenAI handles reasoning vs non-reasoning models
       let effectiveModelString = modelString;
       const [providerName, modelId] = parseModelString(modelString);
-      if (providerName === "xai" && modelId === "grok-4.1-fast") {
+      if (providerName === "xai" && modelId === "grok-4-1-fast") {
         // If thinking is enabled, use reasoning variant
         if (thinkingLevel && thinkingLevel !== "off") {
           effectiveModelString = "xai:grok-4-1-fast-reasoning";

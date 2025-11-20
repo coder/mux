@@ -78,7 +78,7 @@ const MODEL_DEFINITIONS = {
   },
   GROK_4_1: {
     provider: "xai",
-    providerModelId: "grok-4.1-fast",
+    providerModelId: "grok-4-1-fast",
     aliases: ["grok", "grok-4", "grok-4.1", "grok-4-1"],
   },
   GROK_CODE: {
