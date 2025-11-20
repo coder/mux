@@ -32,6 +32,7 @@ import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { StreamingTokenTracker } from "@/node/utils/main/StreamingTokenTracker";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { execBuffered } from "@/node/utils/runtime/helpers";
+import { createCachedSystemMessage, applyCacheControlToTools } from "@/common/utils/ai/cacheStrategy";
 
 // Type definitions for stream parts with extended properties
 interface ReasoningDeltaPart {
@@ -485,15 +486,33 @@ export class StreamManager extends EventEmitter {
       }
     }
 
+    // Apply cache control for Anthropic models
+    let finalMessages = messages;
+    let finalTools = tools;
+    let finalSystem = system;
+    
+    // For Anthropic models, convert system message to a cached message at the start
+    const cachedSystemMessage = createCachedSystemMessage(system, modelString);
+    if (cachedSystemMessage) {
+      // Prepend cached system message and clear the system parameter
+      finalMessages = [cachedSystemMessage, ...messages];
+      finalSystem = "";
+    }
+    
+    // Apply cache control to tools for Anthropic models
+    if (tools) {
+      finalTools = applyCacheControlToTools(tools, modelString);
+    }
+
     // Start streaming - this can throw immediately if API key is missing
     let streamResult;
     try {
       streamResult = streamText({
         model,
-        messages,
-        system,
+        messages: finalMessages,
+        system: finalSystem,
         abortSignal: abortController.signal,
-        tools,
+        tools: finalTools,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
         toolChoice: toolChoice as any, // Force tool use when required by policy
         // When toolChoice is set (required tool), limit to 1 step to prevent infinite loops
