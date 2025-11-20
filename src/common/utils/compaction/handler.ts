@@ -101,7 +101,7 @@ export async function cancelCompaction(
   // Interrupt stream with abandonPartial flag
   // This tells backend to DELETE the partial instead of committing it
   // Result: history ends with the compaction-request user message (which is fine - just a user message)
-  await window.api.workspace.interruptStream(workspaceId, { abandonPartial: true });
+  await window.api.workspace.interruptStream(workspaceId, { soft: false, abandonPartial: true });
 
   // Enter edit mode on the compaction-request message with original command
   // This lets user immediately edit the message or delete it

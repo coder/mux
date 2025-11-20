@@ -337,14 +337,17 @@ export class AgentSession {
     return this.streamWithHistory(model, options);
   }
 
-  async interruptStream(): Promise<Result<void>> {
+  async interruptStream(options?: {
+    soft?: boolean;
+    abandonPartial?: boolean;
+  }): Promise<Result<void>> {
     this.assertNotDisposed("interruptStream");
 
     if (!this.aiService.isStreaming(this.workspaceId)) {
       return Ok(undefined);
     }
 
-    const stopResult = await this.aiService.stopStream(this.workspaceId);
+    const stopResult = await this.aiService.stopStream(this.workspaceId, options);
     if (!stopResult.success) {
       return Err(stopResult.error);
     }

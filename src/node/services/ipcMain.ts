@@ -975,11 +975,15 @@ export class IpcMain {
 
     ipcMain.handle(
       IPC_CHANNELS.WORKSPACE_INTERRUPT_STREAM,
-      async (_event, workspaceId: string, options?: { abandonPartial?: boolean }) => {
+      async (
+        _event,
+        workspaceId: string,
+        options?: { soft?: boolean; abandonPartial?: boolean }
+      ) => {
         log.debug("interruptStream handler: Received", { workspaceId, options });
         try {
           const session = this.getOrCreateSession(workspaceId);
-          const stopResult = await session.interruptStream();
+          const stopResult = await session.interruptStream(options);
           if (!stopResult.success) {
             log.error("Failed to stop stream:", stopResult.error);
             return { success: false, error: stopResult.error };
