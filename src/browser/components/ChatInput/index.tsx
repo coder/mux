@@ -880,27 +880,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 showCommandSuggestions && commandSuggestions.length > 0 ? commandListId : undefined
               }
               aria-expanded={showCommandSuggestions && commandSuggestions.length > 0}
-              trailingAction={
-                <TooltipWrapper inline>
-                  <button
-                    type="button"
-                    onClick={() => void handleSend()}
-                    disabled={!canSend}
-                    aria-label="Send message"
-                    className={cn(
-                      "flex h-7 w-7 items-center justify-center rounded-full border-none text-[12px] text-white transition-colors duration-200 disabled:opacity-50",
-                      mode === "plan"
-                        ? "bg-plan-mode hover:bg-plan-mode-hover disabled:hover:bg-plan-mode"
-                        : "bg-exec-mode hover:bg-exec-mode-hover disabled:hover:bg-exec-mode"
-                    )}
-                  >
-                    <SendHorizontal className="h-3.5 w-3.5" strokeWidth={2.5} />
-                  </button>
-                  <Tooltip className="tooltip" align="center">
-                    Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})
-                  </Tooltip>
-                </TooltipWrapper>
-              }
             />
           </div>
 
