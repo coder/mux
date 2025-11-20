@@ -1,5 +1,5 @@
 import assert from "@/common/utils/assert";
-import type { IpcMain as ElectronIpcMain, BrowserWindow } from "electron";
+import type { BrowserWindow, IpcMain as ElectronIpcMain, IpcMainInvokeEvent } from "electron";
 import { spawn, spawnSync } from "child_process";
 import * as fsPromises from "fs/promises";
 import * as path from "path";
@@ -58,6 +58,8 @@ export class IpcMain {
   private readonly ptyService: PTYService;
   private terminalWindowManager?: TerminalWindowManager;
   private readonly sessions = new Map<string, AgentSession>();
+  private projectDirectoryPicker?: (event: IpcMainInvokeEvent) => Promise<string | null>;
+
   private readonly sessionSubscriptions = new Map<
     string,
     { chat: () => void; metadata: () => void }
@@ -93,6 +95,14 @@ export class IpcMain {
    */
   async initialize(): Promise<void> {
     await this.extensionMetadata.initialize();
+  }
+
+  /**
+   * Configure a picker used to select project directories (desktop mode only).
+   * Server mode does not provide a native directory picker.
+   */
+  setProjectDirectoryPicker(picker: (event: IpcMainInvokeEvent) => Promise<string | null>): void {
+    this.projectDirectoryPicker = picker;
   }
 
   /**
@@ -358,6 +368,37 @@ export class IpcMain {
    * @param ipcMain - Electron's ipcMain module
    * @param mainWindow - The main BrowserWindow for sending events
    */
+  private registerFsHandlers(ipcMain: ElectronIpcMain): void {
+    ipcMain.handle(IPC_CHANNELS.FS_LIST_DIRECTORY, async (_event, root: string) => {
+      try {
+        const normalizedRoot = path.resolve(root || ".");
+        const entries = await fsPromises.readdir(normalizedRoot, { withFileTypes: true });
+
+        const children = entries
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => {
+            const entryPath = path.join(normalizedRoot, entry.name);
+            return {
+              name: entry.name,
+              path: entryPath,
+              isDirectory: true,
+              children: [],
+            };
+          });
+
+        return {
+          name: normalizedRoot,
+          path: normalizedRoot,
+          isDirectory: true,
+          children,
+        };
+      } catch (error) {
+        log.error("FS_LIST_DIRECTORY failed:", error);
+        throw error instanceof Error ? error : new Error(String(error));
+      }
+    });
+  }
+
   register(ipcMain: ElectronIpcMain, mainWindow: BrowserWindow): void {
     // Always update the window reference (windows can be recreated on macOS)
     this.mainWindow = mainWindow;
@@ -373,6 +414,7 @@ export class IpcMain {
     this.registerTokenizerHandlers(ipcMain);
     this.registerWorkspaceHandlers(ipcMain);
     this.registerProviderHandlers(ipcMain);
+    this.registerFsHandlers(ipcMain);
     this.registerProjectHandlers(ipcMain);
     this.registerTerminalHandlers(ipcMain, mainWindow);
     this.registerSubscriptionHandlers(ipcMain);
@@ -1367,6 +1409,24 @@ export class IpcMain {
   }
 
   private registerProjectHandlers(ipcMain: ElectronIpcMain): void {
+    ipcMain.handle(
+      IPC_CHANNELS.PROJECT_PICK_DIRECTORY,
+      async (event: IpcMainInvokeEvent | null) => {
+        if (!event?.sender || !this.projectDirectoryPicker) {
+          // In server mode (HttpIpcMainAdapter), there is no BrowserWindow / sender.
+          // The browser uses the web-based directory picker instead.
+          return null;
+        }
+
+        try {
+          return await this.projectDirectoryPicker(event);
+        } catch (error) {
+          log.error("Failed to pick directory:", error);
+          return null;
+        }
+      }
+    );
+
     ipcMain.handle(IPC_CHANNELS.PROJECT_CREATE, async (_event, projectPath: string) => {
       try {
         // Validate and expand path (handles tilde, checks existence and directory status)

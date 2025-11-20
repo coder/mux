@@ -9,11 +9,13 @@ export const IPC_CHANNELS = {
   PROVIDERS_LIST: "providers:list",
 
   // Project channels
+  PROJECT_PICK_DIRECTORY: "project:pickDirectory",
   PROJECT_CREATE: "project:create",
   PROJECT_REMOVE: "project:remove",
   PROJECT_LIST: "project:list",
   PROJECT_LIST_BRANCHES: "project:listBranches",
   PROJECT_SECRETS_GET: "project:secrets:get",
+  FS_LIST_DIRECTORY: "fs:listDirectory",
   PROJECT_SECRETS_UPDATE: "project:secrets:update",
 
   // Workspace channels

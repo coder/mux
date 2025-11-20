@@ -85,6 +85,7 @@ function setupMockAPI(options: {
           data: { projectConfig: { workspaces: [] }, normalizedPath: "/mock/project/path" },
         }),
       remove: () => Promise.resolve({ success: true, data: undefined }),
+      pickDirectory: () => Promise.resolve(null),
       listBranches: () =>
         Promise.resolve({
           branches: ["main", "develop", "feature/new-feature"],
