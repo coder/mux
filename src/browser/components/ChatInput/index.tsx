@@ -887,7 +887,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 onClick={() => void handleSend()}
                 disabled={!canSend}
                 aria-label="Send message"
-                className="bg-accent hover:bg-accent-dark disabled:opacity-50 disabled:hover:bg-accent cursor-pointer rounded border-none px-3 py-1 text-[13px] text-white transition-colors duration-200"
+                className="bg-accent hover:bg-accent-dark disabled:hover:bg-accent cursor-pointer rounded border-none px-3 py-1 text-[13px] text-white transition-colors duration-200 disabled:opacity-50"
               >
                 →
               </button>
