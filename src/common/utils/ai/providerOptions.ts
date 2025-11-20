@@ -6,12 +6,9 @@
 
 import type { AnthropicProviderOptions } from "@ai-sdk/anthropic";
 import type { OpenAIResponsesProviderOptions } from "@ai-sdk/openai";
-<<<<<<< HEAD
 import type { GoogleGenerativeAIProviderOptions } from "@ai-sdk/google";
-=======
 import type { XaiProviderOptions } from "@ai-sdk/xai";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
->>>>>>> 4fa1bacf (feat: add xai grok provider support)
 import type { ThinkingLevel } from "@/common/types/thinking";
 import {
   ANTHROPIC_THINKING_BUDGETS,
