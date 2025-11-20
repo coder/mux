@@ -57,17 +57,6 @@ const getSliderStyles = (value: number, isHover = false) => {
   };
 };
 
-// Helper functions to map between slider value and ThinkingLevel
-const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high"];
-
-const thinkingLevelToValue = (level: ThinkingLevel): number => {
-  return THINKING_LEVELS.indexOf(level);
-};
-
-const valueToThinkingLevel = (value: number): ThinkingLevel => {
-  return THINKING_LEVELS[value] || "off";
-};
-
 interface ThinkingControlProps {
   modelString: string;
 }
@@ -78,17 +67,32 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
   const sliderId = useId();
   const allowed = getThinkingPolicyForModel(modelString);
 
-  // If policy has single level (e.g., gpt-5-pro), force to that level
+  // Force value to nearest allowed level if current level is invalid for this model
+  // This prevents "stuck" invalid states when switching models
   useEffect(() => {
-    if (allowed.length === 1 && thinkingLevel !== allowed[0]) {
-      setThinkingLevel(allowed[0]);
-    }
+    // If current level is valid, do nothing
+    if (allowed.includes(thinkingLevel)) return;
+
+    // If current level is invalid, switch to a valid one
+    // Prefer medium if available, otherwise first allowed
+    const fallback = allowed.includes("medium") ? "medium" : allowed[0];
+
+    // Only update if we actually need to change it (prevent infinite loops)
+    // We use a timeout to avoid updating state during render
+    const timer = setTimeout(() => {
+      setThinkingLevel(fallback);
+    }, 0);
+    return () => clearTimeout(timer);
   }, [allowed, thinkingLevel, setThinkingLevel]);
 
-  if (allowed.length === 1) {
+  if (allowed.length <= 1) {
     // Render non-interactive badge for single-option policies with explanatory tooltip
-    const fixedLevel = allowed[0];
-    const value = thinkingLevelToValue(fixedLevel);
+    // or if no options are available (shouldn't happen given policy types)
+    const fixedLevel = allowed[0] || "off";
+    // Calculate style based on "standard" levels for consistency
+    const standardIndex = ["off", "low", "medium", "high"].indexOf(fixedLevel);
+    const value = standardIndex === -1 ? 0 : standardIndex;
+
     const formattedLevel = fixedLevel === "off" ? "Off" : fixedLevel;
     const tooltipMessage = `Model ${modelString} locks thinking at ${formattedLevel.toUpperCase()} to match its capabilities.`;
     const textStyle = getTextStyle(value);
@@ -110,9 +114,26 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
     );
   }
 
-  const value = thinkingLevelToValue(thinkingLevel);
-  const sliderStyles = getSliderStyles(value, isHovering);
-  const textStyle = getTextStyle(value);
+  // Map current level to index within the *allowed* subset
+  const currentIndex = allowed.indexOf(thinkingLevel);
+  const sliderValue = currentIndex === -1 ? 0 : currentIndex;
+  const maxSteps = allowed.length - 1;
+
+  // For styling, we still want to map to the "global" intensity 0-3
+  // to keep colors consistent (e.g. "high" is always purple, even if it's step 1 of 2)
+  const globalLevelIndex = ["off", "low", "medium", "high"].indexOf(thinkingLevel);
+  const visualValue = globalLevelIndex === -1 ? 0 : globalLevelIndex;
+
+  const sliderStyles = getSliderStyles(visualValue, isHovering);
+  const textStyle = getTextStyle(visualValue);
+
+  const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const index = parseInt(e.target.value, 10);
+    const newLevel = allowed[index];
+    if (newLevel) {
+      handleThinkingLevelChange(newLevel);
+    }
+  };
 
   const handleThinkingLevelChange = (newLevel: ThinkingLevel) => {
     setThinkingLevel(newLevel);
@@ -124,11 +145,10 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
     }
   };
 
-  // Cycle through allowed thinking levels: off → low → medium → high → off
+  // Cycle through allowed thinking levels
   const cycleThinkingLevel = () => {
-    const currentIndex = THINKING_LEVELS.indexOf(thinkingLevel);
-    const nextIndex = (currentIndex + 1) % THINKING_LEVELS.length;
-    handleThinkingLevelChange(THINKING_LEVELS[nextIndex]);
+    const nextIndex = (currentIndex + 1) % allowed.length;
+    handleThinkingLevelChange(allowed[nextIndex]);
   };
 
   return (
@@ -137,19 +157,17 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
         <input
           type="range"
           min="0"
-          max="3"
+          max={maxSteps}
           step="1"
-          value={value}
-          onChange={(e) =>
-            handleThinkingLevelChange(valueToThinkingLevel(parseInt(e.target.value)))
-          }
+          value={sliderValue}
+          onChange={handleSliderChange}
           onMouseEnter={() => setIsHovering(true)}
           onMouseLeave={() => setIsHovering(false)}
           id={sliderId}
           role="slider"
           aria-valuemin={0}
-          aria-valuemax={3}
-          aria-valuenow={value}
+          aria-valuemax={maxSteps}
+          aria-valuenow={sliderValue}
           aria-valuetext={thinkingLevel}
           aria-label="Thinking level"
           className="thinking-slider"

@@ -16,7 +16,7 @@ import { parseCommand } from "@/browser/utils/slashCommands/parser";
 import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useMode } from "@/browser/contexts/ModeContext";
 import { ThinkingSliderComponent } from "../ThinkingSlider";
-import { Context1MCheckbox } from "../Context1MCheckbox";
+import { ModelSettings } from "../ModelSettings";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import {
   getModelKey,
@@ -47,6 +47,7 @@ import {
 } from "@/browser/utils/ui/keybinds";
 import { ModelSelector, type ModelSelectorRef } from "../ModelSelector";
 import { useModelLRU } from "@/browser/hooks/useModelLRU";
+import { SendHorizontal } from "lucide-react";
 import { VimTextArea } from "../VimTextArea";
 import { ImageAttachments, type ImageAttachment } from "../ImageAttachments";
 import {
@@ -61,6 +62,7 @@ import { useTelemetry } from "@/browser/hooks/useTelemetry";
 import { setTelemetryEnabled } from "@/common/telemetry";
 import { getTokenCountPromise } from "@/browser/utils/tokenizer/rendererClient";
 import { CreationCenterContent } from "./CreationCenterContent";
+import { cn } from "@/common/lib/utils";
 import { CreationControls } from "./CreationControls";
 import { useCreationWorkspace } from "./useCreationWorkspace";
 
@@ -97,6 +99,7 @@ function createTokenCountResource(promise: Promise<number>): TokenCountReader {
 // Import types from local types file
 import type { ChatInputProps, ChatInputAPI } from "./types";
 import type { ImagePart } from "@/common/types/ipc";
+
 export type { ChatInputProps, ChatInputAPI };
 
 export const ChatInput: React.FC<ChatInputProps> = (props) => {
@@ -162,6 +165,8 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     [tokenCountPromise]
   );
   const hasTypedText = input.trim().length > 0;
+  const hasImages = imageAttachments.length > 0;
+  const canSend = (hasTypedText || hasImages) && !disabled && !isSending;
   // Setter for model - updates localStorage directly so useSendMessageOptions picks it up
   const setPreferredModel = useCallback(
     (model: string) => {
@@ -448,8 +453,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   );
 
   const handleSend = async () => {
-    // Allow sending if there's text or images
-    if ((!input.trim() && imageAttachments.length === 0) || disabled || isSending) {
+    if (!canSend) {
       return;
     }
 
@@ -911,7 +915,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             />
           )}
 
-          <div className="flex items-end gap-2.5" data-component="ChatInputControls">
+          <div className="flex items-end" data-component="ChatInputControls">
             <VimTextArea
               ref={inputRef}
               value={input}
@@ -987,9 +991,8 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 <ThinkingSliderComponent modelString={preferredModel} />
               </div>
 
-              {/* Context 1M Checkbox - always visible */}
-              <div className="flex items-center" data-component="Context1MGroup">
-                <Context1MCheckbox modelString={preferredModel} />
+              <div className="ml-4 flex items-center" data-component="ModelSettingsGroup">
+                <ModelSettings provider={(preferredModel || "").split(":")[0]} />
               </div>
 
               {preferredModel && (
@@ -1009,7 +1012,28 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 </div>
               )}
 
-              <ModeSelector mode={mode} onChange={setMode} className="ml-auto" />
+              <div className="ml-auto flex items-center gap-2" data-component="ModelControls">
+                <ModeSelector mode={mode} onChange={setMode} />
+                <TooltipWrapper inline>
+                  <button
+                    type="button"
+                    onClick={() => void handleSend()}
+                    disabled={!canSend}
+                    aria-label="Send message"
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-sm border border-border-light px-2 py-1 text-[11px] font-medium text-white transition-colors duration-200 disabled:opacity-50",
+                      mode === "plan"
+                        ? "bg-plan-mode hover:bg-plan-mode-hover disabled:hover:bg-plan-mode"
+                        : "bg-exec-mode hover:bg-exec-mode-hover disabled:hover:bg-exec-mode"
+                    )}
+                  >
+                    <SendHorizontal className="h-3.5 w-3.5" strokeWidth={2.5} />
+                  </button>
+                  <Tooltip className="tooltip" align="center">
+                    Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})
+                  </Tooltip>
+                </TooltipWrapper>
+              </div>
             </div>
 
             {/* Creation controls - second row for creation variant */}

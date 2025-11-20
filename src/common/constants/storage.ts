@@ -109,12 +109,6 @@ export function getTrunkBranchKey(projectPath: string): string {
 }
 
 /**
- * Get the localStorage key for the 1M context preference (global)
- * Format: "use1MContext"
- */
-export const USE_1M_CONTEXT_KEY = "use1MContext";
-
-/**
  * Get the localStorage key for the preferred compaction model (global)
  * Format: "preferredCompactionModel"
  */

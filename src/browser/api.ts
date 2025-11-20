@@ -193,6 +193,9 @@ const webApi: IPCApi = {
     calculateStats: (messages, model) =>
       invokeIPC(IPC_CHANNELS.TOKENIZER_CALCULATE_STATS, messages, model),
   },
+  fs: {
+    listDirectory: (root) => invokeIPC(IPC_CHANNELS.FS_LIST_DIRECTORY, root),
+  },
   providers: {
     setProviderConfig: (provider, keyPath, value) =>
       invokeIPC(IPC_CHANNELS.PROVIDERS_SET_CONFIG, provider, keyPath, value),
@@ -200,6 +203,7 @@ const webApi: IPCApi = {
   },
   projects: {
     create: (projectPath) => invokeIPC(IPC_CHANNELS.PROJECT_CREATE, projectPath),
+    pickDirectory: () => Promise.resolve(null),
     remove: (projectPath) => invokeIPC(IPC_CHANNELS.PROJECT_REMOVE, projectPath),
     list: () => invokeIPC(IPC_CHANNELS.PROJECT_LIST),
     listBranches: (projectPath) => invokeIPC(IPC_CHANNELS.PROJECT_LIST_BRANCHES, projectPath),

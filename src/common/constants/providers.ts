@@ -42,6 +42,13 @@ export async function importOpenRouter() {
 }
 
 /**
+ * Dynamically import the xAI provider package
+ */
+export async function importXAI() {
+  return await import("@ai-sdk/xai");
+}
+
+/**
  * Centralized provider registry mapping provider names to their import functions
  *
  * This is the single source of truth for supported providers. By mapping to import
@@ -58,6 +65,7 @@ export const PROVIDER_REGISTRY = {
   anthropic: importAnthropic,
   openai: importOpenAI,
   google: importGoogle,
+  xai: importXAI,
   ollama: importOllama,
   openrouter: importOpenRouter,
 } as const;

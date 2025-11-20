@@ -85,6 +85,7 @@ function setupMockAPI(options: {
           data: { projectConfig: { workspaces: [] }, normalizedPath: "/mock/project/path" },
         }),
       remove: () => Promise.resolve({ success: true, data: undefined }),
+      pickDirectory: () => Promise.resolve(null),
       listBranches: () =>
         Promise.resolve({
           branches: ["main", "develop", "feature/new-feature"],
@@ -538,7 +539,7 @@ export const ActiveWorkspaceWithChat: Story = {
           apiOverrides: {
             providers: {
               setProviderConfig: () => Promise.resolve({ success: true, data: undefined }),
-              list: () => Promise.resolve(["anthropic", "openai"]),
+              list: () => Promise.resolve(["anthropic", "openai", "xai"]),
             },
             workspace: {
               create: (projectPath: string, branchName: string) =>

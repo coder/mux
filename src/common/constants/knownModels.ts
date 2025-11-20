@@ -2,7 +2,7 @@
  * Centralized model metadata. Update model versions here and everywhere else will follow.
  */
 
-type ModelProvider = "anthropic" | "openai" | "google";
+type ModelProvider = "anthropic" | "openai" | "google" | "xai";
 
 interface KnownModelDefinition {
   /** Provider identifier used by SDK factories */
@@ -75,6 +75,16 @@ const MODEL_DEFINITIONS = {
     providerModelId: "gemini-3-pro-preview",
     aliases: ["gemini-3", "gemini-3-pro"],
     tokenizerOverride: "google/gemini-2.5-pro",
+  },
+  GROK_4_1: {
+    provider: "xai",
+    providerModelId: "grok-4-1-fast-non-reasoning",
+    aliases: ["grok", "grok-4", "grok-4.1", "grok-4-1"],
+  },
+  GROK_CODE: {
+    provider: "xai",
+    providerModelId: "grok-code-fast-1",
+    aliases: ["grok-code"],
   },
 } as const satisfies Record<string, KnownModelDefinition>;
 

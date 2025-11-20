@@ -112,6 +112,11 @@ export async function getToolsForModel(
         }
         break;
       }
+
+      // Note: Gemini 3 tool support:
+      // Combining native tools with function calling is currently only
+      // supported in the Live API. Thus no `google_search` or `url_context` added here.
+      // - https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#native-tools
     }
   } catch (error) {
     // If tools aren't available, just return base tools

@@ -21,6 +21,7 @@ import { useStableReference, compareMaps } from "./hooks/useStableReference";
 import { CommandRegistryProvider, useCommandRegistry } from "./contexts/CommandRegistryContext";
 import type { CommandAction } from "./contexts/CommandRegistryContext";
 import { ModeProvider } from "./contexts/ModeContext";
+import { ProviderOptionsProvider } from "./contexts/ProviderOptionsContext";
 import { ThinkingProvider } from "./contexts/ThinkingContext";
 import { CommandPalette } from "./components/CommandPalette";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
@@ -547,40 +548,44 @@ function AppInner() {
                   projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "Project";
                 return (
                   <ModeProvider projectPath={projectPath}>
-                    <ThinkingProvider projectPath={projectPath}>
-                      <ChatInput
-                        variant="creation"
-                        projectPath={projectPath}
-                        projectName={projectName}
-                        onReady={handleCreationChatReady}
-                        onWorkspaceCreated={(metadata) => {
-                          // Add to workspace metadata map
-                          setWorkspaceMetadata((prev) => new Map(prev).set(metadata.id, metadata));
+                    <ProviderOptionsProvider>
+                      <ThinkingProvider projectPath={projectPath}>
+                        <ChatInput
+                          variant="creation"
+                          projectPath={projectPath}
+                          projectName={projectName}
+                          onReady={handleCreationChatReady}
+                          onWorkspaceCreated={(metadata) => {
+                            // Add to workspace metadata map
+                            setWorkspaceMetadata((prev) =>
+                              new Map(prev).set(metadata.id, metadata)
+                            );
 
-                          // Switch to new workspace
-                          setSelectedWorkspace({
-                            workspaceId: metadata.id,
-                            projectPath: metadata.projectPath,
-                            projectName: metadata.projectName,
-                            namedWorkspacePath: metadata.namedWorkspacePath,
-                          });
+                            // Switch to new workspace
+                            setSelectedWorkspace({
+                              workspaceId: metadata.id,
+                              projectPath: metadata.projectPath,
+                              projectName: metadata.projectName,
+                              namedWorkspacePath: metadata.namedWorkspacePath,
+                            });
 
-                          // Track telemetry
-                          telemetry.workspaceCreated(metadata.id);
+                            // Track telemetry
+                            telemetry.workspaceCreated(metadata.id);
 
-                          // Clear pending state
-                          clearPendingWorkspaceCreation();
-                        }}
-                        onCancel={
-                          pendingNewWorkspaceProject
-                            ? () => {
-                                // User cancelled workspace creation - clear pending state
-                                clearPendingWorkspaceCreation();
-                              }
-                            : undefined
-                        }
-                      />
-                    </ThinkingProvider>
+                            // Clear pending state
+                            clearPendingWorkspaceCreation();
+                          }}
+                          onCancel={
+                            pendingNewWorkspaceProject
+                              ? () => {
+                                  // User cancelled workspace creation - clear pending state
+                                  clearPendingWorkspaceCreation();
+                                }
+                              : undefined
+                          }
+                        />
+                      </ThinkingProvider>
+                    </ProviderOptionsProvider>
                   </ModeProvider>
                 );
               })()

@@ -1,4 +1,3 @@
-import { use1MContext } from "./use1MContext";
 import { useThinkingLevel } from "./useThinkingLevel";
 import { useMode } from "@/browser/contexts/ModeContext";
 import { usePersistedState } from "./usePersistedState";
@@ -8,8 +7,10 @@ import { getModelKey } from "@/common/constants/storage";
 import type { SendMessageOptions } from "@/common/types/ipc";
 import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
+import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
+import { useProviderOptions } from "./useProviderOptions";
 
 /**
  * Construct SendMessageOptions from raw values
@@ -19,7 +20,7 @@ function constructSendMessageOptions(
   mode: UIMode,
   thinkingLevel: ThinkingLevel,
   preferredModel: string | null | undefined,
-  use1M: boolean,
+  providerOptions: MuxProviderOptions,
   fallbackModel: string
 ): SendMessageOptions {
   const additionalSystemInstructions = mode === "plan" ? PLAN_MODE_INSTRUCTION : undefined;
@@ -37,11 +38,7 @@ function constructSendMessageOptions(
     mode: mode === "exec" || mode === "plan" ? mode : "exec", // Only pass exec/plan to backend
     toolPolicy: modeToToolPolicy(mode),
     additionalSystemInstructions,
-    providerOptions: {
-      anthropic: {
-        use1MContext: use1M,
-      },
-    },
+    providerOptions,
   };
 }
 
@@ -56,9 +53,9 @@ function constructSendMessageOptions(
  * propagate automatically to all components using this hook.
  */
 export function useSendMessageOptions(workspaceId: string): SendMessageOptions {
-  const [use1M] = use1MContext();
   const [thinkingLevel] = useThinkingLevel();
   const [mode] = useMode();
+  const { options: providerOptions } = useProviderOptions();
   const { recentModels } = useModelLRU();
   const [preferredModel] = usePersistedState<string>(
     getModelKey(workspaceId),
@@ -66,7 +63,13 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptions {
     { listener: true } // Listen for changes from ModelSelector and other sources
   );
 
-  return constructSendMessageOptions(mode, thinkingLevel, preferredModel, use1M, recentModels[0]);
+  return constructSendMessageOptions(
+    mode,
+    thinkingLevel,
+    preferredModel,
+    providerOptions,
+    recentModels[0]
+  );
 }
 
 /**

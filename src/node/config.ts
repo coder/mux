@@ -16,6 +16,8 @@ export type { Workspace, ProjectConfig, ProjectsConfig };
 export interface ProviderConfig {
   apiKey?: string;
   baseUrl?: string;
+  baseURL?: string;
+  headers?: Record<string, string>;
   [key: string]: unknown;
 }
 
@@ -460,6 +462,9 @@ export class Config {
 //   },
 //   "openai": {
 //     "apiKey": "sk-..."
+//   },
+//   "xai": {
+//     "apiKey": "sk-xai-..."
 //   },
 //   "ollama": {
 //     "baseUrl": "http://localhost:11434/api"  // Optional - only needed for remote/custom URL

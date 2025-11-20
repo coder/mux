@@ -2,7 +2,7 @@
 import "source-map-support/register";
 import "disposablestack/auto";
 
-import type { MenuItemConstructorOptions } from "electron";
+import type { IpcMainInvokeEvent, MenuItemConstructorOptions } from "electron";
 import {
   app,
   BrowserWindow,
@@ -322,6 +322,19 @@ async function loadServices(): Promise<void> {
 
   // Set TerminalWindowManager for desktop mode (pop-out terminal windows)
   const terminalWindowManager = new TerminalWindowManagerClass(config);
+  ipcMain.setProjectDirectoryPicker(async (event: IpcMainInvokeEvent) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return null;
+
+    const res = await dialog.showOpenDialog(win, {
+      properties: ["openDirectory", "createDirectory", "showHiddenFiles"],
+      title: "Select Project Directory",
+      buttonLabel: "Select Project",
+    });
+
+    return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0];
+  });
+
   ipcMain.setTerminalWindowManager(terminalWindowManager);
 
   loadTokenizerModules().catch((error) => {

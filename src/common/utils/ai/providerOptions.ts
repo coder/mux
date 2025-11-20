@@ -6,32 +6,19 @@
 
 import type { AnthropicProviderOptions } from "@ai-sdk/anthropic";
 import type { OpenAIResponsesProviderOptions } from "@ai-sdk/openai";
+import type { GoogleGenerativeAIProviderOptions } from "@ai-sdk/google";
+import type { XaiProviderOptions } from "@ai-sdk/xai";
+import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import {
   ANTHROPIC_THINKING_BUDGETS,
+  GEMINI_THINKING_BUDGETS,
   OPENAI_REASONING_EFFORT,
   OPENROUTER_REASONING_EFFORT,
 } from "@/common/types/thinking";
 import { log } from "@/node/services/log";
 import type { MuxMessage } from "@/common/types/message";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
-
-/**
- * Extended OpenAI Responses provider options to include truncation
- *
- * NOTE: The SDK types don't yet include this parameter, but it's supported by the OpenAI API.
- * However, the @ai-sdk/openai v2.0.40 implementation does NOT pass truncation from provider
- * options - it only sets it based on modelConfig.requiredAutoTruncation.
- *
- * This type extension is prepared for a future SDK update that will properly map the
- * truncation parameter from provider options to the API request.
- *
- * Current behavior: OpenAI models will NOT use truncation: "auto" until the SDK is updated.
- * Workaround: Use /clear or /compact commands to manage conversation history.
- */
-type ExtendedOpenAIResponsesProviderOptions = OpenAIResponsesProviderOptions & {
-  truncation?: "auto" | "disabled";
-};
 
 /**
  * OpenRouter reasoning options
@@ -50,8 +37,10 @@ interface OpenRouterReasoningOptions {
  */
 type ProviderOptions =
   | { anthropic: AnthropicProviderOptions }
-  | { openai: ExtendedOpenAIResponsesProviderOptions }
+  | { openai: OpenAIResponsesProviderOptions }
+  | { google: GoogleGenerativeAIProviderOptions }
   | { openrouter: OpenRouterReasoningOptions }
+  | { xai: XaiProviderOptions }
   | Record<string, never>; // Empty object for unsupported providers
 
 /**
@@ -73,7 +62,8 @@ export function buildProviderOptions(
   modelString: string,
   thinkingLevel: ThinkingLevel,
   messages?: MuxMessage[],
-  lostResponseIds?: (id: string) => boolean
+  lostResponseIds?: (id: string) => boolean,
+  muxProviderOptions?: MuxProviderOptions
 ): ProviderOptions {
   // Always clamp to the model's supported thinking policy (e.g., gpt-5-pro = HIGH only)
   const effectiveThinking = enforceThinkingPolicy(modelString, thinkingLevel);
@@ -205,10 +195,33 @@ export function buildProviderOptions(
 
   // Build Google-specific options
   if (provider === "google") {
-    // Google Gemini models don't currently support the same thinking/reasoning
-    // configuration as Anthropic/OpenAI, so return empty options for now
-    log.debug("buildProviderOptions: Google config - no specific options yet");
-    return {};
+    const isGemini3 = modelString.includes("gemini-3");
+    let thinkingConfig: GoogleGenerativeAIProviderOptions["thinkingConfig"];
+
+    if (effectiveThinking !== "off") {
+      thinkingConfig = {
+        includeThoughts: true,
+      };
+
+      if (isGemini3) {
+        // Gemini 3 uses thinkingLevel (low/high)
+        thinkingConfig.thinkingLevel = effectiveThinking === "medium" ? "low" : effectiveThinking;
+      } else {
+        // Gemini 2.5 uses thinkingBudget
+        const budget = GEMINI_THINKING_BUDGETS[effectiveThinking];
+        if (budget > 0) {
+          thinkingConfig.thinkingBudget = budget;
+        }
+      }
+    }
+
+    const options: ProviderOptions = {
+      google: {
+        thinkingConfig,
+      },
+    };
+    log.debug("buildProviderOptions: Google options", options);
+    return options;
   }
 
   // Build OpenRouter-specific options
@@ -239,6 +252,25 @@ export function buildProviderOptions(
     // No reasoning config needed when thinking is off
     log.debug("buildProviderOptions: OpenRouter (thinking off, no provider options)");
     return {};
+  }
+
+  // Build xAI-specific options
+  if (provider === "xai") {
+    const overrides = muxProviderOptions?.xai ?? {};
+
+    const defaultSearchParameters: XaiProviderOptions["searchParameters"] = {
+      mode: "auto",
+      returnCitations: true,
+    };
+
+    const options: ProviderOptions = {
+      xai: {
+        ...overrides,
+        searchParameters: overrides.searchParameters ?? defaultSearchParameters,
+      },
+    };
+    log.debug("buildProviderOptions: Returning xAI options", options);
+    return options;
   }
 
   // No provider-specific options for unsupported providers

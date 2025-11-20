@@ -4,7 +4,7 @@ import { getModelStats } from "@/common/utils/tokens/modelStats";
 import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { ToggleGroup, type ToggleOption } from "../ToggleGroup";
-import { use1MContext } from "@/browser/hooks/use1MContext";
+import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { supports1MContext } from "@/common/utils/ai/models";
 import { TOKEN_COMPONENT_COLORS } from "@/common/utils/tokens/tokenMeterUtils";
 import { ConsumerBreakdown } from "./ConsumerBreakdown";
@@ -59,7 +59,8 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
   const usage = useWorkspaceUsage(workspaceId);
   const consumers = useWorkspaceConsumers(workspaceId);
   const [viewMode, setViewMode] = usePersistedState<ViewMode>("costsTab:viewMode", "session");
-  const [use1M] = use1MContext();
+  const { options } = useProviderOptions();
+  const use1M = options.anthropic?.use1MContext ?? false;
 
   // Check if we have any data to display
   const hasUsageData = usage && usage.usageHistory.length > 0;

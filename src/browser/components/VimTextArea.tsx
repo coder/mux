@@ -31,12 +31,13 @@ export interface VimTextAreaProps
   mode: UIMode; // for styling (plan/exec focus color)
   isEditing?: boolean;
   suppressKeys?: string[]; // keys for which Vim should not interfere (e.g. ["Tab","ArrowUp","ArrowDown","Escape"]) when popovers are open
+  trailingAction?: React.ReactNode;
 }
 
 type VimMode = vim.VimMode;
 
 export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProps>(
-  ({ value, onChange, mode, isEditing, suppressKeys, onKeyDown, ...rest }, ref) => {
+  ({ value, onChange, mode, isEditing, suppressKeys, onKeyDown, trailingAction, ...rest }, ref) => {
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
     // Expose DOM ref to parent
     useEffect(() => {
@@ -219,10 +220,15 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
             autoCapitalize="none"
             autoComplete="off"
             {...rest}
+            style={{
+              ...(rest.style ?? {}),
+              ...(trailingAction ? { scrollbarGutter: "stable both-edges" } : {}),
+            }}
             className={cn(
               "w-full border text-light py-1.5 px-2 rounded font-mono text-[13px] resize-none min-h-8 max-h-[50vh] overflow-y-auto",
               "placeholder:text-placeholder",
               "focus:outline-none",
+              trailingAction && "pr-10",
               isEditing
                 ? "bg-editing-mode-alpha border-editing-mode focus:border-editing-mode"
                 : "bg-dark border-border-light",
@@ -232,6 +238,11 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
                 : "caret-white selection:bg-selection"
             )}
           />
+          {trailingAction && (
+            <div className="pointer-events-none absolute right-3.5 bottom-2.5 flex items-center">
+              <div className="pointer-events-auto">{trailingAction}</div>
+            </div>
+          )}
           {vimEnabled && vimMode === "normal" && value.length === 0 && (
             <div className="pointer-events-none absolute top-1.5 left-2 h-4 w-2 bg-white/50" />
           )}

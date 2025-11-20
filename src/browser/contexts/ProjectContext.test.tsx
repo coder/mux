@@ -359,6 +359,7 @@ function createMockAPI(overrides: Partial<IPCApi["projects"]>) {
             data: undefined,
           }))
     ),
+    pickDirectory: mock(overrides.pickDirectory ?? (() => Promise.resolve(null))),
     secrets: {
       get: mock(
         overrides.secrets?.get
