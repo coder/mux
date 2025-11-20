@@ -92,7 +92,7 @@ export function createDisplayUsage(
   };
 }
 
-export function cumUsageHistory(
+export function collectUsageHistory(
   messages: MuxMessage[],
   fallbackModel?: string
 ): ChatUsageDisplay[] {

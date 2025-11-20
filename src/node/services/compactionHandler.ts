@@ -5,9 +5,9 @@ import type { WorkspaceChatMessage, DeleteMessage } from "@/common/types/ipc";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
-import { cumUsageHistory } from "@/common/utils/tokens/displayUsage";
+import { collectUsageHistory } from "@/common/utils/tokens/displayUsage";
 import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
-import { createMuxMessage, MuxMessage } from "@/common/types/message";
+import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 
 interface CompactionHandlerOptions {
   workspaceId: string;
@@ -162,7 +162,7 @@ export class CompactionHandler {
       systemMessageTokens?: number;
     }
   ): Promise<Result<void, string>> {
-    const usageHistory = cumUsageHistory(messages, undefined);
+    const usageHistory = collectUsageHistory(messages, undefined);
 
     const historicalUsage = usageHistory.length > 0 ? sumUsageHistory(usageHistory) : undefined;
 
