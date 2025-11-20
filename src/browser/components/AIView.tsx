@@ -20,7 +20,11 @@ import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useThinking } from "@/browser/contexts/ThinkingContext";
-import { useWorkspaceState, useWorkspaceAggregator } from "@/browser/stores/WorkspaceStore";
+import {
+  useWorkspaceState,
+  useWorkspaceAggregator,
+  useWorkspaceUsage,
+} from "@/browser/stores/WorkspaceStore";
 import { WorkspaceHeader } from "./WorkspaceHeader";
 import { getModelName } from "@/common/utils/ai/models";
 import type { DisplayedMessage } from "@/common/types/message";
@@ -28,6 +32,9 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import { useAIViewKeybinds } from "@/browser/hooks/useAIViewKeybinds";
 import { evictModelFromLRU } from "@/browser/hooks/useModelLRU";
 import { QueuedMessage } from "./Messages/QueuedMessage";
+import { CompactionWarning } from "./CompactionWarning";
+import { shouldAutoCompact } from "@/browser/utils/compaction/autoCompactionCheck";
+import { use1MContext } from "@/browser/hooks/use1MContext";
 
 interface AIViewProps {
   workspaceId: string;
@@ -71,6 +78,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
   const workspaceState = useWorkspaceState(workspaceId);
   const aggregator = useWorkspaceAggregator(workspaceId);
+  const workspaceUsage = useWorkspaceUsage(workspaceId);
+  const [use1M] = use1MContext();
   const handledModelErrorsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -311,6 +320,13 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Get active stream message ID for token counting
   const activeStreamMessageId = aggregator.getActiveStreamMessageId();
 
+  const autoCompactionCheck = currentModel
+    ? shouldAutoCompact(workspaceUsage, currentModel, use1M)
+    : { shouldShowWarning: false, usagePercentage: 0, thresholdPercentage: 70 };
+
+  // Show warning when: shouldShowWarning flag is true AND not currently compacting
+  const shouldShowCompactionWarning = !isCompacting && autoCompactionCheck.shouldShowWarning;
+
   // Note: We intentionally do NOT reset autoRetry when streams start.
   // If user pressed the interrupt key, autoRetry stays false until they manually retry.
   // This makes state transitions explicit and predictable.
@@ -496,6 +512,12 @@ const AIViewInner: React.FC<AIViewProps> = ({
             </button>
           )}
         </div>
+        {shouldShowCompactionWarning && (
+          <CompactionWarning
+            usagePercentage={autoCompactionCheck.usagePercentage}
+            thresholdPercentage={autoCompactionCheck.thresholdPercentage}
+          />
+        )}
         <ChatInput
           variant="workspace"
           workspaceId={workspaceId}
@@ -509,6 +531,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
           onEditLastUserMessage={() => void handleEditLastUserMessage()}
           canInterrupt={canInterrupt}
           onReady={handleChatInputReady}
+          autoCompactionCheck={autoCompactionCheck}
         />
       </div>
 

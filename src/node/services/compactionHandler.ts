@@ -7,7 +7,7 @@ import { Ok, Err } from "@/common/types/result";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { cumUsageHistory } from "@/common/utils/tokens/displayUsage";
 import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
-import { createMuxMessage, MuxMessage } from "@/common/types/message";
+import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 
 interface CompactionHandlerOptions {
   workspaceId: string;

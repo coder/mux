@@ -1,5 +1,6 @@
 import type { ImagePart } from "@/common/types/ipc";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { AutoCompactionCheckResult } from "@/browser/utils/compaction/autoCompactionCheck";
 
 export interface ChatInputAPI {
   focus: () => void;
@@ -23,6 +24,7 @@ export interface ChatInputWorkspaceVariant {
   canInterrupt?: boolean;
   disabled?: boolean;
   onReady?: (api: ChatInputAPI) => void;
+  autoCompactionCheck?: AutoCompactionCheckResult; // Computed in parent (AIView) to avoid duplicate calculation
 }
 
 // Creation variant: simplified for first message / workspace creation

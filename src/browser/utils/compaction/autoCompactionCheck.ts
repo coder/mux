@@ -1,0 +1,105 @@
+/**
+ * Auto-compaction threshold checking
+ *
+ * Determines whether auto-compaction should trigger based on current token usage
+ * as a percentage of the model's context window.
+ *
+ * Auto-compaction triggers when:
+ * - Usage data is available (has at least one API response)
+ * - Model has known max_input_tokens
+ * - Usage exceeds threshold (default 70%)
+ *
+ * Safe defaults:
+ * - Returns false if no usage data (first message)
+ * - Returns false if model stats unavailable (unknown model)
+ * - Never triggers in edit mode (caller's responsibility to check)
+ */
+
+import type { WorkspaceUsageState } from "@/browser/stores/WorkspaceStore";
+import { getModelStats } from "@/common/utils/tokens/modelStats";
+import { supports1MContext } from "@/common/utils/ai/models";
+
+export interface AutoCompactionCheckResult {
+  shouldShowWarning: boolean;
+  usagePercentage: number;
+  thresholdPercentage: number;
+}
+
+// Auto-compaction threshold (0.7 = 70%)
+// TODO: Make this configurable via settings
+const AUTO_COMPACTION_THRESHOLD = 0.7;
+
+// Show warning this many percentage points before threshold
+const WARNING_ADVANCE_PERCENT = 10;
+
+/**
+ * Check if auto-compaction should trigger based on token usage
+ *
+ * @param usage - Current workspace usage state (from useWorkspaceUsage)
+ * @param model - Current model string
+ * @param use1M - Whether 1M context is enabled
+ * @param threshold - Usage percentage threshold (0.0-1.0, default 0.7 = 70%)
+ * @param warningAdvancePercent - Show warning this many percentage points before threshold (default 10)
+ * @returns Check result with shouldAutoCompact flag, warning flag, and usage details
+ */
+export function shouldAutoCompact(
+  usage: WorkspaceUsageState | undefined,
+  model: string,
+  use1M: boolean,
+  threshold: number = AUTO_COMPACTION_THRESHOLD,
+  warningAdvancePercent: number = WARNING_ADVANCE_PERCENT
+): AutoCompactionCheckResult {
+  const thresholdPercentage = threshold * 100;
+
+  // No usage data yet - safe default (don't trigger on first message)
+  if (!usage || usage.usageHistory.length === 0) {
+    return {
+      shouldShowWarning: false,
+      usagePercentage: 0,
+      thresholdPercentage,
+    };
+  }
+
+  // Get last usage (most recent API response)
+  const lastUsage = usage.usageHistory[usage.usageHistory.length - 1];
+  if (!lastUsage) {
+    return {
+      shouldShowWarning: false,
+      usagePercentage: 0,
+      thresholdPercentage,
+    };
+  }
+
+  // Determine max tokens for this model
+  const modelStats = getModelStats(model);
+  const maxTokens = use1M && supports1MContext(model) ? 1_000_000 : modelStats?.max_input_tokens;
+
+  // No max tokens known - safe default (can't calculate percentage)
+  if (!maxTokens) {
+    return {
+      shouldShowWarning: false,
+      usagePercentage: 0,
+      thresholdPercentage,
+    };
+  }
+
+  // Calculate total tokens used in last request
+  const totalUsed =
+    lastUsage.input.tokens +
+    lastUsage.cached.tokens +
+    lastUsage.cacheCreate.tokens +
+    lastUsage.output.tokens +
+    lastUsage.reasoning.tokens;
+
+  // Calculate usage percentage
+  const usagePercentage = (totalUsed / maxTokens) * 100;
+
+  // Show warning if within advance window (e.g., 60% for 70% threshold with 10% advance)
+  const shouldShowWarning = usagePercentage >= thresholdPercentage - warningAdvancePercent;
+
+  return {
+    shouldShowWarning,
+    usagePercentage,
+    thresholdPercentage,
+  };
+}
