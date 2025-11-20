@@ -47,6 +47,7 @@ import {
 } from "@/browser/utils/ui/keybinds";
 import { ModelSelector, type ModelSelectorRef } from "../ModelSelector";
 import { useModelLRU } from "@/browser/hooks/useModelLRU";
+import { Send } from "lucide-react";
 import { VimTextArea } from "../VimTextArea";
 import { ImageAttachments, type ImageAttachment } from "../ImageAttachments";
 import {
@@ -948,7 +949,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                         : "bg-exec-mode hover:bg-exec-mode-hover disabled:hover:bg-exec-mode"
                     )}
                   >
-                    →
+                    <Send className="h-3.5 w-3.5" strokeWidth={2.5} />
                   </button>
                   <Tooltip className="tooltip" align="center">
                     Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})
