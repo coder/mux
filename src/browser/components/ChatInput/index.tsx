@@ -880,21 +880,28 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 showCommandSuggestions && commandSuggestions.length > 0 ? commandListId : undefined
               }
               aria-expanded={showCommandSuggestions && commandSuggestions.length > 0}
+              trailingAction={
+                <TooltipWrapper inline>
+                  <button
+                    type="button"
+                    onClick={() => void handleSend()}
+                    disabled={!canSend}
+                    aria-label="Send message"
+                    className={cn(
+                      "flex h-7 w-7 items-center justify-center rounded-full border-none text-[12px] text-white transition-colors duration-200 disabled:opacity-50",
+                      mode === "plan"
+                        ? "bg-plan-mode hover:bg-plan-mode-hover disabled:hover:bg-plan-mode"
+                        : "bg-exec-mode hover:bg-exec-mode-hover disabled:hover:bg-exec-mode"
+                    )}
+                  >
+                    →
+                  </button>
+                  <Tooltip className="tooltip" align="center">
+                    Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})
+                  </Tooltip>
+                </TooltipWrapper>
+              }
             />
-            <TooltipWrapper inline>
-              <button
-                type="button"
-                onClick={() => void handleSend()}
-                disabled={!canSend}
-                aria-label="Send message"
-                className="bg-accent hover:bg-accent-dark disabled:hover:bg-accent cursor-pointer rounded border-none px-3 py-1 text-[13px] text-white transition-colors duration-200 disabled:opacity-50"
-              >
-                →
-              </button>
-              <Tooltip className="tooltip" align="center">
-                Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})
-              </Tooltip>
-            </TooltipWrapper>
           </div>
 
           {/* Image attachments - workspace only */}
