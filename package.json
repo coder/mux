@@ -71,7 +71,7 @@
     "disposablestack": "^1.1.7",
     "electron-updater": "^6.6.2",
     "express": "^5.1.0",
-    "ghostty-web": "^0.1.1",
+    "ghostty-web": "next",
     "jsonc-parser": "^3.3.1",
     "lru-cache": "^11.2.2",
     "markdown-it": "^14.1.0",
