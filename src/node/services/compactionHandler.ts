@@ -130,7 +130,7 @@ export class CompactionHandler {
     // Mark as processed before performing compaction
     this.processedCompactionRequestIds.add(lastUserMsg.id);
 
-    const result = await this.performCompaction(summary, messages,event.metadata);
+    const result = await this.performCompaction(summary, messages, event.metadata);
     if (!result.success) {
       console.error("[CompactionHandler] Compaction failed:", result.error);
       return false;
