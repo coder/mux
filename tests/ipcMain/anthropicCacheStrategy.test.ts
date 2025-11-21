@@ -24,7 +24,7 @@ describeIntegration("Anthropic cache strategy integration", () => {
     const { env, workspaceId, cleanup } = await setupWorkspace("anthropic");
 
     try {
-      const model = "anthropic:claude-haiku-4-5";
+      const model = "anthropic:claude-3-5-sonnet-20241022";
 
       // Send an initial message to establish conversation history
       const firstMessage = "Hello, can you help me with a coding task?";
@@ -32,7 +32,11 @@ describeIntegration("Anthropic cache strategy integration", () => {
         additionalSystemInstructions: "Be concise and clear in your responses.",
         thinkingLevel: "off",
       });
-      const firstCollector = await waitForStreamSuccess(env.sentEvents, workspaceId);
+      const firstCollector = await waitForStreamSuccess(
+        env.sentEvents,
+        workspaceId,
+        TEST_TIMEOUT_MS
+      );
 
       // Send a second message to test cache reuse
       const secondMessage = "What's the best way to handle errors in TypeScript?";
@@ -40,7 +44,11 @@ describeIntegration("Anthropic cache strategy integration", () => {
         additionalSystemInstructions: "Be concise and clear in your responses.",
         thinkingLevel: "off",
       });
-      const secondCollector = await waitForStreamSuccess(env.sentEvents, workspaceId);
+      const secondCollector = await waitForStreamSuccess(
+        env.sentEvents,
+        workspaceId,
+        TEST_TIMEOUT_MS
+      );
 
       // Check that both streams completed successfully
       const firstEndEvent = firstCollector.getEvents().find((e: any) => e.type === "stream-end");
@@ -69,7 +77,7 @@ describeIntegration("Anthropic cache strategy integration", () => {
         additionalSystemInstructions: "You are a helpful assistant.",
         thinkingLevel: "off",
       });
-      const collector = await waitForStreamSuccess(env.sentEvents, workspaceId);
+      const collector = await waitForStreamSuccess(env.sentEvents, workspaceId, TEST_TIMEOUT_MS);
 
       // Verify the stream completed
       const endEvent = collector.getEvents().find((e: any) => e.type === "stream-end");
