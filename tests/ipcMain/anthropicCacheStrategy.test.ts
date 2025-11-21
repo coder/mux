@@ -24,7 +24,7 @@ describeIntegration("Anthropic cache strategy integration", () => {
     const { env, workspaceId, cleanup } = await setupWorkspace("anthropic");
 
     try {
-      const model = "anthropic:claude-3-5-sonnet-20241022";
+      const model = "anthropic:claude-haiku-4-5";
 
       // Send an initial message to establish conversation history
       const firstMessage = "Hello, can you help me with a coding task?";
