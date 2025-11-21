@@ -106,10 +106,7 @@ export type DisplayedMessage =
       compactionRequest?: {
         // Present if this is a /compact command
         rawCommand: string;
-        parsed: {
-          maxOutputTokens?: number;
-          continueMessage?: string;
-        };
+        parsed: CompactionRequestData;
       };
     }
   | {
