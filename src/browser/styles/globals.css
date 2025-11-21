@@ -218,11 +218,12 @@
     --color-code-keyword: hsl(210 59% 63%); /* #6496ff - keywords */
 
     /* Toast and notification backgrounds */
-    --color-toast-success-bg: hsl(207 100% 37% / 0.13); /* #0e639c with 20% opacity */
-    --color-toast-success-text: hsl(207 100% 60%); /* #3794ff */
-    --color-toast-error-bg: hsl(5 89% 60% / 0.15); /* #f14836 with 15% opacity */
-    --color-toast-error-text: hsl(5 89% 60%); /* #f14836 */
-    --color-toast-error-border: hsl(5 89% 60%); /* #f14836 */
+    /* Toast and notification backgrounds - opaque versions of originals */
+    --color-toast-success-bg: hsl(207 100% 20%); /* Solid blue background */
+    --color-toast-success-text: hsl(207 100% 85%); /* Light blue text */
+    --color-toast-error-bg: hsl(5 89% 25%); /* Solid red background */
+    --color-toast-error-text: hsl(5 89% 90%); /* Light red text */
+    --color-toast-error-border: hsl(5 89% 60%); /* Red border */
     --color-toast-fatal-bg: hsl(0 33% 18%); /* #2d1f1f - fatal error bg */
     --color-toast-fatal-border: hsl(0 36% 26%); /* #5a2c2c - fatal error border */
 

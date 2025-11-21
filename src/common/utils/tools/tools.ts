@@ -1,4 +1,5 @@
-import { type Tool } from "ai";
+import { type Tool, tool } from "ai";
+import { z } from "zod";
 import { createFileReadTool } from "@/node/services/tools/file_read";
 import { createBashTool } from "@/node/services/tools/bash";
 import { createFileEditReplaceStringTool } from "@/node/services/tools/file_edit_replace_string";
@@ -8,6 +9,8 @@ import { createProposePlanTool } from "@/node/services/tools/propose_plan";
 import { createTodoWriteTool, createTodoReadTool } from "@/node/services/tools/todo";
 import { createStatusSetTool } from "@/node/services/tools/status_set";
 import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
+import { listScripts } from "@/utils/scripts/discovery";
+import { runWorkspaceScript } from "@/node/services/scriptRunner";
 import { log } from "@/node/services/log";
 
 import type { Runtime } from "@/node/runtime/Runtime";
@@ -23,6 +26,8 @@ export interface ToolConfiguration {
   runtime: Runtime;
   /** Environment secrets to inject (optional) */
   secrets?: Record<string, string>;
+  /** Additional environment variables to inject (optional) */
+  env?: Record<string, string>;
   /** Process niceness level (optional, -20 to 19, lower = higher priority) */
   niceness?: number;
   /** Temporary directory for tool outputs in runtime's context (local or remote) */
@@ -101,6 +106,80 @@ export async function getToolsForModel(
     bash: wrap(createBashTool(config)),
     web_fetch: wrap(createWebFetchTool(config)),
   };
+
+  // Discover and register user scripts as tools
+  // These are treated as runtime tools (execution happens in runtime)
+  try {
+    const scripts = await listScripts(config.runtime, config.cwd);
+    for (const script of scripts) {
+      if (!script.isExecutable) continue;
+
+      // Sanitize script name for tool name (e.g., "deploy-prod" -> "script_deploy_prod")
+      const sanitizedName = script.name.replace(/[^a-zA-Z0-9_]/g, "_");
+      const toolName = `script_${sanitizedName}`;
+
+      // Create tool definition
+      const scriptTool = tool({
+        description: `(User Script) ${script.description ?? `Execute the ${script.name} script`}`,
+        inputSchema: z.object({
+          args: z.array(z.string()).optional().describe("Arguments to pass to the script"),
+        }),
+        execute: async (input: { args?: string[] }) => {
+          const { args } = input;
+
+          const result = await runWorkspaceScript(
+            config.runtime,
+            config.cwd,
+            script.name,
+            args ?? [],
+            {
+              env: config.env ?? {},
+              secrets: config.secrets ?? {},
+              timeoutSecs: 300,
+              overflowPolicy: "tmpfile",
+            }
+          );
+
+          if (!result.success) {
+            return `Script execution failed: ${result.error}`;
+          }
+
+          const scriptResult = result.data;
+
+          // Combine all outputs
+          const parts: string[] = [];
+
+          if (scriptResult.stdout.trim()) {
+            parts.push(scriptResult.stdout);
+          }
+
+          if (scriptResult.stderr.trim()) {
+            parts.push(`Error: ${scriptResult.stderr}`);
+          }
+
+          if (scriptResult.exitCode !== 0) {
+            parts.push(`(Exit Code: ${scriptResult.exitCode})`);
+          }
+
+          if (scriptResult.outputFileContent?.trim()) {
+            parts.push(`--- MUX_OUTPUT ---\n${scriptResult.outputFileContent.trim()}`);
+          }
+
+          if (scriptResult.promptFileContent?.trim()) {
+            parts.push(`--- MUX_PROMPT ---\n${scriptResult.promptFileContent.trim()}`);
+          }
+
+          return parts.join("\n\n");
+        },
+      });
+
+      // Wrap with init wait and register
+      runtimeTools[toolName] = wrap(scriptTool);
+    }
+  } catch (error) {
+    log.error("Failed to discover/register script tools:", error);
+    // Continue without script tools on error
+  }
 
   // Non-runtime tools execute immediately (no init wait needed)
   const nonRuntimeTools: Record<string, Tool> = {

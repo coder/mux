@@ -31,6 +31,8 @@ export type ParsedCommand =
       startMessage?: string;
     }
   | { type: "vim-toggle" }
+  | { type: "script"; scriptName: string; args: string[] }
+  | { type: "script-help" }
   | { type: "unknown-command"; command: string; subcommand?: string }
   | null;
 
@@ -72,6 +74,7 @@ export interface SlashSuggestion {
 
 export interface SlashSuggestionContext {
   providerNames?: string[];
+  availableScripts?: Array<{ name: string; description?: string }>;
 }
 
 export interface SuggestionDefinition {

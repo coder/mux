@@ -1,7 +1,17 @@
+import { createMuxMessage } from "@/common/types/message";
+import type { BashToolResult } from "@/common/types/tools";
+import type { DeleteMessage } from "@/common/orpc/types";
 import { describe, test, expect } from "bun:test";
 import { StreamingMessageAggregator } from "./StreamingMessageAggregator";
 
 // Test helper: create aggregator with default createdAt for tests
+const BASE_SCRIPT_RESULT: BashToolResult = {
+  success: true,
+  output: "ok",
+  exitCode: 0,
+  wall_duration_ms: 42,
+};
+
 const TEST_CREATED_AT = "2024-01-01T00:00:00.000Z";
 
 describe("StreamingMessageAggregator", () => {
@@ -469,6 +479,147 @@ describe("StreamingMessageAggregator", () => {
         outputTokens: 100,
         totalTokens: 2100,
       });
+    });
+  });
+
+  describe("script execution events", () => {
+    test("adds script logs to displayed messages", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      // Create a persisted message with script metadata
+      const timestamp = Date.now();
+      const scriptMessage = createMuxMessage("script-1", "user", "Run script", {
+        historySequence: 1,
+        timestamp,
+        muxMetadata: {
+          type: "script-execution",
+          id: "script-exec-1",
+          historySequence: 1,
+          timestamp,
+          command: "/script demo",
+          scriptName: "demo",
+          args: ["--flag"],
+          result: BASE_SCRIPT_RESULT,
+        },
+      });
+
+      aggregator.addMessage(scriptMessage);
+
+      const displayed = aggregator.getDisplayedMessages();
+      const scriptMsg = displayed.find((msg) => msg.type === "script-execution");
+      expect(scriptMsg).toBeDefined();
+      if (scriptMsg?.type === "script-execution") {
+        expect(scriptMsg.historySequence).toBe(1);
+        expect(scriptMsg.timestamp).toBe(timestamp);
+        expect(scriptMsg.result).toBe(BASE_SCRIPT_RESULT);
+      }
+    });
+
+    test("tracks pending script executions until a result arrives", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const timestamp = Date.now();
+
+      const pendingScript = createMuxMessage("script-2", "user", "Run script", {
+        historySequence: 1,
+        timestamp,
+        muxMetadata: {
+          type: "script-execution",
+          id: "script-exec-2",
+          historySequence: 1,
+          timestamp,
+          command: "/script wait",
+          scriptName: "wait",
+          args: [],
+        },
+      });
+
+      aggregator.addMessage(pendingScript);
+      expect(aggregator.hasPendingScriptExecution()).toBe(true);
+      expect(aggregator.getPendingScriptExecution()).toMatchObject({
+        scriptName: "wait",
+        command: "/script wait",
+      });
+
+      const completedScript = createMuxMessage("script-2", "user", "Run script", {
+        historySequence: 1,
+        timestamp,
+        muxMetadata: {
+          type: "script-execution",
+          id: "script-exec-2",
+          historySequence: 1,
+          timestamp,
+          command: "/script wait",
+          scriptName: "wait",
+          args: [],
+          result: BASE_SCRIPT_RESULT,
+        },
+      });
+
+      aggregator.addMessage(completedScript);
+      expect(aggregator.hasPendingScriptExecution()).toBe(false);
+      expect(aggregator.getPendingScriptExecution()).toBeNull();
+    });
+
+    test("clears pending script executions when messages are deleted", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const timestamp = Date.now();
+
+      const pendingScript = createMuxMessage("script-3", "user", "Run script", {
+        historySequence: 7,
+        timestamp,
+        muxMetadata: {
+          type: "script-execution",
+          id: "script-exec-3",
+          historySequence: 7,
+          timestamp,
+          command: "/script cleanup",
+          scriptName: "cleanup",
+          args: [],
+        },
+      });
+
+      aggregator.addMessage(pendingScript);
+      expect(aggregator.hasPendingScriptExecution()).toBe(true);
+      expect(aggregator.getPendingScriptExecution()).toMatchObject({
+        scriptName: "cleanup",
+        command: "/script cleanup",
+      });
+
+      const deleteEvent: DeleteMessage = { type: "delete", historySequences: [7] };
+      aggregator.handleDeleteMessage(deleteEvent);
+
+      expect(aggregator.hasPendingScriptExecution()).toBe(false);
+      expect(aggregator.getPendingScriptExecution()).toBeNull();
+    });
+
+    test("removes script logs when history is truncated", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const timestamp = Date.now();
+      const scriptMessage = createMuxMessage("script-1", "user", "Run script", {
+        historySequence: 1,
+        timestamp,
+        muxMetadata: {
+          type: "script-execution",
+          id: "script-exec-1",
+          historySequence: 1,
+          timestamp,
+          command: "/script cleanup",
+          scriptName: "cleanup",
+          args: [],
+          result: BASE_SCRIPT_RESULT,
+        },
+      });
+
+      aggregator.addMessage(scriptMessage);
+
+      const deleteEvent: DeleteMessage = { type: "delete", historySequences: [1] };
+      aggregator.handleDeleteMessage(deleteEvent);
+
+      const scriptMsg = aggregator
+        .getDisplayedMessages()
+        .find((msg) => msg.type === "script-execution");
+      expect(scriptMsg).toBeUndefined();
     });
   });
 });

@@ -199,6 +199,64 @@ export function injectModeTransition(
 }
 
 /**
+ * Transform script-execution messages into standard user text messages for LLM consumption.
+ *
+ * Logic:
+ * - Identifies messages with metadata.muxMetadata.type === "script-execution"
+ * - Replaces them with a simple user text message
+ * - Content format: "Script '<name>' executed (exit code <N>).\nStdout/Stderr:\n<output>"
+ * - Explicitly EXCLUDES the full MUX_OUTPUT and MUX_PROMPT content to save tokens
+ * - Preserves the rest of the message structure (id, role, other metadata)
+ */
+export function transformScriptMessagesForLLM(messages: MuxMessage[]): MuxMessage[] {
+  return messages.flatMap((msg) => {
+    if (msg.metadata?.muxMetadata?.type !== "script-execution") {
+      return [msg];
+    }
+
+    const scriptMeta = msg.metadata.muxMetadata;
+    const result = scriptMeta.result;
+
+    // If script is still executing (no result), hide it from LLM context
+    // This mimics the behavior of the bash tool, where the LLM only sees the
+    // finished output (or the tool call itself, but since this is a user-initiated
+    // script without an explicit tool call in the history, hiding it is the safest default).
+    if (!result) {
+      return [];
+    }
+
+    let llmContent = `Script '${scriptMeta.scriptName}' executed (exit code ${result.exitCode}).`;
+
+    // Include Stdout/Stderr if present
+    if (result.output) {
+      llmContent += `\nStdout/Stderr:\n${result.output}`;
+    } else {
+      llmContent += `\nStdout/Stderr: (no output)`;
+    }
+
+    // Surface script errors for Codex/LLM reviewers even when no output exists.
+    if ("error" in result) {
+      const trimmedError = result.error.trim();
+      if (trimmedError.length > 0) {
+        llmContent += `\nError:\n${trimmedError}`;
+      }
+    }
+
+    // EXCLUDE MUX_OUTPUT and MUX_PROMPT from the LLM context for the script message itself.
+    // MUX_PROMPT is sent as a separate user message by ChatInput, so including it here would be duplication.
+    // MUX_OUTPUT is intended for user toasts, not LLM context.
+
+    return [
+      {
+        ...msg,
+        parts: [{ type: "text", text: llmContent }],
+        // Keep metadata for debugging but ensure downstream consumers use the new parts
+      },
+    ];
+  });
+}
+
+/**
  * Filter out assistant messages that only contain reasoning parts (no text or tool parts).
  * Anthropic API rejects messages that have reasoning but no actual content.
  * This happens when a message is interrupted during thinking before producing any text.

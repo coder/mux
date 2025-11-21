@@ -294,12 +294,18 @@ export class LocalRuntime implements Runtime {
     }
   }
 
-  resolvePath(filePath: string): Promise<string> {
+  async resolvePath(filePath: string): Promise<string> {
     // Expand tilde to actual home directory path
     const expanded = expandTilde(filePath);
+    const absolute = path.resolve(expanded);
 
-    // Resolve to absolute path (handles relative paths like "./foo")
-    return Promise.resolve(path.resolve(expanded));
+    try {
+      // Try to resolve symlinks (canonical path)
+      return await fsPromises.realpath(absolute);
+    } catch {
+      // If file doesn't exist or other error, return absolute path
+      return absolute;
+    }
   }
 
   normalizePath(targetPath: string, basePath: string): string {

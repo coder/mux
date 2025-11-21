@@ -615,6 +615,50 @@ const newCommandDefinition: SlashCommandDefinition = {
   },
 };
 
+const scriptCommandDefinition: SlashCommandDefinition = {
+  key: "script",
+  description: "Execute a script from .cmux/scripts/",
+  handler: ({ cleanRemainingTokens }): ParsedCommand => {
+    if (cleanRemainingTokens.length === 0) {
+      return { type: "script-help" };
+    }
+
+    const scriptName = cleanRemainingTokens[0];
+    const args = cleanRemainingTokens.slice(1);
+
+    return {
+      type: "script",
+      scriptName,
+      args,
+    };
+  },
+  suggestions: ({ stage, partialToken, context }) => {
+    // At stage 1, suggest available scripts from context
+    if (stage === 1 && context.availableScripts) {
+      const scripts = context.availableScripts.map((script) => ({
+        key: script.name,
+        description: script.description ?? `Run .cmux/scripts/${script.name}`,
+      }));
+
+      return filterAndMapSuggestions(scripts, partialToken, (definition) => ({
+        id: `script:${definition.key}`,
+        display: definition.key,
+        description: definition.description,
+        replacement: `/script ${definition.key}`,
+      }));
+    }
+
+    return null;
+  },
+};
+
+const sCommandDefinition: SlashCommandDefinition = {
+  key: "s",
+  description: "Alias for /script",
+  handler: scriptCommandDefinition.handler,
+  suggestions: scriptCommandDefinition.suggestions,
+};
+
 export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   clearCommandDefinition,
   truncateCommandDefinition,
@@ -625,6 +669,8 @@ export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   forkCommandDefinition,
   newCommandDefinition,
   vimCommandDefinition,
+  scriptCommandDefinition,
+  sCommandDefinition,
 ];
 
 export const SLASH_COMMAND_DEFINITION_MAP = new Map(

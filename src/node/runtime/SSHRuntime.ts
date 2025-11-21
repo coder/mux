@@ -392,7 +392,8 @@ export class SSHRuntime implements Runtime {
     // Use shell to expand tildes on remote system
     // Bash will expand ~ automatically when we echo the unquoted variable
     // This works with BusyBox (doesn't require GNU coreutils)
-    const command = `bash -c 'p=${shescape.quote(filePath)}; echo $p'`;
+    // We use readlink -f to resolve symlinks if possible, falling back to just echo
+    const command = `bash -c 'p=${shescape.quote(filePath)}; readlink -f "$p" 2>/dev/null || echo "$p"'`;
     // Use 10 second timeout for path resolution to allow for slower SSH connections
     return this.execSSHCommand(command, 10000);
   }

@@ -541,6 +541,38 @@ export class AgentSession {
     } satisfies AgentSessionChatEvent);
   }
 
+  private scriptAbortController: AbortController | null = null;
+
+  public get isScriptRunning(): boolean {
+    return this.scriptAbortController !== null;
+  }
+
+  public startScriptExecution(): AbortSignal {
+    assert(
+      this.scriptAbortController === null,
+      "AgentSession.startScriptExecution called while script is running"
+    );
+
+    const abortController = new AbortController();
+    this.scriptAbortController = abortController;
+    return abortController.signal;
+  }
+
+  public endScriptExecution(): void {
+    this.scriptAbortController = null;
+  }
+
+  public abortScript(): void {
+    if (this.scriptAbortController) {
+      this.scriptAbortController.abort();
+      this.scriptAbortController = null;
+    }
+  }
+
+  public processQueue(): void {
+    this.sendQueuedMessages();
+  }
+
   queueMessage(message: string, options?: SendMessageOptions & { imageParts?: ImagePart[] }): void {
     this.assertNotDisposed("queueMessage");
     this.messageQueue.add(message, options);

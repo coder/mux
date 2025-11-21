@@ -36,6 +36,13 @@ import { computeRecencyTimestamp } from "./recency";
 // Full history is still maintained internally for token counting and stats
 const MAX_DISPLAYED_MESSAGES = 128;
 
+export interface PendingScriptExecutionInfo {
+  messageId: string;
+  command: string;
+  scriptName: string;
+  args: string[];
+  timestamp: number;
+}
 interface StreamingContext {
   startTime: number;
   isComplete: boolean;
@@ -105,7 +112,9 @@ export class StreamingMessageAggregator {
   // Stores timestamp of when user message was sent (null = no pending stream)
   // IMPORTANT: We intentionally keep this timestamp until a stream actually starts
   // (or the user retries) so retry UI/backoff logic doesn't misfire on send failures.
+
   private pendingStreamStartTime: number | null = null;
+  private pendingScriptExecutions = new Map<string, PendingScriptExecutionInfo>();
 
   // Workspace creation timestamp (used for recency calculation)
   // REQUIRED: Backend guarantees every workspace has createdAt via config.ts
@@ -214,8 +223,13 @@ export class StreamingMessageAggregator {
       }
     }
 
+    // Special handling for script execution messages to ensure correct type identification
+    // If we receive a user message that has script metadata, we treat it as a script execution
+    // This is redundant with getDisplayedMessages logic but good for consistency
+
     // Just store the message - backend assigns historySequence
     this.messages.set(message.id, message);
+    this.syncScriptExecutionState(message);
     this.invalidateCache();
   }
 
@@ -230,6 +244,7 @@ export class StreamingMessageAggregator {
     // First, add all messages to the map
     for (const message of messages) {
       this.messages.set(message.id, message);
+      this.syncScriptExecutionState(message);
     }
 
     // Then, reconstruct derived state from the most recent assistant message
@@ -274,6 +289,45 @@ export class StreamingMessageAggregator {
 
   getPendingStreamStartTime(): number | null {
     return this.pendingStreamStartTime;
+  }
+
+  hasPendingScriptExecution(): boolean {
+    return this.pendingScriptExecutions.size > 0;
+  }
+
+  getPendingScriptExecution(): PendingScriptExecutionInfo | null {
+    if (this.pendingScriptExecutions.size === 0) {
+      return null;
+    }
+
+    let latest: PendingScriptExecutionInfo | null = null;
+    for (const info of this.pendingScriptExecutions.values()) {
+      if (!latest || info.timestamp > latest.timestamp) {
+        latest = info;
+      }
+    }
+    return latest;
+  }
+
+  private syncScriptExecutionState(message: MuxMessage): void {
+    const muxMetadata = message.metadata?.muxMetadata;
+    if (muxMetadata?.type === "script-execution" && muxMetadata.result === undefined) {
+      const info: PendingScriptExecutionInfo = {
+        messageId: message.id,
+        command: muxMetadata.command ?? `/script ${muxMetadata.scriptName}`,
+        scriptName: muxMetadata.scriptName,
+        args: Array.isArray(muxMetadata.args) ? muxMetadata.args : [],
+        timestamp: muxMetadata.timestamp ?? message.metadata?.timestamp ?? Date.now(),
+      };
+      this.pendingScriptExecutions.set(message.id, info);
+      return;
+    }
+
+    this.pendingScriptExecutions.delete(message.id);
+  }
+
+  private clearScriptExecutionState(messageId: string): void {
+    this.pendingScriptExecutions.delete(messageId);
   }
 
   private setPendingStreamStartTime(time: number | null): void {
@@ -327,6 +381,7 @@ export class StreamingMessageAggregator {
     this.messages.clear();
     this.activeStreams.clear();
     this.streamSequenceCounter = 0;
+    this.pendingScriptExecutions.clear();
     this.invalidateCache();
   }
 
@@ -337,18 +392,17 @@ export class StreamingMessageAggregator {
   handleDeleteMessage(deleteMsg: DeleteMessage): void {
     const sequencesToDelete = new Set(deleteMsg.historySequences);
 
-    // Remove messages that match the historySequence numbers
     for (const [messageId, message] of this.messages.entries()) {
       const historySeq = message.metadata?.historySequence;
       if (historySeq !== undefined && sequencesToDelete.has(historySeq)) {
         this.messages.delete(messageId);
+        this.clearScriptExecutionState(messageId);
       }
     }
 
     this.invalidateCache();
   }
 
-  // Unified event handlers that encapsulate all complex logic
   handleStreamStart(data: StreamStartEvent): void {
     // Clear pending stream start timestamp - stream has started
     this.setPendingStreamStartTime(null);
@@ -381,6 +435,7 @@ export class StreamingMessageAggregator {
     });
 
     this.messages.set(data.messageId, streamingMessage);
+    this.syncScriptExecutionState(streamingMessage);
     this.invalidateCache();
   }
 
@@ -458,6 +513,7 @@ export class StreamingMessageAggregator {
       };
 
       this.messages.set(data.messageId, message);
+      this.syncScriptExecutionState(message);
 
       // Clean up stream-scoped state (active stream tracking, TODOs)
       this.cleanupStreamState(data.messageId);
@@ -706,6 +762,7 @@ export class StreamingMessageAggregator {
             }
             for (const removeId of messagesToRemove) {
               this.messages.delete(removeId);
+              this.clearScriptExecutionState(removeId);
             }
             break; // Found and handled the conflict
           }
@@ -745,7 +802,24 @@ export class StreamingMessageAggregator {
         // Get historySequence from backend (required field)
         const historySequence = message.metadata?.historySequence ?? 0;
 
-        if (message.role === "user") {
+        if (
+          message.metadata?.muxMetadata?.type === "script-execution" &&
+          (message.role as string) === "user"
+        ) {
+          // Script Execution Message
+          // Type assertion: we know the metadata shape from the check above
+          const scriptMeta = message.metadata.muxMetadata;
+          displayedMessages.push({
+            type: "script-execution",
+            id: message.id,
+            historySequence,
+            timestamp: baseTimestamp ?? message.metadata.timestamp ?? Date.now(),
+            command: scriptMeta.command,
+            scriptName: scriptMeta.scriptName,
+            args: scriptMeta.args,
+            result: scriptMeta.result,
+          });
+        } else if (message.role === "user") {
           // User messages: combine all text parts into single block, extract images
           const content = message.parts
             .filter((p) => p.type === "text")

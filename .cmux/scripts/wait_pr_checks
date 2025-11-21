@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Description: Wait for PR checks to pass on GitHub. Use this after pushing changes to origin, to catch CI failures. Accepts no arguments.
+set -euo pipefail
+
+BRANCH=$(git branch --show-current)
+NUMBER=$(gh pr list --head "$BRANCH" --json number | jq -cr '.[0].number')
+./scripts/wait_pr_checks.sh "$NUMBER"

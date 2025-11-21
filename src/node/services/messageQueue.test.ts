@@ -58,7 +58,7 @@ describe("MessageQueue", () => {
     it("should return joined messages when metadata type is not compaction-request", () => {
       const metadata: MuxFrontendMetadata = {
         type: "normal",
-      };
+      } as unknown as MuxFrontendMetadata;
 
       const options: SendMessageOptions = {
         model: "claude-3-5-sonnet-20241022",

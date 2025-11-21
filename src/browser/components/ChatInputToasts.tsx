@@ -128,6 +128,32 @@ export const createCommandToast = (parsed: ParsedCommand): Toast | null => {
         ),
       };
 
+    case "script-help":
+      return {
+        id: Date.now().toString(),
+        type: "error",
+        title: "Script Command",
+        message: "Execute a script from .cmux/scripts/",
+        solution: (
+          <>
+            <SolutionLabel>Usage:</SolutionLabel>
+            /script &lt;script-name&gt; [args...]
+            <br />
+            /s &lt;script-name&gt; [args...]
+            <br />
+            <br />
+            <SolutionLabel>Examples:</SolutionLabel>
+            /s deploy
+            <br />
+            /script test --verbose
+            <br />
+            <br />
+            <SolutionLabel>Note:</SolutionLabel>
+            Scripts must be executable (chmod +x) and located in .cmux/scripts/
+          </>
+        ),
+      };
+
     case "unknown-command": {
       const cmd = "/" + parsed.command + (parsed.subcommand ? " " + parsed.subcommand : "");
       return {

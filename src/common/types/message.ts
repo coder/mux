@@ -1,5 +1,6 @@
 import type { UIMessage } from "ai";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
+import type { BashToolResult } from "@/common/types/tools";
 import type { StreamErrorType } from "./errors";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
@@ -29,6 +30,16 @@ export type MuxFrontendMetadata =
     }
   | {
       type: "normal"; // Regular messages
+    }
+  | {
+      type: "script-execution";
+      id: string;
+      historySequence?: number;
+      timestamp: number;
+      command: string;
+      scriptName: string;
+      args: string[];
+      result?: BashToolResult;
     };
 
 // Our custom metadata type
@@ -179,6 +190,16 @@ export type DisplayedMessage =
       lines: string[]; // Accumulated output lines (stderr prefixed with "ERROR:")
       exitCode: number | null; // Final exit code (null while running)
       timestamp: number;
+    }
+  | {
+      type: "script-execution";
+      id: string;
+      historySequence?: number;
+      timestamp: number;
+      command: string;
+      scriptName: string;
+      args: string[];
+      result?: BashToolResult;
     };
 
 export interface QueuedMessage {

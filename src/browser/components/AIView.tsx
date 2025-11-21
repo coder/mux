@@ -128,10 +128,12 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const forceCompactionTriggeredRef = useRef<string | null>(null);
 
   // Extract state from workspace state
-  const { messages, canInterrupt, isCompacting, loading, currentModel } = workspaceState;
+  const { messages, canInterrupt, isCompacting, loading, currentModel, pendingScriptExecution } =
+    workspaceState;
 
   // Get active stream message ID for token counting
   const activeStreamMessageId = aggregator.getActiveStreamMessageId();
+  const isScriptExecutionPending = Boolean(pendingScriptExecution);
 
   // Use pending send model for auto-compaction check, not the last stream's model.
   // This ensures the threshold is based on the model the user will actually send with,
@@ -359,9 +361,15 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
     const mergedMessages = mergeConsecutiveStreamErrors(workspaceState.messages);
     const editCutoffHistoryId = mergedMessages.find(
-      (msg): msg is Exclude<DisplayedMessage, { type: "history-hidden" | "workspace-init" }> =>
+      (
+        msg
+      ): msg is Exclude<
+        DisplayedMessage,
+        { type: "history-hidden" | "workspace-init" | "script-execution" }
+      > =>
         msg.type !== "history-hidden" &&
         msg.type !== "workspace-init" &&
+        msg.type !== "script-execution" &&
         msg.historyId === editingMessage.id
     )?.historyId;
 
@@ -398,9 +406,15 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // When editing, find the cutoff point
   const editCutoffHistoryId = editingMessage
     ? mergedMessages.find(
-        (msg): msg is Exclude<DisplayedMessage, { type: "history-hidden" | "workspace-init" }> =>
+        (
+          msg
+        ): msg is Exclude<
+          DisplayedMessage,
+          { type: "history-hidden" | "workspace-init" | "script-execution" }
+        > =>
           msg.type !== "history-hidden" &&
           msg.type !== "workspace-init" &&
+          msg.type !== "script-execution" &&
           msg.historyId === editingMessage.id
       )?.historyId
     : undefined;
@@ -439,6 +453,30 @@ const AIViewInner: React.FC<AIViewProps> = ({
       </div>
     );
   }
+
+  const interruptKeybindDisplay = formatKeybind(
+    vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL
+  );
+  const streamingStatusText = pendingScriptExecution
+    ? `${pendingScriptExecution.command} running...`
+    : isCompacting
+      ? currentModel
+        ? `${getModelName(currentModel)} compacting...`
+        : "compacting..."
+      : currentModel
+        ? `${getModelName(currentModel)} streaming...`
+        : "streaming...";
+  const streamingCancelText = pendingScriptExecution
+    ? `hit ${interruptKeybindDisplay} to cancel script`
+    : `hit ${interruptKeybindDisplay} to cancel`;
+  const streamingTokenCount =
+    isScriptExecutionPending || !activeStreamMessageId
+      ? undefined
+      : aggregator.getStreamingTokenCount(activeStreamMessageId);
+  const streamingTPS =
+    isScriptExecutionPending || !activeStreamMessageId
+      ? undefined
+      : aggregator.getStreamingTPS(activeStreamMessageId);
 
   return (
     <div
@@ -495,13 +533,16 @@ const AIViewInner: React.FC<AIViewProps> = ({
                       editCutoffHistoryId !== undefined &&
                       msg.type !== "history-hidden" &&
                       msg.type !== "workspace-init" &&
+                      msg.type !== "script-execution" &&
                       msg.historyId === editCutoffHistoryId;
 
                     return (
                       <React.Fragment key={msg.id}>
                         <div
                           data-message-id={
-                            msg.type !== "history-hidden" && msg.type !== "workspace-init"
+                            msg.type !== "history-hidden" &&
+                            msg.type !== "workspace-init" &&
+                            msg.type !== "script-execution"
                               ? msg.historyId
                               : undefined
                           }

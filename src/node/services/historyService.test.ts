@@ -107,7 +107,9 @@ describe("HistoryService", () => {
       const legacyMessage = createMuxMessage("msg-legacy", "user", "legacy", {
         historySequence: 0,
       });
-      (legacyMessage.metadata as Record<string, unknown>).cmuxMetadata = { type: "normal" };
+      (legacyMessage.metadata as Record<string, unknown>).cmuxMetadata = {
+        type: "normal",
+      } as unknown;
 
       const chatPath = path.join(workspaceDir, "chat.jsonl");
       await fs.writeFile(chatPath, JSON.stringify({ ...legacyMessage, workspaceId }) + "\n");
@@ -115,7 +117,9 @@ describe("HistoryService", () => {
       const result = await service.getHistory(workspaceId);
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data[0].metadata?.muxMetadata?.type).toBe("normal");
+        expect((result.data[0].metadata?.muxMetadata as unknown as { type: string })?.type).toBe(
+          "normal"
+        );
       }
     });
     it("should handle empty lines in history file", async () => {

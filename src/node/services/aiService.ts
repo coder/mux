@@ -28,6 +28,7 @@ import {
   addInterruptedSentinel,
   filterEmptyAssistantMessages,
   injectModeTransition,
+  transformScriptMessagesForLLM,
 } from "@/browser/utils/messages/modelMessageTransform";
 import { applyCacheControl } from "@/common/utils/ai/cacheStrategy";
 import type { HistoryService } from "./historyService";
@@ -869,10 +870,11 @@ export class AIService extends EventEmitter {
       // Add [CONTINUE] sentinel to partial messages (for model context)
       const messagesWithSentinel = addInterruptedSentinel(filteredMessages);
 
+      const messagesWithScripts = transformScriptMessagesForLLM(messagesWithSentinel);
       // Inject mode transition context if mode changed from last assistant message
       // Include tool names so model knows what tools are available in the new mode
       const messagesWithModeContext = injectModeTransition(
-        messagesWithSentinel,
+        messagesWithScripts,
         mode,
         toolNamesForSentinel
       );

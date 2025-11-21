@@ -17,6 +17,7 @@ import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePers
 import { useMode } from "@/browser/contexts/ModeContext";
 import { ThinkingSliderComponent } from "../ThinkingSlider";
 import { ModelSettings } from "../ModelSettings";
+import { useAvailableScripts } from "@/browser/hooks/useAvailableScripts";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import {
   getModelKey,
@@ -112,6 +113,7 @@ export type { ChatInputProps, ChatInputAPI };
 
 export const ChatInput: React.FC<ChatInputProps> = (props) => {
   const { variant } = props;
+  const workspaceId = variant === "workspace" ? props.workspaceId : undefined;
 
   // Extract workspace-specific props with defaults
   const disabled = props.disabled ?? false;
@@ -138,6 +140,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
   const [commandSuggestions, setCommandSuggestions] = useState<SlashSuggestion[]>([]);
   const [providerNames, setProviderNames] = useState<string[]>([]);
+  const availableScripts = useAvailableScripts(workspaceId ?? null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([]);
   const handleToastDismiss = useCallback(() => {
@@ -325,10 +328,13 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   // Watch input for slash commands
   useEffect(() => {
     const normalizedSlashSource = normalizeSlashCommandInput(input);
-    const suggestions = getSlashCommandSuggestions(normalizedSlashSource, { providerNames });
+    const suggestions = getSlashCommandSuggestions(normalizedSlashSource, {
+      providerNames,
+      availableScripts,
+    });
     setCommandSuggestions(suggestions);
     setShowCommandSuggestions(normalizedSlashSource.startsWith("/") && suggestions.length > 0);
-  }, [input, providerNames]);
+  }, [input, providerNames, availableScripts]);
 
   // Load provider names for suggestions
   useEffect(() => {
