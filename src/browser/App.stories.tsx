@@ -80,6 +80,19 @@ function setupMockAPI(options: {
           success: true,
           data: { success: true, output: "", exitCode: 0, wall_duration_ms: 0 },
         }),
+      executeScript: () =>
+        Promise.resolve({
+          success: true,
+          data: { success: true, output: "Mock script output", exitCode: 0, wall_duration_ms: 100 },
+        }),
+      listScripts: () =>
+        Promise.resolve({
+          success: true,
+          data: [
+            { name: "deploy", description: "Deploy to staging", isExecutable: true },
+            { name: "test", description: "Run tests", isExecutable: true },
+          ],
+        }),
     },
     projects: {
       list: () => Promise.resolve(Array.from(mockProjects.entries())),
@@ -1132,6 +1145,24 @@ export const ActiveWorkspaceWithChat: Story = {
               truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
               replaceChatHistory: () => Promise.resolve({ success: true, data: undefined }),
               getInfo: () => Promise.resolve(null),
+              executeScript: () =>
+                Promise.resolve({
+                  success: true,
+                  data: {
+                    success: true,
+                    output: "Mock script output",
+                    exitCode: 0,
+                    wall_duration_ms: 150,
+                  },
+                }),
+              listScripts: () =>
+                Promise.resolve({
+                  success: true,
+                  data: [
+                    { name: "deploy", description: "Deploy to staging", isExecutable: true },
+                    { name: "test", description: "Run tests", isExecutable: true },
+                  ],
+                }),
               executeBash: (wsId: string, command: string) => {
                 // Mock git status script responses for each workspace
                 const gitStatusMocks: Record<string, string> = {
@@ -1427,6 +1458,19 @@ These tables should render cleanly without any disruptive copy or download actio
               truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
               replaceChatHistory: () => Promise.resolve({ success: true, data: undefined }),
               getInfo: () => Promise.resolve(null),
+              executeScript: () =>
+                Promise.resolve({
+                  success: true,
+                  data: { success: true, output: "", exitCode: 0, wall_duration_ms: 0 },
+                }),
+              listScripts: () =>
+                Promise.resolve({
+                  success: true,
+                  data: [
+                    { name: "deploy", description: "Deploy to staging", isExecutable: true },
+                    { name: "test", description: "Run tests", isExecutable: true },
+                  ],
+                }),
               executeBash: () =>
                 Promise.resolve({
                   success: true,

@@ -283,9 +283,15 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
     const mergedMessages = mergeConsecutiveStreamErrors(workspaceState.messages);
     const editCutoffHistoryId = mergedMessages.find(
-      (msg): msg is Exclude<DisplayedMessage, { type: "history-hidden" | "workspace-init" }> =>
+      (
+        msg
+      ): msg is Exclude<
+        DisplayedMessage,
+        { type: "history-hidden" | "workspace-init" | "script-execution" }
+      > =>
         msg.type !== "history-hidden" &&
         msg.type !== "workspace-init" &&
+        msg.type !== "script-execution" &&
         msg.historyId === editingMessage.id
     )?.historyId;
 
@@ -313,10 +319,12 @@ const AIViewInner: React.FC<AIViewProps> = ({
   }
 
   // Extract state from workspace state
-  const { messages, canInterrupt, isCompacting, loading, currentModel } = workspaceState;
+  const { messages, canInterrupt, isCompacting, loading, currentModel, pendingScriptExecution } =
+    workspaceState;
 
   // Get active stream message ID for token counting
   const activeStreamMessageId = aggregator.getActiveStreamMessageId();
+  const isScriptExecutionPending = Boolean(pendingScriptExecution);
 
   // Note: We intentionally do NOT reset autoRetry when streams start.
   // If user pressed the interrupt key, autoRetry stays false until they manually retry.
@@ -328,9 +336,15 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // When editing, find the cutoff point
   const editCutoffHistoryId = editingMessage
     ? mergedMessages.find(
-        (msg): msg is Exclude<DisplayedMessage, { type: "history-hidden" | "workspace-init" }> =>
+        (
+          msg
+        ): msg is Exclude<
+          DisplayedMessage,
+          { type: "history-hidden" | "workspace-init" | "script-execution" }
+        > =>
           msg.type !== "history-hidden" &&
           msg.type !== "workspace-init" &&
+          msg.type !== "script-execution" &&
           msg.historyId === editingMessage.id
       )?.historyId
     : undefined;
@@ -369,6 +383,33 @@ const AIViewInner: React.FC<AIViewProps> = ({
       </div>
     );
   }
+
+  const interruptKeybindDisplay = formatKeybind(
+    vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL
+  );
+  const acceptEarlyKeybind = formatKeybind(KEYBINDS.ACCEPT_EARLY_COMPACTION);
+  const streamingStatusText = pendingScriptExecution
+    ? `${pendingScriptExecution.command} running...`
+    : isCompacting
+      ? currentModel
+        ? `${getModelName(currentModel)} compacting...`
+        : "compacting..."
+      : currentModel
+        ? `${getModelName(currentModel)} streaming...`
+        : "streaming...";
+  const streamingCancelText = pendingScriptExecution
+    ? `hit ${interruptKeybindDisplay} to cancel script`
+    : isCompacting
+      ? `${interruptKeybindDisplay} cancel | ${acceptEarlyKeybind} accept early`
+      : `hit ${interruptKeybindDisplay} to cancel`;
+  const streamingTokenCount =
+    isScriptExecutionPending || !activeStreamMessageId
+      ? undefined
+      : aggregator.getStreamingTokenCount(activeStreamMessageId);
+  const streamingTPS =
+    isScriptExecutionPending || !activeStreamMessageId
+      ? undefined
+      : aggregator.getStreamingTPS(activeStreamMessageId);
 
   return (
     <div
@@ -425,13 +466,16 @@ const AIViewInner: React.FC<AIViewProps> = ({
                       editCutoffHistoryId !== undefined &&
                       msg.type !== "history-hidden" &&
                       msg.type !== "workspace-init" &&
+                      msg.type !== "script-execution" &&
                       msg.historyId === editCutoffHistoryId;
 
                     return (
                       <React.Fragment key={msg.id}>
                         <div
                           data-message-id={
-                            msg.type !== "history-hidden" && msg.type !== "workspace-init"
+                            msg.type !== "history-hidden" &&
+                            msg.type !== "workspace-init" &&
+                            msg.type !== "script-execution"
                               ? msg.historyId
                               : undefined
                           }
@@ -459,30 +503,10 @@ const AIViewInner: React.FC<AIViewProps> = ({
               <PinnedTodoList workspaceId={workspaceId} />
               {canInterrupt && (
                 <StreamingBarrier
-                  statusText={
-                    isCompacting
-                      ? currentModel
-                        ? `${getModelName(currentModel)} compacting...`
-                        : "compacting..."
-                      : currentModel
-                        ? `${getModelName(currentModel)} streaming...`
-                        : "streaming..."
-                  }
-                  cancelText={
-                    isCompacting
-                      ? `${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} cancel | ${formatKeybind(KEYBINDS.ACCEPT_EARLY_COMPACTION)} accept early`
-                      : `hit ${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} to cancel`
-                  }
-                  tokenCount={
-                    activeStreamMessageId
-                      ? aggregator.getStreamingTokenCount(activeStreamMessageId)
-                      : undefined
-                  }
-                  tps={
-                    activeStreamMessageId
-                      ? aggregator.getStreamingTPS(activeStreamMessageId)
-                      : undefined
-                  }
+                  statusText={streamingStatusText}
+                  cancelText={streamingCancelText}
+                  tokenCount={streamingTokenCount}
+                  tps={streamingTPS}
                 />
               )}
               {workspaceState?.queuedMessage && (

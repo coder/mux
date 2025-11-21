@@ -221,12 +221,14 @@ describe("PartialService - Legacy compatibility", () => {
     const partialMessage = createMuxMessage("partial-1", "assistant", "legacy", {
       historySequence: 0,
     });
-    (partialMessage.metadata as Record<string, unknown>).cmuxMetadata = { type: "normal" };
+    (partialMessage.metadata as Record<string, unknown>).cmuxMetadata = {
+      type: "normal",
+    } as unknown;
 
     const partialPath = path.join(workspaceDir, "partial.json");
     await fs.writeFile(partialPath, JSON.stringify(partialMessage));
 
     const result = await partialService.readPartial(workspaceId);
-    expect(result?.metadata?.muxMetadata?.type).toBe("normal");
+    expect((result?.metadata?.muxMetadata as unknown as { type: string })?.type).toBe("normal");
   });
 });

@@ -1,15 +1,18 @@
 import type { ReactNode } from "react";
 import React, { useEffect, useCallback } from "react";
 import { cn } from "@/common/lib/utils";
+import ReactMarkdown from "react-markdown";
+import { markdownComponents } from "./Messages/MarkdownComponents";
 
-const toastTypeStyles: Record<"success" | "error", string> = {
+const toastTypeStyles: Record<"success" | "error" | "warning", string> = {
   success: "bg-toast-success-bg border border-accent-dark text-toast-success-text",
   error: "bg-toast-error-bg border border-toast-error-border text-toast-error-text",
+  warning: "bg-amber-900 border border-yellow-600 text-yellow-100",
 };
 
 export interface Toast {
   id: string;
-  type: "success" | "error";
+  type: "success" | "error" | "warning";
   title?: string;
   message: string;
   solution?: ReactNode;
@@ -36,7 +39,7 @@ export const ChatInputToast: React.FC<ChatInputToastProps> = ({ toast, onDismiss
   useEffect(() => {
     if (!toast) return;
 
-    // Only auto-dismiss success toasts
+    // Only auto-dismiss success toasts (warnings/errors stay until dismissed)
     if (toast.type === "success") {
       const duration = toast.duration ?? 3000;
       const timer = setTimeout(() => {
@@ -48,7 +51,6 @@ export const ChatInputToast: React.FC<ChatInputToastProps> = ({ toast, onDismiss
       };
     }
 
-    // Error toasts stay until manually dismissed
     return () => {
       setIsLeaving(false);
     };
@@ -91,7 +93,7 @@ export const ChatInputToast: React.FC<ChatInputToastProps> = ({ toast, onDismiss
     );
   }
 
-  // Regular toast for simple messages and success
+  // Regular toast for simple messages, warnings, and success
   return (
     <div className="pointer-events-none absolute right-[15px] bottom-full left-[15px] z-[1000] mb-2 [&>*]:pointer-events-auto">
       <div
@@ -108,9 +110,11 @@ export const ChatInputToast: React.FC<ChatInputToastProps> = ({ toast, onDismiss
         <span className="text-sm leading-none">{toast.type === "success" ? "✓" : "⚠"}</span>
         <div className="flex-1">
           {toast.title && <div className="mb-px text-[11px] font-semibold">{toast.title}</div>}
-          <div className="opacity-90">{toast.message}</div>
+          <div className="toast-markdown">
+            <ReactMarkdown components={markdownComponents}>{toast.message}</ReactMarkdown>
+          </div>
         </div>
-        {toast.type === "error" && (
+        {(toast.type === "error" || toast.type === "warning") && (
           <button
             onClick={handleDismiss}
             aria-label="Dismiss"

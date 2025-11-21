@@ -90,6 +90,10 @@ const api: IPCApi = {
     getInfo: (workspaceId) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_GET_INFO, workspaceId),
     executeBash: (workspaceId, script, options) =>
       ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_EXECUTE_BASH, workspaceId, script, options),
+    executeScript: (workspaceId, scriptName, args) =>
+      ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_EXECUTE_SCRIPT, workspaceId, scriptName, args),
+    listScripts: (workspaceId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_LIST_SCRIPTS, workspaceId),
     openTerminal: (workspaceId) => {
       return ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_OPEN_TERMINAL, workspaceId);
     },

@@ -45,6 +45,8 @@ import type { TerminalWindowManager } from "@/desktop/terminalWindowManager";
 import type { TerminalCreateParams, TerminalResizeParams } from "@/common/types/terminal";
 import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
 import { generateWorkspaceName } from "./workspaceTitleGenerator";
+import { listScripts } from "@/utils/scripts/discovery";
+import { runWorkspaceScript } from "@/node/services/scriptRunner";
 /**
  * IpcMain - Manages all IPC handlers and service coordination
  *
@@ -1035,8 +1037,11 @@ export class IpcMain {
           // Update recency on user message (fire and forget)
           void this.updateRecencyTimestamp(workspaceId);
 
-          // Queue new messages during streaming, but allow edits through
-          if (this.aiService.isStreaming(workspaceId) && !options?.editMessageId) {
+          // Queue new messages during streaming OR script execution, but allow edits through
+          if (
+            (this.aiService.isStreaming(workspaceId) || session.isScriptRunning) &&
+            !options?.editMessageId
+          ) {
             session.queueMessage(message, options);
             return Ok(undefined);
           }
@@ -1099,6 +1104,9 @@ export class IpcMain {
         try {
           const session = this.getOrCreateSession(workspaceId);
           const stopResult = await session.interruptStream(options?.abandonPartial);
+
+          // Also abort any running scripts
+          session.abortScript();
           if (!stopResult.success) {
             log.error("Failed to stop stream:", stopResult.error);
             return { success: false, error: stopResult.error };
@@ -1262,7 +1270,7 @@ export class IpcMain {
             srcBaseDir: this.config.srcDir,
           };
           const runtime = createRuntime(runtimeConfig);
-          const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+          const workspacePath = workspace.workspacePath;
 
           // Create bash tool with workspace's cwd and secrets
           // All IPC bash calls are from UI (background operations) - use truncate to avoid temp file spam
@@ -1296,9 +1304,182 @@ export class IpcMain {
       }
     );
 
+    ipcMain.handle(
+      IPC_CHANNELS.WORKSPACE_EXECUTE_SCRIPT,
+      async (_event, workspaceId: string, scriptName: string, args: string[] = []) => {
+        try {
+          const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+          if (!metadataResult.success) {
+            return Err(`Failed to get workspace metadata: ${metadataResult.error}`);
+          }
+
+          const metadata = metadataResult.data;
+          const workspace = this.config.findWorkspace(workspaceId);
+          if (!workspace) {
+            return Err(`Workspace ${workspaceId} not found in config`);
+          }
+
+          const projectSecrets = this.config.getProjectSecrets(metadata.projectPath);
+          const runtimeConfig = metadata.runtimeConfig ?? {
+            type: "local" as const,
+            srcBaseDir: this.config.srcDir,
+          };
+          const runtimeInstance = createRuntime(runtimeConfig);
+          // Handle in-place workspaces where projectPath === name
+          // Always use path from config as source of truth (legacy workspaces may have mismatch)
+          const workspacePath = workspace.workspacePath;
+
+          const session = this.getOrCreateSession(workspaceId);
+          const signal = session.startScriptExecution();
+
+          let scriptMessage: MuxMessage | null = null;
+          let scriptMessagePersisted = false;
+          let scriptExecutionStartMs: number | null = null;
+
+          const buildScriptFailureResult = (
+            errorMessage: string,
+            elapsedMs: number
+          ): BashToolResult => ({
+            success: false,
+            error: errorMessage,
+            output: "",
+            exitCode: 1,
+            wall_duration_ms: elapsedMs >= 0 ? elapsedMs : 0,
+          });
+
+          const persistScriptResult = async (result: BashToolResult): Promise<void> => {
+            assert(
+              scriptMessagePersisted,
+              "Script message must be appended before persisting result"
+            );
+            assert(scriptMessage, "Script message must exist before persisting result");
+            const metadata = scriptMessage.metadata?.muxMetadata;
+            assert(
+              metadata?.type === "script-execution",
+              "Unexpected script message metadata type"
+            );
+
+            metadata.result = result;
+
+            const updateResult = await this.historyService.updateHistory(
+              workspaceId,
+              scriptMessage
+            );
+            if (!updateResult.success) {
+              log.error(
+                `Failed to update script execution history for workspace ${workspaceId}: ${updateResult.error}`
+              );
+            }
+
+            if (this.mainWindow) {
+              const channel = getChatChannel(workspaceId);
+              this.mainWindow.webContents.send(channel, scriptMessage);
+            }
+          };
+
+          try {
+            // 1. Create and persist script execution message immediately
+            // This ensures the user sees "Executing script..." in the timeline while it runs
+            const command = `/script ${scriptName}${args.length > 0 ? " " + args.join(" ") : ""}`;
+            const scriptMessageId = `script-${Date.now()}`;
+            const scriptTimestamp = Date.now();
+            const newScriptMessage: MuxMessage = {
+              id: scriptMessageId,
+              role: "user",
+              parts: [{ type: "text", text: `Executed script: ${command}` }],
+              metadata: {
+                timestamp: scriptTimestamp,
+                muxMetadata: {
+                  type: "script-execution",
+                  id: scriptMessageId,
+                  timestamp: scriptTimestamp,
+                  command,
+                  scriptName,
+                  args,
+                },
+              },
+            };
+            scriptMessage = newScriptMessage;
+
+            const appendResult = await this.historyService.appendToHistory(
+              workspaceId,
+              newScriptMessage
+            );
+
+            if (appendResult.success) {
+              scriptMessagePersisted = true;
+              // Broadcast the new message to the frontend immediately
+              const channel = getChatChannel(workspaceId);
+              if (this.mainWindow) {
+                this.mainWindow.webContents.send(channel, newScriptMessage);
+              }
+            } else {
+              log.error("Failed to persist script execution:", appendResult.error);
+              return Err(`Failed to persist script execution: ${appendResult.error}`);
+            }
+
+            // 2. Execute the script
+            scriptExecutionStartMs = Date.now();
+            const execResult = await runWorkspaceScript(
+              runtimeInstance,
+              workspacePath,
+              scriptName,
+              args,
+              {
+                env: {},
+                secrets: secretsToRecord(projectSecrets),
+                timeoutSecs: 300,
+                abortSignal: signal,
+              }
+            );
+            const elapsedMs = scriptExecutionStartMs ? Date.now() - scriptExecutionStartMs : 0;
+            scriptExecutionStartMs = null;
+
+            if (!execResult.success) {
+              await persistScriptResult(buildScriptFailureResult(execResult.error, elapsedMs));
+              return Err(execResult.error);
+            }
+
+            const scriptResult = execResult.data;
+
+            // 3. Construct the enhanced BashToolResult
+            const enhancedResult: BashToolResult = {
+              ...scriptResult.toolResult,
+              outputFile: scriptResult.outputFileContent ?? undefined,
+              promptFile: scriptResult.promptFileContent ?? undefined,
+            };
+
+            // 4. Update the history message with the result
+            await persistScriptResult(enhancedResult);
+
+            return Ok(enhancedResult);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            const elapsedMs = scriptExecutionStartMs ? Date.now() - scriptExecutionStartMs : 0;
+            if (scriptMessagePersisted) {
+              try {
+                await persistScriptResult(buildScriptFailureResult(message, elapsedMs));
+              } catch (persistError) {
+                log.error(
+                  `Failed to persist script execution failure result for workspace ${workspaceId}:`,
+                  persistError
+                );
+              }
+            }
+            return Err(`Failed to execute script: ${message}`);
+          } finally {
+            session.endScriptExecution();
+            session.processQueue();
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return Err(`Failed to execute script: ${message}`);
+        }
+      }
+    );
+
     ipcMain.handle(IPC_CHANNELS.WORKSPACE_OPEN_TERMINAL, async (_event, workspaceId: string) => {
       try {
-        // Look up workspace metadata to get runtime config
         const allMetadata = await this.config.getAllWorkspaceMetadata();
         const workspace = allMetadata.find((w) => w.id === workspaceId);
 
@@ -1310,14 +1491,12 @@ export class IpcMain {
         const runtimeConfig = workspace.runtimeConfig;
 
         if (isSSHRuntime(runtimeConfig)) {
-          // SSH workspace - spawn local terminal that SSHs into remote host
           await this.openTerminal({
             type: "ssh",
             sshConfig: runtimeConfig,
             remotePath: workspace.namedWorkspacePath,
           });
         } else {
-          // Local workspace - spawn terminal with cwd set
           await this.openTerminal({ type: "local", workspacePath: workspace.namedWorkspacePath });
         }
       } catch (error) {
@@ -1621,6 +1800,36 @@ export class IpcMain {
         }
       }
     );
+
+    ipcMain.handle(IPC_CHANNELS.WORKSPACE_LIST_SCRIPTS, async (_event, workspaceId: string) => {
+      try {
+        // Get workspace metadata to find workspace path
+        const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+        if (!metadataResult.success) {
+          return Err(`Workspace not found: ${workspaceId}`);
+        }
+
+        // Get actual workspace path from config (handles both legacy and new format)
+        const workspace = this.config.findWorkspace(workspaceId);
+        if (!workspace) {
+          return Err(`Workspace ${workspaceId} not found in config`);
+        }
+        const workspacePath = workspace.workspacePath;
+
+        const metadata = metadataResult.data;
+        const runtimeConfig = metadata.runtimeConfig ?? {
+          type: "local" as const,
+          srcBaseDir: this.config.srcDir,
+        };
+        const runtime = createRuntime(runtimeConfig);
+
+        const scripts = await listScripts(runtime, workspacePath);
+        return Ok(scripts);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return Err(`Failed to list scripts: ${message}`);
+      }
+    });
   }
 
   private registerTerminalHandlers(ipcMain: ElectronIpcMain, mainWindow: BrowserWindow): void {

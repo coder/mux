@@ -6,6 +6,7 @@ import { ToolMessage } from "./ToolMessage";
 import { ReasoningMessage } from "./ReasoningMessage";
 import { StreamErrorMessage } from "./StreamErrorMessage";
 import { HistoryHiddenMessage } from "./HistoryHiddenMessage";
+import { ScriptExecutionMessage } from "./ScriptExecutionMessage";
 import { InitMessage } from "./InitMessage";
 
 interface MessageRendererProps {
@@ -50,6 +51,8 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
         return <HistoryHiddenMessage message={message} className={className} />;
       case "workspace-init":
         return <InitMessage message={message} className={className} />;
+      case "script-execution":
+        return <ScriptExecutionMessage message={message} className={className} />;
       default:
         console.error("don't know how to render message", message);
         return null;

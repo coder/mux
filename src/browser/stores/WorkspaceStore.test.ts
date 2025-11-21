@@ -1,4 +1,7 @@
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import { createMuxMessage } from "@/common/types/message";
+import type { WorkspaceChatMessage } from "@/common/types/ipc";
+import type { BashToolResult } from "@/common/types/tools";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { WorkspaceStore } from "./WorkspaceStore";
 
@@ -12,6 +15,13 @@ const mockExecuteBash = jest.fn(() => ({
     exitCode: 0,
   },
 }));
+
+const SCRIPT_RESULT: BashToolResult = {
+  success: true,
+  output: "ok",
+  exitCode: 0,
+  wall_duration_ms: 1,
+};
 
 const mockWindow = {
   api: {
@@ -246,6 +256,55 @@ describe("WorkspaceStore", () => {
     });
   });
 
+  describe("script execution state", () => {
+    it("treats pending scripts as interruptible", async () => {
+      const workspaceId = "script-workspace";
+      createAndAddWorkspace(store, workspaceId);
+
+      const onChatCallback = getOnChatCallback<WorkspaceChatMessage>();
+
+      onChatCallback({ type: "caught-up" });
+
+      const timestamp = Date.now();
+      const baseMetadata = {
+        historySequence: 1,
+        timestamp,
+        muxMetadata: {
+          type: "script-execution" as const,
+          id: "script-exec-1",
+          historySequence: 1,
+          timestamp,
+          command: "/script wait_pr_checks",
+          scriptName: "wait_pr_checks",
+          args: [] as string[],
+        },
+      };
+
+      const scriptMessage = createMuxMessage("script-1", "user", "Run script", baseMetadata);
+      onChatCallback(scriptMessage);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const pendingState = store.getWorkspaceState(workspaceId);
+      expect(pendingState.canInterrupt).toBe(true);
+      expect(pendingState.pendingScriptExecution).toMatchObject({
+        scriptName: "wait_pr_checks",
+      });
+
+      const completedScript = createMuxMessage("script-1", "user", "Run script", {
+        ...baseMetadata,
+        muxMetadata: {
+          ...baseMetadata.muxMetadata,
+          result: SCRIPT_RESULT,
+        },
+      });
+      onChatCallback(completedScript);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const finalState = store.getWorkspaceState(workspaceId);
+      expect(finalState.pendingScriptExecution).toBeNull();
+      expect(finalState.canInterrupt).toBe(false);
+    });
+  });
   describe("getWorkspaceState", () => {
     it("should return initial state for newly added workspace", () => {
       createAndAddWorkspace(store, "new-workspace");

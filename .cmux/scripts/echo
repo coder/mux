@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Description: Echo arguments demo. Accepts any number of arguments (strings) which will be echoed back.
+set -euo pipefail
+
+# Check if arguments were provided
+if [ $# -eq 0 ]; then
+  cat >>"$MUX_OUTPUT" <<'EOF'
+## ⚠️ No Arguments Provided
+
+Usage: `/s echo <message...>`
+
+Example: `/s echo hello world`
+EOF
+  exit 0
+fi
+
+# Access arguments using standard bash positional parameters
+# $1 = first arg, $2 = second arg, $@ = all args, $# = number of args
+
+cat >>"$MUX_OUTPUT" <<EOF
+## 🔊 Echo Script
+
+**You said:** $@
+
+**Arguments received:**
+- Count: $# arguments
+- First arg: ${1:-none}
+- Second arg: ${2:-none}
+- All args: $@
+
+**Individual arguments:**
+EOF
+
+
+# Echo arguments to stdout for AI tool visibility
+echo "Echoing arguments to stdout: $@"
+
+# Loop through each argument
+for i in $(seq 1 $#); do
+  echo "- Arg $i: ${!i}" >>"$MUX_OUTPUT"
+done
+
+# Optionally send a message to the agent
+if [ $# -gt 3 ]; then
+  cat >>"$MUX_PROMPT" <<EOF
+The user passed more than 3 arguments to the echo script. They seem to be testing the argument passing feature extensively!
+EOF
+fi
