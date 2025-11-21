@@ -110,8 +110,8 @@ export function applyCacheControlToTools<T extends Record<string, Tool>>(
       };
       cachedTools[key as keyof T] = cachedTool as unknown as T[keyof T];
     } else {
-      // Other tools are copied as-is
-      cachedTools[key as keyof T] = tool;
+      // Other tools are copied as-is (use unknown for type safety)
+      cachedTools[key as keyof T] = tool as unknown as T[keyof T];
     }
   }
 
