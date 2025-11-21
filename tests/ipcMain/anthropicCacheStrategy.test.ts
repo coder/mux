@@ -61,7 +61,8 @@ describeIntegration("Anthropic cache strategy integration", () => {
     const { env, workspaceId, cleanup } = await setupWorkspace("openai");
 
     try {
-      const model = "openai:gpt-4";
+      // Align OpenAI model with other integration suites to avoid unsupported-tool errors
+      const model = "gpt-4o-mini";
       const message = "Hello, can you help me?";
 
       await sendMessageWithModel(env.mockIpcRenderer, workspaceId, message, model, {
