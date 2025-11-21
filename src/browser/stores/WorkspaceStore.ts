@@ -795,6 +795,8 @@ export class WorkspaceStore {
       aggregator.handleDeleteMessage(data);
       this.states.bump(workspaceId);
       this.checkAndBumpRecencyIfChanged();
+      this.usageStore.bump(workspaceId);
+      this.consumerManager.scheduleCalculation(workspaceId, aggregator);
       return;
     }
 
