@@ -424,27 +424,34 @@ export class WorkspaceStore {
    * Extract usage from messages (no tokenization).
    * Each usage entry calculated with its own model for accurate costs.
    *
-   * REQUIRES: Workspace must have been added via addWorkspace() first.
+   * Returns empty state if workspace doesn't exist (e.g., creation mode).
    */
   getWorkspaceUsage(workspaceId: string): WorkspaceUsageState {
     return this.usageStore.get(workspaceId, () => {
-      const aggregator = this.assertGet(workspaceId);
+      const aggregator = this.aggregators.get(workspaceId);
+      if (!aggregator) {
+        return { usageHistory: [], totalTokens: 0 };
+      }
 
       const messages = aggregator.getAllMessages();
       const model = aggregator.getCurrentModel();
       const usageHistory = collectUsageHistory(messages, model);
 
-      // Calculate total from usage history (now includes historical)
-      const totalTokens = usageHistory.reduce(
-        (sum, u) =>
-          sum +
-          u.input.tokens +
-          u.cached.tokens +
-          u.cacheCreate.tokens +
-          u.output.tokens +
-          u.reasoning.tokens,
-        0
-      );
+      const messages = aggregator.getAllMessages();
+      const model = aggregator.getCurrentModel();
+      const usageHistory = cumUsageHistory(messages, model);
+
+      // Use last entry's total (each entry is cumulative, not a delta)
+      // Each usageHistory entry contains the FULL prompt tokens for that turn,
+      // so we only need the most recent value, not a sum
+      const lastEntry = usageHistory[usageHistory.length - 1];
+      const totalTokens = lastEntry
+        ? lastEntry.input.tokens +
+          lastEntry.cached.tokens +
+          lastEntry.cacheCreate.tokens +
+          lastEntry.output.tokens +
+          lastEntry.reasoning.tokens
+        : 0;
 
       return { usageHistory, totalTokens };
     });

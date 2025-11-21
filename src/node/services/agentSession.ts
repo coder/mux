@@ -326,9 +326,10 @@ export class AgentSession {
     // If this is a compaction request with a continue message, queue it for auto-send after compaction
     const muxMeta = options?.muxMetadata;
     if (muxMeta?.type === "compaction-request" && muxMeta.parsed.continueMessage && options) {
+      const { text, imageParts } = muxMeta.parsed.continueMessage;
       // Strip out edit-specific and compaction-specific fields so the queued message is a fresh user message
       const { muxMetadata, mode, editMessageId, ...continueOptions } = options;
-      this.messageQueue.add(muxMeta.parsed.continueMessage, continueOptions);
+      this.messageQueue.add(text, { ...continueOptions, imageParts });
       this.emitQueuedMessageChanged();
     }
 

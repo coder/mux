@@ -762,7 +762,10 @@ export class StreamingMessageAggregator {
             muxMeta?.type === "compaction-request"
               ? {
                   rawCommand: muxMeta.rawCommand,
-                  parsed: muxMeta.parsed,
+                  parsed: {
+                    maxOutputTokens: muxMeta.parsed.maxOutputTokens,
+                    continueMessage: muxMeta.parsed.continueMessage?.text, // Extract text for display
+                  },
                 }
               : undefined;
 
