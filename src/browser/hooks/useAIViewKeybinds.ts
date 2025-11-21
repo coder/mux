@@ -24,6 +24,7 @@ interface UseAIViewKeybindsParams {
   aggregator: StreamingMessageAggregator; // For compaction detection
   setEditingMessage: (editing: { id: string; content: string } | undefined) => void;
   vimEnabled: boolean; // For vim-aware interrupt keybind
+  onInterrupt: () => Promise<void>; // Callback to handle interrupt
 }
 
 /**
@@ -52,6 +53,7 @@ export function useAIViewKeybinds({
   aggregator,
   setEditingMessage,
   vimEnabled,
+  onInterrupt,
 }: UseAIViewKeybindsParams): void {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -81,7 +83,7 @@ export function useAIViewKeybinds({
         if (canInterrupt || showRetryBarrier) {
           e.preventDefault();
           setAutoRetry(false); // User explicitly stopped - don't auto-retry
-          void window.api.workspace.interruptStream(workspaceId);
+          void onInterrupt();
           return;
         }
       }
@@ -95,7 +97,7 @@ export function useAIViewKeybinds({
           // No flag set - handleCompactionAbort will perform compaction with [truncated]
           e.preventDefault();
           setAutoRetry(false);
-          void window.api.workspace.interruptStream(workspaceId);
+          void onInterrupt();
         }
         // Let browser handle Ctrl+A (select all) when not compacting
         return;
@@ -175,5 +177,6 @@ export function useAIViewKeybinds({
     aggregator,
     setEditingMessage,
     vimEnabled,
+    onInterrupt,
   ]);
 }

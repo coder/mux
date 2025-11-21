@@ -7,6 +7,7 @@ interface StreamingBarrierProps {
   cancelText: string; // e.g., "hit Esc to cancel"
   tokenCount?: number;
   tps?: number;
+  interrupting?: boolean;
 }
 
 export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
@@ -15,11 +16,13 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
   cancelText,
   tokenCount,
   tps,
+  interrupting,
 }) => {
+  const color = interrupting ? "var(--color-interrupted)" : "var(--color-assistant-border)";
   return (
     <div className={`flex items-center justify-between gap-4 ${className ?? ""}`}>
       <div className="flex flex-1 items-center gap-2">
-        <BaseBarrier text={statusText} color="var(--color-assistant-border)" animate />
+        <BaseBarrier text={statusText} color={color} animate />
         {tokenCount !== undefined && (
           <span className="text-assistant-border font-mono text-[11px] whitespace-nowrap select-none">
             ~{tokenCount.toLocaleString()} tokens
