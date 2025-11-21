@@ -37,7 +37,7 @@ import { evictModelFromLRU } from "@/browser/hooks/useModelLRU";
 import { QueuedMessage } from "./Messages/QueuedMessage";
 import { CompactionWarning } from "./CompactionWarning";
 import { shouldAutoCompact } from "@/browser/utils/compaction/autoCompactionCheck";
-import { use1MContext } from "@/browser/hooks/use1MContext";
+import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 
 interface AIViewProps {
   workspaceId: string;
@@ -82,7 +82,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const workspaceState = useWorkspaceState(workspaceId);
   const aggregator = useWorkspaceAggregator(workspaceId);
   const workspaceUsage = useWorkspaceUsage(workspaceId);
-  const [use1M] = use1MContext();
+  const { options } = useProviderOptions();
+  const use1M = options.anthropic?.use1MContext ?? false;
   const handledModelErrorsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
