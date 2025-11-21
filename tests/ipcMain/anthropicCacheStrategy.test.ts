@@ -44,7 +44,9 @@ describeIntegration("Anthropic cache strategy integration", () => {
 
         // Check that both streams completed successfully
         const firstEndEvent = firstCollector.getEvents().find((e: any) => e.type === "stream-end");
-        const secondEndEvent = secondCollector.getEvents().find((e: any) => e.type === "stream-end");
+        const secondEndEvent = secondCollector
+          .getEvents()
+          .find((e: any) => e.type === "stream-end");
         expect(firstEndEvent).toBeDefined();
         expect(secondEndEvent).toBeDefined();
 
@@ -79,9 +81,7 @@ describeIntegration("Anthropic cache strategy integration", () => {
         } else {
           // No usage data from API (e.g., custom bridge that doesn't report metrics)
           // Just ensure both requests completed successfully
-          console.log(
-            "Note: API did not return usage data. Skipping cache metrics verification."
-          );
+          console.log("Note: API did not return usage data. Skipping cache metrics verification.");
           console.log("Test passes - both messages completed successfully.");
         }
       } finally {

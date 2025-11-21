@@ -71,7 +71,7 @@ export function createCachedSystemMessage(
 /**
  * Apply cache control to tool definitions for Anthropic models.
  * Tools are static per model and should always be cached.
- * 
+ *
  * IMPORTANT: Anthropic has a 4 cache breakpoint limit. We use:
  * 1. System message (1 breakpoint)
  * 2. Conversation history (1 breakpoint)
