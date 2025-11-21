@@ -437,10 +437,6 @@ export class WorkspaceStore {
       const model = aggregator.getCurrentModel();
       const usageHistory = collectUsageHistory(messages, model);
 
-      const messages = aggregator.getAllMessages();
-      const model = aggregator.getCurrentModel();
-      const usageHistory = cumUsageHistory(messages, model);
-
       // Use last entry's total (each entry is cumulative, not a delta)
       // Each usageHistory entry contains the FULL prompt tokens for that turn,
       // so we only need the most recent value, not a sum
