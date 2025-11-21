@@ -437,17 +437,17 @@ export class WorkspaceStore {
       const model = aggregator.getCurrentModel();
       const usageHistory = collectUsageHistory(messages, model);
 
-      // Use last entry's total (each entry is cumulative, not a delta)
-      // Each usageHistory entry contains the FULL prompt tokens for that turn,
-      // so we only need the most recent value, not a sum
-      const lastEntry = usageHistory[usageHistory.length - 1];
-      const totalTokens = lastEntry
-        ? lastEntry.input.tokens +
-          lastEntry.cached.tokens +
-          lastEntry.cacheCreate.tokens +
-          lastEntry.output.tokens +
-          lastEntry.reasoning.tokens
-        : 0;
+      // Calculate total from usage history (now includes historical)
+      const totalTokens = usageHistory.reduce(
+        (sum, u) =>
+          sum +
+          u.input.tokens +
+          u.cached.tokens +
+          u.cacheCreate.tokens +
+          u.output.tokens +
+          u.reasoning.tokens,
+        0
+      );
 
       return { usageHistory, totalTokens };
     });
