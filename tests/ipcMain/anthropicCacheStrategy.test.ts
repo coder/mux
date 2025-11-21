@@ -6,7 +6,7 @@ const hasAnthropicKey = Boolean(process.env.ANTHROPIC_API_KEY);
 const hasOpenAIKey = Boolean(process.env.OPENAI_API_KEY);
 const shouldRunSuite = shouldRunIntegrationTests() && hasAnthropicKey && hasOpenAIKey;
 const describeIntegration = shouldRunSuite ? describe : describe.skip;
-const TEST_TIMEOUT_MS = 60000;
+const TEST_TIMEOUT_MS = 120000;
 
 if (shouldRunIntegrationTests() && !shouldRunSuite) {
   // eslint-disable-next-line no-console
