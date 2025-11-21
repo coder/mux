@@ -71,6 +71,12 @@ export function createCachedSystemMessage(
 /**
  * Apply cache control to tool definitions for Anthropic models.
  * Tools are static per model and should always be cached.
+ * 
+ * IMPORTANT: Anthropic has a 4 cache breakpoint limit. We use:
+ * 1. System message (1 breakpoint)
+ * 2. Conversation history (1 breakpoint)
+ * 3. Last tool only (1 breakpoint) - caches all tools up to and including this one
+ * = 3 total, leaving 1 for future use
  */
 export function applyCacheControlToTools<T extends Record<string, Tool>>(
   tools: T,
@@ -81,21 +87,32 @@ export function applyCacheControlToTools<T extends Record<string, Tool>>(
     return tools;
   }
 
-  // Clone tools and add cache control to each tool
+  // Get the last tool key (tools are ordered, last one gets cached)
+  const toolKeys = Object.keys(tools);
+  const lastToolKey = toolKeys[toolKeys.length - 1];
+
+  // Clone tools and add cache control ONLY to the last tool
+  // Anthropic caches everything up to the cache breakpoint, so marking
+  // only the last tool will cache all tools
   const cachedTools = {} as unknown as T;
   for (const [key, tool] of Object.entries(tools)) {
-    // Use unknown as intermediate type for safe casting
-    const cachedTool = {
-      ...tool,
-      providerOptions: {
-        anthropic: {
-          cacheControl: {
-            type: "ephemeral" as const,
+    if (key === lastToolKey) {
+      // Last tool gets cache control
+      const cachedTool = {
+        ...tool,
+        providerOptions: {
+          anthropic: {
+            cacheControl: {
+              type: "ephemeral" as const,
+            },
           },
         },
-      },
-    };
-    cachedTools[key as keyof T] = cachedTool as unknown as T[keyof T];
+      };
+      cachedTools[key as keyof T] = cachedTool as unknown as T[keyof T];
+    } else {
+      // Other tools are copied as-is
+      cachedTools[key as keyof T] = tool;
+    }
   }
 
   return cachedTools;

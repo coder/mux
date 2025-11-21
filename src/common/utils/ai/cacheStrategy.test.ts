@@ -162,21 +162,31 @@ describe("cacheStrategy", () => {
       expect(result).toEqual({});
     });
 
-    it("should add cache control to all tools for Anthropic models", () => {
+    it("should add cache control only to the last tool for Anthropic models", () => {
       const result = applyCacheControlToTools(mockTools, "anthropic:claude-3-5-sonnet");
 
-      // Check that each tool has cache control added
+      // Get the keys to identify first and last tools
+      const keys = Object.keys(mockTools);
+      const lastKey = keys[keys.length - 1];
+
+      // Check that only the last tool has cache control
       for (const [key, tool] of Object.entries(result)) {
-        expect(tool).toEqual({
-          ...mockTools[key],
-          providerOptions: {
-            anthropic: {
-              cacheControl: {
-                type: "ephemeral",
+        if (key === lastKey) {
+          // Last tool should have cache control
+          expect(tool).toEqual({
+            ...mockTools[key],
+            providerOptions: {
+              anthropic: {
+                cacheControl: {
+                  type: "ephemeral",
+                },
               },
             },
-          },
-        });
+          });
+        } else {
+          // Other tools should be unchanged
+          expect(tool).toEqual(mockTools[key]);
+        }
       }
 
       // Verify all tools are present
