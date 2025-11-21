@@ -6,8 +6,12 @@
  * to ensure consistent behavior and avoid duplication.
  */
 
-import type { SendMessageOptions } from "@/common/types/ipc";
-import type { MuxFrontendMetadata, CompactionRequestData } from "@/common/types/message";
+import type { SendMessageOptions, ImagePart } from "@/common/types/ipc";
+import type {
+  MuxFrontendMetadata,
+  CompactionRequestData,
+  ContinueMessage,
+} from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { RUNTIME_MODE, SSH_RUNTIME_PREFIX } from "@/common/types/runtime";
@@ -17,6 +21,7 @@ import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
 import { resolveCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
 import { getRuntimeKey } from "@/common/constants/storage";
+import type { ImageAttachment } from "../components/ImageAttachments";
 
 // ============================================================================
 // Workspace Creation
@@ -177,7 +182,7 @@ export { forkWorkspace } from "./workspaceFork";
 export interface CompactionOptions {
   workspaceId: string;
   maxOutputTokens?: number;
-  continueMessage?: string;
+  continueMessage?: ContinueMessage;
   model?: string;
   sendMessageOptions: SendMessageOptions;
   editMessageId?: string;
@@ -203,7 +208,7 @@ export function prepareCompactionMessage(options: CompactionOptions): {
   let messageText = `Summarize this conversation into a compact form for a new Assistant to continue helping the user. Use approximately ${targetWords} words.`;
 
   if (options.continueMessage) {
-    messageText += `\n\nThe user wants to continue with: ${options.continueMessage}`;
+    messageText += `\n\nThe user wants to continue with: ${options.continueMessage.text}`;
   }
 
   // Handle model preference (sticky globally)
@@ -267,7 +272,7 @@ function formatCompactionCommand(options: CompactionOptions): string {
     cmd += ` -m ${options.model}`;
   }
   if (options.continueMessage) {
-    cmd += `\n${options.continueMessage}`;
+    cmd += `\n${options.continueMessage.text}`;
   }
   return cmd;
 }
@@ -279,8 +284,10 @@ function formatCompactionCommand(options: CompactionOptions): string {
 export interface CommandHandlerContext {
   workspaceId: string;
   sendMessageOptions: SendMessageOptions;
+  imageParts?: ImagePart[];
   editMessageId?: string;
   setInput: (value: string) => void;
+  setImageAttachments: (images: ImageAttachment[]) => void;
   setIsSending: (value: boolean) => void;
   setToast: (toast: Toast) => void;
   onCancelEdit?: () => void;
@@ -394,19 +401,23 @@ export async function handleCompactCommand(
     sendMessageOptions,
     editMessageId,
     setInput,
+    setImageAttachments,
     setIsSending,
     setToast,
     onCancelEdit,
   } = context;
 
   setInput("");
+  setImageAttachments([]);
   setIsSending(true);
 
   try {
     const result = await executeCompaction({
       workspaceId,
       maxOutputTokens: parsed.maxOutputTokens,
-      continueMessage: parsed.continueMessage,
+      continueMessage: parsed.continueMessage
+        ? { text: parsed.continueMessage, imageParts: context.imageParts }
+        : undefined,
       model: parsed.model,
       sendMessageOptions,
       editMessageId,
