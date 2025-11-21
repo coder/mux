@@ -816,6 +816,7 @@ export class WorkspaceStore {
         // Process live events immediately (after history loaded)
         aggregator.handleMessage(data);
         this.states.bump(workspaceId);
+        this.usageStore.bump(workspaceId);
         this.checkAndBumpRecencyIfChanged();
       }
       return;
