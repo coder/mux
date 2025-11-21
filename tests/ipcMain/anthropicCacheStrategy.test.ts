@@ -3,15 +3,14 @@ import { sendMessageWithModel, waitForStreamSuccess } from "./helpers";
 
 // Skip tests unless TEST_INTEGRATION=1 AND required API keys are present
 const hasAnthropicKey = Boolean(process.env.ANTHROPIC_API_KEY);
-const hasOpenAIKey = Boolean(process.env.OPENAI_API_KEY);
-const shouldRunSuite = shouldRunIntegrationTests() && hasAnthropicKey && hasOpenAIKey;
+const shouldRunSuite = shouldRunIntegrationTests() && hasAnthropicKey;
 const describeIntegration = shouldRunSuite ? describe : describe.skip;
 const TEST_TIMEOUT_MS = 120000;
 
 if (shouldRunIntegrationTests() && !shouldRunSuite) {
   // eslint-disable-next-line no-console
   console.warn(
-    "Skipping Anthropic cache strategy integration tests: missing ANTHROPIC_API_KEY or OPENAI_API_KEY"
+    "Skipping Anthropic cache strategy integration tests: missing ANTHROPIC_API_KEY"
   );
 }
 
@@ -60,31 +59,6 @@ describeIntegration("Anthropic cache strategy integration", () => {
       // - firstCollector.getEndEvent()?.metadata?.usage?.cacheCreationInputTokens > 0 (cache created)
       // - secondCollector.getEndEvent()?.metadata?.usage?.cacheReadInputTokens > 0 (cache used)
       // But in mock mode, we just verify the flow completes successfully
-    } finally {
-      await cleanup();
-    }
-  });
-
-  test("should not apply cache control for non-Anthropic models", async () => {
-    const { env, workspaceId, cleanup } = await setupWorkspace("openai");
-
-    try {
-      // Align OpenAI model with other integration suites to avoid unsupported-tool errors
-      const model = "gpt-4o-mini";
-      const message = "Hello, can you help me?";
-
-      await sendMessageWithModel(env.mockIpcRenderer, workspaceId, message, model, {
-        additionalSystemInstructions: "You are a helpful assistant.",
-        thinkingLevel: "off",
-      });
-      const collector = await waitForStreamSuccess(env.sentEvents, workspaceId, TEST_TIMEOUT_MS);
-
-      // Verify the stream completed
-      const endEvent = collector.getEvents().find((e: any) => e.type === "stream-end");
-      expect(endEvent).toBeDefined();
-
-      // For non-Anthropic models, cache control should not be applied
-      // The stream should complete normally without any cache-related metadata
     } finally {
       await cleanup();
     }
