@@ -8,6 +8,7 @@ import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { supports1MContext } from "@/common/utils/ai/models";
 import { TOKEN_COMPONENT_COLORS } from "@/common/utils/tokens/tokenMeterUtils";
 import { ConsumerBreakdown } from "./ConsumerBreakdown";
+import { AutoCompactionSettings } from "./AutoCompactionSettings";
 
 // Format token display - show k for thousands with 1 decimal
 const formatTokens = (tokens: number) =>
@@ -230,6 +231,8 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
           </div>
         </div>
       )}
+
+      {hasUsageData && <AutoCompactionSettings workspaceId={workspaceId} />}
 
       {hasUsageData && (
         <div data-testid="cost-section" className="mb-6">

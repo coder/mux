@@ -148,6 +148,22 @@ export function getReviewSearchStateKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for auto-compaction enabled preference per workspace
+ * Format: "autoCompaction:enabled:{workspaceId}"
+ */
+export function getAutoCompactionEnabledKey(workspaceId: string): string {
+  return `autoCompaction:enabled:${workspaceId}`;
+}
+
+/**
+ * Get the localStorage key for auto-compaction threshold percentage per workspace
+ * Format: "autoCompaction:threshold:{workspaceId}"
+ */
+export function getAutoCompactionThresholdKey(workspaceId: string): string {
+  return `autoCompaction:threshold:${workspaceId}`;
+}
+
+/**
  * List of workspace-scoped key functions that should be copied on fork and deleted on removal
  */
 const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> = [
@@ -160,6 +176,8 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getReviewExpandStateKey,
   getFileTreeExpandStateKey,
   getReviewSearchStateKey,
+  getAutoCompactionEnabledKey,
+  getAutoCompactionThresholdKey,
 ];
 
 /**

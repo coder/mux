@@ -36,8 +36,9 @@ import { useAIViewKeybinds } from "@/browser/hooks/useAIViewKeybinds";
 import { evictModelFromLRU } from "@/browser/hooks/useModelLRU";
 import { QueuedMessage } from "./Messages/QueuedMessage";
 import { CompactionWarning } from "./CompactionWarning";
-import { shouldAutoCompact } from "@/browser/utils/compaction/autoCompactionCheck";
+import { checkAutoCompaction } from "@/browser/utils/compaction/autoCompactionCheck";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
+import { useAutoCompactionSettings } from "../hooks/useAutoCompactionSettings";
 
 interface AIViewProps {
   workspaceId: string;
@@ -84,6 +85,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const workspaceUsage = useWorkspaceUsage(workspaceId);
   const { options } = useProviderOptions();
   const use1M = options.anthropic?.use1MContext ?? false;
+  const { enabled: autoCompactionEnabled, threshold: autoCompactionThreshold } =
+    useAutoCompactionSettings(workspaceId);
   const handledModelErrorsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -328,12 +331,16 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Get active stream message ID for token counting
   const activeStreamMessageId = aggregator.getActiveStreamMessageId();
 
-  const autoCompactionCheck = currentModel
-    ? shouldAutoCompact(workspaceUsage, currentModel, use1M)
-    : { shouldShowWarning: false, usagePercentage: 0, thresholdPercentage: 70 };
+  const autoCompactionResult = checkAutoCompaction(
+    workspaceUsage,
+    currentModel,
+    use1M,
+    autoCompactionEnabled,
+    autoCompactionThreshold / 100
+  );
 
   // Show warning when: shouldShowWarning flag is true AND not currently compacting
-  const shouldShowCompactionWarning = !isCompacting && autoCompactionCheck.shouldShowWarning;
+  const shouldShowCompactionWarning = !isCompacting && autoCompactionResult.shouldShowWarning;
 
   // Note: We intentionally do NOT reset autoRetry when streams start.
   // If user pressed the interrupt key, autoRetry stays false until they manually retry.
@@ -522,8 +529,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
         </div>
         {shouldShowCompactionWarning && (
           <CompactionWarning
-            usagePercentage={autoCompactionCheck.usagePercentage}
-            thresholdPercentage={autoCompactionCheck.thresholdPercentage}
+            usagePercentage={autoCompactionResult.usagePercentage}
+            thresholdPercentage={autoCompactionResult.thresholdPercentage}
           />
         )}
         <ChatInput
@@ -539,7 +546,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
           onEditLastUserMessage={() => void handleEditLastUserMessage()}
           canInterrupt={canInterrupt}
           onReady={handleChatInputReady}
-          autoCompactionCheck={autoCompactionCheck}
+          autoCompactionCheck={autoCompactionResult}
         />
       </div>
 
