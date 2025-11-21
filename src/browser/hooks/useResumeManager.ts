@@ -172,8 +172,12 @@ export function useResumeManager() {
           // Apply compaction overrides using shared function (same as ChatInput)
           // This ensures custom model/tokens are preserved across resume
           options = applyCompactionOverrides(options, {
+            model: lastUserMsg.compactionRequest.parsed.model,
             maxOutputTokens: lastUserMsg.compactionRequest.parsed.maxOutputTokens,
-            continueMessage: { text: lastUserMsg.compactionRequest.parsed.continueMessage ?? "" },
+            continueMessage: {
+              text: lastUserMsg.compactionRequest.parsed.continueMessage?.text ?? "",
+              imageParts: lastUserMsg.compactionRequest.parsed.continueMessage?.imageParts,
+            },
           });
         }
       }
