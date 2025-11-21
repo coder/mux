@@ -35,6 +35,10 @@ const WARNING_ADVANCE_PERCENT = 10;
 /**
  * Check if auto-compaction should trigger based on token usage
  *
+ * Uses the last usage entry (most recent API call) to calculate current context size.
+ * This matches the UI token meter display and excludes historical usage from compaction,
+ * preventing infinite compaction loops after the first compaction completes.
+ *
  * @param usage - Current workspace usage state (from useWorkspaceUsage)
  * @param model - Current model string
  * @param use1M - Whether 1M context is enabled
@@ -73,8 +77,24 @@ export function shouldAutoCompact(
     };
   }
 
-  // Calculate usage percentage from cumulative conversation total
-  const usagePercentage = (usage.totalTokens / maxTokens) * 100;
+  // Use last usage entry to calculate current context size (matches UI display)
+  const lastUsage = usage.usageHistory[usage.usageHistory.length - 1];
+  if (!lastUsage) {
+    return {
+      shouldShowWarning: false,
+      usagePercentage: 0,
+      thresholdPercentage,
+    };
+  }
+
+  const currentContextTokens =
+    lastUsage.input.tokens +
+    lastUsage.cached.tokens +
+    lastUsage.cacheCreate.tokens +
+    lastUsage.output.tokens +
+    lastUsage.reasoning.tokens;
+
+  const usagePercentage = (currentContextTokens / maxTokens) * 100;
 
   // Show warning if within advance window (e.g., 60% for 70% threshold with 10% advance)
   const shouldShowWarning = usagePercentage >= thresholdPercentage - warningAdvancePercent;
