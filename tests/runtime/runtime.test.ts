@@ -100,6 +100,33 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.exitCode).toBe(0);
         });
 
+        test.concurrent("automatically sets MUX_AGENT=1 environment variable", async () => {
+          const runtime = createRuntime();
+          await using workspace = await TestWorkspace.create(runtime, type);
+
+          const result = await execBuffered(runtime, 'echo "$MUX_AGENT"', {
+            cwd: workspace.path,
+            timeout: 30,
+          });
+
+          expect(result.stdout.trim()).toBe("1");
+        });
+
+        test.concurrent("NON_INTERACTIVE_ENV_VARS cannot be overridden by user env", async () => {
+          const runtime = createRuntime();
+          await using workspace = await TestWorkspace.create(runtime, type);
+
+          // Attempt to override MUX_AGENT (should be enforced as "1")
+          const result = await execBuffered(runtime, 'echo "$MUX_AGENT"', {
+            cwd: workspace.path,
+            timeout: 30,
+            env: { MUX_AGENT: "0" }, // Try to override
+          });
+
+          // Should still be "1" because NON_INTERACTIVE_ENV_VARS is applied last
+          expect(result.stdout.trim()).toBe("1");
+        });
+
         test.concurrent("passes environment variables", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);

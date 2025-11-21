@@ -16,6 +16,7 @@ import type {
 } from "./Runtime";
 import { RuntimeError as RuntimeErrorClass } from "./Runtime";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
+import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { log } from "@/node/services/log";
 import { checkInitHookExists, createLineBufferedLoggers, getInitHookEnv } from "./initHook";
 import { streamProcessToLogger } from "./streamProcess";
@@ -106,11 +107,12 @@ export class SSHRuntime implements Runtime {
     // Add cd command if cwd is specified
     parts.push(cdCommandForSSH(options.cwd));
 
-    // Add environment variable exports
-    if (options.env) {
-      for (const [key, value] of Object.entries(options.env)) {
-        parts.push(`export ${key}=${shescape.quote(value)}`);
-      }
+    // Add environment variable exports (user-provided env + NON_INTERACTIVE_ENV_VARS enforced last)
+    // NON_INTERACTIVE_ENV_VARS is spread last to match LocalRuntime behavior and ensure
+    // these critical env vars cannot be overridden by caller-provided env
+    const allEnv = { ...(options.env ?? {}), ...NON_INTERACTIVE_ENV_VARS };
+    for (const [key, value] of Object.entries(allEnv)) {
+      parts.push(`export ${key}=${shescape.quote(value)}`);
     }
 
     // Add the actual command
