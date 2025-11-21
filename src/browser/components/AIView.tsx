@@ -37,12 +37,8 @@ import { evictModelFromLRU } from "@/browser/hooks/useModelLRU";
 import { QueuedMessage } from "./Messages/QueuedMessage";
 import { CompactionWarning } from "./CompactionWarning";
 import { shouldAutoCompact } from "@/browser/utils/compaction/autoCompactionCheck";
-<<<<<<< HEAD
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
-=======
-import { use1MContext } from "@/browser/hooks/use1MContext";
-import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
->>>>>>> 52d11bd1 (🤖 feat: add auto-compaction configuration UI)
+import { useAutoCompactionSettings } from "../hooks/useAutoCompactionSettings";
 
 interface AIViewProps {
   workspaceId: string;
@@ -87,14 +83,10 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const workspaceState = useWorkspaceState(workspaceId);
   const aggregator = useWorkspaceAggregator(workspaceId);
   const workspaceUsage = useWorkspaceUsage(workspaceId);
-<<<<<<< HEAD
   const { options } = useProviderOptions();
   const use1M = options.anthropic?.use1MContext ?? false;
-=======
-  const [use1M] = use1MContext();
   const { enabled: autoCompactionEnabled, threshold: autoCompactionThreshold } =
     useAutoCompactionSettings(workspaceId);
->>>>>>> 52d11bd1 (🤖 feat: add auto-compaction configuration UI)
   const handledModelErrorsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
