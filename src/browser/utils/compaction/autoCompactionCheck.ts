@@ -24,7 +24,6 @@ export interface AutoCompactionCheckResult {
   shouldShowWarning: boolean;
   usagePercentage: number;
   thresholdPercentage: number;
-  enabled: boolean;
 }
 
 // Show warning this many percentage points before threshold
@@ -45,53 +44,33 @@ const WARNING_ADVANCE_PERCENT = 10;
  * @param warningAdvancePercent - Show warning this many percentage points before threshold (default 10)
  * @returns Check result with warning flag and usage percentage
  */
-export function shouldAutoCompact(
+export function checkAutoCompaction(
   usage: WorkspaceUsageState | undefined,
-  model: string | null | undefined,
+  model: string | null,
   use1M: boolean,
-  enabled = true,
+  enabled: boolean,
   threshold: number = DEFAULT_AUTO_COMPACTION_THRESHOLD,
   warningAdvancePercent: number = WARNING_ADVANCE_PERCENT
 ): AutoCompactionCheckResult {
   const thresholdPercentage = threshold * 100;
 
   // Short-circuit if auto-compaction is disabled
-  if (!enabled || !model) {
+  // Or if no usage data yet
+  if (!enabled || !model || !usage || usage.usageHistory.length === 0) {
     return {
       shouldShowWarning: false,
       usagePercentage: 0,
       thresholdPercentage,
-      enabled: false,
-    };
-  }
-
-  // No usage data yet - safe default (don't trigger on first message)
-  if (!usage || usage.usageHistory.length === 0) {
-    return {
-      shouldShowWarning: false,
-      usagePercentage: 0,
-      thresholdPercentage,
-      enabled: true,
     };
   }
 
   // Determine max tokens for this model
   const modelStats = getModelStats(model);
   const maxTokens = use1M && supports1MContext(model) ? 1_000_000 : modelStats?.max_input_tokens;
+  const lastUsage = usage.usageHistory[usage.usageHistory.length - 1];
 
   // No max tokens known - safe default (can't calculate percentage)
   if (!maxTokens) {
-    return {
-      shouldShowWarning: false,
-      usagePercentage: 0,
-      thresholdPercentage,
-      enabled: true,
-    };
-  }
-
-  // Use last usage entry to calculate current context size (matches UI display)
-  const lastUsage = usage.usageHistory[usage.usageHistory.length - 1];
-  if (!lastUsage) {
     return {
       shouldShowWarning: false,
       usagePercentage: 0,
@@ -115,6 +94,5 @@ export function shouldAutoCompact(
     shouldShowWarning,
     usagePercentage,
     thresholdPercentage,
-    enabled: true,
   };
 }
