@@ -3,6 +3,8 @@
  * These prevent tools from blocking on editor/credential prompts.
  */
 export const NON_INTERACTIVE_ENV_VARS = {
+  // Sentinel variable to indicate commands are running under Mux AI agent
+  MUX_AGENT: "1",
   // Prevent interactive editors from blocking execution
   // Critical for git operations like rebase/commit that try to open editors
   GIT_EDITOR: "true", // Git-specific editor (highest priority)
