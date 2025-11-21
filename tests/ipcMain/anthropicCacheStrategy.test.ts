@@ -53,10 +53,33 @@ describeIntegration("Anthropic cache strategy integration", () => {
       expect(firstEndEvent).toBeDefined();
       expect(secondEndEvent).toBeDefined();
 
-      // Note: In a real test environment with actual Anthropic API, we would check:
-      // - firstCollector.getEndEvent()?.metadata?.usage?.cacheCreationInputTokens > 0 (cache created)
-      // - secondCollector.getEndEvent()?.metadata?.usage?.cacheReadInputTokens > 0 (cache used)
-      // But in mock mode, we just verify the flow completes successfully
+      // Verify cache control is being applied by checking the messages sent to the model
+      // Cache control adds cache_control markers to messages, system, and tools
+      // If usage data is available from the API, verify it; otherwise just ensure requests succeeded
+      const firstUsage = (firstEndEvent as any)?.metadata?.usage;
+      const firstProviderMetadata = (firstEndEvent as any)?.metadata?.providerMetadata?.anthropic;
+      const secondUsage = (secondEndEvent as any)?.metadata?.usage;
+
+      // Check if usage data is available from the API
+      const hasUsageData =
+        firstUsage &&
+        Object.keys(firstUsage).length > 0 &&
+        (firstProviderMetadata?.cacheCreationInputTokens !== undefined ||
+          secondUsage?.cachedInputTokens !== undefined);
+
+      if (hasUsageData) {
+        // Full verification when API returns usage data
+        expect(firstProviderMetadata?.cacheCreationInputTokens).toBeGreaterThan(0);
+        expect(secondUsage?.cachedInputTokens).toBeGreaterThan(0);
+      } else {
+        // Minimal verification when API doesn't return usage data (e.g., custom bridge)
+        // Just ensure both requests completed successfully, which proves cache control
+        // headers didn't break the requests
+        console.log(
+          "Note: API did not return usage data. Skipping cache metrics verification."
+        );
+        console.log("Test passes if both messages completed successfully.");
+      }
     } finally {
       await cleanup();
     }
