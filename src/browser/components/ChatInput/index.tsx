@@ -18,6 +18,7 @@ import { useMode } from "@/browser/contexts/ModeContext";
 import { ThinkingSliderComponent } from "../ThinkingSlider";
 import { ModelSettings } from "../ModelSettings";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
+import { useAvailableScripts } from "@/browser/hooks/useAvailableScripts";
 import {
   getModelKey,
   getInputKey,
@@ -104,6 +105,7 @@ export type { ChatInputProps, ChatInputAPI };
 
 export const ChatInput: React.FC<ChatInputProps> = (props) => {
   const { variant } = props;
+  const workspaceId = variant === "workspace" ? props.workspaceId : undefined;
 
   // Extract workspace-specific props with defaults
   const disabled = props.disabled ?? false;
@@ -130,6 +132,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
   const [commandSuggestions, setCommandSuggestions] = useState<SlashSuggestion[]>([]);
   const [providerNames, setProviderNames] = useState<string[]>([]);
+  const availableScripts = useAvailableScripts(workspaceId ?? null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([]);
   const handleToastDismiss = useCallback(() => {
@@ -295,10 +298,10 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
 
   // Watch input for slash commands
   useEffect(() => {
-    const suggestions = getSlashCommandSuggestions(input, { providerNames });
+    const suggestions = getSlashCommandSuggestions(input, { providerNames, availableScripts });
     setCommandSuggestions(suggestions);
     setShowCommandSuggestions(suggestions.length > 0);
-  }, [input, providerNames]);
+  }, [input, providerNames, availableScripts]);
 
   // Load provider names for suggestions
   useEffect(() => {
@@ -645,6 +648,101 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           if (!result.clearInput) {
             setInput(messageText); // Restore input on error
           }
+          return;
+        }
+
+        // Handle /script command
+        if (parsed.type === "script") {
+          if (!workspaceId) {
+            setToast({
+              id: Date.now().toString(),
+              type: "error",
+              message: "Script commands are only available in workspaces.",
+            });
+            setInput(messageText);
+            setIsSending(false);
+            return;
+          }
+
+          const currentWorkspaceId = workspaceId;
+          setInput(""); // Clear input immediately
+
+          // Non-blocking execution: fire and forget
+          // We do NOT set isSending(true) so the user can continue to interact
+          void (async () => {
+            try {
+              const result = await window.api.workspace.executeScript(
+                currentWorkspaceId,
+                parsed.scriptName,
+                parsed.args
+              );
+
+              if (!result.success) {
+                setToast({
+                  id: Date.now().toString(),
+                  type: "error",
+                  title: "Script Execution Failed",
+                  message: result.error,
+                });
+                // Note: We don't restore input here as the user may have typed new text
+                return;
+              }
+
+              // Display script result
+              const toolResult = result.data;
+              const exitCode = toolResult.exitCode;
+
+              // Use MUX_OUTPUT content if present, otherwise fall back to default message
+              const toastMessage =
+                toolResult.outputFile ??
+                (exitCode === 0
+                  ? `Script completed successfully`
+                  : `Script exited with code ${exitCode}`);
+
+              // If MUX_PROMPT has content, send it as a new user message to the agent
+              if (toolResult.promptFile && toolResult.promptFile.trim().length > 0) {
+                const sendResult = await window.api.workspace.sendMessage(
+                  currentWorkspaceId,
+                  toolResult.promptFile,
+                  sendMessageOptions
+                );
+
+                if (!sendResult.success) {
+                  console.error("Failed to send prompt from script:", sendResult.error);
+                  const errorToast = createErrorToast(sendResult.error);
+                  errorToast.title = "Failed to Send Prompt";
+                  setToast(errorToast);
+                  return; // Exit early, don't show success toast
+                }
+              }
+
+              // Only show success toast if prompt sent successfully (or no prompt to send)
+              // AND if there is a message to show (either from file or fallback)
+              // If it was empty/success (common for silent scripts), don't show empty toast
+              if (toastMessage && toastMessage.trim().length > 0) {
+                setToast({
+                  id: Date.now().toString(),
+                  type: exitCode === 0 ? "success" : "warning",
+                  message: toastMessage,
+                });
+              }
+
+              // Log the full output to console for debugging
+              if (toolResult.output) {
+                console.log(`Script ${parsed.scriptName} output:`, toolResult.output);
+              }
+            } catch (error) {
+              const errorMsg = error instanceof Error ? error.message : "Failed to execute script";
+              console.error("Script execution error:", error);
+              setToast({
+                id: Date.now().toString(),
+                type: "error",
+                title: "Script Execution Failed",
+                message: errorMsg,
+              });
+            }
+          })();
+
           return;
         }
 

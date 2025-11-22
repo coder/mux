@@ -91,21 +91,21 @@ export default defineConfig(({ mode }) => ({
     strictPort: true,
     allowedHosts: true, // Allow all hosts for dev server (secure by default via MUX_VITE_HOST)
     sourcemapIgnoreList: () => false, // Show all sources in DevTools
-    
+
     watch: {
       // Ignore node_modules to drastically reduce file handle usage
       ignored: ['**/node_modules/**', '**/dist/**', '**/.git/**'],
-      
+
       // Use polling on Windows to avoid file handle exhaustion
       // This is slightly less efficient but much more stable
       usePolling: process.platform === 'win32',
-      
+
       // If using polling, set a reasonable interval (in milliseconds)
       interval: 1000,
-      
+
       // Limit the depth of directory traversal
       depth: 3,
-      
+
       // Additional options for Windows specifically
       ...(process.platform === 'win32' && {
         // Increase the binary interval for better Windows performance
@@ -117,10 +117,12 @@ export default defineConfig(({ mode }) => ({
         }
       })
     },
-    
+
     hmr: {
       // Configure HMR to use the correct host for remote access
-      host: devServerHost,
+      // When host is 0.0.0.0, let client infer hostname from window.location
+      // to avoid browser security blocks on 0.0.0.0
+      host: devServerHost === "0.0.0.0" ? undefined : devServerHost,
       port: devServerPort,
       protocol: "ws",
     },
@@ -135,10 +137,10 @@ export default defineConfig(({ mode }) => ({
     esbuildOptions: {
       target: "esnext",
     },
-    
+
     // Include only what's actually imported to reduce scanning
     entries: ['src/**/*.{ts,tsx}'],
-    
+
     // Force re-optimize dependencies
     force: false,
   },

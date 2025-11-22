@@ -326,6 +326,21 @@ export interface IPCApi {
         niceness?: number;
       }
     ): Promise<Result<BashToolResult, string>>;
+    executeScript(
+      workspaceId: string,
+      scriptName: string,
+      args?: string[]
+    ): Promise<Result<BashToolResult, string>>;
+    listScripts(workspaceId: string): Promise<
+      Result<
+        Array<{
+          name: string;
+          description?: string;
+          isExecutable: boolean;
+        }>,
+        string
+      >
+    >;
     openTerminal(workspacePath: string): Promise<void>;
 
     // Event subscriptions (renderer-only)

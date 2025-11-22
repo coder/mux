@@ -7,7 +7,10 @@ import type { WorkspaceActivitySnapshot } from "@/common/types/workspace";
 
 // Backend URL - defaults to same origin, but can be overridden via VITE_BACKEND_URL
 // This allows frontend (Vite :8080) to connect to backend (:3000) in dev mode
-const API_BASE = import.meta.env.VITE_BACKEND_URL ?? window.location.origin;
+const rawApiBase = import.meta.env.VITE_BACKEND_URL ?? window.location.origin;
+// If config uses 0.0.0.0 (listen on all interfaces), browser must connect to specific hostname
+// 0.0.0.0 is blocked by browsers for security
+const API_BASE = rawApiBase.replace("://0.0.0.0", `://${window.location.hostname}`);
 const WS_BASE = API_BASE.replace("http://", "ws://").replace("https://", "wss://");
 
 interface InvokeResponse<T> {
@@ -271,6 +274,9 @@ const webApi: IPCApi = {
     getInfo: (workspaceId) => invokeIPC(IPC_CHANNELS.WORKSPACE_GET_INFO, workspaceId),
     executeBash: (workspaceId, script, options) =>
       invokeIPC(IPC_CHANNELS.WORKSPACE_EXECUTE_BASH, workspaceId, script, options),
+    executeScript: (workspaceId, scriptName, args) =>
+      invokeIPC(IPC_CHANNELS.WORKSPACE_EXECUTE_SCRIPT, workspaceId, scriptName, args),
+    listScripts: (workspaceId) => invokeIPC(IPC_CHANNELS.WORKSPACE_LIST_SCRIPTS, workspaceId),
     openTerminal: (workspaceId) => invokeIPC(IPC_CHANNELS.WORKSPACE_OPEN_TERMINAL, workspaceId),
     activity: {
       list: async (): Promise<Record<string, WorkspaceActivitySnapshot>> => {
