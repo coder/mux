@@ -13,6 +13,7 @@
  */
 
 import type { ThinkingLevel } from "@/common/types/thinking";
+import modelsData from "@/common/utils/tokens/models.json";
 
 /**
  * Thinking policy is simply the set of allowed thinking levels for a model.
@@ -21,38 +22,63 @@ import type { ThinkingLevel } from "@/common/types/thinking";
 export type ThinkingPolicy = readonly ThinkingLevel[];
 
 /**
+ * Helper to look up model metadata from models.json
+ */
+function getModelMetadata(modelString: string): Record<string, unknown> | null {
+  const colonIndex = modelString.indexOf(":");
+  const provider = colonIndex !== -1 ? modelString.slice(0, colonIndex) : "";
+  const modelName = colonIndex !== -1 ? modelString.slice(colonIndex + 1) : modelString;
+
+  const lookupKeys: string[] = [modelName];
+  if (provider) {
+    lookupKeys.push(`${provider}/${modelName}`);
+  }
+
+  for (const key of lookupKeys) {
+    const data = (modelsData as Record<string, Record<string, unknown>>)[key];
+    if (data) {
+      return data;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Returns the thinking policy for a given model.
- *
- * Rules:
- * - openai:gpt-5-pro → ["high"] (only supported level)
- * - default → ["off", "low", "medium", "high"] (all levels selectable)
- *
- * Tolerates version suffixes (e.g., gpt-5-pro-2025-10-06).
- * Does NOT match gpt-5-pro-mini (uses negative lookahead).
  */
 export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
-  // Match "openai:" followed by optional whitespace and "gpt-5-pro"
-  // Allow version suffixes like "-2025-10-06" but NOT "-mini" or other text suffixes
-  if (/^openai:\s*gpt-5-pro(?!-[a-z])/.test(modelString)) {
+  // GPT-5 Pro: always high (but not gpt-5-pro-mini)
+  if (modelString.startsWith("openai:gpt-5-pro") && !modelString.includes("-mini")) {
     return ["high"];
   }
 
-  // Gemini 3 Pro only supports "low" and "high" reasoning levels
+  // Gemini 3: limited levels
   if (modelString.includes("gemini-3")) {
     return ["low", "high"];
   }
 
-  // Default policy: all levels selectable
+  // Grok: binary on/off (but not grok-code)
+  if (modelString.startsWith("xai:grok-") && !modelString.includes("grok-code")) {
+    return ["off", "high"];
+  }
+
+  // Check models.json for no reasoning support
+  const metadata = getModelMetadata(modelString);
+  if (metadata?.supports_reasoning === false) {
+    return ["off"];
+  }
+
+  // Default: all levels
   return ["off", "low", "medium", "high"];
 }
 
 /**
  * Enforce thinking policy by clamping requested level to allowed set.
  *
- * Fallback strategy:
- * 1. If requested level is allowed, use it
- * 2. If "medium" is allowed, use it (reasonable default)
- * 3. Otherwise use first allowed level
+ * If the requested level isn't allowed:
+ * - If user wanted reasoning (non-"off"), pick the highest available non-"off" level
+ * - Otherwise return the first allowed level
  */
 export function enforceThinkingPolicy(
   modelString: string,
@@ -64,6 +90,12 @@ export function enforceThinkingPolicy(
     return requested;
   }
 
-  // Fallback: prefer "medium" if allowed, else use first allowed level
-  return allowed.includes("medium") ? "medium" : allowed[0];
+  // If user wanted reasoning, keep it on with the best available level
+  if (requested !== "off") {
+    if (allowed.includes("high")) return "high";
+    if (allowed.includes("medium")) return "medium";
+    if (allowed.includes("low")) return "low";
+  }
+
+  return allowed[0];
 }
