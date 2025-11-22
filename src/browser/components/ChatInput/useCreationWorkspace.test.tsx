@@ -245,7 +245,7 @@ describe("useCreationWorkspace", () => {
 
     expect(sendMessageMock.mock.calls.length).toBe(1);
     expect(onWorkspaceCreated.mock.calls.length).toBe(0);
-    await waitFor(() => expect(getHook().error).toBe("backend exploded"));
+    await waitFor(() => expect(getHook().toast?.message).toBe("backend exploded"));
     await waitFor(() => expect(getHook().isSending).toBe(false));
     expect(updatePersistedStateCalls).toEqual([]);
   });

@@ -12,6 +12,10 @@ import { initTelemetry, trackEvent, isTelemetryInitialized } from "./client";
 
 describe("Telemetry", () => {
   describe("in test environment", () => {
+    beforeAll(() => {
+      process.env.NODE_ENV = "test";
+    });
+
     it("should not initialize PostHog", () => {
       initTelemetry();
       expect(isTelemetryInitialized()).toBe(false);
