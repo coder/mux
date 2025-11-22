@@ -5,11 +5,17 @@ import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import type { ImagePart } from "./ipc";
 
+// Message to continue with after compaction
+export interface ContinueMessage {
+  text: string;
+  imageParts?: ImagePart[];
+}
+
 // Parsed compaction request data (shared type for consistency)
 export interface CompactionRequestData {
   model?: string; // Custom model override for compaction
   maxOutputTokens?: number;
-  continueMessage?: string;
+  continueMessage?: ContinueMessage;
 }
 
 // Frontend-specific metadata stored in muxMetadata field
@@ -100,10 +106,7 @@ export type DisplayedMessage =
       compactionRequest?: {
         // Present if this is a /compact command
         rawCommand: string;
-        parsed: {
-          maxOutputTokens?: number;
-          continueMessage?: string;
-        };
+        parsed: CompactionRequestData;
       };
     }
   | {

@@ -30,6 +30,7 @@ import {
   handleCompactCommand,
   forkWorkspace,
   prepareCompactionMessage,
+  executeCompaction,
   type CommandHandlerContext,
 } from "@/browser/utils/chatCommands";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
@@ -472,6 +473,32 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     // Workspace variant: full command handling + message send
     if (variant !== "workspace") return; // Type guard
 
+    // Prepare image parts if any
+    const imageParts = imageAttachments.map((img, index) => {
+      // Validate before sending to help with debugging
+      if (!img.url || typeof img.url !== "string") {
+        console.error(
+          `Image attachment [${index}] has invalid url:`,
+          typeof img.url,
+          img.url?.slice(0, 50)
+        );
+      }
+      if (!img.url?.startsWith("data:")) {
+        console.error(`Image attachment [${index}] url is not a data URL:`, img.url?.slice(0, 100));
+      }
+      if (!img.mediaType || typeof img.mediaType !== "string") {
+        console.error(
+          `Image attachment [${index}] has invalid mediaType:`,
+          typeof img.mediaType,
+          img.mediaType
+        );
+      }
+      return {
+        url: img.url,
+        mediaType: img.mediaType,
+      };
+    });
+
     try {
       // Parse command
       const parsed = parseCommand(messageText);
@@ -571,8 +598,10 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           const context: CommandHandlerContext = {
             workspaceId: props.workspaceId,
             sendMessageOptions,
+            imageParts,
             editMessageId: editingMessage?.id,
             setInput,
+            setImageAttachments,
             setIsSending,
             setToast,
             onCancelEdit: props.onCancelEdit,
@@ -636,7 +665,9 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           const context: CommandHandlerContext = {
             workspaceId: props.workspaceId,
             sendMessageOptions,
+            imageParts: undefined, // /new doesn't use images
             setInput,
+            setImageAttachments,
             setIsSending,
             setToast,
           };
@@ -656,42 +687,70 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         }
       }
 
-      // Regular message - send directly via API
-      setIsSending(true);
-
       // Save current state for restoration on error
       const previousImageAttachments = [...imageAttachments];
 
-      try {
-        // Prepare image parts if any
-        const imageParts = imageAttachments.map((img, index) => {
-          // Validate before sending to help with debugging
-          if (!img.url || typeof img.url !== "string") {
-            console.error(
-              `Image attachment [${index}] has invalid url:`,
-              typeof img.url,
-              img.url?.slice(0, 50)
-            );
-          }
-          if (!img.url?.startsWith("data:")) {
-            console.error(
-              `Image attachment [${index}] url is not a data URL:`,
-              img.url?.slice(0, 100)
-            );
-          }
-          if (!img.mediaType || typeof img.mediaType !== "string") {
-            console.error(
-              `Image attachment [${index}] has invalid mediaType:`,
-              typeof img.mediaType,
-              img.mediaType
-            );
-          }
-          return {
-            url: img.url,
-            mediaType: img.mediaType,
-          };
-        });
+      // Auto-compaction check (workspace variant only)
+      // Check if we should auto-compact before sending this message
+      // Result is computed in parent (AIView) and passed down to avoid duplicate calculation
+      const shouldAutoCompact =
+        props.autoCompactionCheck &&
+        props.autoCompactionCheck.usagePercentage >= props.autoCompactionCheck.thresholdPercentage;
+      if (variant === "workspace" && !editingMessage && shouldAutoCompact) {
+        // Clear input immediately for responsive UX
+        setInput("");
+        setImageAttachments([]);
+        setIsSending(true);
 
+        try {
+          const result = await executeCompaction({
+            workspaceId: props.workspaceId,
+            continueMessage: {
+              text: messageText,
+              imageParts,
+            },
+            sendMessageOptions,
+          });
+
+          if (!result.success) {
+            // Restore on error
+            setInput(messageText);
+            setImageAttachments(previousImageAttachments);
+            setToast({
+              id: Date.now().toString(),
+              type: "error",
+              title: "Auto-Compaction Failed",
+              message: result.error ?? "Failed to start auto-compaction",
+            });
+          } else {
+            setToast({
+              id: Date.now().toString(),
+              type: "success",
+              message: `Context threshold reached - auto-compacting...`,
+            });
+          }
+        } catch (error) {
+          // Restore on unexpected error
+          setInput(messageText);
+          setImageAttachments(previousImageAttachments);
+          setToast({
+            id: Date.now().toString(),
+            type: "error",
+            title: "Auto-Compaction Failed",
+            message:
+              error instanceof Error ? error.message : "Unexpected error during auto-compaction",
+          });
+        } finally {
+          setIsSending(false);
+        }
+
+        return; // Skip normal send
+      }
+
+      // Regular message - send directly via API
+      setIsSending(true);
+
+      try {
         // When editing a /compact command, regenerate the actual summarization request
         let actualMessageText = messageText;
         let muxMetadata: MuxFrontendMetadata | undefined;
@@ -707,7 +766,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             } = prepareCompactionMessage({
               workspaceId: props.workspaceId,
               maxOutputTokens: parsed.maxOutputTokens,
-              continueMessage: parsed.continueMessage,
+              continueMessage: { text: parsed.continueMessage ?? "", imageParts },
               model: parsed.model,
               sendMessageOptions,
             });

@@ -3,6 +3,7 @@ import type {
   MuxMetadata,
   MuxImagePart,
   DisplayedMessage,
+  CompactionRequestData,
 } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type {
@@ -762,7 +763,11 @@ export class StreamingMessageAggregator {
             muxMeta?.type === "compaction-request"
               ? {
                   rawCommand: muxMeta.rawCommand,
-                  parsed: muxMeta.parsed,
+                  parsed: {
+                    model: muxMeta.parsed.model,
+                    maxOutputTokens: muxMeta.parsed.maxOutputTokens,
+                    continueMessage: muxMeta.parsed.continueMessage,
+                  } satisfies CompactionRequestData,
                 }
               : undefined;
 

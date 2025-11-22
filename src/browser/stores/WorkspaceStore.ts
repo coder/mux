@@ -424,11 +424,14 @@ export class WorkspaceStore {
    * Extract usage from messages (no tokenization).
    * Each usage entry calculated with its own model for accurate costs.
    *
-   * REQUIRES: Workspace must have been added via addWorkspace() first.
+   * Returns empty state if workspace doesn't exist (e.g., creation mode).
    */
   getWorkspaceUsage(workspaceId: string): WorkspaceUsageState {
     return this.usageStore.get(workspaceId, () => {
-      const aggregator = this.assertGet(workspaceId);
+      const aggregator = this.aggregators.get(workspaceId);
+      if (!aggregator) {
+        return { usageHistory: [], totalTokens: 0 };
+      }
 
       const messages = aggregator.getAllMessages();
       const model = aggregator.getCurrentModel();
