@@ -8,6 +8,7 @@ import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
+import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { PROVIDER_REGISTRY } from "@/common/constants/providers";
 
 import type { MuxMessage, MuxTextPart } from "@/common/types/message";
@@ -621,7 +622,7 @@ export class AIService extends EventEmitter {
       // Use the provider name already extracted above (providerName variable)
 
       // Get tool names early for mode transition sentinel (stub config, no workspace context needed)
-      const earlyRuntime = createRuntime({ type: "local", srcBaseDir: process.cwd() });
+      const earlyRuntime = createRuntime({ type: "worktree", srcBaseDir: process.cwd() });
       const earlyAllTools = await getToolsForModel(
         modelString,
         {
@@ -715,9 +716,7 @@ export class AIService extends EventEmitter {
       }
 
       // Get workspace path - handle both worktree and in-place modes
-      const runtime = createRuntime(
-        metadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir }
-      );
+      const runtime = createRuntime(metadata.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG);
       // In-place workspaces (CLI/benchmarks) have projectPath === name
       // Use path directly instead of reconstructing via getWorkspacePath
       const isInPlace = metadata.projectPath === metadata.name;

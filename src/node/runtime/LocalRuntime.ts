@@ -29,19 +29,28 @@ import {
 } from "./initHook";
 import { execAsync, DisposableProcess } from "@/node/utils/disposableExec";
 import { getProjectName } from "@/node/utils/runtime/helpers";
+import type { RuntimeConfig } from "@/common/types/runtime";
 import { getErrorMessage } from "@/common/utils/errors";
 import { expandTilde } from "./tildeExpansion";
+
+type LocalRuntimeConfig = Extract<RuntimeConfig, { type: "worktree" | "local" }>;
 
 /**
  * Local runtime implementation that executes commands and file operations
  * directly on the host machine using Node.js APIs.
  */
 export class LocalRuntime implements Runtime {
-  private readonly srcBaseDir: string;
+  private readonly config: LocalRuntimeConfig;
+  private readonly srcBaseDir: string | null;
 
-  constructor(srcBaseDir: string) {
-    // Expand tilde to actual home directory path for local file system operations
-    this.srcBaseDir = expandTilde(srcBaseDir);
+  constructor(config: LocalRuntimeConfig) {
+    if (config.type === "worktree") {
+      this.config = { ...config, srcBaseDir: expandTilde(config.srcBaseDir) };
+      this.srcBaseDir = this.config.srcBaseDir;
+    } else {
+      this.config = config;
+      this.srcBaseDir = null;
+    }
   }
 
   async exec(command: string, options: ExecOptions): Promise<ExecStream> {
@@ -313,19 +322,34 @@ export class LocalRuntime implements Runtime {
   }
 
   getWorkspacePath(projectPath: string, workspaceName: string): string {
+    if (this.config.type === "local") {
+      return projectPath;
+    }
+
     const projectName = getProjectName(projectPath);
+    if (!this.srcBaseDir) {
+      throw new RuntimeErrorClass("Worktree base directory not configured", "unknown");
+    }
     return path.join(this.srcBaseDir, projectName, workspaceName);
   }
 
   async createWorkspace(params: WorkspaceCreationParams): Promise<WorkspaceCreationResult> {
+    if (this.config.type === "local") {
+      return this.createInPlaceWorkspace(params);
+    }
+
+    return this.createWorktreeWorkspace(params);
+  }
+
+  private async createWorktreeWorkspace(
+    params: WorkspaceCreationParams
+  ): Promise<WorkspaceCreationResult> {
     const { projectPath, branchName, trunkBranch, initLogger } = params;
 
     try {
-      // Compute workspace path using the canonical method
       const workspacePath = this.getWorkspacePath(projectPath, branchName);
       initLogger.logStep("Creating git worktree...");
 
-      // Create parent directory if needed
       const parentDir = path.dirname(workspacePath);
       try {
         await fsPromises.access(parentDir);
@@ -333,7 +357,6 @@ export class LocalRuntime implements Runtime {
         await fsPromises.mkdir(parentDir, { recursive: true });
       }
 
-      // Check if workspace already exists
       try {
         await fsPromises.access(workspacePath);
         return {
@@ -344,19 +367,15 @@ export class LocalRuntime implements Runtime {
         // Workspace doesn't exist, proceed with creation
       }
 
-      // Check if branch exists locally
       const localBranches = await listLocalBranches(projectPath);
       const branchExists = localBranches.includes(branchName);
 
-      // Create worktree (git worktree is typically fast)
       if (branchExists) {
-        // Branch exists, just add worktree pointing to it
         using proc = execAsync(
           `git -C "${projectPath}" worktree add "${workspacePath}" "${branchName}"`
         );
         await proc.result;
       } else {
-        // Branch doesn't exist, create it from trunk
         using proc = execAsync(
           `git -C "${projectPath}" worktree add -b "${branchName}" "${workspacePath}" "${trunkBranch}"`
         );
@@ -372,6 +391,55 @@ export class LocalRuntime implements Runtime {
         error: getErrorMessage(error),
       };
     }
+  }
+
+  private async createInPlaceWorkspace(
+    params: WorkspaceCreationParams
+  ): Promise<WorkspaceCreationResult> {
+    const { projectPath, initLogger } = params;
+
+    initLogger.logStep("Reusing project directory in place");
+    try {
+      const stats = await fsPromises.stat(projectPath);
+      if (!stats.isDirectory()) {
+        return {
+          success: false,
+          error: `Project path is not a directory: ${projectPath}`,
+        };
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: `Failed to access project directory: ${getErrorMessage(error)}`,
+      };
+    }
+
+    try {
+      using branchProc = execAsync(`git -C "${projectPath}" branch --show-current`);
+      const { stdout } = await branchProc.result;
+      const branch = stdout.trim();
+      if (branch) {
+        initLogger.logStep(`Active branch: ${branch}`);
+      } else {
+        initLogger.logStep("Working tree is in detached HEAD state");
+      }
+    } catch {
+      // Ignore errors - project may not be a git repository
+    }
+
+    try {
+      using statusProc = execAsync(`git -C "${projectPath}" status --porcelain`);
+      const { stdout } = await statusProc.result;
+      if (stdout.trim().length > 0) {
+        initLogger.logStep(
+          "Project has uncommitted changes; agent will operate on existing working tree"
+        );
+      }
+    } catch {
+      // Ignore errors - project may not be a git repository
+    }
+
+    return { success: true, workspacePath: projectPath };
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
@@ -426,7 +494,7 @@ export class LocalRuntime implements Runtime {
         stdio: ["ignore", "pipe", "pipe"],
         env: {
           ...process.env,
-          ...getInitHookEnv(projectPath, "local"),
+          ...getInitHookEnv(projectPath, this.config.type === "local" ? "local" : "worktree"),
         },
       });
 
@@ -466,6 +534,11 @@ export class LocalRuntime implements Runtime {
     // Note: _abortSignal ignored for local operations (fast, no need for cancellation)
     // Compute workspace paths using canonical method
     const oldPath = this.getWorkspacePath(projectPath, oldName);
+
+    if (this.config.type === "local") {
+      return { success: true, oldPath, newPath: oldPath };
+    }
+
     const newPath = this.getWorkspacePath(projectPath, newName);
 
     try {
@@ -488,34 +561,21 @@ export class LocalRuntime implements Runtime {
   ): Promise<{ success: true; deletedPath: string } | { success: false; error: string }> {
     // Note: _abortSignal ignored for local operations (fast, no need for cancellation)
 
-    // In-place workspaces are identified by projectPath === workspaceName
-    // These are direct workspace directories (e.g., CLI/benchmark sessions), not git worktrees
-    const isInPlace = projectPath === workspaceName;
-
-    // Compute workspace path using the canonical method
     const deletedPath = this.getWorkspacePath(projectPath, workspaceName);
 
-    // Check if directory exists - if not, operation is idempotent
-    try {
-      await fsPromises.access(deletedPath);
-    } catch {
-      // Directory doesn't exist - operation is idempotent
-      // For standard worktrees, prune stale git records (best effort)
-      if (!isInPlace) {
-        try {
-          using pruneProc = execAsync(`git -C "${projectPath}" worktree prune`);
-          await pruneProc.result;
-        } catch {
-          // Ignore prune errors - directory is already deleted, which is the goal
-        }
-      }
+    if (this.config.type === "local" || deletedPath === projectPath) {
       return { success: true, deletedPath };
     }
 
-    // For in-place workspaces, there's no worktree to remove
-    // Just return success - the workspace directory itself should not be deleted
-    // as it may contain the user's actual project files
-    if (isInPlace) {
+    try {
+      await fsPromises.access(deletedPath);
+    } catch {
+      try {
+        using pruneProc = execAsync(`git -C "${projectPath}" worktree prune`);
+        await pruneProc.result;
+      } catch {
+        // Ignore prune errors - directory is already deleted, which is the goal
+      }
       return { success: true, deletedPath };
     }
 
@@ -583,6 +643,13 @@ export class LocalRuntime implements Runtime {
   }
 
   async forkWorkspace(params: WorkspaceForkParams): Promise<WorkspaceForkResult> {
+    if (this.config.type === "local") {
+      return {
+        success: false,
+        error: "Forking is not supported for local (in-place) runtime",
+      };
+    }
+
     const { projectPath, sourceWorkspaceName, newWorkspaceName, initLogger } = params;
 
     // Get source workspace path

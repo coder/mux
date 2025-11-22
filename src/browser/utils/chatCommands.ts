@@ -25,23 +25,33 @@ import { getRuntimeKey } from "@/common/constants/storage";
 /**
  * Parse runtime string from -r flag into RuntimeConfig for backend
  * Supports formats:
+ * - "worktree" -> Worktree runtime (explicit)
+ * - "local" -> Local in-place runtime
  * - "ssh <host>" or "ssh <user@host>" -> SSH runtime
- * - "local" -> Local runtime (explicit)
- * - undefined -> Local runtime (default)
+ * - undefined -> Worktree runtime (default)
  */
 export function parseRuntimeString(
   runtime: string | undefined,
   _workspaceName: string
 ): RuntimeConfig | undefined {
   if (!runtime) {
-    return undefined; // Default to local (backend decides)
+    return undefined; // Default to worktree (backend decides)
   }
 
   const trimmed = runtime.trim();
-  const lowerTrimmed = trimmed.toLowerCase();
+  if (!trimmed) {
+    return undefined;
+  }
 
-  if (lowerTrimmed === RUNTIME_MODE.LOCAL) {
-    return undefined; // Explicit local - let backend use default
+  const lowerTrimmed = trimmed.toLowerCase();
+  const normalized = lowerTrimmed.replace(/[\s_()-]/g, "");
+
+  if (normalized === RUNTIME_MODE.WORKTREE) {
+    return undefined;
+  }
+
+  if (normalized === RUNTIME_MODE.LOCAL || normalized === "localinplace") {
+    return { type: RUNTIME_MODE.LOCAL };
   }
 
   // Parse "ssh <host>" or "ssh <user@host>" format
@@ -61,7 +71,7 @@ export function parseRuntimeString(
     };
   }
 
-  throw new Error(`Unknown runtime type: '${runtime}'. Use 'ssh <host>' or 'local'`);
+  throw new Error(`Unknown runtime type: '${runtime}'. Use 'worktree', 'local', or 'ssh <host>'`);
 }
 
 export interface CreateWorkspaceOptions {

@@ -61,7 +61,7 @@ describe("file_edit_replace_string tool", () => {
     const tool = createFileEditReplaceStringTool({
       ...getTestDeps(),
       cwd: testDir,
-      runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+      runtime: createRuntime({ type: "worktree", srcBaseDir: "/tmp" }),
       runtimeTempDir: "/tmp",
     });
 
@@ -100,7 +100,7 @@ describe("file_edit_replace_lines tool", () => {
     const tool = createFileEditReplaceLinesTool({
       ...getTestDeps(),
       cwd: testDir,
-      runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+      runtime: createRuntime({ type: "worktree", srcBaseDir: "/tmp" }),
       runtimeTempDir: "/tmp",
     });
 

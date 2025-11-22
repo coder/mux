@@ -70,7 +70,7 @@ describe("fileCommon", () => {
 
   describe("validatePathInCwd", () => {
     const cwd = "/workspace/project";
-    const runtime = createRuntime({ type: "local", srcBaseDir: cwd });
+    const runtime = createRuntime({ type: "worktree", srcBaseDir: cwd });
 
     it("should allow relative paths within cwd", () => {
       expect(validatePathInCwd("src/file.ts", cwd, runtime)).toBeNull();
@@ -139,7 +139,7 @@ describe("fileCommon", () => {
 
   describe("validateNoRedundantPrefix", () => {
     const cwd = "/workspace/project";
-    const runtime = createRuntime({ type: "local", srcBaseDir: cwd });
+    const runtime = createRuntime({ type: "worktree", srcBaseDir: cwd });
 
     it("should allow relative paths", () => {
       expect(validateNoRedundantPrefix("src/file.ts", cwd, runtime)).toBeNull();

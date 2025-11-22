@@ -16,6 +16,13 @@ describe("parseRuntimeModeAndHost", () => {
     });
   });
 
+  it("parses worktree mode", () => {
+    expect(parseRuntimeModeAndHost("worktree")).toEqual({
+      mode: "worktree",
+      host: "",
+    });
+  });
+
   it("parses local mode", () => {
     expect(parseRuntimeModeAndHost("local")).toEqual({
       mode: "local",
@@ -23,16 +30,16 @@ describe("parseRuntimeModeAndHost", () => {
     });
   });
 
-  it("defaults to local for undefined", () => {
+  it("defaults to worktree for undefined", () => {
     expect(parseRuntimeModeAndHost(undefined)).toEqual({
-      mode: "local",
+      mode: "worktree",
       host: "",
     });
   });
 
-  it("defaults to local for null", () => {
+  it("defaults to worktree for null", () => {
     expect(parseRuntimeModeAndHost(null)).toEqual({
-      mode: "local",
+      mode: "worktree",
       host: "",
     });
   });
@@ -47,8 +54,12 @@ describe("buildRuntimeString", () => {
     expect(buildRuntimeString("ssh", "")).toBe("ssh");
   });
 
-  it("returns undefined for local mode", () => {
-    expect(buildRuntimeString("local", "")).toBeUndefined();
+  it("returns string token for local mode", () => {
+    expect(buildRuntimeString("local", "")).toBe("local");
+  });
+
+  it("returns undefined for worktree mode", () => {
+    expect(buildRuntimeString("worktree", "")).toBeUndefined();
   });
 
   it("trims whitespace from host", () => {
@@ -61,6 +72,19 @@ describe("round-trip parsing and building", () => {
     const built = buildRuntimeString("ssh", "");
     const parsed = parseRuntimeModeAndHost(built);
     expect(parsed.mode).toBe("ssh");
+    expect(parsed.host).toBe("");
+  });
+  it("preserves local mode token", () => {
+    const built = buildRuntimeString("local", "");
+    const parsed = parseRuntimeModeAndHost(built);
+    expect(parsed.mode).toBe("local");
+    expect(parsed.host).toBe("");
+  });
+
+  it("defaults to worktree when build omits token", () => {
+    const built = buildRuntimeString("worktree", "");
+    const parsed = parseRuntimeModeAndHost(built);
+    expect(parsed.mode).toBe("worktree");
     expect(parsed.host).toBe("");
   });
 

@@ -3,10 +3,11 @@
  */
 
 /** Runtime mode type - used in UI and runtime string parsing */
-export type RuntimeMode = "local" | "ssh";
+export type RuntimeMode = "worktree" | "local" | "ssh";
 
 /** Runtime mode constants */
 export const RUNTIME_MODE = {
+  WORKTREE: "worktree" as const,
   LOCAL: "local" as const,
   SSH: "ssh" as const,
 } as const;
@@ -16,9 +17,12 @@ export const SSH_RUNTIME_PREFIX = "ssh ";
 
 export type RuntimeConfig =
   | {
-      type: "local";
+      type: "worktree";
       /** Base directory where all workspaces are stored (e.g., ~/.mux/src) */
       srcBaseDir: string;
+    }
+  | {
+      type: "local";
     }
   | {
       type: "ssh";
@@ -36,7 +40,8 @@ export type RuntimeConfig =
  * Parse runtime string from localStorage or UI input into mode and host
  * Format: "ssh <host>" -> { mode: "ssh", host: "<host>" }
  *         "ssh" -> { mode: "ssh", host: "" }
- *         "local" or undefined -> { mode: "local", host: "" }
+ *         "local" -> { mode: "local", host: "" }
+ *         "worktree" or undefined -> { mode: "worktree", host: "" }
  *
  * Use this for UI state management (localStorage, form inputs)
  */
@@ -45,7 +50,7 @@ export function parseRuntimeModeAndHost(runtime: string | null | undefined): {
   host: string;
 } {
   if (!runtime) {
-    return { mode: RUNTIME_MODE.LOCAL, host: "" };
+    return { mode: RUNTIME_MODE.WORKTREE, host: "" };
   }
 
   const trimmed = runtime.trim();
@@ -55,26 +60,37 @@ export function parseRuntimeModeAndHost(runtime: string | null | undefined): {
     return { mode: RUNTIME_MODE.LOCAL, host: "" };
   }
 
+  if (lowerTrimmed === RUNTIME_MODE.WORKTREE) {
+    return { mode: RUNTIME_MODE.WORKTREE, host: "" };
+  }
+
   // Handle both "ssh" and "ssh <host>"
   if (lowerTrimmed === RUNTIME_MODE.SSH || lowerTrimmed.startsWith(SSH_RUNTIME_PREFIX)) {
     const host = trimmed.substring(SSH_RUNTIME_PREFIX.length).trim();
     return { mode: RUNTIME_MODE.SSH, host };
   }
 
-  // Default to local for unrecognized strings
-  return { mode: RUNTIME_MODE.LOCAL, host: "" };
+  // Default to worktree for unrecognized strings (backward compatibility)
+  return { mode: RUNTIME_MODE.WORKTREE, host: "" };
 }
 
 /**
  * Build runtime string for storage/IPC from mode and host
- * Returns: "ssh <host>" for SSH with host, "ssh" for SSH without host, undefined for local
+ * Returns: "ssh <host>" for SSH with host, "ssh" for SSH without host,
+ *          "local" for in-place local mode, undefined for worktree mode
  */
 export function buildRuntimeString(mode: RuntimeMode, host: string): string | undefined {
   if (mode === RUNTIME_MODE.SSH) {
     const trimmedHost = host.trim();
     // Persist SSH mode even without a host so UI remains in SSH state
-    return trimmedHost ? `${SSH_RUNTIME_PREFIX}${trimmedHost}` : "ssh";
+    return trimmedHost ? `${SSH_RUNTIME_PREFIX}${trimmedHost}` : RUNTIME_MODE.SSH;
   }
+
+  if (mode === RUNTIME_MODE.LOCAL) {
+    return RUNTIME_MODE.LOCAL;
+  }
+
+  // Worktree is the default - omit to keep backward compatibility with older prefs
   return undefined;
 }
 
