@@ -375,9 +375,13 @@ export class LocalRuntime implements Runtime {
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, workspacePath, initLogger } = params;
+    const { projectPath, workspacePath, initLogger, trunkBranch, autoRebaseTrunk } = params;
 
     try {
+      if (autoRebaseTrunk && trunkBranch) {
+        await this.runAutoRebase(workspacePath, trunkBranch, initLogger);
+      }
+
       // Run .mux/init hook if it exists
       // Note: runInitHook calls logComplete() internally if hook exists
       const hookExists = await checkInitHookExists(projectPath);
@@ -396,6 +400,46 @@ export class LocalRuntime implements Runtime {
         success: false,
         error: errorMsg,
       };
+    }
+  }
+
+  private async runAutoRebase(
+    workspacePath: string,
+    trunkBranch: string,
+    initLogger: InitLogger
+  ): Promise<void> {
+    const quote = (value: string) => `"${value}"`;
+
+    const hasOrigin = await (async () => {
+      try {
+        using remoteCheck = execAsync(`git -C ${quote(workspacePath)} remote get-url origin`);
+        const { stdout } = await remoteCheck.result;
+        return stdout.trim().length > 0;
+      } catch {
+        return false;
+      }
+    })();
+
+    if (!hasOrigin) {
+      initLogger.logStep("Skipping auto-rebase: origin remote not configured.");
+      return;
+    }
+
+    initLogger.logStep(`Fetching origin/${trunkBranch}...`);
+    try {
+      using fetchProc = execAsync(`git -C ${quote(workspacePath)} fetch origin ${trunkBranch}`);
+      await fetchProc.result;
+    } catch (error) {
+      throw new Error(`Failed to fetch origin/${trunkBranch}: ${getErrorMessage(error)}`);
+    }
+
+    initLogger.logStep(`Rebasing onto origin/${trunkBranch}...`);
+    try {
+      using rebaseProc = execAsync(`git -C ${quote(workspacePath)} rebase origin/${trunkBranch}`);
+      await rebaseProc.result;
+      initLogger.logStep(`Rebased onto origin/${trunkBranch}`);
+    } catch (error) {
+      throw new Error(`Failed to rebase onto origin/${trunkBranch}: ${getErrorMessage(error)}`);
     }
   }
 

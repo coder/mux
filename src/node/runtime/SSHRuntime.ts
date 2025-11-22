@@ -722,6 +722,72 @@ export class SSHRuntime implements Runtime {
     }
   }
 
+  private async runAutoRebase(
+    workspacePath: string,
+    trunkBranch: string,
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    const remoteCheck = await this.exec(`git remote get-url origin`, {
+      cwd: workspacePath,
+      timeout: 30,
+      abortSignal,
+    });
+    const [, _remoteStderr, remoteExitCode] = await Promise.all([
+      streamToString(remoteCheck.stdout),
+      streamToString(remoteCheck.stderr),
+      remoteCheck.exitCode,
+    ]);
+
+    if (remoteExitCode !== 0) {
+      initLogger.logStep("Skipping auto-rebase: origin remote not configured.");
+      return;
+    }
+
+    await this.runGitCommandWithLogging(
+      workspacePath,
+      `git fetch origin ${trunkBranch}`,
+      `Fetching origin/${trunkBranch}...`,
+      initLogger,
+      abortSignal
+    );
+
+    await this.runGitCommandWithLogging(
+      workspacePath,
+      `git rebase origin/${trunkBranch}`,
+      `Rebasing onto origin/${trunkBranch}...`,
+      initLogger,
+      abortSignal
+    );
+
+    initLogger.logStep(`Rebased onto origin/${trunkBranch}`);
+  }
+
+  private async runGitCommandWithLogging(
+    workspacePath: string,
+    command: string,
+    description: string,
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal,
+    timeout = 300
+  ): Promise<void> {
+    initLogger.logStep(description);
+    const stream = await this.exec(command, {
+      cwd: workspacePath,
+      timeout,
+      abortSignal,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      streamToString(stream.stdout),
+      streamToString(stream.stderr),
+      stream.exitCode,
+    ]);
+
+    if (exitCode !== 0) {
+      throw new Error(stderr.trim() || stdout.trim() || description);
+    }
+  }
+
   /**
    * Run .mux/init hook on remote machine if it exists
    */
@@ -905,6 +971,10 @@ export class SSHRuntime implements Runtime {
         };
       }
       initLogger.logStep("Branch checked out successfully");
+
+      if (params.autoRebaseTrunk && trunkBranch) {
+        await this.runAutoRebase(workspacePath, trunkBranch, initLogger, abortSignal);
+      }
 
       // 3. Run .mux/init hook if it exists
       // Note: runInitHook calls logComplete() internally if hook exists

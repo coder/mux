@@ -39,6 +39,8 @@ interface UseCreationWorkspaceReturn {
   runtimeMode: RuntimeMode;
   sshHost: string;
   setRuntimeOptions: (mode: RuntimeMode, host: string) => void;
+  autoRebaseTrunk: boolean;
+  setAutoRebaseTrunk: (value: boolean) => void;
   error: string | null;
   setError: (error: string | null) => void;
   isSending: boolean;
@@ -60,6 +62,7 @@ export function useCreationWorkspace({
   const [recommendedTrunk, setRecommendedTrunk] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [autoRebaseTrunk, setAutoRebaseTrunk] = useState(true);
 
   // Centralized draft workspace settings with automatic persistence
   const { settings, setRuntimeOptions, setTrunkBranch, getRuntimeString } =
@@ -107,6 +110,7 @@ export function useCreationWorkspace({
           runtimeConfig,
           projectPath, // Pass projectPath when workspaceId is null
           trunkBranch: settings.trunkBranch, // Pass selected trunk branch from settings
+          autoRebaseTrunk,
         });
 
         if (!result.success) {
@@ -139,6 +143,7 @@ export function useCreationWorkspace({
       getRuntimeString,
       sendMessageOptions,
       settings.trunkBranch,
+      autoRebaseTrunk,
     ]
   );
 
@@ -149,6 +154,8 @@ export function useCreationWorkspace({
     runtimeMode: settings.runtimeMode,
     sshHost: settings.sshHost,
     setRuntimeOptions,
+    autoRebaseTrunk,
+    setAutoRebaseTrunk,
     error,
     setError,
     isSending,

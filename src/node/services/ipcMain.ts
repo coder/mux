@@ -339,6 +339,7 @@ export class IpcMain {
           trunkBranch: recommendedTrunk,
           workspacePath: createResult.workspacePath,
           initLogger,
+          autoRebaseTrunk: options.autoRebaseTrunk ?? false,
         })
         .catch((error: unknown) => {
           const errorMsg = error instanceof Error ? error.message : String(error);
@@ -664,6 +665,7 @@ export class IpcMain {
             trunkBranch: normalizedTrunkBranch,
             workspacePath: createResult.workspacePath,
             initLogger,
+            autoRebaseTrunk: false,
           })
           .catch((error: unknown) => {
             const errorMsg = error instanceof Error ? error.message : String(error);

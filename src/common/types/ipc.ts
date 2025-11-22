@@ -222,6 +222,8 @@ export interface SendMessageOptions {
   maxOutputTokens?: number;
   providerOptions?: MuxProviderOptions;
   mode?: string; // Mode name - frontend narrows to specific values, backend accepts any string
+  /** Whether to rebase onto origin/<trunk> before first workspace init */
+  autoRebaseTrunk?: boolean;
   muxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
 }
 
