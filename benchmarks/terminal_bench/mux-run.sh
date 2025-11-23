@@ -77,7 +77,7 @@ ensure_git_repo "${project_path}"
 log "starting mux agent session for ${project_path}"
 cd "${MUX_APP_ROOT}"
 
-cmd=(bun src/debug/agentSessionCli.ts
+cmd=(bun src/cli/debug/agentSessionCli.ts
   --config-root "${MUX_CONFIG_ROOT}"
   --project-path "${project_path}"
   --workspace-path "${project_path}"
