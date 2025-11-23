@@ -12,11 +12,11 @@ export function ThemeToggleButton() {
       <button
         type="button"
         onClick={toggleTheme}
-        className="border-border-light text-muted-foreground hover:border-border-medium/80 hover:bg-toggle-bg/70 focus-visible:ring-border-medium flex h-7 w-7 items-center justify-center rounded-md border bg-transparent transition-colors duration-150 focus-visible:ring-1"
+        className="border-border-light text-muted-foreground hover:border-border-medium/80 hover:bg-toggle-bg/70 focus-visible:ring-border-medium flex h-5 w-5 items-center justify-center rounded-md border bg-transparent transition-colors duration-150 focus-visible:ring-1"
         aria-label={label}
         data-testid="theme-toggle"
       >
-        <Icon className="h-4 w-4" aria-hidden />
+        <Icon className="h-3.5 w-3.5" aria-hidden />
       </button>
       <Tooltip align="right">{label}</Tooltip>
     </TooltipWrapper>
