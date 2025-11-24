@@ -10,8 +10,7 @@ import {
 import { spawn } from "child_process";
 
 // Skip all tests if TEST_INTEGRATION or TEST_OLLAMA is not set
-// TODO: Re-enable in follow up PR (flaky in CI)
-const shouldRunOllamaTests = false; // shouldRunIntegrationTests() && process.env.TEST_OLLAMA === "1";
+const shouldRunOllamaTests = shouldRunIntegrationTests() && process.env.TEST_OLLAMA === "1";
 const describeOllama = shouldRunOllamaTests ? describe : describe.skip;
 
 // Ollama doesn't require API keys - it's a local service
