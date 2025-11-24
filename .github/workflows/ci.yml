@@ -134,7 +134,7 @@ jobs:
       - name: Run all integration tests with coverage
         # TEST_OLLAMA=1 enables Ollama-specific tests (now included with all integration tests)
         # --silent suppresses per-test output (17+ test files × workers = overwhelming logs)
-        run: TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent ${{ github.event.inputs.test_filter || 'tests' }}
+        run: TEST_INTEGRATION=1 TEST_OLLAMA=1 bun x jest --coverage --maxWorkers=100% --silent ${{ github.event.inputs.test_filter || 'tests' }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
