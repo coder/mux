@@ -135,7 +135,7 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
       }
       data-command-suggestions
       className={cn(
-        "bg-separator border-border-light z-[100] flex max-h-[200px] flex-col overflow-y-auto rounded border shadow-[0_-4px_12px_rgba(0,0,0,0.4)]",
+        "bg-separator border-border-light z-[1010] flex max-h-[200px] flex-col overflow-y-auto rounded border shadow-[0_-4px_12px_rgba(0,0,0,0.4)]",
         // Use absolute positioning relative to parent when not in portal mode
         !anchorRef && "absolute right-0 bottom-full left-0 mb-2"
       )}
