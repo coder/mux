@@ -18,6 +18,7 @@ import {
   readChatHistory,
   TEST_IMAGES,
   modelString,
+  configureTestRetries,
 } from "./helpers";
 import type { StreamDeltaEvent } from "../../src/common/types/stream";
 import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
@@ -1496,6 +1497,9 @@ These are general instructions that apply to all modes.
 
 // Test image support across providers
 describe.each(PROVIDER_CONFIGS)("%s:%s image support", (provider, model) => {
+  // Retry image tests in CI as they can be flaky with some providers
+  configureTestRetries(3);
+
   test.concurrent(
     "should send images to AI model and get response",
     async () => {
