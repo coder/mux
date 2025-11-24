@@ -806,12 +806,3 @@ export async function buildLargeHistory(
   await fs.writeFile(chatPath, content, "utf-8");
 }
 
-/**
- * Configure test retries for flaky tests in CI
- * Only works with Jest
- */
-export function configureTestRetries(retries = 3): void {
-  if (process.env.CI && typeof jest !== "undefined" && jest.retryTimes) {
-    jest.retryTimes(retries, { logErrorsBeforeRetry: true });
-  }
-}
