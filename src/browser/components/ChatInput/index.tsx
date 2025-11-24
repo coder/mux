@@ -63,6 +63,14 @@ import { cn } from "@/common/lib/utils";
 import { CreationControls } from "./CreationControls";
 import { useCreationWorkspace } from "./useCreationWorkspace";
 
+const LEADING_COMMAND_NOISE = /^(?:\s|\u200B|\u200C|\u200D|\u200E|\u200F|\uFEFF)+/;
+
+function normalizeSlashCommandInput(value: string): string {
+  if (!value) {
+    return value;
+  }
+  return value.replace(LEADING_COMMAND_NOISE, "");
+}
 type TokenCountReader = () => number;
 
 function createTokenCountResource(promise: Promise<number>): TokenCountReader {
@@ -301,9 +309,10 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
 
   // Watch input for slash commands
   useEffect(() => {
-    const suggestions = getSlashCommandSuggestions(input, { providerNames });
+    const normalizedSlashSource = normalizeSlashCommandInput(input);
+    const suggestions = getSlashCommandSuggestions(normalizedSlashSource, { providerNames });
     setCommandSuggestions(suggestions);
-    setShowCommandSuggestions(suggestions.length > 0);
+    setShowCommandSuggestions(normalizedSlashSource.startsWith("/") && suggestions.length > 0);
   }, [input, providerNames]);
 
   // Load provider names for suggestions
@@ -463,8 +472,11 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
       return;
     }
 
-    const messageText = input.trim();
-    const parsed = parseCommand(messageText);
+    const rawInputValue = input;
+    const messageText = rawInputValue.trim();
+    const normalizedCommandInput = normalizeSlashCommandInput(messageText);
+    const isSlashCommand = normalizedCommandInput.startsWith("/");
+    const parsed = isSlashCommand ? parseCommand(normalizedCommandInput) : null;
 
     if (parsed) {
       const context: SlashCommandContext = {
@@ -491,8 +503,17 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
       const result = await processSlashCommand(parsed, context);
 
       if (!result.clearInput) {
-        setInput(messageText); // Restore input on failure
+        setInput(rawInputValue); // Restore exact input on failure
       }
+      return;
+    }
+
+    if (isSlashCommand) {
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: `Unknown command: ${normalizedCommandInput.split(/\s+/)[0] ?? ""}`,
+      });
       return;
     }
 
@@ -511,7 +532,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     }
 
     // Workspace variant: regular message send
-    if (variant !== "workspace") return;
 
     try {
       // Regular message - send directly via API
@@ -555,18 +575,18 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         let muxMetadata: MuxFrontendMetadata | undefined;
         let compactionOptions = {};
 
-        if (editingMessage && messageText.startsWith("/")) {
-          const parsed = parseCommand(messageText);
-          if (parsed?.type === "compact") {
+        if (editingMessage && normalizedCommandInput.startsWith("/")) {
+          const parsedEditingCommand = parseCommand(normalizedCommandInput);
+          if (parsedEditingCommand?.type === "compact") {
             const {
               messageText: regeneratedText,
               metadata,
               sendOptions,
             } = prepareCompactionMessage({
               workspaceId: props.workspaceId,
-              maxOutputTokens: parsed.maxOutputTokens,
-              continueMessage: parsed.continueMessage,
-              model: parsed.model,
+              maxOutputTokens: parsedEditingCommand.maxOutputTokens,
+              continueMessage: parsedEditingCommand.continueMessage,
+              model: parsedEditingCommand.model,
               sendMessageOptions,
             });
             actualMessageText = regeneratedText;
@@ -602,7 +622,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           // Show error using enhanced toast
           setToast(createErrorToast(result.error));
           // Restore input and images on error so user can try again
-          setInput(messageText);
+          setInput(rawInputValue);
           setImageAttachments(previousImageAttachments);
         } else {
           // Track telemetry for successful message send
@@ -623,7 +643,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             raw: error instanceof Error ? error.message : "Failed to send message",
           })
         );
-        setInput(messageText);
+        setInput(rawInputValue);
         setImageAttachments(previousImageAttachments);
       } finally {
         setIsSending(false);
@@ -749,18 +769,16 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         data-component="ChatInputSection"
       >
         <div className="mx-auto w-full max-w-4xl">
-          {/* Creation toast */}
-          {variant === "creation" && (
-            <ChatInputToast
-              toast={creationState.toast}
-              onDismiss={() => creationState.setToast(null)}
-            />
-          )}
-
-          {/* Workspace toast */}
-          {variant === "workspace" && (
-            <ChatInputToast toast={toast} onDismiss={handleToastDismiss} />
-          )}
+          {/* Toast - show shared toast (slash commands) or variant-specific toast */}
+          <ChatInputToast
+            toast={toast ?? (variant === "creation" ? creationState.toast : null)}
+            onDismiss={() => {
+              handleToastDismiss();
+              if (variant === "creation") {
+                creationState.setToast(null);
+              }
+            }}
+          />
 
           {/* Command suggestions - available in both variants */}
           <CommandSuggestions
