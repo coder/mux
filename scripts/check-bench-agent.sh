@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# This script verifies that the terminal-bench agent entry point 
+# This script verifies that the terminal-bench agent entry point
 # referenced in mux-run.sh is valid and can be executed (imports resolve).
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -39,14 +39,14 @@ echo "Verifying agent CLI startup (checking imports)..."
 if ! output=$(bun "$FULL_CLI_PATH" --help 2>&1); then
   # It failed, which is expected (no args/bad args), but we need to check WHY
   exit_code=$?
-  
+
   # Check for known import/worker errors
   if echo "$output" | grep -qE "Module not found|Worker error|Cannot find module"; then
     echo "❌ Error: Agent CLI failed to start due to import/worker errors:"
     echo "$output"
     exit 1
   fi
-  
+
   # If it failed just because of arguments, that's fine - it means the code loaded.
   echo "✅ Agent CLI loaded successfully (ignoring argument errors)"
 else
