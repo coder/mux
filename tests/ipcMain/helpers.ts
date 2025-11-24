@@ -805,4 +805,3 @@ export async function buildLargeHistory(
   await fs.mkdir(sessionDir, { recursive: true });
   await fs.writeFile(chatPath, content, "utf-8");
 }
-
