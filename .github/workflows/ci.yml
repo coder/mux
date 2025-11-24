@@ -122,6 +122,59 @@ jobs:
           flags: integration-tests
           fail_ci_if_error: false
 
+  integration-test-ollama:
+    name: Integration Tests (Ollama)
+    if: github.repository_owner == 'coder'
+    timeout-minutes: 15
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Required for git describe to find tags
+
+      - uses: ./.github/actions/setup-mux
+
+      - name: Check if Ollama is pre-installed
+        id: check-ollama
+        run: |
+          if systemctl is-active --quiet ollama 2>/dev/null && curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
+            echo "installed=true" >> $GITHUB_OUTPUT
+            echo "✅ Ollama already running (self-hosted runner)"
+          else
+            echo "installed=false" >> $GITHUB_OUTPUT
+            echo "⚙️ Ollama not found, will install"
+          fi
+
+      - name: Setup Ollama
+        if: steps.check-ollama.outputs.installed != 'true'
+        uses: ./.github/actions/setup-ollama
+
+      - name: Verify Ollama server
+        run: |
+          echo "Verifying Ollama server..."
+          timeout 5 sh -c 'until curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; do sleep 0.2; done'
+          echo "Ollama ready - integration tests will pull models on demand"
+
+      - name: Build worker files
+        run: make build-main
+
+      - name: Run Ollama integration tests with coverage
+        run: TEST_INTEGRATION=1 TEST_OLLAMA=1 bun x jest --coverage --maxWorkers=100% --silent "$TEST_TARGET"
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OLLAMA_BASE_URL: http://localhost:11434/api
+          TEST_TARGET: ${{ github.event.inputs.test_filter || 'tests/ipcMain/ollama.test.ts' }}
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          flags: integration-tests-ollama
+          fail_ci_if_error: false
+
   storybook-test:
     name: Storybook Interaction Tests
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
