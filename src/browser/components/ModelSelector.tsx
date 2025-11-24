@@ -8,6 +8,7 @@ import React, {
 } from "react";
 import { cn } from "@/common/lib/utils";
 import { Star } from "lucide-react";
+import { TooltipWrapper, Tooltip } from "./Tooltip";
 
 interface ModelSelectorProps {
   value: string;
@@ -251,31 +252,38 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                   <span className="truncate flex-1 min-w-0">{model}</span>
                   <div className="flex items-center gap-1 shrink-0">
                     {onSetDefaultModel && (
-                      <button
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          const isDefault = defaultModel === model;
-                          // If it's already the default, do nothing (cannot unset)
-                          if (!isDefault) {
-                            onSetDefaultModel(model);
+                      <TooltipWrapper inline>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            const isDefault = defaultModel === model;
+                            // If it's already the default, do nothing (cannot unset)
+                            if (!isDefault) {
+                              onSetDefaultModel(model);
+                            }
+                          }}
+                          className={cn(
+                            "rounded-sm border px-1 py-0.5 transition-colors duration-150 flex items-center justify-center",
+                            defaultModel === model
+                              ? "text-yellow-400 border-yellow-400/40 cursor-default"
+                              : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
+                          )}
+                          aria-label={
+                            defaultModel === model ? "Current default model" : "Set as default model"
                           }
-                        }}
-                        className={cn(
-                          "rounded-sm border px-1 py-0.5 transition-colors duration-150 flex items-center justify-center",
-                          defaultModel === model
-                            ? "text-yellow-400 border-yellow-400/40 cursor-default"
-                            : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
-                        )}
-                        aria-label={
-                          defaultModel === model ? "Current default model" : "Set as default model"
-                        }
-                        disabled={defaultModel === model}
-                      >
-                        <Star className={cn("h-3 w-3", defaultModel === model && "fill-current")} />
-                      </button>
+                          disabled={defaultModel === model}
+                        >
+                          <Star
+                            className={cn("h-3 w-3")}
+                          />
+                        </button>
+                        <Tooltip className="tooltip" align="center">
+                          {defaultModel === model ? "Current default model" : "Set as default model"}
+                        </Tooltip>
+                      </TooltipWrapper>
                     )}
                     {onRemoveModel && defaultModel !== model && (
                       <button
