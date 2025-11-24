@@ -21,16 +21,20 @@ export const CompactionWarning: React.FC<{
   // At threshold or above, next message will trigger compaction
   const willCompactNext = props.usagePercentage >= props.thresholdPercentage;
 
-  // Calculate remaining percentage until threshold
+  // Urgent warning at/above threshold - prominent blue box
+  if (willCompactNext) {
+    return (
+      <div className="text-plan-mode bg-plan-mode/10 mx-4 my-4 rounded-sm px-4 py-3 text-center text-xs font-medium">
+        ⚠️ Context limit reached. Next message will trigger auto-compaction.
+      </div>
+    );
+  }
+
+  // Countdown warning below threshold - subtle grey text, right-aligned
   const remaining = props.thresholdPercentage - props.usagePercentage;
-
-  const message = willCompactNext
-    ? "⚠️ Context limit reached. Next message will trigger auto-compaction."
-    : `Context left until Auto-Compact: ${Math.round(remaining)}%`;
-
   return (
-    <div className="text-plan-mode bg-plan-mode/10 mx-4 my-4 rounded-sm px-4 py-3 text-center text-xs font-medium">
-      {message}
+    <div className="text-muted mx-4 mt-2 mb-1 text-right text-[10px]">
+      Context left until Auto-Compact: {Math.round(remaining)}%
     </div>
   );
 };
