@@ -33,7 +33,10 @@ import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
 import { buildSystemMessage, readToolInstructions } from "./systemMessage";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
-import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
+import {
+  buildProviderOptions,
+  calculateEffectiveMaxOutputTokens,
+} from "@/common/utils/ai/providerOptions";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type {
   StreamAbortEvent,
@@ -926,6 +929,15 @@ export class AIService extends EventEmitter {
         effectiveMuxProviderOptions
       );
 
+      // Calculate effective maxOutputTokens that accounts for thinking budget
+      // For Anthropic models with extended thinking, the SDK adds thinkingBudget to maxOutputTokens
+      // so we need to ensure the sum doesn't exceed the model's max_output_tokens limit
+      const effectiveMaxOutputTokens = calculateEffectiveMaxOutputTokens(
+        effectiveModelString,
+        thinkingLevel ?? "off",
+        maxOutputTokens
+      );
+
       // Delegate to StreamManager with model instance, system message, tools, historySequence, and initial metadata
       const streamResult = await this.streamManager.startStream(
         workspaceId,
@@ -943,7 +955,7 @@ export class AIService extends EventEmitter {
           mode, // Pass mode so it persists in final history entry
         },
         providerOptions,
-        maxOutputTokens,
+        effectiveMaxOutputTokens,
         toolPolicy,
         streamToken // Pass the pre-generated stream token
       );

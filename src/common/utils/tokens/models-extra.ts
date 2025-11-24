@@ -22,15 +22,16 @@ interface ModelData {
 }
 
 export const modelsExtra: Record<string, ModelData> = {
-  // Claude Opus 4.5 - Released November 2025
-  // $15/M input, $75/M output (same pricing as Opus 4.1)
+  // Claude Opus 4.5 - Released November 24, 2025
+  // $5/M input, $25/M output (price drop from Opus 4.1's $15/$75)
+  // 64K max output tokens (matches Sonnet 4.5)
   "claude-opus-4-5": {
     max_input_tokens: 200000,
-    max_output_tokens: 32000,
-    input_cost_per_token: 0.000015, // $15 per million input tokens
-    output_cost_per_token: 0.000075, // $75 per million output tokens
-    cache_creation_input_token_cost: 0.00001875, // $18.75 per million tokens
-    cache_read_input_token_cost: 0.0000015, // $1.50 per million tokens
+    max_output_tokens: 64000,
+    input_cost_per_token: 0.000005, // $5 per million input tokens
+    output_cost_per_token: 0.000025, // $25 per million output tokens
+    cache_creation_input_token_cost: 0.00000625, // $6.25 per million tokens (estimated)
+    cache_read_input_token_cost: 0.0000005, // $0.50 per million tokens (estimated)
     litellm_provider: "anthropic",
     mode: "chat",
     supports_function_calling: true,
