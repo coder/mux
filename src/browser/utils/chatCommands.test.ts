@@ -120,4 +120,16 @@ describe("prepareCompactionMessage", () => {
 
     expect(metadata.parsed.resumeModel).toBe(sendMessageOptions.model);
   });
+
+  test("generates correct prompt text with strict summary instructions", () => {
+    const sendMessageOptions = createBaseOptions();
+    const { messageText } = prepareCompactionMessage({
+      workspaceId: "ws-1",
+      maxOutputTokens: 4096,
+      sendMessageOptions,
+    });
+
+    expect(messageText).toContain("Focus entirely on the summary");
+    expect(messageText).toContain("Do not suggest next steps or future actions");
+  });
 });

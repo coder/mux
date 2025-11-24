@@ -7,7 +7,7 @@ export const SLASH_COMMAND_PROMPTS = {
 } as const;
 
 export const COMPACTION_MESSAGE =
-  "Summarize this conversation into a compact form for a new Assistant to continue helping the user. Use approximately 385 words.";
+  "Summarize this conversation into a compact form for a new Assistant to continue helping the user. Focus entirely on the summary of what has happened. Do not suggest next steps or future actions. Use approximately 385 words.";
 
 export const COMPACT_SUMMARY_TEXT =
   "Compact summary: The assistant read project files, listed directory contents, created and inspected test.txt, then confirmed the contents remained 'hello'. Technical details preserved.";

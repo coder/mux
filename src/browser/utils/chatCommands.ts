@@ -200,7 +200,7 @@ export function prepareCompactionMessage(options: CompactionOptions): {
   const targetWords = options.maxOutputTokens ? Math.round(options.maxOutputTokens / 1.3) : 2000;
 
   // Build compaction message with optional continue context
-  let messageText = `Summarize this conversation into a compact form for a new Assistant to continue helping the user. Use approximately ${targetWords} words.`;
+  let messageText = `Summarize this conversation into a compact form for a new Assistant to continue helping the user. Focus entirely on the summary of what has happened. Do not suggest next steps or future actions. Use approximately ${targetWords} words.`;
 
   if (options.continueMessage) {
     messageText += `\n\nThe user wants to continue with: ${options.continueMessage}`;
