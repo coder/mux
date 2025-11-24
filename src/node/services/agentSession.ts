@@ -271,6 +271,15 @@ export class AgentSession {
     }
 
     if (options?.editMessageId) {
+      // Interrupt an existing stream or compaction, if active
+      if (this.aiService.isStreaming(this.workspaceId)) {
+        // MUST use abandonPartial=true to prevent handleAbort from performing partial compaction
+        // with mismatched history (since we're about to truncate it)
+        const stopResult = await this.interruptStream(/* abandonPartial */ true);
+        if (!stopResult.success) {
+          return Err(createUnknownSendMessageError(stopResult.error));
+        }
+      }
       const truncateResult = await this.historyService.truncateAfterMessage(
         this.workspaceId,
         options.editMessageId
