@@ -1,4 +1,14 @@
-import { parseRuntimeString } from "./chatCommands";
+import { describe, expect, test, beforeEach } from "bun:test";
+import type { SendMessageOptions } from "@/common/types/ipc";
+import { parseRuntimeString, prepareCompactionMessage } from "./chatCommands";
+
+// Simple mock for localStorage to satisfy resolveCompactionModel
+beforeEach(() => {
+  globalThis.localStorage = {
+    getItem: () => null,
+    setItem: () => undefined,
+  } as unknown as Storage;
+});
 
 describe("parseRuntimeString", () => {
   const workspaceName = "test-workspace";
@@ -82,5 +92,32 @@ describe("parseRuntimeString", () => {
     expect(() => parseRuntimeString("remote", workspaceName)).toThrow(
       "Unknown runtime type: 'remote'"
     );
+  });
+});
+
+describe("prepareCompactionMessage", () => {
+  const createBaseOptions = (): SendMessageOptions => ({
+    model: "anthropic:claude-3-5-sonnet",
+    thinkingLevel: "medium",
+    toolPolicy: [],
+    mode: "exec",
+  });
+
+  test("embeds resumeModel from base send options", () => {
+    const sendMessageOptions = createBaseOptions();
+    const { metadata } = prepareCompactionMessage({
+      workspaceId: "ws-1",
+      maxOutputTokens: 4096,
+      continueMessage: "Keep building",
+      model: "anthropic:claude-3-5-haiku",
+      sendMessageOptions,
+    });
+
+    expect(metadata.type).toBe("compaction-request");
+    if (metadata.type !== "compaction-request") {
+      throw new Error("Expected compaction metadata");
+    }
+
+    expect(metadata.parsed.resumeModel).toBe(sendMessageOptions.model);
   });
 });

@@ -23,6 +23,7 @@ import { Ok, Err } from "@/common/types/result";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { MessageQueue } from "./messageQueue";
+import { buildContinueMessageOptions } from "./compactionContinueOptions";
 import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
 
@@ -336,8 +337,17 @@ export class AgentSession {
     const muxMeta = options?.muxMetadata;
     if (muxMeta?.type === "compaction-request" && muxMeta.parsed.continueMessage && options) {
       // Strip out edit-specific and compaction-specific fields so the queued message is a fresh user message
-      const { muxMetadata, mode, editMessageId, ...continueOptions } = options;
-      this.messageQueue.add(muxMeta.parsed.continueMessage, continueOptions);
+      const { muxMetadata, mode, editMessageId, imageParts, ...rest } = options;
+      const baseContinueOptions: SendMessageOptions = { ...rest };
+      const sanitizedOptions = buildContinueMessageOptions(
+        baseContinueOptions,
+        muxMeta.parsed.resumeModel
+      );
+      const continuePayload =
+        imageParts && imageParts.length > 0
+          ? { ...sanitizedOptions, imageParts }
+          : sanitizedOptions;
+      this.messageQueue.add(muxMeta.parsed.continueMessage, continuePayload);
       this.emitQueuedMessageChanged();
     }
 

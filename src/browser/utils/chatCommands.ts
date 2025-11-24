@@ -214,6 +214,7 @@ export function prepareCompactionMessage(options: CompactionOptions): {
     model: effectiveModel,
     maxOutputTokens: options.maxOutputTokens,
     continueMessage: options.continueMessage,
+    resumeModel: options.sendMessageOptions.model,
   };
 
   const metadata: MuxFrontendMetadata = {

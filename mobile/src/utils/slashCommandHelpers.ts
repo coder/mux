@@ -57,6 +57,7 @@ export function buildMobileCompactionPayload(
       model: parsed.model,
       maxOutputTokens: parsed.maxOutputTokens,
       continueMessage: parsed.continueMessage,
+      resumeModel: baseOptions.model,
     },
   };
 

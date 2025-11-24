@@ -10,6 +10,7 @@ export interface CompactionRequestData {
   model?: string; // Custom model override for compaction
   maxOutputTokens?: number;
   continueMessage?: string;
+  resumeModel?: string; // Original workspace model to use after compaction continues
 }
 
 // Frontend-specific metadata stored in muxMetadata field
@@ -103,6 +104,7 @@ export type DisplayedMessage =
         parsed: {
           maxOutputTokens?: number;
           continueMessage?: string;
+          resumeModel?: string;
         };
       };
     }
