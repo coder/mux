@@ -17,7 +17,9 @@ const describeOllama = shouldRunOllamaTests ? describe : describe.skip;
 // Tests require Ollama to be running and will pull models idempotently
 // Set TEST_OLLAMA=1 to enable these tests
 
-const OLLAMA_MODEL = "gpt-oss:20b";
+// Use a smaller model for CI to reduce resource usage and download time
+// while maintaining sufficient capability for tool calling tests
+const OLLAMA_MODEL = "llama3.2:3b";
 
 /**
  * Ensure Ollama model is available (idempotent).
