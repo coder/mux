@@ -1,7 +1,7 @@
 import { getModelKey, getThinkingLevelKey, getModeKey } from "@/common/constants/storage";
 import { modeToToolPolicy, PLAN_MODE_INSTRUCTION } from "@/common/utils/ui/modeUtils";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
-import { getDefaultModelFromLRU } from "@/browser/hooks/useModelLRU";
+import { getDefaultModel } from "@/browser/hooks/useModelLRU";
 import type { SendMessageOptions } from "@/common/types/ipc";
 import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
@@ -38,7 +38,7 @@ function getProviderOptions(): MuxProviderOptions {
  */
 export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptions {
   // Read model preference (workspace-specific), fallback to LRU default
-  const model = readPersistedState<string>(getModelKey(workspaceId), getDefaultModelFromLRU());
+  const model = readPersistedState<string>(getModelKey(workspaceId), getDefaultModel());
 
   // Read thinking level (workspace-specific)
   const thinkingLevel = readPersistedState<ThinkingLevel>(

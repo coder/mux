@@ -6,7 +6,7 @@ import { updatePersistedState, readPersistedState } from "@/browser/hooks/usePer
 import type { ThinkingLevel, ThinkingLevelOn } from "@/common/types/thinking";
 import { DEFAULT_THINKING_LEVEL } from "@/common/types/thinking";
 import { getThinkingPolicyForModel } from "@/browser/utils/thinking/policy";
-import { getDefaultModelFromLRU } from "@/browser/hooks/useModelLRU";
+import { getDefaultModel } from "@/browser/hooks/useModelLRU";
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { isCompactingStream, cancelCompaction } from "@/browser/utils/compaction/handler";
 
@@ -116,7 +116,7 @@ export function useAIViewKeybinds({
         // Fall back to message history model, then to most recent model from LRU
         // This matches the same logic as useSendMessageOptions
         const selectedModel = readPersistedState<string | null>(getModelKey(workspaceId), null);
-        const modelToUse = selectedModel ?? currentModel ?? getDefaultModelFromLRU();
+        const modelToUse = selectedModel ?? currentModel ?? getDefaultModel();
 
         // Storage key for remembering this model's last-used active thinking level
         const lastThinkingKey = getLastThinkingByModelKey(modelToUse);

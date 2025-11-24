@@ -33,19 +33,9 @@ export function evictModelFromLRU(model: string): void {
   persistModels(nextList);
 }
 
-export function getExplicitDefaultModel(): string {
+export function getDefaultModel(): string {
   const persisted = readPersistedState<string | null>(DEFAULT_MODEL_KEY, null);
   return persisted ?? FALLBACK_MODEL;
-}
-
-/**
- * Get the default model.
- * Prioritizes the explicit default model if set.
- * Otherwise, falls back to LRU behavior (most recently used).
- */
-export function getDefaultModelFromLRU(): string {
-  // Always return the explicit default (which falls back to hardcoded default)
-  return getExplicitDefaultModel();
 }
 
 /**
@@ -60,22 +50,10 @@ export function useModelLRU() {
     { listener: true }
   );
 
-  const [defaultModel, setDefaultModel] = usePersistedState<string | null>(
+  const [defaultModel, setDefaultModel] = usePersistedState<string>(
     DEFAULT_MODEL_KEY,
-    null,
+    FALLBACK_MODEL,
     { listener: true }
-  );
-
-  // Return the effective default model (never null)
-  const effectiveDefaultModel = defaultModel ?? FALLBACK_MODEL;
-
-  // Wrapper for setDefaultModel that prevents null/clearing
-  const handleSetDefaultModel = useCallback(
-    (model: string | null) => {
-      if (!model) return;
-      setDefaultModel(model);
-    },
-    [setDefaultModel]
   );
 
   // Merge any new defaults from MODEL_ABBREVIATIONS (only once on mount)
@@ -131,7 +109,7 @@ export function useModelLRU() {
     evictModel,
     getRecentModels,
     recentModels,
-    defaultModel: effectiveDefaultModel,
-    setDefaultModel: handleSetDefaultModel,
+    defaultModel,
+    setDefaultModel,
   };
 }

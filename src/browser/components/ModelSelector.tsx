@@ -17,7 +17,7 @@ interface ModelSelectorProps {
   onRemoveModel?: (model: string) => void;
   onComplete?: () => void;
   defaultModel?: string | null;
-  onSetDefaultModel?: (model: string | null) => void;
+  onSetDefaultModel?: (model: string) => void;
 }
 
 export interface ModelSelectorRef {
@@ -186,6 +186,14 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       setHighlightedIndex(currentIndex);
     }, [recentModels, value]);
 
+    const handleSetDefault = (e: React.MouseEvent, model: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (defaultModel !== model && onSetDefaultModel) {
+        onSetDefaultModel(model);
+      }
+    };
+
     // Expose open method to parent via ref
     useImperativeHandle(
       ref,
@@ -256,15 +264,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                         <button
                           type="button"
                           onMouseDown={(e) => e.preventDefault()}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            const isDefault = defaultModel === model;
-                            // If it's already the default, do nothing (cannot unset)
-                            if (!isDefault) {
-                              onSetDefaultModel(model);
-                            }
-                          }}
+                          onClick={(e) => handleSetDefault(e, model)}
                           className={cn(
                             "rounded-sm border px-1 py-0.5 transition-colors duration-150 flex items-center justify-center",
                             defaultModel === model
@@ -276,12 +276,12 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                           }
                           disabled={defaultModel === model}
                         >
-                          <Star
-                            className={cn("h-3 w-3")}
-                          />
+                          <Star className={cn("h-3 w-3")} />
                         </button>
                         <Tooltip className="tooltip" align="center">
-                          {defaultModel === model ? "Current default model" : "Set as default model"}
+                          {defaultModel === model
+                            ? "Current default model"
+                            : "Set as default model"}
                         </Tooltip>
                       </TooltipWrapper>
                     )}
