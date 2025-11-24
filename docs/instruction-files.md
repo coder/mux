@@ -11,117 +11,89 @@ Priority within each location: `AGENTS.md` → `AGENT.md` → `CLAUDE.md` (first
 
 > **Note:** mux strips HTML-style markdown comments (`<!-- ... -->`) from instruction files before sending them to the model. Use these comments for editor-only metadata—they will not reach the agent.
 
-## Mode Prompts
+## Scoped Instructions
 
-> Use mode-specific sections to optimize context and customize the behavior specific modes.
+mux supports **Scoped Instructions** that activate only in specific contexts. You define them using special headings in your instruction files:
 
-mux reads mode context from sections inside your instruction files. Add a heading titled:
+- `Mode: <mode>` — Active only in specific interaction modes (e.g., plan, exec).
+- `Model: <regex>` — Active only for specific models (e.g., GPT-4, Claude).
+- `Tool: <tool_name>` — Appended to the description of specific tools.
 
-- `Mode: <mode>` (case-insensitive), at any heading level (`#` .. `######`)
+### General Rules
 
-Rules:
+- **Precedence**: Workspace instructions (`<workspace>/AGENTS.md`) are checked first, then global instructions (`~/.mux/AGENTS.md`).
+- **First Match Wins**: Only the *first* matching section found is used. Overriding global defaults is as simple as defining the same section in your workspace.
+- **Isolation**: These sections are **stripped** from the general `<custom-instructions>` block. Their content is injected only where it belongs (e.g., into a specific tool's description or a special XML tag).
+- **Boundaries**: A section's content includes everything until the next heading of the same or higher level.
 
-- Workspace instructions are checked first, then global instructions
-- The first matching section wins (at most one section is used)
-- The section's content is everything until the next heading of the same or higher level
-- Mode sections are stripped from the general `<custom-instructions>` block; only the active mode's content is re-sent via its `<mode>` tag.
-- Missing sections are ignored (no error)
+---
 
-<!-- Note to developers: This behavior is implemented in src/services/systemMessage.ts (search for extractModeSection). Keep this documentation in sync with code changes. -->
+### Mode Prompts
 
-Example (in either `~/.mux/AGENTS.md` or `my-project/AGENTS.md`):
+Use mode-specific sections to optimize context and customize behavior for specific workflow stages. The active mode's content is injected via a `<mode>` tag.
+
+**Syntax**: `Mode: <mode>` (case-insensitive)
+
+**Example**:
 
 ```markdown
 # General Instructions
-
 - Be concise
-- Prefer TDD
 
 ## Mode: Plan
-
 When planning:
-
-- Focus on goals, constraints, and trade-offs
+- Focus on goals and trade-offs
 - Propose alternatives with pros/cons
-- Defer implementation detail unless asked
 
 ## Mode: Compact
-
-When compacting conversation history:
-
-- Preserve key decisions and their rationale
-- Keep code snippets that are still relevant
-- Maintain context about ongoing tasks
-- Be extremely concise—prioritize information density
+- Preserve key decisions
+- Be extremely concise
 ```
 
-### Available modes
+**Available modes**:
+- **exec** (default) — Normal operations.
+- **plan** — Active in Plan Mode.
+- **compact** — Used during `/compact` to guide history summarization.
 
-- **exec** - Default mode for normal operations
-- **plan** - Activated when the user toggles plan mode in the UI
-- **compact** - Automatically used during `/compact` operations to guide how the AI summarizes conversation history
+### Model Prompts
 
-Customizing the `compact` mode is particularly useful for controlling what information is preserved during automatic history compaction.
+Scope instructions to specific models or families using regex matching. The matched content is injected via a `<model-...>` tag.
 
-## Model Prompts
+**Syntax**: `Model: <regex>`
+- Regexes are case-insensitive by default.
+- Use `/pattern/flags` for custom flags (e.g., `/openai:.*codex/i`).
 
-Similar to modes, mux reads headings titled `Model: <regex>` to scope instructions to specific models or families. The `<regex>` is matched against the full model identifier (for example, `openai:gpt-5.1-codex`).
-
-Rules:
-
-- Workspace instructions are evaluated before global instructions; the first matching section wins.
-- Regexes are case-insensitive by default. Use `/pattern/flags` syntax to opt into custom flags (e.g., `/openai:.*codex/i`).
-- Invalid regex patterns are ignored instead of breaking the parse.
-- Model sections are also removed from `<custom-instructions>`; only the first regex match (if any) is injected via its `<model-…>` tag.
-- Only the content under the first matching heading is injected.
-
-<!-- Developers: See extractModelSection in src/node/utils/main/markdown.ts for the implementation. -->
-
-Example:
+**Example**:
 
 ```markdown
 ## Model: sonnet
-
 Be terse and to the point.
 
-## Model: openai:.\*codex
-
+## Model: openai:.*codex
 Use status reporting tools every few minutes.
 ```
 
-## Tool Prompts
+### Tool Prompts
 
-Like modes and models, mux reads headings titled `Tool: <tool_name>` to add instructions to specific tool descriptions. This allows you to customize how the AI uses particular tools without cluttering general instructions.
+Customize how the AI uses specific tools by appending instructions to their descriptions.
 
-Rules:
-
-- Workspace instructions are evaluated before global instructions; the first matching section wins.
+**Syntax**: `Tool: <tool_name>`
 - Tool names must match exactly (case-insensitive).
-- Tool sections are removed from `<custom-instructions>`; matching content is injected into the tool's description.
-- Only tools available for the active model are augmented (e.g., `web_search` for Anthropic models).
+- Only tools available for the active model are augmented.
 
-<!-- Developers: See extractToolSection in src/node/utils/main/markdown.ts for the implementation. -->
-
-Example:
+**Example**:
 
 ```markdown
 ## Tool: bash
-
-When running commands:
-
-- Always use absolute paths for clarity
-- Prefer single-line commands over multi-line scripts
-- Add `set -e` to scripts that should fail fast
+- Always use absolute paths
+- Add `set -e` to scripts
 
 ## Tool: file_edit_replace_string
-
-When editing files:
-
-- Include enough context (2-3 lines) around the replacement to make matches unique
-- Verify the edit succeeded by reading the file afterwards
+- Include 2-3 lines of context
+- Verify edits by reading the file afterwards
 ```
 
-Available tools include: `bash`, `file_read`, `file_edit_replace_string`, `file_edit_insert`, `propose_plan`, `todo_write`, `todo_read`, `status_set`, and `web_search` (Anthropic/OpenAI models only).
+**Available tools**: `bash`, `file_read`, `file_edit_replace_string`, `file_edit_insert`, `propose_plan`, `todo_write`, `todo_read`, `status_set`, `web_search`.
 
 ## Practical layout
 
