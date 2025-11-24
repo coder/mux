@@ -247,12 +247,13 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                 )}
                 onClick={() => handleSelectModel(model)}
               >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate">{model}</span>
-                  <div className="flex items-center gap-1">
+                <div className="flex items-center justify-between gap-2 w-full">
+                  <span className="truncate flex-1 min-w-0">{model}</span>
+                  <div className="flex items-center gap-1 shrink-0">
                     {onSetDefaultModel && (
                       <button
                         type="button"
+                        onMouseDown={(e) => e.preventDefault()}
                         onClick={(event) => {
                           event.preventDefault();
                           event.stopPropagation();
@@ -279,6 +280,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                     {onRemoveModel && defaultModel !== model && (
                       <button
                         type="button"
+                        onMouseDown={(e) => e.preventDefault()}
                         onClick={(event) => handleRemoveModel(model, event)}
                         className="text-muted-light border-border-light/40 hover:border-danger-soft/60 hover:text-danger-soft rounded-sm border px-1 py-0.5 text-[9px] font-semibold tracking-wide uppercase transition-colors duration-150"
                         aria-label={`Remove ${model} from recent models`}
