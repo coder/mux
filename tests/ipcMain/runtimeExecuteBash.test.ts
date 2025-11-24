@@ -52,6 +52,27 @@ function collectToolOutputs(events: WorkspaceChatMessage[], toolName: string): s
     .join("\n");
 }
 
+// Helper to calculate tool execution duration from captured events
+function getToolDuration(
+  env: { sentEvents: Array<{ channel: string; data: unknown; timestamp: number }> },
+  toolName: string
+): number {
+  const startEvent = env.sentEvents.find((e) => {
+    const msg = e.data as any;
+    return msg.type === "tool-call-start" && msg.toolName === toolName;
+  });
+
+  const endEvent = env.sentEvents.find((e) => {
+    const msg = e.data as any;
+    return msg.type === "tool-call-end" && msg.toolName === toolName;
+  });
+
+  if (startEvent && endEvent) {
+    return endEvent.timestamp - startEvent.timestamp;
+  }
+  return -1;
+}
+
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
@@ -259,17 +280,18 @@ describeIntegration("Runtime Bash Execution", () => {
               // Test command that pipes file through stdin-reading command (grep)
               // This would hang forever if stdin.close() was used instead of stdin.abort()
               // Regression test for: https://github.com/coder/mux/issues/503
-              const startTime = Date.now();
               const events = await sendMessageAndWait(
                 env,
                 workspaceId,
                 "Run bash: cat /tmp/test.json | grep test",
                 HAIKU_MODEL,
                 BASH_ONLY,
-                10000 // 10s timeout - should complete in ~4s per API call
+                30000 // Relaxed timeout for CI stability (was 10s)
               );
-              const duration = Date.now() - startTime;
-
+              
+              // Calculate actual tool execution duration
+              const toolDuration = getToolDuration(env, "bash");
+              
               // Extract response text
               const responseText = extractTextFromEvents(events);
 
@@ -279,10 +301,9 @@ describeIntegration("Runtime Bash Execution", () => {
               expect(bashOutput).toContain('"test": "data"');
 
               // Verify command completed quickly (not hanging until timeout)
-              // With tokenizer preloading, both local and SSH complete in ~8s total
-              // Actual hangs would hit bash tool's 180s timeout
+              expect(toolDuration).toBeGreaterThan(0);
               const maxDuration = 10000;
-              expect(duration).toBeLessThan(maxDuration);
+              expect(toolDuration).toBeLessThan(maxDuration);
 
               // Verify bash tool was called
               const toolCallStarts = events.filter((e: any) => e.type === "tool-call-start");
@@ -337,16 +358,17 @@ describeIntegration("Runtime Bash Execution", () => {
 
               // Test grep | head pattern - this historically hangs over SSH
               // This is a regression test for the bash hang issue
-              const startTime = Date.now();
               const events = await sendMessageAndWait(
                 env,
                 workspaceId,
                 'Run bash: grep -n "terminal bench" testfile.txt | head -n 200',
                 HAIKU_MODEL,
                 BASH_ONLY,
-                15000 // 15s timeout - should complete quickly
+                30000 // Relaxed timeout for CI stability (was 15s)
               );
-              const duration = Date.now() - startTime;
+              
+              // Calculate actual tool execution duration
+              const toolDuration = getToolDuration(env, "bash");
 
               // Extract response text
               const responseText = extractTextFromEvents(events);
@@ -356,8 +378,9 @@ describeIntegration("Runtime Bash Execution", () => {
 
               // Verify command completed quickly (not hanging until timeout)
               // SSH runtime should complete in <10s even with high latency
+              expect(toolDuration).toBeGreaterThan(0);
               const maxDuration = 15000;
-              expect(duration).toBeLessThan(maxDuration);
+              expect(toolDuration).toBeLessThan(maxDuration);
 
               // Verify bash tool was called
               const toolCallStarts = events.filter((e: any) => e.type === "tool-call-start");

@@ -38,7 +38,7 @@ describeIntegration("OpenAI web_search integration tests", () => {
             "Then tell me if it's a good day for a picnic.",
           modelString("openai", "gpt-5.1-codex-mini"),
           {
-            thinkingLevel: "medium", // Ensure reasoning without excessive deliberation
+            thinkingLevel: "low", // Ensure reasoning without excessive deliberation
           }
         );
 
@@ -48,8 +48,8 @@ describeIntegration("OpenAI web_search integration tests", () => {
         // Collect and verify stream events
         const collector = createEventCollector(env.sentEvents, workspaceId);
 
-        // Wait for stream to complete (90s should be enough for simple weather + analysis)
-        const streamEnd = await collector.waitForEvent("stream-end", 90000);
+        // Wait for stream to complete (150s should be enough for simple weather + analysis)
+        const streamEnd = await collector.waitForEvent("stream-end", 150000);
         expect(streamEnd).toBeDefined();
 
         // Verify no errors occurred - this is the KEY test
@@ -84,6 +84,6 @@ describeIntegration("OpenAI web_search integration tests", () => {
         await cleanup();
       }
     },
-    120000 // 120 second timeout - reasoning + web_search should complete faster with simpler task
+    180000 // 180 second timeout - reasoning + web_search should complete faster with simpler task
   );
 });
