@@ -22,7 +22,7 @@ mux supports **Scoped Instructions** that activate only in specific contexts. Yo
 ### General Rules
 
 - **Precedence**: Workspace instructions (`<workspace>/AGENTS.md`) are checked first, then global instructions (`~/.mux/AGENTS.md`).
-- **First Match Wins**: Only the *first* matching section found is used. Overriding global defaults is as simple as defining the same section in your workspace.
+- **First Match Wins**: Only the _first_ matching section found is used. Overriding global defaults is as simple as defining the same section in your workspace.
 - **Isolation**: These sections are **stripped** from the general `<custom-instructions>` block. Their content is injected only where it belongs (e.g., into a specific tool's description or a special XML tag).
 - **Boundaries**: A section's content includes everything until the next heading of the same or higher level.
 
@@ -38,19 +38,24 @@ Use mode-specific sections to optimize context and customize behavior for specif
 
 ```markdown
 # General Instructions
+
 - Be concise
 
 ## Mode: Plan
+
 When planning:
+
 - Focus on goals and trade-offs
 - Propose alternatives with pros/cons
 
 ## Mode: Compact
+
 - Preserve key decisions
 - Be extremely concise
 ```
 
 **Available modes**:
+
 - **exec** (default) — Normal operations.
 - **plan** — Active in Plan Mode.
 - **compact** — Used during `/compact` to guide history summarization.
@@ -60,6 +65,7 @@ When planning:
 Scope instructions to specific models or families using regex matching. The matched content is injected via a `<model-...>` tag.
 
 **Syntax**: `Model: <regex>`
+
 - Regexes are case-insensitive by default.
 - Use `/pattern/flags` for custom flags (e.g., `/openai:.*codex/i`).
 
@@ -67,9 +73,11 @@ Scope instructions to specific models or families using regex matching. The matc
 
 ```markdown
 ## Model: sonnet
+
 Be terse and to the point.
 
-## Model: openai:.*codex
+## Model: openai:.\*codex
+
 Use status reporting tools every few minutes.
 ```
 
@@ -78,6 +86,7 @@ Use status reporting tools every few minutes.
 Customize how the AI uses specific tools by appending instructions to their descriptions.
 
 **Syntax**: `Tool: <tool_name>`
+
 - Tool names must match exactly (case-insensitive).
 - Only tools available for the active model are augmented.
 
@@ -85,12 +94,15 @@ Customize how the AI uses specific tools by appending instructions to their desc
 
 ```markdown
 ## Tool: bash
+
 - Use `rg` instead of `grep` for file searching
 
 ## Tool: file_edit_replace_string
+
 - Run `prettier --write` after editing files
 
 # Tool: status_set
+
 - Set status url to the Pull Request once opened
 ```
 

@@ -47,14 +47,16 @@ function augmentToolDescription(baseTool: Tool, additionalInstructions: string):
   // Access the tool as a record to get its properties
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const baseToolRecord = baseTool as any as Record<string, unknown>;
-  const augmentedDescription = `${String(baseToolRecord.description ?? "")}\n\n${additionalInstructions}`;
+  const originalDescription =
+    typeof baseToolRecord.description === "string" ? baseToolRecord.description : "";
+  const augmentedDescription = `${originalDescription}\n\n${additionalInstructions}`;
 
   // Return a new tool with the augmented description
   return tool({
     description: augmentedDescription,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
     inputSchema: baseToolRecord.inputSchema as any,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
     execute: baseToolRecord.execute as any,
   });
 }
