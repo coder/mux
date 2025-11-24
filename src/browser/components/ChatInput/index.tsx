@@ -496,8 +496,8 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
       return;
     }
 
+    // Handle standard message sending based on variant
     if (variant === "creation") {
-      // Creation variant: simple message send + workspace creation
       setIsSending(true);
       const ok = await creationState.handleSend(messageText);
       if (ok) {
@@ -511,7 +511,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     }
 
     // Workspace variant: regular message send
-    if (variant !== "workspace") return; // Type guard
+    if (variant !== "workspace") return;
 
     try {
       // Regular message - send directly via API
@@ -762,17 +762,15 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             <ChatInputToast toast={toast} onDismiss={handleToastDismiss} />
           )}
 
-          {/* Command suggestions - workspace only */}
-          {variant === "workspace" && (
-            <CommandSuggestions
-              suggestions={commandSuggestions}
-              onSelectSuggestion={handleCommandSelect}
-              onDismiss={() => setShowCommandSuggestions(false)}
-              isVisible={showCommandSuggestions}
-              ariaLabel="Slash command suggestions"
-              listId={commandListId}
-            />
-          )}
+          {/* Command suggestions - available in both variants */}
+          <CommandSuggestions
+            suggestions={commandSuggestions}
+            onSelectSuggestion={handleCommandSelect}
+            onDismiss={() => setShowCommandSuggestions(false)}
+            isVisible={showCommandSuggestions}
+            ariaLabel="Slash command suggestions"
+            listId={commandListId}
+          />
 
           <div className="flex items-end" data-component="ChatInputControls">
             <VimTextArea
