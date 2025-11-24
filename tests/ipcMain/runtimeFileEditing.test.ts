@@ -68,9 +68,16 @@ let sshConfig: SSHServerConfig | undefined;
 // ============================================================================
 
 describeIntegration("Runtime File Editing Tools", () => {
+<<<<<<< HEAD
   // Enable retries in CI for flaky API tests
   configureTestRetries(3);
 
+||||||| parent of 846841cd (🤖 fix: add retries to flaky integration tests)
+=======
+  // Add retries to handle potential AI flakiness (e.g. failing to call tools)
+  configureTestRetries(3);
+
+>>>>>>> 846841cd (🤖 fix: add retries to flaky integration tests)
   beforeAll(async () => {
     // Check if Docker is available (required for SSH tests)
     if (!(await isDockerAvailable())) {
