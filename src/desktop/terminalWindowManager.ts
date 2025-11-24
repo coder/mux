@@ -71,18 +71,21 @@ export class TerminalWindowManager {
     });
 
     // Load the terminal page
-    // app.isPackaged is true when running from a built .app/.exe, false in development
-    if (app.isPackaged) {
-      // Production mode - load from built files
-      await terminalWindow.loadFile(path.join(__dirname, "../terminal.html"), {
-        query: { workspaceId },
-      });
-    } else {
+    // Match main window logic: use dev server unless packaged or MUX_E2E_LOAD_DIST=1
+    const forceDistLoad = process.env.MUX_E2E_LOAD_DIST === "1";
+    const useDevServer = !app.isPackaged && !forceDistLoad;
+
+    if (useDevServer) {
       // Development mode - load from Vite dev server
       await terminalWindow.loadURL(
         `http://localhost:5173/terminal.html?workspaceId=${encodeURIComponent(workspaceId)}`
       );
       terminalWindow.webContents.openDevTools();
+    } else {
+      // Production mode (or E2E dist mode) - load from built files
+      await terminalWindow.loadFile(path.join(__dirname, "../terminal.html"), {
+        query: { workspaceId },
+      });
     }
 
     log.info(`Terminal window ${windowId} opened for workspace: ${workspaceId}`);
