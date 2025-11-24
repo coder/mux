@@ -695,7 +695,9 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
       // Result is computed in parent (AIView) and passed down to avoid duplicate calculation
       const shouldAutoCompact =
         props.autoCompactionCheck &&
-        props.autoCompactionCheck.usagePercentage >= props.autoCompactionCheck.thresholdPercentage;
+        props.autoCompactionCheck.usagePercentage >=
+          props.autoCompactionCheck.thresholdPercentage &&
+        !isCompacting; // Skip if already compacting to prevent double-compaction queue
       if (variant === "workspace" && !editingMessage && shouldAutoCompact) {
         // Clear input immediately for responsive UX
         setInput("");
