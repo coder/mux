@@ -16,11 +16,325 @@ import type { Toast } from "@/browser/components/ChatInputToast";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
 import { resolveCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
-import { getRuntimeKey } from "@/common/constants/storage";
+import { getRuntimeKey, copyWorkspaceStorage } from "@/common/constants/storage";
 
 // ============================================================================
 // Workspace Creation
 // ============================================================================
+
+import { createCommandToast } from "@/browser/components/ChatInputToasts";
+import { setTelemetryEnabled } from "@/common/telemetry";
+
+export interface ForkOptions {
+  sourceWorkspaceId: string;
+  newName: string;
+  startMessage?: string;
+  sendMessageOptions?: SendMessageOptions;
+}
+
+export interface ForkResult {
+  success: boolean;
+  workspaceInfo?: FrontendWorkspaceMetadata;
+  error?: string;
+}
+
+/**
+ * Fork a workspace and switch to it
+ * Handles copying storage, dispatching switch event, and optionally sending start message
+ *
+ * Caller is responsible for error handling, logging, and showing toasts
+ */
+export async function forkWorkspace(options: ForkOptions): Promise<ForkResult> {
+  const result = await window.api.workspace.fork(options.sourceWorkspaceId, options.newName);
+
+  if (!result.success) {
+    return { success: false, error: result.error ?? "Failed to fork workspace" };
+  }
+
+  // Copy UI state to the new workspace
+  copyWorkspaceStorage(options.sourceWorkspaceId, result.metadata.id);
+
+  // Get workspace info for switching
+  const workspaceInfo = await window.api.workspace.getInfo(result.metadata.id);
+  if (!workspaceInfo) {
+    return { success: false, error: "Failed to get workspace info after fork" };
+  }
+
+  // Dispatch event to switch workspace
+  dispatchWorkspaceSwitch(workspaceInfo);
+
+  // If there's a start message, defer until React finishes rendering and WorkspaceStore subscribes
+  // Using requestAnimationFrame ensures we wait for:
+  // 1. React to process the workspace switch and update state
+  // 2. Effects to run (workspaceStore.syncWorkspaces in App.tsx)
+  // 3. WorkspaceStore to subscribe to the new workspace's IPC channel
+  if (options.startMessage && options.sendMessageOptions) {
+    requestAnimationFrame(() => {
+      void window.api.workspace.sendMessage(
+        result.metadata.id,
+        options.startMessage!,
+        options.sendMessageOptions
+      );
+    });
+  }
+
+  return { success: true, workspaceInfo };
+}
+
+export interface SlashCommandContext extends Omit<CommandHandlerContext, "workspaceId"> {
+  workspaceId?: string;
+  variant: "workspace" | "creation";
+
+  // Global Actions
+  onProviderConfig?: (provider: string, keyPath: string[], value: string) => Promise<void>;
+  onModelChange?: (model: string) => void;
+  setPreferredModel: (model: string) => void;
+  setVimEnabled: (cb: (prev: boolean) => boolean) => void;
+
+  // Workspace Actions
+  onTruncateHistory?: (percentage?: number) => Promise<void>;
+  resetInputHeight: () => void;
+}
+
+// ============================================================================
+// Command Dispatcher
+// ============================================================================
+
+/**
+ * Process any slash command
+ * Returns true if the command was handled (even if it failed)
+ * Returns false if it's not a command (should be sent as message) - though parsed usually implies it is a command
+ */
+export async function processSlashCommand(
+  parsed: ParsedCommand,
+  context: SlashCommandContext
+): Promise<CommandHandlerResult> {
+  if (!parsed) return { clearInput: false, toastShown: false };
+  const { setInput, setIsSending, setToast, variant, setVimEnabled, setPreferredModel, onModelChange } = context;
+
+  // 1. Global Commands
+  if (parsed.type === "providers-set") {
+    if (context.onProviderConfig) {
+      setIsSending(true);
+      setInput(""); // Clear input immediately
+
+      try {
+        await context.onProviderConfig(parsed.provider, parsed.keyPath, parsed.value);
+        setToast({
+          id: Date.now().toString(),
+          type: "success",
+          message: `Provider ${parsed.provider} updated`,
+        });
+      } catch (error) {
+        console.error("Failed to update provider config:", error);
+        setToast({
+          id: Date.now().toString(),
+          type: "error",
+          message: error instanceof Error ? error.message : "Failed to update provider",
+        });
+        return { clearInput: false, toastShown: true }; // Input restored by caller if clearInput is false?
+        // Actually caller restores if we return clearInput: false.
+        // But here we cleared it proactively?
+        // The caller (ChatInput) pattern is: if (!result.clearInput) setInput(original).
+        // So we should return clearInput: false on error.
+      } finally {
+        setIsSending(false);
+      }
+      return { clearInput: true, toastShown: true };
+    }
+    return { clearInput: false, toastShown: false };
+  }
+
+  if (parsed.type === "model-set") {
+    setInput("");
+    setPreferredModel(parsed.modelString);
+    onModelChange?.(parsed.modelString);
+    setToast({
+      id: Date.now().toString(),
+      type: "success",
+      message: `Model changed to ${parsed.modelString}`,
+    });
+    return { clearInput: true, toastShown: true };
+  }
+
+  if (parsed.type === "vim-toggle") {
+    setInput("");
+    setVimEnabled((prev) => !prev);
+    return { clearInput: true, toastShown: false };
+  }
+
+  if (parsed.type === "telemetry-set") {
+    setInput("");
+    setTelemetryEnabled(parsed.enabled);
+    setToast({
+      id: Date.now().toString(),
+      type: "success",
+      message: `Telemetry ${parsed.enabled ? "enabled" : "disabled"}`,
+    });
+    return { clearInput: true, toastShown: true };
+  }
+
+  // 2. Workspace Commands
+  const workspaceCommands = ["clear", "truncate", "compact", "fork", "new"];
+  const isWorkspaceCommand = workspaceCommands.includes(parsed.type);
+
+    if (isWorkspaceCommand) {
+    if (variant !== "workspace") {
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: "Command not available during workspace creation",
+      });
+      return { clearInput: false, toastShown: true };
+    }
+
+    // Dispatch workspace commands
+    switch (parsed.type) {
+      case "clear":
+        return handleClearCommand(parsed, context);
+      case "truncate":
+        return handleTruncateCommand(parsed, context);
+      case "compact":
+        // handleCompactCommand expects workspaceId in context
+        if (!context.workspaceId) throw new Error("Workspace ID required");
+        return handleCompactCommand(parsed, { ...context, workspaceId: context.workspaceId } as CommandHandlerContext);
+      case "fork":
+        return handleForkCommand(parsed, context);
+      case "new":
+        if (!context.workspaceId) throw new Error("Workspace ID required");
+        return handleNewCommand(parsed, { ...context, workspaceId: context.workspaceId } as CommandHandlerContext);
+    }
+  }
+
+  // 3. Fallback / Help / Unknown
+  const commandToast = createCommandToast(parsed);
+  if (commandToast) {
+    setToast(commandToast);
+    return { clearInput: false, toastShown: true };
+  }
+
+  return { clearInput: false, toastShown: false };
+}
+
+// ============================================================================
+// Command Handlers
+// ============================================================================
+
+async function handleClearCommand(
+  _parsed: Extract<ParsedCommand, { type: "clear" }>,
+  context: SlashCommandContext
+): Promise<CommandHandlerResult> {
+  const { setInput, onTruncateHistory, resetInputHeight, setToast } = context;
+  
+  setInput("");
+  resetInputHeight();
+  
+  if (!onTruncateHistory) return { clearInput: true, toastShown: false };
+
+  try {
+    await onTruncateHistory(1.0);
+    setToast({
+      id: Date.now().toString(),
+      type: "success",
+      message: "Chat history cleared",
+    });
+    return { clearInput: true, toastShown: true };
+  } catch (error) {
+    console.error("Failed to clear history:", error);
+    setToast({
+      id: Date.now().toString(),
+      type: "error",
+      message: "Failed to clear history",
+    });
+    return { clearInput: false, toastShown: true };
+  }
+}
+
+async function handleTruncateCommand(
+  parsed: Extract<ParsedCommand, { type: "truncate" }>,
+  context: SlashCommandContext
+): Promise<CommandHandlerResult> {
+  const { setInput, onTruncateHistory, resetInputHeight, setToast } = context;
+
+  setInput("");
+  resetInputHeight();
+
+  if (!onTruncateHistory) return { clearInput: true, toastShown: false };
+
+  try {
+    await onTruncateHistory(parsed.percentage);
+    setToast({
+      id: Date.now().toString(),
+      type: "success",
+      message: `Chat history truncated by ${Math.round(parsed.percentage * 100)}%`,
+    });
+    return { clearInput: true, toastShown: true };
+  } catch (error) {
+    console.error("Failed to truncate history:", error);
+    setToast({
+      id: Date.now().toString(),
+      type: "error",
+      message: "Failed to truncate history",
+    });
+    return { clearInput: false, toastShown: true };
+  }
+}
+
+async function handleForkCommand(
+  parsed: Extract<ParsedCommand, { type: "fork" }>,
+  context: SlashCommandContext
+): Promise<CommandHandlerResult> {
+  const { workspaceId, sendMessageOptions, setInput, setIsSending, setToast } = context;
+
+  setInput(""); // Clear input immediately
+  setIsSending(true);
+
+  try {
+    // Note: workspaceId is required for fork, but SlashCommandContext allows undefined workspaceId.
+    // If we are here, variant === "workspace", so workspaceId should be defined.
+    if (!workspaceId) throw new Error("Workspace ID required for fork");
+
+    const forkResult = await forkWorkspace({
+      sourceWorkspaceId: workspaceId,
+      newName: parsed.newName,
+      startMessage: parsed.startMessage,
+      sendMessageOptions,
+    });
+
+    if (!forkResult.success) {
+      const errorMsg = forkResult.error ?? "Failed to fork workspace";
+      console.error("Failed to fork workspace:", errorMsg);
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        title: "Fork Failed",
+        message: errorMsg,
+      });
+      return { clearInput: false, toastShown: true };
+    } else {
+      setToast({
+        id: Date.now().toString(),
+        type: "success",
+        message: `Forked to workspace "${parsed.newName}"`,
+      });
+      return { clearInput: true, toastShown: true };
+    }
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : "Failed to fork workspace";
+    console.error("Fork error:", error);
+    setToast({
+      id: Date.now().toString(),
+      type: "error",
+      title: "Fork Failed",
+      message: errorMsg,
+    });
+    return { clearInput: false, toastShown: true };
+  } finally {
+    setIsSending(false);
+  }
+}
+
+
 
 /**
  * Parse runtime string from -r flag into RuntimeConfig for backend
@@ -168,7 +482,7 @@ export function formatNewCommand(
 // Workspace Forking (re-exported from workspaceFork for convenience)
 // ============================================================================
 
-export { forkWorkspace } from "./workspaceFork";
+export { forkWorkspace };
 
 // ============================================================================
 // Compaction
