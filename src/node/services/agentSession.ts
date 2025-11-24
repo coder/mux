@@ -376,6 +376,15 @@ export class AgentSession {
       return Err(stopResult.error);
     }
 
+    // Delete partial when abandoning to prevent commitToHistory from reintroducing it
+    // Mirrors the IPC handler pattern (ipcMain.ts:1108-1110)
+    if (abandonPartial) {
+      const deleteResult = await this.partialService.deletePartial(this.workspaceId);
+      if (!deleteResult.success) {
+        return Err(deleteResult.error);
+      }
+    }
+
     return Ok(undefined);
   }
 
