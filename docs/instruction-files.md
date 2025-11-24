@@ -85,12 +85,13 @@ Customize how the AI uses specific tools by appending instructions to their desc
 
 ```markdown
 ## Tool: bash
-- Always use absolute paths
-- Add `set -e` to scripts
+- Use `rg` instead of `grep` for file searching
 
 ## Tool: file_edit_replace_string
-- Include 2-3 lines of context
-- Verify edits by reading the file afterwards
+- Run `prettier --write` after editing files
+
+# Tool: status_set
+- Set status url to the Pull Request once opened
 ```
 
 **Available tools**: `bash`, `file_read`, `file_edit_replace_string`, `file_edit_insert`, `propose_plan`, `todo_write`, `todo_read`, `status_set`, `web_search`.
