@@ -65,18 +65,18 @@ const modelStatusTurn: ScenarioTurn = {
         kind: "stream-start",
         delay: 0,
         messageId: "msg-slash-model-status",
-        model: "anthropic:claude-opus-4-1",
+        model: "anthropic:claude-opus-4-5",
       },
       {
         kind: "stream-delta",
         delay: STREAM_BASE_DELAY,
-        text: "Claude Opus 4.1 is now responding with enhanced reasoning capacity.",
+        text: "Claude Opus 4.5 is now responding with enhanced reasoning capacity.",
       },
       {
         kind: "stream-end",
         delay: STREAM_BASE_DELAY * 2,
         metadata: {
-          model: "anthropic:claude-opus-4-1",
+          model: "anthropic:claude-opus-4-5",
           inputTokens: 70,
           outputTokens: 54,
           systemMessageTokens: 12,
@@ -84,7 +84,7 @@ const modelStatusTurn: ScenarioTurn = {
         parts: [
           {
             type: "text",
-            text: "I'm responding as Claude Opus 4.1, which you selected via /model opus. Let me know how to proceed.",
+            text: "I'm responding as Claude Opus 4.5, which you selected via /model opus. Let me know how to proceed.",
           },
         ],
       },

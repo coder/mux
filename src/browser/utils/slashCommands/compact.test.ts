@@ -133,7 +133,7 @@ describe("compact command parser", () => {
   });
 
   it("parses -m flag with full model string", () => {
-    const result = parseCommand("/compact -m anthropic:claude-opus-4-1");
+    const result = parseCommand(`/compact -m ${KNOWN_MODELS.OPUS.id}`);
     expect(result).toEqual({
       type: "compact",
       maxOutputTokens: undefined,

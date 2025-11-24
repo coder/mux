@@ -22,6 +22,23 @@ interface ModelData {
 }
 
 export const modelsExtra: Record<string, ModelData> = {
+  // Claude Opus 4.5 - Released November 2025
+  // $15/M input, $75/M output (same pricing as Opus 4.1)
+  "claude-opus-4-5": {
+    max_input_tokens: 200000,
+    max_output_tokens: 32000,
+    input_cost_per_token: 0.000015, // $15 per million input tokens
+    output_cost_per_token: 0.000075, // $75 per million output tokens
+    cache_creation_input_token_cost: 0.00001875, // $18.75 per million tokens
+    cache_read_input_token_cost: 0.0000015, // $1.50 per million tokens
+    litellm_provider: "anthropic",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+
   // GPT-5 Pro - Released October 6, 2025 at DevDay
   // $15/M input, $120/M output
   // Only available via OpenAI's Responses API
