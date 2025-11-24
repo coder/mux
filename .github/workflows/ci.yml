@@ -165,7 +165,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OLLAMA_BASE_URL: http://localhost:11434/api
-          TEST_TARGET: ${{ github.event.inputs.test_filter || 'tests/ipcMain/ollama.test.ts' }}
+          TEST_TARGET: ${{ github.event.inputs.test_filter || 'ollama' }}
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
