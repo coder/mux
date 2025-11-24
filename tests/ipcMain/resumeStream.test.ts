@@ -161,8 +161,9 @@ describeIntegration("IpcMain resumeStream integration tests", () => {
         // Subscribe to chat channel to receive events
         env.mockIpcRenderer.send("workspace:chat:subscribe", workspaceId);
 
-        // Wait a moment for subscription to complete
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        // Wait for subscription to complete by waiting for caught-up event
+        const caughtUpEvent = await collector.waitForEvent("caught-up", 5000);
+        expect(caughtUpEvent).toBeDefined();
 
         // Resume the stream (should continue from the summary message)
         const resumeResult = (await env.mockIpcRenderer.invoke(
