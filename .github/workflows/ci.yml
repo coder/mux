@@ -95,7 +95,7 @@ jobs:
   integration-test:
     name: Integration Tests
     timeout-minutes: 10
-    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-24.04-32' || 'ubuntu-latest' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
