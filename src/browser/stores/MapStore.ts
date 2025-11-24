@@ -190,6 +190,13 @@ export class MapStore<K, V> {
     };
   }
 
+  /**
+   * Check if there are subscribers for a specific key.
+   */
+  hasKeySubscribers(key: K): boolean {
+    return this.perKey.has(key);
+  }
+
   private makeCacheKey(key: K, version: number): string {
     return `${String(key)}:${version}`;
   }

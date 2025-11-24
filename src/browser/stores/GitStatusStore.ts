@@ -146,12 +146,21 @@ export class GitStatusStore {
       return;
     }
 
+    // Only poll workspaces that have active subscribers
+    const workspaces = Array.from(this.workspaceMetadata.values()).filter((ws) =>
+      this.statuses.hasKeySubscribers(ws.id)
+    );
+
+    if (workspaces.length === 0) {
+      return;
+    }
+
     // Try to fetch workspaces that need it (background, non-blocking)
-    this.tryFetchWorkspaces(this.workspaceMetadata);
+    const workspacesMap = new Map(workspaces.map((ws) => [ws.id, ws]));
+    this.tryFetchWorkspaces(workspacesMap);
 
     // Query git status for each workspace
     // Rate limit: Process in batches to prevent bash process explosion
-    const workspaces = Array.from(this.workspaceMetadata.values());
     const results: Array<[string, GitStatus | null]> = [];
 
     for (let i = 0; i < workspaces.length; i += MAX_CONCURRENT_GIT_OPS) {
