@@ -13,7 +13,6 @@ if (shouldRunIntegrationTests() && !shouldRunSuite) {
 }
 
 describeIntegration("Anthropic cache strategy integration", () => {
-
   test(
     "should apply cache control to messages, system prompt, and tools for Anthropic models",
     async () => {

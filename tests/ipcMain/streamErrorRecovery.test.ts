@@ -220,7 +220,6 @@ async function collectStreamUntil(
 }
 
 describeIntegration("Stream Error Recovery (No Amnesia)", () => {
-
   test.concurrent(
     "should preserve exact prefix and continue from exact point after stream error",
     async () => {

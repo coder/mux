@@ -14,7 +14,6 @@ if (shouldRunIntegrationTests()) {
 }
 
 describeIntegration("IpcMain model_not_found error handling", () => {
-
   test.concurrent(
     "should classify Anthropic 404 as model_not_found (not retryable)",
     async () => {

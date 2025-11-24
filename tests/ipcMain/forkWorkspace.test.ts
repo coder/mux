@@ -28,7 +28,6 @@ if (shouldRunIntegrationTests()) {
 }
 
 describeIntegration("IpcMain fork workspace integration tests", () => {
-
   test.concurrent(
     "should fail to fork workspace with invalid name",
     async () => {

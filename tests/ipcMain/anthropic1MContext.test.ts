@@ -16,7 +16,6 @@ if (shouldRunIntegrationTests()) {
 }
 
 describeIntegration("IpcMain anthropic 1M context integration tests", () => {
-
   test.concurrent(
     "should handle larger context with 1M flag enabled vs standard limits",
     async () => {

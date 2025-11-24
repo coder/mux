@@ -15,7 +15,6 @@ if (shouldRunIntegrationTests()) {
 }
 
 describeIntegration("IpcMain resumeStream integration tests", () => {
-
   test.concurrent(
     "should resume interrupted stream without new user message",
     async () => {

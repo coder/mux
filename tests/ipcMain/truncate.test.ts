@@ -19,7 +19,6 @@ if (shouldRunIntegrationTests()) {
 }
 
 describeIntegration("IpcMain truncate integration tests", () => {
-
   test.concurrent(
     "should truncate 50% of chat history and verify context is updated",
     async () => {

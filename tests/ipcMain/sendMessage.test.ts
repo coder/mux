@@ -46,7 +46,6 @@ const PROVIDER_CONFIGS: Array<[string, string]> = [
 // - Test timeout values (in describe/test) should be 2-3x the expected duration
 
 describeIntegration("IpcMain sendMessage integration tests", () => {
-
   // Run tests for each provider concurrently
   describe.each(PROVIDER_CONFIGS)("%s:%s provider tests", (provider, model) => {
     test.concurrent(
@@ -1075,7 +1074,6 @@ These are general instructions that apply to all modes.
 
   // Tool policy tests
   describe("tool policy", () => {
-
     test.each(PROVIDER_CONFIGS)(
       "%s should respect tool policy that disables bash",
       async (provider, model) => {

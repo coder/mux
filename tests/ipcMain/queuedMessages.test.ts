@@ -66,7 +66,6 @@ async function waitForRestoreToInputEvent(
 }
 
 describeIntegration("IpcMain queuedMessages integration tests", () => {
-
   test.concurrent(
     "should queue message during streaming and auto-send on stream end",
     async () => {
