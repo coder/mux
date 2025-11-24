@@ -1,5 +1,5 @@
 import { createTempGitRepo, cleanupTempGitRepo } from "./helpers";
-import { setupWorkspace } from "./setup";
+import { setupWorkspace, setupWorkspaceWithoutProvider } from "./setup";
 import type { TestEnvironment } from "./setup";
 
 let sharedRepoPath: string | undefined;
@@ -35,6 +35,23 @@ export async function withSharedWorkspace(
 
   const { env, workspaceId, workspacePath, branchName, tempGitRepo, cleanup } =
     await setupWorkspace(provider, undefined, sharedRepoPath);
+
+  try {
+    await testFn({ env, workspaceId, workspacePath, branchName, tempGitRepo });
+  } finally {
+    await cleanup();
+  }
+}
+
+export async function withSharedWorkspaceNoProvider(
+  testFn: (context: SharedWorkspaceContext) => Promise<void>
+): Promise<void> {
+  if (!sharedRepoPath) {
+    throw new Error("Shared repo has not been created yet.");
+  }
+
+  const { env, workspaceId, workspacePath, branchName, tempGitRepo, cleanup } =
+    await setupWorkspaceWithoutProvider(undefined, sharedRepoPath);
 
   try {
     await testFn({ env, workspaceId, workspacePath, branchName, tempGitRepo });

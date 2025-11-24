@@ -1,11 +1,6 @@
 import * as fs from "fs/promises";
 import * as path from "path";
-import {
-  setupWorkspace,
-  setupWorkspaceWithoutProvider,
-  shouldRunIntegrationTests,
-  validateApiKeys,
-} from "./setup";
+import { setupWorkspace, shouldRunIntegrationTests, validateApiKeys } from "./setup";
 import {
   sendMessageWithModel,
   sendMessage,
@@ -20,7 +15,12 @@ import {
   modelString,
   configureTestRetries,
 } from "./helpers";
-import { createSharedRepo, cleanupSharedRepo, withSharedWorkspace } from "./sendMessageTestHelpers";
+import {
+  createSharedRepo,
+  cleanupSharedRepo,
+  withSharedWorkspace,
+  withSharedWorkspaceNoProvider,
+} from "./sendMessageTestHelpers";
 import type { StreamDeltaEvent } from "../../src/common/types/stream";
 import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
 
@@ -411,8 +411,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
   test.concurrent(
     "should preserve arbitrary frontend metadata through IPC round-trip",
     async () => {
-      const { env, workspaceId, cleanup } = await setupWorkspaceWithoutProvider();
-      try {
+      await withSharedWorkspaceNoProvider(async ({ env, workspaceId }) => {
         // Create structured metadata
         const testMetadata = {
           type: "compaction-request" as const,
@@ -466,9 +465,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
         expect(metadata.muxMetadata.rawCommand).toBe("/compact -c continue working");
         expect(metadata.muxMetadata.parsed.continueMessage).toBe("continue working");
         expect(metadata.muxMetadata.parsed.maxOutputTokens).toBe(5000);
-      } finally {
-        await cleanup();
-      }
+      });
     },
     5000
   );

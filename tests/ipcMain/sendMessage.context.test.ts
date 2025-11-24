@@ -1,11 +1,6 @@
 import * as fs from "fs/promises";
 import * as path from "path";
-import {
-  setupWorkspace,
-  setupWorkspaceWithoutProvider,
-  shouldRunIntegrationTests,
-  validateApiKeys,
-} from "./setup";
+import { shouldRunIntegrationTests, validateApiKeys } from "./setup";
 import {
   sendMessageWithModel,
   sendMessage,
@@ -20,7 +15,12 @@ import {
   modelString,
   configureTestRetries,
 } from "./helpers";
-import { createSharedRepo, cleanupSharedRepo, withSharedWorkspace } from "./sendMessageTestHelpers";
+import {
+  createSharedRepo,
+  cleanupSharedRepo,
+  withSharedWorkspace,
+  withSharedWorkspaceNoProvider,
+} from "./sendMessageTestHelpers";
 import type { StreamDeltaEvent } from "../../src/common/types/stream";
 import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
 
@@ -415,10 +415,7 @@ These are general instructions that apply to all modes.
     test.each(PROVIDER_CONFIGS)(
       "%s should return api_key_not_found error when API key is missing",
       async (provider, model) => {
-        const { env, workspaceId, cleanup } = await setupWorkspaceWithoutProvider(
-          `noapi-${provider}`
-        );
-        try {
+        await withSharedWorkspaceNoProvider(async ({ env, workspaceId }) => {
           // Try to send message without API key configured
           const result = await sendMessageWithModel(
             env.mockIpcRenderer,
@@ -432,9 +429,7 @@ These are general instructions that apply to all modes.
           if (!result.success && result.error.type === "api_key_not_found") {
             expect(result.error.provider).toBe(provider);
           }
-        } finally {
-          await cleanup();
-        }
+        });
       }
     );
   });
@@ -487,8 +482,7 @@ These are general instructions that apply to all modes.
     test.each(PROVIDER_CONFIGS)(
       "%s should include full file_edit diff in UI/history but redact it from the next provider request",
       async (provider, model) => {
-        const { env, workspaceId, workspacePath, cleanup } = await setupWorkspace(provider);
-        try {
+        await withSharedWorkspace(provider, async ({ env, workspaceId, workspacePath }) => {
           // 1) Create a file and ask the model to edit it to ensure a file_edit tool runs
           const testFilePath = path.join(workspacePath, "redaction-edit-test.txt");
           await fs.writeFile(testFilePath, "line1\nline2\nline3\n", "utf-8");
@@ -553,131 +547,64 @@ These are general instructions that apply to all modes.
 
           // Note: We don't assert on the exact provider payload (black box), but the fact that
           // the second request succeeds proves the redaction path produced valid provider messages
-        } finally {
-          await cleanup();
-        }
+        });
       },
       90000
     );
   });
 
-  // Test frontend metadata round-trip (no provider needed - just verifies storage)
-  test.concurrent(
-    "should preserve arbitrary frontend metadata through IPC round-trip",
-    async () => {
-      const { env, workspaceId, cleanup } = await setupWorkspaceWithoutProvider();
-      try {
-        // Create structured metadata
-        const testMetadata = {
-          type: "compaction-request" as const,
-          rawCommand: "/compact -c continue working",
-          parsed: {
-            maxOutputTokens: 5000,
-            continueMessage: "continue working",
-          },
-        };
+  // Test multi-turn conversation with response ID persistence
+  describe.each(PROVIDER_CONFIGS)("%s:%s response ID persistence", (provider, model) => {
+    test.concurrent(
+      "should handle multi-turn conversation with response ID persistence",
+      async () => {
+        await withSharedWorkspace(provider, async ({ env, workspaceId }) => {
+          // First message
+          const result1 = await sendMessageWithModel(
+            env.mockIpcRenderer,
+            workspaceId,
+            "What is 2+2?",
+            modelString(provider, model)
+          );
+          expect(result1.success).toBe(true);
 
-        // Send a message with frontend metadata
-        // Use invalid model to fail fast - we only care about metadata storage
-        const result = await env.mockIpcRenderer.invoke(
-          IPC_CHANNELS.WORKSPACE_SEND_MESSAGE,
-          workspaceId,
-          "Test message with metadata",
-          {
-            model: "openai:gpt-4", // Valid format but provider not configured - will fail after storing message
-            muxMetadata: testMetadata,
+          const collector1 = createEventCollector(env.sentEvents, workspaceId);
+          await collector1.waitForEvent("stream-end", 30000);
+          assertStreamSuccess(collector1);
+          env.sentEvents.length = 0; // Clear events
+
+          // Second message - should use previousResponseId from first
+          const result2 = await sendMessageWithModel(
+            env.mockIpcRenderer,
+            workspaceId,
+            "Now add 3 to that",
+            modelString(provider, model)
+          );
+          expect(result2.success).toBe(true);
+
+          const collector2 = createEventCollector(env.sentEvents, workspaceId);
+          await collector2.waitForEvent("stream-end", 30000);
+          assertStreamSuccess(collector2);
+
+          // Verify history contains both messages
+          // Note: readChatHistory needs the temp directory (root of config).
+          const history = await readChatHistory(env.tempDir, workspaceId);
+          expect(history.length).toBeGreaterThanOrEqual(4); // 2 user + 2 assistant
+
+          // Verify assistant messages have responseId
+          const assistantMessages = history.filter((m) => m.role === "assistant");
+          expect(assistantMessages.length).toBeGreaterThanOrEqual(2);
+
+          // Check that responseId exists (if provider supports it)
+          if (provider === "openai") {
+            const firstAssistant = assistantMessages[0] as any;
+            const secondAssistant = assistantMessages[1] as any;
+            expect(firstAssistant.metadata?.providerMetadata?.openai?.responseId).toBeDefined();
+            expect(secondAssistant.metadata?.providerMetadata?.openai?.responseId).toBeDefined();
           }
-        );
-
-        // Note: IPC call will fail due to missing provider config, but that's okay
-        // We only care that the user message was written to history with metadata
-        // (sendMessage writes user message before attempting to stream)
-
-        // Use event collector to get messages sent to frontend
-        const collector = createEventCollector(env.sentEvents, workspaceId);
-
-        // Wait for the user message to appear in the chat channel
-        await waitFor(() => {
-          const messages = collector.collect();
-          return messages.some((m) => "role" in m && m.role === "user");
-        }, 2000);
-
-        // Get all messages for this workspace
-        const allMessages = collector.collect();
-
-        // Find the user message we just sent
-        const userMessage = allMessages.find((msg) => "role" in msg && msg.role === "user");
-        expect(userMessage).toBeDefined();
-
-        // Verify metadata was preserved exactly as sent (black-box)
-        expect(userMessage).toHaveProperty("metadata");
-        const metadata = (userMessage as any).metadata;
-        expect(metadata).toHaveProperty("muxMetadata");
-        expect(metadata.muxMetadata).toEqual(testMetadata);
-
-        // Verify structured fields are accessible
-        expect(metadata.muxMetadata.type).toBe("compaction-request");
-        expect(metadata.muxMetadata.rawCommand).toBe("/compact -c continue working");
-        expect(metadata.muxMetadata.parsed.continueMessage).toBe("continue working");
-        expect(metadata.muxMetadata.parsed.maxOutputTokens).toBe(5000);
-      } finally {
-        await cleanup();
-      }
-    },
-    5000
-  );
-});
-
-// Test image support across providers
-describe.each(PROVIDER_CONFIGS)("%s:%s image support", (provider, model) => {
-  test.concurrent(
-    "should handle multi-turn conversation with response ID persistence (openai reasoning models)",
-    async () => {
-      const { env, workspaceId, cleanup } = await setupWorkspace("openai");
-      try {
-        // First message
-        const result1 = await sendMessageWithModel(
-          env.mockIpcRenderer,
-          workspaceId,
-          "What is 2+2?",
-          modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId)
-        );
-        expect(result1.success).toBe(true);
-
-        const collector1 = createEventCollector(env.sentEvents, workspaceId);
-        await collector1.waitForEvent("stream-end", 30000);
-        assertStreamSuccess(collector1);
-        env.sentEvents.length = 0; // Clear events
-
-        // Second message - should use previousResponseId from first
-        const result2 = await sendMessageWithModel(
-          env.mockIpcRenderer,
-          workspaceId,
-          "Now add 3 to that",
-          modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId)
-        );
-        expect(result2.success).toBe(true);
-
-        const collector2 = createEventCollector(env.sentEvents, workspaceId);
-        await collector2.waitForEvent("stream-end", 30000);
-        assertStreamSuccess(collector2);
-
-        // Verify history contains both messages
-        const history = await readChatHistory(env.tempDir, workspaceId);
-        expect(history.length).toBeGreaterThanOrEqual(4); // 2 user + 2 assistant
-
-        // Verify assistant messages have responseId
-        const assistantMessages = history.filter((m) => m.role === "assistant");
-        expect(assistantMessages.length).toBeGreaterThanOrEqual(2);
-        // Check that responseId exists (type is unknown from JSONL parsing)
-        const firstAssistant = assistantMessages[0] as any;
-        const secondAssistant = assistantMessages[1] as any;
-        expect(firstAssistant.metadata?.providerMetadata?.openai?.responseId).toBeDefined();
-        expect(secondAssistant.metadata?.providerMetadata?.openai?.responseId).toBeDefined();
-      } finally {
-        await cleanup();
-      }
-    },
-    60000
-  );
+        });
+      },
+      60000
+    );
+  });
 });

@@ -1,11 +1,4 @@
-import * as fs from "fs/promises";
-import * as path from "path";
-import {
-  setupWorkspace,
-  setupWorkspaceWithoutProvider,
-  shouldRunIntegrationTests,
-  validateApiKeys,
-} from "./setup";
+import { shouldRunIntegrationTests, validateApiKeys } from "./setup";
 import {
   sendMessageWithModel,
   sendMessage,
@@ -13,7 +6,6 @@ import {
   assertStreamSuccess,
   assertError,
   waitFor,
-  buildLargeHistory,
   waitForStreamSuccess,
   readChatHistory,
   TEST_IMAGES,
@@ -53,7 +45,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
 
   // Run tests for each provider concurrently
   describe.each(PROVIDER_CONFIGS)("%s:%s provider tests", (provider, model) => {
-    // Test frontend metadata round-trip (no provider needed - just verifies storage)
+    // Test image support
     test.concurrent(
       "should send images to AI model and get response",
       async () => {

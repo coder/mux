@@ -1,11 +1,6 @@
 import * as fs from "fs/promises";
 import * as path from "path";
-import {
-  setupWorkspace,
-  setupWorkspaceWithoutProvider,
-  shouldRunIntegrationTests,
-  validateApiKeys,
-} from "./setup";
+import { shouldRunIntegrationTests, validateApiKeys } from "./setup";
 import {
   sendMessageWithModel,
   sendMessage,
@@ -16,7 +11,6 @@ import {
   buildLargeHistory,
   waitForStreamSuccess,
   readChatHistory,
-  TEST_IMAGES,
   modelString,
   configureTestRetries,
 } from "./helpers";
