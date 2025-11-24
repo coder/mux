@@ -7,7 +7,13 @@ import { parseRuntimeString } from "@/browser/utils/chatCommands";
 import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
-import { getModeKey, getProjectScopeId, getThinkingLevelKey } from "@/common/constants/storage";
+import {
+  getInputKey,
+  getModeKey,
+  getPendingScopeId,
+  getProjectScopeId,
+  getThinkingLevelKey,
+} from "@/common/constants/storage";
 import type { Toast } from "@/browser/components/ChatInputToast";
 import { createErrorToast } from "@/browser/components/ChatInputToasts";
 
@@ -119,6 +125,10 @@ export function useCreationWorkspace({
         // Check if this is a workspace creation result (has metadata field)
         if ("metadata" in result && result.metadata) {
           syncCreationPreferences(projectPath, result.metadata.id);
+          if (projectPath) {
+            const pendingInputKey = getInputKey(getPendingScopeId(projectPath));
+            updatePersistedState(pendingInputKey, "");
+          }
           // Settings are already persisted via useDraftWorkspaceSettings
           // Notify parent to switch workspace (clears input via parent unmount)
           onWorkspaceCreated(result.metadata);

@@ -1,5 +1,11 @@
 import type { DraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
-import { getModeKey, getProjectScopeId, getThinkingLevelKey } from "@/common/constants/storage";
+import {
+  getInputKey,
+  getModeKey,
+  getPendingScopeId,
+  getProjectScopeId,
+  getThinkingLevelKey,
+} from "@/common/constants/storage";
 import type { SendMessageError } from "@/common/types/errors";
 import type { BranchListResult, IPCApi, SendMessageOptions } from "@/common/types/ipc";
 import type { RuntimeMode } from "@/common/types/runtime";
@@ -219,8 +225,10 @@ describe("useCreationWorkspace", () => {
 
     const modeKey = getModeKey(TEST_WORKSPACE_ID);
     const thinkingKey = getThinkingLevelKey(TEST_WORKSPACE_ID);
+    const pendingInputKey = getInputKey(getPendingScopeId(TEST_PROJECT_PATH));
     expect(updatePersistedStateCalls).toContainEqual([modeKey, "plan"]);
     expect(updatePersistedStateCalls).toContainEqual([thinkingKey, "high"]);
+    expect(updatePersistedStateCalls).toContainEqual([pendingInputKey, ""]);
   });
 
   test("handleSend surfaces backend errors and resets state", async () => {
