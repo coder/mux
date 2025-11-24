@@ -77,3 +77,18 @@ export const WithManyModels: Story = {
     onComplete: action("onComplete"),
   },
 };
+
+export const WithDefaultModel: Story = {
+  args: {
+    value: "anthropic:claude-sonnet-4-5",
+    onChange: action("onChange"),
+    onRemoveModel: action("onRemoveModel"),
+    recentModels: ["anthropic:claude-sonnet-4-5", "anthropic:claude-opus-4-1", "openai:gpt-5-pro"],
+    onComplete: action("onComplete"),
+    defaultModel: "anthropic:claude-opus-4-1",
+    onSetDefaultModel: (model) => {
+      // Mimic the hook behavior - only allow setting, not clearing
+      if (model) action("onSetDefaultModel")(model);
+    },
+  },
+};

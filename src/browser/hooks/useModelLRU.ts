@@ -6,6 +6,7 @@ import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 const MAX_LRU_SIZE = 12;
 const LRU_KEY = "model-lru";
+const DEFAULT_MODEL_KEY = "model-default";
 
 // Ensure defaultModel is first, then fill with other abbreviations (deduplicated)
 const FALLBACK_MODEL = WORKSPACE_DEFAULTS.model ?? defaultModel;
@@ -13,6 +14,7 @@ const DEFAULT_MODELS = [
   FALLBACK_MODEL,
   ...Array.from(new Set(Object.values(MODEL_ABBREVIATIONS))).filter((m) => m !== FALLBACK_MODEL),
 ].slice(0, MAX_LRU_SIZE);
+
 function persistModels(models: string[]): void {
   updatePersistedState(LRU_KEY, models.slice(0, MAX_LRU_SIZE));
 }
@@ -31,15 +33,19 @@ export function evictModelFromLRU(model: string): void {
   persistModels(nextList);
 }
 
+export function getExplicitDefaultModel(): string {
+  const persisted = readPersistedState<string | null>(DEFAULT_MODEL_KEY, null);
+  return persisted ?? FALLBACK_MODEL;
+}
+
 /**
- * Get the default model from LRU (non-hook version for use outside React)
- * This is the ONLY place that reads from LRU outside of the hook.
- *
- * @returns The most recently used model, or WORKSPACE_DEFAULTS.model if LRU is empty
+ * Get the default model.
+ * Prioritizes the explicit default model if set.
+ * Otherwise, falls back to LRU behavior (most recently used).
  */
 export function getDefaultModelFromLRU(): string {
-  const lru = readPersistedState<string[]>(LRU_KEY, DEFAULT_MODELS.slice(0, MAX_LRU_SIZE));
-  return lru[0] ?? FALLBACK_MODEL;
+  // Always return the explicit default (which falls back to hardcoded default)
+  return getExplicitDefaultModel();
 }
 
 /**
@@ -52,6 +58,24 @@ export function useModelLRU() {
     LRU_KEY,
     DEFAULT_MODELS.slice(0, MAX_LRU_SIZE),
     { listener: true }
+  );
+
+  const [defaultModel, setDefaultModel] = usePersistedState<string | null>(
+    DEFAULT_MODEL_KEY,
+    null,
+    { listener: true }
+  );
+
+  // Return the effective default model (never null)
+  const effectiveDefaultModel = defaultModel ?? FALLBACK_MODEL;
+
+  // Wrapper for setDefaultModel that prevents null/clearing
+  const handleSetDefaultModel = useCallback(
+    (model: string | null) => {
+      if (!model) return;
+      setDefaultModel(model);
+    },
+    [setDefaultModel]
   );
 
   // Merge any new defaults from MODEL_ABBREVIATIONS (only once on mount)
@@ -107,5 +131,7 @@ export function useModelLRU() {
     evictModel,
     getRecentModels,
     recentModels,
+    defaultModel: effectiveDefaultModel,
+    setDefaultModel: handleSetDefaultModel,
   };
 }
