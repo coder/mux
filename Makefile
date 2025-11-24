@@ -33,7 +33,7 @@ SHELL := bash
 else
 SHELL := /usr/bin/env bash
 endif
-.SHELLFLAGS := -eu -o pipefail -c
+.SHELLFLAGS := --norc -eu -o pipefail -c
 
 # Enable parallel execution by default (only if user didn't specify -j)
 ifeq (,$(filter -j%,$(MAKEFLAGS)))
