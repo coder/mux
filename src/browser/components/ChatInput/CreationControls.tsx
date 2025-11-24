@@ -10,6 +10,8 @@ interface CreationControlsProps {
   runtimeMode: RuntimeMode;
   sshHost: string;
   onRuntimeChange: (mode: RuntimeMode, host: string) => void;
+  autoRebaseTrunk: boolean;
+  onAutoRebaseChange: (value: boolean) => void;
   disabled: boolean;
 }
 
@@ -71,6 +73,27 @@ export function CreationControls(props: CreationControlsProps) {
             <br />
             • Local: git worktree in ~/.mux/src
             <br />• SSH: remote clone in ~/mux on SSH host
+          </Tooltip>
+        </TooltipWrapper>
+      </div>
+
+      {/* Auto Rebase Toggle */}
+      <div className="flex items-center gap-1" data-component="AutoRebaseToggle">
+        <label className="text-muted flex items-center gap-1 text-xs">
+          <input
+            type="checkbox"
+            checked={props.autoRebaseTrunk}
+            onChange={(event) => props.onAutoRebaseChange(event.target.checked)}
+            disabled={props.disabled}
+            className="accent-accent"
+          />
+          Auto rebase onto origin/{props.trunkBranch || "main"}
+        </label>
+        <TooltipWrapper inline>
+          <span className="text-muted cursor-help text-xs">?</span>
+          <Tooltip className="tooltip" align="center" width="wide">
+            Fetches origin/{props.trunkBranch || "main"} and rebases the new workspace before
+            running any init hooks. Disable if you need to stay on the local trunk snapshot.
           </Tooltip>
         </TooltipWrapper>
       </div>

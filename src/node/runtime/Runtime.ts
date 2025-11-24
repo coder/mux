@@ -151,6 +151,8 @@ export interface WorkspaceInitParams {
   initLogger: InitLogger;
   /** Optional abort signal for cancellation */
   abortSignal?: AbortSignal;
+  /** Automatically fetch/rebase onto origin/<trunkBranch> before running init hooks */
+  autoRebaseTrunk?: boolean;
 }
 
 /**
