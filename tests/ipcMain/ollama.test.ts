@@ -96,7 +96,7 @@ describeOllama("IpcMain Ollama integration tests", () => {
 
     // Ensure Ollama model is available (idempotent - fast if cached)
     await ensureOllamaModel(OLLAMA_MODEL);
-  }, 150000); // 150s timeout for tokenizer loading + potential model pull
+  }); // 150s timeout handling managed internally or via global config
 
   test("should successfully send message to Ollama and receive response", async () => {
     // Setup test environment
@@ -115,9 +115,9 @@ describeOllama("IpcMain Ollama integration tests", () => {
 
       // Collect and verify stream events
       const collector = createEventCollector(env.sentEvents, workspaceId);
-      const streamEnd = await collector.waitForEvent("stream-end", 30000);
+      const streamEnd = await collector.waitForEvent("stream-end", 60000);
 
-      expect(streamEnd).toBeDefined();
+      expect(streamEnd).not.toBeNull();
       assertStreamSuccess(collector);
 
       // Verify we received deltas

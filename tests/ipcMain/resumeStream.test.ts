@@ -32,7 +32,7 @@ describeIntegration("IpcMain resumeStream integration tests", () => {
         // Wait for stream to start
         const collector1 = createEventCollector(env.sentEvents, workspaceId);
         const streamStartEvent = await collector1.waitForEvent("stream-start", 5000);
-        expect(streamStartEvent).toBeDefined();
+        expect(streamStartEvent).not.toBeNull();
 
         // Wait for at least some content or tool call to start
         await waitFor(() => {
@@ -87,11 +87,11 @@ describeIntegration("IpcMain resumeStream integration tests", () => {
 
         // Wait for new stream to start
         const resumeStreamStart = await collector2.waitForEvent("stream-start", 5000);
-        expect(resumeStreamStart).toBeDefined();
+        expect(resumeStreamStart).not.toBeNull();
 
         // Wait for stream to complete
         const streamEnd = await collector2.waitForEvent("stream-end", 30000);
-        expect(streamEnd).toBeDefined();
+        expect(streamEnd).not.toBeNull();
 
         // Verify no new user message was created
         collector2.collect();
@@ -174,11 +174,11 @@ describeIntegration("IpcMain resumeStream integration tests", () => {
 
         // Wait for stream to start
         const streamStart = await collector.waitForEvent("stream-start", 10000);
-        expect(streamStart).toBeDefined();
+        expect(streamStart).not.toBeNull();
 
         // Wait for stream to complete
         const streamEnd = await collector.waitForEvent("stream-end", 30000);
-        expect(streamEnd).toBeDefined();
+        expect(streamEnd).not.toBeNull();
 
         // Verify no user message was created (resumeStream should not add one)
         collector.collect();
