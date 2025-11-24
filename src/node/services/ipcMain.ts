@@ -1104,12 +1104,6 @@ export class IpcMain {
             return { success: false, error: stopResult.error };
           }
 
-          // If abandonPartial is true, delete the partial instead of committing it
-          if (options?.abandonPartial) {
-            log.debug("Abandoning partial for workspace:", workspaceId);
-            await this.partialService.deletePartial(workspaceId);
-          }
-
           return { success: true, data: undefined };
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
