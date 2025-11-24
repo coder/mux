@@ -1,4 +1,4 @@
-import { type Tool, tool } from "ai";
+import { type Tool } from "ai";
 import { createFileReadTool } from "@/node/services/tools/file_read";
 import { createBashTool } from "@/node/services/tools/bash";
 import { createFileEditReplaceStringTool } from "@/node/services/tools/file_edit_replace_string";
@@ -38,10 +38,11 @@ export type ToolFactory = (config: ToolConfiguration) => Tool;
 
 /**
  * Augment a tool's description with additional instructions from "Tool: <name>" sections
- * Creates a wrapper tool that delegates to the base tool but with an enhanced description.
+ * Mutates the base tool in place to append the instructions to its description.
+ * This preserves any provider-specific metadata or internal state on the tool object.
  * @param baseTool The original tool to augment
  * @param additionalInstructions Additional instructions to append to the description
- * @returns A new tool with the augmented description
+ * @returns The same tool instance with the augmented description
  */
 function augmentToolDescription(baseTool: Tool, additionalInstructions: string): Tool {
   // Access the tool as a record to get its properties
@@ -51,14 +52,10 @@ function augmentToolDescription(baseTool: Tool, additionalInstructions: string):
     typeof baseToolRecord.description === "string" ? baseToolRecord.description : "";
   const augmentedDescription = `${originalDescription}\n\n${additionalInstructions}`;
 
-  // Return a new tool with the augmented description
-  return tool({
-    description: augmentedDescription,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
-    inputSchema: baseToolRecord.inputSchema as any,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
-    execute: baseToolRecord.execute as any,
-  });
+  // Mutate the description in place to preserve other properties (e.g. provider metadata)
+  baseToolRecord.description = augmentedDescription;
+
+  return baseTool;
 }
 
 /**
