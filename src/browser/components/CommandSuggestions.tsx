@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/common/lib/utils";
 import type { SlashSuggestion } from "@/browser/utils/slashCommands/types";
 
@@ -13,6 +14,8 @@ interface CommandSuggestionsProps {
   isVisible: boolean;
   ariaLabel?: string;
   listId?: string;
+  /** Reference to the input element for portal positioning */
+  anchorRef?: React.RefObject<HTMLElement | null>;
 }
 
 // Main component
@@ -23,13 +26,50 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
   isVisible,
   ariaLabel = "Command suggestions",
   listId,
+  anchorRef,
 }) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [position, setPosition] = useState<{ top: number; left: number; width: number } | null>(
+    null
+  );
+  const menuRef = useRef<HTMLDivElement>(null);
 
   // Reset selection whenever suggestions change
   useEffect(() => {
     setSelectedIndex(0);
   }, [suggestions]);
+
+  // Calculate position when using portal mode
+  useLayoutEffect(() => {
+    if (!anchorRef?.current || !isVisible) {
+      setPosition(null);
+      return;
+    }
+
+    const updatePosition = () => {
+      const anchor = anchorRef.current;
+      if (!anchor) return;
+
+      const rect = anchor.getBoundingClientRect();
+      const menuHeight = menuRef.current?.offsetHeight ?? 200;
+
+      setPosition({
+        top: rect.top - menuHeight - 8, // 8px gap above anchor
+        left: rect.left,
+        width: rect.width,
+      });
+    };
+
+    updatePosition();
+
+    // Update on resize/scroll
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [anchorRef, isVisible, suggestions]);
 
   // Handle keyboard navigation
   useEffect(() => {
@@ -84,8 +124,9 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
   const activeSuggestion = suggestions[selectedIndex] ?? suggestions[0];
   const resolvedListId = listId ?? `command-suggestions-list`;
 
-  return (
+  const content = (
     <div
+      ref={menuRef}
       id={resolvedListId}
       role="listbox"
       aria-label={ariaLabel}
@@ -93,7 +134,21 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
         activeSuggestion ? `${resolvedListId}-option-${activeSuggestion.id}` : undefined
       }
       data-command-suggestions
-      className="bg-separator border-border-light absolute right-0 bottom-full left-0 z-[100] mb-2 flex max-h-[200px] flex-col overflow-y-auto rounded border shadow-[0_-4px_12px_rgba(0,0,0,0.4)]"
+      className={cn(
+        "bg-separator border-border-light z-[100] flex max-h-[200px] flex-col overflow-y-auto rounded border shadow-[0_-4px_12px_rgba(0,0,0,0.4)]",
+        // Use absolute positioning relative to parent when not in portal mode
+        !anchorRef && "absolute right-0 bottom-full left-0 mb-2"
+      )}
+      style={
+        anchorRef && position
+          ? {
+              position: "fixed",
+              top: position.top,
+              left: position.left,
+              width: position.width,
+            }
+          : undefined
+      }
     >
       {suggestions.map((suggestion, index) => (
         <div
@@ -119,4 +174,11 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
       </div>
     </div>
   );
+
+  // Use portal when anchorRef is provided (to escape overflow:hidden containers)
+  if (anchorRef) {
+    return createPortal(content, document.body);
+  }
+
+  return content;
 };

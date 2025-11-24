@@ -781,6 +781,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           />
 
           {/* Command suggestions - available in both variants */}
+          {/* In creation mode, use portal (anchorRef) to escape overflow:hidden containers */}
           <CommandSuggestions
             suggestions={commandSuggestions}
             onSelectSuggestion={handleCommandSelect}
@@ -788,6 +789,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             isVisible={showCommandSuggestions}
             ariaLabel="Slash command suggestions"
             listId={commandListId}
+            anchorRef={variant === "creation" ? inputRef : undefined}
           />
 
           <div className="flex items-end" data-component="ChatInputControls">
