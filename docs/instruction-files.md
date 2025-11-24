@@ -89,6 +89,40 @@ Be terse and to the point.
 Use status reporting tools every few minutes.
 ```
 
+## Tool Prompts
+
+Like modes and models, mux reads headings titled `Tool: <tool_name>` to add instructions to specific tool descriptions. This allows you to customize how the AI uses particular tools without cluttering general instructions.
+
+Rules:
+
+- Workspace instructions are evaluated before global instructions; the first matching section wins.
+- Tool names must match exactly (case-insensitive).
+- Tool sections are removed from `<custom-instructions>`; matching content is injected into the tool's description.
+- Only tools available for the active model are augmented (e.g., `web_search` for Anthropic models).
+
+<!-- Developers: See extractToolSection in src/node/utils/main/markdown.ts for the implementation. -->
+
+Example:
+
+```markdown
+## Tool: bash
+
+When running commands:
+
+- Always use absolute paths for clarity
+- Prefer single-line commands over multi-line scripts
+- Add `set -e` to scripts that should fail fast
+
+## Tool: file_edit_replace_string
+
+When editing files:
+
+- Include enough context (2-3 lines) around the replacement to make matches unique
+- Verify the edit succeeded by reading the file afterwards
+```
+
+Available tools include: `bash`, `file_read`, `file_edit_replace_string`, `file_edit_insert`, `propose_plan`, `todo_write`, `todo_read`, `status_set`, and `web_search` (Anthropic/OpenAI models only).
+
 ## Practical layout
 
 ```

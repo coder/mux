@@ -130,11 +130,28 @@ export function extractModelSection(markdown: string, modelId: string): string |
   });
 }
 
+/**
+ * Extract the content under a heading titled "Tool: <tool_name>" (case-insensitive).
+ */
+export function extractToolSection(markdown: string, toolName: string): string | null {
+  if (!markdown || !toolName) return null;
+
+  const expectedHeading = `tool: ${toolName}`.toLowerCase();
+  return extractSectionByHeading(
+    markdown,
+    (headingText) => headingText.toLowerCase() === expectedHeading
+  );
+}
+
 export function stripScopedInstructionSections(markdown: string): string {
   if (!markdown) return markdown;
 
   return removeSectionsByHeading(markdown, (headingText) => {
     const normalized = headingText.trim().toLowerCase();
-    return normalized.startsWith("mode:") || normalized.startsWith("model:");
+    return (
+      normalized.startsWith("mode:") ||
+      normalized.startsWith("model:") ||
+      normalized.startsWith("tool:")
+    );
   });
 }

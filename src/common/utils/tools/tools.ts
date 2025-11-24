@@ -1,4 +1,4 @@
-import { type Tool } from "ai";
+import { type Tool, tool } from "ai";
 import { createFileReadTool } from "@/node/services/tools/file_read";
 import { createBashTool } from "@/node/services/tools/bash";
 import { createFileEditReplaceStringTool } from "@/node/services/tools/file_edit_replace_string";
@@ -37,6 +37,29 @@ export interface ToolConfiguration {
 export type ToolFactory = (config: ToolConfiguration) => Tool;
 
 /**
+ * Augment a tool's description with additional instructions from "Tool: <name>" sections
+ * Creates a wrapper tool that delegates to the base tool but with an enhanced description.
+ * @param baseTool The original tool to augment
+ * @param additionalInstructions Additional instructions to append to the description
+ * @returns A new tool with the augmented description
+ */
+function augmentToolDescription(baseTool: Tool, additionalInstructions: string): Tool {
+  // Access the tool as a record to get its properties
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const baseToolRecord = baseTool as any as Record<string, unknown>;
+  const augmentedDescription = `${String(baseToolRecord.description ?? "")}\n\n${additionalInstructions}`;
+
+  // Return a new tool with the augmented description
+  return tool({
+    description: augmentedDescription,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    inputSchema: baseToolRecord.inputSchema as any,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    execute: baseToolRecord.execute as any,
+  });
+}
+
+/**
  * Get tools available for a specific model with configuration
  *
  * Providers are lazy-loaded to reduce startup time. AI SDK providers are only
@@ -46,13 +69,15 @@ export type ToolFactory = (config: ToolConfiguration) => Tool;
  * @param config Required configuration for tools
  * @param workspaceId Workspace ID for init state tracking (required for runtime tools)
  * @param initStateManager Init state manager for runtime tools to wait for initialization
+ * @param toolInstructions Optional map of tool names to additional instructions from "Tool: <name>" sections
  * @returns Promise resolving to record of tools available for the model
  */
 export async function getToolsForModel(
   modelString: string,
   config: ToolConfiguration,
   workspaceId: string,
-  initStateManager: InitStateManager
+  initStateManager: InitStateManager,
+  toolInstructions?: Record<string, string>
 ): Promise<Record<string, Tool>> {
   const [provider, modelId] = modelString.split(":");
 
@@ -89,21 +114,23 @@ export async function getToolsForModel(
 
   // Try to add provider-specific web search tools if available
   // Lazy-load providers to avoid loading all AI SDKs at startup
+  let allTools = baseTools;
   try {
     switch (provider) {
       case "anthropic": {
         const { anthropic } = await import("@ai-sdk/anthropic");
-        return {
+        allTools = {
           ...baseTools,
           web_search: anthropic.tools.webSearch_20250305({ maxUses: 1000 }),
         };
+        break;
       }
 
       case "openai": {
         // Only add web search for models that support it
         if (modelId.includes("gpt-5") || modelId.includes("gpt-4")) {
           const { openai } = await import("@ai-sdk/openai");
-          return {
+          allTools = {
             ...baseTools,
             web_search: openai.tools.webSearch({
               searchContextSize: "high",
@@ -119,9 +146,23 @@ export async function getToolsForModel(
       // - https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#native-tools
     }
   } catch (error) {
-    // If tools aren't available, just return base tools
+    // If tools aren't available, just use base tools
     log.error(`No web search tools available for ${provider}:`, error);
   }
 
-  return baseTools;
+  // Apply tool-specific instructions if provided
+  if (toolInstructions) {
+    const augmentedTools: Record<string, Tool> = {};
+    for (const [toolName, baseTool] of Object.entries(allTools)) {
+      const instructions = toolInstructions[toolName];
+      if (instructions) {
+        augmentedTools[toolName] = augmentToolDescription(baseTool, instructions);
+      } else {
+        augmentedTools[toolName] = baseTool;
+      }
+    }
+    return augmentedTools;
+  }
+
+  return allTools;
 }

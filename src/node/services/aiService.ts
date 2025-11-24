@@ -31,7 +31,7 @@ import {
 import { applyCacheControl } from "@/common/utils/ai/cacheStrategy";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
-import { buildSystemMessage } from "./systemMessage";
+import { buildSystemMessage, readToolInstructions } from "./systemMessage";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 import type { ThinkingLevel } from "@/common/types/thinking";
@@ -746,6 +746,14 @@ export class AIService extends EventEmitter {
       const streamToken = this.streamManager.generateStreamToken();
       const runtimeTempDir = await this.streamManager.createTempDirForStream(streamToken, runtime);
 
+      // Extract tool-specific instructions from AGENTS.md files
+      const toolInstructions = await readToolInstructions(
+        metadata,
+        runtime,
+        workspacePath,
+        modelString
+      );
+
       // Get model-specific tools with workspace path (correct for local or remote)
       const allTools = await getToolsForModel(
         modelString,
@@ -756,7 +764,8 @@ export class AIService extends EventEmitter {
           runtimeTempDir,
         },
         workspaceId,
-        this.initStateManager
+        this.initStateManager,
+        toolInstructions
       );
 
       // Apply tool policy to filter tools (if policy provided)
