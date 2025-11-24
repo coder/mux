@@ -47,17 +47,17 @@ const PROVIDER_CONFIGS: Array<[string, string]> = [
 // - Longer running tests (tool calls, multiple edits) can take up to 30s
 // - Test timeout values (in describe/test) should be 2-3x the expected duration
 
-  let sharedRepoPath: string;
+let sharedRepoPath: string;
 
-  beforeAll(async () => {
-    sharedRepoPath = await createTempGitRepo();
-  });
+beforeAll(async () => {
+  sharedRepoPath = await createTempGitRepo();
+});
 
-  afterAll(async () => {
-    if (sharedRepoPath) {
-      await cleanupTempGitRepo(sharedRepoPath);
-    }
-  });
+afterAll(async () => {
+  if (sharedRepoPath) {
+    await cleanupTempGitRepo(sharedRepoPath);
+  }
+});
 describeIntegration("IpcMain sendMessage integration tests", () => {
   configureTestRetries(3);
 
@@ -66,7 +66,11 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     test.concurrent(
       "should reject empty message (use interruptStream instead)",
       async () => {
-        const { env, workspaceId, cleanup } = await setupWorkspace(provider, undefined, sharedRepoPath);
+        const { env, workspaceId, cleanup } = await setupWorkspace(
+          provider,
+          undefined,
+          sharedRepoPath
+        );
         try {
           // Send empty message without any active stream
           const result = await sendMessageWithModel(
@@ -101,7 +105,11 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     );
 
     test.concurrent("should return error when model is not provided", async () => {
-      const { env, workspaceId, cleanup } = await setupWorkspace(provider, undefined, sharedRepoPath);
+      const { env, workspaceId, cleanup } = await setupWorkspace(
+        provider,
+        undefined,
+        sharedRepoPath
+      );
       try {
         // Send message without model
         const result = await sendMessage(
@@ -122,7 +130,11 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     });
 
     test.concurrent("should return error for invalid model string", async () => {
-      const { env, workspaceId, cleanup } = await setupWorkspace(provider, undefined, sharedRepoPath);
+      const { env, workspaceId, cleanup } = await setupWorkspace(
+        provider,
+        undefined,
+        sharedRepoPath
+      );
       try {
         // Send message with invalid model format
         const result = await sendMessage(env.mockIpcRenderer, workspaceId, "Hello", {
@@ -139,7 +151,11 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     test.each(PROVIDER_CONFIGS)(
       "%s should return stream error when model does not exist",
       async (provider) => {
-        const { env, workspaceId, cleanup } = await setupWorkspace(provider, undefined, sharedRepoPath);
+        const { env, workspaceId, cleanup } = await setupWorkspace(
+          provider,
+          undefined,
+          sharedRepoPath
+        );
         try {
           // Use a clearly non-existent model name
           const nonExistentModel = "definitely-not-a-real-model-12345";
@@ -185,7 +201,11 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     test.each(PROVIDER_CONFIGS)(
       "%s should return error when accumulated history exceeds token limit",
       async (provider, model) => {
-        const { env, workspaceId, cleanup } = await setupWorkspace(provider, undefined, sharedRepoPath);
+        const { env, workspaceId, cleanup } = await setupWorkspace(
+          provider,
+          undefined,
+          sharedRepoPath
+        );
         try {
           // Build up large conversation history to exceed context limits
           // Different providers have different limits:
@@ -459,8 +479,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
   });
 
   // Additional system instructions tests
-  describe("additional system instructions", () => {
-  });
+  describe("additional system instructions", () => {});
 
   // Test frontend metadata round-trip (no provider needed - just verifies storage)
 });

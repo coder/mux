@@ -47,17 +47,17 @@ const PROVIDER_CONFIGS: Array<[string, string]> = [
 // - Longer running tests (tool calls, multiple edits) can take up to 30s
 // - Test timeout values (in describe/test) should be 2-3x the expected duration
 
-  let sharedRepoPath: string;
+let sharedRepoPath: string;
 
-  beforeAll(async () => {
-    sharedRepoPath = await createTempGitRepo();
-  });
+beforeAll(async () => {
+  sharedRepoPath = await createTempGitRepo();
+});
 
-  afterAll(async () => {
-    if (sharedRepoPath) {
-      await cleanupTempGitRepo(sharedRepoPath);
-    }
-  });
+afterAll(async () => {
+  if (sharedRepoPath) {
+    await cleanupTempGitRepo(sharedRepoPath);
+  }
+});
 describeIntegration("IpcMain sendMessage integration tests", () => {
   configureTestRetries(3);
 
@@ -66,7 +66,11 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     test.concurrent(
       "should handle message editing with history truncation",
       async () => {
-        const { env, workspaceId, cleanup } = await setupWorkspace(provider, undefined, sharedRepoPath);
+        const { env, workspaceId, cleanup } = await setupWorkspace(
+          provider,
+          undefined,
+          sharedRepoPath
+        );
         try {
           // Send first message
           const result1 = await sendMessageWithModel(
@@ -112,7 +116,11 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     test.concurrent(
       "should handle message editing during active stream with tool calls",
       async () => {
-        const { env, workspaceId, cleanup } = await setupWorkspace(provider, undefined, sharedRepoPath);
+        const { env, workspaceId, cleanup } = await setupWorkspace(
+          provider,
+          undefined,
+          sharedRepoPath
+        );
         try {
           // Send a message that will trigger a long-running tool call
           const result1 = await sendMessageWithModel(
@@ -231,7 +239,11 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     test.concurrent(
       "should maintain conversation continuity across messages",
       async () => {
-        const { env, workspaceId, cleanup } = await setupWorkspace(provider, undefined, sharedRepoPath);
+        const { env, workspaceId, cleanup } = await setupWorkspace(
+          provider,
+          undefined,
+          sharedRepoPath
+        );
         try {
           // First message: Ask for a random word
           const result1 = await sendMessageWithModel(
@@ -405,7 +417,11 @@ These are general instructions that apply to all modes.
 
         for (const [provider, model] of PROVIDER_CONFIGS) {
           // Create fresh environment with provider setup
-          const { env, workspaceId, cleanup } = await setupWorkspace(provider, undefined, sharedRepoPath);
+          const { env, workspaceId, cleanup } = await setupWorkspace(
+            provider,
+            undefined,
+            sharedRepoPath
+          );
 
           // Send same message to both providers
           const result = await sendMessageWithModel(
@@ -473,7 +489,11 @@ These are general instructions that apply to all modes.
     test.each(PROVIDER_CONFIGS)(
       "%s should pass additionalSystemInstructions through to system message",
       async (provider, model) => {
-        const { env, workspaceId, cleanup } = await setupWorkspace(provider, undefined, sharedRepoPath);
+        const { env, workspaceId, cleanup } = await setupWorkspace(
+          provider,
+          undefined,
+          sharedRepoPath
+        );
         try {
           // Send message with custom system instructions that add a distinctive marker
           const result = await sendMessage(env.mockIpcRenderer, workspaceId, "Say hello", {
@@ -515,7 +535,6 @@ These are general instructions that apply to all modes.
   describeIntegration("OpenAI auto truncation integration", () => {
     const provider = "openai";
     const model = "gpt-4o-mini";
-
 
     test.each(PROVIDER_CONFIGS)(
       "%s should include full file_edit diff in UI/history but redact it from the next provider request",

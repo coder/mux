@@ -47,17 +47,17 @@ const PROVIDER_CONFIGS: Array<[string, string]> = [
 // - Longer running tests (tool calls, multiple edits) can take up to 30s
 // - Test timeout values (in describe/test) should be 2-3x the expected duration
 
-  let sharedRepoPath: string;
+let sharedRepoPath: string;
 
-  beforeAll(async () => {
-    sharedRepoPath = await createTempGitRepo();
-  });
+beforeAll(async () => {
+  sharedRepoPath = await createTempGitRepo();
+});
 
-  afterAll(async () => {
-    if (sharedRepoPath) {
-      await cleanupTempGitRepo(sharedRepoPath);
-    }
-  });
+afterAll(async () => {
+  if (sharedRepoPath) {
+    await cleanupTempGitRepo(sharedRepoPath);
+  }
+});
 describeIntegration("IpcMain sendMessage integration tests", () => {
   configureTestRetries(3);
 
@@ -67,7 +67,11 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
       "should successfully send message and receive response",
       async () => {
         // Setup test environment
-        const { env, workspaceId, cleanup } = await setupWorkspace(provider, undefined, sharedRepoPath);
+        const { env, workspaceId, cleanup } = await setupWorkspace(
+          provider,
+          undefined,
+          sharedRepoPath
+        );
         try {
           // Send a simple message
           const result = await sendMessageWithModel(
@@ -101,7 +105,11 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
       "should interrupt streaming with interruptStream()",
       async () => {
         // Setup test environment
-        const { env, workspaceId, cleanup } = await setupWorkspace(provider, undefined, sharedRepoPath);
+        const { env, workspaceId, cleanup } = await setupWorkspace(
+          provider,
+          undefined,
+          sharedRepoPath
+        );
         try {
           // Start a long-running stream with a bash command that takes time
           const longMessage = "Run this bash command: while true; do sleep 1; done";
@@ -147,7 +155,11 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
       "should interrupt stream with pending bash tool call near-instantly",
       async () => {
         // Setup test environment
-        const { env, workspaceId, cleanup } = await setupWorkspace(provider, undefined, sharedRepoPath);
+        const { env, workspaceId, cleanup } = await setupWorkspace(
+          provider,
+          undefined,
+          sharedRepoPath
+        );
         try {
           // Ask the model to run a long-running bash command
           // Use explicit instruction to ensure tool call happens
@@ -207,7 +219,11 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
       "should include tokens and timestamp in delta events",
       async () => {
         // Setup test environment
-        const { env, workspaceId, cleanup } = await setupWorkspace(provider, undefined, sharedRepoPath);
+        const { env, workspaceId, cleanup } = await setupWorkspace(
+          provider,
+          undefined,
+          sharedRepoPath
+        );
         try {
           // Send a message that will generate text deltas
           // Disable reasoning for this test to avoid flakiness and encrypted content issues in CI
@@ -282,7 +298,11 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
       "should include usage data in stream-abort events",
       async () => {
         // Setup test environment
-        const { env, workspaceId, cleanup } = await setupWorkspace(provider, undefined, sharedRepoPath);
+        const { env, workspaceId, cleanup } = await setupWorkspace(
+          provider,
+          undefined,
+          sharedRepoPath
+        );
         try {
           // Start a stream that will generate some tokens
           const message = "Write a haiku about coding";
@@ -348,7 +368,11 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
           return;
         }
 
-        const { env, workspaceId, cleanup } = await setupWorkspace(provider, undefined, sharedRepoPath);
+        const { env, workspaceId, cleanup } = await setupWorkspace(
+          provider,
+          undefined,
+          sharedRepoPath
+        );
         try {
           // Start a stream with tool call that takes a long time
           void sendMessageWithModel(
@@ -438,7 +462,6 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
       },
       15000
     );
-
   });
 
   // Test frontend metadata round-trip (no provider needed - just verifies storage)
@@ -509,5 +532,4 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
 });
 
 // Test image support across providers
-describe.each(PROVIDER_CONFIGS)("%s:%s image support", (provider, model) => {
-});
+describe.each(PROVIDER_CONFIGS)("%s:%s image support", (provider, model) => {});
