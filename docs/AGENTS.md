@@ -18,6 +18,7 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 ./scripts/wait_pr_checks.sh <pr_number>
 ```
 
+- Generally run `wait_pr_checks` after submitting a PR to ensure CI passes.
 - Status decoding: `mergeable=MERGEABLE` clean; `CONFLICTING` needs resolution. `mergeStateStatus=CLEAN` ready, `BLOCKED` waiting for CI, `BEHIND` rebase, `DIRTY` conflicts.
 - If behind: `git fetch origin && git rebase origin/main && git push --force-with-lease`.
 - Never enable auto-merge or merge at all unless the user explicitly says "merge it".
