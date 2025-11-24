@@ -176,14 +176,14 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     [storageKeys.modelKey, addModel]
   );
 
-  // When entering creation mode, always reset the model selection to the global default.
-  // We don't want manual selections to persist to subsequent workspace creations.
+  // When entering creation mode (or when the default model changes), reset the
+  // project-scoped model to the explicit default so manual picks don't bleed
+  // into subsequent creation flows.
   useEffect(() => {
     if (variant === "creation" && defaultModel) {
       updatePersistedState(storageKeys.modelKey, defaultModel);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Run once on mount
+  }, [variant, defaultModel, storageKeys.modelKey]);
 
   // Creation-specific state (hook always called, but only used when variant === "creation")
   // This avoids conditional hook calls which violate React rules

@@ -256,9 +256,9 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                 )}
                 onClick={() => handleSelectModel(model)}
               >
-                <div className="flex items-center justify-between gap-2 w-full">
-                  <span className="truncate flex-1 min-w-0">{model}</span>
-                  <div className="flex items-center gap-1 shrink-0">
+                <div className="grid w-full grid-cols-[1fr_48px] items-center gap-2">
+                  <span className="min-w-0 truncate">{model}</span>
+                  <div className="grid w-[48px] grid-cols-[22px_22px] justify-items-center gap-1">
                     {onSetDefaultModel && (
                       <TooltipWrapper inline>
                         <button
@@ -266,17 +266,19 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                           onMouseDown={(e) => e.preventDefault()}
                           onClick={(e) => handleSetDefault(e, model)}
                           className={cn(
-                            "rounded-sm border px-1 py-0.5 transition-colors duration-150 flex items-center justify-center",
+                            "flex items-center justify-center rounded-sm border px-1 py-0.5 transition-colors duration-150",
                             defaultModel === model
                               ? "text-yellow-400 border-yellow-400/40 cursor-default"
                               : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
                           )}
                           aria-label={
-                            defaultModel === model ? "Current default model" : "Set as default model"
+                            defaultModel === model
+                              ? "Current default model"
+                              : "Set as default model"
                           }
                           disabled={defaultModel === model}
                         >
-                          <Star className={cn("h-3 w-3")} />
+                          <Star className="h-3 w-3" />
                         </button>
                         <Tooltip className="tooltip" align="center">
                           {defaultModel === model
