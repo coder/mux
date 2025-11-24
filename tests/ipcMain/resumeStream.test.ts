@@ -15,10 +15,6 @@ if (shouldRunIntegrationTests()) {
 }
 
 describeIntegration("IpcMain resumeStream integration tests", () => {
-  // Enable retries in CI for flaky API tests
-  if (process.env.CI && typeof jest !== "undefined" && jest.retryTimes) {
-    jest.retryTimes(3, { logErrorsBeforeRetry: true });
-  }
 
   test.concurrent(
     "should resume interrupted stream without new user message",

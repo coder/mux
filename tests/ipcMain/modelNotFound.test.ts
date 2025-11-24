@@ -14,10 +14,6 @@ if (shouldRunIntegrationTests()) {
 }
 
 describeIntegration("IpcMain model_not_found error handling", () => {
-  // Enable retries in CI for flaky API tests
-  if (process.env.CI && typeof jest !== "undefined" && jest.retryTimes) {
-    jest.retryTimes(3, { logErrorsBeforeRetry: true });
-  }
 
   test.concurrent(
     "should classify Anthropic 404 as model_not_found (not retryable)",

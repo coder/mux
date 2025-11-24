@@ -28,10 +28,6 @@ if (shouldRunIntegrationTests()) {
 }
 
 describeIntegration("IpcMain fork workspace integration tests", () => {
-  // Enable retries in CI for flaky API tests
-  if (process.env.CI && typeof jest !== "undefined" && jest.retryTimes) {
-    jest.retryTimes(3, { logErrorsBeforeRetry: true });
-  }
 
   test.concurrent(
     "should fail to fork workspace with invalid name",

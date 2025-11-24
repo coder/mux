@@ -13,10 +13,6 @@ if (shouldRunIntegrationTests() && !shouldRunSuite) {
 }
 
 describeIntegration("Anthropic cache strategy integration", () => {
-  // Enable retries in CI for flaky API tests
-  if (process.env.CI && typeof jest !== "undefined" && jest.retryTimes) {
-    jest.retryTimes(2, { logErrorsBeforeRetry: true });
-  }
 
   test(
     "should apply cache control to messages, system prompt, and tools for Anthropic models",

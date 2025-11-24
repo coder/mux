@@ -19,10 +19,6 @@ if (shouldRunIntegrationTests()) {
 }
 
 describeIntegration("IpcMain truncate integration tests", () => {
-  // Enable retries in CI for flaky API tests
-  if (process.env.CI && typeof jest !== "undefined" && jest.retryTimes) {
-    jest.retryTimes(3, { logErrorsBeforeRetry: true });
-  }
 
   test.concurrent(
     "should truncate 50% of chat history and verify context is updated",

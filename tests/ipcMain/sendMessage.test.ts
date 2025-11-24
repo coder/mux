@@ -45,10 +45,6 @@ const PROVIDER_CONFIGS: Array<[string, string]> = [
 // - Test timeout values (in describe/test) should be 2-3x the expected duration
 
 describeIntegration("IpcMain sendMessage integration tests", () => {
-  // Enable retries in CI for flaky API tests (only works with Jest, not Bun test runner)
-  if (process.env.CI && typeof jest !== "undefined" && jest.retryTimes) {
-    jest.retryTimes(3, { logErrorsBeforeRetry: true });
-  }
 
   // Run tests for each provider concurrently
   describe.each(PROVIDER_CONFIGS)("%s:%s provider tests", (provider, model) => {
@@ -1078,10 +1074,6 @@ These are general instructions that apply to all modes.
 
   // Tool policy tests
   describe("tool policy", () => {
-    // Retry tool policy tests in CI (they depend on external API behavior)
-    if (process.env.CI && typeof jest !== "undefined" && jest.retryTimes) {
-      jest.retryTimes(2, { logErrorsBeforeRetry: true });
-    }
 
     test.each(PROVIDER_CONFIGS)(
       "%s should respect tool policy that disables bash",

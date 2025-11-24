@@ -220,10 +220,6 @@ async function collectStreamUntil(
 }
 
 describeIntegration("Stream Error Recovery (No Amnesia)", () => {
-  // Enable retries in CI for flaky API tests
-  if (process.env.CI && typeof jest !== "undefined" && jest.retryTimes) {
-    jest.retryTimes(3, { logErrorsBeforeRetry: true });
-  }
 
   test.concurrent(
     "should preserve exact prefix and continue from exact point after stream error",
