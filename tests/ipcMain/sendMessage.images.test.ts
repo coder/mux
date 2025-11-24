@@ -18,10 +18,9 @@ import {
   readChatHistory,
   TEST_IMAGES,
   modelString,
-  createTempGitRepo,
-  cleanupTempGitRepo,
   configureTestRetries,
 } from "./helpers";
+import { createSharedRepo, cleanupSharedRepo, withSharedWorkspace } from "./sendMessageTestHelpers";
 import type { StreamDeltaEvent } from "../../src/common/types/stream";
 import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
 
@@ -47,17 +46,8 @@ const PROVIDER_CONFIGS: Array<[string, string]> = [
 // - Longer running tests (tool calls, multiple edits) can take up to 30s
 // - Test timeout values (in describe/test) should be 2-3x the expected duration
 
-let sharedRepoPath: string;
-
-beforeAll(async () => {
-  sharedRepoPath = await createTempGitRepo();
-});
-
-afterAll(async () => {
-  if (sharedRepoPath) {
-    await cleanupTempGitRepo(sharedRepoPath);
-  }
-});
+beforeAll(createSharedRepo);
+afterAll(cleanupSharedRepo);
 describeIntegration("IpcMain sendMessage integration tests", () => {
   configureTestRetries(3);
 
@@ -70,12 +60,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
         // Skip Anthropic for now as it fails to process the image data URI in tests
         if (provider === "anthropic") return;
 
-        const { env, workspaceId, cleanup } = await setupWorkspace(
-          provider,
-          undefined,
-          sharedRepoPath
-        );
-        try {
+        await withSharedWorkspace(provider, async ({ env, workspaceId }) => {
           // Send message with image attachment
           const result = await sendMessage(
             env.mockIpcRenderer,
@@ -106,9 +91,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
           expect(fullResponse.length).toBeGreaterThan(0);
           // Red pixel should be detected (flexible matching as different models may phrase differently)
           expect(fullResponse).toMatch(/red|color|orange/i);
-        } finally {
-          await cleanup();
-        }
+        });
       },
       40000 // Vision models can be slower
     );
@@ -119,12 +102,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
         // Skip Anthropic for now as it fails to process the image data URI in tests
         if (provider === "anthropic") return;
 
-        const { env, workspaceId, cleanup } = await setupWorkspace(
-          provider,
-          undefined,
-          sharedRepoPath
-        );
-        try {
+        await withSharedWorkspace(provider, async ({ env, workspaceId }) => {
           // Send message with image
           const result = await sendMessage(env.mockIpcRenderer, workspaceId, "Describe this", {
             model: modelString(provider, model),
@@ -152,9 +130,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
               expect(imagePart.mediaType).toBe("image/png");
             }
           }
-        } finally {
-          await cleanup();
-        }
+        });
       },
       40000
     );

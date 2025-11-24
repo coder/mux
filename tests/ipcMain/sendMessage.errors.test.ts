@@ -18,10 +18,9 @@ import {
   readChatHistory,
   TEST_IMAGES,
   modelString,
-  createTempGitRepo,
-  cleanupTempGitRepo,
   configureTestRetries,
 } from "./helpers";
+import { createSharedRepo, cleanupSharedRepo, withSharedWorkspace } from "./sendMessageTestHelpers";
 import type { StreamDeltaEvent } from "../../src/common/types/stream";
 import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
 
@@ -47,17 +46,8 @@ const PROVIDER_CONFIGS: Array<[string, string]> = [
 // - Longer running tests (tool calls, multiple edits) can take up to 30s
 // - Test timeout values (in describe/test) should be 2-3x the expected duration
 
-let sharedRepoPath: string;
-
-beforeAll(async () => {
-  sharedRepoPath = await createTempGitRepo();
-});
-
-afterAll(async () => {
-  if (sharedRepoPath) {
-    await cleanupTempGitRepo(sharedRepoPath);
-  }
-});
+beforeAll(createSharedRepo);
+afterAll(cleanupSharedRepo);
 describeIntegration("IpcMain sendMessage integration tests", () => {
   configureTestRetries(3);
 
@@ -66,12 +56,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     test.concurrent(
       "should reject empty message (use interruptStream instead)",
       async () => {
-        const { env, workspaceId, cleanup } = await setupWorkspace(
-          provider,
-          undefined,
-          sharedRepoPath
-        );
-        try {
+        await withSharedWorkspace(provider, async ({ env, workspaceId }) => {
           // Send empty message without any active stream
           const result = await sendMessageWithModel(
             env.mockIpcRenderer,
@@ -97,20 +82,13 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
             .getEvents()
             .filter((e) => "type" in e && e.type?.startsWith("stream-"));
           expect(streamEvents.length).toBe(0);
-        } finally {
-          await cleanup();
-        }
+        });
       },
       15000
     );
 
     test.concurrent("should return error when model is not provided", async () => {
-      const { env, workspaceId, cleanup } = await setupWorkspace(
-        provider,
-        undefined,
-        sharedRepoPath
-      );
-      try {
+      await withSharedWorkspace(provider, async ({ env, workspaceId }) => {
         // Send message without model
         const result = await sendMessage(
           env.mockIpcRenderer,
@@ -124,18 +102,11 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
         if (!result.success && result.error.type === "unknown") {
           expect(result.error.raw).toContain("No model specified");
         }
-      } finally {
-        await cleanup();
-      }
+      });
     });
 
     test.concurrent("should return error for invalid model string", async () => {
-      const { env, workspaceId, cleanup } = await setupWorkspace(
-        provider,
-        undefined,
-        sharedRepoPath
-      );
-      try {
+      await withSharedWorkspace(provider, async ({ env, workspaceId }) => {
         // Send message with invalid model format
         const result = await sendMessage(env.mockIpcRenderer, workspaceId, "Hello", {
           model: "invalid-format",
@@ -143,20 +114,13 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
 
         // Should fail with invalid_model_string error
         assertError(result, "invalid_model_string");
-      } finally {
-        await cleanup();
-      }
+      });
     });
 
     test.each(PROVIDER_CONFIGS)(
       "%s should return stream error when model does not exist",
       async (provider) => {
-        const { env, workspaceId, cleanup } = await setupWorkspace(
-          provider,
-          undefined,
-          sharedRepoPath
-        );
-        try {
+        await withSharedWorkspace(provider, async ({ env, workspaceId }) => {
           // Use a clearly non-existent model name
           const nonExistentModel = "definitely-not-a-real-model-12345";
           const result = await sendMessageWithModel(
@@ -189,9 +153,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
           if (errorEvent && "errorType" in errorEvent) {
             expect(errorEvent.errorType).toBe("model_not_found");
           }
-        } finally {
-          await cleanup();
-        }
+        });
       }
     );
   });
@@ -201,12 +163,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     test.each(PROVIDER_CONFIGS)(
       "%s should return error when accumulated history exceeds token limit",
       async (provider, model) => {
-        const { env, workspaceId, cleanup } = await setupWorkspace(
-          provider,
-          undefined,
-          sharedRepoPath
-        );
-        try {
+        await withSharedWorkspace(provider, async ({ env, workspaceId }) => {
           // Build up large conversation history to exceed context limits
           // Different providers have different limits:
           // - Anthropic: 200k tokens → need ~40 messages of 50k chars (2M chars total)
@@ -316,9 +273,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
               expect(partialMessage.metadata.errorType).toBe("context_exceeded");
             }
           }
-        } finally {
-          await cleanup();
-        }
+        });
       },
       30000
     );
@@ -334,8 +289,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     test.each(PROVIDER_CONFIGS)(
       "%s should respect tool policy that disables bash",
       async (provider, model) => {
-        const { env, workspaceId, workspacePath, cleanup } = await setupWorkspace(provider);
-        try {
+        await withSharedWorkspace(provider, async ({ env, workspaceId, workspacePath }) => {
           // Create a test file in the workspace
           const testFilePath = path.join(workspacePath, "bash-test-file.txt");
           await fs.writeFile(testFilePath, "original content", "utf-8");
@@ -402,9 +356,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
           // Verify content unchanged
           const content = await fs.readFile(testFilePath, "utf-8");
           expect(content).toBe("original content");
-        } finally {
-          await cleanup();
-        }
+        });
       },
       90000
     );
@@ -412,8 +364,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     test.each(PROVIDER_CONFIGS)(
       "%s should respect tool policy that disables file_edit tools",
       async (provider, model) => {
-        const { env, workspaceId, workspacePath, cleanup } = await setupWorkspace(provider);
-        try {
+        await withSharedWorkspace(provider, async ({ env, workspaceId, workspacePath }) => {
           // Create a test file with known content
           const testFilePath = path.join(workspacePath, "edit-test-file.txt");
           const originalContent = "original content line 1\noriginal content line 2";
@@ -470,9 +421,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
           // Verify file content unchanged (file_edit tools and bash were disabled)
           const content = await fs.readFile(testFilePath, "utf-8");
           expect(content).toBe(originalContent);
-        } finally {
-          await cleanup();
-        }
+        });
       },
       90000
     );

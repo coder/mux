@@ -18,10 +18,9 @@ import {
   readChatHistory,
   TEST_IMAGES,
   modelString,
-  createTempGitRepo,
-  cleanupTempGitRepo,
   configureTestRetries,
 } from "./helpers";
+import { createSharedRepo, cleanupSharedRepo, withSharedWorkspace } from "./sendMessageTestHelpers";
 import type { StreamDeltaEvent } from "../../src/common/types/stream";
 import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
 
@@ -47,17 +46,8 @@ const PROVIDER_CONFIGS: Array<[string, string]> = [
 // - Longer running tests (tool calls, multiple edits) can take up to 30s
 // - Test timeout values (in describe/test) should be 2-3x the expected duration
 
-let sharedRepoPath: string;
-
-beforeAll(async () => {
-  sharedRepoPath = await createTempGitRepo();
-});
-
-afterAll(async () => {
-  if (sharedRepoPath) {
-    await cleanupTempGitRepo(sharedRepoPath);
-  }
-});
+beforeAll(createSharedRepo);
+afterAll(cleanupSharedRepo);
 describeIntegration("IpcMain sendMessage integration tests", () => {
   configureTestRetries(3);
 
@@ -69,13 +59,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     test.concurrent(
       "respects disableAutoTruncation flag",
       async () => {
-        const { env, workspaceId, cleanup } = await setupWorkspace(
-          provider,
-          undefined,
-          sharedRepoPath
-        );
-
-        try {
+        await withSharedWorkspace(provider, async ({ env, workspaceId }) => {
           // Phase 1: Build up large conversation history to exceed context limit
           // Use ~80 messages (4M chars total) to ensure we hit the limit
           await buildLargeHistory(workspaceId, env.config, {
@@ -143,9 +127,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
           const successCollector = createEventCollector(env.sentEvents, workspaceId);
           await successCollector.waitForEvent("stream-end", 30000);
           assertStreamSuccess(successCollector);
-        } finally {
-          await cleanup();
-        }
+        });
       },
       60000 // 1 minute timeout (much faster since we don't make many API calls)
     );

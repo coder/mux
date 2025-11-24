@@ -18,10 +18,9 @@ import {
   readChatHistory,
   TEST_IMAGES,
   modelString,
-  createTempGitRepo,
-  cleanupTempGitRepo,
   configureTestRetries,
 } from "./helpers";
+import { createSharedRepo, cleanupSharedRepo, withSharedWorkspace } from "./sendMessageTestHelpers";
 import type { StreamDeltaEvent } from "../../src/common/types/stream";
 import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
 
@@ -47,17 +46,8 @@ const PROVIDER_CONFIGS: Array<[string, string]> = [
 // - Longer running tests (tool calls, multiple edits) can take up to 30s
 // - Test timeout values (in describe/test) should be 2-3x the expected duration
 
-let sharedRepoPath: string;
-
-beforeAll(async () => {
-  sharedRepoPath = await createTempGitRepo();
-});
-
-afterAll(async () => {
-  if (sharedRepoPath) {
-    await cleanupTempGitRepo(sharedRepoPath);
-  }
-});
+beforeAll(createSharedRepo);
+afterAll(cleanupSharedRepo);
 describeIntegration("IpcMain sendMessage integration tests", () => {
   configureTestRetries(3);
 
@@ -66,12 +56,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     test.concurrent(
       "should handle message editing with history truncation",
       async () => {
-        const { env, workspaceId, cleanup } = await setupWorkspace(
-          provider,
-          undefined,
-          sharedRepoPath
-        );
-        try {
+        await withSharedWorkspace(provider, async ({ env, workspaceId }) => {
           // Send first message
           const result1 = await sendMessageWithModel(
             env.mockIpcRenderer,
@@ -106,9 +91,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
           const collector2 = createEventCollector(env.sentEvents, workspaceId);
           await collector2.waitForEvent("stream-end", 10000);
           assertStreamSuccess(collector2);
-        } finally {
-          await cleanup();
-        }
+        });
       },
       20000
     );
@@ -116,12 +99,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     test.concurrent(
       "should handle message editing during active stream with tool calls",
       async () => {
-        const { env, workspaceId, cleanup } = await setupWorkspace(
-          provider,
-          undefined,
-          sharedRepoPath
-        );
-        try {
+        await withSharedWorkspace(provider, async ({ env, workspaceId }) => {
           // Send a message that will trigger a long-running tool call
           const result1 = await sendMessageWithModel(
             env.mockIpcRenderer,
@@ -185,9 +163,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
           if (finalMessage && "content" in finalMessage) {
             expect(finalMessage.content).toContain("third edit");
           }
-        } finally {
-          await cleanup();
-        }
+        });
       },
       30000
     );
@@ -195,8 +171,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     test.concurrent(
       "should handle tool calls and return file contents",
       async () => {
-        const { env, workspaceId, workspacePath, cleanup } = await setupWorkspace(provider);
-        try {
+        await withSharedWorkspace(provider, async ({ env, workspaceId, workspacePath }) => {
           // Generate a random string
           const randomString = `test-content-${Date.now()}-${Math.random().toString(36).substring(7)}`;
 
@@ -229,9 +204,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
           if (finalMessage && "content" in finalMessage) {
             expect(finalMessage.content).toContain(randomString);
           }
-        } finally {
-          await cleanup();
-        }
+        });
       },
       20000
     );
@@ -239,12 +212,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     test.concurrent(
       "should maintain conversation continuity across messages",
       async () => {
-        const { env, workspaceId, cleanup } = await setupWorkspace(
-          provider,
-          undefined,
-          sharedRepoPath
-        );
-        try {
+        await withSharedWorkspace(provider, async ({ env, workspaceId }) => {
           // First message: Ask for a random word
           const result1 = await sendMessageWithModel(
             env.mockIpcRenderer,
@@ -316,9 +284,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
 
           // Check if the response contains the original word
           expect(responseWords).toContain(originalWord);
-        } finally {
-          await cleanup();
-        }
+        });
       },
       20000
     );
@@ -326,9 +292,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     test.concurrent(
       "should include mode-specific instructions in system message",
       async () => {
-        // Setup test environment
-        const { env, workspaceId, tempGitRepo, cleanup } = await setupWorkspace(provider);
-        try {
+        await withSharedWorkspace(provider, async ({ env, workspaceId, tempGitRepo }) => {
           // Write AGENTS.md with mode-specific sections containing distinctive markers
           // Note: AGENTS.md is read from project root, not workspace directory
           const agentsMdPath = path.join(tempGitRepo, "AGENTS.md");
@@ -400,9 +364,7 @@ These are general instructions that apply to all modes.
           // 1. Mode-specific sections are extracted from AGENTS.md
           // 2. The correct mode section is included based on the mode parameter
           // 3. Mode sections are mutually exclusive
-        } finally {
-          await cleanup();
-        }
+        });
       },
       25000
     );
@@ -417,30 +379,23 @@ These are general instructions that apply to all modes.
 
         for (const [provider, model] of PROVIDER_CONFIGS) {
           // Create fresh environment with provider setup
-          const { env, workspaceId, cleanup } = await setupWorkspace(
-            provider,
-            undefined,
-            sharedRepoPath
-          );
+          await withSharedWorkspace(provider, async ({ env, workspaceId }) => {
+            // Send same message to both providers
+            const result = await sendMessageWithModel(
+              env.mockIpcRenderer,
+              workspaceId,
+              "Say 'parity test' and nothing else",
+              modelString(provider, model)
+            );
 
-          // Send same message to both providers
-          const result = await sendMessageWithModel(
-            env.mockIpcRenderer,
-            workspaceId,
-            "Say 'parity test' and nothing else",
-            modelString(provider, model)
-          );
+            // Collect response
+            const collector = await waitForStreamSuccess(env.sentEvents, workspaceId, 10000);
 
-          // Collect response
-          const collector = await waitForStreamSuccess(env.sentEvents, workspaceId, 10000);
-
-          results[provider] = {
-            success: result.success,
-            responseLength: collector.getDeltas().length,
-          };
-
-          // Cleanup
-          await cleanup();
+            results[provider] = {
+              success: result.success,
+              responseLength: collector.getDeltas().length,
+            };
+          });
         }
 
         // Verify both providers succeeded
@@ -489,12 +444,7 @@ These are general instructions that apply to all modes.
     test.each(PROVIDER_CONFIGS)(
       "%s should pass additionalSystemInstructions through to system message",
       async (provider, model) => {
-        const { env, workspaceId, cleanup } = await setupWorkspace(
-          provider,
-          undefined,
-          sharedRepoPath
-        );
-        try {
+        await withSharedWorkspace(provider, async ({ env, workspaceId }) => {
           // Send message with custom system instructions that add a distinctive marker
           const result = await sendMessage(env.mockIpcRenderer, workspaceId, "Say hello", {
             model: `${provider}:${model}`,
@@ -521,9 +471,7 @@ These are general instructions that apply to all modes.
 
             expect(content).toContain("BANANA");
           }
-        } finally {
-          await cleanup();
-        }
+        });
       },
       15000
     );

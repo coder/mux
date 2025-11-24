@@ -18,10 +18,9 @@ import {
   readChatHistory,
   TEST_IMAGES,
   modelString,
-  createTempGitRepo,
-  cleanupTempGitRepo,
   configureTestRetries,
 } from "./helpers";
+import { createSharedRepo, cleanupSharedRepo, withSharedWorkspace } from "./sendMessageTestHelpers";
 import type { StreamDeltaEvent } from "../../src/common/types/stream";
 import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
 
@@ -47,17 +46,8 @@ const PROVIDER_CONFIGS: Array<[string, string]> = [
 // - Longer running tests (tool calls, multiple edits) can take up to 30s
 // - Test timeout values (in describe/test) should be 2-3x the expected duration
 
-let sharedRepoPath: string;
-
-beforeAll(async () => {
-  sharedRepoPath = await createTempGitRepo();
-});
-
-afterAll(async () => {
-  if (sharedRepoPath) {
-    await cleanupTempGitRepo(sharedRepoPath);
-  }
-});
+beforeAll(createSharedRepo);
+afterAll(cleanupSharedRepo);
 describeIntegration("IpcMain sendMessage integration tests", () => {
   configureTestRetries(3);
 
@@ -66,13 +56,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     test.concurrent(
       "should successfully send message and receive response",
       async () => {
-        // Setup test environment
-        const { env, workspaceId, cleanup } = await setupWorkspace(
-          provider,
-          undefined,
-          sharedRepoPath
-        );
-        try {
+        await withSharedWorkspace(provider, async ({ env, workspaceId }) => {
           // Send a simple message
           const result = await sendMessageWithModel(
             env.mockIpcRenderer,
@@ -94,9 +78,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
           // Verify we received deltas
           const deltas = collector.getDeltas();
           expect(deltas.length).toBeGreaterThan(0);
-        } finally {
-          await cleanup();
-        }
+        });
       },
       15000
     );
@@ -104,13 +86,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     test.concurrent(
       "should interrupt streaming with interruptStream()",
       async () => {
-        // Setup test environment
-        const { env, workspaceId, cleanup } = await setupWorkspace(
-          provider,
-          undefined,
-          sharedRepoPath
-        );
-        try {
+        await withSharedWorkspace(provider, async ({ env, workspaceId }) => {
           // Start a long-running stream with a bash command that takes time
           const longMessage = "Run this bash command: while true; do sleep 1; done";
           void sendMessageWithModel(
@@ -144,9 +120,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
           }, 5000);
 
           expect(abortOrEndReceived).toBe(true);
-        } finally {
-          await cleanup();
-        }
+        });
       },
       15000
     );
@@ -154,13 +128,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     test.concurrent(
       "should interrupt stream with pending bash tool call near-instantly",
       async () => {
-        // Setup test environment
-        const { env, workspaceId, cleanup } = await setupWorkspace(
-          provider,
-          undefined,
-          sharedRepoPath
-        );
-        try {
+        await withSharedWorkspace(provider, async ({ env, workspaceId }) => {
           // Ask the model to run a long-running bash command
           // Use explicit instruction to ensure tool call happens
           const message = "Use the bash tool to run: sleep 60";
@@ -208,9 +176,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
           }, 5000);
 
           expect(abortOrEndReceived).toBe(true);
-        } finally {
-          await cleanup();
-        }
+        });
       },
       25000
     );
@@ -218,13 +184,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     test.concurrent(
       "should include tokens and timestamp in delta events",
       async () => {
-        // Setup test environment
-        const { env, workspaceId, cleanup } = await setupWorkspace(
-          provider,
-          undefined,
-          sharedRepoPath
-        );
-        try {
+        await withSharedWorkspace(provider, async ({ env, workspaceId }) => {
           // Send a message that will generate text deltas
           // Disable reasoning for this test to avoid flakiness and encrypted content issues in CI
           void sendMessageWithModel(
@@ -287,9 +247,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
 
           // Verify stream completed successfully
           assertStreamSuccess(collector);
-        } finally {
-          await cleanup();
-        }
+        });
       },
       30000 // Increased timeout for OpenAI models which can be slower in CI
     );
@@ -297,13 +255,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
     test.concurrent(
       "should include usage data in stream-abort events",
       async () => {
-        // Setup test environment
-        const { env, workspaceId, cleanup } = await setupWorkspace(
-          provider,
-          undefined,
-          sharedRepoPath
-        );
-        try {
+        await withSharedWorkspace(provider, async ({ env, workspaceId }) => {
           // Start a stream that will generate some tokens
           const message = "Write a haiku about coding";
           void sendMessageWithModel(
@@ -353,9 +305,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
               expect(abortEvent.metadata.usage.outputTokens).toBeGreaterThanOrEqual(0);
             }
           }
-        } finally {
-          await cleanup();
-        }
+        });
       },
       15000
     );
@@ -368,12 +318,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
           return;
         }
 
-        const { env, workspaceId, cleanup } = await setupWorkspace(
-          provider,
-          undefined,
-          sharedRepoPath
-        );
-        try {
+        await withSharedWorkspace(provider, async ({ env, workspaceId }) => {
           // Start a stream with tool call that takes a long time
           void sendMessageWithModel(
             env.mockIpcRenderer,
@@ -456,9 +401,7 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
 
           // Note: If test completes quickly (~5s), abort signal worked and killed the loop
           // If test takes much longer, abort signal didn't work
-        } finally {
-          await cleanup();
-        }
+        });
       },
       15000
     );
