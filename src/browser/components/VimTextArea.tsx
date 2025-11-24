@@ -234,8 +234,8 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
                 : "bg-dark border-border-light",
               !isEditing && (mode === "plan" ? "focus:border-plan-mode" : "focus:border-exec-mode"),
               vimMode === "normal"
-                ? "caret-transparent selection:bg-white/50"
-                : "caret-white selection:bg-selection"
+                ? "caret-transparent selection:bg-caret/50"
+                : "caret-caret selection:bg-selection"
             )}
           />
           {trailingAction && (
@@ -244,7 +244,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
             </div>
           )}
           {vimEnabled && vimMode === "normal" && value.length === 0 && (
-            <div className="pointer-events-none absolute top-1.5 left-2 h-4 w-2 bg-white/50" />
+            <div className="bg-caret/50 pointer-events-none absolute top-1.5 left-2 h-4 w-2" />
           )}
         </div>
       </div>

@@ -235,6 +235,9 @@
     --color-selection: hsl(204 100% 60% / 0.5); /* selection blue with 50% opacity */
     --color-vim-status: hsl(0 0% 83% / 0.6); /* status text with 60% opacity */
     --color-code-keyword-overlay-light: hsl(210 100% 70% / 0.05); /* code keyword with 5% opacity */
+
+    /* Caret */
+    --color-caret: hsl(0 0% 100%);
     --color-code-keyword-overlay: hsl(210 100% 70% / 0.2); /* code keyword with 20% opacity */
 
     /* Info/status colors */
@@ -453,6 +456,9 @@
   --color-selection: hsl(204 100% 45% / 0.3);
   --color-vim-status: hsl(210 18% 32% / 0.6);
   --color-code-keyword-overlay-light: hsl(210 88% 28% / 0.16);
+
+  /* Caret */
+  --color-caret: hsl(210 18% 16%);
   --color-code-keyword-overlay: hsl(210 88% 28% / 0.32);
 
   --color-info-light: hsl(5 90% 70%);
