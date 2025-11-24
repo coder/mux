@@ -5,6 +5,7 @@ import {
   assertStreamSuccess,
   extractTextFromEvents,
   modelString,
+  configureTestRetries,
 } from "./helpers";
 import { spawn } from "child_process";
 
@@ -83,9 +84,7 @@ async function ensureOllamaModel(model: string): Promise<void> {
 
 describeOllama("IpcMain Ollama integration tests", () => {
   // Enable retries in CI for potential network flakiness with Ollama
-  if (process.env.CI && typeof jest !== "undefined" && jest.retryTimes) {
-    jest.retryTimes(3, { logErrorsBeforeRetry: true });
-  }
+  configureTestRetries(3);
 
   // Load tokenizer modules and ensure model is available before all tests
   beforeAll(async () => {
@@ -184,7 +183,7 @@ describeOllama("IpcMain Ollama integration tests", () => {
 
       // Wait for stream to complete
       const collector = createEventCollector(env.sentEvents, workspaceId);
-      await collector.waitForEvent("stream-end", 60000);
+      await collector.waitForEvent("stream-end", 90000);
 
       assertStreamSuccess(collector);
 

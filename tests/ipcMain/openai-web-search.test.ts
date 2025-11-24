@@ -4,6 +4,7 @@ import {
   createEventCollector,
   assertStreamSuccess,
   modelString,
+  configureTestRetries,
 } from "./helpers";
 
 // Skip all tests if TEST_INTEGRATION is not set
@@ -16,9 +17,7 @@ if (shouldRunIntegrationTests()) {
 
 describeIntegration("OpenAI web_search integration tests", () => {
   // Enable retries in CI for flaky API tests
-  if (process.env.CI && typeof jest !== "undefined" && jest.retryTimes) {
-    jest.retryTimes(3, { logErrorsBeforeRetry: true });
-  }
+  configureTestRetries(3);
 
   test.concurrent(
     "should handle reasoning + web_search without itemId errors",
