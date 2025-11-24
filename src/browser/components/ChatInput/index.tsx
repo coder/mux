@@ -489,7 +489,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
       };
 
       const result = await processSlashCommand(parsed, context);
-      
+
       if (!result.clearInput) {
         setInput(messageText); // Restore input on failure
       }

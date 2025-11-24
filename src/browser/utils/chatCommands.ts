@@ -16,6 +16,7 @@ import type { Toast } from "@/browser/components/ChatInputToast";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
 import { resolveCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
+import { dispatchWorkspaceSwitch } from "./workspaceEvents";
 import { getRuntimeKey, copyWorkspaceStorage } from "@/common/constants/storage";
 
 // ============================================================================
@@ -110,7 +111,15 @@ export async function processSlashCommand(
   context: SlashCommandContext
 ): Promise<CommandHandlerResult> {
   if (!parsed) return { clearInput: false, toastShown: false };
-  const { setInput, setIsSending, setToast, variant, setVimEnabled, setPreferredModel, onModelChange } = context;
+  const {
+    setInput,
+    setIsSending,
+    setToast,
+    variant,
+    setVimEnabled,
+    setPreferredModel,
+    onModelChange,
+  } = context;
 
   // 1. Global Commands
   if (parsed.type === "providers-set") {
@@ -178,7 +187,7 @@ export async function processSlashCommand(
   const workspaceCommands = ["clear", "truncate", "compact", "fork", "new"];
   const isWorkspaceCommand = workspaceCommands.includes(parsed.type);
 
-    if (isWorkspaceCommand) {
+  if (isWorkspaceCommand) {
     if (variant !== "workspace") {
       setToast({
         id: Date.now().toString(),
@@ -197,12 +206,18 @@ export async function processSlashCommand(
       case "compact":
         // handleCompactCommand expects workspaceId in context
         if (!context.workspaceId) throw new Error("Workspace ID required");
-        return handleCompactCommand(parsed, { ...context, workspaceId: context.workspaceId } as CommandHandlerContext);
+        return handleCompactCommand(parsed, {
+          ...context,
+          workspaceId: context.workspaceId,
+        } as CommandHandlerContext);
       case "fork":
         return handleForkCommand(parsed, context);
       case "new":
         if (!context.workspaceId) throw new Error("Workspace ID required");
-        return handleNewCommand(parsed, { ...context, workspaceId: context.workspaceId } as CommandHandlerContext);
+        return handleNewCommand(parsed, {
+          ...context,
+          workspaceId: context.workspaceId,
+        } as CommandHandlerContext);
     }
   }
 
@@ -225,10 +240,10 @@ async function handleClearCommand(
   context: SlashCommandContext
 ): Promise<CommandHandlerResult> {
   const { setInput, onTruncateHistory, resetInputHeight, setToast } = context;
-  
+
   setInput("");
   resetInputHeight();
-  
+
   if (!onTruncateHistory) return { clearInput: true, toastShown: false };
 
   try {
@@ -240,11 +255,12 @@ async function handleClearCommand(
     });
     return { clearInput: true, toastShown: true };
   } catch (error) {
-    console.error("Failed to clear history:", error);
+    const normalized = error instanceof Error ? error : new Error("Failed to clear history");
+    console.error("Failed to clear history:", normalized);
     setToast({
       id: Date.now().toString(),
       type: "error",
-      message: "Failed to clear history",
+      message: normalized.message,
     });
     return { clearInput: false, toastShown: true };
   }
@@ -270,11 +286,12 @@ async function handleTruncateCommand(
     });
     return { clearInput: true, toastShown: true };
   } catch (error) {
-    console.error("Failed to truncate history:", error);
+    const normalized = error instanceof Error ? error : new Error("Failed to truncate history");
+    console.error("Failed to truncate history:", normalized);
     setToast({
       id: Date.now().toString(),
       type: "error",
-      message: "Failed to truncate history",
+      message: normalized.message,
     });
     return { clearInput: false, toastShown: true };
   }
@@ -320,21 +337,19 @@ async function handleForkCommand(
       return { clearInput: true, toastShown: true };
     }
   } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : "Failed to fork workspace";
-    console.error("Fork error:", error);
+    const normalized = error instanceof Error ? error : new Error("Failed to fork workspace");
+    console.error("Fork error:", normalized);
     setToast({
       id: Date.now().toString(),
       type: "error",
       title: "Fork Failed",
-      message: errorMsg,
+      message: normalized.message,
     });
     return { clearInput: false, toastShown: true };
   } finally {
     setIsSending(false);
   }
 }
-
-
 
 /**
  * Parse runtime string from -r flag into RuntimeConfig for backend
@@ -479,10 +494,8 @@ export function formatNewCommand(
 }
 
 // ============================================================================
-// Workspace Forking (re-exported from workspaceFork for convenience)
+// Workspace Forking (Inline implementation)
 // ============================================================================
-
-export { forkWorkspace };
 
 // ============================================================================
 // Compaction
@@ -772,10 +785,3 @@ export async function handleCompactCommand(
 /**
  * Dispatch a custom event to switch workspaces
  */
-export function dispatchWorkspaceSwitch(workspaceInfo: FrontendWorkspaceMetadata): void {
-  window.dispatchEvent(
-    new CustomEvent(CUSTOM_EVENTS.WORKSPACE_FORK_SWITCH, {
-      detail: workspaceInfo,
-    })
-  );
-}

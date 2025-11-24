@@ -28,7 +28,7 @@ import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sour
 
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
-import { isWorkspaceForkSwitchEvent } from "./utils/chatCommands";
+import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
 import { getThinkingLevelKey } from "@/common/constants/storage";
 import type { BranchListResult } from "@/common/types/ipc";
 import { useTelemetry } from "./hooks/useTelemetry";
@@ -530,8 +530,6 @@ function AppInner() {
   return (
     <>
       <div className="bg-bg-dark mobile-layout flex h-screen overflow-hidden">
-
-
         <LeftSidebar
           lastReadTimestamps={lastReadTimestamps}
           onToggleUnread={onToggleUnread}
