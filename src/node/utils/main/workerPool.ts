@@ -39,8 +39,12 @@ const srcIndex = pathParts.lastIndexOf("src");
 let workerDir: string;
 let workerFile = "tokenizer.worker.js";
 
-if (extname(__filename) === ".ts") {
-  // Running from source (e.g. via Bun)
+// Check if we're running under Bun (not Node with ts-jest)
+// ts-jest transpiles .ts files but runs them via Node, which can't load .ts workers
+const isBun = !!(process as unknown as { isBun?: boolean }).isBun;
+
+if (isBun && extname(__filename) === ".ts") {
+  // Running from source via Bun - use .ts worker directly
   workerDir = currentDir;
   workerFile = "tokenizer.worker.ts";
 } else if (srcIndex !== -1 && !hasDist) {
