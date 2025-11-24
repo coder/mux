@@ -35,6 +35,8 @@ module.exports = {
   maxWorkers: "50%",
   // Force exit after tests complete to avoid hanging on lingering handles
   forceExit: true,
+  // 10 minute timeout for integration tests, 10s for unit tests
+  testTimeout: process.env.TEST_INTEGRATION === "1" ? 600000 : 10000,
   // Detect open handles in development (disabled by default for speed)
   // detectOpenHandles: true,
 };

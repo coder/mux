@@ -94,6 +94,7 @@ jobs:
 
   integration-test:
     name: Integration Tests
+    timeout-minutes: 10
     runs-on: ${{ github.repository_owner == 'coder' && 'self-hosted' || 'ubuntu-latest' }}
     steps:
       - name: Checkout code
