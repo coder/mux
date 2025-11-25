@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePersistedState, readPersistedState, updatePersistedState } from "./usePersistedState";
 import { MODEL_ABBREVIATIONS } from "@/browser/utils/slashCommands/registry";
 import { defaultModel } from "@/common/utils/ai/models";
@@ -42,6 +42,7 @@ export function getDefaultModel(): string {
  * Hook to manage a Least Recently Used (LRU) cache of AI models.
  * Stores up to 8 recently used models in localStorage.
  * Initializes with default abbreviated models if empty.
+ * Also includes custom models configured in Settings.
  */
 export function useModelLRU() {
   const [recentModels, setRecentModels] = usePersistedState<string[]>(
@@ -49,6 +50,7 @@ export function useModelLRU() {
     DEFAULT_MODELS.slice(0, MAX_LRU_SIZE),
     { listener: true }
   );
+  const [customModels, setCustomModels] = useState<string[]>([]);
 
   const [defaultModel, setDefaultModel] = usePersistedState<string>(
     DEFAULT_MODEL_KEY,
@@ -69,6 +71,44 @@ export function useModelLRU() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Only run once on mount
+
+  // Fetch custom models from providers config
+  useEffect(() => {
+    const fetchCustomModels = async () => {
+      try {
+        const config = await window.api.providers.getConfig();
+        const models: string[] = [];
+        for (const [provider, providerConfig] of Object.entries(config)) {
+          if (providerConfig.models) {
+            for (const modelId of providerConfig.models) {
+              // Format as provider:modelId for consistency
+              models.push(`${provider}:${modelId}`);
+            }
+          }
+        }
+        setCustomModels(models);
+      } catch {
+        // Ignore errors fetching custom models
+      }
+    };
+    void fetchCustomModels();
+
+    // Listen for settings changes via custom event
+    const handleSettingsChange = () => void fetchCustomModels();
+    window.addEventListener("providers-config-changed", handleSettingsChange);
+    return () => window.removeEventListener("providers-config-changed", handleSettingsChange);
+  }, []);
+
+  // Combine LRU models with custom models (custom models appended, deduplicated)
+  const allModels = useMemo(() => {
+    const combined = [...recentModels];
+    for (const model of customModels) {
+      if (!combined.includes(model)) {
+        combined.push(model);
+      }
+    }
+    return combined;
+  }, [recentModels, customModels]);
 
   /**
    * Add a model to the LRU cache. If it already exists, move it to the front.
@@ -94,8 +134,8 @@ export function useModelLRU() {
    * Get the list of recently used models, most recent first.
    */
   const getRecentModels = useCallback(() => {
-    return recentModels;
-  }, [recentModels]);
+    return allModels;
+  }, [allModels]);
 
   const evictModel = useCallback((modelString: string) => {
     if (!modelString.trim()) {
@@ -108,7 +148,7 @@ export function useModelLRU() {
     addModel,
     evictModel,
     getRecentModels,
-    recentModels,
+    recentModels: allModels,
     defaultModel,
     setDefaultModel,
   };

@@ -48,6 +48,9 @@ export function ModelsSection() {
       const cfg = await window.api.providers.getConfig();
       setConfig(cfg);
       setNewModel({ provider: "", modelId: "" });
+
+      // Notify other components about the change
+      window.dispatchEvent(new Event("providers-config-changed"));
     } finally {
       setSaving(false);
     }
@@ -65,6 +68,9 @@ export function ModelsSection() {
         // Refresh config
         const cfg = await window.api.providers.getConfig();
         setConfig(cfg);
+
+        // Notify other components about the change
+        window.dispatchEvent(new Event("providers-config-changed"));
       } finally {
         setSaving(false);
       }

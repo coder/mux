@@ -67,7 +67,7 @@ export function SettingsModal() {
       >
         {/* Sidebar */}
         <div className="border-border-medium flex w-48 shrink-0 flex-col border-r">
-          <div className="border-border-medium flex items-center justify-between border-b px-4 py-3">
+          <div className="border-border-medium flex h-12 items-center border-b px-4">
             <h2 id="settings-title" className="text-foreground text-sm font-semibold">
               Settings
             </h2>
@@ -93,7 +93,7 @@ export function SettingsModal() {
 
         {/* Content */}
         <div className="flex flex-1 flex-col overflow-hidden">
-          <div className="border-border-medium flex items-center justify-between border-b px-6 py-3">
+          <div className="border-border-medium flex h-12 items-center justify-between border-b px-6">
             <h3 className="text-foreground text-sm font-medium">{currentSection.label}</h3>
             <button
               type="button"
