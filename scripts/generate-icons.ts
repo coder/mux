@@ -47,9 +47,7 @@ async function generateIconsetPngs() {
     }
 
     return outputs.map(({ file, dimension }) =>
-      sharp(SOURCE)
-        .resize(dimension, dimension, { fit: "cover" })
-        .toFile(file),
+      sharp(SOURCE).resize(dimension, dimension, { fit: "cover" }).toFile(file)
     );
   });
 
@@ -61,14 +59,7 @@ async function generateIcns() {
     throw new Error("ICNS generation requires macOS (iconutil)");
   }
 
-  const proc = Bun.spawn([
-    "iconutil",
-    "-c",
-    "icns",
-    ICONSET_DIR,
-    "-o",
-    ICNS_OUTPUT,
-  ]);
+  const proc = Bun.spawn(["iconutil", "-c", "icns", ICONSET_DIR, "-o", ICNS_OUTPUT]);
   const status = await proc.exited;
   if (status !== 0) {
     throw new Error("iconutil failed to generate .icns file");

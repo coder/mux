@@ -5,7 +5,7 @@
  * Used by both ChatInput (initial send) and useResumeManager (resume after interruption).
  */
 
-import type { SendMessageOptions } from "@/common/types/ipc";
+import type { SendMessageOptions } from "@/common/orpc/types";
 import type { CompactionRequestData } from "@/common/types/message";
 
 /**

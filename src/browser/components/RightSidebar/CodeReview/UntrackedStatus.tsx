@@ -5,6 +5,7 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/common/lib/utils";
+import { useORPC } from "@/browser/orpc/react";
 
 interface UntrackedStatusProps {
   workspaceId: string;
@@ -19,6 +20,7 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
   refreshTrigger,
   onRefresh,
 }) => {
+  const client = useORPC();
   const [untrackedFiles, setUntrackedFiles] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showTooltip, setShowTooltip] = useState(false);
@@ -72,11 +74,11 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
       }
 
       try {
-        const result = await window.api.workspace.executeBash(
+        const result = await client.workspace.executeBash({
           workspaceId,
-          "git ls-files --others --exclude-standard",
-          { timeout_secs: 5 }
-        );
+          script: "git ls-files --others --exclude-standard",
+          options: { timeout_secs: 5 },
+        });
 
         if (cancelled) return;
 
@@ -102,7 +104,7 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, workspacePath, refreshTrigger]);
+  }, [client, workspaceId, workspacePath, refreshTrigger]);
 
   // Close tooltip when clicking outside
   useEffect(() => {
@@ -129,11 +131,11 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
       // Use git add with -- to treat all arguments as file paths
       // Escape single quotes by replacing ' with '\'' for safe shell quoting
       const escapedFiles = untrackedFiles.map((f) => `'${f.replace(/'/g, "'\\''")}'`).join(" ");
-      const result = await window.api.workspace.executeBash(
+      const result = await client.workspace.executeBash({
         workspaceId,
-        `git add -- ${escapedFiles}`,
-        { timeout_secs: 10 }
-      );
+        script: `git add -- ${escapedFiles}`,
+        options: { timeout_secs: 10 },
+      });
 
       if (result.success) {
         // Close tooltip first

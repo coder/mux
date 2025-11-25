@@ -117,12 +117,9 @@ const localPlugin = {
             "browser/ cannot import from node/. Move shared code to common/ or use IPC.",
           nodeToDesktop:
             "node/ cannot import from desktop/. Move shared code to common/ or use dependency injection.",
-          nodeToCli:
-            "node/ cannot import from cli/. Move shared code to common/.",
-          cliToBrowser:
-            "cli/ cannot import from browser/. Move shared code to common/.",
-          desktopToBrowser:
-            "desktop/ cannot import from browser/. Move shared code to common/.",
+          nodeToCli: "node/ cannot import from cli/. Move shared code to common/.",
+          cliToBrowser: "cli/ cannot import from browser/. Move shared code to common/.",
+          desktopToBrowser: "desktop/ cannot import from browser/. Move shared code to common/.",
         },
       },
       create(context) {
@@ -137,7 +134,9 @@ const localPlugin = {
             const importPath = node.source.value;
 
             // Extract folder from source file (browser, node, desktop, cli, common)
-            const sourceFolderMatch = sourceFile.match(/\/src\/(browser|node|desktop|cli|common)\//);
+            const sourceFolderMatch = sourceFile.match(
+              /\/src\/(browser|node|desktop|cli|common)\//
+            );
             if (!sourceFolderMatch) return;
             const sourceFolder = sourceFolderMatch[1];
 
@@ -460,7 +459,12 @@ export default defineConfig([
     // - Some utils are shared between main/renderer (e.g., utils/tools registry)
     // - Stores can import from utils/messages which is renderer-safe
     // - Type-only imports from services are safe (types live in src/common/types/)
-    files: ["src/browser/components/**", "src/browser/contexts/**", "src/browser/hooks/**", "src/browser/App.tsx"],
+    files: [
+      "src/browser/components/**",
+      "src/browser/contexts/**",
+      "src/browser/hooks/**",
+      "src/browser/App.tsx",
+    ],
     rules: {
       "no-restricted-imports": [
         "error",

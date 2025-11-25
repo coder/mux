@@ -6,7 +6,9 @@
  * to ensure consistent behavior and avoid duplication.
  */
 
-import type { SendMessageOptions, ImagePart } from "@/common/types/ipc";
+import type { RouterClient } from "@orpc/server";
+import type { AppRouter } from "@/node/orpc/router";
+import type { SendMessageOptions, ImagePart } from "@/common/orpc/types";
 import type {
   MuxFrontendMetadata,
   CompactionRequestData,
@@ -32,6 +34,7 @@ import { createCommandToast } from "@/browser/components/ChatInputToasts";
 import { setTelemetryEnabled } from "@/common/telemetry";
 
 export interface ForkOptions {
+  client: RouterClient<AppRouter>;
   sourceWorkspaceId: string;
   newName: string;
   startMessage?: string;
@@ -51,7 +54,11 @@ export interface ForkResult {
  * Caller is responsible for error handling, logging, and showing toasts
  */
 export async function forkWorkspace(options: ForkOptions): Promise<ForkResult> {
-  const result = await window.api.workspace.fork(options.sourceWorkspaceId, options.newName);
+  const { client } = options;
+  const result = await client.workspace.fork({
+    sourceWorkspaceId: options.sourceWorkspaceId,
+    newName: options.newName,
+  });
 
   if (!result.success) {
     return { success: false, error: result.error ?? "Failed to fork workspace" };
@@ -61,7 +68,7 @@ export async function forkWorkspace(options: ForkOptions): Promise<ForkResult> {
   copyWorkspaceStorage(options.sourceWorkspaceId, result.metadata.id);
 
   // Get workspace info for switching
-  const workspaceInfo = await window.api.workspace.getInfo(result.metadata.id);
+  const workspaceInfo = await client.workspace.getInfo({ workspaceId: result.metadata.id });
   if (!workspaceInfo) {
     return { success: false, error: "Failed to get workspace info after fork" };
   }
@@ -76,11 +83,11 @@ export async function forkWorkspace(options: ForkOptions): Promise<ForkResult> {
   // 3. WorkspaceStore to subscribe to the new workspace's IPC channel
   if (options.startMessage && options.sendMessageOptions) {
     requestAnimationFrame(() => {
-      void window.api.workspace.sendMessage(
-        result.metadata.id,
-        options.startMessage!,
-        options.sendMessageOptions
-      );
+      void client.workspace.sendMessage({
+        workspaceId: result.metadata.id,
+        message: options.startMessage!,
+        options: options.sendMessageOptions,
+      });
     });
   }
 
@@ -306,7 +313,7 @@ async function handleForkCommand(
   parsed: Extract<ParsedCommand, { type: "fork" }>,
   context: SlashCommandContext
 ): Promise<CommandHandlerResult> {
-  const { workspaceId, sendMessageOptions, setInput, setIsSending, setToast } = context;
+  const { client, workspaceId, sendMessageOptions, setInput, setIsSending, setToast } = context;
 
   setInput(""); // Clear input immediately
   setIsSending(true);
@@ -316,7 +323,9 @@ async function handleForkCommand(
     // If we are here, variant === "workspace", so workspaceId should be defined.
     if (!workspaceId) throw new Error("Workspace ID required for fork");
 
+    if (!client) throw new Error("Client required for fork");
     const forkResult = await forkWorkspace({
+      client,
       sourceWorkspaceId: workspaceId,
       newName: parsed.newName,
       startMessage: parsed.startMessage,
@@ -399,6 +408,7 @@ export function parseRuntimeString(
 }
 
 export interface CreateWorkspaceOptions {
+  client: RouterClient<AppRouter>;
   projectPath: string;
   workspaceName: string;
   trunkBranch?: string;
@@ -425,7 +435,9 @@ export async function createNewWorkspace(
   // Get recommended trunk if not provided
   let effectiveTrunk = options.trunkBranch;
   if (!effectiveTrunk) {
-    const { recommendedTrunk } = await window.api.projects.listBranches(options.projectPath);
+    const { recommendedTrunk } = await options.client.projects.listBranches({
+      projectPath: options.projectPath,
+    });
     effectiveTrunk = recommendedTrunk ?? "main";
   }
 
@@ -442,19 +454,19 @@ export async function createNewWorkspace(
   // Parse runtime config if provided
   const runtimeConfig = parseRuntimeString(effectiveRuntime, options.workspaceName);
 
-  const result = await window.api.workspace.create(
-    options.projectPath,
-    options.workspaceName,
-    effectiveTrunk,
-    runtimeConfig
-  );
+  const result = await options.client.workspace.create({
+    projectPath: options.projectPath,
+    branchName: options.workspaceName,
+    trunkBranch: effectiveTrunk,
+    runtimeConfig,
+  });
 
   if (!result.success) {
     return { success: false, error: result.error ?? "Failed to create workspace" };
   }
 
   // Get workspace info for switching
-  const workspaceInfo = await window.api.workspace.getInfo(result.metadata.id);
+  const workspaceInfo = await options.client.workspace.getInfo({ workspaceId: result.metadata.id });
   if (!workspaceInfo) {
     return { success: false, error: "Failed to get workspace info after creation" };
   }
@@ -465,11 +477,11 @@ export async function createNewWorkspace(
   // If there's a start message, defer until React finishes rendering and WorkspaceStore subscribes
   if (options.startMessage && options.sendMessageOptions) {
     requestAnimationFrame(() => {
-      void window.api.workspace.sendMessage(
-        result.metadata.id,
-        options.startMessage!,
-        options.sendMessageOptions
-      );
+      void options.client.workspace.sendMessage({
+        workspaceId: result.metadata.id,
+        message: options.startMessage!,
+        options: options.sendMessageOptions,
+      });
     });
   }
 
@@ -507,6 +519,7 @@ export function formatNewCommand(
 // ============================================================================
 
 export interface CompactionOptions {
+  client?: RouterClient<AppRouter>;
   workspaceId: string;
   maxOutputTokens?: number;
   continueMessage?: ContinueMessage;
@@ -574,13 +587,19 @@ export function prepareCompactionMessage(options: CompactionOptions): {
 /**
  * Execute a compaction command
  */
-export async function executeCompaction(options: CompactionOptions): Promise<CompactionResult> {
+export async function executeCompaction(
+  options: CompactionOptions & { client: RouterClient<AppRouter> }
+): Promise<CompactionResult> {
   const { messageText, metadata, sendOptions } = prepareCompactionMessage(options);
 
-  const result = await window.api.workspace.sendMessage(options.workspaceId, messageText, {
-    ...sendOptions,
-    muxMetadata: metadata,
-    editMessageId: options.editMessageId,
+  const result = await options.client.workspace.sendMessage({
+    workspaceId: options.workspaceId,
+    message: messageText,
+    options: {
+      ...sendOptions,
+      muxMetadata: metadata,
+      editMessageId: options.editMessageId,
+    },
   });
 
   if (!result.success) {
@@ -620,6 +639,7 @@ function formatCompactionCommand(options: CompactionOptions): string {
 // ============================================================================
 
 export interface CommandHandlerContext {
+  client: RouterClient<AppRouter>;
   workspaceId: string;
   sendMessageOptions: SendMessageOptions;
   imageParts?: ImagePart[];
@@ -645,14 +665,14 @@ export async function handleNewCommand(
   parsed: Extract<ParsedCommand, { type: "new" }>,
   context: CommandHandlerContext
 ): Promise<CommandHandlerResult> {
-  const { workspaceId, sendMessageOptions, setInput, setIsSending, setToast } = context;
+  const { client, workspaceId, sendMessageOptions, setInput, setIsSending, setToast } = context;
 
   // Open modal if no workspace name provided
   if (!parsed.workspaceName) {
     setInput("");
 
     // Get workspace info to extract projectPath for the modal
-    const workspaceInfo = await window.api.workspace.getInfo(workspaceId);
+    const workspaceInfo = await client.workspace.getInfo({ workspaceId });
     if (!workspaceInfo) {
       setToast({
         id: Date.now().toString(),
@@ -680,12 +700,13 @@ export async function handleNewCommand(
 
   try {
     // Get workspace info to extract projectPath
-    const workspaceInfo = await window.api.workspace.getInfo(workspaceId);
+    const workspaceInfo = await client.workspace.getInfo({ workspaceId });
     if (!workspaceInfo) {
       throw new Error("Failed to get workspace info");
     }
 
     const createResult = await createNewWorkspace({
+      client,
       projectPath: workspaceInfo.projectPath,
       workspaceName: parsed.workspaceName,
       trunkBranch: parsed.trunkBranch,
@@ -735,6 +756,7 @@ export async function handleCompactCommand(
   context: CommandHandlerContext
 ): Promise<CommandHandlerResult> {
   const {
+    client,
     workspaceId,
     sendMessageOptions,
     editMessageId,
@@ -751,6 +773,7 @@ export async function handleCompactCommand(
 
   try {
     const result = await executeCompaction({
+      client,
       workspaceId,
       maxOutputTokens: parsed.maxOutputTokens,
       continueMessage:

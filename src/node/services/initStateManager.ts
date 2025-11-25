@@ -1,7 +1,7 @@
 import { EventEmitter } from "events";
 import type { Config } from "@/node/config";
 import { EventStore } from "@/node/utils/eventStore";
-import type { WorkspaceInitEvent } from "@/common/types/ipc";
+import type { WorkspaceInitEvent } from "@/common/orpc/types";
 import { log } from "@/node/services/log";
 
 /**

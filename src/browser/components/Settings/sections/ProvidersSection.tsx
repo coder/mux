@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Check, X } from "lucide-react";
 import type { ProvidersConfigMap } from "../types";
 import { SUPPORTED_PROVIDERS, PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import type { ProviderName } from "@/common/constants/providers";
+import { useORPC } from "@/browser/orpc/react";
 
 interface FieldConfig {
   key: string;
@@ -58,6 +59,7 @@ function getProviderFields(provider: ProviderName): FieldConfig[] {
 }
 
 export function ProvidersSection() {
+  const client = useORPC();
   const [config, setConfig] = useState<ProvidersConfigMap>({});
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
   const [editingField, setEditingField] = useState<{
@@ -70,10 +72,10 @@ export function ProvidersSection() {
   // Load config on mount
   useEffect(() => {
     void (async () => {
-      const cfg = await window.api.providers.getConfig();
+      const cfg = await client.providers.getConfig();
       setConfig(cfg);
     })();
-  }, []);
+  }, [client]);
 
   const handleToggleProvider = (provider: string) => {
     setExpandedProvider((prev) => (prev === provider ? null : provider));
@@ -101,28 +103,31 @@ export function ProvidersSection() {
     setSaving(true);
     try {
       const { provider, field } = editingField;
-      await window.api.providers.setProviderConfig(provider, [field], editValue);
+      await client.providers.setProviderConfig({ provider, keyPath: [field], value: editValue });
 
       // Refresh config
-      const cfg = await window.api.providers.getConfig();
+      const cfg = await client.providers.getConfig();
       setConfig(cfg);
       setEditingField(null);
       setEditValue("");
     } finally {
       setSaving(false);
     }
-  }, [editingField, editValue]);
+  }, [client, editingField, editValue]);
 
-  const handleClearField = useCallback(async (provider: string, field: string) => {
-    setSaving(true);
-    try {
-      await window.api.providers.setProviderConfig(provider, [field], "");
-      const cfg = await window.api.providers.getConfig();
-      setConfig(cfg);
-    } finally {
-      setSaving(false);
-    }
-  }, []);
+  const handleClearField = useCallback(
+    async (provider: string, field: string) => {
+      setSaving(true);
+      try {
+        await client.providers.setProviderConfig({ provider, keyPath: [field], value: "" });
+        const cfg = await client.providers.getConfig();
+        setConfig(cfg);
+      } finally {
+        setSaving(false);
+      }
+    },
+    [client]
+  );
 
   const isConfigured = (provider: string): boolean => {
     const providerConfig = config[provider];

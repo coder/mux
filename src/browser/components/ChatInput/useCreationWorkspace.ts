@@ -16,6 +16,7 @@ import {
 } from "@/common/constants/storage";
 import type { Toast } from "@/browser/components/ChatInputToast";
 import { createErrorToast } from "@/browser/components/ChatInputToasts";
+import { useORPC } from "@/browser/orpc/react";
 
 interface UseCreationWorkspaceOptions {
   projectPath: string;
@@ -63,6 +64,7 @@ export function useCreationWorkspace({
   projectPath,
   onWorkspaceCreated,
 }: UseCreationWorkspaceOptions): UseCreationWorkspaceReturn {
+  const client = useORPC();
   const [branches, setBranches] = useState<string[]>([]);
   const [recommendedTrunk, setRecommendedTrunk] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
@@ -84,7 +86,7 @@ export function useCreationWorkspace({
     }
     const loadBranches = async () => {
       try {
-        const result = await window.api.projects.listBranches(projectPath);
+        const result = await client.projects.listBranches({ projectPath });
         setBranches(result.branches);
         setRecommendedTrunk(result.recommendedTrunk);
       } catch (err) {
@@ -92,7 +94,7 @@ export function useCreationWorkspace({
       }
     };
     void loadBranches();
-  }, [projectPath]);
+  }, [projectPath, client]);
 
   const handleSend = useCallback(
     async (message: string): Promise<boolean> => {
@@ -109,11 +111,15 @@ export function useCreationWorkspace({
           : undefined;
 
         // Send message with runtime config and creation-specific params
-        const result = await window.api.workspace.sendMessage(null, message, {
-          ...sendMessageOptions,
-          runtimeConfig,
-          projectPath, // Pass projectPath when workspaceId is null
-          trunkBranch: settings.trunkBranch, // Pass selected trunk branch from settings
+        const result = await client.workspace.sendMessage({
+          workspaceId: null,
+          message,
+          options: {
+            ...sendMessageOptions,
+            runtimeConfig,
+            projectPath, // Pass projectPath when workspaceId is null
+            trunkBranch: settings.trunkBranch, // Pass selected trunk branch from settings
+          },
         });
 
         if (!result.success) {
@@ -156,6 +162,7 @@ export function useCreationWorkspace({
       }
     },
     [
+      client,
       isSending,
       projectPath,
       onWorkspaceCreated,

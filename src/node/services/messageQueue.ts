@@ -1,4 +1,16 @@
-import type { ImagePart, SendMessageOptions } from "@/common/types/ipc";
+import type { ImagePart, SendMessageOptions } from "@/common/orpc/types";
+
+// Type guard for compaction request metadata (for display text)
+interface CompactionMetadata {
+  type: "compaction-request";
+  rawCommand: string;
+}
+
+function isCompactionMetadata(meta: unknown): meta is CompactionMetadata {
+  if (typeof meta !== "object" || meta === null) return false;
+  const obj = meta as Record<string, unknown>;
+  return obj.type === "compaction-request" && typeof obj.rawCommand === "string";
+}
 
 /**
  * Queue for messages sent during active streaming.
@@ -55,9 +67,9 @@ export class MessageQueue {
    * Matches StreamingMessageAggregator behavior.
    */
   getDisplayText(): string {
-    // Check if we have compaction metadata
-    const cmuxMetadata = this.latestOptions?.muxMetadata;
-    if (cmuxMetadata?.type === "compaction-request") {
+    // Check if we have compaction metadata (cast from z.any() schema type)
+    const cmuxMetadata = this.latestOptions?.muxMetadata as unknown;
+    if (isCompactionMetadata(cmuxMetadata)) {
       return cmuxMetadata.rawCommand;
     }
 

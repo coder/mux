@@ -23,8 +23,7 @@ test("review scenario", async ({ ui }) => {
   await ui.chat.sendMessage(REVIEW_PROMPTS.SHOW_ONBOARDING_DOC);
   await ui.chat.expectTranscriptContains("Found it. Here’s the quick-start summary:");
 
-  await ui.chat.sendMessage("/truncate 50");
-  await ui.chat.expectStatusMessageContains("Chat history truncated");
+  await ui.chat.sendCommandAndExpectStatus("/truncate 50", "Chat history truncated");
 
   await ui.metaSidebar.expectVisible();
   await ui.metaSidebar.selectTab("Review");

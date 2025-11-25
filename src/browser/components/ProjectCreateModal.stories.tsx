@@ -1,9 +1,9 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { action } from "storybook/actions";
 import { expect, userEvent, waitFor, within } from "storybook/test";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { ProjectCreateModal } from "./ProjectCreateModal";
-import type { IPCApi } from "@/common/types/ipc";
+import { ORPCProvider, type ORPCClient } from "@/browser/orpc/react";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 
 // Mock file tree structure for directory picker
@@ -67,52 +67,72 @@ function findNodeByPath(root: FileTreeNode, targetPath: string): FileTreeNode | 
   return null;
 }
 
-// Setup mock API with fs.listDirectory support (browser mode)
-function setupMockAPI(options?: { onProjectCreate?: (path: string) => void }) {
-  const mockApi: Partial<IPCApi> & { platform: string } = {
-    platform: "browser", // Enable web directory picker
-    fs: {
-      listDirectory: async (path: string) => {
-        // Simulate async delay
-        await new Promise((resolve) => setTimeout(resolve, 50));
-
-        // Handle "." as starting path
-        const targetPath = path === "." ? "/home/user" : path;
-        const node = findNodeByPath(mockFileTree, targetPath);
-
-        if (!node) {
-          return {
-            success: false,
-            error: `Directory not found: ${path}`,
-          } as unknown as FileTreeNode;
-        }
-        return node;
-      },
-    },
+// Create mock ORPC client for stories
+function createMockClient(options?: { onProjectCreate?: (path: string) => void }): ORPCClient {
+  return {
     projects: {
       list: () => Promise.resolve([]),
-      create: (path: string) => {
-        options?.onProjectCreate?.(path);
+      create: (input: { projectPath: string }) => {
+        options?.onProjectCreate?.(input.projectPath);
         return Promise.resolve({
-          success: true,
+          success: true as const,
           data: {
-            normalizedPath: path,
+            normalizedPath: input.projectPath,
             projectConfig: { workspaces: [] },
           },
         });
       },
-      remove: () => Promise.resolve({ success: true, data: undefined }),
+      remove: () => Promise.resolve({ success: true as const, data: undefined }),
       pickDirectory: () => Promise.resolve(null),
       listBranches: () => Promise.resolve({ branches: ["main"], recommendedTrunk: "main" }),
       secrets: {
         get: () => Promise.resolve([]),
-        update: () => Promise.resolve({ success: true, data: undefined }),
+        update: () => Promise.resolve({ success: true as const, data: undefined }),
       },
     },
-  };
+    general: {
+      listDirectory: async (input: { path: string }) => {
+        // Simulate async delay
+        await new Promise((resolve) => setTimeout(resolve, 50));
 
-  // @ts-expect-error - Assigning partial mock API to window for Storybook
-  window.api = mockApi;
+        // Handle "." as starting path
+        const targetPath = input.path === "." ? "/home/user" : input.path;
+        const node = findNodeByPath(mockFileTree, targetPath);
+
+        if (!node) {
+          return {
+            success: false as const,
+            error: `Directory not found: ${input.path}`,
+          };
+        }
+        return { success: true as const, data: node };
+      },
+    },
+  } as unknown as ORPCClient;
+}
+
+// Create mock ORPC client that returns validation error
+function createValidationErrorClient(): ORPCClient {
+  return {
+    projects: {
+      list: () => Promise.resolve([]),
+      create: () =>
+        Promise.resolve({
+          success: false as const,
+          error: "Not a valid git repository",
+        }),
+      remove: () => Promise.resolve({ success: true as const, data: undefined }),
+      pickDirectory: () => Promise.resolve(null),
+      listBranches: () => Promise.resolve({ branches: [], recommendedTrunk: "main" }),
+      secrets: {
+        get: () => Promise.resolve([]),
+        update: () => Promise.resolve({ success: true as const, data: undefined }),
+      },
+    },
+    general: {
+      listDirectory: () => Promise.resolve({ success: true as const, data: mockFileTree }),
+    },
+  } as unknown as ORPCClient;
 }
 
 const meta = {
@@ -122,12 +142,8 @@ const meta = {
     layout: "fullscreen",
   },
   tags: ["autodocs"],
-  decorators: [
-    (Story) => {
-      setupMockAPI();
-      return <Story />;
-    },
-  ],
+  // Stories that need directory picker use custom wrappers with createMockClient()
+  // Other stories use the global ORPCProvider from preview.tsx
 } satisfies Meta<typeof ProjectCreateModal>;
 
 export default meta;
@@ -163,6 +179,12 @@ const ProjectCreateModalWrapper: React.FC<{
   );
 };
 
+// Wrapper that provides custom ORPC client for directory picker stories
+const DirectoryPickerStoryWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const client = useMemo(() => createMockClient(), []);
+  return <ORPCProvider client={client}>{children}</ORPCProvider>;
+};
+
 export const Default: Story = {
   args: {
     isOpen: true,
@@ -182,8 +204,8 @@ export const WithTypedPath: Story = {
     const canvas = within(canvasElement);
 
     // Wait for modal to be visible
-    await waitFor(() => {
-      expect(canvas.getByRole("dialog")).toBeInTheDocument();
+    await waitFor(async () => {
+      await expect(canvas.getByRole("dialog")).toBeInTheDocument();
     });
 
     // Find and type in the input field
@@ -191,7 +213,7 @@ export const WithTypedPath: Story = {
     await userEvent.type(input, "/home/user/projects/my-app");
 
     // Verify input value
-    expect(input).toHaveValue("/home/user/projects/my-app");
+    await expect(input).toHaveValue("/home/user/projects/my-app");
   },
 };
 
@@ -201,23 +223,27 @@ export const BrowseButtonOpensDirectoryPicker: Story = {
     onClose: action("close"),
     onSuccess: action("success"),
   },
-  render: () => <ProjectCreateModalWrapper />,
+  render: () => (
+    <DirectoryPickerStoryWrapper>
+      <ProjectCreateModalWrapper />
+    </DirectoryPickerStoryWrapper>
+  ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
     // Wait for modal to be visible
-    await waitFor(() => {
-      expect(canvas.getByRole("dialog")).toBeInTheDocument();
+    await waitFor(async () => {
+      await expect(canvas.getByRole("dialog")).toBeInTheDocument();
     });
 
     // Find and click the Browse button
     const browseButton = canvas.getByText("Browse…");
-    expect(browseButton).toBeInTheDocument();
+    await expect(browseButton).toBeInTheDocument();
     await userEvent.click(browseButton);
 
     // Wait for DirectoryPickerModal to open (it has title "Select Project Directory")
-    await waitFor(() => {
-      expect(canvas.getByText("Select Project Directory")).toBeInTheDocument();
+    await waitFor(async () => {
+      await expect(canvas.getByText("Select Project Directory")).toBeInTheDocument();
     });
   },
 };
@@ -228,26 +254,30 @@ export const DirectoryPickerNavigation: Story = {
     onClose: action("close"),
     onSuccess: action("success"),
   },
-  render: () => <ProjectCreateModalWrapper />,
+  render: () => (
+    <DirectoryPickerStoryWrapper>
+      <ProjectCreateModalWrapper />
+    </DirectoryPickerStoryWrapper>
+  ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
     // Wait for modal and click Browse
-    await waitFor(() => {
-      expect(canvas.getByRole("dialog")).toBeInTheDocument();
+    await waitFor(async () => {
+      await expect(canvas.getByRole("dialog")).toBeInTheDocument();
     });
 
     await userEvent.click(canvas.getByText("Browse…"));
 
     // Wait for DirectoryPickerModal to open and load directories
-    await waitFor(() => {
-      expect(canvas.getByText("Select Project Directory")).toBeInTheDocument();
+    await waitFor(async () => {
+      await expect(canvas.getByText("Select Project Directory")).toBeInTheDocument();
     });
 
     // Wait for directory listing to load (should show subdirectories of /home/user)
     await waitFor(
-      () => {
-        expect(canvas.getByText("projects")).toBeInTheDocument();
+      async () => {
+        await expect(canvas.getByText("projects")).toBeInTheDocument();
       },
       { timeout: 2000 }
     );
@@ -257,8 +287,8 @@ export const DirectoryPickerNavigation: Story = {
 
     // Wait for subdirectories to load
     await waitFor(
-      () => {
-        expect(canvas.getByText("my-app")).toBeInTheDocument();
+      async () => {
+        await expect(canvas.getByText("my-app")).toBeInTheDocument();
       },
       { timeout: 2000 }
     );
@@ -271,26 +301,30 @@ export const DirectoryPickerSelectsPath: Story = {
     onClose: action("close"),
     onSuccess: action("success"),
   },
-  render: () => <ProjectCreateModalWrapper />,
+  render: () => (
+    <DirectoryPickerStoryWrapper>
+      <ProjectCreateModalWrapper />
+    </DirectoryPickerStoryWrapper>
+  ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
     // Wait for modal and click Browse
-    await waitFor(() => {
-      expect(canvas.getByRole("dialog")).toBeInTheDocument();
+    await waitFor(async () => {
+      await expect(canvas.getByRole("dialog")).toBeInTheDocument();
     });
 
     await userEvent.click(canvas.getByText("Browse…"));
 
     // Wait for DirectoryPickerModal
-    await waitFor(() => {
-      expect(canvas.getByText("Select Project Directory")).toBeInTheDocument();
+    await waitFor(async () => {
+      await expect(canvas.getByText("Select Project Directory")).toBeInTheDocument();
     });
 
     // Wait for directory listing to load
     await waitFor(
-      () => {
-        expect(canvas.getByText("projects")).toBeInTheDocument();
+      async () => {
+        await expect(canvas.getByText("projects")).toBeInTheDocument();
       },
       { timeout: 2000 }
     );
@@ -300,8 +334,8 @@ export const DirectoryPickerSelectsPath: Story = {
 
     // Wait for subdirectories
     await waitFor(
-      () => {
-        expect(canvas.getByText("my-app")).toBeInTheDocument();
+      async () => {
+        await expect(canvas.getByText("my-app")).toBeInTheDocument();
       },
       { timeout: 2000 }
     );
@@ -311,8 +345,8 @@ export const DirectoryPickerSelectsPath: Story = {
 
     // Wait for path update in subtitle
     await waitFor(
-      () => {
-        expect(canvas.getByText("/home/user/projects/my-app")).toBeInTheDocument();
+      async () => {
+        await expect(canvas.getByText("/home/user/projects/my-app")).toBeInTheDocument();
       },
       { timeout: 2000 }
     );
@@ -321,15 +355,33 @@ export const DirectoryPickerSelectsPath: Story = {
     await userEvent.click(canvas.getByText("Select"));
 
     // Directory picker should close and path should be in input
-    await waitFor(() => {
+    await waitFor(async () => {
       // DirectoryPickerModal should be closed
-      expect(canvas.queryByText("Select Project Directory")).not.toBeInTheDocument();
+      await expect(canvas.queryByText("Select Project Directory")).not.toBeInTheDocument();
     });
 
     // Check that the path was populated in the input
     const input = canvas.getByPlaceholderText("/home/user/projects/my-project");
-    expect(input).toHaveValue("/home/user/projects/my-app");
+    await expect(input).toHaveValue("/home/user/projects/my-app");
   },
+};
+
+// Wrapper for FullFlowWithDirectoryPicker that captures created path
+const FullFlowWrapper: React.FC = () => {
+  const [createdPath, setCreatedPath] = useState("");
+  const client = useMemo(
+    () =>
+      createMockClient({
+        onProjectCreate: (path) => setCreatedPath(path),
+      }),
+    []
+  );
+
+  return (
+    <ORPCProvider client={client}>
+      <ProjectCreateModalWrapper onSuccess={() => action("created")(createdPath)} />
+    </ORPCProvider>
+  );
 };
 
 export const FullFlowWithDirectoryPicker: Story = {
@@ -338,59 +390,61 @@ export const FullFlowWithDirectoryPicker: Story = {
     onClose: action("close"),
     onSuccess: action("success"),
   },
-  render: () => {
-    let createdPath = "";
-    setupMockAPI({
-      onProjectCreate: (path) => {
-        createdPath = path;
-      },
-    });
-    return <ProjectCreateModalWrapper onSuccess={() => action("created")(createdPath)} />;
-  },
+  render: () => <FullFlowWrapper />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
     // Wait for modal
-    await waitFor(() => {
-      expect(canvas.getByRole("dialog")).toBeInTheDocument();
+    await waitFor(async () => {
+      await expect(canvas.getByRole("dialog")).toBeInTheDocument();
     });
 
     // Click Browse
     await userEvent.click(canvas.getByText("Browse…"));
 
     // Navigate to project directory
-    await waitFor(() => {
-      expect(canvas.getByText("projects")).toBeInTheDocument();
+    await waitFor(async () => {
+      await expect(canvas.getByText("projects")).toBeInTheDocument();
     });
     await userEvent.click(canvas.getByText("projects"));
 
-    await waitFor(() => {
-      expect(canvas.getByText("api-server")).toBeInTheDocument();
+    await waitFor(async () => {
+      await expect(canvas.getByText("api-server")).toBeInTheDocument();
     });
     await userEvent.click(canvas.getByText("api-server"));
 
     // Wait for path update
-    await waitFor(() => {
-      expect(canvas.getByText("/home/user/projects/api-server")).toBeInTheDocument();
+    await waitFor(async () => {
+      await expect(canvas.getByText("/home/user/projects/api-server")).toBeInTheDocument();
     });
 
     // Select the directory
     await userEvent.click(canvas.getByText("Select"));
 
     // Verify path is in input
-    await waitFor(() => {
+    await waitFor(async () => {
       const input = canvas.getByPlaceholderText("/home/user/projects/my-project");
-      expect(input).toHaveValue("/home/user/projects/api-server");
+      await expect(input).toHaveValue("/home/user/projects/api-server");
     });
 
     // Click Add Project to complete the flow
     await userEvent.click(canvas.getByRole("button", { name: "Add Project" }));
 
     // Modal should close after successful creation
-    await waitFor(() => {
-      expect(canvas.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(async () => {
+      await expect(canvas.queryByRole("dialog")).not.toBeInTheDocument();
     });
   },
+};
+
+// Wrapper for ValidationError story with error-returning client
+const ValidationErrorWrapper: React.FC = () => {
+  const client = useMemo(() => createValidationErrorClient(), []);
+  return (
+    <ORPCProvider client={client}>
+      <ProjectCreateModal isOpen={true} onClose={action("close")} onSuccess={action("success")} />
+    </ORPCProvider>
+  );
 };
 
 export const ValidationError: Story = {
@@ -399,34 +453,7 @@ export const ValidationError: Story = {
     onClose: action("close"),
     onSuccess: action("success"),
   },
-  decorators: [
-    (Story) => {
-      // Setup mock with validation error
-      const mockApi: Partial<IPCApi> = {
-        fs: {
-          listDirectory: () => Promise.resolve(mockFileTree),
-        },
-        projects: {
-          list: () => Promise.resolve([]),
-          create: () =>
-            Promise.resolve({
-              success: false,
-              error: "Not a valid git repository",
-            }),
-          remove: () => Promise.resolve({ success: true, data: undefined }),
-          pickDirectory: () => Promise.resolve(null),
-          listBranches: () => Promise.resolve({ branches: [], recommendedTrunk: "main" }),
-          secrets: {
-            get: () => Promise.resolve([]),
-            update: () => Promise.resolve({ success: true, data: undefined }),
-          },
-        },
-      };
-      // @ts-expect-error - Mock API
-      window.api = mockApi;
-      return <Story />;
-    },
-  ],
+  render: () => <ValidationErrorWrapper />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
@@ -438,8 +465,8 @@ export const ValidationError: Story = {
     await userEvent.click(canvas.getByRole("button", { name: "Add Project" }));
 
     // Wait for error message
-    await waitFor(() => {
-      expect(canvas.getByText("Not a valid git repository")).toBeInTheDocument();
+    await waitFor(async () => {
+      await expect(canvas.getByText("Not a valid git repository")).toBeInTheDocument();
     });
   },
 };

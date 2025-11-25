@@ -1,5 +1,5 @@
 import { createChatEventProcessor } from "./ChatEventProcessor";
-import type { WorkspaceChatMessage } from "@/common/types/ipc";
+import type { WorkspaceChatMessage } from "@/common/orpc/types";
 
 describe("ChatEventProcessor - Reasoning Delta", () => {
   it("should merge consecutive reasoning deltas into a single part", () => {

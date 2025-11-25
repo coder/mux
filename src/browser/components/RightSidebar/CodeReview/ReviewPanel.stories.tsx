@@ -1,7 +1,6 @@
 import React, { useRef } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { ReviewPanel } from "./ReviewPanel";
-import type { IPCApi } from "@/common/types/ipc";
 import { deleteWorkspaceStorage } from "@/common/constants/storage";
 import type { BashToolResult } from "@/common/types/tools";
 import type { Result } from "@/common/types/result";
@@ -369,8 +368,14 @@ function createSuccessResult(
   };
 }
 
+type MockApi = WindowApi & {
+  workspace: {
+    executeBash: (workspaceId: string, command: string) => Promise<Result<BashToolResult, string>>;
+  };
+};
+
 function setupCodeReviewMocks(config: ScenarioConfig) {
-  const executeBash: IPCApi["workspace"]["executeBash"] = (_workspaceId, command) => {
+  const executeBash: MockApi["workspace"]["executeBash"] = (_workspaceId, command) => {
     if (command.includes("git ls-files --others --exclude-standard")) {
       return Promise.resolve(createSuccessResult(config.untrackedFiles.join("\n")));
     }
@@ -399,7 +404,7 @@ function setupCodeReviewMocks(config: ScenarioConfig) {
     return Promise.resolve(createSuccessResult(""));
   };
 
-  const mockApi = {
+  const mockApi: MockApi = {
     workspace: {
       executeBash,
     },
@@ -409,9 +414,8 @@ function setupCodeReviewMocks(config: ScenarioConfig) {
       chrome: "120.0.0.0",
       electron: "28.0.0",
     },
-  } as unknown as IPCApi;
+  };
 
-  // @ts-expect-error - mockApi is not typed correctly
   window.api = mockApi;
 
   deleteWorkspaceStorage(config.workspaceId);
