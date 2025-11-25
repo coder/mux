@@ -25,6 +25,8 @@ export type ThinkingPolicy = readonly ThinkingLevel[];
  *
  * Rules:
  * - openai:gpt-5-pro → ["high"] (only supported level)
+ * - anthropic:claude-opus-4-5 → ["low", "medium", "high"] (effort parameter only)
+ * - gemini-3 → ["low", "high"] (thinking level only)
  * - default → ["off", "low", "medium", "high"] (all levels selectable)
  *
  * Tolerates version suffixes (e.g., gpt-5-pro-2025-10-06).
@@ -35,6 +37,12 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
   // Allow version suffixes like "-2025-10-06" but NOT "-mini" or other text suffixes
   if (/^openai:\s*gpt-5-pro(?!-[a-z])/.test(modelString)) {
     return ["high"];
+  }
+
+  // Claude Opus 4.5 only supports effort parameter: low, medium, high (no "off")
+  // Match "anthropic:" followed by "claude-opus-4-5" with optional version suffix
+  if (modelString.includes("opus-4-5")) {
+    return ["low", "medium", "high"];
   }
 
   // Gemini 3 Pro only supports "low" and "high" reasoning levels
@@ -51,8 +59,8 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
  *
  * Fallback strategy:
  * 1. If requested level is allowed, use it
- * 2. If "medium" is allowed, use it (reasonable default)
- * 3. Otherwise use first allowed level
+ * 2. For Opus 4.5: prefer "high" (best experience for reasoning model)
+ * 3. Otherwise: prefer "medium" if allowed, else use first allowed level
  */
 export function enforceThinkingPolicy(
   modelString: string,
@@ -62,6 +70,11 @@ export function enforceThinkingPolicy(
 
   if (allowed.includes(requested)) {
     return requested;
+  }
+
+  // Special case: Opus 4.5 defaults to "high" for best experience
+  if (modelString.includes("opus-4-5") && allowed.includes("high")) {
+    return "high";
   }
 
   // Fallback: prefer "medium" if allowed, else use first allowed level

@@ -41,17 +41,27 @@ export const DifferentModels: Story = {
   render: () => (
     <div className="bg-dark flex min-w-80 flex-col gap-[30px] p-10">
       <div>
-        <div className="text-muted-light font-primary mb-2 text-xs">Claude Sonnet 4.5</div>
+        <div className="text-muted-light font-primary mb-2 text-xs">Claude Sonnet 4.5 (4 levels)</div>
         <ThinkingSliderComponent modelString="anthropic:claude-sonnete-4-5" />
       </div>
 
       <div>
-        <div className="text-muted-light font-primary mb-2 text-xs">Claude Opus 4.1</div>
+        <div className="text-muted-light font-primary mb-2 text-xs">Claude Opus 4.5 (3 levels: low/medium/high)</div>
+        <ThinkingSliderComponent modelString="anthropic:claude-opus-4-5" />
+      </div>
+
+      <div>
+        <div className="text-muted-light font-primary mb-2 text-xs">Claude Opus 4.1 (4 levels)</div>
         <ThinkingSliderComponent modelString="anthropic:claude-opus-4-1" />
       </div>
 
       <div>
-        <div className="text-muted-light font-primary mb-2 text-xs">GPT-5 Codex</div>
+        <div className="text-muted-light font-primary mb-2 text-xs">Gemini 3 (2 levels: low/high)</div>
+        <ThinkingSliderComponent modelString="google:gemini-3-pro-preview" />
+      </div>
+
+      <div>
+        <div className="text-muted-light font-primary mb-2 text-xs">GPT-5 Codex (4 levels)</div>
         <ThinkingSliderComponent modelString="openai:gpt-5-codex" />
       </div>
     </div>
@@ -89,6 +99,33 @@ export const InteractiveDemo: Story = {
 
     // Note: Testing actual slider interaction via keyboard/mouse is complex
     // The important part is that the slider is accessible and has correct initial state
+  },
+};
+
+export const Opus45ThreeLevels: Story = {
+  args: { modelString: "anthropic:claude-opus-4-5" },
+  render: (args) => (
+    <div className="bg-dark flex min-w-80 flex-col gap-[30px] p-10">
+      <div className="text-bright font-primary mb-2.5 text-[13px]">
+        Claude Opus 4.5 uses the effort parameter (low/medium/high only, no &ldquo;off&rdquo;):
+      </div>
+      <ThinkingSliderComponent modelString={args.modelString} />
+      <div className="text-muted-light font-primary mt-2.5 text-[11px]">
+        • <strong>Low</strong>: Conservative token usage
+        <br />• <strong>Medium</strong>: Balanced usage (default)
+        <br />• <strong>High</strong>: Best results, more tokens
+      </div>
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Find the slider
+    const slider = canvas.getByRole("slider");
+
+    // Verify slider is present with 3 levels (0-2)
+    await expect(slider).toBeInTheDocument();
+    await expect(slider).toHaveAttribute("max", "2");
   },
 };
 

@@ -33,6 +33,23 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
+  test("returns low/medium/high for Opus 4.5", () => {
+    expect(getThinkingPolicyForModel("anthropic:claude-opus-4-5")).toEqual([
+      "low",
+      "medium",
+      "high",
+    ]);
+    expect(getThinkingPolicyForModel("anthropic:claude-opus-4-5-20251101")).toEqual([
+      "low",
+      "medium",
+      "high",
+    ]);
+  });
+
+  test("returns low/high for Gemini 3", () => {
+    expect(getThinkingPolicyForModel("google:gemini-3-pro-preview")).toEqual(["low", "high"]);
+  });
+
   test("returns all levels for other providers", () => {
     expect(getThinkingPolicyForModel("anthropic:claude-opus-4")).toEqual([
       "off",
@@ -46,7 +63,6 @@ describe("getThinkingPolicyForModel", () => {
       "medium",
       "high",
     ]);
-    expect(getThinkingPolicyForModel("google:gemini-3-pro-preview")).toEqual(["low", "high"]);
   });
 });
 
@@ -76,6 +92,22 @@ describe("enforceThinkingPolicy", () => {
       // Simulating behavior with gpt-5-pro (only allows "high")
       // When requesting "low", falls back to first allowed level which is "high"
       expect(enforceThinkingPolicy("openai:gpt-5-pro", "low")).toBe("high");
+    });
+  });
+
+  describe("Opus 4.5 (no off option)", () => {
+    test("allows low/medium/high levels", () => {
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "low")).toBe("low");
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "medium")).toBe("medium");
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "high")).toBe("high");
+    });
+
+    test("falls back to high when off is requested", () => {
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "off")).toBe("high");
+    });
+
+    test("falls back to high when off is requested (versioned model)", () => {
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-5-20251101", "off")).toBe("high");
     });
   });
 });
