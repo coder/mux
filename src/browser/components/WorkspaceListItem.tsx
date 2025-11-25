@@ -44,7 +44,8 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   onToggleUnread: _onToggleUnread,
 }) => {
   // Destructure metadata for convenience
-  const { id: workspaceId, name: workspaceName, namedWorkspacePath } = metadata;
+  const { id: workspaceId, name: workspaceName, namedWorkspacePath, status } = metadata;
+  const isCreating = status === "creating";
   const gitStatus = useGitStatus(workspaceId);
 
   // Get rename context
@@ -100,19 +101,24 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
     <React.Fragment>
       <div
         className={cn(
-          "py-1.5 pl-4 pr-2 cursor-pointer border-l-[3px] border-transparent transition-all duration-150 text-[13px] relative hover:bg-hover [&:hover_button]:opacity-100 flex gap-2",
-          isSelected && "bg-hover border-l-blue-400",
-          isDeleting && "opacity-50 pointer-events-none"
+          "py-1.5 pl-4 pr-2 border-l-[3px] border-transparent transition-all duration-150 text-[13px] relative flex gap-2",
+          isCreating || isDeleting
+            ? "cursor-default opacity-70"
+            : "cursor-pointer hover:bg-hover [&:hover_button]:opacity-100",
+          isSelected && !isCreating && "bg-hover border-l-blue-400",
+          isDeleting && "pointer-events-none"
         )}
-        onClick={() =>
+        onClick={() => {
+          if (isCreating) return; // Disable click while creating
           onSelectWorkspace({
             projectPath,
             projectName,
             namedWorkspacePath,
             workspaceId,
-          })
-        }
+          });
+        }}
         onKeyDown={(e) => {
+          if (isCreating) return; // Disable keyboard while creating
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             onSelectWorkspace({
@@ -124,9 +130,12 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
           }
         }}
         role="button"
-        tabIndex={0}
+        tabIndex={isCreating ? -1 : 0}
         aria-current={isSelected ? "true" : undefined}
-        aria-label={`Select workspace ${displayName}`}
+        aria-label={
+          isCreating ? `Creating workspace ${displayName}` : `Select workspace ${displayName}`
+        }
+        aria-disabled={isCreating}
         data-workspace-path={namedWorkspacePath}
         data-workspace-id={workspaceId}
       >
@@ -147,14 +156,18 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
               />
             ) : (
               <span
-                className="text-foreground -mx-1 min-w-0 flex-1 cursor-pointer truncate rounded-sm px-1 text-left text-[14px] transition-colors duration-200 hover:bg-white/5"
+                className={cn(
+                  "text-foreground -mx-1 min-w-0 flex-1 truncate rounded-sm px-1 text-left text-[14px] transition-colors duration-200",
+                  !isCreating && "cursor-pointer hover:bg-white/5"
+                )}
                 onDoubleClick={(e) => {
+                  if (isCreating) return; // Disable rename while creating
                   e.stopPropagation();
                   startRenaming();
                 }}
-                title="Double-click to rename"
+                title={isCreating ? "Creating workspace..." : "Double-click to rename"}
               >
-                {canInterrupt ? (
+                {canInterrupt || isCreating ? (
                   <Shimmer className="w-full truncate" colorClass="var(--color-foreground)">
                     {displayName}
                   </Shimmer>
@@ -165,41 +178,47 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
             )}
 
             <div className="ml-auto flex items-center gap-1">
-              <GitStatusIndicator
-                gitStatus={gitStatus}
-                workspaceId={workspaceId}
-                tooltipPosition="right"
-                isWorking={canInterrupt}
-              />
+              {!isCreating && (
+                <>
+                  <GitStatusIndicator
+                    gitStatus={gitStatus}
+                    workspaceId={workspaceId}
+                    tooltipPosition="right"
+                    isWorking={canInterrupt}
+                  />
 
-              <TooltipWrapper inline>
-                <button
-                  className="text-muted hover:text-foreground col-start-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center border-none bg-transparent p-0 text-base opacity-0 transition-all duration-200 hover:rounded-sm hover:bg-white/10"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void onRemoveWorkspace(workspaceId, e.currentTarget);
-                  }}
-                  aria-label={`Remove workspace ${displayName}`}
-                  data-workspace-id={workspaceId}
-                >
-                  ×
-                </button>
-                <Tooltip className="tooltip" align="right">
-                  Remove workspace
-                </Tooltip>
-              </TooltipWrapper>
+                  <TooltipWrapper inline>
+                    <button
+                      className="text-muted hover:text-foreground col-start-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center border-none bg-transparent p-0 text-base opacity-0 transition-all duration-200 hover:rounded-sm hover:bg-white/10"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void onRemoveWorkspace(workspaceId, e.currentTarget);
+                      }}
+                      aria-label={`Remove workspace ${displayName}`}
+                      data-workspace-id={workspaceId}
+                    >
+                      ×
+                    </button>
+                    <Tooltip className="tooltip" align="right">
+                      Remove workspace
+                    </Tooltip>
+                  </TooltipWrapper>
+                </>
+              )}
             </div>
           </div>
-          <div className="min-w-0">
-            {isDeleting ? (
-              <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
-                <span className="-mt-0.5 shrink-0 text-[10px]">🗑️</span>
-                <span className="min-w-0 truncate">Deleting...</span>
-              </div>
-            ) : (
-              <WorkspaceStatusIndicator workspaceId={workspaceId} />
-            )}
-          </div>
+          {!isCreating && (
+            <div className="min-w-0">
+              {isDeleting ? (
+                <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
+                  <span className="-mt-0.5 shrink-0 text-[10px]">🗑️</span>
+                  <span className="min-w-0 truncate">Deleting...</span>
+                </div>
+              ) : (
+                <WorkspaceStatusIndicator workspaceId={workspaceId} />
+              )}
+            </div>
+          )}
         </div>
       </div>
       {renameError && isEditing && (

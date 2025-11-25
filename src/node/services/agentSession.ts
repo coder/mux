@@ -8,7 +8,7 @@ import type { AIService } from "@/node/services/aiService";
 import type { HistoryService } from "@/node/services/historyService";
 import type { PartialService } from "@/node/services/partialService";
 import type { InitStateManager } from "@/node/services/initStateManager";
-import type { WorkspaceMetadata } from "@/common/types/workspace";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type {
   WorkspaceChatMessage,
@@ -33,7 +33,7 @@ export interface AgentSessionChatEvent {
 
 export interface AgentSessionMetadataEvent {
   workspaceId: string;
-  metadata: WorkspaceMetadata | null;
+  metadata: FrontendWorkspaceMetadata | null;
 }
 
 interface AgentSessionOptions {
@@ -139,7 +139,7 @@ export class AgentSession {
     await this.emitHistoricalEvents(listener);
   }
 
-  emitMetadata(metadata: WorkspaceMetadata | null): void {
+  emitMetadata(metadata: FrontendWorkspaceMetadata | null): void {
     this.assertNotDisposed("emitMetadata");
     this.emitter.emit("metadata-event", {
       workspaceId: this.workspaceId,
@@ -244,11 +244,12 @@ export class AgentSession {
           : PlatformPaths.basename(normalizedWorkspacePath) || "unknown";
     }
 
-    const metadata: WorkspaceMetadata = {
+    const metadata: FrontendWorkspaceMetadata = {
       id: this.workspaceId,
       name: workspaceName,
       projectName: derivedProjectName,
       projectPath: derivedProjectPath,
+      namedWorkspacePath: normalizedWorkspacePath,
       runtimeConfig: DEFAULT_RUNTIME_CONFIG,
     };
 

@@ -57,3 +57,19 @@ function validateBranchName(name: string): string {
     .replace(/-+/g, "-")
     .substring(0, 50);
 }
+
+/**
+ * Generate a placeholder name from the user's message for immediate display
+ * while the AI generates the real title. This is git-safe and human-readable.
+ */
+export function generatePlaceholderName(message: string): string {
+  // Take first ~40 chars, sanitize for git branch name
+  const truncated = message.slice(0, 40).trim();
+  const sanitized = truncated
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-+/g, "-")
+    .substring(0, 30);
+  return sanitized || "new-workspace";
+}

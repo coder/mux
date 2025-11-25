@@ -54,6 +54,13 @@ export interface WorkspaceMetadata {
 
   /** Runtime configuration for this workspace (always set, defaults to local on load) */
   runtimeConfig: RuntimeConfig;
+
+  /**
+   * Workspace creation status. When 'creating', the workspace is being set up
+   * (title generation, git operations). Undefined or absent means ready.
+   * Pending workspaces are ephemeral (not persisted to config).
+   */
+  status?: "creating";
 }
 
 /**

@@ -26,7 +26,6 @@ import type {
 import { Ok, Err, type Result } from "@/common/types/result";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import type {
-  WorkspaceMetadata,
   FrontendWorkspaceMetadata,
   WorkspaceActivitySnapshot,
 } from "@/common/types/workspace";
@@ -107,7 +106,7 @@ async function createWorkspaceWithCollisionRetry(
   throw new Error("Unexpected: workspace creation loop completed without return");
 }
 
-import { generateWorkspaceName } from "./workspaceTitleGenerator";
+import { generateWorkspaceName, generatePlaceholderName } from "./workspaceTitleGenerator";
 /**
  * IpcMain - Manages all IPC handlers and service coordination
  *
@@ -305,8 +304,35 @@ export class IpcMain {
     | { success: true; workspaceId: string; metadata: FrontendWorkspaceMetadata }
     | Result<void, SendMessageError>
   > {
+    // Generate IDs and placeholder upfront for immediate UI feedback
+    const workspaceId = this.config.generateStableId();
+    const placeholderName = generatePlaceholderName(message);
+    const projectName = projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "unknown";
+    const createdAt = new Date().toISOString();
+
+    // Prepare runtime config early for pending metadata
+    // Default to worktree runtime for new workspaces
+    let finalRuntimeConfig: RuntimeConfig = options.runtimeConfig ?? {
+      type: "worktree",
+      srcBaseDir: this.config.srcDir,
+    };
+
+    // Create session and emit pending metadata IMMEDIATELY
+    // This allows the sidebar to show the workspace while we do slow operations
+    const session = this.getOrCreateSession(workspaceId);
+    session.emitMetadata({
+      id: workspaceId,
+      name: placeholderName,
+      projectName,
+      projectPath,
+      namedWorkspacePath: "", // Not yet created
+      createdAt,
+      runtimeConfig: finalRuntimeConfig,
+      status: "creating",
+    });
+
     try {
-      // 1. Generate workspace branch name using AI (use same model as message)
+      // 1. Generate workspace branch name using AI (SLOW - but user sees pending state)
       let branchName: string;
       {
         const isErrLike = (v: unknown): v is { type: string } =>
@@ -314,6 +340,8 @@ export class IpcMain {
         const nameResult = await generateWorkspaceName(message, options.model, this.aiService);
         if (!nameResult.success) {
           const err = nameResult.error;
+          // Clear pending state on error
+          session.emitMetadata(null);
           if (isErrLike(err)) {
             return Err(err);
           }
@@ -338,15 +366,7 @@ export class IpcMain {
       const recommendedTrunk =
         options.trunkBranch ?? (await detectDefaultTrunkBranch(projectPath, branches)) ?? "main";
 
-      // 3. Create workspace
-      // Default to worktree runtime for new workspaces
-      let finalRuntimeConfig: RuntimeConfig = options.runtimeConfig ?? {
-        type: "worktree",
-        srcBaseDir: this.config.srcDir,
-      };
-
-      const workspaceId = this.config.generateStableId();
-
+      // 3. Resolve runtime paths
       let runtime;
       try {
         // Handle different runtime types
@@ -376,12 +396,12 @@ export class IpcMain {
         }
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
+        // Clear pending state on error
+        session.emitMetadata(null);
         return Err({ type: "unknown", raw: `Failed to prepare runtime: ${errorMsg}` });
       }
 
-      const session = this.getOrCreateSession(workspaceId);
       this.initStateManager.startInit(workspaceId, projectPath);
-
       const initLogger = this.createInitLogger(workspaceId);
 
       // Create workspace with automatic collision retry
@@ -393,21 +413,20 @@ export class IpcMain {
         );
 
       if (!createResult.success || !createResult.workspacePath) {
+        // Clear pending state on error
+        session.emitMetadata(null);
         return Err({ type: "unknown", raw: createResult.error ?? "Failed to create workspace" });
       }
 
       // Use the final branch name (may have suffix if collision occurred)
       branchName = finalBranchName;
 
-      const projectName =
-        projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "unknown";
-
       const metadata = {
         id: workspaceId,
         name: branchName,
         projectName,
         projectPath,
-        createdAt: new Date().toISOString(),
+        createdAt,
       };
 
       await this.config.editConfig((config) => {
@@ -429,9 +448,12 @@ export class IpcMain {
       const allMetadata = await this.config.getAllWorkspaceMetadata();
       const completeMetadata = allMetadata.find((m) => m.id === workspaceId);
       if (!completeMetadata) {
+        // Clear pending state on error
+        session.emitMetadata(null);
         return Err({ type: "unknown", raw: "Failed to retrieve workspace metadata" });
       }
 
+      // Emit final metadata (no status = ready)
       session.emitMetadata(completeMetadata);
 
       void runtime
@@ -460,6 +482,8 @@ export class IpcMain {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       log.error("Unexpected error in createWorkspaceForFirstMessage:", error);
+      // Clear pending state on error
+      session.emitMetadata(null);
       return Err({ type: "unknown", raw: `Failed to create workspace: ${errorMessage}` });
     }
   }
@@ -1063,11 +1087,12 @@ export class IpcMain {
           }
 
           // Initialize workspace metadata
-          const metadata: WorkspaceMetadata = {
+          const metadata: FrontendWorkspaceMetadata = {
             id: newWorkspaceId,
             name: newName,
             projectName,
             projectPath: foundProjectPath,
+            namedWorkspacePath: runtime.getWorkspacePath(foundProjectPath, newName),
             createdAt: new Date().toISOString(),
             runtimeConfig: DEFAULT_RUNTIME_CONFIG,
           };
