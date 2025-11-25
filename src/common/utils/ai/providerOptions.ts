@@ -11,7 +11,7 @@ import type { XaiProviderOptions } from "@ai-sdk/xai";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import {
-  ANTHROPIC_THINKING_BUDGETS,
+  ANTHROPIC_EFFORT,
   GEMINI_THINKING_BUDGETS,
   OPENAI_REASONING_EFFORT,
   OPENROUTER_REASONING_EFFORT,
@@ -83,9 +83,9 @@ export function buildProviderOptions(
 
   // Build Anthropic-specific options
   if (provider === "anthropic") {
-    const budgetTokens = ANTHROPIC_THINKING_BUDGETS[effectiveThinking];
+    const effort = ANTHROPIC_EFFORT[effectiveThinking];
     log.debug("buildProviderOptions: Anthropic config", {
-      budgetTokens,
+      effort,
       thinkingLevel: effectiveThinking,
     });
 
@@ -93,13 +93,9 @@ export function buildProviderOptions(
       anthropic: {
         disableParallelToolUse: false, // Always enable concurrent tool execution
         sendReasoning: true, // Include reasoning traces in requests sent to the model
-        // Conditionally add thinking configuration
-        ...(budgetTokens > 0 && {
-          thinking: {
-            type: "enabled",
-            budgetTokens,
-          },
-        }),
+        // Use effort parameter to control token spend (thinking, text, and tool calls)
+        // SDK auto-adds beta header "effort-2025-11-24" when effort is set
+        ...(effort && { effort }),
       },
     };
     log.debug("buildProviderOptions: Returning Anthropic options", options);

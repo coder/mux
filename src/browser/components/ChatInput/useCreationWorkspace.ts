@@ -7,8 +7,15 @@ import { parseRuntimeString } from "@/browser/utils/chatCommands";
 import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
-import { getModeKey, getProjectScopeId, getThinkingLevelKey } from "@/common/constants/storage";
-import { extractErrorMessage } from "./utils";
+import {
+  getInputKey,
+  getModeKey,
+  getPendingScopeId,
+  getProjectScopeId,
+  getThinkingLevelKey,
+} from "@/common/constants/storage";
+import type { Toast } from "@/browser/components/ChatInputToast";
+import { createErrorToast } from "@/browser/components/ChatInputToasts";
 
 interface UseCreationWorkspaceOptions {
   projectPath: string;
@@ -39,10 +46,10 @@ interface UseCreationWorkspaceReturn {
   runtimeMode: RuntimeMode;
   sshHost: string;
   setRuntimeOptions: (mode: RuntimeMode, host: string) => void;
-  error: string | null;
-  setError: (error: string | null) => void;
+  toast: Toast | null;
+  setToast: (toast: Toast | null) => void;
   isSending: boolean;
-  handleSend: (message: string) => Promise<void>;
+  handleSend: (message: string) => Promise<boolean>;
 }
 
 /**
@@ -58,7 +65,7 @@ export function useCreationWorkspace({
 }: UseCreationWorkspaceOptions): UseCreationWorkspaceReturn {
   const [branches, setBranches] = useState<string[]>([]);
   const [recommendedTrunk, setRecommendedTrunk] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<Toast | null>(null);
   const [isSending, setIsSending] = useState(false);
 
   // Centralized draft workspace settings with automatic persistence
@@ -88,11 +95,11 @@ export function useCreationWorkspace({
   }, [projectPath]);
 
   const handleSend = useCallback(
-    async (message: string) => {
-      if (!message.trim() || isSending) return;
+    async (message: string): Promise<boolean> => {
+      if (!message.trim() || isSending) return false;
 
       setIsSending(true);
-      setError(null);
+      setToast(null);
 
       try {
         // Get runtime config from options
@@ -110,26 +117,42 @@ export function useCreationWorkspace({
         });
 
         if (!result.success) {
-          setError(extractErrorMessage(result.error));
+          setToast(createErrorToast(result.error));
           setIsSending(false);
-          return;
+          return false;
         }
 
         // Check if this is a workspace creation result (has metadata field)
         if ("metadata" in result && result.metadata) {
           syncCreationPreferences(projectPath, result.metadata.id);
+          if (projectPath) {
+            const pendingInputKey = getInputKey(getPendingScopeId(projectPath));
+            updatePersistedState(pendingInputKey, "");
+          }
           // Settings are already persisted via useDraftWorkspaceSettings
           // Notify parent to switch workspace (clears input via parent unmount)
           onWorkspaceCreated(result.metadata);
+          setIsSending(false);
+          return true;
         } else {
           // This shouldn't happen for null workspaceId, but handle gracefully
-          setError("Unexpected response from server");
+          setToast({
+            id: Date.now().toString(),
+            type: "error",
+            message: "Unexpected response from server",
+          });
           setIsSending(false);
+          return false;
         }
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
-        setError(`Failed to create workspace: ${errorMessage}`);
+        setToast({
+          id: Date.now().toString(),
+          type: "error",
+          message: `Failed to create workspace: ${errorMessage}`,
+        });
         setIsSending(false);
+        return false;
       }
     },
     [
@@ -149,8 +172,8 @@ export function useCreationWorkspace({
     runtimeMode: settings.runtimeMode,
     sshHost: settings.sshHost,
     setRuntimeOptions,
-    error,
-    setError,
+    toast,
+    setToast,
     isSending,
     handleSend,
   };

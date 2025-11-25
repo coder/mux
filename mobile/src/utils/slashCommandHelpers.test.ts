@@ -56,6 +56,7 @@ describe("buildMobileCompactionPayload", () => {
       model: "anthropic:claude-opus-4-1",
       maxOutputTokens: 800,
       continueMessage: parsed.continueMessage,
+      resumeModel: baseOptions.model,
     });
     expect(payload.sendOptions.model).toBe("anthropic:claude-opus-4-1");
     expect(payload.sendOptions.mode).toBe("compact");

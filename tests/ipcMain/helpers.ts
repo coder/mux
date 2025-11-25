@@ -46,6 +46,16 @@ export function modelString(provider: string, model: string): string {
 }
 
 /**
+ * Configure global test retries using Jest
+ * This helper isolates Jest-specific globals so they don't break other runners (like Bun)
+ */
+export function configureTestRetries(retries = 3): void {
+  if (process.env.CI && typeof jest !== "undefined" && jest.retryTimes) {
+    jest.retryTimes(retries, { logErrorsBeforeRetry: true });
+  }
+}
+
+/**
  * Send a message via IPC
  */
 type SendMessageWithModelOptions = Omit<SendMessageOptions, "model"> & {
@@ -769,37 +779,29 @@ export async function buildLargeHistory(
     textPrefix?: string;
   } = {}
 ): Promise<void> {
-  const { HistoryService } = await import("../../src/node/services/historyService");
+  const fs = await import("fs/promises");
+  const path = await import("path");
   const { createMuxMessage } = await import("../../src/common/types/message");
-
-  // HistoryService only needs getSessionDir, so we can cast the partial config
-  const historyService = new HistoryService(config as any);
 
   const messageSize = options.messageSize ?? 50_000;
   const messageCount = options.messageCount ?? 80;
   const textPrefix = options.textPrefix ?? "";
 
   const largeText = textPrefix + "A".repeat(messageSize);
+  const sessionDir = config.getSessionDir(workspaceId);
+  const chatPath = path.join(sessionDir, "chat.jsonl");
+
+  let content = "";
 
   // Build conversation history with alternating user/assistant messages
   for (let i = 0; i < messageCount; i++) {
     const isUser = i % 2 === 0;
     const role = isUser ? "user" : "assistant";
     const message = createMuxMessage(`history-msg-${i}`, role, largeText, {});
-
-    const result = await historyService.appendToHistory(workspaceId, message);
-    if (!result.success) {
-      throw new Error(`Failed to append message ${i} to history: ${result.error}`);
-    }
+    content += JSON.stringify(message) + "\n";
   }
-}
 
-/**
- * Configure test retries for flaky tests in CI
- * Only works with Jest
- */
-export function configureTestRetries(retries = 3): void {
-  if (process.env.CI && typeof jest !== "undefined" && jest.retryTimes) {
-    jest.retryTimes(retries, { logErrorsBeforeRetry: true });
-  }
+  // Ensure session directory exists and write file directly for performance
+  await fs.mkdir(sessionDir, { recursive: true });
+  await fs.writeFile(chatPath, content, "utf-8");
 }

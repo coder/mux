@@ -28,7 +28,7 @@ import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sour
 
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
-import { isWorkspaceForkSwitchEvent } from "./utils/workspaceFork";
+import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
 import { getThinkingLevelKey } from "@/common/constants/storage";
 import type { BranchListResult } from "@/common/types/ipc";
 import { useTelemetry } from "./hooks/useTelemetry";
@@ -517,6 +517,16 @@ function AppInner() {
       );
   }, [projects, setSelectedWorkspace, setWorkspaceMetadata]);
 
+  const handleProviderConfig = useCallback(
+    async (provider: string, keyPath: string[], value: string) => {
+      const result = await window.api.providers.setProviderConfig(provider, keyPath, value);
+      if (!result.success) {
+        throw new Error(result.error);
+      }
+    },
+    []
+  );
+
   return (
     <>
       <div className="bg-bg-dark mobile-layout flex h-screen overflow-hidden">
@@ -561,6 +571,7 @@ function AppInner() {
                           variant="creation"
                           projectPath={projectPath}
                           projectName={projectName}
+                          onProviderConfig={handleProviderConfig}
                           onReady={handleCreationChatReady}
                           onWorkspaceCreated={(metadata) => {
                             // Add to workspace metadata map

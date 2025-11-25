@@ -1,7 +1,7 @@
 import { useThinkingLevel } from "./useThinkingLevel";
 import { useMode } from "@/browser/contexts/ModeContext";
 import { usePersistedState } from "./usePersistedState";
-import { getDefaultModelFromLRU } from "./useModelLRU";
+import { getDefaultModel } from "./useModelLRU";
 import { modeToToolPolicy, PLAN_MODE_INSTRUCTION } from "@/common/utils/ui/modeUtils";
 import { getModelKey } from "@/common/constants/storage";
 import type { SendMessageOptions } from "@/common/types/ipc";
@@ -56,7 +56,7 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptions {
   const [thinkingLevel] = useThinkingLevel();
   const [mode] = useMode();
   const { options: providerOptions } = useProviderOptions();
-  const defaultModel = getDefaultModelFromLRU();
+  const defaultModel = getDefaultModel();
   const [preferredModel] = usePersistedState<string>(
     getModelKey(workspaceId),
     defaultModel, // Default to most recently used model

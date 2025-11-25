@@ -95,7 +95,7 @@ jobs:
   integration-test:
     name: Integration Tests
     timeout-minutes: 10
-    runs-on: ${{ github.repository_owner == 'coder' && 'self-hosted' || 'ubuntu-latest' }}
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -104,41 +104,15 @@ jobs:
 
       - uses: ./.github/actions/setup-mux
 
-      - name: Check if Ollama is pre-installed
-        id: check-ollama
-        run: |
-          if systemctl is-active --quiet ollama 2>/dev/null && curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
-            echo "installed=true" >> $GITHUB_OUTPUT
-            echo "✅ Ollama already running (self-hosted runner)"
-          else
-            echo "installed=false" >> $GITHUB_OUTPUT
-            echo "⚙️ Ollama not found, will install"
-          fi
-
-      - name: Setup Ollama
-        # Only install Ollama if not already running (self-hosted runners have it pre-installed)
-        if: steps.check-ollama.outputs.installed != 'true'
-        uses: ./.github/actions/setup-ollama
-
-      # Ollama server started by setup-ollama action or pre-installed on self-hosted
-      # Tests will pull models idempotently
-      - name: Verify Ollama server
-        run: |
-          echo "Verifying Ollama server..."
-          timeout 5 sh -c 'until curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; do sleep 0.2; done'
-          echo "Ollama ready - integration tests will pull models on demand"
-
       - name: Build worker files
         run: make build-main
 
       - name: Run all integration tests with coverage
-        # TEST_OLLAMA=1 enables Ollama-specific tests (now included with all integration tests)
         # --silent suppresses per-test output (17+ test files × workers = overwhelming logs)
         run: TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent ${{ github.event.inputs.test_filter || 'tests' }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          OLLAMA_BASE_URL: http://localhost:11434/api
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5

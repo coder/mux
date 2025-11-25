@@ -1,30 +1,13 @@
-import React, { useEffect } from "react";
+import React from "react";
 import type { Preview } from "@storybook/react-vite";
-import {
-  ThemeProvider,
-  useTheme,
-  type ThemeMode,
-} from "../src/browser/contexts/ThemeContext";
+import { ThemeProvider, type ThemeMode } from "../src/browser/contexts/ThemeContext";
 import "../src/browser/styles/globals.css";
-
-const ThemeStorySync: React.FC<{ mode: ThemeMode }> = ({ mode }) => {
-  const { theme, setTheme } = useTheme();
-
-  useEffect(() => {
-    if (theme !== mode) {
-      setTheme(mode);
-    }
-  }, [mode, setTheme, theme]);
-
-  return null;
-};
 
 const preview: Preview = {
   globalTypes: {
     theme: {
       name: "Theme",
       description: "Choose between light and dark UI themes",
-      defaultValue: "dark",
       toolbar: {
         icon: "mirror",
         items: [
@@ -35,12 +18,22 @@ const preview: Preview = {
       },
     },
   },
+  initialGlobals: {
+    theme: "dark",
+  },
   decorators: [
     (Story, context) => {
-      const mode = (context.globals.theme ?? "dark") as ThemeMode;
+      // Default to dark if mode not set (e.g., Chromatic headless browser defaults to light)
+      const mode = (context.globals.theme as ThemeMode | undefined) ?? "dark";
+
+      // Apply theme synchronously before React renders - critical for Chromatic snapshots
+      if (typeof document !== "undefined") {
+        document.documentElement.dataset.theme = mode;
+        document.documentElement.style.colorScheme = mode;
+      }
+
       return (
-        <ThemeProvider>
-          <ThemeStorySync mode={mode} />
+        <ThemeProvider forcedTheme={mode}>
           <Story />
         </ThemeProvider>
       );
@@ -55,8 +48,8 @@ const preview: Preview = {
     },
     chromatic: {
       modes: {
-        dark: { globals: { theme: "dark" } },
-        light: { globals: { theme: "light" } },
+        dark: { theme: "dark" },
+        light: { theme: "light" },
       },
     },
   },

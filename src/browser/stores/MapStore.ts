@@ -42,7 +42,8 @@ export class MapStore<K, V> {
    */
   get(key: K, compute: () => V): V {
     // DEV-mode: Track render depth to detect bump() during render
-    if (import.meta.env.DEV) {
+    // eslint-disable-next-line no-restricted-globals, no-restricted-syntax
+    if (process.env.NODE_ENV !== "production") {
       this.renderDepth++;
       try {
         return this.getImpl(key, compute);
@@ -109,7 +110,8 @@ export class MapStore<K, V> {
    */
   bump(key: K): void {
     // DEV-mode guard: detect bump() during render
-    if (import.meta.env.DEV && this.renderDepth > 0) {
+    // eslint-disable-next-line no-restricted-globals, no-restricted-syntax
+    if (process.env.NODE_ENV !== "production" && this.renderDepth > 0) {
       const error = new Error(
         `[MapStore] bump() called during render! This will cause infinite loops.\n` +
           `Key: ${String(key)}\n` +

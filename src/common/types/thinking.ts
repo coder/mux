@@ -14,19 +14,23 @@ export type ThinkingLevel = "off" | "low" | "medium" | "high";
 export type ThinkingLevelOn = Exclude<ThinkingLevel, "off">;
 
 /**
- * Anthropic thinking token budget mapping
+ * Anthropic effort level mapping
  *
- * These heuristics balance thinking depth with response time and cost:
- * - off: No extended thinking
- * - low: Quick thinking for straightforward tasks (4K tokens)
- * - medium: Standard thinking for moderate complexity (10K tokens)
- * - high: Deep thinking for complex problems (20K tokens)
+ * Maps our unified thinking levels to Anthropic's effort parameter:
+ * - off: No effort specified (undefined)
+ * - low: Most efficient - significant token savings
+ * - medium: Balanced approach with moderate token savings
+ * - high: Maximum capability (default behavior)
+ *
+ * The effort parameter controls all token spend including thinking,
+ * text responses, and tool calls. Unlike budget_tokens, it doesn't require
+ * thinking to be explicitly enabled.
  */
-export const ANTHROPIC_THINKING_BUDGETS: Record<ThinkingLevel, number> = {
-  off: 0,
-  low: 4000,
-  medium: 10000,
-  high: 20000,
+export const ANTHROPIC_EFFORT: Record<ThinkingLevel, "low" | "medium" | "high" | undefined> = {
+  off: undefined,
+  low: "low",
+  medium: "medium",
+  high: "high",
 };
 
 /**

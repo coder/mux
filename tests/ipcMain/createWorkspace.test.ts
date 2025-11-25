@@ -818,7 +818,8 @@ exit 1
 
         try {
           // Set up a real origin remote in the test repo
-          const originUrl = "https://github.com/example/test-repo.git";
+          // Use example.com to avoid global git config rewrites (e.g. insteadOf https://github.com/)
+          const originUrl = "https://example.com/example/test-repo.git";
           await execAsync(`git remote add origin ${originUrl}`, {
             cwd: tempGitRepo,
           });
