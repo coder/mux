@@ -542,11 +542,21 @@ export function prepareCompactionMessage(options: CompactionOptions): {
   const effectiveModel = resolveCompactionModel(options.model);
 
   // Create compaction metadata (will be stored in user message)
+  // Only include continueMessage if there's text or images to queue after compaction
+  const hasText = options.continueMessage?.text;
+  const hasImages =
+    options.continueMessage?.imageParts && options.continueMessage.imageParts.length > 0;
   const compactData: CompactionRequestData = {
     model: effectiveModel,
     maxOutputTokens: options.maxOutputTokens,
-    continueMessage: options.continueMessage,
-    resumeModel: options.sendMessageOptions.model,
+    continueMessage:
+      hasText || hasImages
+        ? {
+            text: options.continueMessage?.text ?? "",
+            imageParts: options.continueMessage?.imageParts,
+            model: options.continueMessage?.model ?? options.sendMessageOptions.model,
+          }
+        : undefined,
   };
 
   const metadata: MuxFrontendMetadata = {
@@ -740,9 +750,14 @@ export async function handleCompactCommand(
     const result = await executeCompaction({
       workspaceId,
       maxOutputTokens: parsed.maxOutputTokens,
-      continueMessage: parsed.continueMessage
-        ? { text: parsed.continueMessage, imageParts: context.imageParts }
-        : undefined,
+      continueMessage:
+        parsed.continueMessage || (context.imageParts && context.imageParts.length > 0)
+          ? {
+              text: parsed.continueMessage ?? "",
+              imageParts: context.imageParts,
+              model: sendMessageOptions.model,
+            }
+          : undefined,
       model: parsed.model,
       sendMessageOptions,
       editMessageId,

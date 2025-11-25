@@ -103,12 +103,12 @@ describe("prepareCompactionMessage", () => {
     mode: "exec",
   });
 
-  test("embeds resumeModel from base send options", () => {
+  test("embeds continue message model from base send options", () => {
     const sendMessageOptions = createBaseOptions();
     const { metadata } = prepareCompactionMessage({
       workspaceId: "ws-1",
       maxOutputTokens: 4096,
-      continueMessage: "Keep building",
+      continueMessage: { text: "Keep building" },
       model: "anthropic:claude-3-5-haiku",
       sendMessageOptions,
     });
@@ -118,7 +118,7 @@ describe("prepareCompactionMessage", () => {
       throw new Error("Expected compaction metadata");
     }
 
-    expect(metadata.parsed.resumeModel).toBe(sendMessageOptions.model);
+    expect(metadata.parsed.continueMessage?.model).toBe(sendMessageOptions.model);
   });
 
   test("generates correct prompt text with strict summary instructions", () => {
@@ -131,5 +131,56 @@ describe("prepareCompactionMessage", () => {
 
     expect(messageText).toContain("Focus entirely on the summary");
     expect(messageText).toContain("Do not suggest next steps or future actions");
+  });
+
+  test("does not create continueMessage when no text or images provided", () => {
+    const sendMessageOptions = createBaseOptions();
+    const { metadata } = prepareCompactionMessage({
+      workspaceId: "ws-1",
+      maxOutputTokens: 4096,
+      sendMessageOptions,
+    });
+
+    expect(metadata.type).toBe("compaction-request");
+    if (metadata.type !== "compaction-request") {
+      throw new Error("Expected compaction metadata");
+    }
+
+    expect(metadata.parsed.continueMessage).toBeUndefined();
+  });
+
+  test("creates continueMessage when text is provided", () => {
+    const sendMessageOptions = createBaseOptions();
+    const { metadata } = prepareCompactionMessage({
+      workspaceId: "ws-1",
+      continueMessage: { text: "Continue with this" },
+      sendMessageOptions,
+    });
+
+    if (metadata.type !== "compaction-request") {
+      throw new Error("Expected compaction metadata");
+    }
+
+    expect(metadata.parsed.continueMessage).toBeDefined();
+    expect(metadata.parsed.continueMessage?.text).toBe("Continue with this");
+  });
+
+  test("creates continueMessage when images are provided without text", () => {
+    const sendMessageOptions = createBaseOptions();
+    const { metadata } = prepareCompactionMessage({
+      workspaceId: "ws-1",
+      continueMessage: {
+        text: "",
+        imageParts: [{ url: "data:image/png;base64,abc", mediaType: "image/png" }],
+      },
+      sendMessageOptions,
+    });
+
+    if (metadata.type !== "compaction-request") {
+      throw new Error("Expected compaction metadata");
+    }
+
+    expect(metadata.parsed.continueMessage).toBeDefined();
+    expect(metadata.parsed.continueMessage?.imageParts).toHaveLength(1);
   });
 });

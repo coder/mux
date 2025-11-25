@@ -9,7 +9,7 @@ import type { ImagePart } from "./ipc";
 export interface ContinueMessage {
   text: string;
   imageParts?: ImagePart[];
-  model: string;
+  model?: string;
 }
 
 // Parsed compaction request data (shared type for consistency)

@@ -479,12 +479,39 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     const isSlashCommand = normalizedCommandInput.startsWith("/");
     const parsed = isSlashCommand ? parseCommand(normalizedCommandInput) : null;
 
+    // Prepare image parts early so slash commands can access them
+    const imageParts = imageAttachments.map((img, index) => {
+      // Validate before sending to help with debugging
+      if (!img.url || typeof img.url !== "string") {
+        console.error(
+          `Image attachment [${index}] has invalid url:`,
+          typeof img.url,
+          img.url?.slice(0, 50)
+        );
+      }
+      if (!img.url?.startsWith("data:")) {
+        console.error(`Image attachment [${index}] url is not a data URL:`, img.url?.slice(0, 100));
+      }
+      if (!img.mediaType || typeof img.mediaType !== "string") {
+        console.error(
+          `Image attachment [${index}] has invalid mediaType:`,
+          typeof img.mediaType,
+          img.mediaType
+        );
+      }
+      return {
+        url: img.url,
+        mediaType: img.mediaType,
+      };
+    });
+
     if (parsed) {
       const context: SlashCommandContext = {
         variant,
         workspaceId: variant === "workspace" ? props.workspaceId : undefined,
         sendMessageOptions,
         setInput,
+        setImageAttachments,
         setIsSending,
         setToast,
         setVimEnabled,
@@ -494,6 +521,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         onTruncateHistory: variant === "workspace" ? props.onTruncateHistory : undefined,
         onCancelEdit: variant === "workspace" ? props.onCancelEdit : undefined,
         editMessageId: editingMessage?.id,
+        imageParts: imageParts.length > 0 ? imageParts : undefined,
         resetInputHeight: () => {
           if (inputRef.current) {
             inputRef.current.style.height = "36px";
@@ -534,32 +562,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
 
     // Workspace variant: regular message send
 
-    // Prepare image parts if any
-    const imageParts = imageAttachments.map((img, index) => {
-      // Validate before sending to help with debugging
-      if (!img.url || typeof img.url !== "string") {
-        console.error(
-          `Image attachment [${index}] has invalid url:`,
-          typeof img.url,
-          img.url?.slice(0, 50)
-        );
-      }
-      if (!img.url?.startsWith("data:")) {
-        console.error(`Image attachment [${index}] url is not a data URL:`, img.url?.slice(0, 100));
-      }
-      if (!img.mediaType || typeof img.mediaType !== "string") {
-        console.error(
-          `Image attachment [${index}] has invalid mediaType:`,
-          typeof img.mediaType,
-          img.mediaType
-        );
-      }
-      return {
-        url: img.url,
-        mediaType: img.mediaType,
-      };
-    });
-
     try {
       // Regular message - send directly via API
       setIsSending(true);
@@ -587,6 +589,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             continueMessage: {
               text: messageText,
               imageParts,
+              model: sendMessageOptions.model,
             },
             sendMessageOptions,
           });
@@ -645,7 +648,11 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             } = prepareCompactionMessage({
               workspaceId: props.workspaceId,
               maxOutputTokens: parsedEditingCommand.maxOutputTokens,
-              continueMessage: { text: parsedEditingCommand.continueMessage ?? "", imageParts },
+              continueMessage: {
+                text: parsedEditingCommand.continueMessage ?? "",
+                imageParts,
+                model: sendMessageOptions.model,
+              },
               model: parsedEditingCommand.model,
               sendMessageOptions,
             });

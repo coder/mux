@@ -23,7 +23,7 @@ import { Ok, Err } from "@/common/types/result";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { MessageQueue } from "./messageQueue";
-import { buildContinueMessageOptions } from "./compactionContinueOptions";
+
 import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
 
@@ -336,16 +336,16 @@ export class AgentSession {
     // If this is a compaction request with a continue message, queue it for auto-send after compaction
     const muxMeta = options?.muxMetadata;
     if (muxMeta?.type === "compaction-request" && muxMeta.parsed.continueMessage && options) {
-      // Strip out edit-specific and compaction-specific fields so the queued message is a fresh user message
-      const { muxMetadata, mode, editMessageId, imageParts, ...rest } = options;
-      const baseContinueOptions: SendMessageOptions = { ...rest };
-      const sanitizedOptions = buildContinueMessageOptions(
-        baseContinueOptions,
-        muxMeta.parsed.continueMessage.model
-      );
+      // Strip out compaction-specific fields so the queued message is a fresh user message
+      const { muxMetadata, mode, editMessageId, imageParts, maxOutputTokens, ...rest } = options;
+      const sanitizedOptions: SendMessageOptions = {
+        ...rest,
+        model: muxMeta.parsed.continueMessage.model ?? rest.model,
+      };
+      const continueImageParts = muxMeta.parsed.continueMessage.imageParts;
       const continuePayload =
-        imageParts && imageParts.length > 0
-          ? { ...sanitizedOptions, imageParts }
+        continueImageParts && continueImageParts.length > 0
+          ? { ...sanitizedOptions, imageParts: continueImageParts }
           : sanitizedOptions;
       this.messageQueue.add(muxMeta.parsed.continueMessage.text, continuePayload);
       this.emitQueuedMessageChanged();
