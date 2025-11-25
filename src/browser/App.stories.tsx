@@ -996,13 +996,14 @@ export const ActiveWorkspaceWithChat: Story = {
                   }, 100);
 
                   // Keep sending reasoning deltas to maintain streaming state
+                  // tokens: 0 to avoid flaky token counts in visual tests
                   const intervalId = setInterval(() => {
                     callback({
                       type: "reasoning-delta",
                       workspaceId: workspaceId,
                       messageId: "msg-12",
                       delta: ".",
-                      tokens: 1,
+                      tokens: 0,
                       timestamp: NOW,
                     });
                   }, 2000);
@@ -1108,13 +1109,14 @@ export const ActiveWorkspaceWithChat: Story = {
                   }, 100);
 
                   // Keep sending deltas to maintain streaming state
+                  // tokens: 0 to avoid flaky token counts in visual tests
                   const intervalId = setInterval(() => {
                     callback({
                       type: "stream-delta",
                       workspaceId: streamingWorkspaceId,
                       messageId: "stream-msg-2",
                       delta: ".",
-                      tokens: 1,
+                      tokens: 0,
                       timestamp: NOW,
                     });
                   }, 2000);
