@@ -12,6 +12,7 @@ import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import {
   ANTHROPIC_EFFORT,
+  ANTHROPIC_THINKING_BUDGETS,
   GEMINI_THINKING_BUDGETS,
   OPENAI_REASONING_EFFORT,
   OPENROUTER_REASONING_EFFORT,
@@ -83,9 +84,39 @@ export function buildProviderOptions(
 
   // Build Anthropic-specific options
   if (provider === "anthropic") {
-    const effort = ANTHROPIC_EFFORT[effectiveThinking];
+    // Extract model name from model string (e.g., "anthropic:claude-opus-4-5" -> "claude-opus-4-5")
+    const [, modelName] = modelString.split(":");
+
+    // Check if this is Opus 4.5 (supports effort parameter)
+    // Opus 4.5 uses the new "effort" parameter for reasoning control
+    // All other Anthropic models use the "thinking" parameter with budgetTokens
+    const isOpus45 = modelName?.includes("opus-4-5") ?? false;
+
+    if (isOpus45) {
+      // Opus 4.5: Use effort parameter for reasoning control
+      const effort = ANTHROPIC_EFFORT[effectiveThinking];
+      log.debug("buildProviderOptions: Anthropic Opus 4.5 config", {
+        effort,
+        thinkingLevel: effectiveThinking,
+      });
+
+      const options: ProviderOptions = {
+        anthropic: {
+          disableParallelToolUse: false, // Always enable concurrent tool execution
+          sendReasoning: true, // Include reasoning traces in requests sent to the model
+          // Use effort parameter (Opus 4.5 only) to control token spend
+          // SDK auto-adds beta header "effort-2025-11-24" when effort is set
+          ...(effort && { effort }),
+        },
+      };
+      log.debug("buildProviderOptions: Returning Anthropic Opus 4.5 options", options);
+      return options;
+    }
+
+    // Other Anthropic models: Use thinking parameter with budgetTokens
+    const budgetTokens = ANTHROPIC_THINKING_BUDGETS[effectiveThinking];
     log.debug("buildProviderOptions: Anthropic config", {
-      effort,
+      budgetTokens,
       thinkingLevel: effectiveThinking,
     });
 
@@ -93,9 +124,13 @@ export function buildProviderOptions(
       anthropic: {
         disableParallelToolUse: false, // Always enable concurrent tool execution
         sendReasoning: true, // Include reasoning traces in requests sent to the model
-        // Use effort parameter to control token spend (thinking, text, and tool calls)
-        // SDK auto-adds beta header "effort-2025-11-24" when effort is set
-        ...(effort && { effort }),
+        // Conditionally add thinking configuration (non-Opus 4.5 models)
+        ...(budgetTokens > 0 && {
+          thinking: {
+            type: "enabled",
+            budgetTokens,
+          },
+        }),
       },
     };
     log.debug("buildProviderOptions: Returning Anthropic options", options);

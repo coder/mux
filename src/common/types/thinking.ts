@@ -14,17 +14,33 @@ export type ThinkingLevel = "off" | "low" | "medium" | "high";
 export type ThinkingLevelOn = Exclude<ThinkingLevel, "off">;
 
 /**
- * Anthropic effort level mapping
+ * Anthropic thinking token budget mapping
  *
- * Maps our unified thinking levels to Anthropic's effort parameter:
- * - off: No effort specified (undefined)
- * - low: Most efficient - significant token savings
- * - medium: Balanced approach with moderate token savings
- * - high: Maximum capability (default behavior)
+ * These heuristics balance thinking depth with response time and cost.
+ * Used for models that support extended thinking with budgetTokens
+ * (e.g., Sonnet 4.5, Haiku 4.5, Opus 4.1, etc.)
  *
- * The effort parameter controls all token spend including thinking,
- * text responses, and tool calls. Unlike budget_tokens, it doesn't require
- * thinking to be explicitly enabled.
+ * - off: No extended thinking
+ * - low: Quick thinking for straightforward tasks (4K tokens)
+ * - medium: Standard thinking for moderate complexity (10K tokens)
+ * - high: Deep thinking for complex problems (20K tokens)
+ */
+export const ANTHROPIC_THINKING_BUDGETS: Record<ThinkingLevel, number> = {
+  off: 0,
+  low: 4000,
+  medium: 10000,
+  high: 20000,
+};
+
+/**
+ * Anthropic Opus 4.5 effort parameter mapping
+ *
+ * The effort parameter is a new feature ONLY available for Claude Opus 4.5.
+ * It controls how much computational work the model applies to each task.
+ *
+ * Other Anthropic models must use the thinking.budgetTokens approach instead.
+ *
+ * @see https://www.anthropic.com/news/claude-opus-4-5
  */
 export const ANTHROPIC_EFFORT: Record<ThinkingLevel, "low" | "medium" | "high" | undefined> = {
   off: undefined,
