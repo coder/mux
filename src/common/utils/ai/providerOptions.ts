@@ -11,7 +11,7 @@ import type { XaiProviderOptions } from "@ai-sdk/xai";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import {
-  ANTHROPIC_THINKING_BUDGETS,
+  ANTHROPIC_EFFORT,
   GEMINI_THINKING_BUDGETS,
   OPENAI_REASONING_EFFORT,
   OPENROUTER_REASONING_EFFORT,
@@ -19,7 +19,6 @@ import {
 import { log } from "@/node/services/log";
 import type { MuxMessage } from "@/common/types/message";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
-import { getModelStats } from "@/common/utils/tokens/modelStats";
 
 /**
  * OpenRouter reasoning options
@@ -84,9 +83,9 @@ export function buildProviderOptions(
 
   // Build Anthropic-specific options
   if (provider === "anthropic") {
-    const budgetTokens = ANTHROPIC_THINKING_BUDGETS[effectiveThinking];
+    const effort = ANTHROPIC_EFFORT[effectiveThinking];
     log.debug("buildProviderOptions: Anthropic config", {
-      budgetTokens,
+      effort,
       thinkingLevel: effectiveThinking,
     });
 
@@ -94,13 +93,9 @@ export function buildProviderOptions(
       anthropic: {
         disableParallelToolUse: false, // Always enable concurrent tool execution
         sendReasoning: true, // Include reasoning traces in requests sent to the model
-        // Conditionally add thinking configuration
-        ...(budgetTokens > 0 && {
-          thinking: {
-            type: "enabled",
-            budgetTokens,
-          },
-        }),
+        // Use effort parameter to control token spend (thinking, text, and tool calls)
+        // SDK auto-adds beta header "effort-2025-11-24" when effort is set
+        ...(effort && { effort }),
       },
     };
     log.debug("buildProviderOptions: Returning Anthropic options", options);
@@ -277,78 +272,4 @@ export function buildProviderOptions(
   // No provider-specific options for unsupported providers
   log.debug("buildProviderOptions: Unsupported provider", provider);
   return {};
-}
-
-/**
- * Calculate the effective maxOutputTokens for a model based on its limits and thinking budget
- *
- * For Anthropic models with extended thinking, the AI SDK adds thinkingBudget to maxOutputTokens
- * internally. We need to ensure the sum doesn't exceed the model's max_output_tokens limit.
- *
- * For example, Claude Opus 4 has max_output_tokens=32000. If we use:
- * - thinkingBudget=20000 (high)
- * - maxOutputTokens=32000
- * Then total=52000 which exceeds 32000 → SDK shows warning and caps output
- *
- * Solution: Reduce maxOutputTokens so that maxOutputTokens + thinkingBudget <= model limit
- *
- * @param modelString - Full model string (e.g., "anthropic:claude-opus-4-1")
- * @param thinkingLevel - Current thinking level
- * @param requestedMaxOutputTokens - Optional user-requested maxOutputTokens
- * @returns Effective maxOutputTokens that respects model limits with thinking budget
- */
-export function calculateEffectiveMaxOutputTokens(
-  modelString: string,
-  thinkingLevel: ThinkingLevel,
-  requestedMaxOutputTokens?: number
-): number | undefined {
-  const [provider] = modelString.split(":");
-
-  // Only apply this adjustment for Anthropic models
-  if (provider !== "anthropic") {
-    return requestedMaxOutputTokens;
-  }
-
-  // Get the actual thinking level after policy enforcement
-  const effectiveThinking = enforceThinkingPolicy(modelString, thinkingLevel);
-  const thinkingBudget = ANTHROPIC_THINKING_BUDGETS[effectiveThinking];
-
-  // Get model's max output tokens from models.json
-  const modelStats = getModelStats(modelString);
-  const modelMaxOutput = modelStats?.max_output_tokens;
-
-  // If we don't know the model's max output, return requested value
-  if (!modelMaxOutput) {
-    log.debug("calculateEffectiveMaxOutputTokens: Unknown model max output, using requested", {
-      modelString,
-      requestedMaxOutputTokens,
-    });
-    return requestedMaxOutputTokens;
-  }
-
-  // Calculate the maximum safe maxOutputTokens
-  // The SDK will add thinkingBudget to maxOutputTokens, so we need room for both
-  const maxSafeOutput = modelMaxOutput - thinkingBudget;
-
-  // If user didn't request specific tokens, use the max safe value
-  const targetOutput = requestedMaxOutputTokens ?? modelMaxOutput;
-
-  // Cap at the safe maximum
-  const effectiveOutput = Math.min(targetOutput, maxSafeOutput);
-
-  // Ensure we don't go below a reasonable minimum (1000 tokens)
-  const finalOutput = Math.max(effectiveOutput, 1000);
-
-  log.debug("calculateEffectiveMaxOutputTokens", {
-    modelString,
-    thinkingLevel,
-    effectiveThinking,
-    thinkingBudget,
-    modelMaxOutput,
-    requestedMaxOutputTokens,
-    maxSafeOutput,
-    finalOutput,
-  });
-
-  return finalOutput;
 }
