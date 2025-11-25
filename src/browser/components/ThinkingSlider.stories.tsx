@@ -75,6 +75,14 @@ export const DifferentModels: Story = {
 };
 
 export const InteractiveDemo: Story = {
+  // Use unique workspaceId to isolate state from other stories
+  decorators: [
+    (Story) => (
+      <ThinkingProvider workspaceId="storybook-interactive-demo">
+        <Story />
+      </ThinkingProvider>
+    ),
+  ],
   render: () => (
     <div className="bg-dark flex min-w-80 flex-col gap-[30px] p-10">
       <div className="text-bright font-primary mb-2.5 text-[13px]">
