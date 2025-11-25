@@ -81,6 +81,18 @@ export type ProviderName = keyof typeof PROVIDER_REGISTRY;
 export const SUPPORTED_PROVIDERS = Object.keys(PROVIDER_REGISTRY) as ProviderName[];
 
 /**
+ * Display names for providers (proper casing for UI)
+ */
+export const PROVIDER_DISPLAY_NAMES: Record<ProviderName, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  google: "Google",
+  xai: "xAI",
+  ollama: "Ollama",
+  openrouter: "OpenRouter",
+};
+
+/**
  * Type guard to check if a string is a valid provider name
  */
 export function isValidProvider(provider: string): provider is ProviderName {

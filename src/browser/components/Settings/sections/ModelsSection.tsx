@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import type { ProvidersConfigMap } from "../types";
-import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
+import { SUPPORTED_PROVIDERS, PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 
 interface NewModelForm {
   provider: string;
@@ -98,7 +98,7 @@ export function ModelsSection() {
             <option value="">Select provider</option>
             {SUPPORTED_PROVIDERS.map((p) => (
               <option key={p} value={p}>
-                {p}
+                {PROVIDER_DISPLAY_NAMES[p]}
               </option>
             ))}
           </select>
@@ -136,7 +136,10 @@ export function ModelsSection() {
               className="border-border-medium bg-background-secondary flex items-center justify-between rounded-md border px-4 py-2"
             >
               <div className="flex items-center gap-3">
-                <span className="text-muted text-xs capitalize">{provider}</span>
+                <span className="text-muted text-xs">
+                  {PROVIDER_DISPLAY_NAMES[provider as keyof typeof PROVIDER_DISPLAY_NAMES] ??
+                    provider}
+                </span>
                 <span className="text-foreground font-mono text-sm">{modelId}</span>
               </div>
               <button

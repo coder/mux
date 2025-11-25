@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { ChevronDown, ChevronRight, Check, X } from "lucide-react";
 import type { ProvidersConfigMap } from "../types";
-import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
+import { SUPPORTED_PROVIDERS, PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 
 export function ProvidersSection() {
   const [config, setConfig] = useState<ProvidersConfigMap>({});
@@ -90,7 +90,9 @@ export function ProvidersSection() {
                 ) : (
                   <ChevronRight className="text-muted h-4 w-4" />
                 )}
-                <span className="text-foreground text-sm font-medium capitalize">{provider}</span>
+                <span className="text-foreground text-sm font-medium">
+                  {PROVIDER_DISPLAY_NAMES[provider]}
+                </span>
               </div>
               <div
                 className={`h-2 w-2 rounded-full ${configured ? "bg-green-500" : "bg-border-medium"}`}
