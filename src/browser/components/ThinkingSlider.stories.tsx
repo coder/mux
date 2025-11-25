@@ -41,12 +41,16 @@ export const DifferentModels: Story = {
   render: () => (
     <div className="bg-dark flex min-w-80 flex-col gap-[30px] p-10">
       <div>
-        <div className="text-muted-light font-primary mb-2 text-xs">Claude Sonnet 4.5 (4 levels)</div>
+        <div className="text-muted-light font-primary mb-2 text-xs">
+          Claude Sonnet 4.5 (4 levels)
+        </div>
         <ThinkingSliderComponent modelString="anthropic:claude-sonnete-4-5" />
       </div>
 
       <div>
-        <div className="text-muted-light font-primary mb-2 text-xs">Claude Opus 4.5 (3 levels: low/medium/high)</div>
+        <div className="text-muted-light font-primary mb-2 text-xs">
+          Claude Opus 4.5 (3 levels: low/medium/high)
+        </div>
         <ThinkingSliderComponent modelString="anthropic:claude-opus-4-5" />
       </div>
 
@@ -56,7 +60,9 @@ export const DifferentModels: Story = {
       </div>
 
       <div>
-        <div className="text-muted-light font-primary mb-2 text-xs">Gemini 3 (2 levels: low/high)</div>
+        <div className="text-muted-light font-primary mb-2 text-xs">
+          Gemini 3 (2 levels: low/high)
+        </div>
         <ThinkingSliderComponent modelString="google:gemini-3-pro-preview" />
       </div>
 
