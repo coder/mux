@@ -168,7 +168,9 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
         {isLoading ? "..." : `${count} Untracked`}
       </div>
 
-      {showTooltip && hasUntracked && popupPosition &&
+      {showTooltip &&
+        hasUntracked &&
+        popupPosition &&
         createPortal(
           <div
             ref={popupRef}
