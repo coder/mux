@@ -541,6 +541,18 @@ export const ActiveWorkspaceWithChat: Story = {
           projects,
           workspaces,
           apiOverrides: {
+            tokenizer: {
+              countTokens: () => Promise.resolve(42),
+              countTokensBatch: (_model, texts) => Promise.resolve(texts.map(() => 42)),
+              calculateStats: () =>
+                Promise.resolve({
+                  consumers: [],
+                  totalTokens: 0,
+                  model: "mock-model",
+                  tokenizerName: "mock-tokenizer",
+                  usageHistory: [],
+                }),
+            },
             providers: {
               setProviderConfig: () => Promise.resolve({ success: true, data: undefined }),
               list: () => Promise.resolve(["anthropic", "openai", "xai"]),
@@ -1245,6 +1257,13 @@ main
             namedWorkspacePath: "/home/user/.mux/src/my-app/feature",
           })
         );
+
+        // Pre-fill input with text so token count is visible
+        localStorage.setItem(
+          `input:${workspaceId}`,
+          "Add OAuth2 support with Google and GitHub providers"
+        );
+        localStorage.setItem(`model:${workspaceId}`, "anthropic:claude-sonnet-4-5");
 
         initialized.current = true;
       }
