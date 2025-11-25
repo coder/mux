@@ -1483,7 +1483,13 @@ export class IpcMain {
           }
 
           if (keyPath.length > 0) {
-            current[keyPath[keyPath.length - 1]] = value;
+            const lastKey = keyPath[keyPath.length - 1];
+            // Delete key if value is empty string, otherwise set it
+            if (value === "") {
+              delete current[lastKey];
+            } else {
+              current[lastKey] = value;
+            }
           }
 
           // Save updated config

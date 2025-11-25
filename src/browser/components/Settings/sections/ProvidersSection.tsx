@@ -57,6 +57,17 @@ export function ProvidersSection() {
     }
   }, [editingField, editValue]);
 
+  const handleClearBaseUrl = useCallback(async (provider: string) => {
+    setSaving(true);
+    try {
+      await window.api.providers.setProviderConfig(provider, ["baseUrl"], "");
+      const cfg = await window.api.providers.getConfig();
+      setConfig(cfg);
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
   const isConfigured = (provider: string) => {
     return config[provider]?.apiKeySet ?? false;
   };
@@ -192,13 +203,25 @@ export function ProvidersSection() {
                       <span className="text-foreground font-mono text-xs">
                         {providerConfig?.baseUrl ?? "Default"}
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => handleStartEdit(provider, "baseUrl")}
-                        className="text-accent hover:text-accent-light text-xs"
-                      >
-                        {providerConfig?.baseUrl ? "Change" : "Set"}
-                      </button>
+                      <div className="flex gap-2">
+                        {providerConfig?.baseUrl && (
+                          <button
+                            type="button"
+                            onClick={() => void handleClearBaseUrl(provider)}
+                            disabled={saving}
+                            className="text-muted hover:text-error text-xs"
+                          >
+                            Clear
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleStartEdit(provider, "baseUrl")}
+                          className="text-accent hover:text-accent-light text-xs"
+                        >
+                          {providerConfig?.baseUrl ? "Change" : "Set"}
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
