@@ -23,37 +23,46 @@ void mock.module("@/browser/utils/thinking/policy", () => ({
 
 describe("buildProviderOptions - Anthropic", () => {
   describe("Opus 4.5 (effort parameter)", () => {
-    test("should use effort parameter for claude-opus-4-5", () => {
+    test("should use effort and thinking parameters for claude-opus-4-5", () => {
       const result = buildProviderOptions("anthropic:claude-opus-4-5", "medium");
 
       expect(result).toEqual({
         anthropic: {
           disableParallelToolUse: false,
           sendReasoning: true,
+          thinking: {
+            type: "enabled",
+            budgetTokens: 10000, // ANTHROPIC_THINKING_BUDGETS.medium
+          },
           effort: "medium",
         },
       });
     });
 
-    test("should use effort parameter for claude-opus-4-5-20251101", () => {
+    test("should use effort and thinking parameters for claude-opus-4-5-20251101", () => {
       const result = buildProviderOptions("anthropic:claude-opus-4-5-20251101", "high");
 
       expect(result).toEqual({
         anthropic: {
           disableParallelToolUse: false,
           sendReasoning: true,
+          thinking: {
+            type: "enabled",
+            budgetTokens: 20000, // ANTHROPIC_THINKING_BUDGETS.high
+          },
           effort: "high",
         },
       });
     });
 
-    test("should omit effort when thinking is off for Opus 4.5", () => {
+    test("should use effort 'low' with no thinking when off for Opus 4.5", () => {
       const result = buildProviderOptions("anthropic:claude-opus-4-5", "off");
 
       expect(result).toEqual({
         anthropic: {
           disableParallelToolUse: false,
           sendReasoning: true,
+          effort: "low", // "off" maps to effort: "low" for efficiency
         },
       });
     });

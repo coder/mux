@@ -42,8 +42,8 @@ export const ANTHROPIC_THINKING_BUDGETS: Record<ThinkingLevel, number> = {
  *
  * @see https://www.anthropic.com/news/claude-opus-4-5
  */
-export const ANTHROPIC_EFFORT: Record<ThinkingLevel, "low" | "medium" | "high" | undefined> = {
-  off: undefined,
+export const ANTHROPIC_EFFORT: Record<ThinkingLevel, "low" | "medium" | "high"> = {
+  off: "low",
   low: "low",
   medium: "medium",
   high: "high",

@@ -33,13 +33,17 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
-  test("returns low/medium/high for Opus 4.5", () => {
+  test("returns all levels for Opus 4.5 (uses default policy)", () => {
+    // Opus 4.5 uses the default policy - no special case needed
+    // The effort parameter handles the "off" case by setting effort="low"
     expect(getThinkingPolicyForModel("anthropic:claude-opus-4-5")).toEqual([
+      "off",
       "low",
       "medium",
       "high",
     ]);
     expect(getThinkingPolicyForModel("anthropic:claude-opus-4-5-20251101")).toEqual([
+      "off",
       "low",
       "medium",
       "high",
@@ -95,19 +99,16 @@ describe("enforceThinkingPolicy", () => {
     });
   });
 
-  describe("Opus 4.5 (no off option)", () => {
-    test("allows low/medium/high levels", () => {
+  describe("Opus 4.5 (all levels supported)", () => {
+    test("allows all levels including off", () => {
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "off")).toBe("off");
       expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "low")).toBe("low");
       expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "medium")).toBe("medium");
       expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "high")).toBe("high");
     });
 
-    test("falls back to high when off is requested", () => {
-      expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "off")).toBe("high");
-    });
-
-    test("falls back to high when off is requested (versioned model)", () => {
-      expect(enforceThinkingPolicy("anthropic:claude-opus-4-5-20251101", "off")).toBe("high");
+    test("allows off for versioned model", () => {
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-5-20251101", "off")).toBe("off");
     });
   });
 });

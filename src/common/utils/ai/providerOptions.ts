@@ -93,10 +93,16 @@ export function buildProviderOptions(
     const isOpus45 = modelName?.includes("opus-4-5") ?? false;
 
     if (isOpus45) {
-      // Opus 4.5: Use effort parameter for reasoning control
-      const effort = ANTHROPIC_EFFORT[effectiveThinking];
+      // Opus 4.5: Use effort parameter AND optionally thinking for visible reasoning
+      // - "off" or "low" → effort: "low", no thinking (fast, no visible reasoning for off)
+      // - "low" → effort: "low", thinking enabled (visible reasoning)
+      // - "medium" → effort: "medium", thinking enabled
+      // - "high" → effort: "high", thinking enabled
+      const effortLevel = ANTHROPIC_EFFORT[effectiveThinking];
+      const budgetTokens = ANTHROPIC_THINKING_BUDGETS[effectiveThinking];
       log.debug("buildProviderOptions: Anthropic Opus 4.5 config", {
-        effort,
+        effort: effortLevel,
+        budgetTokens,
         thinkingLevel: effectiveThinking,
       });
 
@@ -104,9 +110,17 @@ export function buildProviderOptions(
         anthropic: {
           disableParallelToolUse: false, // Always enable concurrent tool execution
           sendReasoning: true, // Include reasoning traces in requests sent to the model
+          // Enable thinking to get visible reasoning traces (only when not "off")
+          // budgetTokens sets the ceiling; effort controls how eagerly tokens are spent
+          ...(budgetTokens > 0 && {
+            thinking: {
+              type: "enabled",
+              budgetTokens,
+            },
+          }),
           // Use effort parameter (Opus 4.5 only) to control token spend
           // SDK auto-adds beta header "effort-2025-11-24" when effort is set
-          ...(effort && { effort }),
+          effort: effortLevel,
         },
       };
       log.debug("buildProviderOptions: Returning Anthropic Opus 4.5 options", options);

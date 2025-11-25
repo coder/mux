@@ -48,9 +48,7 @@ export const DifferentModels: Story = {
       </div>
 
       <div>
-        <div className="text-muted-light font-primary mb-2 text-xs">
-          Claude Opus 4.5 (3 levels: low/medium/high)
-        </div>
+        <div className="text-muted-light font-primary mb-2 text-xs">Claude Opus 4.5 (4 levels)</div>
         <ThinkingSliderComponent modelString="anthropic:claude-opus-4-5" />
       </div>
 
@@ -116,18 +114,19 @@ export const InteractiveDemo: Story = {
   },
 };
 
-export const Opus45ThreeLevels: Story = {
+export const Opus45AllLevels: Story = {
   args: { modelString: "anthropic:claude-opus-4-5" },
   render: (args) => (
     <div className="bg-dark flex min-w-80 flex-col gap-[30px] p-10">
       <div className="text-bright font-primary mb-2.5 text-[13px]">
-        Claude Opus 4.5 uses the effort parameter (low/medium/high only, no &ldquo;off&rdquo;):
+        Claude Opus 4.5 uses the effort parameter with optional extended thinking:
       </div>
       <ThinkingSliderComponent modelString={args.modelString} />
       <div className="text-muted-light font-primary mt-2.5 text-[11px]">
-        • <strong>Low</strong>: Conservative token usage
-        <br />• <strong>Medium</strong>: Balanced usage (default)
-        <br />• <strong>High</strong>: Best results, more tokens
+        • <strong>Off</strong>: effort=&ldquo;low&rdquo;, no visible reasoning
+        <br />• <strong>Low</strong>: effort=&ldquo;low&rdquo;, visible reasoning
+        <br />• <strong>Medium</strong>: effort=&ldquo;medium&rdquo;, visible reasoning
+        <br />• <strong>High</strong>: effort=&ldquo;high&rdquo;, visible reasoning
       </div>
     </div>
   ),
