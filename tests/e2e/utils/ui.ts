@@ -41,6 +41,14 @@ export interface WorkspaceUI {
     expectVisible(): Promise<void>;
     selectTab(label: string): Promise<void>;
   };
+  readonly settings: {
+    open(): Promise<void>;
+    close(): Promise<void>;
+    expectOpen(): Promise<void>;
+    expectClosed(): Promise<void>;
+    selectSection(section: "General" | "Providers" | "Models"): Promise<void>;
+    expandProvider(providerName: string): Promise<void>;
+  };
   readonly context: DemoProjectConfig;
 }
 
@@ -333,10 +341,51 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
     },
   };
 
+  const settings = {
+    async open(): Promise<void> {
+      // Click the settings gear button in the title bar
+      const settingsButton = page.getByRole("button", { name: /settings/i });
+      await expect(settingsButton).toBeVisible();
+      await settingsButton.click();
+      await settings.expectOpen();
+    },
+
+    async close(): Promise<void> {
+      // Press Escape to close
+      await page.keyboard.press("Escape");
+      await settings.expectClosed();
+    },
+
+    async expectOpen(): Promise<void> {
+      const dialog = page.getByRole("dialog", { name: "Settings" });
+      await expect(dialog).toBeVisible({ timeout: 5000 });
+    },
+
+    async expectClosed(): Promise<void> {
+      const dialog = page.getByRole("dialog", { name: "Settings" });
+      await expect(dialog).not.toBeVisible({ timeout: 5000 });
+    },
+
+    async selectSection(section: "General" | "Providers" | "Models"): Promise<void> {
+      const sectionButton = page.getByRole("button", { name: section, exact: true });
+      await expect(sectionButton).toBeVisible();
+      await sectionButton.click();
+    },
+
+    async expandProvider(providerName: string): Promise<void> {
+      const providerButton = page.getByRole("button", { name: new RegExp(providerName, "i") });
+      await expect(providerButton).toBeVisible();
+      await providerButton.click();
+      // Wait for expansion - look for the "Base URL" label which is more unique
+      await expect(page.getByText(/Base URL/)).toBeVisible({ timeout: 5000 });
+    },
+  };
+
   return {
     projects,
     chat,
     metaSidebar,
+    settings,
     context,
   };
 }
