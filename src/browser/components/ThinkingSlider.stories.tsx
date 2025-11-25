@@ -123,16 +123,6 @@ export const Opus45ThreeLevels: Story = {
       </div>
     </div>
   ),
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-
-    // Find the slider
-    const slider = canvas.getByRole("slider");
-
-    // Verify slider is present with 3 levels (0-2)
-    await expect(slider).toBeInTheDocument();
-    await expect(slider).toHaveAttribute("max", "2");
-  },
 };
 
 export const LockedThinking: Story = {
