@@ -109,17 +109,17 @@ test.describe("slash command flows", () => {
     ).toBeVisible();
 
     await ui.chat.sendMessage("/model opus");
-    await ui.chat.expectStatusMessageContains("Model changed to anthropic:claude-opus-4-1");
-    await expect(modeToggles.getByText("anthropic:claude-opus-4-1", { exact: true })).toBeVisible();
+    await ui.chat.expectStatusMessageContains("Model changed to anthropic:claude-opus-4-5");
+    await expect(modeToggles.getByText("anthropic:claude-opus-4-5", { exact: true })).toBeVisible();
 
     const timeline = await ui.chat.captureStreamTimeline(async () => {
       await ui.chat.sendMessage(SLASH_COMMAND_PROMPTS.MODEL_STATUS);
     });
 
     const streamStart = timeline.events.find((event) => event.type === "stream-start");
-    expect(streamStart?.model).toBe("anthropic:claude-opus-4-1");
+    expect(streamStart?.model).toBe("anthropic:claude-opus-4-5");
     await ui.chat.expectTranscriptContains(
-      "Claude Opus 4.1 is now responding with enhanced reasoning capacity."
+      "Claude Opus 4.5 is now responding with enhanced reasoning capacity."
     );
   });
 

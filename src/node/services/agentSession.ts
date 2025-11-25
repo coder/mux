@@ -23,6 +23,7 @@ import { Ok, Err } from "@/common/types/result";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { MessageQueue } from "./messageQueue";
+
 import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
 
@@ -271,6 +272,15 @@ export class AgentSession {
     }
 
     if (options?.editMessageId) {
+      // Interrupt an existing stream or compaction, if active
+      if (this.aiService.isStreaming(this.workspaceId)) {
+        // MUST use abandonPartial=true to prevent handleAbort from performing partial compaction
+        // with mismatched history (since we're about to truncate it)
+        const stopResult = await this.interruptStream(/* abandonPartial */ true);
+        if (!stopResult.success) {
+          return Err(createUnknownSendMessageError(stopResult.error));
+        }
+      }
       const truncateResult = await this.historyService.truncateAfterMessage(
         this.workspaceId,
         options.editMessageId
@@ -326,10 +336,18 @@ export class AgentSession {
     // If this is a compaction request with a continue message, queue it for auto-send after compaction
     const muxMeta = options?.muxMetadata;
     if (muxMeta?.type === "compaction-request" && muxMeta.parsed.continueMessage && options) {
-      const { text, imageParts } = muxMeta.parsed.continueMessage;
-      // Strip out edit-specific and compaction-specific fields so the queued message is a fresh user message
-      const { muxMetadata, mode, editMessageId, ...continueOptions } = options;
-      this.messageQueue.add(text, { ...continueOptions, imageParts });
+      // Strip out compaction-specific fields so the queued message is a fresh user message
+      const { muxMetadata, mode, editMessageId, imageParts, maxOutputTokens, ...rest } = options;
+      const sanitizedOptions: SendMessageOptions = {
+        ...rest,
+        model: muxMeta.parsed.continueMessage.model ?? rest.model,
+      };
+      const continueImageParts = muxMeta.parsed.continueMessage.imageParts;
+      const continuePayload =
+        continueImageParts && continueImageParts.length > 0
+          ? { ...sanitizedOptions, imageParts: continueImageParts }
+          : sanitizedOptions;
+      this.messageQueue.add(muxMeta.parsed.continueMessage.text, continuePayload);
       this.emitQueuedMessageChanged();
     }
 
@@ -361,6 +379,16 @@ export class AgentSession {
 
     if (!this.aiService.isStreaming(this.workspaceId)) {
       return Ok(undefined);
+    }
+
+    // Delete partial BEFORE stopping to prevent abort handler from committing it
+    // The abort handler in aiService.ts runs immediately when stopStream is called,
+    // so we must delete first to ensure it finds no partial to commit
+    if (abandonPartial) {
+      const deleteResult = await this.partialService.deletePartial(this.workspaceId);
+      if (!deleteResult.success) {
+        return Err(deleteResult.error);
+      }
     }
 
     const stopResult = await this.aiService.stopStream(this.workspaceId, abandonPartial);

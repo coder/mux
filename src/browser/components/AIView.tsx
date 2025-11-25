@@ -39,6 +39,7 @@ import { CompactionWarning } from "./CompactionWarning";
 import { checkAutoCompaction } from "@/browser/utils/compaction/autoCompactionCheck";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useAutoCompactionSettings } from "../hooks/useAutoCompactionSettings";
+import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 
 interface AIViewProps {
   workspaceId: string;
@@ -142,6 +143,9 @@ const AIViewInner: React.FC<AIViewProps> = ({
     handleScroll,
     markUserInteraction,
   } = useAutoScroll();
+
+  // Use send options for auto-compaction check
+  const pendingSendOptions = useSendMessageOptions(workspaceId);
 
   // ChatInput API for focus management
   const chatInputAPI = useRef<ChatInputAPI | null>(null);
@@ -330,6 +334,11 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
   // Get active stream message ID for token counting
   const activeStreamMessageId = aggregator.getActiveStreamMessageId();
+
+  // Use pending send model for auto-compaction check, not the last stream's model.
+  // This ensures the threshold is based on the model the user will actually send with,
+  // preventing context-length errors when switching from a large-context to smaller model.
+  const pendingModel = pendingSendOptions.model;
 
   const autoCompactionResult = checkAutoCompaction(
     workspaceUsage,

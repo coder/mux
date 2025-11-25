@@ -6,6 +6,7 @@ import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 const MAX_LRU_SIZE = 12;
 const LRU_KEY = "model-lru";
+const DEFAULT_MODEL_KEY = "model-default";
 
 // Ensure defaultModel is first, then fill with other abbreviations (deduplicated)
 const FALLBACK_MODEL = WORKSPACE_DEFAULTS.model ?? defaultModel;
@@ -13,6 +14,7 @@ const DEFAULT_MODELS = [
   FALLBACK_MODEL,
   ...Array.from(new Set(Object.values(MODEL_ABBREVIATIONS))).filter((m) => m !== FALLBACK_MODEL),
 ].slice(0, MAX_LRU_SIZE);
+
 function persistModels(models: string[]): void {
   updatePersistedState(LRU_KEY, models.slice(0, MAX_LRU_SIZE));
 }
@@ -31,15 +33,9 @@ export function evictModelFromLRU(model: string): void {
   persistModels(nextList);
 }
 
-/**
- * Get the default model from LRU (non-hook version for use outside React)
- * This is the ONLY place that reads from LRU outside of the hook.
- *
- * @returns The most recently used model, or WORKSPACE_DEFAULTS.model if LRU is empty
- */
-export function getDefaultModelFromLRU(): string {
-  const lru = readPersistedState<string[]>(LRU_KEY, DEFAULT_MODELS.slice(0, MAX_LRU_SIZE));
-  return lru[0] ?? FALLBACK_MODEL;
+export function getDefaultModel(): string {
+  const persisted = readPersistedState<string | null>(DEFAULT_MODEL_KEY, null);
+  return persisted ?? FALLBACK_MODEL;
 }
 
 /**
@@ -51,6 +47,12 @@ export function useModelLRU() {
   const [recentModels, setRecentModels] = usePersistedState<string[]>(
     LRU_KEY,
     DEFAULT_MODELS.slice(0, MAX_LRU_SIZE),
+    { listener: true }
+  );
+
+  const [defaultModel, setDefaultModel] = usePersistedState<string>(
+    DEFAULT_MODEL_KEY,
+    FALLBACK_MODEL,
     { listener: true }
   );
 
@@ -107,5 +109,7 @@ export function useModelLRU() {
     evictModel,
     getRecentModels,
     recentModels,
+    defaultModel,
+    setDefaultModel,
   };
 }

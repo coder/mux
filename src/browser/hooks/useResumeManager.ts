@@ -177,6 +177,7 @@ export function useResumeManager() {
             continueMessage: {
               text: lastUserMsg.compactionRequest.parsed.continueMessage?.text ?? "",
               imageParts: lastUserMsg.compactionRequest.parsed.continueMessage?.imageParts,
+              model: lastUserMsg.compactionRequest.parsed.continueMessage?.model ?? options.model,
             },
           });
         }

@@ -28,8 +28,8 @@ const SECTION_MARKERS = {
   dirtyStart: "__MUX_BRANCH_DATA__BEGIN_DIRTY_FILES__",
   dirtyEnd: "__MUX_BRANCH_DATA__END_DIRTY_FILES__",
 } as const;
-
-const isDevelopment = import.meta.env.DEV;
+// eslint-disable-next-line no-restricted-globals, no-restricted-syntax
+const isDevelopment = process.env.NODE_ENV !== "production";
 
 function debugAssert(condition: unknown, message: string): void {
   if (!condition && isDevelopment) {

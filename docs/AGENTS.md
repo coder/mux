@@ -22,6 +22,7 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 - Status decoding: `mergeable=MERGEABLE` clean; `CONFLICTING` needs resolution. `mergeStateStatus=CLEAN` ready, `BLOCKED` waiting for CI, `BEHIND` rebase, `DIRTY` conflicts.
 - If behind: `git fetch origin && git rebase origin/main && git push --force-with-lease`.
 - Never enable auto-merge or merge at all unless the user explicitly says "merge it".
+- Do not enable auto-squash or auto-merge on Pull Requests unless explicit permission is given.
 - PR descriptions: include only information a busy reviewer cannot infer; focus on implementation nuances or validation steps.
 - Title prefixes: `perf|refactor|fix|feat|ci|bench`, e.g., `🤖 fix: handle workspace rename edge cases`.
 
@@ -155,3 +156,7 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 
 - When Plan Mode is requested, assume the user wants the actual completed plan; do not merely describe how you would devise one.
 - Attach a net LoC estimate (product code only) to each recommended approach.
+
+## Tool: status_set
+
+- Set status url to the Pull Request once opened

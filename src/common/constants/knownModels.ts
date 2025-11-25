@@ -2,6 +2,8 @@
  * Centralized model metadata. Update model versions here and everywhere else will follow.
  */
 
+import { formatModelDisplayName } from "../utils/ai/modelDisplay";
+
 type ModelProvider = "anthropic" | "openai" | "google" | "xai";
 
 interface KnownModelDefinition {
@@ -43,7 +45,7 @@ const MODEL_DEFINITIONS = {
   },
   OPUS: {
     provider: "anthropic",
-    providerModelId: "claude-opus-4-1",
+    providerModelId: "claude-opus-4-5",
     aliases: ["opus"],
   },
   GPT: {
@@ -151,3 +153,9 @@ export const MODEL_NAMES: Record<ModelProvider, Record<string, string>> = Object
   },
   {} as Record<ModelProvider, Record<string, string>>
 );
+
+/** Picker-friendly list: { label, value } for each known model */
+export const KNOWN_MODEL_OPTIONS = Object.values(KNOWN_MODELS).map((model) => ({
+  label: formatModelDisplayName(model.providerModelId),
+  value: model.id,
+}));

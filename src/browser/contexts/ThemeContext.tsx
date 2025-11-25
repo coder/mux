@@ -15,6 +15,8 @@ interface ThemeContextValue {
   theme: ThemeMode;
   setTheme: React.Dispatch<React.SetStateAction<ThemeMode>>;
   toggleTheme: () => void;
+  /** True if this provider has a forcedTheme - nested providers should not override */
+  isForced: boolean;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -51,29 +53,58 @@ function applyThemeToDocument(theme: ThemeMode) {
   }
 }
 
-export function ThemeProvider(props: { children: ReactNode }) {
-  const [theme, setTheme] = usePersistedState<ThemeMode>(UI_THEME_KEY, resolveSystemTheme(), {
-    listener: true,
-  });
+export function ThemeProvider({
+  children,
+  forcedTheme,
+}: {
+  children: ReactNode;
+  forcedTheme?: ThemeMode;
+}) {
+  // Check if we're nested inside a forced theme provider
+  const parentContext = useContext(ThemeContext);
+  const isNestedUnderForcedProvider = parentContext?.isForced ?? false;
 
+  const [persistedTheme, setTheme] = usePersistedState<ThemeMode>(
+    UI_THEME_KEY,
+    resolveSystemTheme(),
+    {
+      listener: true,
+    }
+  );
+
+  // If nested under a forced provider, use parent's theme
+  // Otherwise, use forcedTheme (if provided) or persistedTheme
+  const theme =
+    isNestedUnderForcedProvider && parentContext
+      ? parentContext.theme
+      : (forcedTheme ?? persistedTheme);
+
+  const isForced = forcedTheme !== undefined || isNestedUnderForcedProvider;
+
+  // Only apply to document if we're the authoritative provider
   useLayoutEffect(() => {
-    applyThemeToDocument(theme);
-  }, [theme]);
+    if (!isNestedUnderForcedProvider) {
+      applyThemeToDocument(theme);
+    }
+  }, [theme, isNestedUnderForcedProvider]);
 
   const toggleTheme = useCallback(() => {
-    setTheme((current) => (current === "dark" ? "light" : "dark"));
-  }, [setTheme]);
+    if (!isNestedUnderForcedProvider) {
+      setTheme((current) => (current === "dark" ? "light" : "dark"));
+    }
+  }, [setTheme, isNestedUnderForcedProvider]);
 
   const value = useMemo<ThemeContextValue>(
     () => ({
       theme,
       setTheme,
       toggleTheme,
+      isForced,
     }),
-    [setTheme, theme, toggleTheme]
+    [setTheme, theme, toggleTheme, isForced]
   );
 
-  return <ThemeContext.Provider value={value}>{props.children}</ThemeContext.Provider>;
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 
 export function useTheme(): ThemeContextValue {

@@ -10,19 +10,10 @@ import { ThemedText } from "../src/components/ThemedText";
 import { useWorkspaceDefaults } from "../src/hooks/useWorkspaceDefaults";
 import type { ThinkingLevel, WorkspaceMode } from "../src/types/settings";
 import { supports1MContext } from "@/common/utils/ai/models";
+import { KNOWN_MODEL_OPTIONS } from "@/common/constants/knownModels";
 
 const MODE_TABS: WorkspaceMode[] = ["plan", "exec"];
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high"];
-
-// Common models from MODEL_ABBREVIATIONS
-const AVAILABLE_MODELS = [
-  { label: "Claude Sonnet 4.5", value: "anthropic:claude-sonnet-4-5" },
-  { label: "Claude Haiku 4.5", value: "anthropic:claude-haiku-4-5" },
-  { label: "Claude Opus 4.1", value: "anthropic:claude-opus-4-1" },
-  { label: "GPT-5", value: "openai:gpt-5" },
-  { label: "GPT-5 Pro", value: "openai:gpt-5-pro" },
-  { label: "GPT-5 Codex", value: "openai:gpt-5-codex" },
-];
 
 function thinkingLevelToValue(level: ThinkingLevel): number {
   const index = THINKING_LEVELS.indexOf(level);
@@ -110,7 +101,7 @@ export default function WorkspaceSettings(): JSX.Element {
                 }}
                 dropdownIconColor={theme.colors.foregroundPrimary}
               >
-                {AVAILABLE_MODELS.map((model) => (
+                {KNOWN_MODEL_OPTIONS.map((model) => (
                   <Picker.Item
                     key={model.value}
                     label={model.label}

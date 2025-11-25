@@ -6,10 +6,12 @@ import {
 import {
   extractModeSection,
   extractModelSection,
+  extractToolSection,
   stripScopedInstructionSections,
 } from "@/node/utils/main/markdown";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { getMuxHome } from "@/common/constants/paths";
+import { getAvailableTools } from "@/common/utils/tools/toolDefinitions";
 
 // NOTE: keep this in sync with the docs/models.md file
 
@@ -78,6 +80,85 @@ function getSystemDirectory(): string {
 }
 
 /**
+ * Extract tool-specific instructions from instruction sources.
+ * Searches context (workspace/project) first, then falls back to global instructions.
+ *
+ * @param globalInstructions Global instructions from ~/.mux/AGENTS.md
+ * @param contextInstructions Context instructions from workspace/project AGENTS.md
+ * @param modelString Active model identifier to determine available tools
+ * @returns Map of tool names to their additional instructions
+ */
+export function extractToolInstructions(
+  globalInstructions: string | null,
+  contextInstructions: string | null,
+  modelString: string
+): Record<string, string> {
+  const availableTools = getAvailableTools(modelString);
+  const toolInstructions: Record<string, string> = {};
+
+  for (const toolName of availableTools) {
+    // Try context instructions first, then global
+    const content =
+      (contextInstructions && extractToolSection(contextInstructions, toolName)) ??
+      (globalInstructions && extractToolSection(globalInstructions, toolName)) ??
+      null;
+
+    if (content) {
+      toolInstructions[toolName] = content;
+    }
+  }
+
+  return toolInstructions;
+}
+
+/**
+ * Read instruction sources and extract tool-specific instructions.
+ * Convenience wrapper that combines readInstructionSources and extractToolInstructions.
+ *
+ * @param metadata - Workspace metadata (contains projectPath)
+ * @param runtime - Runtime for reading workspace files (supports SSH)
+ * @param workspacePath - Workspace directory path
+ * @param modelString - Active model identifier to determine available tools
+ * @returns Map of tool names to their additional instructions
+ */
+export async function readToolInstructions(
+  metadata: WorkspaceMetadata,
+  runtime: Runtime,
+  workspacePath: string,
+  modelString: string
+): Promise<Record<string, string>> {
+  const [globalInstructions, contextInstructions] = await readInstructionSources(
+    metadata,
+    runtime,
+    workspacePath
+  );
+
+  return extractToolInstructions(globalInstructions, contextInstructions, modelString);
+}
+
+/**
+ * Read instruction sets from global and context sources.
+ * Internal helper for buildSystemMessage and extractToolInstructions.
+ *
+ * @param metadata - Workspace metadata (contains projectPath)
+ * @param runtime - Runtime for reading workspace files (supports SSH)
+ * @param workspacePath - Workspace directory path
+ * @returns Tuple of [globalInstructions, contextInstructions]
+ */
+async function readInstructionSources(
+  metadata: WorkspaceMetadata,
+  runtime: Runtime,
+  workspacePath: string
+): Promise<[string | null, string | null]> {
+  const globalInstructions = await readInstructionSet(getSystemDirectory());
+  const workspaceInstructions = await readInstructionSetFromRuntime(runtime, workspacePath);
+  const contextInstructions =
+    workspaceInstructions ?? (await readInstructionSet(metadata.projectPath));
+
+  return [globalInstructions, contextInstructions];
+}
+
+/**
  * Builds a system message for the AI model by combining instruction sources.
  *
  * Instruction layers:
@@ -108,10 +189,11 @@ export async function buildSystemMessage(
   if (!workspacePath) throw new Error("Invalid workspace path: workspacePath is required");
 
   // Read instruction sets
-  const globalInstructions = await readInstructionSet(getSystemDirectory());
-  const workspaceInstructions = await readInstructionSetFromRuntime(runtime, workspacePath);
-  const contextInstructions =
-    workspaceInstructions ?? (await readInstructionSet(metadata.projectPath));
+  const [globalInstructions, contextInstructions] = await readInstructionSources(
+    metadata,
+    runtime,
+    workspacePath
+  );
 
   // Combine: global + context (workspace takes precedence over project) after stripping scoped sections
   const sanitizeScopedInstructions = (input?: string | null): string | undefined => {

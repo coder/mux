@@ -11,7 +11,7 @@ import React, {
 import { CommandSuggestions, COMMAND_SUGGESTION_KEYS } from "../CommandSuggestions";
 import type { Toast } from "../ChatInputToast";
 import { ChatInputToast } from "../ChatInputToast";
-import { createCommandToast, createErrorToast } from "../ChatInputToasts";
+import { createErrorToast } from "../ChatInputToasts";
 import { parseCommand } from "@/browser/utils/slashCommands/parser";
 import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useMode } from "@/browser/contexts/ModeContext";
@@ -26,12 +26,10 @@ import {
   getPendingScopeId,
 } from "@/common/constants/storage";
 import {
-  handleNewCommand,
-  handleCompactCommand,
-  forkWorkspace,
   prepareCompactionMessage,
   executeCompaction,
-  type CommandHandlerContext,
+  processSlashCommand,
+  type SlashCommandContext,
 } from "@/browser/utils/chatCommands";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import {
@@ -60,13 +58,20 @@ import {
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { MuxFrontendMetadata } from "@/common/types/message";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
-import { setTelemetryEnabled } from "@/common/telemetry";
 import { getTokenCountPromise } from "@/browser/utils/tokenizer/rendererClient";
 import { CreationCenterContent } from "./CreationCenterContent";
 import { cn } from "@/common/lib/utils";
 import { CreationControls } from "./CreationControls";
 import { useCreationWorkspace } from "./useCreationWorkspace";
 
+const LEADING_COMMAND_NOISE = /^(?:\s|\u200B|\u200C|\u200D|\u200E|\u200F|\uFEFF)+/;
+
+function normalizeSlashCommandInput(value: string): string {
+  if (!value) {
+    return value;
+  }
+  return value.replace(LEADING_COMMAND_NOISE, "");
+}
 type TokenCountReader = () => number;
 
 function createTokenCountResource(promise: Promise<number>): TokenCountReader {
@@ -139,7 +144,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const modelSelectorRef = useRef<ModelSelectorRef>(null);
   const [mode, setMode] = useMode();
-  const { recentModels, addModel, evictModel } = useModelLRU();
+  const { recentModels, addModel, evictModel, defaultModel, setDefaultModel } = useModelLRU();
   const commandListId = useId();
   const telemetry = useTelemetry();
   const [vimEnabled, setVimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, {
@@ -176,6 +181,15 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     },
     [storageKeys.modelKey, addModel]
   );
+
+  // When entering creation mode (or when the default model changes), reset the
+  // project-scoped model to the explicit default so manual picks don't bleed
+  // into subsequent creation flows.
+  useEffect(() => {
+    if (variant === "creation" && defaultModel) {
+      updatePersistedState(storageKeys.modelKey, defaultModel);
+    }
+  }, [variant, defaultModel, storageKeys.modelKey]);
 
   // Creation-specific state (hook always called, but only used when variant === "creation")
   // This avoids conditional hook calls which violate React rules
@@ -296,9 +310,10 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
 
   // Watch input for slash commands
   useEffect(() => {
-    const suggestions = getSlashCommandSuggestions(input, { providerNames });
+    const normalizedSlashSource = normalizeSlashCommandInput(input);
+    const suggestions = getSlashCommandSuggestions(normalizedSlashSource, { providerNames });
     setCommandSuggestions(suggestions);
-    setShowCommandSuggestions(suggestions.length > 0);
+    setShowCommandSuggestions(normalizedSlashSource.startsWith("/") && suggestions.length > 0);
   }, [input, providerNames]);
 
   // Load provider names for suggestions
@@ -458,22 +473,13 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
       return;
     }
 
-    const messageText = input.trim();
+    const rawInputValue = input;
+    const messageText = rawInputValue.trim();
+    const normalizedCommandInput = normalizeSlashCommandInput(messageText);
+    const isSlashCommand = normalizedCommandInput.startsWith("/");
+    const parsed = isSlashCommand ? parseCommand(normalizedCommandInput) : null;
 
-    // Route to creation handler for creation variant
-    if (variant === "creation") {
-      // Creation variant: simple message send + workspace creation
-      setIsSending(true);
-      setInput(""); // Clear input immediately (will be restored by parent if creation fails)
-      await creationState.handleSend(messageText);
-      setIsSending(false);
-      return;
-    }
-
-    // Workspace variant: full command handling + message send
-    if (variant !== "workspace") return; // Type guard
-
-    // Prepare image parts if any
+    // Prepare image parts early so slash commands can access them
     const imageParts = imageAttachments.map((img, index) => {
       // Validate before sending to help with debugging
       if (!img.url || typeof img.url !== "string") {
@@ -499,193 +505,66 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
       };
     });
 
-    try {
-      // Parse command
-      const parsed = parseCommand(messageText);
-
-      if (parsed) {
-        // Handle /clear command
-        if (parsed.type === "clear") {
-          setInput("");
+    if (parsed) {
+      const context: SlashCommandContext = {
+        variant,
+        workspaceId: variant === "workspace" ? props.workspaceId : undefined,
+        sendMessageOptions,
+        setInput,
+        setImageAttachments,
+        setIsSending,
+        setToast,
+        setVimEnabled,
+        setPreferredModel,
+        onProviderConfig: props.onProviderConfig,
+        onModelChange: props.onModelChange,
+        onTruncateHistory: variant === "workspace" ? props.onTruncateHistory : undefined,
+        onCancelEdit: variant === "workspace" ? props.onCancelEdit : undefined,
+        editMessageId: editingMessage?.id,
+        imageParts: imageParts.length > 0 ? imageParts : undefined,
+        resetInputHeight: () => {
           if (inputRef.current) {
             inputRef.current.style.height = "36px";
           }
-          await props.onTruncateHistory(1.0);
-          setToast({
-            id: Date.now().toString(),
-            type: "success",
-            message: "Chat history cleared",
-          });
-          return;
-        }
+        },
+      };
 
-        // Handle /truncate command
-        if (parsed.type === "truncate") {
-          setInput("");
-          if (inputRef.current) {
-            inputRef.current.style.height = "36px";
-          }
-          await props.onTruncateHistory(parsed.percentage);
-          setToast({
-            id: Date.now().toString(),
-            type: "success",
-            message: `Chat history truncated by ${Math.round(parsed.percentage * 100)}%`,
-          });
-          return;
-        }
+      const result = await processSlashCommand(parsed, context);
 
-        // Handle /providers set command
-        if (parsed.type === "providers-set" && props.onProviderConfig) {
-          setIsSending(true);
-          setInput(""); // Clear input immediately
+      if (!result.clearInput) {
+        setInput(rawInputValue); // Restore exact input on failure
+      }
+      return;
+    }
 
-          try {
-            await props.onProviderConfig(parsed.provider, parsed.keyPath, parsed.value);
-            // Success - show toast
-            setToast({
-              id: Date.now().toString(),
-              type: "success",
-              message: `Provider ${parsed.provider} updated`,
-            });
-          } catch (error) {
-            console.error("Failed to update provider config:", error);
-            setToast({
-              id: Date.now().toString(),
-              type: "error",
-              message: error instanceof Error ? error.message : "Failed to update provider",
-            });
-            setInput(messageText); // Restore input on error
-          } finally {
-            setIsSending(false);
-          }
-          return;
-        }
+    if (isSlashCommand) {
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: `Unknown command: ${normalizedCommandInput.split(/\s+/)[0] ?? ""}`,
+      });
+      return;
+    }
 
-        // Handle /model command
-        if (parsed.type === "model-set") {
-          setInput(""); // Clear input immediately
-          setPreferredModel(parsed.modelString);
-          props.onModelChange?.(parsed.modelString);
-          setToast({
-            id: Date.now().toString(),
-            type: "success",
-            message: `Model changed to ${parsed.modelString}`,
-          });
-          return;
-        }
-
-        // Handle /vim command
-        if (parsed.type === "vim-toggle") {
-          setInput(""); // Clear input immediately
-          setVimEnabled((prev) => !prev);
-          return;
-        }
-
-        // Handle /telemetry command
-        if (parsed.type === "telemetry-set") {
-          setInput(""); // Clear input immediately
-          setTelemetryEnabled(parsed.enabled);
-          setToast({
-            id: Date.now().toString(),
-            type: "success",
-            message: `Telemetry ${parsed.enabled ? "enabled" : "disabled"}`,
-          });
-          return;
-        }
-
-        // Handle /compact command
-        if (parsed.type === "compact") {
-          const context: CommandHandlerContext = {
-            workspaceId: props.workspaceId,
-            sendMessageOptions,
-            imageParts,
-            editMessageId: editingMessage?.id,
-            setInput,
-            setImageAttachments,
-            setIsSending,
-            setToast,
-            onCancelEdit: props.onCancelEdit,
-          };
-
-          const result = await handleCompactCommand(parsed, context);
-          if (!result.clearInput) {
-            setInput(messageText); // Restore input on error
-          }
-          return;
-        }
-
-        // Handle /fork command
-        if (parsed.type === "fork") {
-          setInput(""); // Clear input immediately
-          setIsSending(true);
-
-          try {
-            const forkResult = await forkWorkspace({
-              sourceWorkspaceId: props.workspaceId,
-              newName: parsed.newName,
-              startMessage: parsed.startMessage,
-              sendMessageOptions,
-            });
-
-            if (!forkResult.success) {
-              const errorMsg = forkResult.error ?? "Failed to fork workspace";
-              console.error("Failed to fork workspace:", errorMsg);
-              setToast({
-                id: Date.now().toString(),
-                type: "error",
-                title: "Fork Failed",
-                message: errorMsg,
-              });
-              setInput(messageText); // Restore input on error
-            } else {
-              setToast({
-                id: Date.now().toString(),
-                type: "success",
-                message: `Forked to workspace "${parsed.newName}"`,
-              });
-            }
-          } catch (error) {
-            const errorMsg = error instanceof Error ? error.message : "Failed to fork workspace";
-            console.error("Fork error:", error);
-            setToast({
-              id: Date.now().toString(),
-              type: "error",
-              title: "Fork Failed",
-              message: errorMsg,
-            });
-            setInput(messageText); // Restore input on error
-          }
-
-          setIsSending(false);
-          return;
-        }
-
-        // Handle /new command
-        if (parsed.type === "new") {
-          const context: CommandHandlerContext = {
-            workspaceId: props.workspaceId,
-            sendMessageOptions,
-            imageParts: undefined, // /new doesn't use images
-            setInput,
-            setImageAttachments,
-            setIsSending,
-            setToast,
-          };
-
-          const result = await handleNewCommand(parsed, context);
-          if (!result.clearInput) {
-            setInput(messageText); // Restore input on error
-          }
-          return;
-        }
-
-        // Handle all other commands - show display toast
-        const commandToast = createCommandToast(parsed);
-        if (commandToast) {
-          setToast(commandToast);
-          return;
+    // Handle standard message sending based on variant
+    if (variant === "creation") {
+      setIsSending(true);
+      const ok = await creationState.handleSend(messageText);
+      if (ok) {
+        setInput("");
+        if (inputRef.current) {
+          inputRef.current.style.height = "36px";
         }
       }
+      setIsSending(false);
+      return;
+    }
+
+    // Workspace variant: regular message send
+
+    try {
+      // Regular message - send directly via API
+      setIsSending(true);
 
       // Save current state for restoration on error
       const previousImageAttachments = [...imageAttachments];
@@ -710,6 +589,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             continueMessage: {
               text: messageText,
               imageParts,
+              model: sendMessageOptions.model,
             },
             sendMessageOptions,
           });
@@ -730,6 +610,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
               type: "success",
               message: `Context threshold reached - auto-compacting...`,
             });
+            props.onMessageSent?.();
           }
         } catch (error) {
           // Restore on unexpected error
@@ -758,18 +639,22 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         let muxMetadata: MuxFrontendMetadata | undefined;
         let compactionOptions = {};
 
-        if (editingMessage && messageText.startsWith("/")) {
-          const parsed = parseCommand(messageText);
-          if (parsed?.type === "compact") {
+        if (editingMessage && normalizedCommandInput.startsWith("/")) {
+          const parsedEditingCommand = parseCommand(normalizedCommandInput);
+          if (parsedEditingCommand?.type === "compact") {
             const {
               messageText: regeneratedText,
               metadata,
               sendOptions,
             } = prepareCompactionMessage({
               workspaceId: props.workspaceId,
-              maxOutputTokens: parsed.maxOutputTokens,
-              continueMessage: { text: parsed.continueMessage ?? "", imageParts },
-              model: parsed.model,
+              maxOutputTokens: parsedEditingCommand.maxOutputTokens,
+              continueMessage: {
+                text: parsedEditingCommand.continueMessage ?? "",
+                imageParts,
+                model: sendMessageOptions.model,
+              },
+              model: parsedEditingCommand.model,
               sendMessageOptions,
             });
             actualMessageText = regeneratedText;
@@ -805,7 +690,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           // Show error using enhanced toast
           setToast(createErrorToast(result.error));
           // Restore input and images on error so user can try again
-          setInput(messageText);
+          setInput(rawInputValue);
           setImageAttachments(previousImageAttachments);
         } else {
           // Track telemetry for successful message send
@@ -826,7 +711,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             raw: error instanceof Error ? error.message : "Failed to send message",
           })
         );
-        setInput(messageText);
+        setInput(rawInputValue);
         setImageAttachments(previousImageAttachments);
       } finally {
         setIsSending(false);
@@ -952,29 +837,28 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         data-component="ChatInputSection"
       >
         <div className="mx-auto w-full max-w-4xl">
-          {/* Creation error toast */}
-          {variant === "creation" && creationState?.error && (
-            <div className="mb-2 rounded border border-red-700 bg-red-900/20 px-3 py-2 text-sm text-red-400">
-              {creationState.error}
-            </div>
-          )}
+          {/* Toast - show shared toast (slash commands) or variant-specific toast */}
+          <ChatInputToast
+            toast={toast ?? (variant === "creation" ? creationState.toast : null)}
+            onDismiss={() => {
+              handleToastDismiss();
+              if (variant === "creation") {
+                creationState.setToast(null);
+              }
+            }}
+          />
 
-          {/* Workspace toast */}
-          {variant === "workspace" && (
-            <ChatInputToast toast={toast} onDismiss={handleToastDismiss} />
-          )}
-
-          {/* Command suggestions - workspace only */}
-          {variant === "workspace" && (
-            <CommandSuggestions
-              suggestions={commandSuggestions}
-              onSelectSuggestion={handleCommandSelect}
-              onDismiss={() => setShowCommandSuggestions(false)}
-              isVisible={showCommandSuggestions}
-              ariaLabel="Slash command suggestions"
-              listId={commandListId}
-            />
-          )}
+          {/* Command suggestions - available in both variants */}
+          {/* In creation mode, use portal (anchorRef) to escape overflow:hidden containers */}
+          <CommandSuggestions
+            suggestions={commandSuggestions}
+            onSelectSuggestion={handleCommandSelect}
+            onDismiss={() => setShowCommandSuggestions(false)}
+            isVisible={showCommandSuggestions}
+            ariaLabel="Slash command suggestions"
+            listId={commandListId}
+            anchorRef={variant === "creation" ? inputRef : undefined}
+          />
 
           <div className="flex items-end" data-component="ChatInputControls">
             <VimTextArea
@@ -1022,6 +906,8 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                   recentModels={recentModels}
                   onRemoveModel={evictModel}
                   onComplete={() => inputRef.current?.focus()}
+                  defaultModel={defaultModel}
+                  onSetDefaultModel={setDefaultModel}
                 />
                 <TooltipWrapper inline>
                   <HelpIndicator>?</HelpIndicator>

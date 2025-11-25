@@ -204,6 +204,13 @@ describeIntegration("IpcMain queuedMessages integration tests", () => {
         await sendMessage(env.mockIpcRenderer, workspaceId, "Message 3");
 
         // Verify all messages queued
+        // Wait until we have 3 messages in the queue state
+        const success = await waitFor(async () => {
+          const msgs = await getQueuedMessages(collector1, 500);
+          return msgs.length === 3;
+        }, 5000);
+        expect(success).toBe(true);
+
         const queued = await getQueuedMessages(collector1);
         expect(queued).toEqual(["Message 1", "Message 2", "Message 3"]);
 

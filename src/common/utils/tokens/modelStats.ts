@@ -3,6 +3,7 @@ import { modelsExtra } from "./models-extra";
 
 export interface ModelStats {
   max_input_tokens: number;
+  max_output_tokens?: number;
   input_cost_per_token: number;
   output_cost_per_token: number;
   cache_creation_input_token_cost?: number;
@@ -11,6 +12,7 @@ export interface ModelStats {
 
 interface RawModelData {
   max_input_tokens?: number | string;
+  max_output_tokens?: number | string;
   input_cost_per_token?: number;
   output_cost_per_token?: number;
   cache_creation_input_token_cost?: number;
@@ -37,6 +39,8 @@ function extractModelStats(data: RawModelData): ModelStats {
   /* eslint-disable @typescript-eslint/non-nullable-type-assertion-style */
   return {
     max_input_tokens: data.max_input_tokens as number,
+    max_output_tokens:
+      typeof data.max_output_tokens === "number" ? data.max_output_tokens : undefined,
     input_cost_per_token: data.input_cost_per_token as number,
     output_cost_per_token: data.output_cost_per_token as number,
     cache_creation_input_token_cost:

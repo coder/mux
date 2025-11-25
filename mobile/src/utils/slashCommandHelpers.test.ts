@@ -55,10 +55,37 @@ describe("buildMobileCompactionPayload", () => {
     expect(payload.metadata.parsed).toEqual({
       model: "anthropic:claude-opus-4-1",
       maxOutputTokens: 800,
-      continueMessage: parsed.continueMessage,
+      continueMessage: {
+        text: parsed.continueMessage,
+        imageParts: [],
+        model: baseOptions.model,
+      },
     });
     expect(payload.sendOptions.model).toBe("anthropic:claude-opus-4-1");
     expect(payload.sendOptions.mode).toBe("compact");
     expect(payload.sendOptions.maxOutputTokens).toBe(800);
+  });
+
+  it("omits continueMessage when no text provided", () => {
+    const baseOptions: SendMessageOptions = {
+      model: "anthropic:claude-sonnet-4-5",
+      mode: "plan",
+      thinkingLevel: "default",
+    };
+
+    const parsed = {
+      type: "compact" as const,
+      maxOutputTokens: 1000,
+      continueMessage: undefined,
+      model: undefined,
+    };
+
+    const payload = buildMobileCompactionPayload(parsed, baseOptions);
+
+    if (payload.metadata.type !== "compaction-request") {
+      throw new Error("Expected compaction metadata");
+    }
+
+    expect(payload.metadata.parsed.continueMessage).toBeUndefined();
   });
 });
