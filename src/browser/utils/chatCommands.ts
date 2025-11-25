@@ -609,6 +609,9 @@ function formatCompactionCommand(options: CompactionOptions): string {
   if (options.model) {
     cmd += ` -m ${options.model}`;
   }
+  if (options.continueMessage) {
+    cmd += `\n${options.continueMessage.text}`;
+  }
   return cmd;
 }
 
