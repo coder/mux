@@ -35,6 +35,27 @@ import { getProjectName } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 import { once } from "node:events";
 import { log } from "@/node/services/log";
+
+/**
+ * Convert Node.js exit event args to a single exit code.
+ * When a process is killed by signal, Node provides code=null and signal name.
+ * This converts to Unix-conventional exit codes (128 + signal_number).
+ */
+function getExitCode(code: number | null, signal: NodeJS.Signals | null): number {
+  if (code !== null) return code;
+  if (signal) {
+    const signalNumbers: Record<string, number> = {
+      SIGHUP: 1,
+      SIGINT: 2,
+      SIGQUIT: 3,
+      SIGKILL: 9,
+      SIGTERM: 15,
+    };
+    return 128 + (signalNumbers[signal] ?? 0);
+  }
+  return 0;
+}
+
 import { expandTilde } from "./tildeExpansion";
 
 /**
@@ -246,11 +267,11 @@ export class LocalRuntime implements Runtime {
       }
     });
 
-    childProcess.on("exit", (code) => {
+    childProcess.on("exit", (code, signal) => {
       // Flush remaining partial lines
       if (stdoutBuffer) handle._emitStdout(stdoutBuffer);
       if (stderrBuffer) handle._emitStderr(stderrBuffer);
-      handle._emitExit(code ?? 0);
+      handle._emitExit(getExitCode(code, signal));
     });
 
     handle = new LocalBackgroundHandle(disposable);

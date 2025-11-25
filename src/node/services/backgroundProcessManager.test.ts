@@ -224,5 +224,26 @@ describe("BackgroundProcessManager", () => {
         expect(proc?.status).toBe("killed");
       }
     });
+
+    it("should report non-zero exit code for signal-terminated processes", async () => {
+      // Spawn a long-running process
+      const result = await manager.spawn(runtime, testWorkspaceId, "sleep 60", {
+        cwd: process.cwd(),
+      });
+
+      if (result.success) {
+        // Terminate it (sends SIGTERM, then SIGKILL after 2s)
+        await manager.terminate(result.processId);
+
+        // Wait for exit to be recorded
+        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        const proc = manager.getProcess(result.processId);
+        expect(proc).not.toBeNull();
+        // Exit code should be 128 + signal number (SIGTERM=15 → 143, SIGKILL=9 → 137)
+        // Either is acceptable depending on timing
+        expect(proc!.exitCode).toBeGreaterThanOrEqual(128);
+      }
+    });
   });
 });
