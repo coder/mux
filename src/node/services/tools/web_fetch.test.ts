@@ -215,4 +215,36 @@ describe("web_fetch tool", () => {
       expect(result.error).toContain("Failed to fetch URL");
     }
   });
+
+  // Test HTTP error handling with body parsing
+  it("should include HTTP status code in error for 404 responses", async () => {
+    using testEnv = createTestWebFetchTool();
+    const args: WebFetchToolArgs = {
+      // GitHub returns a proper 404 page for nonexistent users
+      url: "https://github.com/this-user-definitely-does-not-exist-12345",
+    };
+
+    const result = (await testEnv.tool.execute!(args, toolCallOptions)) as WebFetchToolResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("HTTP 404");
+    }
+  });
+
+  it("should detect Cloudflare challenge pages", async () => {
+    using testEnv = createTestWebFetchTool();
+    const args: WebFetchToolArgs = {
+      // platform.openai.com is known to serve Cloudflare challenges
+      url: "https://platform.openai.com",
+    };
+
+    const result = (await testEnv.tool.execute!(args, toolCallOptions)) as WebFetchToolResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("Cloudflare");
+      expect(result.error).toContain("JavaScript");
+    }
+  });
 });

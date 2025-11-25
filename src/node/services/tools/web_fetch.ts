@@ -14,6 +14,64 @@ import { execBuffered } from "@/node/utils/runtime/helpers";
 
 const USER_AGENT = "Mux/1.0 (https://github.com/coder/mux; web-fetch tool)";
 
+/** Parse curl -i output into headers and body */
+function parseResponse(output: string): { headers: string; body: string; statusCode: string } {
+  // Find the last HTTP status line (after redirects) and its headers
+  // curl -i with -L shows all redirect responses, we want the final one
+  const httpMatches = [...output.matchAll(/HTTP\/[\d.]+ (\d{3})[^\r\n]*/g)];
+  const lastStatusMatch = httpMatches.length > 0 ? httpMatches[httpMatches.length - 1] : null;
+  const statusCode = lastStatusMatch ? lastStatusMatch[1] : "";
+
+  // Headers end with \r\n\r\n (or \n\n for some servers)
+  const headerEndIndex = output.indexOf("\r\n\r\n");
+  const altHeaderEndIndex = output.indexOf("\n\n");
+  const splitIndex =
+    headerEndIndex !== -1
+      ? headerEndIndex + 4
+      : altHeaderEndIndex !== -1
+        ? altHeaderEndIndex + 2
+        : 0;
+
+  const headers = splitIndex > 0 ? output.slice(0, splitIndex).toLowerCase() : "";
+  const body = splitIndex > 0 ? output.slice(splitIndex) : output;
+
+  return { headers, body, statusCode };
+}
+
+/** Detect if error response is a Cloudflare challenge page */
+function isCloudflareChallenge(headers: string, body: string): boolean {
+  return (
+    headers.includes("cf-mitigated") ||
+    (body.includes("Just a moment") && body.includes("Enable JavaScript"))
+  );
+}
+
+/** Try to extract readable content from HTML, returns null on failure */
+function tryExtractContent(
+  body: string,
+  url: string,
+  maxBytes: number
+): { title: string; content: string } | null {
+  try {
+    const dom = new JSDOM(body, { url });
+    const reader = new Readability(dom.window.document);
+    const article = reader.parse();
+    if (!article?.content) return null;
+
+    const turndown = new TurndownService({
+      headingStyle: "atx",
+      codeBlockStyle: "fenced",
+    });
+    let content = turndown.turndown(article.content);
+    if (content.length > maxBytes) {
+      content = content.slice(0, maxBytes) + "\n\n[Content truncated]";
+    }
+    return { title: article.title ?? "Untitled", content };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Web fetch tool factory for AI assistant
  * Creates a tool that fetches web pages and extracts readable content as markdown
@@ -62,12 +120,41 @@ export const createWebFetchTool: ToolFactory = (config: ToolConfiguration) => {
           const exitCodeMessages: Record<number, string> = {
             6: "Could not resolve host",
             7: "Failed to connect",
-            22: "HTTP error (4xx/5xx)",
             28: "Operation timed out",
             35: "SSL/TLS handshake failed",
             56: "Network data receive error",
             63: "Maximum file size exceeded",
           };
+
+          // For HTTP errors (exit 22), try to parse and include the error body
+          if (result.exitCode === 22 && result.stdout) {
+            const { headers, body, statusCode } = parseResponse(result.stdout);
+            const statusText = statusCode ? `HTTP ${statusCode}` : "HTTP error";
+
+            // Detect Cloudflare challenge pages
+            if (isCloudflareChallenge(headers, body)) {
+              return {
+                success: false,
+                error: `${statusText}: Cloudflare security challenge (page requires JavaScript)`,
+              };
+            }
+
+            // Try to extract readable content from error page
+            const extracted = tryExtractContent(body, url, WEB_FETCH_MAX_OUTPUT_BYTES);
+            if (extracted) {
+              return {
+                success: false,
+                error: statusText,
+                content: extracted.content,
+              };
+            }
+
+            return {
+              success: false,
+              error: statusText,
+            };
+          }
+
           const reason = exitCodeMessages[result.exitCode] || result.stderr || "Unknown error";
           return {
             success: false,
@@ -76,19 +163,7 @@ export const createWebFetchTool: ToolFactory = (config: ToolConfiguration) => {
         }
 
         // Parse headers and body from curl -i output
-        // Headers end with \r\n\r\n (or \n\n for some servers)
-        const output = result.stdout;
-        const headerEndIndex = output.indexOf("\r\n\r\n");
-        const altHeaderEndIndex = output.indexOf("\n\n");
-        const splitIndex =
-          headerEndIndex !== -1
-            ? headerEndIndex + 4
-            : altHeaderEndIndex !== -1
-              ? altHeaderEndIndex + 2
-              : 0;
-
-        const headers = splitIndex > 0 ? output.slice(0, splitIndex).toLowerCase() : "";
-        const body = splitIndex > 0 ? output.slice(splitIndex) : output;
+        const { headers, body } = parseResponse(result.stdout);
 
         if (!body || body.trim().length === 0) {
           return {

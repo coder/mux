@@ -219,4 +219,6 @@ export type WebFetchToolResult =
   | {
       success: false;
       error: string;
+      /** Parsed error response body (e.g., from HTTP 4xx/5xx pages) */
+      content?: string;
     };
