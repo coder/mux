@@ -141,6 +141,9 @@ const AIViewInner: React.FC<AIViewProps> = ({
     markUserInteraction,
   } = useAutoScroll();
 
+  // Use send options for auto-compaction check
+  const pendingSendOptions = useSendMessageOptions(workspaceId);
+
   // ChatInput API for focus management
   const chatInputAPI = useRef<ChatInputAPI | null>(null);
   const handleChatInputReady = useCallback((api: ChatInputAPI) => {
@@ -332,7 +335,6 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Use pending send model for auto-compaction check, not the last stream's model.
   // This ensures the threshold is based on the model the user will actually send with,
   // preventing context-length errors when switching from a large-context to smaller model.
-  const pendingSendOptions = useSendMessageOptions(workspaceId);
   const pendingModel = pendingSendOptions.model;
 
   const autoCompactionCheck = pendingModel
