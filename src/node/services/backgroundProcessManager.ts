@@ -74,8 +74,11 @@ export class BackgroundProcessManager {
       onExit: (exitCode: number) => {
         log.debug(`Background process ${processId} exited with code ${exitCode}`);
         process.exitCode = exitCode;
-        process.exitTime = Date.now();
-        process.status = "exited";
+        process.exitTime ??= Date.now();
+        // Don't overwrite status if already marked as killed/failed by terminate()
+        if (process.status === "running") {
+          process.status = "exited";
+        }
       },
     });
 

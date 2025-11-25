@@ -198,5 +198,24 @@ describe("BackgroundProcessManager", () => {
         expect(process?.stdoutBuffer.toArray()).toContain("test");
       }
     });
+
+    it("should preserve killed status after onExit callback fires", async () => {
+      // Spawn a long-running process
+      const result = await manager.spawn("workspace-1", "sleep 60", {
+        cwd: process.cwd(),
+      });
+
+      if (result.success) {
+        // Terminate it
+        await manager.terminate(result.processId);
+
+        // Wait for onExit callback to fire
+        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        // Status should still be "killed", not "exited"
+        const proc = manager.getProcess(result.processId);
+        expect(proc?.status).toBe("killed");
+      }
+    });
   });
 });
