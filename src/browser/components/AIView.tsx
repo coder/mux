@@ -342,7 +342,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
   const autoCompactionResult = checkAutoCompaction(
     workspaceUsage,
-    currentModel,
+    pendingModel,
     use1M,
     autoCompactionEnabled,
     autoCompactionThreshold / 100
