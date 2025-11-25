@@ -192,26 +192,25 @@ describeIntegration("IpcMain resumeStream integration tests", () => {
           .filter((e) => "role" in e && e.role === "assistant");
         expect(assistantMessages.length).toBeGreaterThan(0);
 
-        // Verify we received content deltas
-        const deltas = collector.getDeltas();
-        expect(deltas.length).toBeGreaterThan(0);
-
         // Verify no stream errors
         const streamErrors = collector
           .getEvents()
           .filter((e) => "type" in e && e.type === "stream-error");
         expect(streamErrors.length).toBe(0);
 
-        // Verify the assistant responded with actual content and said the verification word
-        const allText = deltas
-          .filter((d) => "delta" in d)
-          .map((d) => ("delta" in d ? d.delta : ""))
-          .join("");
-        expect(allText.length).toBeGreaterThan(0);
+        // Get the final message content from stream-end parts
+        // StreamEndEvent has parts: Array<MuxTextPart | MuxReasoningPart | MuxToolPart>
+        const finalMessage = collector.getFinalMessage() as any;
+        expect(finalMessage).toBeDefined();
+        const textParts = (finalMessage?.parts ?? []).filter(
+          (p: any) => p.type === "text" && p.text
+        );
+        const finalContent = textParts.map((p: any) => p.text).join("");
+        expect(finalContent.length).toBeGreaterThan(0);
 
         // Verify the assistant followed the instruction and said the verification word
         // This proves resumeStream properly loaded history and continued from it
-        expect(allText).toContain(verificationWord);
+        expect(finalContent).toContain(verificationWord);
       } finally {
         await cleanup();
       }

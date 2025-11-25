@@ -57,6 +57,13 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 
 ## Testing Doctrine
 
+Two types of tests are preferred:
+
+1. **True integration tests** — use real runtimes, real filesystems, real network calls. No mocks, stubs, or fakes. These prove the system works end-to-end.
+2. **Unit tests on pure/isolated logic** — test pure functions or well-isolated modules where inputs and outputs are clear. No mocks needed because the code has no external dependencies.
+
+Avoid mock-heavy tests that verify implementation details rather than behavior. If you need mocks to test something, consider whether the code should be restructured to be more testable.
+
 ### Storybook
 
 - Prefer full-app stories (`App.stories.tsx`) to isolated components.

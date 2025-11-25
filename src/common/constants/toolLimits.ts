@@ -17,3 +17,8 @@ export const BASH_MAX_LINE_BYTES = 1024; // 1KB per line for AI agent
 export const MAX_TODOS = 7; // Maximum number of TODO items in a list
 
 export const STATUS_MESSAGE_MAX_LENGTH = 60; // Maximum length for status messages (auto-truncated)
+
+// Web fetch tool limits
+export const WEB_FETCH_TIMEOUT_SECS = 15; // curl timeout
+export const WEB_FETCH_MAX_OUTPUT_BYTES = 64 * 1024; // 64KB markdown output
+export const WEB_FETCH_MAX_HTML_BYTES = 5 * 1024 * 1024; // 5MB HTML input (curl --max-filesize)

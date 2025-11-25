@@ -213,7 +213,10 @@ build/icon.png: docs/img/logo.webp scripts/generate-icons.ts
 	@bun scripts/generate-icons.ts png
 
 ## Quality checks (can run in parallel)
-static-check: lint typecheck fmt-check check-eager-imports ## Run all static checks (includes startup performance checks)
+static-check: lint typecheck fmt-check check-eager-imports check-bench-agent ## Run all static checks (includes startup performance checks)
+
+check-bench-agent: ## Verify terminal-bench agent configuration and imports
+	@./scripts/check-bench-agent.sh
 
 lint: node_modules/.installed ## Run ESLint (typecheck runs in separate target)
 	@./scripts/lint.sh

@@ -65,7 +65,7 @@ The adapter lives in `benchmarks/terminal_bench/mux_agent.py`. For each task it:
 
 1. Copies the mux repository (package manifests + `src/`) into `/tmp/mux-app` inside the container.
 2. Ensures Bun exists, then runs `bun install --frozen-lockfile`.
-3. Launches `src/debug/agentSessionCli.ts` to prepare workspace metadata and stream the instruction, storing state under `MUX_CONFIG_ROOT` (default `/root/.mux`).
+3. Launches `src/cli/debug/agentSessionCli.ts` to prepare workspace metadata and stream the instruction, storing state under `MUX_CONFIG_ROOT` (default `/root/.mux`).
 
 `MUX_MODEL` accepts either the mux colon form (`anthropic:claude-sonnet-4-5`) or the Terminal-Bench slash form (`anthropic/claude-sonnet-4-5`); the adapter normalises whichever you provide.
 

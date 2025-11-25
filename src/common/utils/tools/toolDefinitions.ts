@@ -12,6 +12,7 @@ import {
   BASH_MAX_LINE_BYTES,
   BASH_MAX_TOTAL_BYTES,
   STATUS_MESSAGE_MAX_LENGTH,
+  WEB_FETCH_MAX_OUTPUT_BYTES,
 } from "@/common/constants/toolLimits";
 import { TOOL_EDIT_WARNING } from "@/common/types/tools";
 
@@ -228,6 +229,16 @@ export const TOOL_DEFINITIONS = {
       })
       .strict(),
   },
+  web_fetch: {
+    description:
+      `Fetch a web page and extract its main content as clean markdown. ` +
+      `Uses the workspace's network context (requests originate from the workspace, not Mux host). ` +
+      `Requires curl to be installed in the workspace. ` +
+      `Output is truncated to ${Math.floor(WEB_FETCH_MAX_OUTPUT_BYTES / 1024)}KB.`,
+    schema: z.object({
+      url: z.string().url().describe("The URL to fetch (http or https)"),
+    }),
+  },
 } as const;
 
 /**
@@ -268,6 +279,7 @@ export function getAvailableTools(modelString: string): string[] {
     "todo_write",
     "todo_read",
     "status_set",
+    "web_fetch",
   ];
 
   // Add provider-specific tools

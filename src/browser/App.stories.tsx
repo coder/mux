@@ -541,6 +541,18 @@ export const ActiveWorkspaceWithChat: Story = {
           projects,
           workspaces,
           apiOverrides: {
+            tokenizer: {
+              countTokens: () => Promise.resolve(42),
+              countTokensBatch: (_model, texts) => Promise.resolve(texts.map(() => 42)),
+              calculateStats: () =>
+                Promise.resolve({
+                  consumers: [],
+                  totalTokens: 0,
+                  model: "mock-model",
+                  tokenizerName: "mock-tokenizer",
+                  usageHistory: [],
+                }),
+            },
             providers: {
               setProviderConfig: () => Promise.resolve({ success: true, data: undefined }),
               list: () => Promise.resolve(["anthropic", "openai", "xai"]),
@@ -984,13 +996,14 @@ export const ActiveWorkspaceWithChat: Story = {
                   }, 100);
 
                   // Keep sending reasoning deltas to maintain streaming state
+                  // tokens: 0 to avoid flaky token counts in visual tests
                   const intervalId = setInterval(() => {
                     callback({
                       type: "reasoning-delta",
                       workspaceId: workspaceId,
                       messageId: "msg-12",
                       delta: ".",
-                      tokens: 1,
+                      tokens: 0,
                       timestamp: NOW,
                     });
                   }, 2000);
@@ -1096,13 +1109,14 @@ export const ActiveWorkspaceWithChat: Story = {
                   }, 100);
 
                   // Keep sending deltas to maintain streaming state
+                  // tokens: 0 to avoid flaky token counts in visual tests
                   const intervalId = setInterval(() => {
                     callback({
                       type: "stream-delta",
                       workspaceId: streamingWorkspaceId,
                       messageId: "stream-msg-2",
                       delta: ".",
-                      tokens: 1,
+                      tokens: 0,
                       timestamp: NOW,
                     });
                   }, 2000);
@@ -1245,6 +1259,13 @@ main
             namedWorkspacePath: "/home/user/.mux/src/my-app/feature",
           })
         );
+
+        // Pre-fill input with text so token count is visible
+        localStorage.setItem(
+          `input:${workspaceId}`,
+          "Add OAuth2 support with Google and GitHub providers"
+        );
+        localStorage.setItem(`model:${workspaceId}`, "anthropic:claude-sonnet-4-5");
 
         initialized.current = true;
       }

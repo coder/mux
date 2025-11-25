@@ -1,12 +1,13 @@
 import React from "react";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
+import { supports1MContext } from "@/common/utils/ai/models";
 import { TooltipWrapper, Tooltip } from "./Tooltip";
 
 interface ModelSettingsProps {
-  provider: string;
+  model: string;
 }
 
-export const ModelSettings: React.FC<ModelSettingsProps> = ({ provider }) => {
+export const ModelSettings: React.FC<ModelSettingsProps> = (props) => {
   const { options, setAnthropicOptions, setOpenAIOptions } = useProviderOptions();
 
   const renderOption = (
@@ -35,7 +36,8 @@ export const ModelSettings: React.FC<ModelSettingsProps> = ({ provider }) => {
     </div>
   );
 
-  if (provider === "anthropic") {
+  // 1M context is only available for specific Anthropic models (Sonnet 4/4.5)
+  if (supports1MContext(props.model)) {
     return renderOption(
       "anthropic-1m",
       "1M",
@@ -45,6 +47,7 @@ export const ModelSettings: React.FC<ModelSettingsProps> = ({ provider }) => {
     );
   }
 
+  const provider = props.model.split(":")[0];
   if (provider === "openai") {
     if (import.meta.env.DEV) {
       return renderOption(

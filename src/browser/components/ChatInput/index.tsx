@@ -939,7 +939,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
               </div>
 
               <div className="ml-4 flex items-center" data-component="ModelSettingsGroup">
-                <ModelSettings provider={(preferredModel || "").split(":")[0]} />
+                <ModelSettings model={preferredModel || ""} />
               </div>
 
               {preferredModel && (
@@ -947,7 +947,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                   <Suspense
                     fallback={
                       <div
-                        className="text-muted flex items-center gap-1 text-xs"
+                        className="text-muted flex items-center gap-1 text-[11px]"
                         data-component="TokenEstimate"
                       >
                         <span>Calculating tokens…</span>
@@ -1008,7 +1008,7 @@ const TokenCountDisplay: React.FC<{ reader: TokenCountReader }> = ({ reader }) =
     return null;
   }
   return (
-    <div className="text-muted flex items-center gap-1 text-xs" data-component="TokenEstimate">
+    <div className="text-muted flex items-center gap-1 text-[11px]" data-component="TokenEstimate">
       <span>{tokens.toLocaleString()} tokens</span>
     </div>
   );

@@ -134,8 +134,7 @@ jobs:
 
       - uses: ./.github/actions/setup-mux
 
-      - name: Install Playwright browsers
-        run: bun x playwright install --with-deps
+      - uses: ./.github/actions/setup-playwright
 
       - name: Build Storybook
         run: make storybook-build
@@ -160,16 +159,12 @@ jobs:
 
       - uses: ./.github/actions/setup-mux
 
-      - name: Install system dependencies
+      - name: Install xvfb
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb
 
-      - name: Install Playwright runtime dependencies
-        run: bun x playwright install-deps
-
-      - name: Install Playwright browsers
-        run: bun x playwright install --with-deps
+      - uses: ./.github/actions/setup-playwright
 
       - name: Run e2e tests
         run: xvfb-run -a make test-e2e

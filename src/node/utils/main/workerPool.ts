@@ -1,5 +1,5 @@
 import { Worker } from "node:worker_threads";
-import { join, dirname, sep } from "node:path";
+import { join, dirname, sep, extname } from "node:path";
 
 interface WorkerRequest {
   messageId: number;
@@ -37,7 +37,17 @@ const hasDist = pathParts.includes("dist");
 const srcIndex = pathParts.lastIndexOf("src");
 
 let workerDir: string;
-if (srcIndex !== -1 && !hasDist) {
+let workerFile = "tokenizer.worker.js";
+
+// Check if we're running under Bun (not Node with ts-jest)
+// ts-jest transpiles .ts files but runs them via Node, which can't load .ts workers
+const isBun = !!(process as unknown as { isBun?: boolean }).isBun;
+
+if (isBun && extname(__filename) === ".ts") {
+  // Running from source via Bun - use .ts worker directly
+  workerDir = currentDir;
+  workerFile = "tokenizer.worker.ts";
+} else if (srcIndex !== -1 && !hasDist) {
   // Replace 'src' with 'dist' in the path (only if not already in dist)
   pathParts[srcIndex] = "dist";
   workerDir = pathParts.join(sep);
@@ -45,7 +55,7 @@ if (srcIndex !== -1 && !hasDist) {
   workerDir = currentDir;
 }
 
-const workerPath = join(workerDir, "tokenizer.worker.js");
+const workerPath = join(workerDir, workerFile);
 const worker = new Worker(workerPath);
 
 // Handle messages from worker
