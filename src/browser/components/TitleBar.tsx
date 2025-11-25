@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { cn } from "@/common/lib/utils";
 import { VERSION } from "@/version";
-import { ThemeToggleButton } from "./ThemeToggleButton";
+import { SettingsButton } from "./SettingsButton";
 import { TooltipWrapper, Tooltip } from "./Tooltip";
 import type { UpdateStatus } from "@/common/types/ipc";
 import { isTelemetryEnabled } from "@/common/telemetry";
@@ -253,7 +253,7 @@ export function TitleBar() {
         </div>
       </div>
       <div className="flex items-center gap-3">
-        <ThemeToggleButton />
+        <SettingsButton />
         <TooltipWrapper>
           <div className="cursor-default text-[11px] opacity-70">{buildDate}</div>
           <Tooltip align="right">Built at {extendedTimestamp}</Tooltip>
