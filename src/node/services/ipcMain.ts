@@ -1539,8 +1539,10 @@ export class IpcMain {
       try {
         const config = this.config.loadProvidersConfig() ?? {};
         // Return a sanitized version (only whether API key is set, not the value)
-        const sanitized: Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }> =
-          {};
+        const sanitized: Record<
+          string,
+          { apiKeySet: boolean; baseUrl?: string; models?: string[] }
+        > = {};
         for (const [provider, providerConfig] of Object.entries(config)) {
           const baseUrl = providerConfig.baseUrl ?? providerConfig.baseURL;
           const models = providerConfig.models;

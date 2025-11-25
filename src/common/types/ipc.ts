@@ -248,7 +248,9 @@ export interface IPCApi {
       value: string
     ): Promise<Result<void, string>>;
     setModels(provider: string, models: string[]): Promise<Result<void, string>>;
-    getConfig(): Promise<Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>>;
+    getConfig(): Promise<
+      Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>
+    >;
     list(): Promise<string[]>;
   };
   fs?: {
