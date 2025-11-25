@@ -54,6 +54,10 @@ export const CommandIds = {
   themeToggle: () => "appearance:theme:toggle" as const,
   themeSet: (theme: "light" | "dark") => `appearance:theme:set:${theme}` as const,
 
+  // Settings commands
+  settingsOpen: () => "settings:open" as const,
+  settingsOpenSection: (section: string) => `settings:open:${section}` as const,
+
   // Help commands
   helpKeybinds: () => "help:keybinds" as const,
 } as const;

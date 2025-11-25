@@ -45,6 +45,7 @@ export interface BuildSourcesParams {
   onOpenWorkspaceInTerminal: (workspaceId: string) => void;
   onToggleTheme: () => void;
   onSetTheme: (theme: ThemeMode) => void;
+  onOpenSettings?: (section?: string) => void;
 }
 
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high"];
@@ -61,6 +62,7 @@ export const COMMAND_SECTIONS = {
   HELP: "Help",
   PROJECTS: "Projects",
   APPEARANCE: "Appearance",
+  SETTINGS: "Settings",
 } as const;
 
 const section = {
@@ -71,6 +73,7 @@ const section = {
   mode: COMMAND_SECTIONS.MODE,
   help: COMMAND_SECTIONS.HELP,
   projects: COMMAND_SECTIONS.PROJECTS,
+  settings: COMMAND_SECTIONS.SETTINGS,
 };
 
 export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandAction[]> {
@@ -531,6 +534,37 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     }
     return list;
   });
+
+  // Settings
+  if (p.onOpenSettings) {
+    const openSettings = p.onOpenSettings;
+    actions.push(() => [
+      {
+        id: CommandIds.settingsOpen(),
+        title: "Open Settings",
+        section: section.settings,
+        keywords: ["preferences", "config", "configuration"],
+        shortcutHint: "⌘,",
+        run: () => openSettings(),
+      },
+      {
+        id: CommandIds.settingsOpenSection("providers"),
+        title: "Settings: Providers",
+        subtitle: "Configure API keys and endpoints",
+        section: section.settings,
+        keywords: ["api", "key", "anthropic", "openai", "google"],
+        run: () => openSettings("providers"),
+      },
+      {
+        id: CommandIds.settingsOpenSection("models"),
+        title: "Settings: Models",
+        subtitle: "Manage custom models",
+        section: section.settings,
+        keywords: ["model", "custom", "add"],
+        run: () => openSettings("models"),
+      },
+    ]);
+  }
 
   return actions;
 }

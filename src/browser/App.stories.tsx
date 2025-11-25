@@ -37,6 +37,8 @@ function setupMockAPI(options: {
     },
     providers: {
       setProviderConfig: () => Promise.resolve({ success: true, data: undefined }),
+      setModels: () => Promise.resolve({ success: true, data: undefined }),
+      getConfig: () => Promise.resolve({} as Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>),
       list: () => Promise.resolve([]),
     },
     workspace: {
@@ -555,6 +557,8 @@ export const ActiveWorkspaceWithChat: Story = {
             },
             providers: {
               setProviderConfig: () => Promise.resolve({ success: true, data: undefined }),
+              setModels: () => Promise.resolve({ success: true, data: undefined }),
+              getConfig: () => Promise.resolve({} as Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>),
               list: () => Promise.resolve(["anthropic", "openai", "xai"]),
             },
             workspace: {

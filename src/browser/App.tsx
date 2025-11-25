@@ -34,6 +34,9 @@ import type { BranchListResult } from "@/common/types/ipc";
 import { useTelemetry } from "./hooks/useTelemetry";
 import { useStartWorkspaceCreation, getFirstProjectPath } from "./hooks/useStartWorkspaceCreation";
 
+import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
+import { SettingsModal } from "./components/Settings/SettingsModal";
+
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high"];
 
 function AppInner() {
@@ -50,6 +53,7 @@ function AppInner() {
     clearPendingWorkspaceCreation,
   } = useWorkspaceContext();
   const { theme, setTheme, toggleTheme } = useTheme();
+  const { open: openSettings } = useSettings();
   const setThemePreference = useCallback(
     (nextTheme: ThemeMode) => {
       setTheme(nextTheme);
@@ -412,6 +416,7 @@ function AppInner() {
     onOpenWorkspaceInTerminal: openWorkspaceInTerminal,
     onToggleTheme: toggleTheme,
     onSetTheme: setThemePreference,
+    onOpenSettings: openSettings,
   };
 
   useEffect(() => {
@@ -634,6 +639,7 @@ function AppInner() {
           onClose={closeProjectCreateModal}
           onSuccess={addProject}
         />
+        <SettingsModal />
       </div>
     </>
   );
@@ -642,9 +648,11 @@ function AppInner() {
 function App() {
   return (
     <ThemeProvider>
-      <CommandRegistryProvider>
-        <AppInner />
-      </CommandRegistryProvider>
+      <SettingsProvider>
+        <CommandRegistryProvider>
+          <AppInner />
+        </CommandRegistryProvider>
+      </SettingsProvider>
     </ThemeProvider>
   );
 }

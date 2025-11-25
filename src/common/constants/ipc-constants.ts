@@ -6,6 +6,8 @@
 export const IPC_CHANNELS = {
   // Provider channels
   PROVIDERS_SET_CONFIG: "providers:setConfig",
+  PROVIDERS_SET_MODELS: "providers:setModels",
+  PROVIDERS_GET_CONFIG: "providers:getConfig",
   PROVIDERS_LIST: "providers:list",
 
   // Project channels

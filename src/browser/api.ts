@@ -233,6 +233,9 @@ const webApi: IPCApi = {
   providers: {
     setProviderConfig: (provider, keyPath, value) =>
       invokeIPC(IPC_CHANNELS.PROVIDERS_SET_CONFIG, provider, keyPath, value),
+    setModels: (provider, models) =>
+      invokeIPC(IPC_CHANNELS.PROVIDERS_SET_MODELS, provider, models),
+    getConfig: () => invokeIPC(IPC_CHANNELS.PROVIDERS_GET_CONFIG),
     list: () => invokeIPC(IPC_CHANNELS.PROVIDERS_LIST),
   },
   projects: {

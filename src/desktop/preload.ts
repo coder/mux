@@ -40,6 +40,9 @@ const api: IPCApi = {
   providers: {
     setProviderConfig: (provider, keyPath, value) =>
       ipcRenderer.invoke(IPC_CHANNELS.PROVIDERS_SET_CONFIG, provider, keyPath, value),
+    setModels: (provider, models) =>
+      ipcRenderer.invoke(IPC_CHANNELS.PROVIDERS_SET_MODELS, provider, models),
+    getConfig: () => ipcRenderer.invoke(IPC_CHANNELS.PROVIDERS_GET_CONFIG),
     list: () => ipcRenderer.invoke(IPC_CHANNELS.PROVIDERS_LIST),
   },
   fs: {
