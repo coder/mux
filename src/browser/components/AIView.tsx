@@ -38,6 +38,7 @@ import { QueuedMessage } from "./Messages/QueuedMessage";
 import { CompactionWarning } from "./CompactionWarning";
 import { shouldAutoCompact } from "@/browser/utils/compaction/autoCompactionCheck";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
+import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 
 interface AIViewProps {
   workspaceId: string;
@@ -328,8 +329,14 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Get active stream message ID for token counting
   const activeStreamMessageId = aggregator.getActiveStreamMessageId();
 
-  const autoCompactionCheck = currentModel
-    ? shouldAutoCompact(workspaceUsage, currentModel, use1M)
+  // Use pending send model for auto-compaction check, not the last stream's model.
+  // This ensures the threshold is based on the model the user will actually send with,
+  // preventing context-length errors when switching from a large-context to smaller model.
+  const pendingSendOptions = useSendMessageOptions(workspaceId);
+  const pendingModel = pendingSendOptions.model;
+
+  const autoCompactionCheck = pendingModel
+    ? shouldAutoCompact(workspaceUsage, pendingModel, use1M)
     : { shouldShowWarning: false, usagePercentage: 0, thresholdPercentage: 70 };
 
   // Show warning when: shouldShowWarning flag is true AND not currently compacting
