@@ -15,6 +15,7 @@ import {
   configureTestRetries,
 } from "./helpers";
 import { createSharedRepo, cleanupSharedRepo, withSharedWorkspace } from "./sendMessageTestHelpers";
+import { preloadTestModules } from "./setup";
 import type { StreamDeltaEvent } from "../../src/common/types/stream";
 import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
 
@@ -40,9 +41,13 @@ const PROVIDER_CONFIGS: Array<[string, string]> = [
 // - Longer running tests (tool calls, multiple edits) can take up to 30s
 // - Test timeout values (in describe/test) should be 2-3x the expected duration
 
-beforeAll(createSharedRepo);
-afterAll(cleanupSharedRepo);
 describeIntegration("IpcMain sendMessage integration tests", () => {
+  beforeAll(async () => {
+    await preloadTestModules();
+    await createSharedRepo();
+  });
+  afterAll(cleanupSharedRepo);
+
   configureTestRetries(3);
 
   // Run tests for each provider concurrently

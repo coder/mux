@@ -16,7 +16,12 @@
  * test the recovery path without relying on actual network failures.
  */
 
-import { setupWorkspace, shouldRunIntegrationTests, validateApiKeys } from "./setup";
+import {
+  setupWorkspace,
+  shouldRunIntegrationTests,
+  validateApiKeys,
+  preloadTestModules,
+} from "./setup";
 import {
   sendMessageWithModel,
   createEventCollector,
@@ -220,6 +225,8 @@ async function collectStreamUntil(
 }
 
 describeIntegration("Stream Error Recovery (No Amnesia)", () => {
+  beforeAll(preloadTestModules);
+
   test.concurrent(
     "should preserve exact prefix and continue from exact point after stream error",
     async () => {
