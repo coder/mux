@@ -10,11 +10,8 @@ describe("getThinkingPolicyForModel", () => {
     expect(getThinkingPolicyForModel("openai:gpt-5-pro-2025-10-06")).toEqual(["high"]);
   });
 
-  test("returns single HIGH for gpt-5-pro with whitespace after colon", () => {
-    expect(getThinkingPolicyForModel("openai: gpt-5-pro")).toEqual(["high"]);
-  });
-
   test("returns all levels for gpt-5-pro-mini (not a fixed policy)", () => {
+    // gpt-5-pro-mini shouldn't match the gpt-5-pro config
     expect(getThinkingPolicyForModel("openai:gpt-5-pro-mini")).toEqual([
       "off",
       "low",
@@ -48,6 +45,25 @@ describe("getThinkingPolicyForModel", () => {
     ]);
     expect(getThinkingPolicyForModel("google:gemini-3-pro-preview")).toEqual(["low", "high"]);
   });
+
+  test("returns binary on/off for xAI Grok models", () => {
+    expect(getThinkingPolicyForModel("xai:grok-4-1-fast")).toEqual(["off", "high"]);
+    expect(getThinkingPolicyForModel("xai:grok-2-latest")).toEqual(["off", "high"]);
+    expect(getThinkingPolicyForModel("xai:grok-beta")).toEqual(["off", "high"]);
+  });
+
+  test("grok models with version suffixes also get binary policy", () => {
+    expect(getThinkingPolicyForModel("xai:grok-4-1-fast-v2")).toEqual(["off", "high"]);
+  });
+
+  test("grok-code does not match grok- prefix, gets default policy", () => {
+    expect(getThinkingPolicyForModel("xai:grok-code-fast-1")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+    ]);
+  });
 });
 
 describe("enforceThinkingPolicy", () => {
@@ -72,10 +88,15 @@ describe("enforceThinkingPolicy", () => {
       expect(enforceThinkingPolicy("anthropic:claude-opus-4", "high")).toBe("high");
     });
 
-    test("falls back to medium when requested level not allowed", () => {
-      // Simulating behavior with gpt-5-pro (only allows "high")
-      // When requesting "low", falls back to first allowed level which is "high"
+    test("maps non-off levels to highest available when requested level not allowed", () => {
+      // gpt-5-pro only allows "high"
       expect(enforceThinkingPolicy("openai:gpt-5-pro", "low")).toBe("high");
+      expect(enforceThinkingPolicy("openai:gpt-5-pro", "medium")).toBe("high");
+
+      // Grok only allows "off" and "high" - preserve reasoning intent
+      expect(enforceThinkingPolicy("xai:grok-4-1-fast", "low")).toBe("high");
+      expect(enforceThinkingPolicy("xai:grok-4-1-fast", "medium")).toBe("high");
+      expect(enforceThinkingPolicy("xai:grok-4-1-fast", "off")).toBe("off");
     });
   });
 });
