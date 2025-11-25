@@ -84,6 +84,10 @@ export async function getToolsForModel(
   const wrap = <TParameters, TResult>(tool: Tool<TParameters, TResult>) =>
     wrapWithInitWait(tool, workspaceId, initStateManager);
 
+  // Lazy-load web_fetch to avoid loading jsdom (ESM-only) at Jest setup time
+  // This allows integration tests to run without transforming jsdom's dependencies
+  const { createWebFetchTool } = await import("@/node/services/tools/web_fetch");
+
   // Runtime-dependent tools need to wait for workspace initialization
   // Wrap them to handle init waiting centrally instead of in each tool
   const runtimeTools: Record<string, Tool> = {
@@ -95,6 +99,7 @@ export async function getToolsForModel(
     // and line number miscalculations. Use file_edit_replace_string instead.
     // file_edit_replace_lines: wrap(createFileEditReplaceLinesTool(config)),
     bash: wrap(createBashTool(config)),
+    web_fetch: wrap(createWebFetchTool(config)),
   };
 
   // Non-runtime tools execute immediately (no init wait needed)

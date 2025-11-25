@@ -201,3 +201,22 @@ export type StatusSetToolResult =
       success: false;
       error: string;
     };
+
+// Web Fetch Tool Types
+export interface WebFetchToolArgs {
+  url: string;
+}
+
+export type WebFetchToolResult =
+  | {
+      success: true;
+      title: string;
+      content: string;
+      url: string;
+      byline?: string;
+      length: number;
+    }
+  | {
+      success: false;
+      error: string;
+    };

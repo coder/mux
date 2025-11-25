@@ -14,6 +14,7 @@ module.exports = {
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/src/$1",
     "^chalk$": "<rootDir>/tests/__mocks__/chalk.js",
+    "^jsdom$": "<rootDir>/tests/__mocks__/jsdom.js",
   },
   transform: {
     "^.+\\.tsx?$": [

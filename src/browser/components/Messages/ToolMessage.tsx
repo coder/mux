@@ -8,6 +8,7 @@ import { FileReadToolCall } from "../tools/FileReadToolCall";
 import { ProposePlanToolCall } from "../tools/ProposePlanToolCall";
 import { TodoToolCall } from "../tools/TodoToolCall";
 import { StatusSetToolCall } from "../tools/StatusSetToolCall";
+import { WebFetchToolCall } from "../tools/WebFetchToolCall";
 import type {
   BashToolArgs,
   BashToolResult,
@@ -25,6 +26,8 @@ import type {
   TodoWriteToolResult,
   StatusSetToolArgs,
   StatusSetToolResult,
+  WebFetchToolArgs,
+  WebFetchToolResult,
 } from "@/common/types/tools";
 
 interface ToolMessageProps {
@@ -79,6 +82,11 @@ function isTodoWriteTool(toolName: string, args: unknown): args is TodoWriteTool
 function isStatusSetTool(toolName: string, args: unknown): args is StatusSetToolArgs {
   if (toolName !== "status_set") return false;
   return TOOL_DEFINITIONS.status_set.schema.safeParse(args).success;
+}
+
+function isWebFetchTool(toolName: string, args: unknown): args is WebFetchToolArgs {
+  if (toolName !== "web_fetch") return false;
+  return TOOL_DEFINITIONS.web_fetch.schema.safeParse(args).success;
 }
 
 export const ToolMessage: React.FC<ToolMessageProps> = ({ message, className, workspaceId }) => {
@@ -178,6 +186,18 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({ message, className, wo
         <StatusSetToolCall
           args={message.args}
           result={message.result as StatusSetToolResult | undefined}
+          status={message.status}
+        />
+      </div>
+    );
+  }
+
+  if (isWebFetchTool(message.toolName, message.args)) {
+    return (
+      <div className={className}>
+        <WebFetchToolCall
+          args={message.args}
+          result={message.result as WebFetchToolResult | undefined}
           status={message.status}
         />
       </div>
