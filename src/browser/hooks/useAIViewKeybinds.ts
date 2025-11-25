@@ -34,7 +34,6 @@ interface UseAIViewKeybindsParams {
  * - Ctrl+G: Jump to bottom
  * - Ctrl+T: Open terminal
  * - Ctrl+C (during compaction in vim mode): Cancel compaction, restore command
- * - Ctrl+A (during compaction): Accept early with [truncated]
  *
  * Note: In vim mode, Ctrl+C always interrupts streams. Use vim yank (y) commands for copying.
  */
@@ -61,7 +60,6 @@ export function useAIViewKeybinds({
         : KEYBINDS.INTERRUPT_STREAM_NORMAL;
 
       // Interrupt stream: Ctrl+C in vim mode, Esc in normal mode
-      // (different from Ctrl+A which accepts early with [truncated])
       // Only intercept if actively compacting (otherwise allow browser default for copy in vim mode)
       if (matchesKeybind(e, interruptKeybind)) {
         if (canInterrupt && isCompactingStream(aggregator)) {
@@ -84,21 +82,6 @@ export function useAIViewKeybinds({
           void window.api.workspace.interruptStream(workspaceId);
           return;
         }
-      }
-
-      // Ctrl+A during compaction: accept early with [truncated] sentinel
-      // (different from Ctrl+C which cancels and restores original state)
-      // Only intercept if actively compacting (otherwise allow browser default for select all)
-      if (matchesKeybind(e, KEYBINDS.ACCEPT_EARLY_COMPACTION)) {
-        if (canInterrupt && isCompactingStream(aggregator)) {
-          // Ctrl+A during compaction: perform compaction with partial summary
-          // No flag set - handleCompactionAbort will perform compaction with [truncated]
-          e.preventDefault();
-          setAutoRetry(false);
-          void window.api.workspace.interruptStream(workspaceId);
-        }
-        // Let browser handle Ctrl+A (select all) when not compacting
-        return;
       }
 
       // Focus chat input works anywhere (even in input fields)

@@ -799,7 +799,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
       const interruptKeybind = vimEnabled
         ? KEYBINDS.INTERRUPT_STREAM_VIM
         : KEYBINDS.INTERRUPT_STREAM_NORMAL;
-      return `Compacting... (${formatKeybind(interruptKeybind)} cancel | ${formatKeybind(KEYBINDS.ACCEPT_EARLY_COMPACTION)} accept early | ${formatKeybind(KEYBINDS.SEND_MESSAGE)} to queue)`;
+      return `Compacting... (${formatKeybind(interruptKeybind)} cancel | ${formatKeybind(KEYBINDS.SEND_MESSAGE)} to queue)`;
     }
 
     // Build hints for normal input

@@ -501,11 +501,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
                         ? `${getModelName(currentModel)} streaming...`
                         : "streaming..."
                   }
-                  cancelText={
-                    isCompacting
-                      ? `${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} cancel | ${formatKeybind(KEYBINDS.ACCEPT_EARLY_COMPACTION)} accept early`
-                      : `hit ${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} to cancel`
-                  }
+                  cancelText={`hit ${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} to cancel`}
                   tokenCount={
                     activeStreamMessageId
                       ? aggregator.getStreamingTokenCount(activeStreamMessageId)

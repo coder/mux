@@ -23,8 +23,7 @@ import { Ok, Err } from "@/common/types/result";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { MessageQueue } from "./messageQueue";
-
-import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
+import type { StreamEndEvent } from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
 
 export interface AgentSessionChatEvent {
@@ -475,11 +474,8 @@ export class AgentSession {
       this.sendQueuedMessages();
     });
 
-    forward("stream-abort", async (payload) => {
-      const handled = await this.compactionHandler.handleAbort(payload as StreamAbortEvent);
-      if (!handled) {
-        this.emitChatEvent(payload);
-      }
+    forward("stream-abort", (payload) => {
+      this.emitChatEvent(payload);
 
       // Stream aborted: restore queued messages to input
       if (!this.messageQueue.isEmpty()) {

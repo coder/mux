@@ -206,9 +206,6 @@ export const KEYBINDS = {
   INTERRUPT_STREAM_VIM: { key: "c", ctrl: true, macCtrlBehavior: "control" },
   INTERRUPT_STREAM_NORMAL: { key: "Escape" },
 
-  /** Accept partial compaction early (adds [truncated] sentinel) */
-  ACCEPT_EARLY_COMPACTION: { key: "a", ctrl: true, macCtrlBehavior: "control" },
-
   /** Focus chat input */
   FOCUS_INPUT_I: { key: "i" },
 

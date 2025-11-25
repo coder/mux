@@ -1,14 +1,8 @@
 /**
  * Compaction interrupt handling
  *
- * Two interrupt flows during compaction:
- * - Ctrl+C (cancel): Abort compaction, restore original history + command to input
- * - Ctrl+A (accept early): Complete compaction with [truncated] sentinel
- *
- * Uses localStorage to persist cancellation intent across reloads:
- * - Before interrupt, store messageId in localStorage
- * - handleCompactionAbort checks localStorage and verifies messageId matches
- * - Reload-safe: localStorage persists, messageId ensures freshness
+ * Ctrl+C (cancel): Abort compaction, enters edit mode on compaction-request message
+ * with original /compact command restored for re-editing.
  */
 
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
