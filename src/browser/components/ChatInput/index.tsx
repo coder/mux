@@ -610,6 +610,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
               type: "success",
               message: `Context threshold reached - auto-compacting...`,
             });
+            props.onMessageSent?.();
           }
         } catch (error) {
           // Restore on unexpected error
