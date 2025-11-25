@@ -361,6 +361,33 @@ export class Config {
   }
 
   /**
+   * Get workspace metadata by ID synchronously.
+   * Used for executor registration when creating sessions for existing workspaces.
+   * Only returns workspaces that have complete metadata in config (not legacy).
+   */
+  getWorkspaceMetadataSync(workspaceId: string): WorkspaceMetadata | null {
+    const config = this.loadConfigOrDefault();
+
+    for (const [projectPath, projectConfig] of config.projects) {
+      for (const workspace of projectConfig.workspaces) {
+        // Only check new format workspaces (have id and name in config)
+        if (workspace.id === workspaceId && workspace.name) {
+          return {
+            id: workspace.id,
+            name: workspace.name,
+            projectName: this.getProjectName(projectPath),
+            projectPath,
+            createdAt: workspace.createdAt,
+            runtimeConfig: workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
+          };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Add a workspace to config.json (single source of truth for workspace metadata).
    * Creates project entry if it doesn't exist.
    *

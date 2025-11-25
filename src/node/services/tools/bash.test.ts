@@ -1368,7 +1368,10 @@ describe("bash tool - background execution", () => {
 
   it("should reject timeout with background mode", async () => {
     const manager = new BackgroundProcessManager();
-    manager.registerExecutor("test-workspace", new LocalBackgroundExecutor(new BashExecutionService()));
+    manager.registerExecutor(
+      "test-workspace",
+      new LocalBackgroundExecutor(new BashExecutionService())
+    );
 
     const tempDir = new TestTempDir("test-bash-bg");
     const config = createTestToolConfig(process.cwd());
@@ -1395,7 +1398,10 @@ describe("bash tool - background execution", () => {
 
   it("should start background process and return process ID", async () => {
     const manager = new BackgroundProcessManager();
-    manager.registerExecutor("test-workspace", new LocalBackgroundExecutor(new BashExecutionService()));
+    manager.registerExecutor(
+      "test-workspace",
+      new LocalBackgroundExecutor(new BashExecutionService())
+    );
 
     const tempDir = new TestTempDir("test-bash-bg");
     const config = createTestToolConfig(process.cwd());

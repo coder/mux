@@ -110,8 +110,14 @@ describe("bash_background_list tool", () => {
 
   it("should only list processes for the current workspace", async () => {
     const manager = new BackgroundProcessManager();
-    manager.registerExecutor("workspace-a", new LocalBackgroundExecutor(new BashExecutionService()));
-    manager.registerExecutor("workspace-b", new LocalBackgroundExecutor(new BashExecutionService()));
+    manager.registerExecutor(
+      "workspace-a",
+      new LocalBackgroundExecutor(new BashExecutionService())
+    );
+    manager.registerExecutor(
+      "workspace-b",
+      new LocalBackgroundExecutor(new BashExecutionService())
+    );
 
     const tempDir = new TestTempDir("test-bash-bg-list");
     const config = createTestToolConfig(process.cwd(), { workspaceId: "workspace-a" });

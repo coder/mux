@@ -122,6 +122,25 @@ export class IpcMain {
   }
 
   /**
+   * Ensure a background executor is registered for a workspace.
+   * Called when creating sessions for existing workspaces (after app restart).
+   * No-op if executor already registered or workspace not found (new workspace being created).
+   */
+  private ensureExecutorRegistered(workspaceId: string): void {
+    // Look up workspace metadata synchronously from config
+    const metadata = this.config.getWorkspaceMetadataSync(workspaceId);
+    if (!metadata) {
+      // Workspace not in config yet - executor will be registered by creation path
+      return;
+    }
+
+    const runtime = createRuntime(metadata.runtimeConfig);
+    const executor = this.createBackgroundExecutor(metadata.runtimeConfig, runtime);
+    // registerExecutor is idempotent - no-op if already registered
+    this.backgroundProcessManager.registerExecutor(workspaceId, executor);
+  }
+
+  /**
    * Initialize the service. Call this after construction.
    * This is separate from the constructor to support async initialization.
    */
@@ -419,6 +438,9 @@ export class IpcMain {
     if (session) {
       return session;
     }
+
+    // Ensure executor is registered for existing workspaces (handles app restart case)
+    this.ensureExecutorRegistered(trimmed);
 
     session = new AgentSession({
       workspaceId: trimmed,

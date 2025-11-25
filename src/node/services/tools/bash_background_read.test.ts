@@ -206,8 +206,14 @@ describe("bash_background_read tool", () => {
 
   it("should not read processes from other workspaces", async () => {
     const manager = new BackgroundProcessManager();
-    manager.registerExecutor("workspace-a", new LocalBackgroundExecutor(new BashExecutionService()));
-    manager.registerExecutor("workspace-b", new LocalBackgroundExecutor(new BashExecutionService()));
+    manager.registerExecutor(
+      "workspace-a",
+      new LocalBackgroundExecutor(new BashExecutionService())
+    );
+    manager.registerExecutor(
+      "workspace-b",
+      new LocalBackgroundExecutor(new BashExecutionService())
+    );
 
     const tempDir = new TestTempDir("test-bash-bg-read");
     // Config is for workspace-a

@@ -33,10 +33,14 @@ export class BackgroundProcessManager {
 
   /**
    * Register an executor for a workspace.
-   * Called when workspace is created - local workspaces get LocalBackgroundExecutor,
-   * SSH workspaces get SSHBackgroundExecutor.
+   * Called when workspace is created or session is started for existing workspace.
+   * Local workspaces get LocalBackgroundExecutor, SSH workspaces get SSHBackgroundExecutor.
+   * Idempotent - no-op if executor already registered.
    */
   registerExecutor(workspaceId: string, executor: BackgroundExecutor): void {
+    if (this.executors.has(workspaceId)) {
+      return; // Already registered
+    }
     log.debug(`BackgroundProcessManager.registerExecutor(${workspaceId})`);
     this.executors.set(workspaceId, executor);
   }
@@ -65,7 +69,8 @@ export class BackgroundProcessManager {
     if (!executor) {
       return {
         success: false,
-        error: "No executor registered for this workspace. Background execution may not be supported.",
+        error:
+          "No executor registered for this workspace. Background execution may not be supported.",
       };
     }
 
@@ -194,7 +199,7 @@ export class BackgroundProcessManager {
       proc.exitTime ??= Date.now();
       // Ensure handle is cleaned up even on error
       if (proc.handle) {
-        await proc.handle.dispose().catch(() => {});
+        await proc.handle.dispose();
       }
       return { success: true };
     }

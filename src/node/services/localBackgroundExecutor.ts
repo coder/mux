@@ -88,8 +88,8 @@ class LocalBackgroundHandle implements BackgroundHandle {
     }
   }
 
-  async isRunning(): Promise<boolean> {
-    return this.disposable.child.exitCode === null;
+  isRunning(): Promise<boolean> {
+    return Promise.resolve(this.disposable.child.exitCode === null);
   }
 
   async terminate(): Promise<void> {
@@ -126,8 +126,8 @@ class LocalBackgroundHandle implements BackgroundHandle {
     this.terminated = true;
   }
 
-  async dispose(): Promise<void> {
-    this.disposable[Symbol.dispose]();
+  dispose(): Promise<void> {
+    return Promise.resolve(this.disposable[Symbol.dispose]());
   }
 
   /** Get the child process (for spawn event waiting) */
@@ -145,7 +145,9 @@ export class LocalBackgroundExecutor implements BackgroundExecutor {
   async spawn(script: string, config: BackgroundExecConfig): Promise<BackgroundSpawnResult> {
     log.debug(`LocalBackgroundExecutor: Spawning background process in ${config.cwd}`);
 
-    // Create handle first so we can wire up callbacks
+    // Declare handle before executeStreaming so callbacks can reference it via closure.
+    // It's assigned immediately after executeStreaming returns, before any callbacks fire.
+    // eslint-disable-next-line prefer-const
     let handle: LocalBackgroundHandle;
 
     // Spawn with streaming callbacks that forward to handle
@@ -190,9 +192,7 @@ export class LocalBackgroundExecutor implements BackgroundExecutor {
       return { success: false, error: err.message };
     }
 
-    log.debug(
-      `LocalBackgroundExecutor: Process spawned with PID ${handle.child.pid ?? "unknown"}`
-    );
+    log.debug(`LocalBackgroundExecutor: Process spawned with PID ${handle.child.pid ?? "unknown"}`);
     return { success: true, handle };
   }
 }

@@ -32,12 +32,12 @@ export class SSHBackgroundExecutor implements BackgroundExecutor {
     // Runtime will be used for SSH commands when implemented
   }
 
-  async spawn(_script: string, _config: BackgroundExecConfig): Promise<BackgroundSpawnResult> {
+  spawn(_script: string, _config: BackgroundExecConfig): Promise<BackgroundSpawnResult> {
     // TODO: Implement SSH background execution
     // See file header for implementation approach
-    return {
+    return Promise.resolve({
       success: false,
       error: "SSH background execution is not yet implemented",
-    };
+    });
   }
 }
