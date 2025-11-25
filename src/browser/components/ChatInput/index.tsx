@@ -871,7 +871,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
               </div>
 
               <div className="ml-4 flex items-center" data-component="ModelSettingsGroup">
-                <ModelSettings provider={(preferredModel || "").split(":")[0]} />
+                <ModelSettings model={preferredModel || ""} />
               </div>
 
               {preferredModel && (
