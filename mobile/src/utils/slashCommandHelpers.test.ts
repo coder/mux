@@ -65,4 +65,27 @@ describe("buildMobileCompactionPayload", () => {
     expect(payload.sendOptions.mode).toBe("compact");
     expect(payload.sendOptions.maxOutputTokens).toBe(800);
   });
+
+  it("omits continueMessage when no text provided", () => {
+    const baseOptions: SendMessageOptions = {
+      model: "anthropic:claude-sonnet-4-5",
+      mode: "plan",
+      thinkingLevel: "default",
+    };
+
+    const parsed = {
+      type: "compact" as const,
+      maxOutputTokens: 1000,
+      continueMessage: undefined,
+      model: undefined,
+    };
+
+    const payload = buildMobileCompactionPayload(parsed, baseOptions);
+
+    if (payload.metadata.type !== "compaction-request") {
+      throw new Error("Expected compaction metadata");
+    }
+
+    expect(payload.metadata.parsed.continueMessage).toBeUndefined();
+  });
 });

@@ -56,11 +56,13 @@ export function buildMobileCompactionPayload(
     parsed: {
       model: parsed.model,
       maxOutputTokens: parsed.maxOutputTokens,
-      continueMessage: {
-        text: parsed.continueMessage ?? "",
-        imageParts: [],
-        model: baseOptions.model,
-      },
+      continueMessage: parsed.continueMessage
+        ? {
+            text: parsed.continueMessage,
+            imageParts: [],
+            model: baseOptions.model,
+          }
+        : undefined,
     },
   };
 
