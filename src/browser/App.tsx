@@ -3,13 +3,13 @@ import "./styles/globals.css";
 import { useWorkspaceContext } from "./contexts/WorkspaceContext";
 import { useProjectContext } from "./contexts/ProjectContext";
 import type { WorkspaceSelection } from "./components/ProjectSidebar";
-import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { LeftSidebar } from "./components/LeftSidebar";
 import { ProjectCreateModal } from "./components/ProjectCreateModal";
 import { AIView } from "./components/AIView";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { usePersistedState, updatePersistedState } from "./hooks/usePersistedState";
 import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
+import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
 import { useResumeManager } from "./hooks/useResumeManager";
 import { useUnreadTracking } from "./hooks/useUnreadTracking";
 import { useWorkspaceStoreRaw, useWorkspaceRecency } from "./stores/WorkspaceStore";
@@ -198,46 +198,24 @@ function AppInner() {
   // NEW: Get workspace recency from store
   const workspaceRecency = useWorkspaceRecency();
 
-  // Sort workspaces by recency (most recent first)
-  // Returns Map<projectPath, FrontendWorkspaceMetadata[]> for direct component use
+  // Build sorted workspaces map including pending workspaces
   // Use stable reference to prevent sidebar re-renders when sort order hasn't changed
   const sortedWorkspacesByProject = useStableReference(
-    () => {
-      const result = new Map<string, FrontendWorkspaceMetadata[]>();
-      for (const [projectPath, config] of projects) {
-        // Transform Workspace[] to FrontendWorkspaceMetadata[] using workspace ID
-        const metadataList = config.workspaces
-          .map((ws) => (ws.id ? workspaceMetadata.get(ws.id) : undefined))
-          .filter((meta): meta is FrontendWorkspaceMetadata => meta !== undefined && meta !== null);
-
-        // Sort by recency
-        metadataList.sort((a, b) => {
-          const aTimestamp = workspaceRecency[a.id] ?? 0;
-          const bTimestamp = workspaceRecency[b.id] ?? 0;
-          return bTimestamp - aTimestamp;
+    () => buildSortedWorkspacesByProject(projects, workspaceMetadata, workspaceRecency),
+    (prev, next) =>
+      compareMaps(prev, next, (a, b) => {
+        if (a.length !== b.length) return false;
+        // Check ID, name, and status to detect changes
+        return a.every((meta, i) => {
+          const other = b[i];
+          return (
+            other &&
+            meta.id === other.id &&
+            meta.name === other.name &&
+            meta.status === other.status
+          );
         });
-
-        result.set(projectPath, metadataList);
-      }
-      return result;
-    },
-    (prev, next) => {
-      // Compare Maps: check if size, workspace order, and metadata content are the same
-      if (
-        !compareMaps(prev, next, (a, b) => {
-          if (a.length !== b.length) return false;
-          // Check both ID and name to detect renames
-          return a.every((metadata, i) => {
-            const bMeta = b[i];
-            if (!bMeta || !metadata) return false; // Null-safe
-            return metadata.id === bMeta.id && metadata.name === bMeta.name;
-          });
-        })
-      ) {
-        return false;
-      }
-      return true;
-    },
+      }),
     [projects, workspaceMetadata, workspaceRecency]
   );
 
@@ -605,12 +583,19 @@ function AppInner() {
                               new Map(prev).set(metadata.id, metadata)
                             );
 
-                            // Switch to new workspace
-                            setSelectedWorkspace({
-                              workspaceId: metadata.id,
-                              projectPath: metadata.projectPath,
-                              projectName: metadata.projectName,
-                              namedWorkspacePath: metadata.namedWorkspacePath,
+                            // Only switch to new workspace if user hasn't selected another one
+                            // during the creation process (selectedWorkspace was null when creation started)
+                            setSelectedWorkspace((current) => {
+                              if (current !== null) {
+                                // User has already selected another workspace - don't override
+                                return current;
+                              }
+                              return {
+                                workspaceId: metadata.id,
+                                projectPath: metadata.projectPath,
+                                projectName: metadata.projectName,
+                                namedWorkspacePath: metadata.namedWorkspacePath,
+                              };
                             });
 
                             // Track telemetry

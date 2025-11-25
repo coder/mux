@@ -66,7 +66,7 @@ export interface WorkspaceContext {
 
   // Selection
   selectedWorkspace: WorkspaceSelection | null;
-  setSelectedWorkspace: (workspace: WorkspaceSelection | null) => void;
+  setSelectedWorkspace: React.Dispatch<React.SetStateAction<WorkspaceSelection | null>>;
 
   // Workspace creation flow
   pendingNewWorkspaceProject: string | null;

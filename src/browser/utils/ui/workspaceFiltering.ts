@@ -1,4 +1,5 @@
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { ProjectConfig } from "@/common/types/project";
 
 /**
  * Age thresholds for workspace filtering, in ascending order.
@@ -8,6 +9,57 @@ export const AGE_THRESHOLDS_DAYS = [1, 7, 30] as const;
 export type AgeThresholdDays = (typeof AGE_THRESHOLDS_DAYS)[number];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Build a map of project paths to sorted workspace metadata lists.
+ * Includes both persisted workspaces (from config) and pending workspaces
+ * (status: "creating") that haven't been saved yet.
+ *
+ * Workspaces are sorted by recency (most recent first).
+ */
+export function buildSortedWorkspacesByProject(
+  projects: Map<string, ProjectConfig>,
+  workspaceMetadata: Map<string, FrontendWorkspaceMetadata>,
+  workspaceRecency: Record<string, number>
+): Map<string, FrontendWorkspaceMetadata[]> {
+  const result = new Map<string, FrontendWorkspaceMetadata[]>();
+  const includedIds = new Set<string>();
+
+  // First pass: include workspaces from persisted config
+  for (const [projectPath, config] of projects) {
+    const metadataList: FrontendWorkspaceMetadata[] = [];
+    for (const ws of config.workspaces) {
+      if (!ws.id) continue;
+      const meta = workspaceMetadata.get(ws.id);
+      if (meta) {
+        metadataList.push(meta);
+        includedIds.add(ws.id);
+      }
+    }
+    result.set(projectPath, metadataList);
+  }
+
+  // Second pass: add pending workspaces (status: "creating") not yet in config
+  for (const [id, metadata] of workspaceMetadata) {
+    if (metadata.status === "creating" && !includedIds.has(id)) {
+      const projectWorkspaces = result.get(metadata.projectPath) ?? [];
+      projectWorkspaces.push(metadata);
+      result.set(metadata.projectPath, projectWorkspaces);
+    }
+  }
+
+  // Sort each project's workspaces by recency
+  for (const [projectPath, metadataList] of result) {
+    metadataList.sort((a, b) => {
+      const aTimestamp = workspaceRecency[a.id] ?? 0;
+      const bTimestamp = workspaceRecency[b.id] ?? 0;
+      return bTimestamp - aTimestamp;
+    });
+    result.set(projectPath, metadataList);
+  }
+
+  return result;
+}
 
 /**
  * Format a day count for display.

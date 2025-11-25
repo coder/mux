@@ -3,8 +3,10 @@ import {
   partitionWorkspacesByAge,
   formatDaysThreshold,
   AGE_THRESHOLDS_DAYS,
+  buildSortedWorkspacesByProject,
 } from "./workspaceFiltering";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { ProjectConfig } from "@/common/types/project";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 
 describe("partitionWorkspacesByAge", () => {
@@ -171,5 +173,147 @@ describe("formatDaysThreshold", () => {
   it("should format plural days correctly", () => {
     expect(formatDaysThreshold(7)).toBe("7 days");
     expect(formatDaysThreshold(30)).toBe("30 days");
+  });
+});
+
+describe("buildSortedWorkspacesByProject", () => {
+  const createWorkspace = (
+    id: string,
+    projectPath: string,
+    status?: "creating"
+  ): FrontendWorkspaceMetadata => ({
+    id,
+    name: `workspace-${id}`,
+    projectName: projectPath.split("/").pop() ?? "unknown",
+    projectPath,
+    namedWorkspacePath: `${projectPath}/workspace-${id}`,
+    runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    status,
+  });
+
+  it("should include workspaces from persisted config", () => {
+    const projects = new Map<string, ProjectConfig>([
+      ["/project/a", { workspaces: [{ path: "/a/ws1", id: "ws1" }] }],
+    ]);
+    const metadata = new Map<string, FrontendWorkspaceMetadata>([
+      ["ws1", createWorkspace("ws1", "/project/a")],
+    ]);
+
+    const result = buildSortedWorkspacesByProject(projects, metadata, {});
+
+    expect(result.get("/project/a")).toHaveLength(1);
+    expect(result.get("/project/a")?.[0].id).toBe("ws1");
+  });
+
+  it("should include pending workspaces not yet in config", () => {
+    const projects = new Map<string, ProjectConfig>([
+      ["/project/a", { workspaces: [{ path: "/a/ws1", id: "ws1" }] }],
+    ]);
+    const metadata = new Map<string, FrontendWorkspaceMetadata>([
+      ["ws1", createWorkspace("ws1", "/project/a")],
+      ["pending1", createWorkspace("pending1", "/project/a", "creating")],
+    ]);
+
+    const result = buildSortedWorkspacesByProject(projects, metadata, {});
+
+    expect(result.get("/project/a")).toHaveLength(2);
+    expect(result.get("/project/a")?.map((w) => w.id)).toContain("ws1");
+    expect(result.get("/project/a")?.map((w) => w.id)).toContain("pending1");
+  });
+
+  it("should handle multiple concurrent pending workspaces", () => {
+    const projects = new Map<string, ProjectConfig>([["/project/a", { workspaces: [] }]]);
+    const metadata = new Map<string, FrontendWorkspaceMetadata>([
+      ["pending1", createWorkspace("pending1", "/project/a", "creating")],
+      ["pending2", createWorkspace("pending2", "/project/a", "creating")],
+      ["pending3", createWorkspace("pending3", "/project/a", "creating")],
+    ]);
+
+    const result = buildSortedWorkspacesByProject(projects, metadata, {});
+
+    expect(result.get("/project/a")).toHaveLength(3);
+  });
+
+  it("should add pending workspaces for projects not yet in config", () => {
+    const projects = new Map<string, ProjectConfig>();
+    const metadata = new Map<string, FrontendWorkspaceMetadata>([
+      ["pending1", createWorkspace("pending1", "/new/project", "creating")],
+    ]);
+
+    const result = buildSortedWorkspacesByProject(projects, metadata, {});
+
+    expect(result.get("/new/project")).toHaveLength(1);
+    expect(result.get("/new/project")?.[0].id).toBe("pending1");
+  });
+
+  it("should sort workspaces by recency (most recent first)", () => {
+    const now = Date.now();
+    const projects = new Map<string, ProjectConfig>([
+      [
+        "/project/a",
+        {
+          workspaces: [
+            { path: "/a/ws1", id: "ws1" },
+            { path: "/a/ws2", id: "ws2" },
+            { path: "/a/ws3", id: "ws3" },
+          ],
+        },
+      ],
+    ]);
+    const metadata = new Map<string, FrontendWorkspaceMetadata>([
+      ["ws1", createWorkspace("ws1", "/project/a")],
+      ["ws2", createWorkspace("ws2", "/project/a")],
+      ["ws3", createWorkspace("ws3", "/project/a")],
+    ]);
+    const recency = {
+      ws1: now - 3000, // oldest
+      ws2: now - 1000, // newest
+      ws3: now - 2000, // middle
+    };
+
+    const result = buildSortedWorkspacesByProject(projects, metadata, recency);
+
+    expect(result.get("/project/a")?.map((w) => w.id)).toEqual(["ws2", "ws3", "ws1"]);
+  });
+
+  it("should not duplicate workspaces that exist in both config and have creating status", () => {
+    // Edge case: workspace was saved to config but still has status: "creating"
+    // (this shouldn't happen in practice but tests defensive coding)
+    const projects = new Map<string, ProjectConfig>([
+      ["/project/a", { workspaces: [{ path: "/a/ws1", id: "ws1" }] }],
+    ]);
+    const metadata = new Map<string, FrontendWorkspaceMetadata>([
+      ["ws1", createWorkspace("ws1", "/project/a", "creating")],
+    ]);
+
+    const result = buildSortedWorkspacesByProject(projects, metadata, {});
+
+    expect(result.get("/project/a")).toHaveLength(1);
+    expect(result.get("/project/a")?.[0].id).toBe("ws1");
+  });
+
+  it("should skip workspaces with no id in config", () => {
+    const projects = new Map<string, ProjectConfig>([
+      ["/project/a", { workspaces: [{ path: "/a/legacy" }, { path: "/a/ws1", id: "ws1" }] }],
+    ]);
+    const metadata = new Map<string, FrontendWorkspaceMetadata>([
+      ["ws1", createWorkspace("ws1", "/project/a")],
+    ]);
+
+    const result = buildSortedWorkspacesByProject(projects, metadata, {});
+
+    expect(result.get("/project/a")).toHaveLength(1);
+    expect(result.get("/project/a")?.[0].id).toBe("ws1");
+  });
+
+  it("should skip config workspaces with no matching metadata", () => {
+    const projects = new Map<string, ProjectConfig>([
+      ["/project/a", { workspaces: [{ path: "/a/ws1", id: "ws1" }] }],
+    ]);
+    const metadata = new Map<string, FrontendWorkspaceMetadata>(); // empty
+
+    const result = buildSortedWorkspacesByProject(projects, metadata, {});
+
+    expect(result.get("/project/a")).toHaveLength(0);
   });
 });
