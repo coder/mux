@@ -24,54 +24,28 @@ const MAX_BUFFER_LINES = 1000;
 /**
  * Manages background bash processes for workspaces.
  *
- * Each workspace registers its own executor (local or SSH) at creation time.
- * This allows different execution backends per workspace.
+ * Executors are provided lazily at spawn time and cached per workspace.
+ * This allows different execution backends per workspace (local vs SSH).
  */
 export class BackgroundProcessManager {
   private processes = new Map<string, BackgroundProcess>();
   private executors = new Map<string, BackgroundExecutor>();
 
   /**
-   * Register an executor for a workspace.
-   * Called when workspace is created or session is started for existing workspace.
-   * Local workspaces get LocalBackgroundExecutor, SSH workspaces get SSHBackgroundExecutor.
-   * Idempotent - no-op if executor already registered.
-   */
-  registerExecutor(workspaceId: string, executor: BackgroundExecutor): void {
-    if (this.executors.has(workspaceId)) {
-      return; // Already registered
-    }
-    log.debug(`BackgroundProcessManager.registerExecutor(${workspaceId})`);
-    this.executors.set(workspaceId, executor);
-  }
-
-  /**
-   * Unregister executor for a workspace.
-   * Called when workspace is deleted.
-   */
-  unregisterExecutor(workspaceId: string): void {
-    log.debug(`BackgroundProcessManager.unregisterExecutor(${workspaceId})`);
-    this.executors.delete(workspaceId);
-  }
-
-  /**
-   * Spawn a new background process
+   * Spawn a new background process.
+   * The executor is cached on first spawn per workspace for reuse (e.g., SSH connection pooling).
    */
   async spawn(
+    executor: BackgroundExecutor,
     workspaceId: string,
     script: string,
     config: { cwd: string; secrets?: Record<string, string>; niceness?: number }
   ): Promise<{ success: true; processId: string } | { success: false; error: string }> {
     log.debug(`BackgroundProcessManager.spawn() called for workspace ${workspaceId}`);
 
-    // Get executor for this workspace
-    const executor = this.executors.get(workspaceId);
-    if (!executor) {
-      return {
-        success: false,
-        error:
-          "No executor registered for this workspace. Background execution may not be supported.",
-      };
+    // Cache executor on first spawn for this workspace (enables SSH connection reuse)
+    if (!this.executors.has(workspaceId)) {
+      this.executors.set(workspaceId, executor);
     }
 
     // Generate unique process ID
@@ -207,7 +181,7 @@ export class BackgroundProcessManager {
 
   /**
    * Clean up all processes for a workspace.
-   * Terminates running processes, removes them from memory, and unregisters the executor.
+   * Terminates running processes, removes them from memory, and clears the cached executor.
    */
   async cleanup(workspaceId: string): Promise<void> {
     log.debug(`BackgroundProcessManager.cleanup(${workspaceId}) called`);
@@ -221,8 +195,8 @@ export class BackgroundProcessManager {
     // Remove all processes from memory
     matching.forEach((p) => this.processes.delete(p.id));
 
-    // Unregister the executor for this workspace
-    this.unregisterExecutor(workspaceId);
+    // Clear cached executor for this workspace
+    this.executors.delete(workspaceId);
 
     log.debug(`Cleaned up ${matching.length} process(es) for workspace ${workspaceId}`);
   }

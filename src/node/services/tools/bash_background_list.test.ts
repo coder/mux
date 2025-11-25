@@ -3,6 +3,7 @@ import { createBashBackgroundListTool } from "./bash_background_list";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import { BashExecutionService } from "@/node/services/bashExecutionService";
 import { LocalBackgroundExecutor } from "@/node/services/localBackgroundExecutor";
+import type { BackgroundExecutor } from "@/node/services/backgroundExecutor";
 import type { BashBackgroundListResult } from "@/common/types/tools";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 import type { ToolCallOptions } from "ai";
@@ -12,11 +13,9 @@ const mockToolCallOptions: ToolCallOptions = {
   messages: [],
 };
 
-// Helper to create manager with executor registered for a workspace
-function createManagerWithExecutor(workspaceId: string): BackgroundProcessManager {
-  const manager = new BackgroundProcessManager();
-  manager.registerExecutor(workspaceId, new LocalBackgroundExecutor(new BashExecutionService()));
-  return manager;
+// Create a test executor
+function createTestExecutor(): BackgroundExecutor {
+  return new LocalBackgroundExecutor(new BashExecutionService());
 }
 
 describe("bash_background_list tool", () => {
@@ -37,7 +36,7 @@ describe("bash_background_list tool", () => {
   });
 
   it("should return error when workspaceId not available", async () => {
-    const manager = createManagerWithExecutor("test-workspace");
+    const manager = new BackgroundProcessManager();
     const tempDir = new TestTempDir("test-bash-bg-list");
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
@@ -56,7 +55,7 @@ describe("bash_background_list tool", () => {
   });
 
   it("should return empty list when no processes", async () => {
-    const manager = createManagerWithExecutor("test-workspace");
+    const manager = new BackgroundProcessManager();
     const tempDir = new TestTempDir("test-bash-bg-list");
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
@@ -74,14 +73,15 @@ describe("bash_background_list tool", () => {
   });
 
   it("should list spawned processes with correct fields", async () => {
-    const manager = createManagerWithExecutor("test-workspace");
+    const manager = new BackgroundProcessManager();
+    const executor = createTestExecutor();
     const tempDir = new TestTempDir("test-bash-bg-list");
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
     config.backgroundProcessManager = manager;
 
     // Spawn a process
-    const spawnResult = await manager.spawn("test-workspace", "sleep 10", {
+    const spawnResult = await manager.spawn(executor, "test-workspace", "sleep 10", {
       cwd: process.cwd(),
     });
 
@@ -110,14 +110,8 @@ describe("bash_background_list tool", () => {
 
   it("should only list processes for the current workspace", async () => {
     const manager = new BackgroundProcessManager();
-    manager.registerExecutor(
-      "workspace-a",
-      new LocalBackgroundExecutor(new BashExecutionService())
-    );
-    manager.registerExecutor(
-      "workspace-b",
-      new LocalBackgroundExecutor(new BashExecutionService())
-    );
+    const executorA = createTestExecutor();
+    const executorB = createTestExecutor();
 
     const tempDir = new TestTempDir("test-bash-bg-list");
     const config = createTestToolConfig(process.cwd(), { workspaceId: "workspace-a" });
@@ -125,8 +119,8 @@ describe("bash_background_list tool", () => {
     config.backgroundProcessManager = manager;
 
     // Spawn processes in different workspaces
-    const spawnA = await manager.spawn("workspace-a", "sleep 10", { cwd: process.cwd() });
-    const spawnB = await manager.spawn("workspace-b", "sleep 10", { cwd: process.cwd() });
+    const spawnA = await manager.spawn(executorA, "workspace-a", "sleep 10", { cwd: process.cwd() });
+    const spawnB = await manager.spawn(executorB, "workspace-b", "sleep 10", { cwd: process.cwd() });
 
     if (!spawnA.success || !spawnB.success) {
       throw new Error("Failed to spawn processes");

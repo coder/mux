@@ -16,6 +16,7 @@ import { log } from "@/node/services/log";
 import type { Runtime } from "@/node/runtime/Runtime";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
+import type { BackgroundExecutor } from "@/node/services/backgroundExecutor";
 
 /**
  * Configuration for tools that need runtime context
@@ -35,6 +36,8 @@ export interface ToolConfiguration {
   overflow_policy?: "truncate" | "tmpfile";
   /** Background process manager for bash tool (optional, AI-only) */
   backgroundProcessManager?: BackgroundProcessManager;
+  /** Background executor for this workspace (optional, AI-only) */
+  backgroundExecutor?: BackgroundExecutor;
   /** Workspace ID for tracking background processes (optional for token estimation) */
   workspaceId?: string;
 }

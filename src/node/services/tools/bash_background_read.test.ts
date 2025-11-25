@@ -3,6 +3,7 @@ import { createBashBackgroundReadTool } from "./bash_background_read";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import { BashExecutionService } from "@/node/services/bashExecutionService";
 import { LocalBackgroundExecutor } from "@/node/services/localBackgroundExecutor";
+import type { BackgroundExecutor } from "@/node/services/backgroundExecutor";
 import type { BashBackgroundReadArgs, BashBackgroundReadResult } from "@/common/types/tools";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 import type { ToolCallOptions } from "ai";
@@ -12,11 +13,9 @@ const mockToolCallOptions: ToolCallOptions = {
   messages: [],
 };
 
-// Helper to create manager with executor registered for a workspace
-function createManagerWithExecutor(workspaceId: string): BackgroundProcessManager {
-  const manager = new BackgroundProcessManager();
-  manager.registerExecutor(workspaceId, new LocalBackgroundExecutor(new BashExecutionService()));
-  return manager;
+// Create a test executor
+function createTestExecutor(): BackgroundExecutor {
+  return new LocalBackgroundExecutor(new BashExecutionService());
 }
 
 describe("bash_background_read tool", () => {
@@ -41,7 +40,7 @@ describe("bash_background_read tool", () => {
   });
 
   it("should return error for non-existent process", async () => {
-    const manager = createManagerWithExecutor("test-workspace");
+    const manager = new BackgroundProcessManager();
     const tempDir = new TestTempDir("test-bash-bg-read");
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
@@ -63,14 +62,15 @@ describe("bash_background_read tool", () => {
   });
 
   it("should return process status and output", async () => {
-    const manager = createManagerWithExecutor("test-workspace");
+    const manager = new BackgroundProcessManager();
+    const executor = createTestExecutor();
     const tempDir = new TestTempDir("test-bash-bg-read");
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
     config.backgroundProcessManager = manager;
 
     // Spawn a process
-    const spawnResult = await manager.spawn("test-workspace", "echo hello; sleep 1", {
+    const spawnResult = await manager.spawn(executor, "test-workspace", "echo hello; sleep 1", {
       cwd: process.cwd(),
     });
 
@@ -100,7 +100,8 @@ describe("bash_background_read tool", () => {
   });
 
   it("should handle tail filtering", async () => {
-    const manager = createManagerWithExecutor("test-workspace");
+    const manager = new BackgroundProcessManager();
+    const executor = createTestExecutor();
     const tempDir = new TestTempDir("test-bash-bg-read");
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
@@ -108,6 +109,7 @@ describe("bash_background_read tool", () => {
 
     // Spawn a process with multiple lines
     const spawnResult = await manager.spawn(
+      executor,
       "test-workspace",
       "echo line1; echo line2; echo line3",
       {
@@ -138,13 +140,14 @@ describe("bash_background_read tool", () => {
   });
 
   it("should handle regex filtering", async () => {
-    const manager = createManagerWithExecutor("test-workspace");
+    const manager = new BackgroundProcessManager();
+    const executor = createTestExecutor();
     const tempDir = new TestTempDir("test-bash-bg-read");
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
     config.backgroundProcessManager = manager;
 
-    const spawnResult = await manager.spawn("test-workspace", "echo ERROR: test; echo INFO: test", {
+    const spawnResult = await manager.spawn(executor, "test-workspace", "echo ERROR: test; echo INFO: test", {
       cwd: process.cwd(),
     });
 
@@ -171,13 +174,14 @@ describe("bash_background_read tool", () => {
   });
 
   it("should return error for invalid regex pattern", async () => {
-    const manager = createManagerWithExecutor("test-workspace");
+    const manager = new BackgroundProcessManager();
+    const executor = createTestExecutor();
     const tempDir = new TestTempDir("test-bash-bg-read");
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
     config.backgroundProcessManager = manager;
 
-    const spawnResult = await manager.spawn("test-workspace", "echo test", {
+    const spawnResult = await manager.spawn(executor, "test-workspace", "echo test", {
       cwd: process.cwd(),
     });
 
@@ -206,14 +210,7 @@ describe("bash_background_read tool", () => {
 
   it("should not read processes from other workspaces", async () => {
     const manager = new BackgroundProcessManager();
-    manager.registerExecutor(
-      "workspace-a",
-      new LocalBackgroundExecutor(new BashExecutionService())
-    );
-    manager.registerExecutor(
-      "workspace-b",
-      new LocalBackgroundExecutor(new BashExecutionService())
-    );
+    const executorB = createTestExecutor();
 
     const tempDir = new TestTempDir("test-bash-bg-read");
     // Config is for workspace-a
@@ -222,7 +219,7 @@ describe("bash_background_read tool", () => {
     config.backgroundProcessManager = manager;
 
     // Spawn process in workspace-b
-    const spawnResult = await manager.spawn("workspace-b", "echo secret", {
+    const spawnResult = await manager.spawn(executorB, "workspace-b", "echo secret", {
       cwd: process.cwd(),
     });
 

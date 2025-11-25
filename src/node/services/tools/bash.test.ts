@@ -10,6 +10,12 @@ import type { ToolCallOptions } from "ai";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import { BashExecutionService } from "@/node/services/bashExecutionService";
 import { LocalBackgroundExecutor } from "@/node/services/localBackgroundExecutor";
+import type { BackgroundExecutor } from "@/node/services/backgroundExecutor";
+
+// Create a test executor
+function createTestExecutor(): BackgroundExecutor {
+  return new LocalBackgroundExecutor(new BashExecutionService());
+}
 
 // Mock ToolCallOptions for testing
 const mockToolCallOptions: ToolCallOptions = {
@@ -1368,15 +1374,13 @@ describe("bash tool - background execution", () => {
 
   it("should reject timeout with background mode", async () => {
     const manager = new BackgroundProcessManager();
-    manager.registerExecutor(
-      "test-workspace",
-      new LocalBackgroundExecutor(new BashExecutionService())
-    );
+    const executor = createTestExecutor();
 
     const tempDir = new TestTempDir("test-bash-bg");
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
     config.backgroundProcessManager = manager;
+    config.backgroundExecutor = executor;
     config.workspaceId = "test-workspace";
 
     const tool = createBashTool(config);
@@ -1398,15 +1402,13 @@ describe("bash tool - background execution", () => {
 
   it("should start background process and return process ID", async () => {
     const manager = new BackgroundProcessManager();
-    manager.registerExecutor(
-      "test-workspace",
-      new LocalBackgroundExecutor(new BashExecutionService())
-    );
+    const executor = createTestExecutor();
 
     const tempDir = new TestTempDir("test-bash-bg");
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
     config.backgroundProcessManager = manager;
+    config.backgroundExecutor = executor;
     config.workspaceId = "test-workspace";
 
     const tool = createBashTool(config);

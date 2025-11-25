@@ -249,7 +249,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
           };
         }
 
-        if (!config.workspaceId || !config.backgroundProcessManager) {
+        if (!config.workspaceId || !config.backgroundProcessManager || !config.backgroundExecutor) {
           return {
             success: false,
             error:
@@ -270,6 +270,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
 
         const startTime = performance.now();
         const spawnResult = await config.backgroundProcessManager.spawn(
+          config.backgroundExecutor,
           config.workspaceId,
           script,
           {
