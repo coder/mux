@@ -232,7 +232,16 @@ export async function sendMessageAndWait(
 
   // Wait for stream completion
   const collector = createEventCollector(env.sentEvents, workspaceId);
-  await collector.waitForEvent("stream-end", timeoutMs);
+  const streamEnd = await collector.waitForEvent("stream-end", timeoutMs);
+
+  if (!streamEnd) {
+    collector.logEventDiagnostics(`sendMessageAndWait timeout after ${timeoutMs}ms`);
+    throw new Error(
+      `sendMessageAndWait: Timeout waiting for stream-end after ${timeoutMs}ms.\n` +
+        `See detailed event diagnostics above.`
+    );
+  }
+
   return collector.getEvents();
 }
 
