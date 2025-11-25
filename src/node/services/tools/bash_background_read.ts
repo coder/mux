@@ -87,7 +87,6 @@ export const createBashBackgroundReadTool: ToolFactory = (config: ToolConfigurat
         process_id: process.id,
         status: process.status,
         script: process.script,
-        pid: process.pid,
         uptime_ms,
         exitCode: process.exitCode,
         stdout,

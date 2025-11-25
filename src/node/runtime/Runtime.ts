@@ -364,13 +364,6 @@ export interface Runtime {
    * @returns Result with new workspace path and source branch, or error
    */
   forkWorkspace(params: WorkspaceForkParams): Promise<WorkspaceForkResult>;
-
-  /**
-   * Whether this runtime supports background process execution.
-   * LocalRuntime: true (uses detached process groups)
-   * SSHRuntime: false (TODO: implement via nohup/setsid + file-based output capture)
-   */
-  readonly supportsBackgroundExecution: boolean;
 }
 
 /**

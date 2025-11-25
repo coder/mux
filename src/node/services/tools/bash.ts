@@ -249,16 +249,6 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
           };
         }
 
-        // TODO: Add SSH runtime support for background processes (nohup/setsid + file-based output)
-        if (!config.runtime.supportsBackgroundExecution) {
-          return {
-            success: false,
-            error: "Background execution is not yet supported for SSH/remote workspaces",
-            exitCode: -1,
-            wall_duration_ms: 0,
-          };
-        }
-
         if (!config.workspaceId || !config.backgroundProcessManager) {
           return {
             success: false,

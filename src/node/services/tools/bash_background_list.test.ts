@@ -2,6 +2,7 @@ import { describe, it, expect } from "bun:test";
 import { createBashBackgroundListTool } from "./bash_background_list";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import { BashExecutionService } from "@/node/services/bashExecutionService";
+import { LocalBackgroundExecutor } from "@/node/services/localBackgroundExecutor";
 import type { BashBackgroundListResult } from "@/common/types/tools";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 import type { ToolCallOptions } from "ai";
@@ -10,6 +11,13 @@ const mockToolCallOptions: ToolCallOptions = {
   toolCallId: "test-call-id",
   messages: [],
 };
+
+// Helper to create manager with executor registered for a workspace
+function createManagerWithExecutor(workspaceId: string): BackgroundProcessManager {
+  const manager = new BackgroundProcessManager();
+  manager.registerExecutor(workspaceId, new LocalBackgroundExecutor(new BashExecutionService()));
+  return manager;
+}
 
 describe("bash_background_list tool", () => {
   it("should return error when manager not available", async () => {
@@ -29,7 +37,7 @@ describe("bash_background_list tool", () => {
   });
 
   it("should return error when workspaceId not available", async () => {
-    const manager = new BackgroundProcessManager(new BashExecutionService());
+    const manager = createManagerWithExecutor("test-workspace");
     const tempDir = new TestTempDir("test-bash-bg-list");
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
@@ -48,7 +56,7 @@ describe("bash_background_list tool", () => {
   });
 
   it("should return empty list when no processes", async () => {
-    const manager = new BackgroundProcessManager(new BashExecutionService());
+    const manager = createManagerWithExecutor("test-workspace");
     const tempDir = new TestTempDir("test-bash-bg-list");
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
@@ -66,7 +74,7 @@ describe("bash_background_list tool", () => {
   });
 
   it("should list spawned processes with correct fields", async () => {
-    const manager = new BackgroundProcessManager(new BashExecutionService());
+    const manager = createManagerWithExecutor("test-workspace");
     const tempDir = new TestTempDir("test-bash-bg-list");
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
@@ -91,7 +99,6 @@ describe("bash_background_list tool", () => {
       expect(proc.process_id).toBe(spawnResult.processId);
       expect(proc.status).toBe("running");
       expect(proc.script).toBe("sleep 10");
-      expect(proc.pid).toBeDefined();
       expect(proc.uptime_ms).toBeGreaterThanOrEqual(0);
       expect(proc.exitCode).toBeUndefined();
     }
@@ -102,7 +109,10 @@ describe("bash_background_list tool", () => {
   });
 
   it("should only list processes for the current workspace", async () => {
-    const manager = new BackgroundProcessManager(new BashExecutionService());
+    const manager = new BackgroundProcessManager();
+    manager.registerExecutor("workspace-a", new LocalBackgroundExecutor(new BashExecutionService()));
+    manager.registerExecutor("workspace-b", new LocalBackgroundExecutor(new BashExecutionService()));
+
     const tempDir = new TestTempDir("test-bash-bg-list");
     const config = createTestToolConfig(process.cwd(), { workspaceId: "workspace-a" });
     config.runtimeTempDir = tempDir.path;

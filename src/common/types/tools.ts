@@ -212,7 +212,6 @@ export type BashBackgroundReadResult =
       process_id: string;
       status: "running" | "exited" | "killed" | "failed";
       script: string;
-      pid?: number; // OS process ID
       uptime_ms: number;
       exitCode?: number;
       stdout: string[];
@@ -238,7 +237,6 @@ export interface BashBackgroundListProcess {
   process_id: string;
   status: "running" | "exited" | "killed" | "failed";
   script: string;
-  pid?: number;
   uptime_ms: number;
   exitCode?: number;
 }

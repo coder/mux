@@ -1,11 +1,6 @@
-import type {
-  BashExecutionService,
-  BashExecutionConfig,
-  DisposableProcess,
-} from "./bashExecutionService";
+import type { BackgroundExecutor, BackgroundHandle } from "./backgroundExecutor";
 import { log } from "./log";
 import { randomBytes } from "crypto";
-import { once } from "node:events";
 import { CircularBuffer } from "./circularBuffer";
 
 /**
@@ -15,25 +10,45 @@ export interface BackgroundProcess {
   id: string; // Short unique ID (e.g., "bg-abc123")
   workspaceId: string; // Owning workspace
   script: string; // Original command
-  pid?: number; // Process ID (undefined if spawn failed)
   startTime: number; // Timestamp when started
   stdoutBuffer: CircularBuffer<string>; // Circular buffer (max 1000 lines)
   stderrBuffer: CircularBuffer<string>; // Circular buffer (max 1000 lines)
   exitCode?: number; // Undefined if still running
   exitTime?: number; // Timestamp when exited (undefined if running)
   status: "running" | "exited" | "killed" | "failed";
-  disposable: DisposableProcess | null; // For process cleanup
+  handle: BackgroundHandle | null; // For process interaction
 }
 
 const MAX_BUFFER_LINES = 1000;
 
 /**
- * Manages background bash processes for workspaces
+ * Manages background bash processes for workspaces.
+ *
+ * Each workspace registers its own executor (local or SSH) at creation time.
+ * This allows different execution backends per workspace.
  */
 export class BackgroundProcessManager {
   private processes = new Map<string, BackgroundProcess>();
+  private executors = new Map<string, BackgroundExecutor>();
 
-  constructor(private readonly bashExecutionService: BashExecutionService) {}
+  /**
+   * Register an executor for a workspace.
+   * Called when workspace is created - local workspaces get LocalBackgroundExecutor,
+   * SSH workspaces get SSHBackgroundExecutor.
+   */
+  registerExecutor(workspaceId: string, executor: BackgroundExecutor): void {
+    log.debug(`BackgroundProcessManager.registerExecutor(${workspaceId})`);
+    this.executors.set(workspaceId, executor);
+  }
+
+  /**
+   * Unregister executor for a workspace.
+   * Called when workspace is deleted.
+   */
+  unregisterExecutor(workspaceId: string): void {
+    log.debug(`BackgroundProcessManager.unregisterExecutor(${workspaceId})`);
+    this.executors.delete(workspaceId);
+  }
 
   /**
    * Spawn a new background process
@@ -41,9 +56,18 @@ export class BackgroundProcessManager {
   async spawn(
     workspaceId: string,
     script: string,
-    config: BashExecutionConfig
+    config: { cwd: string; secrets?: Record<string, string>; niceness?: number }
   ): Promise<{ success: true; processId: string } | { success: false; error: string }> {
     log.debug(`BackgroundProcessManager.spawn() called for workspace ${workspaceId}`);
+
+    // Get executor for this workspace
+    const executor = this.executors.get(workspaceId);
+    if (!executor) {
+      return {
+        success: false,
+        error: "No executor registered for this workspace. Background execution may not be supported.",
+      };
+    }
 
     // Generate unique process ID
     const processId = `bg-${randomBytes(4).toString("hex")}`;
@@ -52,7 +76,7 @@ export class BackgroundProcessManager {
     const stdoutBuffer = new CircularBuffer<string>(MAX_BUFFER_LINES);
     const stderrBuffer = new CircularBuffer<string>(MAX_BUFFER_LINES);
 
-    const process: BackgroundProcess = {
+    const proc: BackgroundProcess = {
       id: processId,
       workspaceId,
       script,
@@ -60,65 +84,48 @@ export class BackgroundProcessManager {
       stdoutBuffer,
       stderrBuffer,
       status: "running",
-      disposable: null,
+      handle: null,
     };
 
-    // Spawn with streaming callbacks
-    const disposable = this.bashExecutionService.executeStreaming(script, config, {
-      onStdout: (line: string) => {
-        stdoutBuffer.push(line);
-      },
-      onStderr: (line: string) => {
-        stderrBuffer.push(line);
-      },
-      onExit: (exitCode: number) => {
-        log.debug(`Background process ${processId} exited with code ${exitCode}`);
-        process.exitCode = exitCode;
-        process.exitTime ??= Date.now();
-        // Don't overwrite status if already marked as killed/failed by terminate()
-        if (process.status === "running") {
-          process.status = "exited";
-        }
-      },
+    // Spawn via executor
+    const result = await executor.spawn(script, {
+      cwd: config.cwd,
+      env: config.secrets,
+      niceness: config.niceness,
     });
 
-    const child = disposable.child;
-
-    // Wait until we know whether the spawn succeeded or failed
-    // ChildProcess emits either 'spawn' (success) or 'error' (failure) - mutually exclusive
-    try {
-      await Promise.race([
-        // Successful spawn
-        once(child, "spawn"),
-
-        // Spawn error (ENOENT, invalid cwd, etc.)
-        once(child, "error").then(([err]) => {
-          throw err;
-        }),
-
-        // Safety timeout to prevent infinite hang
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Spawn did not complete in time")), 2000)
-        ),
-      ]);
-    } catch (e) {
-      const err = e as Error;
-      log.debug(`Failed to spawn background process: ${err.message}`);
-      disposable[Symbol.dispose]();
-      return {
-        success: false,
-        error: err.message,
-      };
+    if (!result.success) {
+      log.debug(`BackgroundProcessManager: Failed to spawn: ${result.error}`);
+      return { success: false, error: result.error };
     }
 
-    // At this point we know the process spawned successfully
-    process.disposable = disposable;
-    process.pid = child.pid ?? undefined;
+    const handle = result.handle;
+
+    // Wire up callbacks to buffers
+    handle.onStdout((line: string) => {
+      stdoutBuffer.push(line);
+    });
+
+    handle.onStderr((line: string) => {
+      stderrBuffer.push(line);
+    });
+
+    handle.onExit((exitCode: number) => {
+      log.debug(`Background process ${processId} exited with code ${exitCode}`);
+      proc.exitCode = exitCode;
+      proc.exitTime ??= Date.now();
+      // Don't overwrite status if already marked as killed/failed by terminate()
+      if (proc.status === "running") {
+        proc.status = "exited";
+      }
+    });
+
+    proc.handle = handle;
 
     // Store process in map
-    this.processes.set(processId, process);
+    this.processes.set(processId, proc);
 
-    log.debug(`Background process ${processId} spawned with PID ${process.pid ?? "unknown"}`);
+    log.debug(`Background process ${processId} spawned successfully`);
     return { success: true, processId };
   }
 
@@ -159,40 +166,23 @@ export class BackgroundProcessManager {
       return { success: true };
     }
 
-    // Check if we have a valid PID
-    if (!proc.pid || !proc.disposable) {
-      log.debug(`Process ${processId} has no PID or disposable, marking as failed`);
+    // Check if we have a valid handle
+    if (!proc.handle) {
+      log.debug(`Process ${processId} has no handle, marking as failed`);
       proc.status = "failed";
       proc.exitTime = Date.now();
       return { success: true };
     }
 
     try {
-      // Send SIGTERM to the process group for graceful shutdown
-      // Use negative PID to kill the entire process group (detached processes are group leaders)
-      // This ensures child processes (e.g., from npm run dev) are also terminated
-      const pgid = -proc.pid;
-      log.debug(`Sending SIGTERM to process group ${processId} (PGID: ${pgid})`);
-      process.kill(pgid, "SIGTERM");
-
-      // Wait 2 seconds for graceful shutdown
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-
-      // Check if process is still running
-      const stillRunning = proc.disposable.child.exitCode === null;
-
-      if (stillRunning) {
-        // Force kill the process group with SIGKILL
-        log.debug(`Process group ${processId} still running, sending SIGKILL`);
-        process.kill(pgid, "SIGKILL");
-      }
+      await proc.handle.terminate();
 
       // Update process status
       proc.status = "killed";
       proc.exitTime ??= Date.now();
 
-      // Dispose of the process
-      proc.disposable[Symbol.dispose]();
+      // Dispose of the handle
+      await proc.handle.dispose();
 
       log.debug(`Process ${processId} terminated successfully`);
       return { success: true };
@@ -202,17 +192,17 @@ export class BackgroundProcessManager {
       // Mark as killed even if there was an error (process likely already dead)
       proc.status = "killed";
       proc.exitTime ??= Date.now();
-      // Ensure disposable is cleaned up even on error
-      if (proc.disposable) {
-        proc.disposable[Symbol.dispose]();
+      // Ensure handle is cleaned up even on error
+      if (proc.handle) {
+        await proc.handle.dispose().catch(() => {});
       }
       return { success: true };
     }
   }
 
   /**
-   * Clean up all processes for a workspace
-   * Terminates running processes and removes them from memory
+   * Clean up all processes for a workspace.
+   * Terminates running processes, removes them from memory, and unregisters the executor.
    */
   async cleanup(workspaceId: string): Promise<void> {
     log.debug(`BackgroundProcessManager.cleanup(${workspaceId}) called`);
@@ -225,6 +215,10 @@ export class BackgroundProcessManager {
 
     // Remove all processes from memory
     matching.forEach((p) => this.processes.delete(p.id));
+
+    // Unregister the executor for this workspace
+    this.unregisterExecutor(workspaceId);
+
     log.debug(`Cleaned up ${matching.length} process(es) for workspace ${workspaceId}`);
   }
 }

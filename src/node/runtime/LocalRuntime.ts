@@ -39,9 +39,6 @@ import { expandTilde } from "./tildeExpansion";
 export class LocalRuntime implements Runtime {
   private readonly srcBaseDir: string;
 
-  /** LocalRuntime supports background execution via detached process groups */
-  readonly supportsBackgroundExecution = true;
-
   constructor(srcBaseDir: string) {
     // Expand tilde to actual home directory path for local file system operations
     this.srcBaseDir = expandTilde(srcBaseDir);

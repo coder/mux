@@ -2,6 +2,7 @@ import { describe, it, expect } from "bun:test";
 import { createBashBackgroundTerminateTool } from "./bash_background_terminate";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import { BashExecutionService } from "@/node/services/bashExecutionService";
+import { LocalBackgroundExecutor } from "@/node/services/localBackgroundExecutor";
 import type {
   BashBackgroundTerminateArgs,
   BashBackgroundTerminateResult,
@@ -13,6 +14,13 @@ const mockToolCallOptions: ToolCallOptions = {
   toolCallId: "test-call-id",
   messages: [],
 };
+
+// Helper to create manager with executor registered for a workspace
+function createManagerWithExecutor(workspaceId: string): BackgroundProcessManager {
+  const manager = new BackgroundProcessManager();
+  manager.registerExecutor(workspaceId, new LocalBackgroundExecutor(new BashExecutionService()));
+  return manager;
+}
 
 describe("bash_background_terminate tool", () => {
   it("should return error when manager not available", async () => {
@@ -39,7 +47,7 @@ describe("bash_background_terminate tool", () => {
   });
 
   it("should return error for non-existent process", async () => {
-    const manager = new BackgroundProcessManager(new BashExecutionService());
+    const manager = createManagerWithExecutor("test-workspace");
     const tempDir = new TestTempDir("test-bash-bg-term");
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
@@ -59,7 +67,7 @@ describe("bash_background_terminate tool", () => {
   });
 
   it("should terminate a running process", async () => {
-    const manager = new BackgroundProcessManager(new BashExecutionService());
+    const manager = createManagerWithExecutor("test-workspace");
     const tempDir = new TestTempDir("test-bash-bg-term");
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
@@ -97,7 +105,7 @@ describe("bash_background_terminate tool", () => {
   });
 
   it("should be idempotent (double-terminate succeeds)", async () => {
-    const manager = new BackgroundProcessManager(new BashExecutionService());
+    const manager = createManagerWithExecutor("test-workspace");
     const tempDir = new TestTempDir("test-bash-bg-term");
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
@@ -135,7 +143,10 @@ describe("bash_background_terminate tool", () => {
   });
 
   it("should not terminate processes from other workspaces", async () => {
-    const manager = new BackgroundProcessManager(new BashExecutionService());
+    const manager = new BackgroundProcessManager();
+    manager.registerExecutor("workspace-a", new LocalBackgroundExecutor(new BashExecutionService()));
+    manager.registerExecutor("workspace-b", new LocalBackgroundExecutor(new BashExecutionService()));
+
     const tempDir = new TestTempDir("test-bash-bg-term");
     // Config is for workspace-a
     const config = createTestToolConfig(process.cwd(), { workspaceId: "workspace-a" });

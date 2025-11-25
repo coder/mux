@@ -40,7 +40,10 @@ import { createRuntime } from "@/node/runtime/runtimeFactory";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import { BashExecutionService } from "@/node/services/bashExecutionService";
+import { LocalBackgroundExecutor } from "@/node/services/localBackgroundExecutor";
+import { SSHBackgroundExecutor } from "@/node/services/sshBackgroundExecutor";
 import { isSSHRuntime } from "@/common/types/runtime";
+import type { Runtime } from "@/node/runtime/Runtime";
 import { validateProjectPath } from "@/node/utils/pathUtils";
 import { PTYService } from "@/node/services/ptyService";
 import type { TerminalWindowManager } from "@/desktop/terminalWindowManager";
@@ -69,6 +72,7 @@ export class IpcMain {
   private readonly extensionMetadata: ExtensionMetadataService;
   private readonly ptyService: PTYService;
   private readonly backgroundProcessManager: BackgroundProcessManager;
+  private readonly bashExecutionService: BashExecutionService;
   private terminalWindowManager?: TerminalWindowManager;
   private readonly sessions = new Map<string, AgentSession>();
   private projectDirectoryPicker?: (event: IpcMainInvokeEvent) => Promise<string | null>;
@@ -89,7 +93,8 @@ export class IpcMain {
     this.extensionMetadata = new ExtensionMetadataService(
       path.join(config.rootDir, "extensionMetadata.json")
     );
-    this.backgroundProcessManager = new BackgroundProcessManager(new BashExecutionService());
+    this.backgroundProcessManager = new BackgroundProcessManager();
+    this.bashExecutionService = new BashExecutionService();
 
     this.aiService = new AIService(
       config,
@@ -103,6 +108,17 @@ export class IpcMain {
 
     // Listen to AIService events to update metadata
     this.setupMetadataListeners();
+  }
+
+  /**
+   * Create a background executor appropriate for the given runtime.
+   * Local runtimes use LocalBackgroundExecutor, SSH runtimes use SSHBackgroundExecutor.
+   */
+  private createBackgroundExecutor(runtimeConfig: RuntimeConfig, runtime: Runtime) {
+    if (isSSHRuntime(runtimeConfig)) {
+      return new SSHBackgroundExecutor(runtime);
+    }
+    return new LocalBackgroundExecutor(this.bashExecutionService);
   }
 
   /**
@@ -359,6 +375,10 @@ export class IpcMain {
       }
 
       session.emitMetadata(completeMetadata);
+
+      // Register background executor for this workspace
+      const executor = this.createBackgroundExecutor(finalRuntimeConfig, runtime);
+      this.backgroundProcessManager.registerExecutor(workspaceId, executor);
 
       void runtime
         .initWorkspace({
@@ -682,6 +702,10 @@ export class IpcMain {
 
         // Emit metadata event for new workspace (session already created above)
         session.emitMetadata(completeMetadata);
+
+        // Register background executor for this workspace
+        const executor = this.createBackgroundExecutor(finalRuntimeConfig, runtime);
+        this.backgroundProcessManager.registerExecutor(workspaceId, executor);
 
         // Phase 2: Initialize workspace asynchronously (SLOW - runs in background)
         // This streams progress via initLogger and doesn't block the IPC return

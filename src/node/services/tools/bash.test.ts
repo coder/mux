@@ -9,6 +9,7 @@ import { createRuntime } from "@/node/runtime/runtimeFactory";
 import type { ToolCallOptions } from "ai";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import { BashExecutionService } from "@/node/services/bashExecutionService";
+import { LocalBackgroundExecutor } from "@/node/services/localBackgroundExecutor";
 
 // Mock ToolCallOptions for testing
 const mockToolCallOptions: ToolCallOptions = {
@@ -1366,7 +1367,8 @@ describe("bash tool - background execution", () => {
   });
 
   it("should reject timeout with background mode", async () => {
-    const manager = new BackgroundProcessManager(new BashExecutionService());
+    const manager = new BackgroundProcessManager();
+    manager.registerExecutor("test-workspace", new LocalBackgroundExecutor(new BashExecutionService()));
 
     const tempDir = new TestTempDir("test-bash-bg");
     const config = createTestToolConfig(process.cwd());
@@ -1392,7 +1394,8 @@ describe("bash tool - background execution", () => {
   });
 
   it("should start background process and return process ID", async () => {
-    const manager = new BackgroundProcessManager(new BashExecutionService());
+    const manager = new BackgroundProcessManager();
+    manager.registerExecutor("test-workspace", new LocalBackgroundExecutor(new BashExecutionService()));
 
     const tempDir = new TestTempDir("test-bash-bg");
     const config = createTestToolConfig(process.cwd());

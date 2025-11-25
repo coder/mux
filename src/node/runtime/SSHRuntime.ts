@@ -71,12 +71,6 @@ export class SSHRuntime implements Runtime {
   private readonly config: SSHRuntimeConfig;
   private readonly controlPath: string;
 
-  /**
-   * SSHRuntime does not yet support background execution.
-   * TODO: Implement via nohup/setsid + file-based output capture on remote host
-   */
-  readonly supportsBackgroundExecution = false;
-
   constructor(config: SSHRuntimeConfig) {
     // Note: srcBaseDir may contain tildes - they will be resolved via resolvePath() before use
     // The WORKSPACE_CREATE IPC handler resolves paths before storing in config

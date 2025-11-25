@@ -1,19 +1,27 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { BackgroundProcessManager } from "./backgroundProcessManager";
 import { BashExecutionService } from "./bashExecutionService";
+import { LocalBackgroundExecutor } from "./localBackgroundExecutor";
+
+// Helper to create manager with executor registered for a workspace
+function createManagerWithExecutor(workspaceId: string): BackgroundProcessManager {
+  const manager = new BackgroundProcessManager();
+  manager.registerExecutor(workspaceId, new LocalBackgroundExecutor(new BashExecutionService()));
+  return manager;
+}
 
 describe("BackgroundProcessManager", () => {
   let manager: BackgroundProcessManager;
-  let bashService: BashExecutionService;
+  const testWorkspaceId = "workspace-1";
+  const testWorkspaceId2 = "workspace-2";
 
   beforeEach(() => {
-    bashService = new BashExecutionService();
-    manager = new BackgroundProcessManager(bashService);
+    manager = createManagerWithExecutor(testWorkspaceId);
   });
 
   describe("spawn", () => {
     it("should spawn a background process and return process ID", async () => {
-      const result = await manager.spawn("workspace-1", "echo hello", {
+      const result = await manager.spawn(testWorkspaceId, "echo hello", {
         cwd: process.cwd(),
       });
 
@@ -23,8 +31,20 @@ describe("BackgroundProcessManager", () => {
       }
     });
 
+    it("should return error when no executor is registered", async () => {
+      const managerNoExecutor = new BackgroundProcessManager();
+      const result = await managerNoExecutor.spawn("unregistered-workspace", "echo hello", {
+        cwd: process.cwd(),
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("No executor registered");
+      }
+    });
+
     it("should return error on spawn failure", async () => {
-      const result = await manager.spawn("workspace-1", "echo test", {
+      const result = await manager.spawn(testWorkspaceId, "echo test", {
         cwd: "/nonexistent/path/that/does/not/exist",
       });
 
@@ -32,7 +52,7 @@ describe("BackgroundProcessManager", () => {
     });
 
     it("should capture stdout and stderr", async () => {
-      const result = await manager.spawn("workspace-1", "echo hello; echo world >&2", {
+      const result = await manager.spawn(testWorkspaceId, "echo hello; echo world >&2", {
         cwd: process.cwd(),
       });
 
@@ -55,7 +75,7 @@ describe("BackgroundProcessManager", () => {
         .map((_, i) => `echo line${i}`)
         .join("; ");
 
-      const result = await manager.spawn("workspace-1", script, {
+      const result = await manager.spawn(testWorkspaceId, script, {
         cwd: process.cwd(),
       });
 
@@ -73,7 +93,7 @@ describe("BackgroundProcessManager", () => {
 
   describe("getProcess", () => {
     it("should return process by ID", async () => {
-      const spawnResult = await manager.spawn("workspace-1", "sleep 1", {
+      const spawnResult = await manager.spawn(testWorkspaceId, "sleep 1", {
         cwd: process.cwd(),
       });
 
@@ -93,30 +113,36 @@ describe("BackgroundProcessManager", () => {
 
   describe("list", () => {
     it("should list all processes", async () => {
-      await manager.spawn("workspace-1", "sleep 1", { cwd: process.cwd() });
-      await manager.spawn("workspace-1", "sleep 1", { cwd: process.cwd() });
+      await manager.spawn(testWorkspaceId, "sleep 1", { cwd: process.cwd() });
+      await manager.spawn(testWorkspaceId, "sleep 1", { cwd: process.cwd() });
 
       const processes = manager.list();
       expect(processes.length).toBeGreaterThanOrEqual(2);
     });
 
     it("should filter by workspace ID", async () => {
-      await manager.spawn("workspace-1", "sleep 1", { cwd: process.cwd() });
-      await manager.spawn("workspace-2", "sleep 1", { cwd: process.cwd() });
+      // Register second workspace executor
+      manager.registerExecutor(
+        testWorkspaceId2,
+        new LocalBackgroundExecutor(new BashExecutionService())
+      );
 
-      const ws1Processes = manager.list("workspace-1");
-      const ws2Processes = manager.list("workspace-2");
+      await manager.spawn(testWorkspaceId, "sleep 1", { cwd: process.cwd() });
+      await manager.spawn(testWorkspaceId2, "sleep 1", { cwd: process.cwd() });
+
+      const ws1Processes = manager.list(testWorkspaceId);
+      const ws2Processes = manager.list(testWorkspaceId2);
 
       expect(ws1Processes.length).toBeGreaterThanOrEqual(1);
       expect(ws2Processes.length).toBeGreaterThanOrEqual(1);
-      expect(ws1Processes.every((p) => p.workspaceId === "workspace-1")).toBe(true);
-      expect(ws2Processes.every((p) => p.workspaceId === "workspace-2")).toBe(true);
+      expect(ws1Processes.every((p) => p.workspaceId === testWorkspaceId)).toBe(true);
+      expect(ws2Processes.every((p) => p.workspaceId === testWorkspaceId2)).toBe(true);
     });
   });
 
   describe("terminate", () => {
     it("should terminate a running process", async () => {
-      const spawnResult = await manager.spawn("workspace-1", "sleep 10", {
+      const spawnResult = await manager.spawn(testWorkspaceId, "sleep 10", {
         cwd: process.cwd(),
       });
 
@@ -135,7 +161,7 @@ describe("BackgroundProcessManager", () => {
     });
 
     it("should be idempotent (double-terminate succeeds)", async () => {
-      const spawnResult = await manager.spawn("workspace-1", "sleep 10", {
+      const spawnResult = await manager.spawn(testWorkspaceId, "sleep 10", {
         cwd: process.cwd(),
       });
 
@@ -151,17 +177,28 @@ describe("BackgroundProcessManager", () => {
 
   describe("cleanup", () => {
     it("should kill all processes for a workspace and remove them from memory", async () => {
-      await manager.spawn("workspace-1", "sleep 10", { cwd: process.cwd() });
-      await manager.spawn("workspace-1", "sleep 10", { cwd: process.cwd() });
-      await manager.spawn("workspace-2", "sleep 10", { cwd: process.cwd() });
+      // Register second workspace executor
+      manager.registerExecutor(
+        testWorkspaceId2,
+        new LocalBackgroundExecutor(new BashExecutionService())
+      );
 
-      await manager.cleanup("workspace-1");
+      await manager.spawn(testWorkspaceId, "sleep 10", { cwd: process.cwd() });
+      await manager.spawn(testWorkspaceId, "sleep 10", { cwd: process.cwd() });
+      await manager.spawn(testWorkspaceId2, "sleep 10", { cwd: process.cwd() });
 
-      const ws1Processes = manager.list("workspace-1");
-      const ws2Processes = manager.list("workspace-2");
+      await manager.cleanup(testWorkspaceId);
 
-      // All workspace-1 processes should be removed from memory
+      const ws1Processes = manager.list(testWorkspaceId);
+      const ws2Processes = manager.list(testWorkspaceId2);
+      // All testWorkspaceId processes should be removed from memory
       expect(ws1Processes.length).toBe(0);
+      // Executor should also be unregistered - spawning should fail
+      const spawnResult = await manager.spawn(testWorkspaceId, "echo test", { cwd: process.cwd() });
+      expect(spawnResult.success).toBe(false);
+      if (!spawnResult.success) {
+        expect(spawnResult.error).toContain("No executor registered");
+      }
       // workspace-2 processes should still exist and be running
       expect(ws2Processes.length).toBeGreaterThanOrEqual(1);
       expect(ws2Processes.some((p) => p.status === "running")).toBe(true);
@@ -170,7 +207,7 @@ describe("BackgroundProcessManager", () => {
 
   describe("process state tracking", () => {
     it("should track process exit", async () => {
-      const result = await manager.spawn("workspace-1", "exit 42", {
+      const result = await manager.spawn(testWorkspaceId, "exit 42", {
         cwd: process.cwd(),
       });
 
@@ -186,7 +223,7 @@ describe("BackgroundProcessManager", () => {
     });
 
     it("should keep buffer after process exits", async () => {
-      const result = await manager.spawn("workspace-1", "echo test; exit 0", {
+      const result = await manager.spawn(testWorkspaceId, "echo test; exit 0", {
         cwd: process.cwd(),
       });
 
@@ -201,7 +238,7 @@ describe("BackgroundProcessManager", () => {
 
     it("should preserve killed status after onExit callback fires", async () => {
       // Spawn a long-running process
-      const result = await manager.spawn("workspace-1", "sleep 60", {
+      const result = await manager.spawn(testWorkspaceId, "sleep 60", {
         cwd: process.cwd(),
       });
 
