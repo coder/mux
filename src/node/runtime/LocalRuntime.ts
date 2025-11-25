@@ -15,6 +15,9 @@ import type {
   WorkspaceForkParams,
   WorkspaceForkResult,
   InitLogger,
+  BackgroundSpawnOptions,
+  BackgroundSpawnResult,
+  BackgroundHandle,
 } from "./Runtime";
 import { RuntimeError as RuntimeErrorClass } from "./Runtime";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
@@ -30,6 +33,130 @@ import {
 import { execAsync, DisposableProcess } from "@/node/utils/disposableExec";
 import { getProjectName } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
+import { once } from "node:events";
+import { log } from "@/node/services/log";
+
+/**
+ * Handle to a local background process.
+ *
+ * Buffers early events until callbacks are registered, since the manager
+ * registers callbacks after spawn() returns (but output may arrive before).
+ */
+class LocalBackgroundHandle implements BackgroundHandle {
+  private stdoutCallback?: (line: string) => void;
+  private stderrCallback?: (line: string) => void;
+  private exitCallback?: (exitCode: number) => void;
+  private terminated = false;
+
+  // Buffers for events that arrive before callbacks are registered
+  private pendingStdout: string[] = [];
+  private pendingStderr: string[] = [];
+  private pendingExitCode?: number;
+
+  constructor(private readonly disposable: DisposableProcess) {}
+
+  onStdout(callback: (line: string) => void): void {
+    this.stdoutCallback = callback;
+    // Flush buffered events
+    for (const line of this.pendingStdout) {
+      callback(line);
+    }
+    this.pendingStdout = [];
+  }
+
+  onStderr(callback: (line: string) => void): void {
+    this.stderrCallback = callback;
+    // Flush buffered events
+    for (const line of this.pendingStderr) {
+      callback(line);
+    }
+    this.pendingStderr = [];
+  }
+
+  onExit(callback: (exitCode: number) => void): void {
+    this.exitCallback = callback;
+    // Flush buffered event
+    if (this.pendingExitCode !== undefined) {
+      callback(this.pendingExitCode);
+      this.pendingExitCode = undefined;
+    }
+  }
+
+  /** Internal: called when stdout line arrives */
+  _emitStdout(line: string): void {
+    if (this.stdoutCallback) {
+      this.stdoutCallback(line);
+    } else {
+      this.pendingStdout.push(line);
+    }
+  }
+
+  /** Internal: called when stderr line arrives */
+  _emitStderr(line: string): void {
+    if (this.stderrCallback) {
+      this.stderrCallback(line);
+    } else {
+      this.pendingStderr.push(line);
+    }
+  }
+
+  /** Internal: called when process exits */
+  _emitExit(exitCode: number): void {
+    if (this.exitCallback) {
+      this.exitCallback(exitCode);
+    } else {
+      this.pendingExitCode = exitCode;
+    }
+  }
+
+  isRunning(): Promise<boolean> {
+    return Promise.resolve(this.disposable.underlying.exitCode === null);
+  }
+
+  async terminate(): Promise<void> {
+    if (this.terminated) return;
+
+    const pid = this.disposable.underlying.pid;
+    if (pid === undefined) {
+      this.terminated = true;
+      return;
+    }
+
+    try {
+      // Send SIGTERM to the process group for graceful shutdown
+      // Use negative PID to kill the entire process group (detached processes are group leaders)
+      const pgid = -pid;
+      log.debug(`LocalBackgroundHandle: Sending SIGTERM to process group (PGID: ${pgid})`);
+      process.kill(pgid, "SIGTERM");
+
+      // Wait 2 seconds for graceful shutdown
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      // Check if process is still running
+      if (await this.isRunning()) {
+        log.debug(`LocalBackgroundHandle: Process still running, sending SIGKILL`);
+        process.kill(pgid, "SIGKILL");
+      }
+    } catch (error) {
+      // Process may already be dead - that's fine
+      log.debug(
+        `LocalBackgroundHandle: Error during terminate: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+
+    this.terminated = true;
+  }
+
+  dispose(): Promise<void> {
+    return Promise.resolve(this.disposable[Symbol.dispose]());
+  }
+
+  /** Get the underlying child process (for spawn event waiting) */
+  get child() {
+    return this.disposable.underlying;
+  }
+}
+
 import { expandTilde } from "./tildeExpansion";
 
 /**
@@ -177,6 +304,99 @@ export class LocalRuntime implements Runtime {
     }
 
     return { stdout, stderr, stdin, exitCode, duration };
+  }
+
+  async spawnBackground(
+    script: string,
+    options: BackgroundSpawnOptions
+  ): Promise<BackgroundSpawnResult> {
+    log.debug(`LocalRuntime.spawnBackground: Spawning in ${options.cwd}`);
+
+    // Check if working directory exists
+    try {
+      await fsPromises.access(options.cwd);
+    } catch {
+      return { success: false, error: `Working directory does not exist: ${options.cwd}` };
+    }
+
+    // Build command with optional niceness
+    const isWindows = process.platform === "win32";
+    const bashPath = getBashPath();
+    const spawnCommand = options.niceness !== undefined && !isWindows ? "nice" : bashPath;
+    const spawnArgs =
+      options.niceness !== undefined && !isWindows
+        ? ["-n", options.niceness.toString(), bashPath, "-c", script]
+        : ["-c", script];
+
+    const childProcess = spawn(spawnCommand, spawnArgs, {
+      cwd: options.cwd,
+      env: {
+        ...process.env,
+        ...(options.env ?? {}),
+        ...NON_INTERACTIVE_ENV_VARS,
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+      detached: true,
+    });
+
+    const disposable = new DisposableProcess(childProcess);
+
+    // Declare handle before setting up listeners
+    // eslint-disable-next-line prefer-const
+    let handle: LocalBackgroundHandle;
+
+    // Set up line-buffered output streaming
+    const decoder = new TextDecoder();
+    let stdoutBuffer = "";
+    let stderrBuffer = "";
+
+    childProcess.stdout.on("data", (chunk: Buffer) => {
+      stdoutBuffer += decoder.decode(chunk, { stream: true });
+      const lines = stdoutBuffer.split("\n");
+      stdoutBuffer = lines.pop() ?? "";
+      for (const line of lines) {
+        handle._emitStdout(line);
+      }
+    });
+
+    childProcess.stderr.on("data", (chunk: Buffer) => {
+      stderrBuffer += decoder.decode(chunk, { stream: true });
+      const lines = stderrBuffer.split("\n");
+      stderrBuffer = lines.pop() ?? "";
+      for (const line of lines) {
+        handle._emitStderr(line);
+      }
+    });
+
+    childProcess.on("exit", (code) => {
+      // Flush remaining partial lines
+      if (stdoutBuffer) handle._emitStdout(stdoutBuffer);
+      if (stderrBuffer) handle._emitStderr(stderrBuffer);
+      handle._emitExit(code ?? 0);
+    });
+
+    handle = new LocalBackgroundHandle(disposable);
+
+    // Wait for spawn or error
+    try {
+      await Promise.race([
+        once(childProcess, "spawn"),
+        once(childProcess, "error").then(([err]) => {
+          throw err;
+        }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Spawn did not complete in time")), 2000)
+        ),
+      ]);
+    } catch (e) {
+      const err = e as Error;
+      log.debug(`LocalRuntime.spawnBackground: Failed to spawn: ${err.message}`);
+      await handle.dispose();
+      return { success: false, error: err.message };
+    }
+
+    log.debug(`LocalRuntime.spawnBackground: Spawned with PID ${childProcess.pid ?? "unknown"}`);
+    return { success: true, handle };
   }
 
   readFile(filePath: string, _abortSignal?: AbortSignal): ReadableStream<Uint8Array> {

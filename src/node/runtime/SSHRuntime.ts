@@ -13,6 +13,8 @@ import type {
   WorkspaceForkParams,
   WorkspaceForkResult,
   InitLogger,
+  BackgroundSpawnOptions,
+  BackgroundSpawnResult,
 } from "./Runtime";
 import { RuntimeError as RuntimeErrorClass } from "./Runtime";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
@@ -245,6 +247,18 @@ export class SSHRuntime implements Runtime {
     void exitCode.finally(() => clearTimeout(timeoutHandle));
 
     return { stdout, stderr, stdin, exitCode, duration };
+  }
+
+  spawnBackground(
+    _script: string,
+    _options: BackgroundSpawnOptions
+  ): Promise<BackgroundSpawnResult> {
+    // SSH background execution not yet implemented
+    // Would require: remote process management, output polling, etc.
+    return Promise.resolve({
+      success: false,
+      error: "Background process execution is not supported for SSH workspaces",
+    });
   }
 
   /**

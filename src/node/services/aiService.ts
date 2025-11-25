@@ -21,12 +21,6 @@ import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { secretsToRecord } from "@/common/types/secrets";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
-import type { BackgroundExecutor } from "@/node/services/backgroundExecutor";
-import { LocalBackgroundExecutor } from "@/node/services/localBackgroundExecutor";
-import { SSHBackgroundExecutor } from "@/node/services/sshBackgroundExecutor";
-import { BashExecutionService } from "@/node/services/bashExecutionService";
-import { isSSHRuntime, type RuntimeConfig } from "@/common/types/runtime";
-import type { Runtime } from "@/node/runtime/Runtime";
 import { log } from "./log";
 import {
   transformModelMessages,
@@ -149,7 +143,6 @@ export class AIService extends EventEmitter {
   private readonly mockModeEnabled: boolean;
   private readonly mockScenarioPlayer?: MockScenarioPlayer;
   private readonly backgroundProcessManager?: BackgroundProcessManager;
-  private readonly bashExecutionService: BashExecutionService;
 
   constructor(
     config: Config,
@@ -167,7 +160,6 @@ export class AIService extends EventEmitter {
     this.partialService = partialService;
     this.initStateManager = initStateManager;
     this.backgroundProcessManager = backgroundProcessManager;
-    this.bashExecutionService = new BashExecutionService();
     this.streamManager = new StreamManager(historyService, partialService);
     void this.ensureSessionsDir();
     this.setupStreamEventForwarding();
@@ -179,20 +171,6 @@ export class AIService extends EventEmitter {
         historyService,
       });
     }
-  }
-
-  /**
-   * Create a background executor appropriate for the given runtime.
-   * Local runtimes use LocalBackgroundExecutor, SSH runtimes use SSHBackgroundExecutor.
-   */
-  private createBackgroundExecutor(
-    runtimeConfig: RuntimeConfig,
-    runtime: Runtime
-  ): BackgroundExecutor {
-    if (isSSHRuntime(runtimeConfig)) {
-      return new SSHBackgroundExecutor(runtime);
-    }
-    return new LocalBackgroundExecutor(this.bashExecutionService);
   }
 
   /**
@@ -753,9 +731,6 @@ export class AIService extends EventEmitter {
         ? metadata.projectPath
         : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
 
-      // Create background executor for this workspace (cached on first spawn)
-      const backgroundExecutor = this.createBackgroundExecutor(runtimeConfig, runtime);
-
       // Build system message from workspace metadata
       const systemMessage = await buildSystemMessage(
         metadata,
@@ -794,7 +769,6 @@ export class AIService extends EventEmitter {
           secrets: secretsToRecord(projectSecrets),
           runtimeTempDir,
           backgroundProcessManager: this.backgroundProcessManager,
-          backgroundExecutor,
           workspaceId,
         },
         workspaceId,

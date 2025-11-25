@@ -1,4 +1,4 @@
-import type { BackgroundExecutor, BackgroundHandle } from "./backgroundExecutor";
+import type { Runtime, BackgroundHandle } from "@/node/runtime/Runtime";
 import { log } from "./log";
 import { randomBytes } from "crypto";
 import { CircularBuffer } from "./circularBuffer";
@@ -24,29 +24,26 @@ const MAX_BUFFER_LINES = 1000;
 /**
  * Manages background bash processes for workspaces.
  *
- * Executors are provided lazily at spawn time and cached per workspace.
- * This allows different execution backends per workspace (local vs SSH).
+ * Processes are spawned via Runtime.spawnBackground() and tracked by ID.
+ * Output is stored in circular buffers for later retrieval.
  */
 export class BackgroundProcessManager {
   private processes = new Map<string, BackgroundProcess>();
-  private executors = new Map<string, BackgroundExecutor>();
 
   /**
    * Spawn a new background process.
-   * The executor is cached on first spawn per workspace for reuse (e.g., SSH connection pooling).
+   * @param runtime Runtime to spawn the process on
+   * @param workspaceId Workspace ID for tracking/filtering
+   * @param script Bash script to execute
+   * @param config Execution configuration
    */
   async spawn(
-    executor: BackgroundExecutor,
+    runtime: Runtime,
     workspaceId: string,
     script: string,
     config: { cwd: string; secrets?: Record<string, string>; niceness?: number }
   ): Promise<{ success: true; processId: string } | { success: false; error: string }> {
     log.debug(`BackgroundProcessManager.spawn() called for workspace ${workspaceId}`);
-
-    // Cache executor on first spawn for this workspace (enables SSH connection reuse)
-    if (!this.executors.has(workspaceId)) {
-      this.executors.set(workspaceId, executor);
-    }
 
     // Generate unique process ID
     const processId = `bg-${randomBytes(4).toString("hex")}`;
@@ -66,8 +63,8 @@ export class BackgroundProcessManager {
       handle: null,
     };
 
-    // Spawn via executor
-    const result = await executor.spawn(script, {
+    // Spawn via runtime
+    const result = await runtime.spawnBackground(script, {
       cwd: config.cwd,
       env: config.secrets,
       niceness: config.niceness,
@@ -181,7 +178,7 @@ export class BackgroundProcessManager {
 
   /**
    * Clean up all processes for a workspace.
-   * Terminates running processes, removes them from memory, and clears the cached executor.
+   * Terminates running processes and removes them from memory.
    */
   async cleanup(workspaceId: string): Promise<void> {
     log.debug(`BackgroundProcessManager.cleanup(${workspaceId}) called`);
@@ -194,9 +191,6 @@ export class BackgroundProcessManager {
 
     // Remove all processes from memory
     matching.forEach((p) => this.processes.delete(p.id));
-
-    // Clear cached executor for this workspace
-    this.executors.delete(workspaceId);
 
     log.debug(`Cleaned up ${matching.length} process(es) for workspace ${workspaceId}`);
   }
