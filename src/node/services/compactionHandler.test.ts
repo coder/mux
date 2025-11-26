@@ -255,7 +255,7 @@ describe("CompactionHandler", () => {
         model: "claude-3-5-sonnet-20241022",
         usage,
         duration: 2000,
-        providerMetadata: { foo: "bar" },
+        providerMetadata: { anthropic: { cacheCreationInputTokens: 50000 } },
         systemMessageTokens: 100,
       });
       await handler.handleCompletion(event);
@@ -266,14 +266,15 @@ describe("CompactionHandler", () => {
       });
       expect(summaryEvent).toBeDefined();
       const sevt = summaryEvent?.data.message as MuxMessage;
+      // providerMetadata is omitted to avoid inflating context with pre-compaction cacheCreationInputTokens
       expect(sevt.metadata).toMatchObject({
         model: "claude-3-5-sonnet-20241022",
         usage,
         duration: 2000,
-        providerMetadata: { foo: "bar" },
         systemMessageTokens: 100,
         compacted: true,
       });
+      expect(sevt.metadata?.providerMetadata).toBeUndefined();
     });
 
     it("should emit stream-end event to frontend", async () => {

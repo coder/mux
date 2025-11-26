@@ -112,7 +112,10 @@ export class CompactionHandler {
     }
     const deletedSequences = clearResult.data;
 
-    // Create summary message with metadata
+    // Create summary message with metadata.
+    // We omit providerMetadata because it contains cacheCreationInputTokens from the
+    // pre-compaction context, which inflates context usage display. The historicalUsage
+    // field preserves full cost accounting from pre-compaction messages.
     const summaryMessage = createMuxMessage(
       `summary-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
       "assistant",
@@ -123,7 +126,6 @@ export class CompactionHandler {
         model: metadata.model,
         usage: metadata.usage,
         historicalUsage,
-        providerMetadata: metadata.providerMetadata,
         duration: metadata.duration,
         systemMessageTokens: metadata.systemMessageTokens,
         muxMetadata: { type: "normal" },
