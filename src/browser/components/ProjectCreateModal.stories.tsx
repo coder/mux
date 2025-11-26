@@ -415,8 +415,9 @@ export const CancelDirectoryPicker: Story = {
       expect(canvas.getByText("Select Project Directory")).toBeInTheDocument();
     });
 
-    // Click Cancel
-    await userEvent.click(canvas.getByText("Cancel"));
+    // Click Cancel in the directory picker (the second/last Cancel button visible)
+    const cancelButtons = canvas.getAllByRole("button", { name: "Cancel" });
+    await userEvent.click(cancelButtons[cancelButtons.length - 1]);
 
     // DirectoryPickerModal should close but main modal stays open
     await waitFor(() => {
