@@ -1,6 +1,7 @@
 import { Settings } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { TooltipWrapper, Tooltip } from "./Tooltip";
+import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 
 export function SettingsButton() {
   const { open } = useSettings();
@@ -16,7 +17,7 @@ export function SettingsButton() {
       >
         <Settings className="h-3.5 w-3.5" aria-hidden />
       </button>
-      <Tooltip align="right">Settings</Tooltip>
+      <Tooltip align="right">Settings ({formatKeybind(KEYBINDS.OPEN_SETTINGS)})</Tooltip>
     </TooltipWrapper>
   );
 }

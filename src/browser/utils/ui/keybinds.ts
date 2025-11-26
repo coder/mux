@@ -281,4 +281,8 @@ export const KEYBINDS = {
 
   /** Toggle hunk expand/collapse in Code Review panel */
   TOGGLE_HUNK_COLLAPSE: { key: " " },
+
+  /** Open settings modal */
+  // macOS: Cmd+, Win/Linux: Ctrl+,
+  OPEN_SETTINGS: { key: ",", ctrl: true },
 } as const;

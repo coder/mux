@@ -462,6 +462,9 @@ function AppInner() {
       } else if (matchesKeybind(e, KEYBINDS.TOGGLE_SIDEBAR)) {
         e.preventDefault();
         setSidebarCollapsed((prev) => !prev);
+      } else if (matchesKeybind(e, KEYBINDS.OPEN_SETTINGS)) {
+        e.preventDefault();
+        openSettings();
       }
     };
 
@@ -473,6 +476,7 @@ function AppInner() {
     isCommandPaletteOpen,
     closeCommandPalette,
     openCommandPalette,
+    openSettings,
   ]);
 
   // Handle workspace fork switch event
