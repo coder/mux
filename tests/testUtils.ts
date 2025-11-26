@@ -49,7 +49,13 @@ export function getApiKey(keyName: string): string {
     throw new Error("getApiKey should only be called when TEST_INTEGRATION is set");
   }
 
-  const value = process.env[keyName];
+  let value = process.env[keyName];
+
+  // Fallback for Anthropic: support ANTHROPIC_AUTH_TOKEN for proxy/gateway setups
+  if (!value && keyName === "ANTHROPIC_API_KEY") {
+    value = process.env.ANTHROPIC_AUTH_TOKEN;
+  }
+
   if (!value) {
     throw new Error(`Environment variable ${keyName} is required for integration tests`);
   }

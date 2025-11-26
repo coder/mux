@@ -182,10 +182,24 @@ export async function setupWorkspace(
       },
     });
   } else {
+    const providerConfig: { apiKey: string; baseUrl?: string } = {
+      apiKey: getApiKey(`${provider.toUpperCase()}_API_KEY`),
+    };
+
+    // Support custom base URLs (e.g., ANTHROPIC_BASE_URL for proxy setups)
+    const baseUrlEnvVar = `${provider.toUpperCase()}_BASE_URL`;
+    if (process.env[baseUrlEnvVar]) {
+      let baseUrl = process.env[baseUrlEnvVar];
+      // The AI SDK appends /messages to the base URL, but Coder's aibridge expects /v1/messages
+      // Append /v1 to the base URL if using Anthropic proxy
+      if (provider === "anthropic" && baseUrl && !baseUrl.endsWith("/v1")) {
+        baseUrl = baseUrl.replace(/\/$/, "") + "/v1";
+      }
+      providerConfig.baseUrl = baseUrl;
+    }
+
     await setupProviders(env.mockIpcRenderer, {
-      [provider]: {
-        apiKey: getApiKey(`${provider.toUpperCase()}_API_KEY`),
-      },
+      [provider]: providerConfig,
     });
   }
 

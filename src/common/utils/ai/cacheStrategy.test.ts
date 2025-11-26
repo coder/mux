@@ -83,6 +83,39 @@ describe("cacheStrategy", () => {
       });
       expect(result[1]).toEqual(messages[1]); // Last message unchanged
     });
+
+    it("should merge with existing providerOptions instead of overwriting", () => {
+      const messages: ModelMessage[] = [
+        { role: "user", content: "Hello" },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Hi there!" }],
+          providerOptions: {
+            anthropic: {
+              someOtherOption: "value",
+            },
+            openai: {
+              anotherOption: 123,
+            },
+          },
+        },
+        { role: "user", content: "How are you?" },
+      ];
+      const result = applyCacheControl(messages, "anthropic:claude-3-5-sonnet");
+
+      // Second message (index 1) should have merged providerOptions
+      expect(result[1].providerOptions).toEqual({
+        anthropic: {
+          someOtherOption: "value",
+          cacheControl: {
+            type: "ephemeral",
+          },
+        },
+        openai: {
+          anotherOption: 123,
+        },
+      });
+    });
   });
 
   describe("createCachedSystemMessage", () => {
@@ -197,6 +230,45 @@ describe("cacheStrategy", () => {
       const originalTools = { ...mockTools };
       applyCacheControlToTools(mockTools, "anthropic:claude-3-5-sonnet");
       expect(mockTools).toEqual(originalTools);
+    });
+
+    it("should skip provider-defined tools and cache the last function tool", () => {
+      // Create tools with a provider-defined tool at the end
+      const toolsWithProviderDefined: Record<string, Tool> = {
+        read_file: tool({
+          description: "Read a file",
+          inputSchema: z.object({ path: z.string() }),
+          execute: () => Promise.resolve({ content: "" }),
+        }),
+        status_set: tool({
+          description: "Set status",
+          inputSchema: z.object({ status: z.string() }),
+          execute: () => Promise.resolve({ success: true }),
+        }),
+        // Provider-defined tool (simulating web_search)
+        web_search: {
+          type: "provider-defined" as const,
+          id: "anthropic.web_search_20250305",
+          args: {},
+        } as unknown as Tool,
+      };
+
+      const result = applyCacheControlToTools(
+        toolsWithProviderDefined,
+        "anthropic:claude-3-5-sonnet"
+      );
+
+      // status_set (last function tool) should have cache control
+      expect(result.status_set.providerOptions?.anthropic?.cacheControl).toEqual({
+        type: "ephemeral",
+      });
+
+      // web_search (provider-defined) should NOT have cache control set by us
+      // (it doesn't have providerOptions because we didn't add them)
+      expect((result.web_search as any).providerOptions).toBeUndefined();
+
+      // read_file should not have cache control
+      expect(result.read_file.providerOptions).toBeUndefined();
     });
   });
 });

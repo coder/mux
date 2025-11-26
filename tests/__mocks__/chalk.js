@@ -4,4 +4,5 @@ const chalk = new Proxy(() => "", {
   apply: (_target, _thisArg, args) => args[0],
 });
 
-module.exports = { default: chalk };
+module.exports = chalk;
+module.exports.default = chalk;

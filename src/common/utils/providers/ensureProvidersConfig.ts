@@ -16,7 +16,8 @@ const hasAnyConfiguredProvider = (providers: ProvidersConfig | null | undefined)
 const buildProvidersFromEnv = (env: NodeJS.ProcessEnv): ProvidersConfig => {
   const providers: ProvidersConfig = {};
 
-  const anthropicKey = trim(env.ANTHROPIC_API_KEY);
+  // Support both ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN (for proxy/gateway setups)
+  const anthropicKey = trim(env.ANTHROPIC_API_KEY) || trim(env.ANTHROPIC_AUTH_TOKEN);
   if (anthropicKey.length > 0) {
     const entry: ProviderConfig = { apiKey: anthropicKey };
 
