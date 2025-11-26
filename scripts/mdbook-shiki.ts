@@ -6,9 +6,9 @@
  */
 
 import { createHighlighter } from "shiki";
-import { SHIKI_THEME, mapToShikiLang, extractShikiLines } from "../src/utils/highlighting/shiki-shared";
+import { SHIKI_DARK_THEME, mapToShikiLang, extractShikiLines } from "../src/browser/utils/highlighting/shiki-shared";
 import { renderToStaticMarkup } from "react-dom/server";
-import { CodeBlockSSR } from "../src/components/Messages/CodeBlockSSR";
+import { CodeBlockSSR } from "../src/browser/components/Messages/CodeBlockSSR";
 
 interface Chapter {
   name: string;
@@ -87,7 +87,7 @@ async function processMarkdown(content: string, highlighter: Awaited<ReturnType<
       
       const html = highlighter.codeToHtml(trimmedCode, {
         lang: shikiLang,
-        theme: SHIKI_THEME,
+        theme: SHIKI_DARK_THEME,
       });
       
       const gridHtml = generateGridHtml(html, trimmedCode);
@@ -148,7 +148,7 @@ async function main() {
   
   // Initialize Shiki highlighter
   const highlighter = await createHighlighter({
-    themes: [SHIKI_THEME],
+    themes: [SHIKI_DARK_THEME],
     langs: [], // Load on-demand
   });
   
