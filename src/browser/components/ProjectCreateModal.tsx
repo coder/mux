@@ -1,5 +1,7 @@
 import React, { useState, useCallback } from "react";
 import { Modal, ModalActions, CancelButton, PrimaryButton } from "./Modal";
+import { DirectoryPickerModal } from "./DirectoryPickerModal";
+import type { IPCApi } from "@/common/types/ipc";
 import type { ProjectConfig } from "@/node/config";
 
 interface ProjectCreateModalProps {
@@ -21,13 +23,36 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
 }) => {
   const [path, setPath] = useState("");
   const [error, setError] = useState("");
+  // Detect desktop environment where native directory picker is available
+  const isDesktop =
+    window.api.platform !== "browser" && typeof window.api.projects.pickDirectory === "function";
+  const api = window.api as unknown as IPCApi;
+  const hasWebFsPicker = window.api.platform === "browser" && !!api.fs?.listDirectory;
   const [isCreating, setIsCreating] = useState(false);
+  const [isDirPickerOpen, setIsDirPickerOpen] = useState(false);
 
   const handleCancel = useCallback(() => {
     setPath("");
     setError("");
     onClose();
   }, [onClose]);
+
+  const handleWebPickerPathSelected = useCallback((selected: string) => {
+    setPath(selected);
+    setError("");
+  }, []);
+
+  const handleBrowse = useCallback(async () => {
+    try {
+      const selectedPath = await window.api.projects.pickDirectory();
+      if (selectedPath) {
+        setPath(selectedPath);
+        setError("");
+      }
+    } catch (err) {
+      console.error("Failed to pick directory:", err);
+    }
+  }, []);
 
   const handleSelect = useCallback(async () => {
     const trimmedPath = path.trim();
@@ -78,6 +103,14 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
     }
   }, [path, onSuccess, onClose]);
 
+  const handleBrowseClick = useCallback(() => {
+    if (isDesktop) {
+      void handleBrowse();
+    } else if (hasWebFsPicker) {
+      setIsDirPickerOpen(true);
+    }
+  }, [handleBrowse, hasWebFsPicker, isDesktop]);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Enter") {
@@ -89,35 +122,55 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
   );
 
   return (
-    <Modal
-      isOpen={isOpen}
-      title="Add Project"
-      subtitle="Enter the path to your project directory"
-      onClose={handleCancel}
-      isLoading={isCreating}
-    >
-      <input
-        type="text"
-        value={path}
-        onChange={(e) => {
-          setPath(e.target.value);
-          setError("");
-        }}
-        onKeyDown={handleKeyDown}
-        placeholder="/home/user/projects/my-project"
-        autoFocus
-        disabled={isCreating}
-        className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-muted text-foreground mb-5 w-full rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
+    <>
+      <Modal
+        isOpen={isOpen}
+        title="Add Project"
+        subtitle="Enter the path to your project directory"
+        onClose={handleCancel}
+        isLoading={isCreating}
+      >
+        <div className="mb-5 flex gap-2">
+          <input
+            type="text"
+            value={path}
+            onChange={(e) => {
+              setPath(e.target.value);
+              setError("");
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder="/home/user/projects/my-project"
+            autoFocus
+            disabled={isCreating}
+            className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-muted text-foreground min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
+          />
+          {(isDesktop || hasWebFsPicker) && (
+            <button
+              type="button"
+              onClick={handleBrowseClick}
+              disabled={isCreating}
+              className="bg-modal-bg border-border-medium text-muted hover:text-foreground hover:border-accent shrink-0 rounded border px-3 py-2 text-sm transition-colors disabled:opacity-50"
+            >
+              Browse…
+            </button>
+          )}
+        </div>
+        {error && <div className="text-error -mt-3 mb-3 text-xs">{error}</div>}
+        <ModalActions>
+          <CancelButton onClick={handleCancel} disabled={isCreating}>
+            Cancel
+          </CancelButton>
+          <PrimaryButton onClick={() => void handleSelect()} disabled={isCreating}>
+            {isCreating ? "Adding..." : "Add Project"}
+          </PrimaryButton>
+        </ModalActions>
+      </Modal>
+      <DirectoryPickerModal
+        isOpen={isDirPickerOpen}
+        initialPath={path || "."}
+        onClose={() => setIsDirPickerOpen(false)}
+        onSelectPath={handleWebPickerPathSelected}
       />
-      {error && <div className="text-error -mt-3 mb-3 text-xs">{error}</div>}
-      <ModalActions>
-        <CancelButton onClick={handleCancel} disabled={isCreating}>
-          Cancel
-        </CancelButton>
-        <PrimaryButton onClick={() => void handleSelect()} disabled={isCreating}>
-          {isCreating ? "Adding..." : "Add Project"}
-        </PrimaryButton>
-      </ModalActions>
-    </Modal>
+    </>
   );
 };
