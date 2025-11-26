@@ -49,6 +49,13 @@ export async function importXAI() {
 }
 
 /**
+ * Dynamically import the Amazon Bedrock provider package
+ */
+export async function importBedrock() {
+  return import("@ai-sdk/amazon-bedrock");
+}
+
+/**
  * Centralized provider registry mapping provider names to their import functions
  *
  * This is the single source of truth for supported providers. By mapping to import
@@ -68,6 +75,7 @@ export const PROVIDER_REGISTRY = {
   xai: importXAI,
   ollama: importOllama,
   openrouter: importOpenRouter,
+  bedrock: importBedrock,
 } as const;
 
 /**
@@ -90,6 +98,7 @@ export const PROVIDER_DISPLAY_NAMES: Record<ProviderName, string> = {
   xai: "xAI",
   ollama: "Ollama",
   openrouter: "OpenRouter",
+  bedrock: "Amazon Bedrock",
 };
 
 /**

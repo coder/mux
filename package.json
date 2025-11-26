@@ -45,10 +45,12 @@
     "postinstall": "sh scripts/postinstall.sh"
   },
   "dependencies": {
+    "@ai-sdk/amazon-bedrock": "^3.0.61",
     "@ai-sdk/anthropic": "^2.0.47",
     "@ai-sdk/google": "^2.0.43",
     "@ai-sdk/openai": "^2.0.72",
     "@ai-sdk/xai": "^2.0.36",
+    "@aws-sdk/credential-providers": "^3.940.0",
     "@lydell/node-pty": "1.1.0",
     "@mozilla/readability": "^0.6.0",
     "@openrouter/ai-sdk-provider": "^1.2.5",

@@ -2,6 +2,7 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import { EventEmitter } from "events";
 import type { XaiProviderOptions } from "@ai-sdk/xai";
+import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 import { convertToModelMessages, type LanguageModel } from "ai";
 import { applyToolOutputRedaction } from "@/browser/utils/messages/applyToolOutputRedaction";
 import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
@@ -533,6 +534,62 @@ export class AIService extends EventEmitter {
           headers,
           fetch: baseFetch,
           extraBody,
+        });
+        return Ok(provider(modelId));
+      }
+
+      // Handle Amazon Bedrock provider
+      if (providerName === "bedrock") {
+        // Bedrock requires a region - check config or environment
+        const configRegion = providerConfig.region;
+        const region =
+          typeof configRegion === "string" && configRegion ? configRegion : process.env.AWS_REGION;
+
+        if (!region) {
+          return Err({
+            type: "api_key_not_found",
+            provider: providerName,
+          });
+        }
+
+        const baseFetch = getProviderFetch(providerConfig);
+        const { createAmazonBedrock } = await PROVIDER_REGISTRY.bedrock();
+
+        // Check if explicit credentials are provided in config
+        const hasExplicitCredentials = providerConfig.accessKeyId && providerConfig.secretAccessKey;
+
+        if (hasExplicitCredentials) {
+          // Use explicit credentials from providers.jsonc
+          const provider = createAmazonBedrock({
+            ...providerConfig,
+            region,
+            fetch: baseFetch,
+          });
+          return Ok(provider(modelId));
+        }
+
+        // Check if AWS_BEARER_TOKEN_BEDROCK is set (Bedrock API key - simplest auth)
+        // The SDK automatically picks this up when no other credentials are provided
+        if (process.env.AWS_BEARER_TOKEN_BEDROCK) {
+          const provider = createAmazonBedrock({
+            region,
+            fetch: baseFetch,
+          });
+          return Ok(provider(modelId));
+        }
+
+        // Use AWS credential provider chain for flexible authentication:
+        // - Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+        // - Shared credentials file (~/.aws/credentials)
+        // - EC2 instance profiles
+        // - ECS task roles
+        // - EKS service account (IRSA)
+        // - SSO credentials
+        // - And more...
+        const provider = createAmazonBedrock({
+          region,
+          credentialProvider: fromNodeProviderChain(),
+          fetch: baseFetch,
         });
         return Ok(provider(modelId));
       }
