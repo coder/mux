@@ -12,6 +12,7 @@ import type {
   ToolCallEndEvent,
   ReasoningDeltaEvent,
   ReasoningEndEvent,
+  UsageDeltaEvent,
 } from "@/common/types/stream";
 
 export type BranchListResult = z.infer<typeof schemas.BranchListResultSchema>;
@@ -74,6 +75,10 @@ export function isReasoningDelta(msg: WorkspaceChatMessage): msg is ReasoningDel
 
 export function isReasoningEnd(msg: WorkspaceChatMessage): msg is ReasoningEndEvent {
   return (msg as { type?: string }).type === "reasoning-end";
+}
+
+export function isUsageDelta(msg: WorkspaceChatMessage): msg is UsageDeltaEvent {
+  return (msg as { type?: string }).type === "usage-delta";
 }
 
 export function isMuxMessage(msg: WorkspaceChatMessage): msg is MuxMessage {

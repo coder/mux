@@ -5,6 +5,7 @@ import {
   modelString,
   assertStreamSuccess,
 } from "./helpers";
+import { isUsageDelta } from "../../src/common/orpc/types";
 import { KNOWN_MODELS } from "../../src/common/constants/knownModels";
 
 // Skip all tests if TEST_INTEGRATION is not set
@@ -45,9 +46,7 @@ describeIntegration("usage-delta events", () => {
 
         // Verify usage-delta events were emitted
         const allEvents = collector.getEvents();
-        const usageDeltas = allEvents.filter(
-          (e) => "type" in e && e.type === "usage-delta"
-        ) as Array<{ type: "usage-delta"; usage: { inputTokens: number; outputTokens: number } }>;
+        const usageDeltas = allEvents.filter(isUsageDelta);
 
         // Multi-step stream should emit at least one usage-delta (on finish-step)
         expect(usageDeltas.length).toBeGreaterThan(0);
@@ -55,6 +54,7 @@ describeIntegration("usage-delta events", () => {
         // Each usage-delta should have valid usage data
         for (const delta of usageDeltas) {
           expect(delta.usage).toBeDefined();
+          // inputTokens should be present and > 0 (full context)
           expect(delta.usage.inputTokens).toBeGreaterThan(0);
           // outputTokens may be 0 for some steps, but should be defined
           expect(typeof delta.usage.outputTokens).toBe("number");

@@ -469,6 +469,20 @@ export const ReasoningEndEventSchema = z.object({
   messageId: z.string(),
 });
 
+// Usage schema matching LanguageModelV2Usage from @ai-sdk/provider
+export const LanguageModelUsageSchema = z.object({
+  inputTokens: z.number().optional(),
+  outputTokens: z.number().optional(),
+  totalTokens: z.number().optional(),
+});
+
+export const UsageDeltaEventSchema = z.object({
+  type: z.literal("usage-delta"),
+  workspaceId: z.string(),
+  messageId: z.string(),
+  usage: LanguageModelUsageSchema,
+});
+
 export const WorkspaceInitEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("init-start"),
@@ -518,6 +532,7 @@ export const WorkspaceChatMessageSchema = z.union([
     ToolCallEndEventSchema,
     ReasoningDeltaEventSchema,
     ReasoningEndEventSchema,
+    UsageDeltaEventSchema,
     // Flatten WorkspaceInitEventSchema members into this union if possible,
     // or just include it as a union member. Zod discriminated union is strict.
     // WorkspaceInitEventSchema is already a discriminated union.

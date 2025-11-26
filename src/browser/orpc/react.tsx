@@ -70,7 +70,16 @@ function createBrowserClient(authToken: string | null): {
 }
 
 export const ORPCProvider = (props: ORPCProviderProps) => {
-  const [state, setState] = useState<ConnectionState>({ status: "connecting" });
+  // If client is provided externally, start in connected state immediately
+  // This avoids a flash of null content on first render
+  const [state, setState] = useState<ConnectionState>(() => {
+    if (props.client) {
+      // Also set the global client reference immediately
+      window.__ORPC_CLIENT__ = props.client;
+      return { status: "connected", client: props.client, cleanup: () => undefined };
+    }
+    return { status: "connecting" };
+  });
   const [authToken, setAuthToken] = useState<string | null>(() => {
     // Check URL param first, then localStorage
     const urlParams = new URLSearchParams(window.location.search);
