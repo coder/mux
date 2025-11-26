@@ -17,7 +17,7 @@ import {
   isRestoreToInput,
 } from "@/common/types/ipc";
 import { MapStore } from "./MapStore";
-import { collectUsageHistory } from "@/common/utils/tokens/displayUsage";
+import { collectUsageHistory, createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import type { TokenConsumer } from "@/common/types/chatStats";
@@ -63,6 +63,8 @@ type DerivedState = Record<string, number>;
 export interface WorkspaceUsageState {
   usageHistory: ChatUsageDisplay[];
   totalTokens: number;
+  /** Live usage during streaming (inputTokens = current context window) */
+  liveUsage?: ChatUsageDisplay;
 }
 
 /**
@@ -177,6 +179,10 @@ export class WorkspaceStore {
     "reasoning-end": (workspaceId, aggregator, data) => {
       aggregator.handleReasoningEnd(data as never);
       this.states.bump(workspaceId);
+    },
+    "usage-delta": (workspaceId, aggregator, data) => {
+      aggregator.handleUsageDelta(data as never);
+      this.usageStore.bump(workspaceId);
     },
     "init-start": (workspaceId, aggregator, data) => {
       aggregator.handleMessage(data);
@@ -449,7 +455,12 @@ export class WorkspaceStore {
         0
       );
 
-      return { usageHistory, totalTokens };
+      // Include active stream usage if currently streaming (already converted)
+      const activeStreamId = aggregator.getActiveStreamMessageId();
+      const rawUsage = activeStreamId ? aggregator.getActiveStreamUsage(activeStreamId) : undefined;
+      const liveUsage = rawUsage && model ? createDisplayUsage(rawUsage, model) : undefined;
+
+      return { usageHistory, totalTokens, liveUsage };
     });
   }
 

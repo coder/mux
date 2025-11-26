@@ -471,5 +471,53 @@ describeIntegration("IpcMain sendMessage integration tests", () => {
   );
 });
 
+// Test usage-delta events during multi-step streams
+describeIntegration("usage-delta events", () => {
+  configureTestRetries(3);
+
+  // Only test with Anthropic - more reliable multi-step behavior
+  test.concurrent(
+    "should emit usage-delta events during multi-step tool call streams",
+    async () => {
+      await withSharedWorkspace("anthropic", async ({ env, workspaceId }) => {
+        // Ask the model to read a file - guaranteed to trigger tool use
+        const result = await sendMessageWithModel(
+          env.mockIpcRenderer,
+          workspaceId,
+          "Use the file_read tool to read README.md. Only read the first 5 lines.",
+          modelString("anthropic", KNOWN_MODELS.SONNET.providerModelId)
+        );
+
+        expect(result.success).toBe(true);
+
+        // Collect events and wait for stream completion
+        const collector = createEventCollector(env.sentEvents, workspaceId);
+        await collector.waitForEvent("stream-end", 15000);
+
+        // Verify usage-delta events were emitted
+        const allEvents = collector.getEvents();
+        const usageDeltas = allEvents.filter(
+          (e) => "type" in e && e.type === "usage-delta"
+        ) as Array<{ type: "usage-delta"; usage: { inputTokens: number; outputTokens: number } }>;
+
+        // Multi-step stream should emit at least one usage-delta (on finish-step)
+        expect(usageDeltas.length).toBeGreaterThan(0);
+
+        // Each usage-delta should have valid usage data
+        for (const delta of usageDeltas) {
+          expect(delta.usage).toBeDefined();
+          expect(delta.usage.inputTokens).toBeGreaterThan(0);
+          // outputTokens may be 0 for some steps, but should be defined
+          expect(typeof delta.usage.outputTokens).toBe("number");
+        }
+
+        // Verify stream completed successfully
+        assertStreamSuccess(collector);
+      });
+    },
+    30000
+  );
+});
+
 // Test image support across providers
 describe.each(PROVIDER_CONFIGS)("%s:%s image support", (provider, model) => {});

@@ -134,7 +134,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const costsPanelId = `${baseId}-panel-costs`;
   const reviewPanelId = `${baseId}-panel-review`;
 
-  const lastUsage = usage?.usageHistory[usage.usageHistory.length - 1];
+  const lastUsage = usage?.liveUsage ?? usage?.usageHistory[usage.usageHistory.length - 1];
 
   // Memoize vertical meter data calculation to prevent unnecessary re-renders
   const verticalMeterData = React.useMemo(() => {

@@ -121,6 +121,17 @@ export interface ReasoningEndEvent {
   messageId: string;
 }
 
+/**
+ * Emitted on each AI SDK finish-step event, providing incremental usage updates.
+ * Allows UI to update token display as steps complete (after each tool call or at stream end).
+ */
+export interface UsageDeltaEvent {
+  type: "usage-delta";
+  workspaceId: string;
+  messageId: string;
+  usage: LanguageModelV2Usage; // This step's usage (inputTokens = full context)
+}
+
 export type AIServiceEvent =
   | StreamStartEvent
   | StreamDeltaEvent
@@ -132,4 +143,5 @@ export type AIServiceEvent =
   | ToolCallEndEvent
   | ReasoningStartEvent
   | ReasoningDeltaEvent
-  | ReasoningEndEvent;
+  | ReasoningEndEvent
+  | UsageDeltaEvent;

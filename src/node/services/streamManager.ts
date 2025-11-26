@@ -18,6 +18,7 @@ import { log } from "./log";
 import type {
   StreamStartEvent,
   StreamEndEvent,
+  UsageDeltaEvent,
   ErrorEvent,
   ToolCallEndEvent,
   CompletedMessagePart,
@@ -851,9 +852,29 @@ export class StreamManager extends EventEmitter {
           case "start":
           case "start-step":
           case "text-start":
-          case "finish":
-          case "finish-step":
             // These events can be logged or handled if needed
+            break;
+
+          case "finish-step": {
+            // Emit usage-delta event with usage from this step
+            const finishStepPart = part as {
+              type: "finish-step";
+              usage: LanguageModelV2Usage;
+            };
+
+            const usageEvent: UsageDeltaEvent = {
+              type: "usage-delta",
+              workspaceId: workspaceId as string,
+              messageId: streamInfo.messageId,
+              usage: finishStepPart.usage,
+            };
+            this.emit("usage-delta", usageEvent);
+            break;
+          }
+
+          case "finish":
+            // No usage-delta here - totalUsage sums all steps, not current context.
+            // Last finish-step already has correct context window usage.
             break;
         }
       }

@@ -464,6 +464,7 @@ export class AgentSession {
     });
     forward("reasoning-delta", (payload) => this.emitChatEvent(payload));
     forward("reasoning-end", (payload) => this.emitChatEvent(payload));
+    forward("usage-delta", (payload) => this.emitChatEvent(payload));
 
     forward("stream-end", async (payload) => {
       const handled = await this.compactionHandler.handleCompletion(payload as StreamEndEvent);

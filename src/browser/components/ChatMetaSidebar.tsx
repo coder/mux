@@ -19,7 +19,7 @@ const ChatMetaSidebarComponent: React.FC<ChatMetaSidebarProps> = ({ workspaceId,
   const use1M = options.anthropic?.use1MContext ?? false;
   const chatAreaSize = useResizeObserver(chatAreaRef);
 
-  const lastUsage = usage?.usageHistory[usage.usageHistory.length - 1];
+  const lastUsage = usage?.liveUsage ?? usage?.usageHistory[usage.usageHistory.length - 1];
 
   // Memoize vertical meter data calculation to prevent unnecessary re-renders
   const verticalMeterData = React.useMemo(() => {

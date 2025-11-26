@@ -203,6 +203,7 @@ export class AIService extends EventEmitter {
     // Forward reasoning events
     this.streamManager.on("reasoning-delta", (data) => this.emit("reasoning-delta", data));
     this.streamManager.on("reasoning-end", (data) => this.emit("reasoning-end", data));
+    this.streamManager.on("usage-delta", (data) => this.emit("usage-delta", data));
   }
 
   private async ensureSessionsDir(): Promise<void> {

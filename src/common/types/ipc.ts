@@ -21,6 +21,7 @@ import type {
   StreamDeltaEvent,
   StreamEndEvent,
   StreamAbortEvent,
+  UsageDeltaEvent,
   ToolCallStartEvent,
   ToolCallDeltaEvent,
   ToolCallEndEvent,
@@ -103,6 +104,7 @@ export type WorkspaceChatMessage =
   | DeleteMessage
   | StreamStartEvent
   | StreamDeltaEvent
+  | UsageDeltaEvent
   | StreamEndEvent
   | StreamAbortEvent
   | ToolCallStartEvent
@@ -147,6 +149,11 @@ export function isStreamEnd(msg: WorkspaceChatMessage): msg is StreamEndEvent {
 // Type guard for stream abort events
 export function isStreamAbort(msg: WorkspaceChatMessage): msg is StreamAbortEvent {
   return "type" in msg && msg.type === "stream-abort";
+}
+
+// Type guard for usage delta events
+export function isUsageDelta(msg: WorkspaceChatMessage): msg is UsageDeltaEvent {
+  return "type" in msg && msg.type === "usage-delta";
 }
 
 // Type guard for tool call start events

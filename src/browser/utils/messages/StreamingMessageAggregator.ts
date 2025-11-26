@@ -9,6 +9,7 @@ import { createMuxMessage } from "@/common/types/message";
 import type {
   StreamStartEvent,
   StreamDeltaEvent,
+  UsageDeltaEvent,
   StreamEndEvent,
   StreamAbortEvent,
   ToolCallStartEvent,
@@ -17,6 +18,7 @@ import type {
   ReasoningDeltaEvent,
   ReasoningEndEvent,
 } from "@/common/types/stream";
+import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { TodoItem, StatusSetToolResult } from "@/common/types/tools";
 
 import type { WorkspaceChatMessage, StreamErrorMessage, DeleteMessage } from "@/common/types/ipc";
@@ -71,6 +73,10 @@ export class StreamingMessageAggregator {
 
   // Delta history for token counting and TPS calculation
   private deltaHistory = new Map<string, DeltaRecordStorage>();
+
+  // Active stream step usage (updated on each stream-step event)
+  // Tracks cumulative usage for the currently streaming message
+  private activeStreamStepUsage = new Map<string, LanguageModelV2Usage>();
 
   // Current TODO list (updated when todo_write succeeds, cleared on stream end)
   // Stream-scoped: automatically reset when stream completes
@@ -992,5 +998,20 @@ export class StreamingMessageAggregator {
    */
   clearTokenState(messageId: string): void {
     this.deltaHistory.delete(messageId);
+    this.activeStreamStepUsage.delete(messageId);
+  }
+
+  /**
+   * Handle usage-delta event: update cumulative usage for active stream
+   */
+  handleUsageDelta(data: UsageDeltaEvent): void {
+    this.activeStreamStepUsage.set(data.messageId, data.usage);
+  }
+
+  /**
+   * Get active stream usage for a message (if streaming)
+   */
+  getActiveStreamUsage(messageId: string): LanguageModelV2Usage | undefined {
+    return this.activeStreamStepUsage.get(messageId);
   }
 }

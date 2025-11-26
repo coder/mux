@@ -63,8 +63,15 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
   const { options } = useProviderOptions();
   const use1M = options.anthropic?.use1MContext ?? false;
 
-  // Check if we have any data to display
-  const hasUsageData = usage && usage.usageHistory.length > 0;
+  // Session usage for cost
+  const sessionUsage = React.useMemo(() => {
+    const historicalSum = sumUsageHistory(usage.usageHistory);
+    if (!usage.liveUsage) return historicalSum;
+    if (!historicalSum) return usage.liveUsage;
+    return sumUsageHistory([historicalSum, usage.liveUsage]);
+  }, [usage.usageHistory, usage.liveUsage]);
+
+  const hasUsageData = usage && (usage.usageHistory.length > 0 || usage.liveUsage !== undefined);
   const hasConsumerData = consumers && (consumers.totalTokens > 0 || consumers.isCalculating);
   const hasAnyData = hasUsageData || hasConsumerData;
 
@@ -80,16 +87,11 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
     );
   }
 
-  // Context Usage always shows Last Request data
-  const lastRequestUsage = hasUsageData
-    ? usage.usageHistory[usage.usageHistory.length - 1]
-    : undefined;
+  // Last Request (for Cost section): always the last completed request
+  const lastRequestUsage = usage.usageHistory[usage.usageHistory.length - 1];
 
   // Cost and Details table use viewMode
-  const displayUsage =
-    viewMode === "last-request"
-      ? usage.usageHistory[usage.usageHistory.length - 1]
-      : sumUsageHistory(usage.usageHistory);
+  const displayUsage = viewMode === "last-request" ? lastRequestUsage : sessionUsage;
 
   return (
     <div className="text-light font-primary text-[13px] leading-relaxed">
@@ -97,11 +99,10 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
         <div data-testid="context-usage-section" className="mt-2 mb-5">
           <div data-testid="context-usage-list" className="flex flex-col gap-3">
             {(() => {
-              // Context Usage always uses last request
-              const contextUsage = lastRequestUsage;
-
-              // Get model from last request (for context window display)
-              const model = lastRequestUsage?.model ?? "unknown";
+              // Context usage: live when streaming, else last historical
+              const contextUsage =
+                usage.liveUsage ?? usage.usageHistory[usage.usageHistory.length - 1];
+              const model = contextUsage?.model ?? "unknown";
 
               // Get max tokens for the model from the model stats database
               const modelStats = getModelStats(model);

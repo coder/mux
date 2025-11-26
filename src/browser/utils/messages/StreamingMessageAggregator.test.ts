@@ -379,4 +379,96 @@ describe("StreamingMessageAggregator", () => {
       expect(aggregator.getCurrentTodos()).toHaveLength(0);
     });
   });
+
+  describe("usage-delta handling", () => {
+    test("handleUsageDelta stores usage by messageId", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-1",
+        usage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+      });
+
+      expect(aggregator.getActiveStreamUsage("msg-1")).toEqual({
+        inputTokens: 1000,
+        outputTokens: 50,
+        totalTokens: 1050,
+      });
+    });
+
+    test("clearTokenState removes usage", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-1",
+        usage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+      });
+
+      expect(aggregator.getActiveStreamUsage("msg-1")).toBeDefined();
+
+      aggregator.clearTokenState("msg-1");
+
+      expect(aggregator.getActiveStreamUsage("msg-1")).toBeUndefined();
+    });
+
+    test("latest usage-delta replaces previous for same messageId", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      // First step usage
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-1",
+        usage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+      });
+
+      // Second step usage (larger context after tool result added)
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-1",
+        usage: { inputTokens: 1500, outputTokens: 100, totalTokens: 1600 },
+      });
+
+      // Should have latest values, not summed
+      expect(aggregator.getActiveStreamUsage("msg-1")).toEqual({
+        inputTokens: 1500,
+        outputTokens: 100,
+        totalTokens: 1600,
+      });
+    });
+
+    test("tracks usage independently per messageId", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-1",
+        usage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+      });
+
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-2",
+        usage: { inputTokens: 2000, outputTokens: 100, totalTokens: 2100 },
+      });
+
+      expect(aggregator.getActiveStreamUsage("msg-1")).toEqual({
+        inputTokens: 1000,
+        outputTokens: 50,
+        totalTokens: 1050,
+      });
+      expect(aggregator.getActiveStreamUsage("msg-2")).toEqual({
+        inputTokens: 2000,
+        outputTokens: 100,
+        totalTokens: 2100,
+      });
+    });
+  });
 });
