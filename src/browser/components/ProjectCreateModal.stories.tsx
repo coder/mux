@@ -90,23 +90,23 @@ function setupMockAPI(options?: { onProjectCreate?: (path: string) => void }) {
       },
     },
     projects: {
-      list: async () => [],
-      create: async (path: string) => {
+      list: () => Promise.resolve([]),
+      create: (path: string) => {
         options?.onProjectCreate?.(path);
-        return {
+        return Promise.resolve({
           success: true,
           data: {
             normalizedPath: path,
             projectConfig: { workspaces: [] },
           },
-        };
+        });
       },
-      remove: async () => ({ success: true, data: undefined }),
-      pickDirectory: async () => null,
-      listBranches: async () => ({ branches: ["main"], recommendedTrunk: "main" }),
+      remove: () => Promise.resolve({ success: true, data: undefined }),
+      pickDirectory: () => Promise.resolve(null),
+      listBranches: () => Promise.resolve({ branches: ["main"], recommendedTrunk: "main" }),
       secrets: {
-        get: async () => [],
-        update: async () => ({ success: true, data: undefined }),
+        get: () => Promise.resolve([]),
+        update: () => Promise.resolve({ success: true, data: undefined }),
       },
     },
   };
@@ -439,20 +439,21 @@ export const ValidationError: Story = {
       // Setup mock with validation error
       const mockApi: Partial<IPCApi> = {
         fs: {
-          listDirectory: async () => mockFileTree,
+          listDirectory: () => Promise.resolve(mockFileTree),
         },
         projects: {
-          list: async () => [],
-          create: async () => ({
-            success: false,
-            error: "Not a valid git repository",
-          }),
-          remove: async () => ({ success: true, data: undefined }),
-          pickDirectory: async () => null,
-          listBranches: async () => ({ branches: [], recommendedTrunk: "main" }),
+          list: () => Promise.resolve([]),
+          create: () =>
+            Promise.resolve({
+              success: false,
+              error: "Not a valid git repository",
+            }),
+          remove: () => Promise.resolve({ success: true, data: undefined }),
+          pickDirectory: () => Promise.resolve(null),
+          listBranches: () => Promise.resolve({ branches: [], recommendedTrunk: "main" }),
           secrets: {
-            get: async () => [],
-            update: async () => ({ success: true, data: undefined }),
+            get: () => Promise.resolve([]),
+            update: () => Promise.resolve({ success: true, data: undefined }),
           },
         },
       };
