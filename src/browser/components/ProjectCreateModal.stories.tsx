@@ -384,7 +384,7 @@ export const FullFlowWithDirectoryPicker: Story = {
     });
 
     // Click Add Project to complete the flow
-    await userEvent.click(canvas.getByText("Add Project"));
+    await userEvent.click(canvas.getByRole("button", { name: "Add Project" }));
 
     // Modal should close after successful creation
     await waitFor(() => {
@@ -424,7 +424,7 @@ export const CancelDirectoryPicker: Story = {
     });
 
     // Main modal should still be visible
-    expect(canvas.getByText("Add Project")).toBeInTheDocument();
+    expect(canvas.getByRole("button", { name: "Add Project" })).toBeInTheDocument();
   },
 };
 
@@ -470,7 +470,7 @@ export const ValidationError: Story = {
     await userEvent.type(input, "/invalid/path");
 
     // Click Add Project
-    await userEvent.click(canvas.getByText("Add Project"));
+    await userEvent.click(canvas.getByRole("button", { name: "Add Project" }));
 
     // Wait for error message
     await waitFor(() => {
