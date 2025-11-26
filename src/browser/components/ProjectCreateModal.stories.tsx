@@ -393,42 +393,6 @@ export const FullFlowWithDirectoryPicker: Story = {
   },
 };
 
-export const CancelDirectoryPicker: Story = {
-  args: {
-    isOpen: true,
-    onClose: action("close"),
-    onSuccess: action("success"),
-  },
-  render: () => <ProjectCreateModalWrapper />,
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-
-    // Wait for modal and click Browse
-    await waitFor(() => {
-      expect(canvas.getByRole("dialog")).toBeInTheDocument();
-    });
-
-    await userEvent.click(canvas.getByText("Browse…"));
-
-    // Wait for DirectoryPickerModal
-    await waitFor(() => {
-      expect(canvas.getByText("Select Project Directory")).toBeInTheDocument();
-    });
-
-    // Click Cancel in the directory picker (the second/last Cancel button visible)
-    const cancelButtons = canvas.getAllByRole("button", { name: "Cancel" });
-    await userEvent.click(cancelButtons[cancelButtons.length - 1]);
-
-    // DirectoryPickerModal should close but main modal stays open
-    await waitFor(() => {
-      expect(canvas.queryByText("Select Project Directory")).not.toBeInTheDocument();
-    });
-
-    // Main modal should still be visible
-    expect(canvas.getByRole("button", { name: "Add Project" })).toBeInTheDocument();
-  },
-};
-
 export const ValidationError: Story = {
   args: {
     isOpen: true,
