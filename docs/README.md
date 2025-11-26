@@ -56,10 +56,11 @@ The following tools are needed to build locally:
 - `mdbook` (v0.4.52+)
 - `mdbook-mermaid` (v0.16.0+)
 - `mdbook-linkcheck` (v0.7.7+)
+- `mdbook-pagetoc` (v0.2.1+)
 
 Install via cargo:
 
 ```bash
-cargo install mdbook mdbook-mermaid mdbook-linkcheck
+cargo install mdbook mdbook-mermaid mdbook-linkcheck mdbook-pagetoc
 mdbook-mermaid install docs
 ```
