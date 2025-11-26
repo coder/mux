@@ -245,12 +245,15 @@ export class LocalRuntime implements Runtime {
     let handle: LocalBackgroundHandle;
 
     // Set up line-buffered output streaming
-    const decoder = new TextDecoder();
+    // Use separate decoders per stream - TextDecoder with stream:true buffers
+    // partial multibyte sequences, so sharing would corrupt output when chunks interleave
+    const stdoutDecoder = new TextDecoder();
+    const stderrDecoder = new TextDecoder();
     let stdoutBuffer = "";
     let stderrBuffer = "";
 
     childProcess.stdout.on("data", (chunk: Buffer) => {
-      stdoutBuffer += decoder.decode(chunk, { stream: true });
+      stdoutBuffer += stdoutDecoder.decode(chunk, { stream: true });
       const lines = stdoutBuffer.split("\n");
       stdoutBuffer = lines.pop() ?? "";
       for (const line of lines) {
@@ -259,7 +262,7 @@ export class LocalRuntime implements Runtime {
     });
 
     childProcess.stderr.on("data", (chunk: Buffer) => {
-      stderrBuffer += decoder.decode(chunk, { stream: true });
+      stderrBuffer += stderrDecoder.decode(chunk, { stream: true });
       const lines = stderrBuffer.split("\n");
       stderrBuffer = lines.pop() ?? "";
       for (const line of lines) {
@@ -268,6 +271,9 @@ export class LocalRuntime implements Runtime {
     });
 
     childProcess.on("exit", (code, signal) => {
+      // Flush decoder buffers (emits any incomplete multibyte sequences)
+      stdoutBuffer += stdoutDecoder.decode();
+      stderrBuffer += stderrDecoder.decode();
       // Flush remaining partial lines
       if (stdoutBuffer) handle._emitStdout(stdoutBuffer);
       if (stderrBuffer) handle._emitStderr(stderrBuffer);
