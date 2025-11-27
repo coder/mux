@@ -39,6 +39,13 @@ export function parseRuntimeModeAndHost(runtime: string | null | undefined): {
   const trimmed = runtime.trim();
   const lowerTrimmed = trimmed.toLowerCase();
 
+  // Check for "ssh <host>" format first (before trying to parse as plain mode)
+  if (lowerTrimmed.startsWith(SSH_RUNTIME_PREFIX)) {
+    const host = trimmed.substring(SSH_RUNTIME_PREFIX.length).trim();
+    return { mode: RUNTIME_MODE.SSH, host };
+  }
+
+  // Try to parse as a plain mode ("ssh" or "local")
   const modeResult = RuntimeModeSchema.safeParse(lowerTrimmed);
   if (!modeResult.success) {
     // Default to local for unrecognized strings
@@ -47,17 +54,12 @@ export function parseRuntimeModeAndHost(runtime: string | null | undefined): {
 
   const mode = modeResult.data;
 
-  if (mode === RUNTIME_MODE.LOCAL) {
+  if (mode === RUNTIME_MODE.SSH) {
+    // Plain "ssh" without host
     return { mode, host: "" };
   }
 
-  // Handle both "ssh" and "ssh <host>"
-  if (mode === RUNTIME_MODE.SSH || lowerTrimmed.startsWith(SSH_RUNTIME_PREFIX)) {
-    const host = trimmed.substring(SSH_RUNTIME_PREFIX.length).trim();
-    return { mode, host };
-  }
-
-  // Default to local for unrecognized strings
+  // Local mode or default
   return { mode: RUNTIME_MODE.LOCAL, host: "" };
 }
 
