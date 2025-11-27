@@ -138,14 +138,16 @@ const setupWindow = ({ listBranches, sendMessage }: SetupWindowOptions = {}) => 
       if (!args.workspaceId) {
         return Promise.resolve({
           success: true,
-          workspaceId: TEST_WORKSPACE_ID,
-          metadata: TEST_METADATA,
+          data: {
+            workspaceId: TEST_WORKSPACE_ID,
+            metadata: TEST_METADATA,
+          },
         } satisfies WorkspaceSendMessageResult);
       }
 
       const existingWorkspaceResult: WorkspaceSendMessageResult = {
         success: true,
-        data: undefined,
+        data: {},
       };
       return Promise.resolve(existingWorkspaceResult);
     });
@@ -357,8 +359,10 @@ describe("useCreationWorkspace", () => {
       (_args: WorkspaceSendMessageArgs): Promise<WorkspaceSendMessageResult> =>
         Promise.resolve({
           success: true as const,
-          workspaceId: TEST_WORKSPACE_ID,
-          metadata: TEST_METADATA,
+          data: {
+            workspaceId: TEST_WORKSPACE_ID,
+            metadata: TEST_METADATA,
+          },
         })
     );
     const { workspaceApi } = setupWindow({

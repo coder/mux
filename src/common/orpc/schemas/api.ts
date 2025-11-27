@@ -167,14 +167,13 @@ export const workspace = {
         trunkBranch: z.string().optional(),
       }).optional(),
     }),
-    output: z.union([
-      ResultSchema(z.void(), SendMessageErrorSchema),
+    output: ResultSchema(
       z.object({
-        success: z.literal(true),
-        workspaceId: z.string(),
-        metadata: FrontendWorkspaceMetadataSchema,
+        workspaceId: z.string().optional(),
+        metadata: FrontendWorkspaceMetadataSchema.optional(),
       }),
-    ]),
+      SendMessageErrorSchema
+    ),
   },
   resumeStream: {
     input: z.object({

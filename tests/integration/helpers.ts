@@ -132,12 +132,12 @@ export async function sendMessage(
     return { success: false, error: { type: "unknown", raw } };
   }
 
-  if (result.success && "workspaceId" in result) {
-    // Lazy workspace creation path returns metadata/workspaceId; normalize to void success for callers
+  // Normalize to Result<void> for callers - they just care about success/failure
+  if (result.success) {
     return { success: true, data: undefined };
   }
 
-  return result;
+  return { success: false, error: result.error };
 }
 
 /**

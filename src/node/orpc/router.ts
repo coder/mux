@@ -199,12 +199,9 @@ export const router = (authToken?: string) => {
           const result = await context.workspaceService.sendMessage(
             input.workspaceId,
             input.message,
-            input.options // Cast to avoid Zod vs Interface mismatch
+            input.options
           );
 
-          // Type mismatch handling: WorkspaceService returns Result<any>.
-          // Our schema output is ResultSchema(void, SendMessageError) OR {success:true, ...}
-          // We need to ensure strict type alignment.
           if (!result.success) {
             const error =
               typeof result.error === "string"
@@ -212,22 +209,20 @@ export const router = (authToken?: string) => {
                 : result.error;
             return { success: false, error };
           }
-          // If success, it returns different shapes depending on lazy creation.
-          // If lazy creation happened, it returns {success: true, workspaceId, metadata}
-          // If regular message, it returns {success: true, data: ...} -> wait, result.data is undefined for normal message?
-          // SendMessage in AgentSession returns Result<void> mostly.
-          // But createForFirstMessage returns object.
 
-          // Check result shape
+          // Check if this is a workspace creation result
           if ("workspaceId" in result) {
             return {
               success: true,
-              workspaceId: result.workspaceId,
-              metadata: result.metadata,
+              data: {
+                workspaceId: result.workspaceId,
+                metadata: result.metadata,
+              },
             };
           }
 
-          return { success: true, data: undefined };
+          // Regular message send (no workspace creation)
+          return { success: true, data: {} };
         }),
       resumeStream: t
         .input(schemas.workspace.resumeStream.input)

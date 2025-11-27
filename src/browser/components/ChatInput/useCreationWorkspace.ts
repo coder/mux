@@ -128,16 +128,17 @@ export function useCreationWorkspace({
           return false;
         }
 
-        // Check if this is a workspace creation result (has metadata field)
-        if ("metadata" in result && result.metadata) {
-          syncCreationPreferences(projectPath, result.metadata.id);
+        // Check if this is a workspace creation result (has metadata in data)
+        const { metadata } = result.data;
+        if (metadata) {
+          syncCreationPreferences(projectPath, metadata.id);
           if (projectPath) {
             const pendingInputKey = getInputKey(getPendingScopeId(projectPath));
             updatePersistedState(pendingInputKey, "");
           }
           // Settings are already persisted via useDraftWorkspaceSettings
           // Notify parent to switch workspace (clears input via parent unmount)
-          onWorkspaceCreated(result.metadata);
+          onWorkspaceCreated(metadata);
           setIsSending(false);
           return true;
         } else {
