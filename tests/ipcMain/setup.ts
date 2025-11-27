@@ -226,7 +226,8 @@ export async function setupWorkspace(
 }
 
 /**
- * Setup workspace without provider (for API key error tests)
+ * Setup workspace without provider (for API key error tests).
+ * Also clears Anthropic env vars to ensure the error check works.
  */
 export async function setupWorkspaceWithoutProvider(
   branchPrefix?: string,
@@ -240,6 +241,17 @@ export async function setupWorkspaceWithoutProvider(
   cleanup: () => Promise<void>;
 }> {
   const { createTempGitRepo, cleanupTempGitRepo } = await import("./helpers");
+
+  // Clear Anthropic env vars to ensure api_key_not_found error is triggered.
+  // Save original values for restoration in cleanup.
+  const savedEnvVars = {
+    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+    ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
+    ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL,
+  };
+  delete process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_AUTH_TOKEN;
+  delete process.env.ANTHROPIC_BASE_URL;
 
   // Create dedicated temp git repo for this test unless one is provided
   const tempGitRepo = existingRepoPath || (await createTempGitRepo());
@@ -256,16 +268,20 @@ export async function setupWorkspaceWithoutProvider(
   const createResult = await createWorkspace(env.mockIpcRenderer, tempGitRepo, branchName);
 
   if (!createResult.success) {
+    // Restore env vars before throwing
+    Object.assign(process.env, savedEnvVars);
     await cleanupRepo();
     throw new Error(`Workspace creation failed: ${createResult.error}`);
   }
 
   if (!createResult.metadata.id) {
+    Object.assign(process.env, savedEnvVars);
     await cleanupRepo();
     throw new Error("Workspace ID not returned from creation");
   }
 
   if (!createResult.metadata.namedWorkspacePath) {
+    Object.assign(process.env, savedEnvVars);
     await cleanupRepo();
     throw new Error("Workspace path not returned from creation");
   }
@@ -273,6 +289,12 @@ export async function setupWorkspaceWithoutProvider(
   env.sentEvents.length = 0;
 
   const cleanup = async () => {
+    // Restore env vars
+    for (const [key, value] of Object.entries(savedEnvVars)) {
+      if (value !== undefined) {
+        process.env[key] = value;
+      }
+    }
     await cleanupTestEnvironment(env);
     await cleanupRepo();
   };
