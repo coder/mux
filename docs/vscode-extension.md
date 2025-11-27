@@ -67,7 +67,7 @@ If you haven't configured the SSH host yet:
 
 1. Open `~/.ssh/config` and add:
 
-   ```ssh
+   ```bash
    Host myserver
      HostName 192.168.1.100
      User username

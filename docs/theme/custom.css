@@ -251,6 +251,7 @@ pre > code {
   display: block;
   padding: 0.9rem 1rem;
   font-family: var(--font-monospace);
+  white-space: pre-wrap;
 }
 
 /* Code blocks inside lists */
