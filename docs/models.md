@@ -24,8 +24,8 @@ Anthropic can be configured via `~/.mux/providers.jsonc` or environment variable
   "anthropic": {
     "apiKey": "sk-ant-...",
     // Optional: custom base URL (mux auto-appends /v1 if missing)
-    "baseUrl": "https://api.anthropic.com"
-  }
+    "baseUrl": "https://api.anthropic.com",
+  },
 }
 ```
 
