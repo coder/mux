@@ -87,9 +87,14 @@ all: build
 
 # Sentinel file to track when dependencies are installed
 # Depends on package.json and bun.lock - rebuilds if either changes
-node_modules/.installed: package.json bun.lock
+# In CI, use --frozen-lockfile to prevent lockfile modifications which would
+# make git describe show "-dirty" in version strings.
+#
+# IMPORTANT: Depends on src/version.ts to ensure version is generated BEFORE
+# bun install runs, since bun install can modify bun.lock and make the repo dirty.
+node_modules/.installed: src/version.ts package.json bun.lock
 	@echo "Dependencies out of date or missing, running bun install..."
-	@bun install
+	@bun install $(if $(CI),--frozen-lockfile)
 	@touch node_modules/.installed
 
 # Mobile dependencies - separate from main project
