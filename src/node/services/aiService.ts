@@ -103,6 +103,24 @@ function getProviderFetch(providerConfig: ProviderConfig): typeof fetch {
 }
 
 /**
+ * Normalize Anthropic base URL to ensure it ends with /v1 suffix.
+ *
+ * The Anthropic SDK expects baseURL to include /v1 (default: https://api.anthropic.com/v1).
+ * Many users configure base URLs without the /v1 suffix, which causes API calls to fail.
+ * This function automatically appends /v1 if missing.
+ *
+ * @param baseURL - The base URL to normalize (may or may not have /v1)
+ * @returns The base URL with /v1 suffix
+ */
+export function normalizeAnthropicBaseURL(baseURL: string): string {
+  const trimmed = baseURL.replace(/\/+$/, ""); // Remove trailing slashes
+  if (trimmed.endsWith("/v1")) {
+    return trimmed;
+  }
+  return `${trimmed}/v1`;
+}
+
+/**
  * Preload AI SDK provider modules to avoid race conditions in concurrent test environments.
  * This function loads @ai-sdk/anthropic, @ai-sdk/openai, and ollama-ai-provider-v2 eagerly
  * so that subsequent dynamic imports in createModel() hit the module cache instead of racing.
@@ -288,17 +306,38 @@ export class AIService extends EventEmitter {
 
       // Handle Anthropic provider
       if (providerName === "anthropic") {
-        // Check for API key in config
-        if (!providerConfig.apiKey) {
+        // Anthropic API key can come from:
+        // 1. providers.jsonc config (providerConfig.apiKey)
+        // 2. ANTHROPIC_API_KEY env var (SDK reads this automatically)
+        // 3. ANTHROPIC_AUTH_TOKEN env var (we pass this explicitly since SDK doesn't check it)
+        // We allow env var passthrough so users don't need explicit config.
+
+        const hasApiKeyInConfig = Boolean(providerConfig.apiKey);
+        const hasApiKeyEnvVar = Boolean(process.env.ANTHROPIC_API_KEY);
+        const hasAuthTokenEnvVar = Boolean(process.env.ANTHROPIC_AUTH_TOKEN);
+
+        // Return structured error if no credentials available anywhere
+        if (!hasApiKeyInConfig && !hasApiKeyEnvVar && !hasAuthTokenEnvVar) {
           return Err({
             type: "api_key_not_found",
             provider: providerName,
           });
         }
 
+        // If SDK won't find a key (no config, no ANTHROPIC_API_KEY), use ANTHROPIC_AUTH_TOKEN
+        let configWithApiKey = providerConfig;
+        if (!hasApiKeyInConfig && !hasApiKeyEnvVar && hasAuthTokenEnvVar) {
+          configWithApiKey = { ...providerConfig, apiKey: process.env.ANTHROPIC_AUTH_TOKEN };
+        }
+
+        // Normalize base URL to ensure /v1 suffix (SDK expects it)
+        const normalizedConfig = configWithApiKey.baseURL
+          ? { ...configWithApiKey, baseURL: normalizeAnthropicBaseURL(configWithApiKey.baseURL) }
+          : configWithApiKey;
+
         // Add 1M context beta header if requested
         const use1MContext = muxProviderOptions?.anthropic?.use1MContext;
-        const existingHeaders = providerConfig.headers;
+        const existingHeaders = normalizedConfig.headers;
         const headers =
           use1MContext && existingHeaders
             ? { ...existingHeaders, "anthropic-beta": "context-1m-2025-08-07" }
@@ -308,7 +347,7 @@ export class AIService extends EventEmitter {
 
         // Lazy-load Anthropic provider to reduce startup time
         const { createAnthropic } = await PROVIDER_REGISTRY.anthropic();
-        const provider = createAnthropic({ ...providerConfig, headers });
+        const provider = createAnthropic({ ...normalizedConfig, headers });
         return Ok(provider(modelId));
       }
 

@@ -15,6 +15,27 @@ Best supported provider with full feature support:
 - `anthropic:claude-sonnet-4-5`
 - `anthropic:claude-opus-4-1`
 
+**Setup:**
+
+Anthropic can be configured via `~/.mux/providers.jsonc` or environment variables:
+
+```jsonc
+{
+  "anthropic": {
+    "apiKey": "sk-ant-...",
+    // Optional: custom base URL (mux auto-appends /v1 if missing)
+    "baseUrl": "https://api.anthropic.com"
+  }
+}
+```
+
+Or set environment variables:
+
+- `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` — API key (required if not in providers.jsonc)
+- `ANTHROPIC_BASE_URL` — Custom base URL (optional)
+
+**Note:** Environment variables are read automatically if no config is provided. The `/v1` path suffix is normalized automatically—you can omit it from base URLs.
+
 #### OpenAI (Cloud)
 
 GPT-5 family of models:
@@ -179,7 +200,7 @@ All providers are configured in `~/.mux/providers.jsonc`. Example configurations
 
 ```jsonc
 {
-  // Required for Anthropic models
+  // Anthropic: config OR env vars (ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL)
   "anthropic": {
     "apiKey": "sk-ant-...",
   },
