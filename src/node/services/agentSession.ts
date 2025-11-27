@@ -293,7 +293,7 @@ export class AgentSession {
       if (this.aiService.isStreaming(this.workspaceId)) {
         // MUST use abandonPartial=true to prevent handleAbort from performing partial compaction
         // with mismatched history (since we're about to truncate it)
-        const stopResult = await this.interruptStream(/* abandonPartial */ true);
+        const stopResult = await this.interruptStream({ abandonPartial: true });
         if (!stopResult.success) {
           return Err(createUnknownSendMessageError(stopResult.error));
         }
@@ -405,7 +405,10 @@ export class AgentSession {
     return this.streamWithHistory(model, options);
   }
 
-  async interruptStream(abandonPartial?: boolean): Promise<Result<void>> {
+  async interruptStream(options?: {
+    soft?: boolean;
+    abandonPartial?: boolean;
+  }): Promise<Result<void>> {
     this.assertNotDisposed("interruptStream");
 
     if (!this.aiService.isStreaming(this.workspaceId)) {
@@ -415,14 +418,14 @@ export class AgentSession {
     // Delete partial BEFORE stopping to prevent abort handler from committing it
     // The abort handler in aiService.ts runs immediately when stopStream is called,
     // so we must delete first to ensure it finds no partial to commit
-    if (abandonPartial) {
+    if (options?.abandonPartial) {
       const deleteResult = await this.partialService.deletePartial(this.workspaceId);
       if (!deleteResult.success) {
         return Err(deleteResult.error);
       }
     }
 
-    const stopResult = await this.aiService.stopStream(this.workspaceId, abandonPartial);
+    const stopResult = await this.aiService.stopStream(this.workspaceId, options);
     if (!stopResult.success) {
       return Err(stopResult.error);
     }
