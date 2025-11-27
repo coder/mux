@@ -2,15 +2,20 @@ import type { Config } from "@/node/config";
 import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
 import type { Result } from "@/common/types/result";
 
+/** AWS credential status for Bedrock provider */
+export interface AWSCredentialStatus {
+  region?: string;
+  bearerTokenSet: boolean;
+  accessKeyIdSet: boolean;
+  secretAccessKeySet: boolean;
+}
+
 export interface ProviderConfigInfo {
   apiKeySet: boolean;
   baseUrl?: string;
   models?: string[];
-  // Bedrock-specific fields
-  region?: string;
-  bearerTokenSet?: boolean;
-  accessKeyIdSet?: boolean;
-  secretAccessKeySet?: boolean;
+  /** AWS-specific fields (only present for bedrock provider) */
+  aws?: AWSCredentialStatus;
 }
 
 export type ProvidersConfigMap = Record<string, ProviderConfigInfo>;
@@ -51,12 +56,14 @@ export class ProviderService {
         models: config.models,
       };
 
-      // Bedrock-specific fields
+      // AWS/Bedrock-specific fields
       if (provider === "bedrock") {
-        providerInfo.region = config.region;
-        providerInfo.bearerTokenSet = !!config.bearerToken;
-        providerInfo.accessKeyIdSet = !!config.accessKeyId;
-        providerInfo.secretAccessKeySet = !!config.secretAccessKey;
+        providerInfo.aws = {
+          region: config.region,
+          bearerTokenSet: !!config.bearerToken,
+          accessKeyIdSet: !!config.accessKeyId,
+          secretAccessKeySet: !!config.secretAccessKey,
+        };
       }
 
       result[provider] = providerInfo;

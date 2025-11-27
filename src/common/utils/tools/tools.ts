@@ -125,7 +125,8 @@ export async function getToolsForModel(
         const { anthropic } = await import("@ai-sdk/anthropic");
         allTools = {
           ...baseTools,
-          web_search: anthropic.tools.webSearch_20250305({ maxUses: 1000 }),
+          // Provider-specific tool types are compatible with Tool at runtime
+          web_search: anthropic.tools.webSearch_20250305({ maxUses: 1000 }) as Tool,
         };
         break;
       }
@@ -136,9 +137,10 @@ export async function getToolsForModel(
           const { openai } = await import("@ai-sdk/openai");
           allTools = {
             ...baseTools,
+            // Provider-specific tool types are compatible with Tool at runtime
             web_search: openai.tools.webSearch({
               searchContextSize: "high",
-            }),
+            }) as Tool,
           };
         }
         break;

@@ -27,7 +27,7 @@ export type UpdateStatus =
  */
 export class UpdaterService {
   private updateStatus: UpdateStatus = { type: "idle" };
-  private checkTimeout: NodeJS.Timeout | null = null;
+  private checkTimeout: ReturnType<typeof setTimeout> | null = null;
   private readonly fakeVersion: string | undefined;
   private subscribers = new Set<(status: UpdateStatus) => void>();
 

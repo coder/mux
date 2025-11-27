@@ -1,6 +1,6 @@
 # mux Mobile App
 
-Expo React Native app for mux - connects to mux server over HTTP/WebSocket.
+Expo React Native app for mux - connects to mux server via ORPC over HTTP with SSE streaming.
 
 ## Requirements
 

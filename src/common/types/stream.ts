@@ -2,9 +2,22 @@
  * Event types emitted by AIService
  */
 
-import type { LanguageModelV2Usage } from "@ai-sdk/provider";
+import type { z } from "zod";
 import type { MuxReasoningPart, MuxTextPart, MuxToolPart } from "./message";
-import type { StreamErrorType } from "./errors";
+import type {
+  ErrorEventSchema,
+  ReasoningDeltaEventSchema,
+  ReasoningEndEventSchema,
+  ReasoningStartEventSchema,
+  StreamAbortEventSchema,
+  StreamDeltaEventSchema,
+  StreamEndEventSchema,
+  StreamStartEventSchema,
+  ToolCallDeltaEventSchema,
+  ToolCallEndEventSchema,
+  ToolCallStartEventSchema,
+  UsageDeltaEventSchema,
+} from "../orpc/schemas";
 
 /**
  * Completed message part (reasoning, text, or tool) suitable for serialization
@@ -12,125 +25,26 @@ import type { StreamErrorType } from "./errors";
  */
 export type CompletedMessagePart = MuxReasoningPart | MuxTextPart | MuxToolPart;
 
-export interface StreamStartEvent {
-  type: "stream-start";
-  workspaceId: string;
-  messageId: string;
-  model: string;
-  historySequence: number; // Backend assigns global message ordering
-}
+export type StreamStartEvent = z.infer<typeof StreamStartEventSchema>;
+export type StreamDeltaEvent = z.infer<typeof StreamDeltaEventSchema>;
+export type StreamEndEvent = z.infer<typeof StreamEndEventSchema>;
+export type StreamAbortEvent = z.infer<typeof StreamAbortEventSchema>;
 
-export interface StreamDeltaEvent {
-  type: "stream-delta";
-  workspaceId: string;
-  messageId: string;
-  delta: string;
-  tokens: number; // Token count for this delta
-  timestamp: number; // When delta was received (Date.now())
-}
+export type ErrorEvent = z.infer<typeof ErrorEventSchema>;
 
-export interface StreamEndEvent {
-  type: "stream-end";
-  workspaceId: string;
-  messageId: string;
-  // Structured metadata from backend - directly mergeable with MuxMetadata
-  metadata: {
-    model: string;
-    usage?: LanguageModelV2Usage;
-    providerMetadata?: Record<string, unknown>;
-    duration?: number;
-    systemMessageTokens?: number;
-    historySequence?: number; // Present when loading from history
-    timestamp?: number; // Present when loading from history
-  };
-  // Parts array preserves temporal ordering of reasoning, text, and tool calls
-  parts: CompletedMessagePart[];
-}
+export type ToolCallStartEvent = z.infer<typeof ToolCallStartEventSchema>;
+export type ToolCallDeltaEvent = z.infer<typeof ToolCallDeltaEventSchema>;
+export type ToolCallEndEvent = z.infer<typeof ToolCallEndEventSchema>;
 
-export interface StreamAbortEvent {
-  type: "stream-abort";
-  workspaceId: string;
-  messageId: string;
-  // Metadata may contain usage if abort occurred after stream completed processing
-  metadata?: {
-    usage?: LanguageModelV2Usage;
-    duration?: number;
-  };
-  abandonPartial?: boolean;
-}
-
-export interface ErrorEvent {
-  type: "error";
-  workspaceId: string;
-  messageId: string;
-  error: string;
-  errorType?: StreamErrorType;
-}
-
-// Tool call events
-export interface ToolCallStartEvent {
-  type: "tool-call-start";
-  workspaceId: string;
-  messageId: string;
-  toolCallId: string;
-  toolName: string;
-  args: unknown;
-  tokens: number; // Token count for tool input
-  timestamp: number; // When tool call started (Date.now())
-}
-
-export interface ToolCallDeltaEvent {
-  type: "tool-call-delta";
-  workspaceId: string;
-  messageId: string;
-  toolCallId: string;
-  toolName: string;
-  delta: unknown;
-  tokens: number; // Token count for this delta
-  timestamp: number; // When delta was received (Date.now())
-}
-
-export interface ToolCallEndEvent {
-  type: "tool-call-end";
-  workspaceId: string;
-  messageId: string;
-  toolCallId: string;
-  toolName: string;
-  result: unknown;
-}
-
-// Reasoning events
-export interface ReasoningStartEvent {
-  type: "reasoning-start";
-  workspaceId: string;
-  messageId: string;
-}
-
-export interface ReasoningDeltaEvent {
-  type: "reasoning-delta";
-  workspaceId: string;
-  messageId: string;
-  delta: string;
-  tokens: number; // Token count for this delta
-  timestamp: number; // When delta was received (Date.now())
-}
-
-export interface ReasoningEndEvent {
-  type: "reasoning-end";
-  workspaceId: string;
-  messageId: string;
-}
+export type ReasoningStartEvent = z.infer<typeof ReasoningStartEventSchema>;
+export type ReasoningDeltaEvent = z.infer<typeof ReasoningDeltaEventSchema>;
+export type ReasoningEndEvent = z.infer<typeof ReasoningEndEventSchema>;
 
 /**
  * Emitted on each AI SDK finish-step event, providing incremental usage updates.
  * Allows UI to update token display as steps complete (after each tool call or at stream end).
  */
-export interface UsageDeltaEvent {
-  type: "usage-delta";
-  workspaceId: string;
-  messageId: string;
-  usage: LanguageModelV2Usage; // This step's usage (inputTokens = full context)
-}
+export type UsageDeltaEvent = z.infer<typeof UsageDeltaEventSchema>;
 
 export type AIServiceEvent =
   | StreamStartEvent

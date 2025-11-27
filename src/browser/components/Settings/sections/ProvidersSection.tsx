@@ -86,10 +86,8 @@ export function ProvidersSection() {
     setEditingField({ provider, field });
     // For secrets, start empty since we only show masked value
     // For text fields, show current value
-    const currentValue = (config[provider] as Record<string, unknown> | undefined)?.[field];
-    setEditValue(
-      fieldConfig.type === "text" && typeof currentValue === "string" ? currentValue : ""
-    );
+    const currentValue = getFieldValue(provider, field);
+    setEditValue(fieldConfig.type === "text" && currentValue ? currentValue : "");
   };
 
   const handleCancelEdit = () => {
@@ -133,14 +131,10 @@ export function ProvidersSection() {
     const providerConfig = config[provider];
     if (!providerConfig) return false;
 
-    // For Bedrock, check if any credential field is set
-    if (provider === "bedrock") {
-      return !!(
-        providerConfig.region ??
-        providerConfig.bearerTokenSet ??
-        providerConfig.accessKeyIdSet ??
-        providerConfig.secretAccessKeySet
-      );
+    // For Bedrock, check if any AWS credential field is set
+    if (provider === "bedrock" && providerConfig.aws) {
+      const { aws } = providerConfig;
+      return !!(aws.region ?? aws.bearerTokenSet ?? aws.accessKeyIdSet ?? aws.secretAccessKeySet);
     }
 
     // For other providers, check apiKeySet
@@ -148,20 +142,40 @@ export function ProvidersSection() {
   };
 
   const getFieldValue = (provider: string, field: string): string | undefined => {
-    const providerConfig = config[provider] as Record<string, unknown> | undefined;
+    const providerConfig = config[provider];
     if (!providerConfig) return undefined;
-    const value = providerConfig[field];
+
+    // For bedrock, check aws nested object for region
+    if (provider === "bedrock" && field === "region") {
+      return providerConfig.aws?.region;
+    }
+
+    // For standard fields like baseUrl
+    const value = providerConfig[field as keyof typeof providerConfig];
     return typeof value === "string" ? value : undefined;
   };
 
   const isFieldSet = (provider: string, field: string, fieldConfig: FieldConfig): boolean => {
+    const providerConfig = config[provider];
+    if (!providerConfig) return false;
+
     if (fieldConfig.type === "secret") {
       // For apiKey, we have apiKeySet from the sanitized config
-      if (field === "apiKey") return config[provider]?.apiKeySet ?? false;
-      // For other secrets, check if the field exists in the raw config
-      // Since we don't expose secret values, we assume they're not set if undefined
-      const providerConfig = config[provider] as Record<string, unknown> | undefined;
-      return providerConfig?.[`${field}Set`] === true;
+      if (field === "apiKey") return providerConfig.apiKeySet ?? false;
+
+      // For AWS secrets, check the aws nested object
+      if (provider === "bedrock" && providerConfig.aws) {
+        const { aws } = providerConfig;
+        switch (field) {
+          case "bearerToken":
+            return aws.bearerTokenSet ?? false;
+          case "accessKeyId":
+            return aws.accessKeyIdSet ?? false;
+          case "secretAccessKey":
+            return aws.secretAccessKeySet ?? false;
+        }
+      }
+      return false;
     }
     return !!getFieldValue(provider, field);
   };

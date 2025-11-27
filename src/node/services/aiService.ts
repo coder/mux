@@ -70,6 +70,7 @@ const defaultFetchWithUnlimitedTimeout = (async (
   input: RequestInfo | URL,
   init?: RequestInit
 ): Promise<Response> => {
+  // dispatcher is a Node.js undici-specific property for custom HTTP agents
   const requestInit: RequestInit = {
     ...(init ?? {}),
     dispatcher: unlimitedTimeoutAgent,

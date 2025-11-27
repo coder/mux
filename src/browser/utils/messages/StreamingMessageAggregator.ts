@@ -64,7 +64,6 @@ function hasFailureResult(result: unknown): boolean {
 export class StreamingMessageAggregator {
   private messages = new Map<string, MuxMessage>();
   private activeStreams = new Map<string, StreamingContext>();
-  private streamSequenceCounter = 0; // For ordering parts within a streaming message
 
   // Simple cache for derived values (invalidated on every mutation)
   private cachedAllMessages: MuxMessage[] | null = null;
@@ -326,7 +325,6 @@ export class StreamingMessageAggregator {
   clear(): void {
     this.messages.clear();
     this.activeStreams.clear();
-    this.streamSequenceCounter = 0;
     this.invalidateCache();
   }
 

@@ -301,6 +301,12 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.workspaceService.getInfo(input.workspaceId);
         }),
+      getFullReplay: t
+        .input(schemas.workspace.getFullReplay.input)
+        .output(schemas.workspace.getFullReplay.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.getFullReplay(input.workspaceId);
+        }),
       executeBash: t
         .input(schemas.workspace.executeBash.input)
         .output(schemas.workspace.executeBash.output)
