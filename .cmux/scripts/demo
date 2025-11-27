@@ -2,27 +2,20 @@
 # Description: Demo script to showcase the script execution feature. Accepts no arguments.
 set -euo pipefail
 
-# Regular output goes to stdout (visible in console logs)
-echo "Running demo script..."
-echo "Current workspace: $(pwd)"
-echo "Timestamp: $(date)"
+# Progress messages to stderr (shown to user, not sent to agent)
+echo "Running demo script..." >&2
+echo "Current workspace: $(pwd)" >&2
+echo "Timestamp: $(date)" >&2
 
-# Write formatted output to MUX_OUTPUT for toast display
-cat >>"$MUX_OUTPUT" <<'EOF'
+# Structured output to stdout (sent to agent)
+cat <<'EOF'
 ## 🎉 Script Execution Demo
 
 ✅ Script executed successfully!
 
-**Environment Variables Available:**
-- `MUX_OUTPUT`: Custom toast display
-- `MUX_PROMPT`: Send messages to agent
-EOF
+**Output Semantics:**
+- `stdout`: Sent to the agent as tool result
+- `stderr`: Shown to user only (progress/debug info)
 
-# Write a prompt to MUX_PROMPT to send a message to the agent
-cat >>"$MUX_PROMPT" <<'EOF'
-The demo script has completed successfully. The script execution feature is working correctly with:
-1. Custom toast output via MUX_OUTPUT
-2. Agent prompting via MUX_PROMPT
-
-You can now create workspace-specific scripts to automate tasks and interact with the agent.
+The demo script completed. You can create workspace-specific scripts to automate tasks.
 EOF

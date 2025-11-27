@@ -4,7 +4,7 @@ set -euo pipefail
 
 # Check if arguments were provided
 if [ $# -eq 0 ]; then
-  cat >>"$MUX_OUTPUT" <<'EOF'
+  cat <<'EOF'
 ## ⚠️ No Arguments Provided
 
 Usage: `/s echo <message...>`
@@ -14,10 +14,8 @@ EOF
   exit 0
 fi
 
-# Access arguments using standard bash positional parameters
-# $1 = first arg, $2 = second arg, $@ = all args, $# = number of args
-
-cat >>"$MUX_OUTPUT" <<EOF
+# Structured output to stdout (sent to agent)
+cat <<EOF
 ## 🔊 Echo Script
 
 **You said:** $@
@@ -31,18 +29,7 @@ cat >>"$MUX_OUTPUT" <<EOF
 **Individual arguments:**
 EOF
 
-
-# Echo arguments to stdout for AI tool visibility
-echo "Echoing arguments to stdout: $@"
-
 # Loop through each argument
 for i in $(seq 1 $#); do
-  echo "- Arg $i: ${!i}" >>"$MUX_OUTPUT"
+  echo "- Arg $i: ${!i}"
 done
-
-# Optionally send a message to the agent
-if [ $# -gt 3 ]; then
-  cat >>"$MUX_PROMPT" <<EOF
-The user passed more than 3 arguments to the echo script. They seem to be testing the argument passing feature extensively!
-EOF
-fi
