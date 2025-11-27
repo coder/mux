@@ -254,7 +254,8 @@ export function getToolSchemas(): Record<string, ToolSchema> {
       {
         name,
         description: def.description,
-        inputSchema: zodToJsonSchema(def.schema) as ToolSchema["inputSchema"],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
+        inputSchema: zodToJsonSchema(def.schema as any) as ToolSchema["inputSchema"],
       },
     ])
   );

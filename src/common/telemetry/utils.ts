@@ -18,8 +18,8 @@ export function getBaseTelemetryProperties(): BaseTelemetryProperties {
 
   return {
     version: gitDescribe,
-    platform: window.api?.platform || "unknown",
-    electronVersion: window.api?.versions?.electron || "unknown",
+    platform: window.api?.platform ?? "unknown",
+    electronVersion: window.api?.versions?.electron ?? "unknown",
   };
 }
 

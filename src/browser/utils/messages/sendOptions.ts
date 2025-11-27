@@ -2,7 +2,7 @@ import { getModelKey, getThinkingLevelKey, getModeKey } from "@/common/constants
 import { modeToToolPolicy, PLAN_MODE_INSTRUCTION } from "@/common/utils/ui/modeUtils";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import { getDefaultModel } from "@/browser/hooks/useModelLRU";
-import type { SendMessageOptions } from "@/common/types/ipc";
+import type { SendMessageOptions } from "@/common/orpc/types";
 import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";

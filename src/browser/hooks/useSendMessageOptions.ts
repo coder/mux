@@ -4,7 +4,7 @@ import { usePersistedState } from "./usePersistedState";
 import { getDefaultModel } from "./useModelLRU";
 import { modeToToolPolicy, PLAN_MODE_INSTRUCTION } from "@/common/utils/ui/modeUtils";
 import { getModelKey } from "@/common/constants/storage";
-import type { SendMessageOptions } from "@/common/types/ipc";
+import type { SendMessageOptions } from "@/common/orpc/types";
 import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";

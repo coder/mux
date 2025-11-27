@@ -1,10 +1,9 @@
-import React, { useRef } from "react";
+import React, { useRef, useMemo } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { ReviewPanel } from "./ReviewPanel";
-import type { IPCApi } from "@/common/types/ipc";
 import { deleteWorkspaceStorage } from "@/common/constants/storage";
-import type { BashToolResult } from "@/common/types/tools";
-import type { Result } from "@/common/types/result";
+import { ORPCProvider } from "@/browser/orpc/react";
+import { createMockORPCClient } from "@/../.storybook/mocks/orpc";
 
 type ScenarioName = "rich" | "empty" | "truncated";
 
@@ -353,34 +352,33 @@ const scenarioConfigs: Record<ScenarioName, ScenarioConfig> = {
   },
 };
 
-function createSuccessResult(
-  output: string,
-  overrides?: { truncated?: { reason: string; totalLines: number } }
-): Result<BashToolResult, string> {
-  return {
-    success: true as const,
-    data: {
-      success: true as const,
-      output,
-      exitCode: 0,
-      wall_duration_ms: 5,
-      ...overrides,
-    },
-  };
-}
-
-function setupCodeReviewMocks(config: ScenarioConfig) {
-  const executeBash: IPCApi["workspace"]["executeBash"] = (_workspaceId, command) => {
+function createExecuteBashMock(config: ScenarioConfig) {
+  return (_workspaceId: string, command: string) => {
     if (command.includes("git ls-files --others --exclude-standard")) {
-      return Promise.resolve(createSuccessResult(config.untrackedFiles.join("\n")));
+      return Promise.resolve({
+        success: true as const,
+        output: config.untrackedFiles.join("\n"),
+        exitCode: 0 as const,
+        wall_duration_ms: 5,
+      });
     }
 
     if (command.includes("--numstat")) {
-      return Promise.resolve(createSuccessResult(config.numstatOutput));
+      return Promise.resolve({
+        success: true as const,
+        output: config.numstatOutput,
+        exitCode: 0 as const,
+        wall_duration_ms: 5,
+      });
     }
 
     if (command.includes("git add --")) {
-      return Promise.resolve(createSuccessResult(""));
+      return Promise.resolve({
+        success: true as const,
+        output: "",
+        exitCode: 0 as const,
+        wall_duration_ms: 5,
+      });
     }
 
     if (command.startsWith("git diff") || command.includes("git diff ")) {
@@ -391,29 +389,25 @@ function setupCodeReviewMocks(config: ScenarioConfig) {
         ? (config.diffByFile[pathFilter] ?? "")
         : Object.values(config.diffByFile).filter(Boolean).join("\n\n");
 
-      const truncated =
-        !pathFilter && config.truncated ? { truncated: config.truncated } : undefined;
-      return Promise.resolve(createSuccessResult(diffOutput, truncated));
+      return Promise.resolve({
+        success: true as const,
+        output: diffOutput,
+        exitCode: 0 as const,
+        wall_duration_ms: 5,
+        ...(!pathFilter && config.truncated ? { truncated: config.truncated } : {}),
+      });
     }
 
-    return Promise.resolve(createSuccessResult(""));
+    return Promise.resolve({
+      success: true as const,
+      output: "",
+      exitCode: 0 as const,
+      wall_duration_ms: 5,
+    });
   };
+}
 
-  const mockApi = {
-    workspace: {
-      executeBash,
-    },
-    platform: "browser",
-    versions: {
-      node: "18.18.0",
-      chrome: "120.0.0.0",
-      electron: "28.0.0",
-    },
-  } as unknown as IPCApi;
-
-  // @ts-expect-error - mockApi is not typed correctly
-  window.api = mockApi;
-
+function setupLocalStorage(config: ScenarioConfig) {
   deleteWorkspaceStorage(config.workspaceId);
   localStorage.removeItem(`review-diff-base:${config.workspaceId}`);
   localStorage.removeItem(`review-file-filter:${config.workspaceId}`);
@@ -426,23 +420,34 @@ const ReviewPanelStoryWrapper: React.FC<{ scenario: ScenarioName }> = ({ scenari
   const initialized = useRef(false);
   const config = scenarioConfigs[scenario];
 
+  // Create mock ORPC client with the scenario-specific executeBash mock
+  const client = useMemo(
+    () =>
+      createMockORPCClient({
+        executeBash: createExecuteBashMock(config),
+      }),
+    [config]
+  );
+
   if (!initialized.current) {
-    setupCodeReviewMocks(config);
+    setupLocalStorage(config);
     initialized.current = true;
   }
 
   return (
-    <div
-      style={{
-        height: "720px",
-        width: "520px",
-        padding: "16px",
-        background: "#050505",
-        boxSizing: "border-box",
-      }}
-    >
-      <ReviewPanel workspaceId={config.workspaceId} workspacePath={config.workspacePath} />
-    </div>
+    <ORPCProvider client={client}>
+      <div
+        style={{
+          height: "720px",
+          width: "520px",
+          padding: "16px",
+          background: "#050505",
+          boxSizing: "border-box",
+        }}
+      >
+        <ReviewPanel workspaceId={config.workspaceId} workspacePath={config.workspacePath} />
+      </div>
+    </ORPCProvider>
   );
 };
 

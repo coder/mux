@@ -2,8 +2,12 @@
  * Runtime configuration types for workspace execution environments
  */
 
+import type { z } from "zod";
+import type { RuntimeConfigSchema } from "../orpc/schemas";
+import { RuntimeModeSchema } from "../orpc/schemas";
+
 /** Runtime mode type - used in UI and runtime string parsing */
-export type RuntimeMode = "local" | "ssh";
+export type RuntimeMode = z.infer<typeof RuntimeModeSchema>;
 
 /** Runtime mode constants */
 export const RUNTIME_MODE = {
@@ -14,23 +18,7 @@ export const RUNTIME_MODE = {
 /** Runtime string prefix for SSH mode (e.g., "ssh hostname") */
 export const SSH_RUNTIME_PREFIX = "ssh ";
 
-export type RuntimeConfig =
-  | {
-      type: "local";
-      /** Base directory where all workspaces are stored (e.g., ~/.mux/src) */
-      srcBaseDir: string;
-    }
-  | {
-      type: "ssh";
-      /** SSH host (can be hostname, user@host, or SSH config alias) */
-      host: string;
-      /** Base directory on remote host where all workspaces are stored */
-      srcBaseDir: string;
-      /** Optional: Path to SSH private key (if not using ~/.ssh/config or ssh-agent) */
-      identityFile?: string;
-      /** Optional: SSH port (default: 22) */
-      port?: number;
-    };
+export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
 
 /**
  * Parse runtime string from localStorage or UI input into mode and host
@@ -51,17 +39,27 @@ export function parseRuntimeModeAndHost(runtime: string | null | undefined): {
   const trimmed = runtime.trim();
   const lowerTrimmed = trimmed.toLowerCase();
 
-  if (lowerTrimmed === RUNTIME_MODE.LOCAL) {
-    return { mode: RUNTIME_MODE.LOCAL, host: "" };
-  }
-
-  // Handle both "ssh" and "ssh <host>"
-  if (lowerTrimmed === RUNTIME_MODE.SSH || lowerTrimmed.startsWith(SSH_RUNTIME_PREFIX)) {
+  // Check for "ssh <host>" format first (before trying to parse as plain mode)
+  if (lowerTrimmed.startsWith(SSH_RUNTIME_PREFIX)) {
     const host = trimmed.substring(SSH_RUNTIME_PREFIX.length).trim();
     return { mode: RUNTIME_MODE.SSH, host };
   }
 
-  // Default to local for unrecognized strings
+  // Try to parse as a plain mode ("ssh" or "local")
+  const modeResult = RuntimeModeSchema.safeParse(lowerTrimmed);
+  if (!modeResult.success) {
+    // Default to local for unrecognized strings
+    return { mode: RUNTIME_MODE.LOCAL, host: "" };
+  }
+
+  const mode = modeResult.data;
+
+  if (mode === RUNTIME_MODE.SSH) {
+    // Plain "ssh" without host
+    return { mode, host: "" };
+  }
+
+  // Local mode or default
   return { mode: RUNTIME_MODE.LOCAL, host: "" };
 }
 

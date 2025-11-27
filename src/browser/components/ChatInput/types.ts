@@ -1,4 +1,4 @@
-import type { ImagePart } from "@/common/types/ipc";
+import type { ImagePart } from "@/common/orpc/types";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { AutoCompactionCheckResult } from "@/browser/utils/compaction/autoCompactionCheck";
 

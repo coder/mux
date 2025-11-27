@@ -23,7 +23,7 @@ import {
   isToolCallStart,
   type SendMessageOptions,
   type WorkspaceChatMessage,
-} from "@/common/types/ipc";
+} from "@/common/orpc/types";
 import { defaultModel } from "@/common/utils/ai/models";
 import { ensureProvidersConfig } from "@/common/utils/providers/ensureProvidersConfig";
 import { modeToToolPolicy, PLAN_MODE_INSTRUCTION } from "@/common/utils/ui/modeUtils";

@@ -1,6 +1,8 @@
-import React from "react";
+import React, { useMemo } from "react";
 import type { Preview } from "@storybook/react-vite";
 import { ThemeProvider, type ThemeMode } from "../src/browser/contexts/ThemeContext";
+import { ORPCProvider } from "../src/browser/orpc/react";
+import { createMockORPCClient } from "./mocks/orpc";
 import "../src/browser/styles/globals.css";
 
 const preview: Preview = {
@@ -22,6 +24,16 @@ const preview: Preview = {
     theme: "dark",
   },
   decorators: [
+    // Global ORPC provider - ensures useORPC works in all stories
+    (Story) => {
+      const client = useMemo(() => createMockORPCClient(), []);
+      return (
+        <ORPCProvider client={client}>
+          <Story />
+        </ORPCProvider>
+      );
+    },
+    // Theme provider
     (Story, context) => {
       // Default to dark if mode not set (e.g., Chromatic headless browser defaults to light)
       const mode = (context.globals.theme as ThemeMode | undefined) ?? "dark";

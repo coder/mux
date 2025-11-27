@@ -6,6 +6,7 @@ import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { WorkspaceStatusDot } from "./WorkspaceStatusDot";
+import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 
 interface WorkspaceHeaderProps {
   workspaceId: string;
@@ -22,10 +23,11 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   namedWorkspacePath,
   runtimeConfig,
 }) => {
+  const openTerminal = useOpenTerminal();
   const gitStatus = useGitStatus(workspaceId);
   const handleOpenTerminal = useCallback(() => {
-    void window.api.terminal.openWindow(workspaceId);
-  }, [workspaceId]);
+    openTerminal(workspaceId);
+  }, [workspaceId, openTerminal]);
 
   return (
     <div className="bg-separator border-border-light flex h-8 items-center justify-between border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:flex-wrap [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:py-2 [@media(max-width:768px)]:pl-[60px]">

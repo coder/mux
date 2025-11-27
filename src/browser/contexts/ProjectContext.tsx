@@ -8,8 +8,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useORPC } from "@/browser/orpc/react";
 import type { ProjectConfig } from "@/node/config";
-import type { BranchListResult } from "@/common/types/ipc";
+import type { BranchListResult } from "@/common/orpc/types";
 import type { Secret } from "@/common/types/secrets";
 
 interface WorkspaceModalState {
@@ -60,6 +61,7 @@ function deriveProjectName(projectPath: string): string {
 }
 
 export function ProjectProvider(props: { children: ReactNode }) {
+  const orpc = useORPC();
   const [projects, setProjects] = useState<Map<string, ProjectConfig>>(new Map());
   const [isProjectCreateModalOpen, setProjectCreateModalOpen] = useState(false);
   const [workspaceModalState, setWorkspaceModalState] = useState<WorkspaceModalState>({
@@ -76,13 +78,13 @@ export function ProjectProvider(props: { children: ReactNode }) {
 
   const refreshProjects = useCallback(async () => {
     try {
-      const projectsList = await window.api.projects.list();
+      const projectsList = await orpc.projects.list();
       setProjects(new Map(projectsList));
     } catch (error) {
       console.error("Failed to load projects:", error);
       setProjects(new Map());
     }
-  }, []);
+  }, [orpc]);
 
   useEffect(() => {
     void refreshProjects();
@@ -96,28 +98,32 @@ export function ProjectProvider(props: { children: ReactNode }) {
     });
   }, []);
 
-  const removeProject = useCallback(async (path: string) => {
-    try {
-      const result = await window.api.projects.remove(path);
-      if (result.success) {
-        setProjects((prev) => {
-          const next = new Map(prev);
-          next.delete(path);
-          return next;
-        });
-      } else {
-        console.error("Failed to remove project:", result.error);
+  const removeProject = useCallback(
+    async (path: string) => {
+      try {
+        const result = await orpc.projects.remove({ projectPath: path });
+        if (result.success) {
+          setProjects((prev) => {
+            const next = new Map(prev);
+            next.delete(path);
+            return next;
+          });
+        } else {
+          console.error("Failed to remove project:", result.error);
+        }
+      } catch (error) {
+        console.error("Failed to remove project:", error);
       }
-    } catch (error) {
-      console.error("Failed to remove project:", error);
-    }
-  }, []);
+    },
+    [orpc]
+  );
 
   const getBranchesForProject = useCallback(
     async (projectPath: string): Promise<BranchListResult> => {
-      const branchResult = await window.api.projects.listBranches(projectPath);
-      const sanitizedBranches = Array.isArray(branchResult?.branches)
-        ? branchResult.branches.filter((branch): branch is string => typeof branch === "string")
+      const branchResult = await orpc.projects.listBranches({ projectPath });
+      const branches = branchResult.branches;
+      const sanitizedBranches = Array.isArray(branches)
+        ? branches.filter((branch): branch is string => typeof branch === "string")
         : [];
 
       const recommended =
@@ -131,7 +137,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
         recommendedTrunk: recommended,
       };
     },
-    []
+    [orpc]
   );
 
   const openWorkspaceModal = useCallback(
@@ -201,16 +207,22 @@ export function ProjectProvider(props: { children: ReactNode }) {
     setPendingNewWorkspaceProject(null);
   }, []);
 
-  const getSecrets = useCallback(async (projectPath: string) => {
-    return await window.api.projects.secrets.get(projectPath);
-  }, []);
+  const getSecrets = useCallback(
+    async (projectPath: string) => {
+      return await orpc.projects.secrets.get({ projectPath });
+    },
+    [orpc]
+  );
 
-  const updateSecrets = useCallback(async (projectPath: string, secrets: Secret[]) => {
-    const result = await window.api.projects.secrets.update(projectPath, secrets);
-    if (!result.success) {
-      console.error("Failed to update secrets:", result.error);
-    }
-  }, []);
+  const updateSecrets = useCallback(
+    async (projectPath: string, secrets: Secret[]) => {
+      const result = await orpc.projects.secrets.update({ projectPath, secrets });
+      if (!result.success) {
+        console.error("Failed to update secrets:", result.error);
+      }
+    },
+    [orpc]
+  );
 
   const value = useMemo<ProjectContext>(
     () => ({

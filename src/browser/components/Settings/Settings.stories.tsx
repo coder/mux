@@ -1,15 +1,13 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, userEvent, waitFor, within } from "storybook/test";
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { SettingsProvider, useSettings } from "@/browser/contexts/SettingsContext";
 import { SettingsModal } from "./SettingsModal";
-import type { IPCApi } from "@/common/types/ipc";
+import type { ProvidersConfigMap } from "./types";
+import { ORPCProvider, type ORPCClient } from "@/browser/orpc/react";
 
 // Mock providers config for stories
-const mockProvidersConfig: Record<
-  string,
-  { apiKeySet: boolean; baseUrl?: string; models?: string[] }
-> = {
+const mockProvidersConfig: ProvidersConfigMap = {
   anthropic: { apiKeySet: true },
   openai: { apiKeySet: true, baseUrl: "https://custom.openai.com" },
   google: { apiKeySet: false },
@@ -18,27 +16,27 @@ const mockProvidersConfig: Record<
   openrouter: { apiKeySet: true, models: ["mistral/mistral-7b"] },
 };
 
-function setupMockAPI(config = mockProvidersConfig) {
-  const mockProviders: IPCApi["providers"] = {
-    setProviderConfig: () => Promise.resolve({ success: true, data: undefined }),
-    setModels: () => Promise.resolve({ success: true, data: undefined }),
-    getConfig: () => Promise.resolve(config),
-    list: () => Promise.resolve([]),
-  };
-
-  // @ts-expect-error - Assigning mock API to window for Storybook
-  window.api = {
-    providers: mockProviders,
-  };
+function createMockProviderClient(config = mockProvidersConfig): ORPCClient {
+  return {
+    providers: {
+      setProviderConfig: () => Promise.resolve({ success: true as const, data: undefined }),
+      setModels: () => Promise.resolve({ success: true as const, data: undefined }),
+      getConfig: () => Promise.resolve(config),
+      list: () => Promise.resolve(Object.keys(config)),
+    },
+  } as unknown as ORPCClient;
 }
 
 // Wrapper component that auto-opens the settings modal
-function SettingsStoryWrapper(props: { initialSection?: string }) {
+function SettingsStoryWrapper(props: { initialSection?: string; config?: ProvidersConfigMap }) {
+  const client = useMemo(() => createMockProviderClient(props.config), [props.config]);
   return (
-    <SettingsProvider>
-      <SettingsAutoOpen initialSection={props.initialSection} />
-      <SettingsModal />
-    </SettingsProvider>
+    <ORPCProvider client={client}>
+      <SettingsProvider>
+        <SettingsAutoOpen initialSection={props.initialSection} />
+        <SettingsModal />
+      </SettingsProvider>
+    </ORPCProvider>
   );
 }
 
@@ -59,24 +57,27 @@ function SettingsAutoOpen(props: { initialSection?: string }) {
 // Interactive wrapper for testing close behavior
 function InteractiveSettingsWrapper(props: { initialSection?: string }) {
   const [reopenCount, setReopenCount] = useState(0);
+  const client = useMemo(() => createMockProviderClient(), []);
 
   return (
-    <SettingsProvider key={reopenCount}>
-      <div className="p-4">
-        <button
-          type="button"
-          onClick={() => setReopenCount((c) => c + 1)}
-          className="bg-accent mb-4 rounded px-4 py-2 text-white"
-        >
-          Reopen Settings
-        </button>
-        <div id="close-indicator" className="text-muted text-sm">
-          Click overlay or press Escape to close
+    <ORPCProvider client={client}>
+      <SettingsProvider key={reopenCount}>
+        <div className="p-4">
+          <button
+            type="button"
+            onClick={() => setReopenCount((c) => c + 1)}
+            className="bg-accent mb-4 rounded px-4 py-2 text-white"
+          >
+            Reopen Settings
+          </button>
+          <div id="close-indicator" className="text-muted text-sm">
+            Click overlay or press Escape to close
+          </div>
         </div>
-      </div>
-      <SettingsAutoOpen initialSection={props.initialSection} />
-      <SettingsModal />
-    </SettingsProvider>
+        <SettingsAutoOpen initialSection={props.initialSection} />
+        <SettingsModal />
+      </SettingsProvider>
+    </ORPCProvider>
   );
 }
 
@@ -87,12 +88,6 @@ const meta = {
     layout: "fullscreen",
   },
   tags: ["autodocs"],
-  decorators: [
-    (Story) => {
-      setupMockAPI();
-      return <Story />;
-    },
-  ],
 } satisfies Meta<typeof SettingsModal>;
 
 export default meta;
@@ -155,20 +150,19 @@ export const Models: Story = {
  * Models section with no custom models configured.
  */
 export const ModelsEmpty: Story = {
-  decorators: [
-    (Story) => {
-      setupMockAPI({
+  render: () => (
+    <SettingsStoryWrapper
+      initialSection="models"
+      config={{
         anthropic: { apiKeySet: true },
         openai: { apiKeySet: true },
         google: { apiKeySet: false },
         xai: { apiKeySet: false },
         ollama: { apiKeySet: false },
         openrouter: { apiKeySet: false },
-      });
-      return <Story />;
-    },
-  ],
-  render: () => <SettingsStoryWrapper initialSection="models" />,
+      }}
+    />
+  ),
 };
 
 /**

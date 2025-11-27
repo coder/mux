@@ -2,6 +2,7 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import { EventEmitter } from "events";
 import type { XaiProviderOptions } from "@ai-sdk/xai";
+import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 import { convertToModelMessages, type LanguageModel } from "ai";
 import { applyToolOutputRedaction } from "@/browser/utils/messages/applyToolOutputRedaction";
 import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
@@ -69,6 +70,7 @@ const defaultFetchWithUnlimitedTimeout = (async (
   input: RequestInfo | URL,
   init?: RequestInit
 ): Promise<Response> => {
+  // dispatcher is a Node.js undici-specific property for custom HTTP agents
   const requestInit: RequestInit = {
     ...(init ?? {}),
     dispatcher: unlimitedTimeoutAgent,
@@ -100,6 +102,24 @@ function getProviderFetch(providerConfig: ProviderConfig): typeof fetch {
   return typeof providerConfig.fetch === "function"
     ? (providerConfig.fetch as typeof fetch)
     : defaultFetchWithUnlimitedTimeout;
+}
+
+/**
+ * Normalize Anthropic base URL to ensure it ends with /v1 suffix.
+ *
+ * The Anthropic SDK expects baseURL to include /v1 (default: https://api.anthropic.com/v1).
+ * Many users configure base URLs without the /v1 suffix, which causes API calls to fail.
+ * This function automatically appends /v1 if missing.
+ *
+ * @param baseURL - The base URL to normalize (may or may not have /v1)
+ * @returns The base URL with /v1 suffix
+ */
+export function normalizeAnthropicBaseURL(baseURL: string): string {
+  const trimmed = baseURL.replace(/\/+$/, ""); // Remove trailing slashes
+  if (trimmed.endsWith("/v1")) {
+    return trimmed;
+  }
+  return `${trimmed}/v1`;
 }
 
 /**
@@ -289,17 +309,43 @@ export class AIService extends EventEmitter {
 
       // Handle Anthropic provider
       if (providerName === "anthropic") {
-        // Check for API key in config
-        if (!providerConfig.apiKey) {
+        // Anthropic API key can come from:
+        // 1. providers.jsonc config (providerConfig.apiKey)
+        // 2. ANTHROPIC_API_KEY env var (SDK reads this automatically)
+        // 3. ANTHROPIC_AUTH_TOKEN env var (we pass this explicitly since SDK doesn't check it)
+        // We allow env var passthrough so users don't need explicit config.
+
+        const hasApiKeyInConfig = Boolean(providerConfig.apiKey);
+        const hasApiKeyEnvVar = Boolean(process.env.ANTHROPIC_API_KEY);
+        const hasAuthTokenEnvVar = Boolean(process.env.ANTHROPIC_AUTH_TOKEN);
+
+        // Return structured error if no credentials available anywhere
+        if (!hasApiKeyInConfig && !hasApiKeyEnvVar && !hasAuthTokenEnvVar) {
           return Err({
             type: "api_key_not_found",
             provider: providerName,
           });
         }
 
+        // If SDK won't find a key (no config, no ANTHROPIC_API_KEY), use ANTHROPIC_AUTH_TOKEN
+        let configWithApiKey = providerConfig;
+        if (!hasApiKeyInConfig && !hasApiKeyEnvVar && hasAuthTokenEnvVar) {
+          configWithApiKey = { ...providerConfig, apiKey: process.env.ANTHROPIC_AUTH_TOKEN };
+        }
+
+        // Normalize base URL to ensure /v1 suffix (SDK expects it).
+        // Check config first, then fall back to ANTHROPIC_BASE_URL env var.
+        // We must explicitly pass baseURL to ensure /v1 normalization happens
+        // (SDK reads env var but doesn't normalize it).
+        const baseURLFromEnv = process.env.ANTHROPIC_BASE_URL?.trim();
+        const effectiveBaseURL = configWithApiKey.baseURL ?? baseURLFromEnv;
+        const normalizedConfig = effectiveBaseURL
+          ? { ...configWithApiKey, baseURL: normalizeAnthropicBaseURL(effectiveBaseURL) }
+          : configWithApiKey;
+
         // Add 1M context beta header if requested
         const use1MContext = muxProviderOptions?.anthropic?.use1MContext;
-        const existingHeaders = providerConfig.headers;
+        const existingHeaders = normalizedConfig.headers;
         const headers =
           use1MContext && existingHeaders
             ? { ...existingHeaders, "anthropic-beta": "context-1m-2025-08-07" }
@@ -309,7 +355,7 @@ export class AIService extends EventEmitter {
 
         // Lazy-load Anthropic provider to reduce startup time
         const { createAnthropic } = await PROVIDER_REGISTRY.anthropic();
-        const provider = createAnthropic({ ...providerConfig, headers });
+        const provider = createAnthropic({ ...normalizedConfig, headers });
         return Ok(provider(modelId));
       }
 
@@ -534,6 +580,79 @@ export class AIService extends EventEmitter {
           headers,
           fetch: baseFetch,
           extraBody,
+        });
+        return Ok(provider(modelId));
+      }
+
+      // Handle Amazon Bedrock provider
+      if (providerName === "bedrock") {
+        // Bedrock requires a region - check config or environment
+        // Support AWS_REGION (standard) and AWS_DEFAULT_REGION (used by AWS CLI profiles)
+        const configRegion = providerConfig.region;
+        const region =
+          typeof configRegion === "string" && configRegion
+            ? configRegion
+            : (process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION);
+
+        if (!region) {
+          return Err({
+            type: "api_key_not_found",
+            provider: providerName,
+          });
+        }
+
+        const baseFetch = getProviderFetch(providerConfig);
+        const { createAmazonBedrock } = await PROVIDER_REGISTRY.bedrock();
+
+        // Check if explicit credentials are provided in config
+        const hasExplicitCredentials = providerConfig.accessKeyId && providerConfig.secretAccessKey;
+
+        if (hasExplicitCredentials) {
+          // Use explicit credentials from providers.jsonc
+          const provider = createAmazonBedrock({
+            ...providerConfig,
+            region,
+            fetch: baseFetch,
+          });
+          return Ok(provider(modelId));
+        }
+
+        // Check for Bedrock bearer token (simplest auth) - from config or environment
+        // The SDK's apiKey option maps to AWS_BEARER_TOKEN_BEDROCK
+        const bearerToken =
+          typeof providerConfig.bearerToken === "string" ? providerConfig.bearerToken : undefined;
+
+        if (bearerToken) {
+          const provider = createAmazonBedrock({
+            region,
+            apiKey: bearerToken,
+            fetch: baseFetch,
+          });
+          return Ok(provider(modelId));
+        }
+
+        // Check if AWS_BEARER_TOKEN_BEDROCK env var is set
+        if (process.env.AWS_BEARER_TOKEN_BEDROCK) {
+          // SDK automatically picks this up via apiKey option
+          const provider = createAmazonBedrock({
+            region,
+            fetch: baseFetch,
+          });
+          return Ok(provider(modelId));
+        }
+
+        // Use AWS credential provider chain for flexible authentication:
+        // - Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+        // - Shared credentials file (~/.aws/credentials)
+        // - EC2 instance profiles
+        // - ECS task roles
+        // - EKS service account (IRSA)
+        // - SSO credentials
+        // - And more...
+        const provider = createAmazonBedrock({
+          region,
+          credentialProvider: fromNodeProviderChain(),
+          fetch: baseFetch,
         });
         return Ok(provider(modelId));
       }

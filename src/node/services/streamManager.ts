@@ -107,7 +107,7 @@ interface WorkspaceStreamInfo {
   // Track last partial write time for throttling
   lastPartialWriteTime: number;
   // Throttle timer for partial writes
-  partialWriteTimer?: NodeJS.Timeout;
+  partialWriteTimer?: ReturnType<typeof setTimeout>;
   // Track in-flight write to serialize writes
   partialWritePromise?: Promise<void>;
   // Track background processing promise for guaranteed cleanup

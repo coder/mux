@@ -56,6 +56,10 @@ const DEFAULT_PROVIDER_NAMES: SuggestionDefinition[] = [
     key: "google",
     description: "Google Gemini provider",
   },
+  {
+    key: "bedrock",
+    description: "Amazon Bedrock provider (AWS)",
+  },
 ];
 
 const DEFAULT_PROVIDER_KEYS: Record<string, SuggestionDefinition[]> = {
@@ -87,6 +91,24 @@ const DEFAULT_PROVIDER_KEYS: Record<string, SuggestionDefinition[]> = {
     {
       key: "apiKey",
       description: "API key used when calling Google Gemini",
+    },
+  ],
+  bedrock: [
+    {
+      key: "region",
+      description: "AWS region (e.g., us-east-1, us-west-2)",
+    },
+    {
+      key: "bearerToken",
+      description: "Bedrock bearer token (maps to AWS_BEARER_TOKEN_BEDROCK)",
+    },
+    {
+      key: "accessKeyId",
+      description: "AWS Access Key ID (alternative to bearerToken)",
+    },
+    {
+      key: "secretAccessKey",
+      description: "AWS Secret Access Key (use with accessKeyId)",
     },
   ],
   default: [
@@ -318,16 +340,13 @@ const providersSetCommandDefinition: SlashCommandDefinition = {
     // Stage 3: /providers set <provider> [key]
     if (stage === 3) {
       const providerName = completedTokens[2];
-      const definitions = [
-        ...(providerName && DEFAULT_PROVIDER_KEYS[providerName]
+      // Use provider-specific keys if defined, otherwise fall back to defaults
+      const definitions =
+        providerName && DEFAULT_PROVIDER_KEYS[providerName]
           ? DEFAULT_PROVIDER_KEYS[providerName]
-          : []),
-        ...DEFAULT_PROVIDER_KEYS.default,
-      ];
+          : DEFAULT_PROVIDER_KEYS.default;
 
-      const combined = dedupeDefinitions(definitions);
-
-      return filterAndMapSuggestions(combined, partialToken, (definition) => ({
+      return filterAndMapSuggestions(definitions, partialToken, (definition) => ({
         id: `command:providers:set:${providerName}:${definition.key}`,
         display: definition.key,
         description: definition.description,

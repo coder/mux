@@ -17,6 +17,7 @@ code --install-extension mux-0.1.0.vsix
 ## Requirements
 
 **For SSH workspaces**: Install Remote-SSH extension
+
 - **VS Code**: `ms-vscode-remote.remote-ssh`
 - **Cursor**: `anysphere.remote-ssh`
 

@@ -15,6 +15,27 @@ Best supported provider with full feature support:
 - `anthropic:claude-sonnet-4-5`
 - `anthropic:claude-opus-4-1`
 
+**Setup:**
+
+Anthropic can be configured via `~/.mux/providers.jsonc` or environment variables:
+
+```jsonc
+{
+  "anthropic": {
+    "apiKey": "sk-ant-...",
+    // Optional: custom base URL (mux auto-appends /v1 if missing)
+    "baseUrl": "https://api.anthropic.com",
+  },
+}
+```
+
+Or set environment variables:
+
+- `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` — API key (required if not in providers.jsonc)
+- `ANTHROPIC_BASE_URL` — Custom base URL (optional)
+
+**Note:** Environment variables are read automatically if no config is provided. The `/v1` path suffix is normalized automatically—you can omit it from base URLs.
+
 #### OpenAI (Cloud)
 
 GPT-5 family of models:
@@ -173,13 +194,92 @@ By default, mux connects to Ollama at `http://localhost:11434/api`. To use a rem
 }
 ```
 
+#### Amazon Bedrock (Cloud)
+
+Access Anthropic Claude and other models through AWS Bedrock:
+
+- `bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0`
+- `bedrock:us.amazon.nova-pro-v1:0`
+
+Model IDs follow the Bedrock format: `[region.]vendor.model-name-version`. mux automatically parses these for display (e.g., `us.anthropic.claude-sonnet-4-20250514-v1:0` displays as "Sonnet 4").
+
+**Authentication Options:**
+
+Bedrock supports multiple authentication methods, tried in order:
+
+1. **Bearer Token** (simplest) — A single API key for Bedrock access
+2. **Explicit Credentials** — Access Key ID + Secret Access Key in config
+3. **AWS Credential Chain** — Automatic credential resolution (recommended for AWS environments)
+
+**Option 1: Bearer Token**
+
+The simplest approach if you have a Bedrock API key:
+
+```jsonc
+{
+  "bedrock": {
+    "region": "us-east-1",
+    "bearerToken": "your-bedrock-api-key",
+  },
+}
+```
+
+Or set via environment variable:
+
+```bash
+export AWS_REGION=us-east-1
+export AWS_BEARER_TOKEN_BEDROCK=your-bedrock-api-key
+```
+
+**Option 2: Explicit AWS Credentials**
+
+Use IAM access keys directly:
+
+```jsonc
+{
+  "bedrock": {
+    "region": "us-east-1",
+    "accessKeyId": "AKIA...",
+    "secretAccessKey": "...",
+  },
+}
+```
+
+**Option 3: AWS Credential Chain (Recommended for AWS)**
+
+If no explicit credentials are provided, mux uses the AWS SDK's `fromNodeProviderChain()` which automatically resolves credentials from (in order):
+
+1. **Environment variables** — `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`
+2. **Shared credentials file** — `~/.aws/credentials` (supports profiles via `AWS_PROFILE`)
+3. **SSO credentials** — AWS IAM Identity Center (configure with `aws sso login`)
+4. **EC2 instance profile** — Automatic on EC2 instances with IAM roles
+5. **ECS task role** — Automatic in ECS containers
+6. **EKS Pod Identity / IRSA** — Automatic in Kubernetes with IAM Roles for Service Accounts
+
+For region, mux checks `AWS_REGION` and `AWS_DEFAULT_REGION` environment variables, so standard AWS CLI configurations work automatically.
+
+This means if you're already authenticated with AWS CLI (`aws sso login` or configured credentials), mux will automatically use those credentials:
+
+```jsonc
+{
+  "bedrock": {
+    "region": "us-east-1",
+    // No credentials needed — uses AWS credential chain
+  },
+}
+```
+
+**Required IAM Permissions:**
+
+Your AWS credentials need the `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream` permissions for the models you want to use.
+
 ### Provider Configuration
 
 All providers are configured in `~/.mux/providers.jsonc`. Example configurations:
 
 ```jsonc
 {
-  // Required for Anthropic models
+  // Anthropic: config OR env vars (ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL)
   "anthropic": {
     "apiKey": "sk-ant-...",
   },
@@ -198,6 +298,10 @@ All providers are configured in `~/.mux/providers.jsonc`. Example configurations
   // Required for OpenRouter models
   "openrouter": {
     "apiKey": "sk-or-v1-...",
+  },
+  // Bedrock (uses AWS credential chain if no explicit credentials)
+  "bedrock": {
+    "region": "us-east-1",
   },
   // Optional for Ollama (only needed for custom URL)
   "ollama": {

@@ -18,6 +18,7 @@ import type { ChatInputAPI } from "./components/ChatInput/types";
 
 import { useStableReference, compareMaps } from "./hooks/useStableReference";
 import { CommandRegistryProvider, useCommandRegistry } from "./contexts/CommandRegistryContext";
+import { useOpenTerminal } from "./hooks/useOpenTerminal";
 import type { CommandAction } from "./contexts/CommandRegistryContext";
 import { ModeProvider } from "./contexts/ModeContext";
 import { ProviderOptionsProvider } from "./contexts/ProviderOptionsContext";
@@ -30,9 +31,10 @@ import type { ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
 import { getThinkingLevelKey } from "@/common/constants/storage";
-import type { BranchListResult } from "@/common/types/ipc";
+import type { BranchListResult } from "@/common/orpc/types";
 import { useTelemetry } from "./hooks/useTelemetry";
 import { useStartWorkspaceCreation, getFirstProjectPath } from "./hooks/useStartWorkspaceCreation";
+import { useORPC } from "@/browser/orpc/react";
 
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
 import { SettingsModal } from "./components/Settings/SettingsModal";
@@ -60,6 +62,7 @@ function AppInner() {
     },
     [setTheme]
   );
+  const client = useORPC();
   const {
     projects,
     removeProject,
@@ -141,15 +144,19 @@ function AppInner() {
       const metadata = workspaceMetadata.get(selectedWorkspace.workspaceId);
       const workspaceName = metadata?.name ?? selectedWorkspace.workspaceId;
       const title = `${workspaceName} - ${selectedWorkspace.projectName} - mux`;
-      void window.api.window.setTitle(title);
+      // Set document.title locally for browser mode, call backend for Electron
+      document.title = title;
+      void client.window.setTitle({ title });
     } else {
       // Clear hash when no workspace selected
       if (window.location.hash) {
         window.history.replaceState(null, "", window.location.pathname);
       }
-      void window.api.window.setTitle("mux");
+      // Set document.title locally for browser mode, call backend for Electron
+      document.title = "mux";
+      void client.window.setTitle({ title: "mux" });
     }
-  }, [selectedWorkspace, workspaceMetadata]);
+  }, [selectedWorkspace, workspaceMetadata, client]);
   // Validate selected workspace exists and has all required fields
   useEffect(() => {
     if (selectedWorkspace) {
@@ -177,9 +184,7 @@ function AppInner() {
     }
   }, [selectedWorkspace, workspaceMetadata, setSelectedWorkspace]);
 
-  const openWorkspaceInTerminal = useCallback((workspaceId: string) => {
-    void window.api.terminal.openWindow(workspaceId);
-  }, []);
+  const openWorkspaceInTerminal = useOpenTerminal();
 
   const handleRemoveProject = useCallback(
     async (path: string) => {
@@ -339,23 +344,21 @@ function AppInner() {
 
   const getBranchesForProject = useCallback(
     async (projectPath: string): Promise<BranchListResult> => {
-      const branchResult = await window.api.projects.listBranches(projectPath);
-      const sanitizedBranches = Array.isArray(branchResult?.branches)
-        ? branchResult.branches.filter((branch): branch is string => typeof branch === "string")
-        : [];
+      const branchResult = await client.projects.listBranches({ projectPath });
+      const sanitizedBranches = branchResult.branches.filter(
+        (branch): branch is string => typeof branch === "string"
+      );
 
-      const recommended =
-        typeof branchResult?.recommendedTrunk === "string" &&
-        sanitizedBranches.includes(branchResult.recommendedTrunk)
-          ? branchResult.recommendedTrunk
-          : (sanitizedBranches[0] ?? "");
+      const recommended = sanitizedBranches.includes(branchResult.recommendedTrunk)
+        ? branchResult.recommendedTrunk
+        : (sanitizedBranches[0] ?? "");
 
       return {
         branches: sanitizedBranches,
         recommendedTrunk: recommended,
       };
     },
-    []
+    [client]
   );
 
   const selectWorkspaceFromPalette = useCallback(
@@ -417,6 +420,7 @@ function AppInner() {
     onToggleTheme: toggleTheme,
     onSetTheme: setThemePreference,
     onOpenSettings: openSettings,
+    client,
   };
 
   useEffect(() => {
@@ -528,12 +532,12 @@ function AppInner() {
 
   const handleProviderConfig = useCallback(
     async (provider: string, keyPath: string[], value: string) => {
-      const result = await window.api.providers.setProviderConfig(provider, keyPath, value);
+      const result = await client.providers.setProviderConfig({ provider, keyPath, value });
       if (!result.success) {
         throw new Error(result.error);
       }
     },
-    []
+    [client]
   );
 
   return (

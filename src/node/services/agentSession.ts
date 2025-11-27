@@ -15,16 +15,34 @@ import type {
   StreamErrorMessage,
   SendMessageOptions,
   ImagePart,
-} from "@/common/types/ipc";
+} from "@/common/orpc/types";
 import type { SendMessageError } from "@/common/types/errors";
 import { createUnknownSendMessageError } from "@/node/services/utils/sendMessageError";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
+import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
+import type { MuxFrontendMetadata } from "@/common/types/message";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { MessageQueue } from "./messageQueue";
 import type { StreamEndEvent } from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
+
+// Type guard for compaction request metadata
+interface CompactionRequestMetadata {
+  type: "compaction-request";
+  parsed: {
+    continueMessage?: string;
+  };
+}
+
+function isCompactionRequestMetadata(meta: unknown): meta is CompactionRequestMetadata {
+  if (typeof meta !== "object" || meta === null) return false;
+  const obj = meta as Record<string, unknown>;
+  if (obj.type !== "compaction-request") return false;
+  if (typeof obj.parsed !== "object" || obj.parsed === null) return false;
+  return true;
+}
 
 export interface AgentSessionChatEvent {
   workspaceId: string;
@@ -313,14 +331,18 @@ export class AgentSession {
           })
         : undefined;
 
+    // Cast from z.any() schema types to proper types (schema uses any for complex recursive types)
+    const typedToolPolicy = options?.toolPolicy as ToolPolicy | undefined;
+    const typedMuxMetadata = options?.muxMetadata as MuxFrontendMetadata | undefined;
+
     const userMessage = createMuxMessage(
       messageId,
       "user",
       message,
       {
         timestamp: Date.now(),
-        toolPolicy: options?.toolPolicy,
-        muxMetadata: options?.muxMetadata, // Pass through frontend metadata as black-box
+        toolPolicy: typedToolPolicy,
+        muxMetadata: typedMuxMetadata, // Pass through frontend metadata as black-box
       },
       additionalParts
     );
@@ -333,20 +355,30 @@ export class AgentSession {
     this.emitChatEvent(userMessage);
 
     // If this is a compaction request with a continue message, queue it for auto-send after compaction
-    const muxMeta = options?.muxMetadata;
-    if (muxMeta?.type === "compaction-request" && muxMeta.parsed.continueMessage && options) {
+    if (
+      isCompactionRequestMetadata(typedMuxMetadata) &&
+      typedMuxMetadata.parsed.continueMessage &&
+      options
+    ) {
       // Strip out compaction-specific fields so the queued message is a fresh user message
-      const { muxMetadata, mode, editMessageId, imageParts, maxOutputTokens, ...rest } = options;
-      const sanitizedOptions: SendMessageOptions = {
-        ...rest,
-        model: muxMeta.parsed.continueMessage.model ?? rest.model,
+      // Use Omit to avoid unsafe destructuring of any-typed muxMetadata
+      const continueMessage = typedMuxMetadata.parsed.continueMessage;
+      const sanitizedOptions: Omit<
+        SendMessageOptions,
+        "muxMetadata" | "mode" | "editMessageId" | "imageParts" | "maxOutputTokens"
+      > & { imageParts?: typeof continueMessage.imageParts } = {
+        model: continueMessage.model ?? options.model,
+        thinkingLevel: options.thinkingLevel,
+        toolPolicy: options.toolPolicy as ToolPolicy | undefined,
+        additionalSystemInstructions: options.additionalSystemInstructions,
+        providerOptions: options.providerOptions,
       };
-      const continueImageParts = muxMeta.parsed.continueMessage.imageParts;
+      const continueImageParts = continueMessage.imageParts;
       const continuePayload =
         continueImageParts && continueImageParts.length > 0
           ? { ...sanitizedOptions, imageParts: continueImageParts }
           : sanitizedOptions;
-      this.messageQueue.add(muxMeta.parsed.continueMessage.text, continuePayload);
+      this.messageQueue.add(continueMessage.text, continuePayload);
       this.emitQueuedMessageChanged();
     }
 
@@ -423,7 +455,7 @@ export class AgentSession {
       this.workspaceId,
       modelString,
       effectiveThinkingLevel,
-      options?.toolPolicy,
+      options?.toolPolicy as ToolPolicy | undefined,
       undefined,
       options?.additionalSystemInstructions,
       options?.maxOutputTokens,

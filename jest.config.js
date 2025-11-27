@@ -1,5 +1,4 @@
 module.exports = {
-  preset: "ts-jest",
   testEnvironment: "node",
   testMatch: ["<rootDir>/src/**/*.test.ts", "<rootDir>/tests/**/*.test.ts"],
   collectCoverageFrom: [
@@ -17,22 +16,10 @@ module.exports = {
     "^jsdom$": "<rootDir>/tests/__mocks__/jsdom.js",
   },
   transform: {
-    "^.+\\.tsx?$": [
-      "ts-jest",
-      {
-        tsconfig: {
-          target: "ES2020",
-          module: "ESNext",
-          moduleResolution: "node",
-          lib: ["ES2023", "DOM", "ES2022.Intl"],
-          esModuleInterop: true,
-          allowSyntheticDefaultImports: true,
-        },
-      },
-    ],
+    "^.+\\.(ts|tsx|js|mjs)$": ["babel-jest"],
   },
-  // Transform ESM modules (like shiki) to CommonJS for Jest
-  transformIgnorePatterns: ["node_modules/(?!(shiki)/)"],
+  // Transform ESM modules (like shiki, @orpc) to CommonJS for Jest
+  transformIgnorePatterns: ["node_modules/(?!(@orpc|shiki)/)"],
   // Run tests in parallel (use 50% of available cores, or 4 minimum)
   maxWorkers: "50%",
   // Force exit after tests complete to avoid hanging on lingering handles

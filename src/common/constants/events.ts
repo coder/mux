@@ -6,7 +6,7 @@
  */
 
 import type { ThinkingLevel } from "@/common/types/thinking";
-import type { ImagePart } from "../types/ipc";
+import type { ImagePart } from "@/common/orpc/schemas";
 
 export const CUSTOM_EVENTS = {
   /**

@@ -2,26 +2,16 @@
  * Type definitions for dynamic tool parts
  */
 
-export interface DynamicToolPartAvailable {
-  type: "dynamic-tool";
-  toolCallId: string;
-  toolName: string;
-  state: "output-available";
-  input: unknown;
-  output: unknown;
-  timestamp?: number;
-}
+import type { z } from "zod";
+import type {
+  DynamicToolPartAvailableSchema,
+  DynamicToolPartPendingSchema,
+  DynamicToolPartSchema,
+} from "../orpc/schemas";
 
-export interface DynamicToolPartPending {
-  type: "dynamic-tool";
-  toolCallId: string;
-  toolName: string;
-  state: "input-available";
-  input: unknown;
-  timestamp?: number;
-}
-
-export type DynamicToolPart = DynamicToolPartAvailable | DynamicToolPartPending;
+export type DynamicToolPartAvailable = z.infer<typeof DynamicToolPartAvailableSchema>;
+export type DynamicToolPartPending = z.infer<typeof DynamicToolPartPendingSchema>;
+export type DynamicToolPart = z.infer<typeof DynamicToolPartSchema>;
 
 export function isDynamicToolPart(part: unknown): part is DynamicToolPart {
   return (

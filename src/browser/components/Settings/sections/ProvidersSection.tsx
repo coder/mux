@@ -2,13 +2,69 @@ import React, { useState, useEffect, useCallback } from "react";
 import { ChevronDown, ChevronRight, Check, X } from "lucide-react";
 import type { ProvidersConfigMap } from "../types";
 import { SUPPORTED_PROVIDERS, PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
+import type { ProviderName } from "@/common/constants/providers";
+import { useORPC } from "@/browser/orpc/react";
+
+interface FieldConfig {
+  key: string;
+  label: string;
+  placeholder: string;
+  type: "secret" | "text";
+  optional?: boolean;
+}
+
+/**
+ * Get provider-specific field configuration.
+ * Most providers use API Key + Base URL, but some (like Bedrock) have different needs.
+ */
+function getProviderFields(provider: ProviderName): FieldConfig[] {
+  if (provider === "bedrock") {
+    return [
+      { key: "region", label: "Region", placeholder: "us-east-1", type: "text" },
+      {
+        key: "bearerToken",
+        label: "Bearer Token",
+        placeholder: "AWS_BEARER_TOKEN_BEDROCK",
+        type: "secret",
+        optional: true,
+      },
+      {
+        key: "accessKeyId",
+        label: "Access Key ID",
+        placeholder: "AWS Access Key ID",
+        type: "secret",
+        optional: true,
+      },
+      {
+        key: "secretAccessKey",
+        label: "Secret Access Key",
+        placeholder: "AWS Secret Access Key",
+        type: "secret",
+        optional: true,
+      },
+    ];
+  }
+
+  // Default for most providers
+  return [
+    { key: "apiKey", label: "API Key", placeholder: "Enter API key", type: "secret" },
+    {
+      key: "baseUrl",
+      label: "Base URL",
+      placeholder: "https://api.example.com",
+      type: "text",
+      optional: true,
+    },
+  ];
+}
 
 export function ProvidersSection() {
+  const client = useORPC();
   const [config, setConfig] = useState<ProvidersConfigMap>({});
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
   const [editingField, setEditingField] = useState<{
     provider: string;
-    field: "apiKey" | "baseUrl";
+    field: string;
   } | null>(null);
   const [editValue, setEditValue] = useState("");
   const [saving, setSaving] = useState(false);
@@ -16,21 +72,22 @@ export function ProvidersSection() {
   // Load config on mount
   useEffect(() => {
     void (async () => {
-      const cfg = await window.api.providers.getConfig();
+      const cfg = await client.providers.getConfig();
       setConfig(cfg);
     })();
-  }, []);
+  }, [client]);
 
   const handleToggleProvider = (provider: string) => {
     setExpandedProvider((prev) => (prev === provider ? null : provider));
     setEditingField(null);
   };
 
-  const handleStartEdit = (provider: string, field: "apiKey" | "baseUrl") => {
+  const handleStartEdit = (provider: string, field: string, fieldConfig: FieldConfig) => {
     setEditingField({ provider, field });
-    // For API key, start empty since we only show masked value
-    // For baseUrl, show current value
-    setEditValue(field === "baseUrl" ? (config[provider]?.baseUrl ?? "") : "");
+    // For secrets, start empty since we only show masked value
+    // For text fields, show current value
+    const currentValue = getFieldValue(provider, field);
+    setEditValue(fieldConfig.type === "text" && currentValue ? currentValue : "");
   };
 
   const handleCancelEdit = () => {
@@ -44,32 +101,83 @@ export function ProvidersSection() {
     setSaving(true);
     try {
       const { provider, field } = editingField;
-      const keyPath = field === "apiKey" ? ["apiKey"] : ["baseUrl"];
-      await window.api.providers.setProviderConfig(provider, keyPath, editValue);
+      await client.providers.setProviderConfig({ provider, keyPath: [field], value: editValue });
 
       // Refresh config
-      const cfg = await window.api.providers.getConfig();
+      const cfg = await client.providers.getConfig();
       setConfig(cfg);
       setEditingField(null);
       setEditValue("");
     } finally {
       setSaving(false);
     }
-  }, [editingField, editValue]);
+  }, [client, editingField, editValue]);
 
-  const handleClearBaseUrl = useCallback(async (provider: string) => {
-    setSaving(true);
-    try {
-      await window.api.providers.setProviderConfig(provider, ["baseUrl"], "");
-      const cfg = await window.api.providers.getConfig();
-      setConfig(cfg);
-    } finally {
-      setSaving(false);
+  const handleClearField = useCallback(
+    async (provider: string, field: string) => {
+      setSaving(true);
+      try {
+        await client.providers.setProviderConfig({ provider, keyPath: [field], value: "" });
+        const cfg = await client.providers.getConfig();
+        setConfig(cfg);
+      } finally {
+        setSaving(false);
+      }
+    },
+    [client]
+  );
+
+  const isConfigured = (provider: string): boolean => {
+    const providerConfig = config[provider];
+    if (!providerConfig) return false;
+
+    // For Bedrock, check if any AWS credential field is set
+    if (provider === "bedrock" && providerConfig.aws) {
+      const { aws } = providerConfig;
+      return !!(aws.region ?? aws.bearerTokenSet ?? aws.accessKeyIdSet ?? aws.secretAccessKeySet);
     }
-  }, []);
 
-  const isConfigured = (provider: string) => {
-    return config[provider]?.apiKeySet ?? false;
+    // For other providers, check apiKeySet
+    return providerConfig.apiKeySet ?? false;
+  };
+
+  const getFieldValue = (provider: string, field: string): string | undefined => {
+    const providerConfig = config[provider];
+    if (!providerConfig) return undefined;
+
+    // For bedrock, check aws nested object for region
+    if (provider === "bedrock" && field === "region") {
+      return providerConfig.aws?.region;
+    }
+
+    // For standard fields like baseUrl
+    const value = providerConfig[field as keyof typeof providerConfig];
+    return typeof value === "string" ? value : undefined;
+  };
+
+  const isFieldSet = (provider: string, field: string, fieldConfig: FieldConfig): boolean => {
+    const providerConfig = config[provider];
+    if (!providerConfig) return false;
+
+    if (fieldConfig.type === "secret") {
+      // For apiKey, we have apiKeySet from the sanitized config
+      if (field === "apiKey") return providerConfig.apiKeySet ?? false;
+
+      // For AWS secrets, check the aws nested object
+      if (provider === "bedrock" && providerConfig.aws) {
+        const { aws } = providerConfig;
+        switch (field) {
+          case "bearerToken":
+            return aws.bearerTokenSet ?? false;
+          case "accessKeyId":
+            return aws.accessKeyIdSet ?? false;
+          case "secretAccessKey":
+            return aws.secretAccessKeySet ?? false;
+        }
+      }
+      return false;
+    }
+    return !!getFieldValue(provider, field);
   };
 
   return (
@@ -81,8 +189,8 @@ export function ProvidersSection() {
 
       {SUPPORTED_PROVIDERS.map((provider) => {
         const isExpanded = expandedProvider === provider;
-        const providerConfig = config[provider];
         const configured = isConfigured(provider);
+        const fields = getProviderFields(provider);
 
         return (
           <div
@@ -114,117 +222,83 @@ export function ProvidersSection() {
             {/* Provider settings */}
             {isExpanded && (
               <div className="border-border-medium space-y-3 border-t px-4 py-3">
-                {/* API Key */}
-                <div>
-                  <label className="text-muted mb-1 block text-xs">API Key</label>
-                  {editingField?.provider === provider && editingField?.field === "apiKey" ? (
-                    <div className="flex gap-2">
-                      <input
-                        type="password"
-                        value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
-                        placeholder="Enter API key"
-                        className="bg-modal-bg border-border-medium focus:border-accent flex-1 rounded border px-2 py-1.5 font-mono text-xs focus:outline-none"
-                        autoFocus
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") void handleSaveEdit();
-                          if (e.key === "Escape") handleCancelEdit();
-                        }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => void handleSaveEdit()}
-                        disabled={saving}
-                        className="p-1 text-green-500 hover:text-green-400"
-                      >
-                        <Check className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleCancelEdit}
-                        className="text-muted hover:text-foreground p-1"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-between">
-                      <span className="text-foreground font-mono text-xs">
-                        {providerConfig?.apiKeySet ? "••••••••" : "Not set"}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleStartEdit(provider, "apiKey")}
-                        className="text-accent hover:text-accent-light text-xs"
-                      >
-                        {providerConfig?.apiKeySet ? "Change" : "Set"}
-                      </button>
-                    </div>
-                  )}
-                </div>
+                {fields.map((fieldConfig) => {
+                  const isEditing =
+                    editingField?.provider === provider && editingField?.field === fieldConfig.key;
+                  const fieldValue = getFieldValue(provider, fieldConfig.key);
+                  const fieldIsSet = isFieldSet(provider, fieldConfig.key, fieldConfig);
 
-                {/* Base URL (optional) */}
-                <div>
-                  <label className="text-muted mb-1 block text-xs">
-                    Base URL <span className="text-dim">(optional)</span>
-                  </label>
-                  {editingField?.provider === provider && editingField?.field === "baseUrl" ? (
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
-                        placeholder="https://api.example.com"
-                        className="bg-modal-bg border-border-medium focus:border-accent flex-1 rounded border px-2 py-1.5 font-mono text-xs focus:outline-none"
-                        autoFocus
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") void handleSaveEdit();
-                          if (e.key === "Escape") handleCancelEdit();
-                        }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => void handleSaveEdit()}
-                        disabled={saving}
-                        className="p-1 text-green-500 hover:text-green-400"
-                      >
-                        <Check className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleCancelEdit}
-                        className="text-muted hover:text-foreground p-1"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-between">
-                      <span className="text-foreground font-mono text-xs">
-                        {providerConfig?.baseUrl ?? "Default"}
-                      </span>
-                      <div className="flex gap-2">
-                        {providerConfig?.baseUrl && (
+                  return (
+                    <div key={fieldConfig.key}>
+                      <label className="text-muted mb-1 block text-xs">
+                        {fieldConfig.label}
+                        {fieldConfig.optional && <span className="text-dim"> (optional)</span>}
+                      </label>
+                      {isEditing ? (
+                        <div className="flex gap-2">
+                          <input
+                            type={fieldConfig.type === "secret" ? "password" : "text"}
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            placeholder={fieldConfig.placeholder}
+                            className="bg-modal-bg border-border-medium focus:border-accent flex-1 rounded border px-2 py-1.5 font-mono text-xs focus:outline-none"
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") void handleSaveEdit();
+                              if (e.key === "Escape") handleCancelEdit();
+                            }}
+                          />
                           <button
                             type="button"
-                            onClick={() => void handleClearBaseUrl(provider)}
+                            onClick={() => void handleSaveEdit()}
                             disabled={saving}
-                            className="text-muted hover:text-error text-xs"
+                            className="p-1 text-green-500 hover:text-green-400"
                           >
-                            Clear
+                            <Check className="h-4 w-4" />
                           </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => handleStartEdit(provider, "baseUrl")}
-                          className="text-accent hover:text-accent-light text-xs"
-                        >
-                          {providerConfig?.baseUrl ? "Change" : "Set"}
-                        </button>
-                      </div>
+                          <button
+                            type="button"
+                            onClick={handleCancelEdit}
+                            className="text-muted hover:text-foreground p-1"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between">
+                          <span className="text-foreground font-mono text-xs">
+                            {fieldConfig.type === "secret"
+                              ? fieldIsSet
+                                ? "••••••••"
+                                : "Not set"
+                              : (fieldValue ?? "Default")}
+                          </span>
+                          <div className="flex gap-2">
+                            {fieldConfig.type === "text" && fieldValue && (
+                              <button
+                                type="button"
+                                onClick={() => void handleClearField(provider, fieldConfig.key)}
+                                disabled={saving}
+                                className="text-muted hover:text-error text-xs"
+                              >
+                                Clear
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleStartEdit(provider, fieldConfig.key, fieldConfig)
+                              }
+                              className="text-accent hover:text-accent-light text-xs"
+                            >
+                              {fieldIsSet || fieldValue ? "Change" : "Set"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
+                  );
+                })}
               </div>
             )}
           </div>

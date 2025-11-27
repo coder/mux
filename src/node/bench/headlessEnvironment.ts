@@ -4,7 +4,7 @@ import * as fs from "fs/promises";
 import createIPCMock from "electron-mock-ipc";
 import type { BrowserWindow, IpcMain as ElectronIpcMain, WebContents } from "electron";
 import { Config } from "@/node/config";
-import { IpcMain } from "@/node/services/ipcMain";
+import { ServiceContainer } from "@/node/services/serviceContainer";
 
 type MockedElectron = ReturnType<typeof createIPCMock>;
 
@@ -17,7 +17,7 @@ interface CreateHeadlessEnvironmentOptions {
 
 export interface HeadlessEnvironment {
   config: Config;
-  ipcMain: IpcMain;
+  services: ServiceContainer;
   mockIpcMain: ElectronIpcMain;
   mockIpcRenderer: Electron.IpcRenderer;
   mockWindow: BrowserWindow;
@@ -104,9 +104,9 @@ export async function createHeadlessEnvironment(
   const mockIpcMainModule = mockedElectron.ipcMain;
   const mockIpcRendererModule = mockedElectron.ipcRenderer;
 
-  const ipcMain = new IpcMain(config);
-  await ipcMain.initialize();
-  ipcMain.register(mockIpcMainModule, mockWindow);
+  const services = new ServiceContainer(config);
+  await services.initialize();
+  services.windowService.setMainWindow(mockWindow);
 
   const dispose = async () => {
     sentEvents.length = 0;
@@ -115,7 +115,7 @@ export async function createHeadlessEnvironment(
 
   return {
     config,
-    ipcMain,
+    services,
     mockIpcMain: mockIpcMainModule,
     mockIpcRenderer: mockIpcRendererModule,
     mockWindow,

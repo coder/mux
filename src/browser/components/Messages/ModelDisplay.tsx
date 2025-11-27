@@ -1,6 +1,7 @@
 import React from "react";
 import AnthropicIcon from "@/browser/assets/icons/anthropic.svg?react";
 import OpenAIIcon from "@/browser/assets/icons/openai.svg?react";
+import AWSIcon from "@/browser/assets/icons/aws.svg?react";
 import { TooltipWrapper, Tooltip } from "@/browser/components/Tooltip";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 
@@ -29,6 +30,8 @@ export const ModelDisplay: React.FC<ModelDisplayProps> = ({ modelString, showToo
         return <AnthropicIcon />;
       case "openai":
         return <OpenAIIcon />;
+      case "bedrock":
+        return <AWSIcon />;
       default:
         return null;
     }

@@ -4,7 +4,7 @@ import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, Text, View } f
 import { useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme";
-import { useApiClient } from "../hooks/useApiClient";
+import { useORPC } from "../orpc/react";
 import { parseDiff, extractAllHunks } from "../utils/git/diffParser";
 import { parseNumstat, buildFileTree } from "../utils/git/numstatParser";
 import { buildGitDiffCommand } from "../utils/git/gitCommands";
@@ -17,7 +17,7 @@ export default function GitReviewScreen(): JSX.Element {
   const theme = useTheme();
   const params = useLocalSearchParams<{ id?: string }>();
   const workspaceId = params.id ? String(params.id) : "";
-  const api = useApiClient();
+  const client = useORPC();
 
   const [hunks, setHunks] = useState<DiffHunk[]>([]);
   const [fileTree, setFileTree] = useState<FileTreeNode | null>(null);
@@ -44,28 +44,23 @@ export default function GitReviewScreen(): JSX.Element {
 
       // Fetch file tree (numstat)
       const numstatCommand = buildGitDiffCommand(diffBase, includeUncommitted, "", "numstat");
-      const numstatResult = await api.workspace.executeBash(workspaceId, numstatCommand, {
-        timeout_secs: 30,
+      const numstatResult = await client.workspace.executeBash({
+        workspaceId,
+        script: numstatCommand,
+        options: { timeout_secs: 30 },
       });
 
+      // executeBash returns Result<BashToolResult> where BashToolResult is { success, output/error }
       if (!numstatResult.success) {
         throw new Error(numstatResult.error);
       }
 
       const numstatData = numstatResult.data;
       if (!numstatData.success) {
-        throw new Error(numstatData.error || "Failed to fetch file stats");
+        throw new Error(numstatData.error || "Failed to execute numstat command");
       }
 
-      // Access nested data.data structure (executeBash returns Result<Result<BashOutput>>)
-      const numstatBashResult = (numstatData as any).data;
-      if (!numstatBashResult || !numstatBashResult.success) {
-        const error = numstatBashResult?.error || "Failed to execute numstat command";
-        throw new Error(error);
-      }
-
-      // Ensure output exists and is a string
-      const numstatOutput = numstatBashResult.output ?? "";
+      const numstatOutput = numstatData.output ?? "";
       const fileStats = parseNumstat(numstatOutput);
       const tree = buildFileTree(fileStats);
       setFileTree(tree);
@@ -73,8 +68,10 @@ export default function GitReviewScreen(): JSX.Element {
       // Fetch diff hunks (with optional path filter for truncation workaround)
       const pathFilter = selectedFilePath ? ` -- "${selectedFilePath}"` : "";
       const diffCommand = buildGitDiffCommand(diffBase, includeUncommitted, pathFilter, "diff");
-      const diffResult = await api.workspace.executeBash(workspaceId, diffCommand, {
-        timeout_secs: 30,
+      const diffResult = await client.workspace.executeBash({
+        workspaceId,
+        script: diffCommand,
+        options: { timeout_secs: 30 },
       });
 
       if (!diffResult.success) {
@@ -83,19 +80,11 @@ export default function GitReviewScreen(): JSX.Element {
 
       const diffData = diffResult.data;
       if (!diffData.success) {
-        throw new Error(diffData.error || "Failed to fetch diff");
+        throw new Error(diffData.error || "Failed to execute diff command");
       }
 
-      // Access nested data.data structure (executeBash returns Result<Result<BashOutput>>)
-      const diffBashResult = (diffData as any).data;
-      if (!diffBashResult || !diffBashResult.success) {
-        const error = diffBashResult?.error || "Failed to execute diff command";
-        throw new Error(error);
-      }
-
-      // Ensure output exists and is a string
-      const diffOutput = diffBashResult.output ?? "";
-      const truncationInfo = diffBashResult.truncated;
+      const diffOutput = diffData.output ?? "";
+      const truncationInfo = diffData.truncated;
 
       const fileDiffs = parseDiff(diffOutput);
       const allHunks = extractAllHunks(fileDiffs);
@@ -115,7 +104,7 @@ export default function GitReviewScreen(): JSX.Element {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [workspaceId, diffBase, includeUncommitted, selectedFilePath, api]);
+  }, [workspaceId, diffBase, includeUncommitted, selectedFilePath, client]);
 
   useEffect(() => {
     void loadGitData();
