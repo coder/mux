@@ -47,6 +47,22 @@ describe("formatModelDisplayName", () => {
     });
   });
 
+  describe("Bedrock models", () => {
+    test("formats Anthropic Claude models from Bedrock", () => {
+      expect(formatModelDisplayName("global.anthropic.claude-sonnet-4-5-20250929-v1:0")).toBe(
+        "Sonnet 4.5"
+      );
+      expect(formatModelDisplayName("us.anthropic.claude-opus-4-20250514-v1:0")).toBe("Opus 4");
+      expect(formatModelDisplayName("anthropic.claude-3-5-sonnet-20240620-v1:0")).toBe(
+        "Sonnet 3.5"
+      );
+    });
+
+    test("formats Amazon Titan models from Bedrock", () => {
+      expect(formatModelDisplayName("amazon.titan-text-premier-v1:0")).toBe("Titan Text Premier");
+    });
+  });
+
   describe("fallback formatting", () => {
     test("capitalizes dash-separated parts", () => {
       expect(formatModelDisplayName("custom-model-name")).toBe("Custom Model Name");

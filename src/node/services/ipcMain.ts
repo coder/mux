@@ -1538,21 +1538,31 @@ export class IpcMain {
     ipcMain.handle(IPC_CHANNELS.PROVIDERS_GET_CONFIG, () => {
       try {
         const config = this.config.loadProvidersConfig() ?? {};
-        // Return a sanitized version (only whether API key is set, not the value)
-        const sanitized: Record<
-          string,
-          { apiKeySet: boolean; baseUrl?: string; models?: string[] }
-        > = {};
+        // Return a sanitized version (only whether secrets are set, not the values)
+        const sanitized: Record<string, Record<string, unknown>> = {};
         for (const [provider, providerConfig] of Object.entries(config)) {
           const baseUrl = providerConfig.baseUrl ?? providerConfig.baseURL;
           const models = providerConfig.models;
-          sanitized[provider] = {
+
+          // Base fields for all providers
+          const providerData: Record<string, unknown> = {
             apiKeySet: !!providerConfig.apiKey,
             baseUrl: typeof baseUrl === "string" ? baseUrl : undefined,
             models: Array.isArray(models)
               ? models.filter((m): m is string => typeof m === "string")
               : undefined,
           };
+
+          // Bedrock-specific fields
+          if (provider === "bedrock") {
+            const region = providerConfig.region;
+            providerData.region = typeof region === "string" ? region : undefined;
+            providerData.bearerTokenSet = !!providerConfig.bearerToken;
+            providerData.accessKeyIdSet = !!providerConfig.accessKeyId;
+            providerData.secretAccessKeySet = !!providerConfig.secretAccessKey;
+          }
+
+          sanitized[provider] = providerData;
         }
         return sanitized;
       } catch (error) {

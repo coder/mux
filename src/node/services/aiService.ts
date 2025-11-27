@@ -541,9 +541,12 @@ export class AIService extends EventEmitter {
       // Handle Amazon Bedrock provider
       if (providerName === "bedrock") {
         // Bedrock requires a region - check config or environment
+        // Support AWS_REGION (standard) and AWS_DEFAULT_REGION (used by AWS CLI profiles)
         const configRegion = providerConfig.region;
         const region =
-          typeof configRegion === "string" && configRegion ? configRegion : process.env.AWS_REGION;
+          typeof configRegion === "string" && configRegion
+            ? configRegion
+            : (process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION);
 
         if (!region) {
           return Err({
@@ -568,9 +571,23 @@ export class AIService extends EventEmitter {
           return Ok(provider(modelId));
         }
 
-        // Check if AWS_BEARER_TOKEN_BEDROCK is set (Bedrock API key - simplest auth)
-        // The SDK automatically picks this up when no other credentials are provided
+        // Check for Bedrock bearer token (simplest auth) - from config or environment
+        // The SDK's apiKey option maps to AWS_BEARER_TOKEN_BEDROCK
+        const bearerToken =
+          typeof providerConfig.bearerToken === "string" ? providerConfig.bearerToken : undefined;
+
+        if (bearerToken) {
+          const provider = createAmazonBedrock({
+            region,
+            apiKey: bearerToken,
+            fetch: baseFetch,
+          });
+          return Ok(provider(modelId));
+        }
+
+        // Check if AWS_BEARER_TOKEN_BEDROCK env var is set
         if (process.env.AWS_BEARER_TOKEN_BEDROCK) {
+          // SDK automatically picks this up via apiKey option
           const provider = createAmazonBedrock({
             region,
             fetch: baseFetch,
