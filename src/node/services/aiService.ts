@@ -330,9 +330,14 @@ export class AIService extends EventEmitter {
           configWithApiKey = { ...providerConfig, apiKey: process.env.ANTHROPIC_AUTH_TOKEN };
         }
 
-        // Normalize base URL to ensure /v1 suffix (SDK expects it)
-        const normalizedConfig = configWithApiKey.baseURL
-          ? { ...configWithApiKey, baseURL: normalizeAnthropicBaseURL(configWithApiKey.baseURL) }
+        // Normalize base URL to ensure /v1 suffix (SDK expects it).
+        // Check config first, then fall back to ANTHROPIC_BASE_URL env var.
+        // We must explicitly pass baseURL to ensure /v1 normalization happens
+        // (SDK reads env var but doesn't normalize it).
+        const baseURLFromEnv = process.env.ANTHROPIC_BASE_URL?.trim();
+        const effectiveBaseURL = configWithApiKey.baseURL ?? baseURLFromEnv;
+        const normalizedConfig = effectiveBaseURL
+          ? { ...configWithApiKey, baseURL: normalizeAnthropicBaseURL(effectiveBaseURL) }
           : configWithApiKey;
 
         // Add 1M context beta header if requested
