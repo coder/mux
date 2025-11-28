@@ -14,7 +14,7 @@ import type {
 } from "@/common/types/terminal";
 import type { IPty } from "node-pty";
 import { SSHRuntime, type SSHRuntimeConfig } from "@/node/runtime/SSHRuntime";
-import { LocalRuntime } from "@/node/runtime/LocalRuntime";
+import { LocalBaseRuntime } from "@/node/runtime/LocalBaseRuntime";
 import { access } from "fs/promises";
 import { constants } from "fs";
 import { getControlPath } from "@/node/runtime/sshConnectionPool";
@@ -99,7 +99,7 @@ export class PTYService {
       `Creating terminal session ${sessionId} for workspace ${params.workspaceId} (${runtime instanceof SSHRuntime ? "SSH" : "local"})`
     );
 
-    if (runtime instanceof LocalRuntime) {
+    if (runtime instanceof LocalBaseRuntime) {
       // Local: Use node-pty or @lydell/node-pty
       // Try node-pty first and fall back to @lydell/node-pty if it fails
       // eslint-disable-next-line @typescript-eslint/consistent-type-imports

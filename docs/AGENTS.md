@@ -85,9 +85,9 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 ### Integration Testing
 
 - Use `bun x jest` (optionally `TEST_INTEGRATION=1`). Examples:
-  - `TEST_INTEGRATION=1 bun x jest tests/ipcMain/sendMessage.test.ts -t "pattern"`
+  - `TEST_INTEGRATION=1 bun x jest tests/integration/sendMessage.test.ts -t "pattern"`
   - `TEST_INTEGRATION=1 bun x jest tests`
-- `tests/ipcMain` is slow; filter with `-t` when possible. Tests use `test.concurrent()`.
+- `tests/integration` is slow; filter with `-t` when possible. Tests use `test.concurrent()`.
 - Never bypass IPC: do not call `env.config.saveConfig`, `env.historyService`, etc., directly. Use `env.mockIpcRenderer.invoke(IPC_CHANNELS.CONFIG_SAVE|HISTORY_GET|WORKSPACE_CREATE, ...)` instead.
 - Acceptable exceptions: reading config to craft IPC args, verifying filesystem after IPC completes, or loading existing data to avoid redundant API calls.
 

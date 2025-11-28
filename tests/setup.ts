@@ -4,8 +4,7 @@
  */
 
 import assert from "assert";
-
-require("disposablestack/auto");
+import "disposablestack/auto";
 
 assert.equal(typeof Symbol.dispose, "symbol");
 assert.equal(typeof Symbol.asyncDispose, "symbol");
@@ -29,7 +28,7 @@ if (typeof globalThis.File === "undefined") {
 if (process.env.TEST_INTEGRATION === "1") {
   // Store promise globally to ensure it blocks subsequent test execution
   (globalThis as any).__muxPreloadPromise = (async () => {
-    const { preloadTestModules } = await import("./ipcMain/setup");
+    const { preloadTestModules } = await import("./integration/setup");
     await preloadTestModules();
   })();
 

@@ -4,6 +4,7 @@ import type { ProvidersConfigMap } from "../types";
 import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
 import type { ProviderName } from "@/common/constants/providers";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
+import { useAPI } from "@/browser/contexts/API";
 
 interface FieldConfig {
   key: string;
@@ -64,6 +65,7 @@ function getProviderFields(provider: ProviderName): FieldConfig[] {
 }
 
 export function ProvidersSection() {
+  const { api } = useAPI();
   const [config, setConfig] = useState<ProvidersConfigMap>({});
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
   const [editingField, setEditingField] = useState<{
@@ -75,11 +77,12 @@ export function ProvidersSection() {
 
   // Load config on mount
   useEffect(() => {
+    if (!api) return;
     void (async () => {
-      const cfg = await window.api.providers.getConfig();
+      const cfg = await api.providers.getConfig();
       setConfig(cfg);
     })();
-  }, []);
+  }, [api]);
 
   const handleToggleProvider = (provider: string) => {
     setExpandedProvider((prev) => (prev === provider ? null : provider));
@@ -90,10 +93,8 @@ export function ProvidersSection() {
     setEditingField({ provider, field });
     // For secrets, start empty since we only show masked value
     // For text fields, show current value
-    const currentValue = (config[provider] as Record<string, unknown> | undefined)?.[field];
-    setEditValue(
-      fieldConfig.type === "text" && typeof currentValue === "string" ? currentValue : ""
-    );
+    const currentValue = getFieldValue(provider, field);
+    setEditValue(fieldConfig.type === "text" && currentValue ? currentValue : "");
   };
 
   const handleCancelEdit = () => {
@@ -102,52 +103,46 @@ export function ProvidersSection() {
   };
 
   const handleSaveEdit = useCallback(async () => {
-    if (!editingField) return;
+    if (!editingField || !api) return;
 
     setSaving(true);
     try {
       const { provider, field } = editingField;
-      await window.api.providers.setProviderConfig(provider, [field], editValue);
+      await api.providers.setProviderConfig({ provider, keyPath: [field], value: editValue });
 
       // Refresh config
-      const cfg = await window.api.providers.getConfig();
+      const cfg = await api.providers.getConfig();
       setConfig(cfg);
       setEditingField(null);
       setEditValue("");
-
-      // Notify other components about the change
-      window.dispatchEvent(new Event("providers-config-changed"));
     } finally {
       setSaving(false);
     }
-  }, [editingField, editValue]);
+  }, [api, editingField, editValue]);
 
-  const handleClearField = useCallback(async (provider: string, field: string) => {
-    setSaving(true);
-    try {
-      await window.api.providers.setProviderConfig(provider, [field], "");
-      const cfg = await window.api.providers.getConfig();
-      setConfig(cfg);
-
-      // Notify other components about the change
-      window.dispatchEvent(new Event("providers-config-changed"));
-    } finally {
-      setSaving(false);
-    }
-  }, []);
+  const handleClearField = useCallback(
+    async (provider: string, field: string) => {
+      if (!api) return;
+      setSaving(true);
+      try {
+        await api.providers.setProviderConfig({ provider, keyPath: [field], value: "" });
+        const cfg = await api.providers.getConfig();
+        setConfig(cfg);
+      } finally {
+        setSaving(false);
+      }
+    },
+    [api]
+  );
 
   const isConfigured = (provider: string): boolean => {
     const providerConfig = config[provider];
     if (!providerConfig) return false;
 
-    // For Bedrock, check if any credential field is set
-    if (provider === "bedrock") {
-      return !!(
-        providerConfig.region ??
-        providerConfig.bearerTokenSet ??
-        providerConfig.accessKeyIdSet ??
-        providerConfig.secretAccessKeySet
-      );
+    // For Bedrock, check if any AWS credential field is set
+    if (provider === "bedrock" && providerConfig.aws) {
+      const { aws } = providerConfig;
+      return !!(aws.region ?? aws.bearerTokenSet ?? aws.accessKeyIdSet ?? aws.secretAccessKeySet);
     }
 
     // For Mux Gateway, check voucherSet
@@ -160,22 +155,42 @@ export function ProvidersSection() {
   };
 
   const getFieldValue = (provider: string, field: string): string | undefined => {
-    const providerConfig = config[provider] as Record<string, unknown> | undefined;
+    const providerConfig = config[provider];
     if (!providerConfig) return undefined;
-    const value = providerConfig[field];
+
+    // For bedrock, check aws nested object for region
+    if (provider === "bedrock" && field === "region") {
+      return providerConfig.aws?.region;
+    }
+
+    // For standard fields like baseUrl
+    const value = providerConfig[field as keyof typeof providerConfig];
     return typeof value === "string" ? value : undefined;
   };
 
   const isFieldSet = (provider: string, field: string, fieldConfig: FieldConfig): boolean => {
+    const providerConfig = config[provider];
+    if (!providerConfig) return false;
+
     if (fieldConfig.type === "secret") {
       // For apiKey, we have apiKeySet from the sanitized config
-      if (field === "apiKey") return config[provider]?.apiKeySet ?? false;
+      if (field === "apiKey") return providerConfig.apiKeySet ?? false;
       // For voucher (mux-gateway), check voucherSet
-      if (field === "voucher") return config[provider]?.voucherSet ?? false;
-      // For other secrets, check if the field exists in the raw config
-      // Since we don't expose secret values, we assume they're not set if undefined
-      const providerConfig = config[provider] as Record<string, unknown> | undefined;
-      return providerConfig?.[`${field}Set`] === true;
+      if (field === "voucher") return providerConfig.voucherSet ?? false;
+
+      // For AWS secrets, check the aws nested object
+      if (provider === "bedrock" && providerConfig.aws) {
+        const { aws } = providerConfig;
+        switch (field) {
+          case "bearerToken":
+            return aws.bearerTokenSet ?? false;
+          case "accessKeyId":
+            return aws.accessKeyIdSet ?? false;
+          case "secretAccessKey":
+            return aws.secretAccessKeySet ?? false;
+        }
+      }
+      return false;
     }
     return !!getFieldValue(provider, field);
   };

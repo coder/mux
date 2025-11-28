@@ -3,7 +3,7 @@
  */
 
 import { applyCompactionOverrides } from "./compactionOptions";
-import type { SendMessageOptions } from "@/common/types/ipc";
+import type { SendMessageOptions } from "@/common/orpc/types";
 import type { CompactionRequestData } from "@/common/types/message";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 

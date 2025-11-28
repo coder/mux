@@ -33,7 +33,8 @@
           const prefersLight = window.matchMedia
             ? window.matchMedia("(prefers-color-scheme: light)").matches
             : false;
-          const theme = parsed === "light" || parsed === "dark" ? parsed : prefersLight ? "light" : "dark";
+          const theme =
+            parsed === "light" || parsed === "dark" ? parsed : prefersLight ? "light" : "dark";
 
           document.documentElement.dataset.theme = theme;
           document.documentElement.style.colorScheme = theme;

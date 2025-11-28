@@ -1,52 +1,43 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-call */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/no-explicit-any */
-/* eslint-disable @typescript-eslint/no-unsafe-return */
-/* eslint-disable @typescript-eslint/no-empty-function */
-/* eslint-disable @typescript-eslint/unbound-method */
+import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
+import { EventEmitter } from "events";
+import { UpdaterService, type UpdateStatus } from "./updater";
 
-import { UpdaterService } from "./updater";
-import { autoUpdater } from "electron-updater";
-import type { BrowserWindow } from "electron";
-
-// Mock electron-updater
-jest.mock("electron-updater", () => {
-  const EventEmitter = require("events");
-  const mockAutoUpdater = new EventEmitter();
-  return {
-    autoUpdater: Object.assign(mockAutoUpdater, {
-      autoDownload: false,
-      autoInstallOnAppQuit: true,
-      checkForUpdates: jest.fn(),
-      downloadUpdate: jest.fn(),
-      quitAndInstall: jest.fn(),
-    }),
-  };
+// Create a mock autoUpdater that's an EventEmitter with the required methods
+const mockAutoUpdater = Object.assign(new EventEmitter(), {
+  autoDownload: false,
+  autoInstallOnAppQuit: true,
+  checkForUpdates: mock(() => Promise.resolve()),
+  downloadUpdate: mock(() => Promise.resolve()),
+  quitAndInstall: mock(() => {
+    // Mock implementation - does nothing in tests
+  }),
 });
+
+// Mock electron-updater module
+void mock.module("electron-updater", () => ({
+  autoUpdater: mockAutoUpdater,
+}));
 
 describe("UpdaterService", () => {
   let service: UpdaterService;
-  let mockWindow: jest.Mocked<BrowserWindow>;
+  let statusUpdates: UpdateStatus[];
   let originalDebugUpdater: string | undefined;
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    // Reset mocks
+    mockAutoUpdater.checkForUpdates.mockClear();
+    mockAutoUpdater.downloadUpdate.mockClear();
+    mockAutoUpdater.quitAndInstall.mockClear();
+    mockAutoUpdater.removeAllListeners();
+
     // Save and clear DEBUG_UPDATER to ensure clean test environment
     originalDebugUpdater = process.env.DEBUG_UPDATER;
     delete process.env.DEBUG_UPDATER;
     service = new UpdaterService();
 
-    // Create mock window
-    mockWindow = {
-      isDestroyed: jest.fn(() => false),
-      webContents: {
-        send: jest.fn(),
-      },
-    } as any;
-
-    service.setMainWindow(mockWindow);
+    // Capture status updates via subscriber pattern (ORPC model)
+    statusUpdates = [];
+    service.subscribe((status) => statusUpdates.push(status));
   });
 
   afterEach(() => {
@@ -59,29 +50,27 @@ describe("UpdaterService", () => {
   });
 
   describe("checkForUpdates", () => {
-    it("should set status to 'checking' immediately and notify renderer", () => {
+    it("should set status to 'checking' immediately and notify subscribers", () => {
       // Setup
-      const checkForUpdatesMock = autoUpdater.checkForUpdates as jest.Mock;
-      checkForUpdatesMock.mockReturnValue(Promise.resolve());
+      mockAutoUpdater.checkForUpdates.mockReturnValue(Promise.resolve());
 
       // Act
       service.checkForUpdates();
 
       // Assert - should immediately notify with 'checking' status
-      expect(mockWindow.webContents.send).toHaveBeenCalledWith("update:status", {
-        type: "checking",
-      });
+      expect(statusUpdates).toContainEqual({ type: "checking" });
     });
 
     it("should transition to 'up-to-date' when no update found", async () => {
       // Setup
-      const checkForUpdatesMock = autoUpdater.checkForUpdates as jest.Mock;
-      checkForUpdatesMock.mockImplementation(() => {
+      mockAutoUpdater.checkForUpdates.mockImplementation(() => {
         // Simulate electron-updater behavior: emit event, return unresolved promise
         setImmediate(() => {
-          (autoUpdater as any).emit("update-not-available");
+          mockAutoUpdater.emit("update-not-available");
         });
-        return new Promise(() => {}); // Never resolves
+        return new Promise(() => {
+          // Intentionally never resolves to simulate hanging promise
+        });
       });
 
       // Act
@@ -91,14 +80,12 @@ describe("UpdaterService", () => {
       await new Promise((resolve) => setImmediate(resolve));
 
       // Assert - should notify with 'up-to-date' status
-      const calls = (mockWindow.webContents.send as jest.Mock).mock.calls;
-      expect(calls).toContainEqual(["update:status", { type: "checking" }]);
-      expect(calls).toContainEqual(["update:status", { type: "up-to-date" }]);
+      expect(statusUpdates).toContainEqual({ type: "checking" });
+      expect(statusUpdates).toContainEqual({ type: "up-to-date" });
     });
 
     it("should transition to 'available' when update found", async () => {
       // Setup
-      const checkForUpdatesMock = autoUpdater.checkForUpdates as jest.Mock;
       const updateInfo = {
         version: "1.0.0",
         files: [],
@@ -107,11 +94,13 @@ describe("UpdaterService", () => {
         releaseDate: "2025-01-01",
       };
 
-      checkForUpdatesMock.mockImplementation(() => {
+      mockAutoUpdater.checkForUpdates.mockImplementation(() => {
         setImmediate(() => {
-          (autoUpdater as any).emit("update-available", updateInfo);
+          mockAutoUpdater.emit("update-available", updateInfo);
         });
-        return new Promise(() => {}); // Never resolves
+        return new Promise(() => {
+          // Intentionally never resolves to simulate hanging promise
+        });
       });
 
       // Act
@@ -121,17 +110,15 @@ describe("UpdaterService", () => {
       await new Promise((resolve) => setImmediate(resolve));
 
       // Assert
-      const calls = (mockWindow.webContents.send as jest.Mock).mock.calls;
-      expect(calls).toContainEqual(["update:status", { type: "checking" }]);
-      expect(calls).toContainEqual(["update:status", { type: "available", info: updateInfo }]);
+      expect(statusUpdates).toContainEqual({ type: "checking" });
+      expect(statusUpdates).toContainEqual({ type: "available", info: updateInfo });
     });
 
     it("should handle errors from checkForUpdates", async () => {
       // Setup
-      const checkForUpdatesMock = autoUpdater.checkForUpdates as jest.Mock;
       const error = new Error("Network error");
 
-      checkForUpdatesMock.mockImplementation(() => {
+      mockAutoUpdater.checkForUpdates.mockImplementation(() => {
         return Promise.reject(error);
       });
 
@@ -142,16 +129,12 @@ describe("UpdaterService", () => {
       await new Promise((resolve) => setImmediate(resolve));
 
       // Assert
-      const calls = (mockWindow.webContents.send as jest.Mock).mock.calls;
-      expect(calls).toContainEqual(["update:status", { type: "checking" }]);
+      expect(statusUpdates).toContainEqual({ type: "checking" });
 
       // Should eventually get error status
-      const errorCall = calls.find((call) => call[1].type === "error");
-      expect(errorCall).toBeDefined();
-      expect(errorCall[1]).toEqual({
-        type: "error",
-        message: "Network error",
-      });
+      const errorStatus = statusUpdates.find((s) => s.type === "error");
+      expect(errorStatus).toBeDefined();
+      expect(errorStatus).toEqual({ type: "error", message: "Network error" });
     });
 
     it("should timeout if no events fire within 30 seconds", () => {
@@ -161,33 +144,32 @@ describe("UpdaterService", () => {
       let timeoutCallback: (() => void) | null = null;
 
       // Mock setTimeout to capture the timeout callback
-      (global as any).setTimeout = ((cb: () => void, _delay: number) => {
+      const globalObj = global as { setTimeout: typeof setTimeout };
+      globalObj.setTimeout = ((cb: () => void, _delay: number) => {
         timeoutCallback = cb;
-        return 123 as any; // Return fake timer ID
-      }) as any;
+        return 123 as unknown as ReturnType<typeof setTimeout>;
+      }) as typeof setTimeout;
 
       // Setup - checkForUpdates returns promise that never resolves and emits no events
-      const checkForUpdatesMock = autoUpdater.checkForUpdates as jest.Mock;
-      checkForUpdatesMock.mockImplementation(() => {
-        return new Promise(() => {}); // Hangs forever, no events
+      mockAutoUpdater.checkForUpdates.mockImplementation(() => {
+        return new Promise(() => {
+          // Intentionally never resolves to simulate hanging promise
+        });
       });
 
       // Act
       service.checkForUpdates();
 
       // Should be in checking state
-      expect(mockWindow.webContents.send).toHaveBeenCalledWith("update:status", {
-        type: "checking",
-      });
+      expect(statusUpdates).toContainEqual({ type: "checking" });
 
       // Manually trigger the timeout callback
       expect(timeoutCallback).toBeTruthy();
       timeoutCallback!();
 
       // Should have timed out and returned to idle
-      const calls = (mockWindow.webContents.send as jest.Mock).mock.calls;
-      const lastCall = calls[calls.length - 1];
-      expect(lastCall).toEqual(["update:status", { type: "idle" }]);
+      const lastStatus = statusUpdates[statusUpdates.length - 1];
+      expect(lastStatus).toEqual({ type: "idle" });
 
       // Restore original setTimeout
       global.setTimeout = originalSetTimeout;
@@ -201,8 +183,7 @@ describe("UpdaterService", () => {
     });
 
     it("should return current status after check starts", () => {
-      const checkForUpdatesMock = autoUpdater.checkForUpdates as jest.Mock;
-      checkForUpdatesMock.mockReturnValue(Promise.resolve());
+      mockAutoUpdater.checkForUpdates.mockReturnValue(Promise.resolve());
 
       service.checkForUpdates();
 

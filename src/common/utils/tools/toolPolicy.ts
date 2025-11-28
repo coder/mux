@@ -1,20 +1,19 @@
 import type { Tool } from "ai";
+import type { z } from "zod";
+import type { ToolPolicyFilterSchema, ToolPolicySchema } from "@/common/orpc/schemas/stream";
 
 /**
  * Filter for tool policy - determines if a tool should be enabled, disabled, or required
+ * Inferred from ToolPolicyFilterSchema (single source of truth)
  */
-export interface ToolPolicyFilter {
-  /** Regex pattern to match tool names (e.g., "bash", "file_edit_.*", ".*") */
-  regex_match: string;
-  /** Action to take when pattern matches */
-  action: "enable" | "disable" | "require";
-}
+export type ToolPolicyFilter = z.infer<typeof ToolPolicyFilterSchema>;
 
 /**
  * Tool policy - array of filters applied in order
  * Default behavior is "allow" (all tools enabled) for backwards compatibility
+ * Inferred from ToolPolicySchema (single source of truth)
  */
-export type ToolPolicy = ToolPolicyFilter[];
+export type ToolPolicy = z.infer<typeof ToolPolicySchema>;
 
 /**
  * Apply tool policy to filter available tools

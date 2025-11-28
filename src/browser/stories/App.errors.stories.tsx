@@ -3,8 +3,7 @@
  */
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import type { WorkspaceChatMessage } from "@/common/types/ipc";
-import type { MuxMessage } from "@/common/types/message";
+import type { WorkspaceChatMessage, ChatMuxMessage } from "@/common/orpc/types";
 import {
   STABLE_TIMESTAMP,
   createWorkspace,
@@ -136,9 +135,10 @@ export const HiddenHistory: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
-        // Hidden message type uses special "hidden" role not in MuxMessage union
+        // Hidden message type uses special "hidden" role not in ChatMuxMessage union
         // Cast is needed since this is a display-only message type
         const hiddenIndicator = {
+          type: "message",
           id: "hidden-1",
           role: "hidden",
           parts: [],
@@ -146,9 +146,9 @@ export const HiddenHistory: AppStory = {
             historySequence: 0,
             hiddenCount: 42,
           },
-        } as unknown as MuxMessage;
+        } as unknown as ChatMuxMessage;
 
-        const messages: MuxMessage[] = [
+        const messages: ChatMuxMessage[] = [
           hiddenIndicator,
           createUserMessage("msg-1", "Can you summarize what we discussed?", {
             historySequence: 43,

@@ -2,8 +2,12 @@
  * Runtime configuration types for workspace execution environments
  */
 
+import type { z } from "zod";
+import type { RuntimeConfigSchema } from "../orpc/schemas";
+import { RuntimeModeSchema } from "../orpc/schemas";
+
 /** Runtime mode type - used in UI and runtime string parsing */
-export type RuntimeMode = "local" | "worktree" | "ssh";
+export type RuntimeMode = z.infer<typeof RuntimeModeSchema>;
 
 /** Runtime mode constants */
 export const RUNTIME_MODE = {
@@ -15,43 +19,7 @@ export const RUNTIME_MODE = {
 /** Runtime string prefix for SSH mode (e.g., "ssh hostname") */
 export const SSH_RUNTIME_PREFIX = "ssh ";
 
-/**
- * Runtime configuration union type.
- *
- * COMPATIBILITY NOTE:
- * - `type: "local"` with `srcBaseDir` = legacy worktree config (for backward compat)
- * - `type: "local"` without `srcBaseDir` = new project-dir runtime
- * - `type: "worktree"` = explicit worktree runtime (new workspaces)
- *
- * This allows two-way compatibility: users can upgrade/downgrade without breaking workspaces.
- */
-export type RuntimeConfig =
-  | {
-      type: "local";
-      /** Base directory where all workspaces are stored (legacy worktree config) */
-      srcBaseDir: string;
-    }
-  | {
-      type: "local";
-      /** No srcBaseDir = project-dir runtime (uses project path directly) */
-      srcBaseDir?: never;
-    }
-  | {
-      type: "worktree";
-      /** Base directory where all workspaces are stored (e.g., ~/.mux/src) */
-      srcBaseDir: string;
-    }
-  | {
-      type: "ssh";
-      /** SSH host (can be hostname, user@host, or SSH config alias) */
-      host: string;
-      /** Base directory on remote host where all workspaces are stored */
-      srcBaseDir: string;
-      /** Optional: Path to SSH private key (if not using ~/.ssh/config or ssh-agent) */
-      identityFile?: string;
-      /** Optional: SSH port (default: 22) */
-      port?: number;
-    };
+export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
 
 /**
  * Parse runtime string from localStorage or UI input into mode and host
@@ -81,14 +49,25 @@ export function parseRuntimeModeAndHost(runtime: string | null | undefined): {
     return { mode: RUNTIME_MODE.WORKTREE, host: "" };
   }
 
-  // Handle both "ssh" and "ssh <host>"
-  if (lowerTrimmed === RUNTIME_MODE.SSH || lowerTrimmed.startsWith(SSH_RUNTIME_PREFIX)) {
+  // Check for "ssh <host>" format first (before trying to parse as plain mode)
+  if (lowerTrimmed.startsWith(SSH_RUNTIME_PREFIX)) {
     const host = trimmed.substring(SSH_RUNTIME_PREFIX.length).trim();
     return { mode: RUNTIME_MODE.SSH, host };
   }
 
-  // Default to worktree for unrecognized strings
-  return { mode: RUNTIME_MODE.WORKTREE, host: "" };
+  // Plain "ssh" without host
+  if (lowerTrimmed === RUNTIME_MODE.SSH) {
+    return { mode: RUNTIME_MODE.SSH, host: "" };
+  }
+
+  // Try to parse as a plain mode
+  const modeResult = RuntimeModeSchema.safeParse(lowerTrimmed);
+  if (modeResult.success) {
+    return { mode: modeResult.data, host: "" };
+  }
+
+  // Default to local for unrecognized strings
+  return { mode: RUNTIME_MODE.LOCAL, host: "" };
 }
 
 /**
@@ -142,4 +121,25 @@ export function isLocalProjectRuntime(
   if (!config) return false;
   // "local" without srcBaseDir is project-dir runtime
   return config.type === "local" && !("srcBaseDir" in config && config.srcBaseDir);
+}
+
+/**
+ * Type guard to check if a runtime config has srcBaseDir (worktree-style runtimes).
+ * This narrows the type to allow safe access to srcBaseDir.
+ */
+export function hasSrcBaseDir(
+  config: RuntimeConfig | undefined
+): config is Extract<RuntimeConfig, { srcBaseDir: string }> {
+  if (!config) return false;
+  return "srcBaseDir" in config && typeof config.srcBaseDir === "string";
+}
+
+/**
+ * Helper to safely get srcBaseDir from a runtime config.
+ * Returns undefined for project-dir local configs.
+ */
+export function getSrcBaseDir(config: RuntimeConfig | undefined): string | undefined {
+  if (!config) return undefined;
+  if (hasSrcBaseDir(config)) return config.srcBaseDir;
+  return undefined;
 }

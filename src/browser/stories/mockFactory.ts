@@ -9,15 +9,17 @@
 
 import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { IPCApi, WorkspaceChatMessage } from "@/common/types/ipc";
+import type { WorkspaceChatMessage, ChatMuxMessage } from "@/common/orpc/types";
 import type { ChatStats } from "@/common/types/chatStats";
 import type {
-  MuxMessage,
   MuxTextPart,
   MuxReasoningPart,
   MuxImagePart,
   MuxToolPart,
 } from "@/common/types/message";
+
+/** Mock window.api interface - matches the shape expected by components */
+type MockWindowApi = ReturnType<typeof createMockAPI>;
 
 /** Part type for message construction */
 type MuxPart = MuxTextPart | MuxReasoningPart | MuxImagePart | MuxToolPart;
@@ -152,7 +154,7 @@ export function createUserMessage(
   id: string,
   text: string,
   opts: { historySequence: number; timestamp?: number; images?: string[] }
-): MuxMessage {
+): ChatMuxMessage {
   const parts: MuxPart[] = [{ type: "text", text }];
   if (opts.images) {
     for (const url of opts.images) {
@@ -160,6 +162,7 @@ export function createUserMessage(
     }
   }
   return {
+    type: "message",
     id,
     role: "user",
     parts,
@@ -180,7 +183,7 @@ export function createAssistantMessage(
     reasoning?: string;
     toolCalls?: MuxPart[];
   }
-): MuxMessage {
+): ChatMuxMessage {
   const parts: MuxPart[] = [];
   if (opts.reasoning) {
     parts.push({ type: "reasoning", text: opts.reasoning });
@@ -190,6 +193,7 @@ export function createAssistantMessage(
     parts.push(...opts.toolCalls);
   }
   return {
+    type: "message",
     id,
     role: "assistant",
     parts,
@@ -337,7 +341,7 @@ export interface MockAPIOptions {
   providersList?: string[];
 }
 
-export function createMockAPI(options: MockAPIOptions): IPCApi {
+export function createMockAPI(options: MockAPIOptions) {
   const {
     projects,
     workspaces,
@@ -358,7 +362,7 @@ export function createMockAPI(options: MockAPIOptions): IPCApi {
   return {
     tokenizer: {
       countTokens: () => Promise.resolve(42),
-      countTokensBatch: (_model, texts) => Promise.resolve(texts.map(() => 42)),
+      countTokensBatch: (_model: string, texts: string[]) => Promise.resolve(texts.map(() => 42)),
       calculateStats: () => Promise.resolve(mockStats),
     },
     providers: {
@@ -389,7 +393,7 @@ export function createMockAPI(options: MockAPIOptions): IPCApi {
       remove: () => Promise.resolve({ success: true }),
       fork: () => Promise.resolve({ success: false, error: "Not implemented in mock" }),
       openTerminal: () => Promise.resolve(undefined),
-      onChat: (wsId, callback) => {
+      onChat: (wsId: string, callback: (msg: WorkspaceChatMessage) => void) => {
         const handler = chatHandlers.get(wsId);
         if (handler) {
           return handler(callback);
@@ -479,9 +483,9 @@ export function createMockAPI(options: MockAPIOptions): IPCApi {
 }
 
 /** Install mock API on window */
-export function installMockAPI(api: IPCApi): void {
-  // @ts-expect-error - Assigning mock API to window for Storybook
-  window.api = api;
+export function installMockAPI(api: MockWindowApi): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
+  (window as any).api = api;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -489,7 +493,7 @@ export function installMockAPI(api: IPCApi): void {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /** Creates a chat handler that sends messages then caught-up */
-export function createStaticChatHandler(messages: MuxMessage[]): ChatHandler {
+export function createStaticChatHandler(messages: ChatMuxMessage[]): ChatHandler {
   return (callback) => {
     setTimeout(() => {
       for (const msg of messages) {
@@ -504,7 +508,7 @@ export function createStaticChatHandler(messages: MuxMessage[]): ChatHandler {
 
 /** Creates a chat handler with streaming state */
 export function createStreamingChatHandler(opts: {
-  messages: MuxMessage[];
+  messages: ChatMuxMessage[];
   streamingMessageId: string;
   model: string;
   historySequence: number;

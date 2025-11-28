@@ -18,6 +18,7 @@ import type { ChatInputAPI } from "./components/ChatInput/types";
 
 import { useStableReference, compareMaps } from "./hooks/useStableReference";
 import { CommandRegistryProvider, useCommandRegistry } from "./contexts/CommandRegistryContext";
+import { useOpenTerminal } from "./hooks/useOpenTerminal";
 import type { CommandAction } from "./contexts/CommandRegistryContext";
 import { ModeProvider } from "./contexts/ModeContext";
 import { ProviderOptionsProvider } from "./contexts/ProviderOptionsContext";
@@ -30,9 +31,11 @@ import type { ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
 import { getThinkingLevelKey } from "@/common/constants/storage";
-import type { BranchListResult } from "@/common/types/ipc";
+import type { BranchListResult } from "@/common/orpc/types";
 import { useTelemetry } from "./hooks/useTelemetry";
 import { useStartWorkspaceCreation, getFirstProjectPath } from "./hooks/useStartWorkspaceCreation";
+import { useAPI } from "@/browser/contexts/API";
+import { AuthTokenModal } from "@/browser/components/AuthTokenModal";
 
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
 import { SettingsModal } from "./components/Settings/SettingsModal";
@@ -61,6 +64,8 @@ function AppInner() {
     },
     [setTheme]
   );
+  const { api, status, error, authenticate } = useAPI();
+
   const {
     projects,
     removeProject,
@@ -142,15 +147,19 @@ function AppInner() {
       const metadata = workspaceMetadata.get(selectedWorkspace.workspaceId);
       const workspaceName = metadata?.name ?? selectedWorkspace.workspaceId;
       const title = `${workspaceName} - ${selectedWorkspace.projectName} - mux`;
-      void window.api.window.setTitle(title);
+      // Set document.title locally for browser mode, call backend for Electron
+      document.title = title;
+      void api?.window.setTitle({ title });
     } else {
       // Clear hash when no workspace selected
       if (window.location.hash) {
         window.history.replaceState(null, "", window.location.pathname);
       }
-      void window.api.window.setTitle("mux");
+      // Set document.title locally for browser mode, call backend for Electron
+      document.title = "mux";
+      void api?.window.setTitle({ title: "mux" });
     }
-  }, [selectedWorkspace, workspaceMetadata]);
+  }, [selectedWorkspace, workspaceMetadata, api]);
   // Validate selected workspace exists and has all required fields
   useEffect(() => {
     if (selectedWorkspace) {
@@ -178,9 +187,7 @@ function AppInner() {
     }
   }, [selectedWorkspace, workspaceMetadata, setSelectedWorkspace]);
 
-  const openWorkspaceInTerminal = useCallback((workspaceId: string) => {
-    void window.api.terminal.openWindow(workspaceId);
-  }, []);
+  const openWorkspaceInTerminal = useOpenTerminal();
 
   const handleRemoveProject = useCallback(
     async (path: string) => {
@@ -318,23 +325,24 @@ function AppInner() {
 
   const getBranchesForProject = useCallback(
     async (projectPath: string): Promise<BranchListResult> => {
-      const branchResult = await window.api.projects.listBranches(projectPath);
-      const sanitizedBranches = Array.isArray(branchResult?.branches)
-        ? branchResult.branches.filter((branch): branch is string => typeof branch === "string")
-        : [];
+      if (!api) {
+        return { branches: [], recommendedTrunk: "" };
+      }
+      const branchResult = await api.projects.listBranches({ projectPath });
+      const sanitizedBranches = branchResult.branches.filter(
+        (branch): branch is string => typeof branch === "string"
+      );
 
-      const recommended =
-        typeof branchResult?.recommendedTrunk === "string" &&
-        sanitizedBranches.includes(branchResult.recommendedTrunk)
-          ? branchResult.recommendedTrunk
-          : (sanitizedBranches[0] ?? "");
+      const recommended = sanitizedBranches.includes(branchResult.recommendedTrunk)
+        ? branchResult.recommendedTrunk
+        : (sanitizedBranches[0] ?? "");
 
       return {
         branches: sanitizedBranches,
         recommendedTrunk: recommended,
       };
     },
-    []
+    [api]
   );
 
   const selectWorkspaceFromPalette = useCallback(
@@ -396,6 +404,7 @@ function AppInner() {
     onToggleTheme: toggleTheme,
     onSetTheme: setThemePreference,
     onOpenSettings: openSettings,
+    api,
   };
 
   useEffect(() => {
@@ -460,11 +469,25 @@ function AppInner() {
 
   // Subscribe to menu bar "Open Settings" (macOS Cmd+, from app menu)
   useEffect(() => {
-    const unsubscribe = window.api.menu?.onOpenSettings(() => {
-      openSettings();
-    });
-    return () => unsubscribe?.();
-  }, [openSettings]);
+    if (!api) return;
+
+    const abortController = new AbortController();
+    const signal = abortController.signal;
+
+    (async () => {
+      try {
+        const iterator = await api.menu.onOpenSettings(undefined, { signal });
+        for await (const _ of iterator) {
+          if (signal.aborted) break;
+          openSettings();
+        }
+      } catch {
+        // Subscription cancelled via abort signal - expected on cleanup
+      }
+    })();
+
+    return () => abortController.abort();
+  }, [api, openSettings]);
 
   // Handle workspace fork switch event
   useEffect(() => {
@@ -515,13 +538,21 @@ function AppInner() {
 
   const handleProviderConfig = useCallback(
     async (provider: string, keyPath: string[], value: string) => {
-      const result = await window.api.providers.setProviderConfig(provider, keyPath, value);
+      if (!api) {
+        throw new Error("API not connected");
+      }
+      const result = await api.providers.setProviderConfig({ provider, keyPath, value });
       if (!result.success) {
         throw new Error(result.error);
       }
     },
-    []
+    [api]
   );
+
+  // Show auth modal if authentication is required
+  if (status === "auth_required") {
+    return <AuthTokenModal isOpen={true} onSubmit={authenticate} error={error} />;
+  }
 
   return (
     <>

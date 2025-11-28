@@ -6,8 +6,7 @@
  */
 
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { MuxMessage } from "@/common/types/message";
-import type { WorkspaceChatMessage } from "@/common/types/ipc";
+import type { WorkspaceChatMessage, ChatMuxMessage } from "@/common/orpc/types";
 import {
   SELECTED_WORKSPACE_KEY,
   EXPANDED_PROJECTS_KEY,
@@ -64,7 +63,7 @@ export interface SimpleChatSetupOptions {
   workspaceId?: string;
   workspaceName?: string;
   projectName?: string;
-  messages: MuxMessage[];
+  messages: ChatMuxMessage[];
   gitStatus?: GitStatusFixture;
   providersConfig?: Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>;
 }
@@ -109,7 +108,7 @@ export interface StreamingChatSetupOptions {
   workspaceId?: string;
   workspaceName?: string;
   projectName?: string;
-  messages: MuxMessage[];
+  messages: ChatMuxMessage[];
   streamingMessageId: string;
   model?: string;
   historySequence: number;

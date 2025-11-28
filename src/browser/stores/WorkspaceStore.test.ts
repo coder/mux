@@ -1,46 +1,39 @@
+import { describe, expect, it, beforeEach, afterEach, mock, type Mock } from "bun:test";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { WorkspaceStore } from "./WorkspaceStore";
 
-// Mock window.api
-const mockExecuteBash = jest.fn(() => ({
-  success: true,
-  data: {
-    success: false,
-    error: "executeBash is mocked in WorkspaceStore.test.ts",
-    output: "",
-    exitCode: 0,
+// Mock client
+// eslint-disable-next-line require-yield
+const mockOnChat = mock(async function* (): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+  // yield nothing by default
+  await Promise.resolve();
+});
+
+const mockClient = {
+  workspace: {
+    onChat: mockOnChat,
   },
-}));
+};
 
 const mockWindow = {
   api: {
     workspace: {
-      onChat: jest.fn((_workspaceId, _callback) => {
-        // Return unsubscribe function
+      onChat: mock((_workspaceId, _callback) => {
         return () => {
-          // Empty unsubscribe
+          // cleanup
         };
       }),
-      replaceChatHistory: jest.fn(),
-      executeBash: mockExecuteBash,
     },
   },
 };
 
 global.window = mockWindow as unknown as Window & typeof globalThis;
+global.window.dispatchEvent = mock();
 
-// Mock dispatchEvent
-global.window.dispatchEvent = jest.fn();
-
-// Helper to get IPC callback in a type-safe way
-function getOnChatCallback<T = { type: string }>(): (data: T) => void {
-  const mock = mockWindow.api.workspace.onChat as jest.Mock<
-    () => void,
-    [string, (data: T) => void]
-  >;
-  return mock.mock.calls[0][1];
-}
+// Mock queueMicrotask
+global.queueMicrotask = (fn) => fn();
 
 // Helper to create and add a workspace
 function createAndAddWorkspace(
@@ -63,13 +56,14 @@ function createAndAddWorkspace(
 
 describe("WorkspaceStore", () => {
   let store: WorkspaceStore;
-  let mockOnModelUsed: jest.Mock;
+  let mockOnModelUsed: Mock<(model: string) => void>;
 
   beforeEach(() => {
-    jest.clearAllMocks();
-    mockExecuteBash.mockClear();
-    mockOnModelUsed = jest.fn();
+    mockOnChat.mockClear();
+    mockOnModelUsed = mock(() => undefined);
     store = new WorkspaceStore(mockOnModelUsed);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+    store.setClient(mockClient as any);
   });
 
   afterEach(() => {
@@ -118,18 +112,24 @@ describe("WorkspaceStore", () => {
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
       };
 
+      // Setup mock stream
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield { type: "caught-up" };
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 10);
+        });
+      });
+
       // Add workspace
       store.addWorkspace(metadata);
 
       // Check initial recency
       const initialState = store.getWorkspaceState(workspaceId);
       expect(initialState.recencyTimestamp).toBe(new Date(createdAt).getTime());
-
-      // Get the IPC callback to simulate messages
-      const callback = getOnChatCallback();
-
-      // Simulate CAUGHT_UP message with no history (new workspace with no messages)
-      callback({ type: "caught-up" });
 
       // Wait for async processing
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -146,7 +146,7 @@ describe("WorkspaceStore", () => {
 
   describe("subscription", () => {
     it("should call listener when workspace state changes", async () => {
-      const listener = jest.fn();
+      const listener = mock(() => undefined);
       const unsubscribe = store.subscribe(listener);
 
       // Create workspace metadata
@@ -160,23 +160,29 @@ describe("WorkspaceStore", () => {
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
       };
 
+      // Setup mock stream
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        await Promise.resolve();
+        yield { type: "caught-up" };
+      });
+
       // Add workspace (should trigger IPC subscription)
       store.addWorkspace(metadata);
 
-      // Simulate a caught-up message (triggers emit)
-      const onChatCallback = getOnChatCallback();
-      onChatCallback({ type: "caught-up" });
-
-      // Wait for queueMicrotask to complete
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      // Wait for async processing
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(listener).toHaveBeenCalled();
 
       unsubscribe();
     });
 
-    it("should allow unsubscribe", () => {
-      const listener = jest.fn();
+    it("should allow unsubscribe", async () => {
+      const listener = mock(() => undefined);
       const unsubscribe = store.subscribe(listener);
 
       const metadata: FrontendWorkspaceMetadata = {
@@ -189,13 +195,22 @@ describe("WorkspaceStore", () => {
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
       };
 
+      // Setup mock stream
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        await Promise.resolve();
+        yield { type: "caught-up" };
+      });
+
+      // Unsubscribe before adding workspace (which triggers updates)
+      unsubscribe();
       store.addWorkspace(metadata);
 
-      // Unsubscribe before emitting
-      unsubscribe();
-
-      const onChatCallback = getOnChatCallback();
-      onChatCallback({ type: "caught-up" });
+      // Wait for async processing
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(listener).not.toHaveBeenCalled();
     });
@@ -216,10 +231,7 @@ describe("WorkspaceStore", () => {
       const workspaceMap = new Map([[metadata1.id, metadata1]]);
       store.syncWorkspaces(workspaceMap);
 
-      expect(mockWindow.api.workspace.onChat).toHaveBeenCalledWith(
-        "workspace-1",
-        expect.any(Function)
-      );
+      expect(mockOnChat).toHaveBeenCalledWith({ workspaceId: "workspace-1" }, expect.anything());
     });
 
     it("should remove deleted workspaces", () => {
@@ -235,14 +247,13 @@ describe("WorkspaceStore", () => {
 
       // Add workspace
       store.addWorkspace(metadata1);
-      const unsubscribeSpy = jest.fn();
-      (mockWindow.api.workspace.onChat as jest.Mock).mockReturnValue(unsubscribeSpy);
 
       // Sync with empty map (removes all workspaces)
       store.syncWorkspaces(new Map());
 
-      // Note: The unsubscribe function from the first add won't be captured
-      // since we mocked it before. In real usage, this would be called.
+      // Should verify that the controller was aborted, but since we mock the implementation
+      // we just check that the workspace was removed from internal state
+      expect(store.getAggregator("workspace-1")).toBeUndefined();
     });
   });
 
@@ -300,27 +311,30 @@ describe("WorkspaceStore", () => {
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
       };
 
+      // Setup mock stream
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield { type: "caught-up" };
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        yield {
+          type: "stream-start",
+          historySequence: 1,
+          messageId: "msg1",
+          model: "claude-opus-4",
+          workspaceId: "test-workspace",
+        };
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 10);
+        });
+      });
+
       store.addWorkspace(metadata);
 
-      const onChatCallback = getOnChatCallback<{
-        type: string;
-        messageId?: string;
-        model?: string;
-      }>();
-
-      // Mark workspace as caught-up first (required for stream events to process)
-      onChatCallback({
-        type: "caught-up",
-      });
-
-      onChatCallback({
-        type: "stream-start",
-        messageId: "msg-1",
-        model: "claude-opus-4",
-      });
-
-      // Wait for queueMicrotask to complete
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      // Wait for async processing
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(mockOnModelUsed).toHaveBeenCalledWith("claude-opus-4");
     });
@@ -353,7 +367,7 @@ describe("WorkspaceStore", () => {
     });
 
     it("syncWorkspaces() does not emit when workspaces unchanged", () => {
-      const listener = jest.fn();
+      const listener = mock(() => undefined);
       store.subscribe(listener);
 
       const metadata = new Map<string, FrontendWorkspaceMetadata>();
@@ -401,30 +415,33 @@ describe("WorkspaceStore", () => {
         createdAt: new Date().toISOString(),
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
       };
+
+      // Setup mock stream
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield { type: "caught-up" };
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        yield {
+          type: "stream-start",
+          historySequence: 1,
+          messageId: "msg1",
+          model: "claude-sonnet-4",
+          workspaceId: "test-workspace",
+        };
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 10);
+        });
+      });
+
       store.addWorkspace(metadata);
 
       const state1 = store.getWorkspaceState("test-workspace");
 
-      // Trigger change
-      const onChatCallback = getOnChatCallback<{
-        type: string;
-        messageId?: string;
-        model?: string;
-      }>();
-
-      // Mark workspace as caught-up first
-      onChatCallback({
-        type: "caught-up",
-      });
-
-      onChatCallback({
-        type: "stream-start",
-        messageId: "msg1",
-        model: "claude-sonnet-4",
-      });
-
-      // Wait for queueMicrotask to complete
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      // Wait for async processing
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       const state2 = store.getWorkspaceState("test-workspace");
       expect(state1).not.toBe(state2); // Cache should be invalidated
@@ -441,30 +458,33 @@ describe("WorkspaceStore", () => {
         createdAt: new Date().toISOString(),
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
       };
+
+      // Setup mock stream
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield { type: "caught-up" };
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        yield {
+          type: "stream-start",
+          historySequence: 1,
+          messageId: "msg1",
+          model: "claude-sonnet-4",
+          workspaceId: "test-workspace",
+        };
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 10);
+        });
+      });
+
       store.addWorkspace(metadata);
 
       const states1 = store.getAllStates();
 
-      // Trigger change
-      const onChatCallback = getOnChatCallback<{
-        type: string;
-        messageId?: string;
-        model?: string;
-      }>();
-
-      // Mark workspace as caught-up first
-      onChatCallback({
-        type: "caught-up",
-      });
-
-      onChatCallback({
-        type: "stream-start",
-        messageId: "msg1",
-        model: "claude-sonnet-4",
-      });
-
-      // Wait for queueMicrotask to complete
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      // Wait for async processing
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       const states2 = store.getAllStates();
       expect(states1).not.toBe(states2); // Cache should be invalidated
@@ -543,9 +563,7 @@ describe("WorkspaceStore", () => {
       expect(allStates.size).toBe(0);
 
       // Verify aggregator is gone
-      expect(() => store.getAggregator("test-workspace")).toThrow(
-        /Workspace test-workspace not found/
-      );
+      expect(store.getAggregator("test-workspace")).toBeUndefined();
     });
 
     it("handles concurrent workspace additions", () => {

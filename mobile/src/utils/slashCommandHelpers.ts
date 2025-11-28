@@ -1,6 +1,11 @@
 import type { MuxFrontendMetadata } from "@/common/types/message";
 import type { ParsedCommand, SlashSuggestion } from "@/browser/utils/slashCommands/types";
-import type { SendMessageOptions } from "../api/client";
+import type { InferClientInputs } from "@orpc/client";
+import type { ORPCClient } from "../orpc/client";
+
+type SendMessageOptions = NonNullable<
+  InferClientInputs<ORPCClient>["workspace"]["sendMessage"]["options"]
+>;
 
 export const MOBILE_HIDDEN_COMMANDS = new Set(["telemetry", "vim"]);
 const WORDS_PER_TOKEN = 1.3;

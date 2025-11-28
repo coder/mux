@@ -3,7 +3,8 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { StreamErrorType } from "./errors";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
-import type { ImagePart } from "./ipc";
+import type { ImagePart, MuxToolPartSchema } from "@/common/orpc/schemas";
+import type { z } from "zod";
 
 // Message to continue with after compaction
 export interface ContinueMessage {
@@ -60,15 +61,8 @@ export interface MuxMetadata {
 
 // Extended tool part type that supports interrupted tool calls (input-available state)
 // Standard AI SDK ToolUIPart only supports output-available (completed tools)
-export interface MuxToolPart {
-  type: "dynamic-tool";
-  toolCallId: string;
-  toolName: string;
-  state: "input-available" | "output-available";
-  input: unknown;
-  output?: unknown;
-  timestamp?: number; // When the tool call was emitted
-}
+// Uses discriminated union: output is required when state is "output-available", absent when "input-available"
+export type MuxToolPart = z.infer<typeof MuxToolPartSchema>;
 
 // Text part type
 export interface MuxTextPart {

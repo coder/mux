@@ -116,7 +116,11 @@
     --color-token-cached: hsl(0 0% 50%);
 
     /* Plan surfaces */
-    --surface-plan-gradient: linear-gradient(135deg, color-mix(in srgb, var(--color-plan-mode), transparent 92%) 0%, color-mix(in srgb, var(--color-plan-mode), transparent 95%) 100%);
+    --surface-plan-gradient: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--color-plan-mode), transparent 92%) 0%,
+      color-mix(in srgb, var(--color-plan-mode), transparent 95%) 100%
+    );
     --surface-plan-border: color-mix(in srgb, var(--color-plan-mode), transparent 70%);
     --surface-plan-border-subtle: color-mix(in srgb, var(--color-plan-mode), transparent 80%);
     --surface-plan-border-strong: color-mix(in srgb, var(--color-plan-mode), transparent 60%);
@@ -344,7 +348,11 @@
   --color-token-output: hsl(207 90% 40%);
   --color-token-cached: hsl(210 16% 50%);
 
-  --surface-plan-gradient: linear-gradient(135deg, color-mix(in srgb, var(--color-plan-mode), transparent 94%) 0%, color-mix(in srgb, var(--color-plan-mode), transparent 97%) 100%);
+  --surface-plan-gradient: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-plan-mode), transparent 94%) 0%,
+    color-mix(in srgb, var(--color-plan-mode), transparent 97%) 100%
+  );
   --surface-plan-border: color-mix(in srgb, var(--color-plan-mode), transparent 78%);
   --surface-plan-border-subtle: color-mix(in srgb, var(--color-plan-mode), transparent 85%);
   --surface-plan-border-strong: color-mix(in srgb, var(--color-plan-mode), transparent 70%);
@@ -895,7 +903,6 @@
   --radius: 0.5rem;
 }
 
-
 h1,
 h2,
 h3 {
@@ -1003,7 +1010,6 @@ body,
   }
 }
 
-
 /* Tailwind utility extensions for dark theme surfaces */
 @utility plan-surface {
   background: var(--surface-plan-gradient);
@@ -1022,7 +1028,10 @@ body,
   color: var(--color-plan-mode);
   background: var(--surface-plan-chip-bg);
   border: 1px solid var(--surface-plan-chip-border);
-  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+  transition:
+    background 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease;
 }
 
 @utility plan-chip-hover {
@@ -1039,7 +1048,10 @@ body,
   color: var(--color-muted);
   background: transparent;
   border: 1px solid var(--surface-plan-neutral-border);
-  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+  transition:
+    background 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease;
 }
 
 @utility plan-chip-ghost-hover {
@@ -1052,14 +1064,15 @@ body,
   background: var(--surface-assistant-chip-bg);
   border: 1px solid var(--surface-assistant-chip-border);
   color: var(--color-foreground);
-  transition: background 150ms ease, border-color 150ms ease;
+  transition:
+    background 150ms ease,
+    border-color 150ms ease;
 }
 
 @utility assistant-chip-hover {
   background: var(--surface-assistant-chip-hover);
   border-color: var(--surface-assistant-chip-border-strong);
 }
-
 
 @utility edit-cutoff-divider {
   border-bottom: 3px solid;
@@ -1706,11 +1719,13 @@ input[type="checkbox"] {
 }
 
 @keyframes tutorial-pulse {
-  0%, 100% {
+  0%,
+  100% {
     box-shadow: 0 0 0 2px var(--color-accent);
   }
   50% {
-    box-shadow: 0 0 0 3px var(--color-accent), 0 0 12px var(--color-accent);
+    box-shadow:
+      0 0 0 3px var(--color-accent),
+      0 0 12px var(--color-accent);
   }
 }
-

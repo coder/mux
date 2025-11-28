@@ -8,7 +8,7 @@ import MuxIcon from "@/browser/assets/icons/mux.svg?react";
 import { PROVIDER_DISPLAY_NAMES, type ProviderName } from "@/common/constants/providers";
 import { cn } from "@/common/lib/utils";
 
-const PROVIDER_ICONS: Partial<Record<ProviderName | "mux-gateway", React.FC>> = {
+const PROVIDER_ICONS: Partial<Record<ProviderName, React.FC>> = {
   anthropic: AnthropicIcon,
   openai: OpenAIIcon,
   google: GoogleIcon,

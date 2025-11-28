@@ -23,7 +23,7 @@ export interface BaseTelemetryProperties {
   /** Application version */
   version: string;
   /** Operating system platform (darwin, win32, linux) */
-  platform: string;
+  platform: NodeJS.Platform | "unknown";
   /** Electron version */
   electronVersion: string;
 }

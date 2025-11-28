@@ -5,6 +5,7 @@ import { SUPPORTED_PROVIDERS, PROVIDER_DISPLAY_NAMES } from "@/common/constants/
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { useModelLRU } from "@/browser/hooks/useModelLRU";
 import { ModelRow } from "./ModelRow";
+import { useAPI } from "@/browser/contexts/API";
 
 interface NewModelForm {
   provider: string;
@@ -18,6 +19,7 @@ interface EditingState {
 }
 
 export function ModelsSection() {
+  const { api } = useAPI();
   const [config, setConfig] = useState<ProvidersConfigMap | null>(null);
   const [newModel, setNewModel] = useState<NewModelForm>({ provider: "", modelId: "" });
   const [saving, setSaving] = useState(false);
@@ -27,11 +29,12 @@ export function ModelsSection() {
 
   // Load config on mount
   useEffect(() => {
+    if (!api) return;
     void (async () => {
-      const cfg = await window.api.providers.getConfig();
-      setConfig(cfg);
+      const cfg = await api.providers.getConfig();
+      setConfig(cfg ?? null);
     })();
-  }, []);
+  }, [api]);
 
   // Check if a model already exists (for duplicate prevention)
   const modelExists = useCallback(
@@ -54,47 +57,42 @@ export function ModelsSection() {
       return;
     }
 
+    if (!api) return;
     setError(null);
     setSaving(true);
     try {
       const currentModels = config[newModel.provider]?.models ?? [];
       const updatedModels = [...currentModels, trimmedModelId];
 
-      await window.api.providers.setModels(newModel.provider, updatedModels);
+      await api.providers.setModels({ provider: newModel.provider, models: updatedModels });
 
       // Refresh config
-      const cfg = await window.api.providers.getConfig();
-      setConfig(cfg);
+      const cfg = await api.providers.getConfig();
+      setConfig(cfg ?? null);
       setNewModel({ provider: "", modelId: "" });
-
-      // Notify other components about the change
-      window.dispatchEvent(new Event("providers-config-changed"));
     } finally {
       setSaving(false);
     }
-  }, [newModel, config, modelExists]);
+  }, [api, newModel, config, modelExists]);
 
   const handleRemoveModel = useCallback(
     async (provider: string, modelId: string) => {
-      if (!config) return;
+      if (!config || !api) return;
       setSaving(true);
       try {
         const currentModels = config[provider]?.models ?? [];
         const updatedModels = currentModels.filter((m) => m !== modelId);
 
-        await window.api.providers.setModels(provider, updatedModels);
+        await api.providers.setModels({ provider, models: updatedModels });
 
         // Refresh config
-        const cfg = await window.api.providers.getConfig();
-        setConfig(cfg);
-
-        // Notify other components about the change
-        window.dispatchEvent(new Event("providers-config-changed"));
+        const cfg = await api.providers.getConfig();
+        setConfig(cfg ?? null);
       } finally {
         setSaving(false);
       }
     },
-    [config]
+    [api, config]
   );
 
   const handleStartEdit = useCallback((provider: string, modelId: string) => {
@@ -108,7 +106,7 @@ export function ModelsSection() {
   }, []);
 
   const handleSaveEdit = useCallback(async () => {
-    if (!config || !editing) return;
+    if (!config || !editing || !api) return;
 
     const trimmedModelId = editing.newModelId.trim();
     if (!trimmedModelId) {
@@ -132,19 +130,16 @@ export function ModelsSection() {
         m === editing.originalModelId ? trimmedModelId : m
       );
 
-      await window.api.providers.setModels(editing.provider, updatedModels);
+      await api.providers.setModels({ provider: editing.provider, models: updatedModels });
 
       // Refresh config
-      const cfg = await window.api.providers.getConfig();
-      setConfig(cfg);
+      const cfg = await api.providers.getConfig();
+      setConfig(cfg ?? null);
       setEditing(null);
-
-      // Notify other components about the change
-      window.dispatchEvent(new Event("providers-config-changed"));
     } finally {
       setSaving(false);
     }
-  }, [editing, config, modelExists]);
+  }, [api, editing, config, modelExists]);
 
   // Show loading state while config is being fetched
   if (config === null) {

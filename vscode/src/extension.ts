@@ -80,9 +80,7 @@ async function openWorkspaceCommand() {
 
     // User can't easily open mux from VS Code, so just inform them
     if (selection === "Open mux") {
-      vscode.window.showInformationMessage(
-        "Please open the mux application to create workspaces."
-      );
+      vscode.window.showInformationMessage("Please open the mux application to create workspaces.");
     }
     return;
   }

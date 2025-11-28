@@ -24,8 +24,10 @@ import { VIM_ENABLED_KEY } from "@/common/constants/storage";
  * - src/utils/vim.test.ts (integration tests)
  */
 
-export interface VimTextAreaProps
-  extends Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "value"> {
+export interface VimTextAreaProps extends Omit<
+  React.TextareaHTMLAttributes<HTMLTextAreaElement>,
+  "onChange" | "value"
+> {
   value: string;
   onChange: (next: string) => void;
   mode: UIMode; // for styling (plan/exec focus color)

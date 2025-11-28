@@ -58,8 +58,7 @@ test.describe("slash command flows", () => {
     await expect(transcript).toContainText("Mock README content");
     await expect(transcript).toContainText("hello");
 
-    await ui.chat.sendMessage("/truncate 50");
-    await ui.chat.expectStatusMessageContains("Chat history truncated by 50%");
+    await ui.chat.sendCommandAndExpectStatus("/truncate 50", "Chat history truncated by 50%");
 
     await expect(transcript).not.toContainText("Mock README content");
     await expect(transcript).toContainText("hello");
@@ -95,7 +94,7 @@ test.describe("slash command flows", () => {
     const transcript = page.getByRole("log", { name: "Conversation transcript" });
     await ui.chat.expectTranscriptContains(COMPACT_SUMMARY_TEXT);
     await expect(transcript).toContainText(COMPACT_SUMMARY_TEXT);
-    await expect(transcript.getByText("📦 compacted")).toBeVisible();
+    // Note: The old "📦 compacted" label was removed - compaction now shows only summary text
     await expect(transcript).not.toContainText("Mock README content");
     await expect(transcript).not.toContainText("Directory listing:");
   });

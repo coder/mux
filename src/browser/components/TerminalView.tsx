@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState } from "react";
 import { Terminal, FitAddon } from "ghostty-web";
 import { useTerminalSession } from "@/browser/hooks/useTerminalSession";
+import { useAPI } from "@/browser/contexts/API";
 
 interface TerminalViewProps {
   workspaceId: string;
@@ -32,6 +33,26 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
     }
   };
 
+  const { api } = useAPI();
+
+  // Set window title
+  useEffect(() => {
+    if (!api) return;
+    const setWindowDetails = async () => {
+      try {
+        const workspaces = await api.workspace.list();
+        const workspace = workspaces.find((ws) => ws.id === workspaceId);
+        if (workspace) {
+          document.title = `Terminal — ${workspace.projectName}/${workspace.name}`;
+        } else {
+          document.title = `Terminal — ${workspaceId}`;
+        }
+      } catch {
+        document.title = `Terminal — ${workspaceId}`;
+      }
+    };
+    void setWindowDetails();
+  }, [api, workspaceId]);
   const {
     sendInput,
     resize,

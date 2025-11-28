@@ -413,6 +413,32 @@ export class Config {
   }
 
   /**
+   * Remove a workspace from config.json
+   *
+   * @param workspaceId ID of the workspace to remove
+   */
+  async removeWorkspace(workspaceId: string): Promise<void> {
+    await this.editConfig((config) => {
+      let workspaceFound = false;
+
+      for (const [_projectPath, project] of config.projects) {
+        const index = project.workspaces.findIndex((w) => w.id === workspaceId);
+        if (index !== -1) {
+          project.workspaces.splice(index, 1);
+          workspaceFound = true;
+          // We don't break here in case duplicates exist (though they shouldn't)
+        }
+      }
+
+      if (!workspaceFound) {
+        console.warn(`Workspace ${workspaceId} not found in config during removal`);
+      }
+
+      return config;
+    });
+  }
+
+  /**
    * Update workspace metadata fields (e.g., regenerate missing title/branch)
    * Used to fix incomplete metadata after errors or restarts
    */

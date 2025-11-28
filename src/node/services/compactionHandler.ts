@@ -1,7 +1,7 @@
 import type { EventEmitter } from "events";
 import type { HistoryService } from "./historyService";
 import type { StreamEndEvent } from "@/common/types/stream";
-import type { WorkspaceChatMessage, DeleteMessage } from "@/common/types/ipc";
+import type { WorkspaceChatMessage, DeleteMessage } from "@/common/orpc/types";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
@@ -150,8 +150,8 @@ export class CompactionHandler {
       this.emitChatEvent(deleteMessage);
     }
 
-    // Emit summary message to frontend
-    this.emitChatEvent(summaryMessage);
+    // Emit summary message to frontend (add type: "message" for discriminated union)
+    this.emitChatEvent({ ...summaryMessage, type: "message" });
 
     return Ok(undefined);
   }

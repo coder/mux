@@ -1,8 +1,8 @@
 import React, { useState, useCallback } from "react";
 import { Modal, ModalActions, CancelButton, PrimaryButton } from "./Modal";
 import { DirectoryPickerModal } from "./DirectoryPickerModal";
-import type { IPCApi } from "@/common/types/ipc";
 import type { ProjectConfig } from "@/node/config";
+import { useAPI } from "@/browser/contexts/API";
 
 interface ProjectCreateModalProps {
   isOpen: boolean;
@@ -21,13 +21,13 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
   onClose,
   onSuccess,
 }) => {
+  const { api } = useAPI();
   const [path, setPath] = useState("");
   const [error, setError] = useState("");
-  // Detect desktop environment where native directory picker is available
-  const isDesktop =
-    window.api.platform !== "browser" && typeof window.api.projects.pickDirectory === "function";
-  const api = window.api as unknown as IPCApi;
-  const hasWebFsPicker = window.api.platform === "browser" && !!api.fs?.listDirectory;
+  // In Electron mode, window.api exists (set by preload) and has native directory picker via ORPC
+  // In browser mode, window.api doesn't exist and we use web-based DirectoryPickerModal
+  const isDesktop = !!window.api;
+  const hasWebFsPicker = !isDesktop;
   const [isCreating, setIsCreating] = useState(false);
   const [isDirPickerOpen, setIsDirPickerOpen] = useState(false);
 
@@ -44,7 +44,7 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
 
   const handleBrowse = useCallback(async () => {
     try {
-      const selectedPath = await window.api.projects.pickDirectory();
+      const selectedPath = await api?.projects.pickDirectory();
       if (selectedPath) {
         setPath(selectedPath);
         setError("");
@@ -52,7 +52,7 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
     } catch (err) {
       console.error("Failed to pick directory:", err);
     }
-  }, []);
+  }, [api]);
 
   const handleSelect = useCallback(async () => {
     const trimmedPath = path.trim();
@@ -62,22 +62,23 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
     }
 
     setError("");
+    if (!api) {
+      setError("Not connected to server");
+      return;
+    }
     setIsCreating(true);
 
     try {
       // First check if project already exists
-      const existingProjects = await window.api.projects.list();
+      const existingProjects = await api.projects.list();
       const existingPaths = new Map(existingProjects);
 
       // Try to create the project
-      const result = await window.api.projects.create(trimmedPath);
+      const result = await api.projects.create({ projectPath: trimmedPath });
 
       if (result.success) {
         // Check if duplicate (backend may normalize the path)
-        const { normalizedPath, projectConfig } = result.data as {
-          normalizedPath: string;
-          projectConfig: ProjectConfig;
-        };
+        const { normalizedPath, projectConfig } = result.data;
         if (existingPaths.has(normalizedPath)) {
           setError("This project has already been added.");
           return;
@@ -101,7 +102,7 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
     } finally {
       setIsCreating(false);
     }
-  }, [path, onSuccess, onClose]);
+  }, [path, onSuccess, onClose, api]);
 
   const handleBrowseClick = useCallback(() => {
     if (isDesktop) {

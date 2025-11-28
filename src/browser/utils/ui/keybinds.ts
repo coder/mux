@@ -50,6 +50,11 @@ export function matchesKeybind(
   event: React.KeyboardEvent | KeyboardEvent,
   keybind: Keybind
 ): boolean {
+  // Guard against undefined event.key (can happen with dead keys, modifier-only events, etc.)
+  if (!event.key) {
+    return false;
+  }
+
   // Check key match (case-insensitive for letters)
   if (event.key.toLowerCase() !== keybind.key.toLowerCase()) {
     return false;

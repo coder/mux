@@ -16,6 +16,7 @@ import {
   migrateWorkspaceStorage,
   SELECTED_WORKSPACE_KEY,
 } from "@/common/constants/storage";
+import { useAPI } from "@/browser/contexts/API";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
@@ -84,6 +85,7 @@ interface WorkspaceProviderProps {
 }
 
 export function WorkspaceProvider(props: WorkspaceProviderProps) {
+  const { api } = useAPI();
   // Get project refresh function from ProjectContext
   const { refreshProjects } = useProjectContext();
 
@@ -116,8 +118,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   );
 
   const loadWorkspaceMetadata = useCallback(async () => {
+    if (!api) return;
     try {
-      const metadataList = await window.api.workspace.list();
+      const metadataList = await api.workspace.list(undefined);
       const metadataMap = new Map<string, FrontendWorkspaceMetadata>();
       for (const metadata of metadataList) {
         ensureCreatedAt(metadata);
@@ -129,7 +132,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       console.error("Failed to load workspace metadata:", error);
       setWorkspaceMetadata(new Map());
     }
-  }, [setWorkspaceMetadata]);
+  }, [setWorkspaceMetadata, api]);
 
   // Load metadata once on mount
   useEffect(() => {
@@ -163,6 +166,25 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           namedWorkspacePath: metadata.namedWorkspacePath,
         });
       }
+    } else if (hash.length > 1) {
+      // Try to interpret hash as project path (for direct deep linking)
+      // e.g. #/Users/me/project or #/launch-project
+      const projectPath = decodeURIComponent(hash.substring(1));
+
+      // Find first workspace with this project path
+      const projectWorkspaces = Array.from(workspaceMetadata.values()).filter(
+        (meta) => meta.projectPath === projectPath
+      );
+
+      if (projectWorkspaces.length > 0) {
+        const metadata = projectWorkspaces[0];
+        setSelectedWorkspace({
+          workspaceId: metadata.id,
+          projectPath: metadata.projectPath,
+          projectName: metadata.projectName,
+          namedWorkspacePath: metadata.namedWorkspacePath,
+        });
+      }
     }
     // Only run once when loading finishes
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -171,32 +193,36 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   // Check for launch project from server (for --add-project flag)
   // This only applies in server mode, runs after metadata loads
   useEffect(() => {
-    if (loading) return;
+    if (loading || !api) return;
 
     // Skip if we already have a selected workspace (from localStorage or URL hash)
     if (selectedWorkspace) return;
 
     const checkLaunchProject = async () => {
-      // Only available in server mode
-      if (!window.api.server?.getLaunchProject) return;
+      // Only available in server mode (checked via platform/capabilities in future)
+      // For now, try the call - it will return null if not applicable
+      try {
+        const launchProjectPath = await api.server.getLaunchProject(undefined);
+        if (!launchProjectPath) return;
 
-      const launchProjectPath = await window.api.server.getLaunchProject();
-      if (!launchProjectPath) return;
+        // Find first workspace in this project
+        const projectWorkspaces = Array.from(workspaceMetadata.values()).filter(
+          (meta) => meta.projectPath === launchProjectPath
+        );
 
-      // Find first workspace in this project
-      const projectWorkspaces = Array.from(workspaceMetadata.values()).filter(
-        (meta) => meta.projectPath === launchProjectPath
-      );
-
-      if (projectWorkspaces.length > 0) {
-        // Select the first workspace in the project
-        const metadata = projectWorkspaces[0];
-        setSelectedWorkspace({
-          workspaceId: metadata.id,
-          projectPath: metadata.projectPath,
-          projectName: metadata.projectName,
-          namedWorkspacePath: metadata.namedWorkspacePath,
-        });
+        if (projectWorkspaces.length > 0) {
+          // Select the first workspace in the project
+          const metadata = projectWorkspaces[0];
+          setSelectedWorkspace({
+            workspaceId: metadata.id,
+            projectPath: metadata.projectPath,
+            projectName: metadata.projectName,
+            namedWorkspacePath: metadata.namedWorkspacePath,
+          });
+        }
+      } catch (error) {
+        // Ignore errors (e.g. method not found if running against old backend)
+        console.debug("Failed to check launch project:", error);
       }
       // If no workspaces exist yet, just leave the project in the sidebar
       // The user will need to create a workspace
@@ -209,39 +235,54 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
   // Subscribe to metadata updates (for create/rename/delete operations)
   useEffect(() => {
-    const unsubscribe = window.api.workspace.onMetadata(
-      (event: { workspaceId: string; metadata: FrontendWorkspaceMetadata | null }) => {
-        setWorkspaceMetadata((prev) => {
-          const updated = new Map(prev);
-          const isNewWorkspace = !prev.has(event.workspaceId) && event.metadata !== null;
-          const existingMeta = prev.get(event.workspaceId);
-          const wasCreating = existingMeta?.status === "creating";
-          const isNowReady = event.metadata !== null && event.metadata.status !== "creating";
+    if (!api) return;
+    const controller = new AbortController();
+    const { signal } = controller;
 
-          if (event.metadata === null) {
-            // Workspace deleted - remove from map
-            updated.delete(event.workspaceId);
-          } else {
-            ensureCreatedAt(event.metadata);
-            updated.set(event.workspaceId, event.metadata);
-          }
+    (async () => {
+      try {
+        const iterator = await api.workspace.onMetadata(undefined, { signal });
 
-          // Reload projects when:
-          // 1. New workspace appears (e.g., from fork)
-          // 2. Workspace transitions from "creating" to ready (now saved to config)
-          if (isNewWorkspace || (wasCreating && isNowReady)) {
-            void refreshProjects();
-          }
+        for await (const event of iterator) {
+          if (signal.aborted) break;
 
-          return updated;
-        });
+          setWorkspaceMetadata((prev) => {
+            const updated = new Map(prev);
+            const isNewWorkspace = !prev.has(event.workspaceId) && event.metadata !== null;
+            // Detect transition from "creating" to ready for pending workspace state
+            const existingMeta = prev.get(event.workspaceId);
+            const wasCreating = existingMeta?.status === "creating";
+            const isNowReady = event.metadata !== null && event.metadata.status !== "creating";
+
+            if (event.metadata === null) {
+              // Workspace deleted - remove from map
+              updated.delete(event.workspaceId);
+            } else {
+              ensureCreatedAt(event.metadata);
+              updated.set(event.workspaceId, event.metadata);
+            }
+
+            // Reload projects when:
+            // 1. New workspace appears (e.g., from fork)
+            // 2. Workspace transitions from "creating" to ready (now saved to config)
+            if (isNewWorkspace || (wasCreating && isNowReady)) {
+              void refreshProjects();
+            }
+
+            return updated;
+          });
+        }
+      } catch (err) {
+        if (!signal.aborted) {
+          console.error("Failed to subscribe to metadata:", err);
+        }
       }
-    );
+    })();
 
     return () => {
-      unsubscribe();
+      controller.abort();
     };
-  }, [refreshProjects, setWorkspaceMetadata]);
+  }, [refreshProjects, setWorkspaceMetadata, api]);
 
   const createWorkspace = useCallback(
     async (
@@ -250,16 +291,17 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       trunkBranch: string,
       runtimeConfig?: RuntimeConfig
     ) => {
+      if (!api) throw new Error("API not connected");
       console.assert(
         typeof trunkBranch === "string" && trunkBranch.trim().length > 0,
         "Expected trunk branch to be provided when creating a workspace"
       );
-      const result = await window.api.workspace.create(
+      const result = await api.workspace.create({
         projectPath,
         branchName,
         trunkBranch,
-        runtimeConfig
-      );
+        runtimeConfig,
+      });
       if (result.success) {
         // Backend has already updated the config - reload projects to get updated state
         await refreshProjects();
@@ -283,9 +325,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         throw new Error(result.error);
       }
     },
-    // refreshProjects is stable from context, doesn't need to be in deps
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [loadWorkspaceMetadata]
+    [api, refreshProjects, setWorkspaceMetadata]
   );
 
   const removeWorkspace = useCallback(
@@ -293,8 +333,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       workspaceId: string,
       options?: { force?: boolean }
     ): Promise<{ success: boolean; error?: string }> => {
+      if (!api) return { success: false, error: "API not connected" };
       try {
-        const result = await window.api.workspace.remove(workspaceId, options);
+        const result = await api.workspace.remove({ workspaceId, options });
         if (result.success) {
           // Clean up workspace-specific localStorage keys
           deleteWorkspaceStorage(workspaceId);
@@ -320,13 +361,14 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         return { success: false, error: errorMessage };
       }
     },
-    [loadWorkspaceMetadata, refreshProjects, selectedWorkspace, setSelectedWorkspace]
+    [loadWorkspaceMetadata, refreshProjects, selectedWorkspace, setSelectedWorkspace, api]
   );
 
   const renameWorkspace = useCallback(
     async (workspaceId: string, newName: string): Promise<{ success: boolean; error?: string }> => {
+      if (!api) return { success: false, error: "API not connected" };
       try {
-        const result = await window.api.workspace.rename(workspaceId, newName);
+        const result = await api.workspace.rename({ workspaceId, newName });
         if (result.success) {
           const newWorkspaceId = result.data.newWorkspaceId;
 
@@ -342,7 +384,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           // Update selected workspace if it was renamed
           if (selectedWorkspace?.workspaceId === workspaceId) {
             // Get updated workspace metadata from backend
-            const newMetadata = await window.api.workspace.getInfo(newWorkspaceId);
+            const newMetadata = await api.workspace.getInfo({ workspaceId: newWorkspaceId });
             if (newMetadata) {
               ensureCreatedAt(newMetadata);
               setSelectedWorkspace({
@@ -364,20 +406,24 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         return { success: false, error: errorMessage };
       }
     },
-    [loadWorkspaceMetadata, refreshProjects, selectedWorkspace, setSelectedWorkspace]
+    [loadWorkspaceMetadata, refreshProjects, selectedWorkspace, setSelectedWorkspace, api]
   );
 
   const refreshWorkspaceMetadata = useCallback(async () => {
     await loadWorkspaceMetadata();
   }, [loadWorkspaceMetadata]);
 
-  const getWorkspaceInfo = useCallback(async (workspaceId: string) => {
-    const metadata = await window.api.workspace.getInfo(workspaceId);
-    if (metadata) {
-      ensureCreatedAt(metadata);
-    }
-    return metadata;
-  }, []);
+  const getWorkspaceInfo = useCallback(
+    async (workspaceId: string) => {
+      if (!api) return null;
+      const metadata = await api.workspace.getInfo({ workspaceId });
+      if (metadata) {
+        ensureCreatedAt(metadata);
+      }
+      return metadata;
+    },
+    [api]
+  );
 
   const beginWorkspaceCreation = useCallback(
     (projectPath: string) => {

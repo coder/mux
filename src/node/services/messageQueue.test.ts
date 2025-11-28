@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { MessageQueue } from "./messageQueue";
 import type { MuxFrontendMetadata } from "@/common/types/message";
-import type { SendMessageOptions } from "@/common/types/ipc";
+import type { SendMessageOptions } from "@/common/orpc/types";
 
 describe("MessageQueue", () => {
   let queue: MessageQueue;
@@ -118,9 +118,18 @@ describe("MessageQueue", () => {
 
   describe("getImageParts", () => {
     it("should return accumulated images from multiple messages", () => {
-      const image1 = { url: "data:image/png;base64,abc", mediaType: "image/png" };
-      const image2 = { url: "data:image/jpeg;base64,def", mediaType: "image/jpeg" };
-      const image3 = { url: "data:image/gif;base64,ghi", mediaType: "image/gif" };
+      const image1 = {
+        url: "data:image/png;base64,abc",
+        mediaType: "image/png",
+      };
+      const image2 = {
+        url: "data:image/jpeg;base64,def",
+        mediaType: "image/jpeg",
+      };
+      const image3 = {
+        url: "data:image/gif;base64,ghi",
+        mediaType: "image/gif",
+      };
 
       queue.add("First message", { model: "gpt-4", imageParts: [image1] });
       queue.add("Second message", { model: "gpt-4", imageParts: [image2, image3] });
@@ -135,7 +144,11 @@ describe("MessageQueue", () => {
     });
 
     it("should return copy of images array", () => {
-      const image = { url: "data:image/png;base64,abc", mediaType: "image/png" };
+      const image = {
+        type: "file" as const,
+        url: "data:image/png;base64,abc",
+        mediaType: "image/png",
+      };
       queue.add("Message", { model: "gpt-4", imageParts: [image] });
 
       const images1 = queue.getImageParts();
@@ -146,7 +159,10 @@ describe("MessageQueue", () => {
     });
 
     it("should clear images when queue is cleared", () => {
-      const image = { url: "data:image/png;base64,abc", mediaType: "image/png" };
+      const image = {
+        url: "data:image/png;base64,abc",
+        mediaType: "image/png",
+      };
       queue.add("Message", { model: "gpt-4", imageParts: [image] });
 
       expect(queue.getImageParts()).toHaveLength(1);

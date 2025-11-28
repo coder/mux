@@ -1,43 +1,47 @@
 import { createChatEventProcessor } from "./ChatEventProcessor";
-import type { WorkspaceChatMessage } from "@/common/types/ipc";
 
 describe("ChatEventProcessor - Reasoning Delta", () => {
   it("should merge consecutive reasoning deltas into a single part", () => {
     const processor = createChatEventProcessor();
+    const workspaceId = "ws-1";
     const messageId = "msg-1";
 
     // Start stream
     processor.handleEvent({
       type: "stream-start",
-      workspaceId: "ws-1",
+      workspaceId,
       messageId,
-      role: "assistant",
       model: "gpt-4",
-      timestamp: 1000,
       historySequence: 1,
-    } as WorkspaceChatMessage);
+    });
 
     // Send reasoning deltas
     processor.handleEvent({
       type: "reasoning-delta",
+      workspaceId,
       messageId,
       delta: "Thinking",
+      tokens: 1,
       timestamp: 1001,
-    } as WorkspaceChatMessage);
+    });
 
     processor.handleEvent({
       type: "reasoning-delta",
+      workspaceId,
       messageId,
       delta: " about",
+      tokens: 1,
       timestamp: 1002,
-    } as WorkspaceChatMessage);
+    });
 
     processor.handleEvent({
       type: "reasoning-delta",
+      workspaceId,
       messageId,
       delta: " this...",
+      tokens: 1,
       timestamp: 1003,
-    } as WorkspaceChatMessage);
+    });
 
     const messages = processor.getMessages();
     expect(messages).toHaveLength(1);
@@ -55,42 +59,47 @@ describe("ChatEventProcessor - Reasoning Delta", () => {
 
   it("should separate reasoning parts if interrupted by other content (though unlikely in practice)", () => {
     const processor = createChatEventProcessor();
+    const workspaceId = "ws-1";
     const messageId = "msg-1";
 
     // Start stream
     processor.handleEvent({
       type: "stream-start",
-      workspaceId: "ws-1",
+      workspaceId,
       messageId,
-      role: "assistant",
       model: "gpt-4",
-      timestamp: 1000,
       historySequence: 1,
-    } as WorkspaceChatMessage);
+    });
 
     // Reasoning 1
     processor.handleEvent({
       type: "reasoning-delta",
+      workspaceId,
       messageId,
       delta: "Part 1",
+      tokens: 1,
       timestamp: 1001,
-    } as WorkspaceChatMessage);
+    });
 
     // Text delta (interruption - although usually reasoning comes before text)
     processor.handleEvent({
       type: "stream-delta",
+      workspaceId,
       messageId,
       delta: "Some text",
+      tokens: 2,
       timestamp: 1002,
-    } as WorkspaceChatMessage);
+    });
 
     // Reasoning 2
     processor.handleEvent({
       type: "reasoning-delta",
+      workspaceId,
       messageId,
       delta: "Part 2",
+      tokens: 1,
       timestamp: 1003,
-    } as WorkspaceChatMessage);
+    });
 
     const messages = processor.getMessages();
     const parts = messages[0].parts;
