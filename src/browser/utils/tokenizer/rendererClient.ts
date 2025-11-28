@@ -1,4 +1,4 @@
-import type { ORPCClient } from "@/browser/orpc/react";
+import type { IPCApi } from "@/common/types/ipc";
 
 const MAX_CACHE_ENTRIES = 256;
 
@@ -11,6 +11,14 @@ interface CacheEntry {
 
 const tokenCache = new Map<CacheKey, CacheEntry>();
 const keyOrder: CacheKey[] = [];
+
+function getTokenizerApi(): IPCApi["tokenizer"] | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const api = window.api;
+  return api?.tokenizer ?? null;
+}
 
 function makeKey(model: string, text: string): CacheKey {
   return `${model}::${text}`;
@@ -25,11 +33,7 @@ function pruneCache(): void {
   }
 }
 
-export function getTokenCountPromise(
-  client: ORPCClient,
-  model: string,
-  text: string
-): Promise<number> {
+export function getTokenCountPromise(model: string, text: string): Promise<number> {
   const trimmedModel = model?.trim();
   if (!trimmedModel || text.length === 0) {
     return Promise.resolve(0);
@@ -41,8 +45,13 @@ export function getTokenCountPromise(
     return cached.value !== null ? Promise.resolve(cached.value) : cached.promise;
   }
 
-  const promise = client.tokenizer
-    .countTokens({ model: trimmedModel, text })
+  const tokenizer = getTokenizerApi();
+  if (!tokenizer) {
+    return Promise.resolve(0);
+  }
+
+  const promise = tokenizer
+    .countTokens(trimmedModel, text)
     .then((tokens) => {
       const entry = tokenCache.get(key);
       if (entry) {
@@ -62,17 +71,18 @@ export function getTokenCountPromise(
   return promise;
 }
 
-export async function countTokensBatchRenderer(
-  client: ORPCClient,
-  model: string,
-  texts: string[]
-): Promise<number[]> {
+export async function countTokensBatchRenderer(model: string, texts: string[]): Promise<number[]> {
   if (!Array.isArray(texts) || texts.length === 0) {
     return [];
   }
 
   const trimmedModel = model?.trim();
   if (!trimmedModel) {
+    return texts.map(() => 0);
+  }
+
+  const tokenizer = getTokenizerApi();
+  if (!tokenizer) {
     return texts.map(() => 0);
   }
 
@@ -97,10 +107,7 @@ export async function countTokensBatchRenderer(
   }
 
   try {
-    const rawBatchResult: unknown = await client.tokenizer.countTokensBatch({
-      model: trimmedModel,
-      texts: missingTexts,
-    });
+    const rawBatchResult: unknown = await tokenizer.countTokensBatch(trimmedModel, missingTexts);
     if (!Array.isArray(rawBatchResult)) {
       throw new Error("Tokenizer returned invalid batch result");
     }

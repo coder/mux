@@ -15,34 +15,16 @@ import type {
   StreamErrorMessage,
   SendMessageOptions,
   ImagePart,
-} from "@/common/orpc/types";
+} from "@/common/types/ipc";
 import type { SendMessageError } from "@/common/types/errors";
 import { createUnknownSendMessageError } from "@/node/services/utils/sendMessageError";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
-import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
-import type { MuxFrontendMetadata } from "@/common/types/message";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { MessageQueue } from "./messageQueue";
 import type { StreamEndEvent } from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
-
-// Type guard for compaction request metadata
-interface CompactionRequestMetadata {
-  type: "compaction-request";
-  parsed: {
-    continueMessage?: string;
-  };
-}
-
-function isCompactionRequestMetadata(meta: unknown): meta is CompactionRequestMetadata {
-  if (typeof meta !== "object" || meta === null) return false;
-  const obj = meta as Record<string, unknown>;
-  if (obj.type !== "compaction-request") return false;
-  if (typeof obj.parsed !== "object" || obj.parsed === null) return false;
-  return true;
-}
 
 export interface AgentSessionChatEvent {
   workspaceId: string;
@@ -293,7 +275,7 @@ export class AgentSession {
       if (this.aiService.isStreaming(this.workspaceId)) {
         // MUST use abandonPartial=true to prevent handleAbort from performing partial compaction
         // with mismatched history (since we're about to truncate it)
-        const stopResult = await this.interruptStream({ abandonPartial: true });
+        const stopResult = await this.interruptStream(/* abandonPartial */ true);
         if (!stopResult.success) {
           return Err(createUnknownSendMessageError(stopResult.error));
         }
@@ -331,18 +313,14 @@ export class AgentSession {
           })
         : undefined;
 
-    // Cast from z.any() schema types to proper types (schema uses any for complex recursive types)
-    const typedToolPolicy = options?.toolPolicy as ToolPolicy | undefined;
-    const typedMuxMetadata = options?.muxMetadata as MuxFrontendMetadata | undefined;
-
     const userMessage = createMuxMessage(
       messageId,
       "user",
       message,
       {
         timestamp: Date.now(),
-        toolPolicy: typedToolPolicy,
-        muxMetadata: typedMuxMetadata, // Pass through frontend metadata as black-box
+        toolPolicy: options?.toolPolicy,
+        muxMetadata: options?.muxMetadata, // Pass through frontend metadata as black-box
       },
       additionalParts
     );
@@ -355,30 +333,20 @@ export class AgentSession {
     this.emitChatEvent(userMessage);
 
     // If this is a compaction request with a continue message, queue it for auto-send after compaction
-    if (
-      isCompactionRequestMetadata(typedMuxMetadata) &&
-      typedMuxMetadata.parsed.continueMessage &&
-      options
-    ) {
+    const muxMeta = options?.muxMetadata;
+    if (muxMeta?.type === "compaction-request" && muxMeta.parsed.continueMessage && options) {
       // Strip out compaction-specific fields so the queued message is a fresh user message
-      // Use Omit to avoid unsafe destructuring of any-typed muxMetadata
-      const continueMessage = typedMuxMetadata.parsed.continueMessage;
-      const sanitizedOptions: Omit<
-        SendMessageOptions,
-        "muxMetadata" | "mode" | "editMessageId" | "imageParts" | "maxOutputTokens"
-      > & { imageParts?: typeof continueMessage.imageParts } = {
-        model: continueMessage.model ?? options.model,
-        thinkingLevel: options.thinkingLevel,
-        toolPolicy: options.toolPolicy as ToolPolicy | undefined,
-        additionalSystemInstructions: options.additionalSystemInstructions,
-        providerOptions: options.providerOptions,
+      const { muxMetadata, mode, editMessageId, imageParts, maxOutputTokens, ...rest } = options;
+      const sanitizedOptions: SendMessageOptions = {
+        ...rest,
+        model: muxMeta.parsed.continueMessage.model ?? rest.model,
       };
-      const continueImageParts = continueMessage.imageParts;
+      const continueImageParts = muxMeta.parsed.continueMessage.imageParts;
       const continuePayload =
         continueImageParts && continueImageParts.length > 0
           ? { ...sanitizedOptions, imageParts: continueImageParts }
           : sanitizedOptions;
-      this.messageQueue.add(continueMessage.text, continuePayload);
+      this.messageQueue.add(muxMeta.parsed.continueMessage.text, continuePayload);
       this.emitQueuedMessageChanged();
     }
 
@@ -405,27 +373,24 @@ export class AgentSession {
     return this.streamWithHistory(model, options);
   }
 
-  async interruptStream(options?: {
-    soft?: boolean;
-    abandonPartial?: boolean;
-  }): Promise<Result<void>> {
+  async interruptStream(abandonPartial?: boolean): Promise<Result<void>> {
     this.assertNotDisposed("interruptStream");
 
     if (!this.aiService.isStreaming(this.workspaceId)) {
       return Ok(undefined);
     }
 
-    // For hard interrupts, delete partial BEFORE stopping to prevent abort handler
-    // from committing it. For soft interrupts, defer to stream-abort handler since
-    // the stream continues running and would recreate the partial.
-    if (options?.abandonPartial && !options?.soft) {
+    // Delete partial BEFORE stopping to prevent abort handler from committing it
+    // The abort handler in aiService.ts runs immediately when stopStream is called,
+    // so we must delete first to ensure it finds no partial to commit
+    if (abandonPartial) {
       const deleteResult = await this.partialService.deletePartial(this.workspaceId);
       if (!deleteResult.success) {
         return Err(deleteResult.error);
       }
     }
 
-    const stopResult = await this.aiService.stopStream(this.workspaceId, options);
+    const stopResult = await this.aiService.stopStream(this.workspaceId, abandonPartial);
     if (!stopResult.success) {
       return Err(stopResult.error);
     }
@@ -458,7 +423,7 @@ export class AgentSession {
       this.workspaceId,
       modelString,
       effectiveThinkingLevel,
-      options?.toolPolicy as ToolPolicy | undefined,
+      options?.toolPolicy,
       undefined,
       options?.additionalSystemInstructions,
       options?.maxOutputTokens,

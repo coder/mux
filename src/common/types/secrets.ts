@@ -1,7 +1,10 @@
-import type z from "zod";
-import type { SecretSchema } from "../orpc/schemas";
-
-export type Secret = z.infer<typeof SecretSchema>;
+/**
+ * Secret - A key-value pair for storing sensitive configuration
+ */
+export interface Secret {
+  key: string;
+  value: string;
+}
 
 /**
  * SecretsConfig - Maps project paths to their secrets

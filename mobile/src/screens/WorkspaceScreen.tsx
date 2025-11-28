@@ -22,7 +22,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Picker } from "@react-native-picker/picker";
 import { useTheme } from "../theme";
 import { ThemedText } from "../components/ThemedText";
-import { useORPC } from "../orpc/react";
+import { useApiClient } from "../hooks/useApiClient";
 import { useWorkspaceCost } from "../contexts/WorkspaceCostContext";
 import type { StreamAbortEvent, StreamEndEvent } from "@/common/types/stream.ts";
 import { MessageRenderer } from "../messages/MessageRenderer";
@@ -30,7 +30,7 @@ import { useWorkspaceSettings } from "../hooks/useWorkspaceSettings";
 import type { ThinkingLevel, WorkspaceMode } from "../types/settings";
 import { FloatingTodoCard } from "../components/FloatingTodoCard";
 import type { TodoItem } from "../components/TodoItemView";
-import type { DisplayedMessage, WorkspaceChatEvent } from "../types";
+import type { DisplayedMessage, FrontendWorkspaceMetadata, WorkspaceChatEvent } from "../types";
 import { useWorkspaceChat } from "../contexts/WorkspaceChatContext";
 import { applyChatEvent, TimelineEntry } from "./chatTimelineReducer";
 import type { SlashSuggestion } from "@/browser/utils/slashCommands/types";
@@ -66,6 +66,13 @@ if (__DEV__) {
 }
 
 type ThemeSpacing = ReturnType<typeof useTheme>["spacing"];
+
+function formatProjectBreadcrumb(metadata: FrontendWorkspaceMetadata | null): string {
+  if (!metadata) {
+    return "Workspace";
+  }
+  return `${metadata.projectName} › ${metadata.name}`;
+}
 
 function RawEventCard({
   payload,
@@ -179,7 +186,7 @@ function WorkspaceScreenInner({
   const spacing = theme.spacing;
   const insets = useSafeAreaInsets();
   const { getExpander } = useWorkspaceChat();
-  const client = useORPC();
+  const api = useApiClient();
   const {
     mode,
     thinkingLevel,
@@ -244,7 +251,7 @@ function WorkspaceScreenInner({
   );
   const { suggestions: commandSuggestions } = useSlashCommandSuggestions({
     input,
-    client,
+    api,
     enabled: !isCreationMode,
   });
   useEffect(() => {
@@ -410,9 +417,7 @@ function WorkspaceScreenInner({
 
     async function loadBranches() {
       try {
-        const result = await client.projects.listBranches({
-          projectPath: creationContext!.projectPath,
-        });
+        const result = await api.projects.listBranches(creationContext!.projectPath);
         const sanitized = result?.branches ?? [];
         setBranches(sanitized);
         const trunk = result?.recommendedTrunk ?? sanitized[0] ?? "main";
@@ -423,7 +428,7 @@ function WorkspaceScreenInner({
       }
     }
     void loadBranches();
-  }, [isCreationMode, client, creationContext]);
+  }, [isCreationMode, api, creationContext]);
 
   // Load runtime preference in creation mode
   useEffect(() => {
@@ -453,7 +458,7 @@ function WorkspaceScreenInner({
 
   const metadataQuery = useQuery({
     queryKey: ["workspace", workspaceId],
-    queryFn: () => client.workspace.getInfo({ workspaceId: workspaceId! }),
+    queryFn: () => api.workspace.getInfo(workspaceId!),
     staleTime: 15_000,
     enabled: !isCreationMode && !!workspaceId,
   });
@@ -461,22 +466,20 @@ function WorkspaceScreenInner({
   const metadata = metadataQuery.data ?? null;
 
   useEffect(() => {
-    // Skip SSE subscription in creation mode (no workspace yet)
+    // Skip WebSocket subscription in creation mode (no workspace yet)
     if (isCreationMode) return;
 
     isStreamActiveRef.current = false;
     hasCaughtUpRef.current = false;
     pendingTodosRef.current = null;
 
-    const controller = new AbortController();
-
     // Get persistent expander for this workspace (survives navigation)
     const expander = getExpander(workspaceId!);
-
-    const handlePayload = (payload: WorkspaceChatEvent) => {
+    const subscription = api.workspace.subscribeChat(workspaceId!, (payload) => {
       // Track streaming state and tokens (60s trailing window like desktop)
       if (payload && typeof payload === "object" && "type" in payload) {
         if (payload.type === "caught-up") {
+          const alreadyCaughtUp = hasCaughtUpRef.current;
           hasCaughtUpRef.current = true;
 
           if (
@@ -492,6 +495,9 @@ function WorkspaceScreenInner({
 
           pendingTodosRef.current = null;
 
+          if (__DEV__ && !alreadyCaughtUp) {
+            console.debug(`[WorkspaceScreen] caught up for workspace ${workspaceId}`);
+          }
           return;
         }
 
@@ -594,33 +600,13 @@ function WorkspaceScreenInner({
         // Only return new array if actually changed (prevents FlatList re-render)
         return changed ? next : current;
       });
-    };
-
-    // Subscribe via SSE async generator
-    (async () => {
-      try {
-        const iterator = await client.workspace.onChat(
-          { workspaceId: workspaceId! },
-          { signal: controller.signal }
-        );
-        for await (const event of iterator) {
-          if (controller.signal.aborted) break;
-          handlePayload(event as unknown as WorkspaceChatEvent);
-        }
-      } catch (error) {
-        // Stream ended or aborted - expected on cleanup
-        if (!controller.signal.aborted && process.env.NODE_ENV !== "production") {
-          console.warn("[WorkspaceScreen] Chat stream error:", error);
-        }
-      }
-    })();
-
-    wsRef.current = { close: () => controller.abort() };
+    });
+    wsRef.current = subscription;
     return () => {
-      controller.abort();
+      subscription.close();
       wsRef.current = null;
     };
-  }, [client, workspaceId, isCreationMode, recordStreamUsage, getExpander]);
+  }, [api, workspaceId, isCreationMode, recordStreamUsage, getExpander]);
 
   // Reset timeline, todos, and editing state when workspace changes
   useEffect(() => {
@@ -700,7 +686,7 @@ function WorkspaceScreenInner({
 
     if (!isCreationMode && parsedCommand) {
       const handled = await executeSlashCommand(parsedCommand, {
-        client,
+        api,
         workspaceId,
         metadata,
         sendMessageOptions,
@@ -742,28 +728,17 @@ function WorkspaceScreenInner({
           ? { type: "ssh" as const, host: sshHost, srcBaseDir: "~/mux" }
           : undefined;
 
-      const result = await client.workspace.sendMessage({
-        workspaceId: null,
-        message: trimmed,
-        options: {
-          ...sendMessageOptions,
-          projectPath: creationContext!.projectPath,
-          trunkBranch,
-          runtimeConfig,
-        },
+      const result = await api.workspace.sendMessage(null, trimmed, {
+        ...sendMessageOptions,
+        projectPath: creationContext!.projectPath,
+        trunkBranch,
+        runtimeConfig,
       });
 
       if (!result.success) {
-        const err = result.error;
-        const errorMsg =
-          typeof err === "string"
-            ? err
-            : err?.type === "unknown"
-              ? err.raw
-              : (err?.type ?? "Unknown error");
-        console.error("[createWorkspace] Failed:", errorMsg);
+        console.error("[createWorkspace] Failed:", result.error);
         setTimeline((current) =>
-          applyChatEvent(current, { type: "error", error: errorMsg } as WorkspaceChatEvent)
+          applyChatEvent(current, { type: "error", error: result.error } as WorkspaceChatEvent)
         );
         setInputWithSuggestionGuard(originalContent);
         setIsSending(false);
@@ -785,26 +760,15 @@ function WorkspaceScreenInner({
       return true;
     }
 
-    const result = await client.workspace.sendMessage({
-      workspaceId: workspaceId!,
-      message: trimmed,
-      options: {
-        ...sendMessageOptions,
-        editMessageId: editingMessage?.id,
-      },
+    const result = await api.workspace.sendMessage(workspaceId!, trimmed, {
+      ...sendMessageOptions,
+      editMessageId: editingMessage?.id,
     });
 
     if (!result.success) {
-      const err = result.error;
-      const errorMsg =
-        typeof err === "string"
-          ? err
-          : err?.type === "unknown"
-            ? err.raw
-            : (err?.type ?? "Unknown error");
-      console.error("[sendMessage] Validation failed:", errorMsg);
+      console.error("[sendMessage] Validation failed:", result.error);
       setTimeline((current) =>
-        applyChatEvent(current, { type: "error", error: errorMsg } as WorkspaceChatEvent)
+        applyChatEvent(current, { type: "error", error: result.error } as WorkspaceChatEvent)
       );
 
       if (wasEditing) {
@@ -823,7 +787,7 @@ function WorkspaceScreenInner({
     setIsSending(false);
     return true;
   }, [
-    client,
+    api,
     creationContext,
     editingMessage,
     handleCancelEdit,
@@ -860,26 +824,23 @@ function WorkspaceScreenInner({
 
   const onCancelStream = useCallback(async () => {
     if (!workspaceId) return;
-    await client.workspace.interruptStream({ workspaceId });
-  }, [client, workspaceId]);
+    await api.workspace.interruptStream(workspaceId);
+  }, [api, workspaceId]);
 
   const handleStartHere = useCallback(
     async (content: string) => {
       if (!workspaceId) return;
       const message = createCompactedMessage(content);
-      const result = await client.workspace.replaceChatHistory({
-        workspaceId,
-        summaryMessage: message,
-      });
+      const result = await api.workspace.replaceChatHistory(workspaceId, message);
 
       if (!result.success) {
         console.error("Failed to start here:", result.error);
         // Consider adding toast notification in future
       }
-      // Success case: backend will send delete + new message via SSE
+      // Success case: backend will send delete + new message via WebSocket
       // UI will update automatically via subscription
     },
-    [client, workspaceId]
+    [api, workspaceId]
   );
 
   // Edit message handlers

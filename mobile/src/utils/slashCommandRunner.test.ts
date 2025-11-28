@@ -1,8 +1,9 @@
 import { executeSlashCommand, parseRuntimeStringForMobile } from "./slashCommandRunner";
 import type { SlashCommandRunnerContext } from "./slashCommandRunner";
 
-function createMockClient(): SlashCommandRunnerContext["client"] {
-  const client = {
+function createMockApi(): SlashCommandRunnerContext["api"] {
+  const noopSubscription = { close: jest.fn() };
+  const api = {
     workspace: {
       list: jest.fn(),
       create: jest.fn().mockResolvedValue({ success: false, error: "not implemented" }),
@@ -13,15 +14,15 @@ function createMockClient(): SlashCommandRunnerContext["client"] {
       fork: jest.fn().mockResolvedValue({ success: false, error: "not implemented" }),
       rename: jest.fn(),
       interruptStream: jest.fn(),
-      truncateHistory: jest.fn().mockResolvedValue({ success: true }),
+      truncateHistory: jest.fn().mockResolvedValue({ success: true, data: undefined }),
       replaceChatHistory: jest.fn(),
-      sendMessage: jest.fn().mockResolvedValue(undefined),
+      sendMessage: jest.fn().mockResolvedValue({ success: true, data: undefined }),
       executeBash: jest.fn(),
-      onChat: jest.fn(),
+      subscribeChat: jest.fn().mockReturnValue(noopSubscription),
     },
     providers: {
       list: jest.fn().mockResolvedValue(["anthropic"]),
-      setProviderConfig: jest.fn().mockResolvedValue(undefined),
+      setProviderConfig: jest.fn().mockResolvedValue({ success: true, data: undefined }),
     },
     projects: {
       list: jest.fn(),
@@ -31,16 +32,16 @@ function createMockClient(): SlashCommandRunnerContext["client"] {
         update: jest.fn(),
       },
     },
-  } satisfies SlashCommandRunnerContext["client"];
-  return client;
+  } satisfies SlashCommandRunnerContext["api"];
+  return api;
 }
 
 function createContext(
   overrides: Partial<SlashCommandRunnerContext> = {}
 ): SlashCommandRunnerContext {
-  const client = createMockClient();
+  const api = createMockApi();
   return {
-    client,
+    api,
     workspaceId: "ws-1",
     metadata: null,
     sendMessageOptions: {
@@ -79,10 +80,7 @@ describe("executeSlashCommand", () => {
     const ctx = createContext();
     const handled = await executeSlashCommand({ type: "clear" }, ctx);
     expect(handled).toBe(true);
-    expect(ctx.client.workspace.truncateHistory).toHaveBeenCalledWith({
-      workspaceId: "ws-1",
-      percentage: 1,
-    });
+    expect(ctx.api.workspace.truncateHistory).toHaveBeenCalledWith("ws-1", 1);
     expect(ctx.onClearTimeline).toHaveBeenCalled();
   });
 

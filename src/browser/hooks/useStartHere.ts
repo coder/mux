@@ -3,7 +3,39 @@ import React from "react";
 import { COMPACTED_EMOJI } from "@/common/constants/ui";
 import { StartHereModal } from "@/browser/components/StartHereModal";
 import { createMuxMessage } from "@/common/types/message";
-import { useORPC } from "@/browser/orpc/react";
+
+/**
+ * Replace chat history with a specific message.
+ * This allows starting fresh from a plan or final assistant message.
+ */
+async function startHereWithMessage(
+  workspaceId: string,
+  content: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const summaryMessage = createMuxMessage(
+      `start-here-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+      "assistant",
+      content,
+      {
+        timestamp: Date.now(),
+        compacted: true,
+      }
+    );
+
+    const result = await window.api.workspace.replaceChatHistory(workspaceId, summaryMessage);
+
+    if (!result.success) {
+      console.error("Failed to start here:", result.error);
+      return { success: false, error: result.error };
+    }
+
+    return { success: true };
+  } catch (err) {
+    console.error("Start here error:", err);
+    return { success: false, error: String(err) };
+  }
+}
 
 /**
  * Hook for managing Start Here button state and modal.
@@ -18,7 +50,6 @@ export function useStartHere(
   content: string,
   isCompacted = false
 ) {
-  const client = useORPC();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isStartingHere, setIsStartingHere] = useState(false);
 
@@ -39,26 +70,7 @@ export function useStartHere(
 
     setIsStartingHere(true);
     try {
-      const summaryMessage = createMuxMessage(
-        `start-here-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-        "assistant",
-        content,
-        {
-          timestamp: Date.now(),
-          compacted: true,
-        }
-      );
-
-      const result = await client.workspace.replaceChatHistory({
-        workspaceId,
-        summaryMessage,
-      });
-
-      if (!result.success) {
-        console.error("Failed to start here:", result.error);
-      }
-    } catch (err) {
-      console.error("Start here error:", err);
+      await startHereWithMessage(workspaceId, content);
     } finally {
       setIsStartingHere(false);
     }

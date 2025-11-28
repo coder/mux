@@ -1,30 +1,19 @@
 import type { ProjectConfig } from "@/node/config";
+import type { IPCApi } from "@/common/types/ipc";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import type { ProjectContext } from "./ProjectContext";
 import { ProjectProvider, useProjectContext } from "./ProjectContext";
-import type { RecursivePartial } from "@/browser/testUtils";
-
-import type { ORPCClient } from "@/browser/orpc/react";
-
-// Mock ORPC
-let currentClientMock: RecursivePartial<ORPCClient> = {};
-void mock.module("@/browser/orpc/react", () => ({
-  useORPC: () => currentClientMock as ORPCClient,
-  ORPCProvider: ({ children }: { children: React.ReactNode }) => children,
-}));
 
 describe("ProjectContext", () => {
   afterEach(() => {
     cleanup();
 
-    // Resetting global state in tests
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    // Resetting global state in tests
-    globalThis.document = undefined as unknown as Document;
-
-    currentClientMock = {};
+    // @ts-expect-error - Resetting global state in tests
+    globalThis.window = undefined;
+    // @ts-expect-error - Resetting global state in tests
+    globalThis.document = undefined;
   });
 
   test("loads projects on mount and supports add/remove mutations", async () => {
@@ -61,7 +50,7 @@ describe("ProjectContext", () => {
     await act(async () => {
       await ctx().removeProject("/alpha");
     });
-    expect(projectsApi.remove).toHaveBeenCalledWith({ projectPath: "/alpha" });
+    expect(projectsApi.remove).toHaveBeenCalledWith("/alpha");
     expect(ctx().projects.has("/alpha")).toBe(false);
   });
 
@@ -174,14 +163,11 @@ describe("ProjectContext", () => {
     const ctx = await setup();
 
     const secrets = await ctx().getSecrets("/alpha");
-    expect(projectsApi.secrets.get).toHaveBeenCalledWith({ projectPath: "/alpha" });
+    expect(projectsApi.secrets.get).toHaveBeenCalledWith("/alpha");
     expect(secrets).toEqual([{ key: "A", value: "1" }]);
 
     await ctx().updateSecrets("/alpha", [{ key: "B", value: "2" }]);
-    expect(projectsApi.secrets.update).toHaveBeenCalledWith({
-      projectPath: "/alpha",
-      secrets: [{ key: "B", value: "2" }],
-    });
+    expect(projectsApi.secrets.update).toHaveBeenCalledWith("/alpha", [{ key: "B", value: "2" }]);
   });
 
   test("updateSecrets handles failure gracefully", async () => {
@@ -199,10 +185,7 @@ describe("ProjectContext", () => {
 
     // Should not throw even when update fails
     expect(ctx().updateSecrets("/alpha", [{ key: "C", value: "3" }])).resolves.toBeUndefined();
-    expect(projectsApi.secrets.update).toHaveBeenCalledWith({
-      projectPath: "/alpha",
-      secrets: [{ key: "C", value: "3" }],
-    });
+    expect(projectsApi.secrets.update).toHaveBeenCalledWith("/alpha", [{ key: "C", value: "3" }]);
   });
 
   test("refreshProjects sets empty map on API error", async () => {
@@ -305,8 +288,8 @@ describe("ProjectContext", () => {
     createMockAPI({
       list: () => Promise.resolve([]),
       remove: () => Promise.resolve({ success: true as const, data: undefined }),
-      listBranches: ({ projectPath }: { projectPath: string }) => {
-        if (projectPath === "/project-a") {
+      listBranches: (path: string) => {
+        if (path === "/project-a") {
           return projectAPromise;
         }
         return Promise.resolve({ branches: ["main-b"], recommendedTrunk: "main-b" });
@@ -354,7 +337,7 @@ async function setup() {
   return () => contextRef.current!;
 }
 
-function createMockAPI(overrides: RecursivePartial<ORPCClient["projects"]>) {
+function createMockAPI(overrides: Partial<IPCApi["projects"]>) {
   const projects = {
     create: mock(
       overrides.create ??
@@ -378,26 +361,30 @@ function createMockAPI(overrides: RecursivePartial<ORPCClient["projects"]>) {
     ),
     pickDirectory: mock(overrides.pickDirectory ?? (() => Promise.resolve(null))),
     secrets: {
-      get: mock(overrides.secrets?.get ?? (() => Promise.resolve([]))),
+      get: mock(
+        overrides.secrets?.get
+          ? (...args: Parameters<typeof overrides.secrets.get>) => overrides.secrets!.get(...args)
+          : () => Promise.resolve([])
+      ),
       update: mock(
-        overrides.secrets?.update ??
-          (() =>
-            Promise.resolve({
-              success: true as const,
-              data: undefined,
-            }))
+        overrides.secrets?.update
+          ? (...args: Parameters<typeof overrides.secrets.update>) =>
+              overrides.secrets!.update(...args)
+          : () =>
+              Promise.resolve({
+                success: true as const,
+                data: undefined,
+              })
       ),
     },
-  };
+  } satisfies IPCApi["projects"];
 
-  // Update the global mock
-  currentClientMock = {
-    projects: projects as unknown as RecursivePartial<ORPCClient["projects"]>,
+  // @ts-expect-error - Setting up global state for tests
+  globalThis.window = new GlobalWindow();
+  // @ts-expect-error - Setting up global state for tests
+  globalThis.window.api = {
+    projects,
   };
-
-  // Setting up global state for tests
-  globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
-  // Setting up global state for tests
   globalThis.document = globalThis.window.document;
 
   return projects;

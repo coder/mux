@@ -8,7 +8,6 @@ import { View } from "react-native";
 import { ThemeProvider, useTheme } from "../src/theme";
 import { WorkspaceChatProvider } from "../src/contexts/WorkspaceChatContext";
 import { AppConfigProvider } from "../src/contexts/AppConfigContext";
-import { ORPCProvider } from "../src/orpc/react";
 
 function AppFrame(): JSX.Element {
   const theme = useTheme();
@@ -75,11 +74,9 @@ export default function RootLayout(): JSX.Element {
       <SafeAreaProvider>
         <ThemeProvider>
           <AppConfigProvider>
-            <ORPCProvider>
-              <WorkspaceChatProvider>
-                <AppFrame />
-              </WorkspaceChatProvider>
-            </ORPCProvider>
+            <WorkspaceChatProvider>
+              <AppFrame />
+            </WorkspaceChatProvider>
           </AppConfigProvider>
         </ThemeProvider>
       </SafeAreaProvider>

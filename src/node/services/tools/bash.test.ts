@@ -1103,19 +1103,19 @@ fi
     const abortController = new AbortController();
 
     // Use unique token to identify our test processes
-    const token = (100 + Math.random() * 100).toFixed(4); // Unique duration for grep
+    const token = `test-abort-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
     // Spawn a command that creates child processes (simulating cargo build)
     const args: BashToolArgs = {
       script: `
         # Simulate cargo spawning rustc processes
         for i in {1..5}; do
-          (echo "child-\${i}"; exec sleep ${token}) &
+          (echo "child-\${i}"; exec -a "sleep-${token}" sleep 100) &
           echo "SPAWNED:$!"
         done
         echo "ALL_SPAWNED"
         # Wait so we can abort while children are running
-        exec sleep ${token}
+        exec -a "sleep-${token}" sleep 100
       `,
       timeout_secs: 10,
     };
@@ -1151,7 +1151,7 @@ fi
       using checkEnv = createTestBashTool();
       const checkResult = (await checkEnv.tool.execute!(
         {
-          script: `ps aux | grep "sleep ${token}" | grep -v grep | wc -l`,
+          script: `ps aux | grep "${token}" | grep -v grep | wc -l`,
           timeout_secs: 1,
         },
         mockToolCallOptions

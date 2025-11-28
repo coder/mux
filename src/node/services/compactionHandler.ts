@@ -1,7 +1,7 @@
 import type { EventEmitter } from "events";
 import type { HistoryService } from "./historyService";
 import type { StreamEndEvent } from "@/common/types/stream";
-import type { WorkspaceChatMessage, DeleteMessage } from "@/common/orpc/types";
+import type { WorkspaceChatMessage, DeleteMessage } from "@/common/types/ipc";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";

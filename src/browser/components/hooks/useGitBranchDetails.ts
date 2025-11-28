@@ -6,7 +6,6 @@ import {
   type GitCommit,
   type GitBranchHeader,
 } from "@/common/utils/git/parseGitLog";
-import { useORPC } from "@/browser/orpc/react";
 
 const GitBranchDataSchema = z.object({
   showBranch: z.string(),
@@ -155,7 +154,6 @@ export function useGitBranchDetails(
     "useGitBranchDetails expects a non-empty workspaceId argument."
   );
 
-  const client = useORPC();
   const [branchHeaders, setBranchHeaders] = useState<GitBranchHeader[] | null>(null);
   const [commits, setCommits] = useState<GitCommit[] | null>(null);
   const [dirtyFiles, setDirtyFiles] = useState<string[] | null>(null);
@@ -217,13 +215,9 @@ printf '__MUX_BRANCH_DATA__BEGIN_DATES__\\n%s\\n__MUX_BRANCH_DATA__END_DATES__\\
 printf '__MUX_BRANCH_DATA__BEGIN_DIRTY_FILES__\\n%s\\n__MUX_BRANCH_DATA__END_DIRTY_FILES__\\n' "$DIRTY_FILES"
 `;
 
-      const result = await client.workspace.executeBash({
-        workspaceId,
-        script,
-        options: {
-          timeout_secs: 5,
-          niceness: 19, // Lowest priority - don't interfere with user operations
-        },
+      const result = await window.api.workspace.executeBash(workspaceId, script, {
+        timeout_secs: 5,
+        niceness: 19, // Lowest priority - don't interfere with user operations
       });
 
       if (!result.success) {
@@ -283,7 +277,7 @@ printf '__MUX_BRANCH_DATA__BEGIN_DIRTY_FILES__\\n%s\\n__MUX_BRANCH_DATA__END_DIR
     } finally {
       setIsLoading(false);
     }
-  }, [client, workspaceId, gitStatus]);
+  }, [workspaceId, gitStatus]);
 
   useEffect(() => {
     if (!enabled) {

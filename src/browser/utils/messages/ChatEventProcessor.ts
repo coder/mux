@@ -17,7 +17,7 @@
  */
 
 import type { MuxMessage, MuxMetadata } from "@/common/types/message";
-import type { WorkspaceChatMessage } from "@/common/orpc/types";
+import type { WorkspaceChatMessage } from "@/common/types/ipc";
 import {
   isStreamStart,
   isStreamDelta,
@@ -32,7 +32,7 @@ import {
   isInitStart,
   isInitOutput,
   isInitEnd,
-} from "@/common/orpc/types";
+} from "@/common/types/ipc";
 import type {
   DynamicToolPart,
   DynamicToolPartPending,
@@ -87,7 +87,7 @@ type ExtendedStreamStartEvent = StreamStartEvent & {
   timestamp?: number;
 };
 
-type ExtendedStreamEndEvent = Omit<StreamEndEvent, "metadata"> & {
+type ExtendedStreamEndEvent = StreamEndEvent & {
   metadata: StreamEndEvent["metadata"] & Partial<MuxMetadata>;
 };
 

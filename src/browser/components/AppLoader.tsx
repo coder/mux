@@ -4,13 +4,7 @@ import { LoadingScreen } from "./LoadingScreen";
 import { useWorkspaceStoreRaw } from "../stores/WorkspaceStore";
 import { useGitStatusStoreRaw } from "../stores/GitStatusStore";
 import { ProjectProvider } from "../contexts/ProjectContext";
-import { ORPCProvider, useORPC, type ORPCClient } from "@/browser/orpc/react";
 import { WorkspaceProvider, useWorkspaceContext } from "../contexts/WorkspaceContext";
-
-interface AppLoaderProps {
-  /** Optional pre-created ORPC client. If provided, skips internal connection setup. */
-  client?: ORPCClient;
-}
 
 /**
  * AppLoader handles all initialization before rendering the main App:
@@ -23,15 +17,13 @@ interface AppLoaderProps {
  * This ensures App.tsx can assume stores are always synced and removes
  * the need for conditional guards in effects.
  */
-export function AppLoader(props: AppLoaderProps) {
+export function AppLoader() {
   return (
-    <ORPCProvider client={props.client}>
-      <ProjectProvider>
-        <WorkspaceProvider>
-          <AppLoaderInner />
-        </WorkspaceProvider>
-      </ProjectProvider>
-    </ORPCProvider>
+    <ProjectProvider>
+      <WorkspaceProvider>
+        <AppLoaderInner />
+      </WorkspaceProvider>
+    </ProjectProvider>
   );
 }
 
@@ -41,7 +33,6 @@ export function AppLoader(props: AppLoaderProps) {
  */
 function AppLoaderInner() {
   const workspaceContext = useWorkspaceContext();
-  const client = useORPC();
 
   // Get store instances
   const workspaceStore = useWorkspaceStoreRaw();
@@ -52,9 +43,6 @@ function AppLoaderInner() {
 
   // Sync stores when metadata finishes loading
   useEffect(() => {
-    workspaceStore.setClient(client);
-    gitStatusStore.setClient(client);
-
     if (!workspaceContext.loading) {
       workspaceStore.syncWorkspaces(workspaceContext.workspaceMetadata);
       gitStatusStore.syncWorkspaces(workspaceContext.workspaceMetadata);
@@ -67,7 +55,6 @@ function AppLoaderInner() {
     workspaceContext.workspaceMetadata,
     workspaceStore,
     gitStatusStore,
-    client,
   ]);
 
   // Show loading screen until stores are synced

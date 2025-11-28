@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import type { SlashSuggestion } from "@/browser/utils/slashCommands/types";
 import { getSlashCommandSuggestions } from "@/browser/utils/slashCommands/suggestions";
-import type { ORPCClient } from "../orpc/client";
+import type { MuxMobileClient } from "../api/client";
 import { filterSuggestionsForMobile, MOBILE_HIDDEN_COMMANDS } from "../utils/slashCommandHelpers";
 
 interface UseSlashCommandSuggestionsOptions {
   input: string;
-  client: Pick<ORPCClient, "providers">;
+  api: MuxMobileClient;
   hiddenCommands?: ReadonlySet<string>;
   enabled?: boolean;
 }
@@ -18,7 +18,7 @@ interface UseSlashCommandSuggestionsResult {
 export function useSlashCommandSuggestions(
   options: UseSlashCommandSuggestionsOptions
 ): UseSlashCommandSuggestionsResult {
-  const { input, client, hiddenCommands = MOBILE_HIDDEN_COMMANDS, enabled = true } = options;
+  const { input, api, hiddenCommands = MOBILE_HIDDEN_COMMANDS, enabled = true } = options;
   const [providerNames, setProviderNames] = useState<string[]>([]);
 
   useEffect(() => {
@@ -30,7 +30,7 @@ export function useSlashCommandSuggestions(
     let cancelled = false;
     const loadProviders = async () => {
       try {
-        const names = await client.providers.list();
+        const names = await api.providers.list();
         if (!cancelled && Array.isArray(names)) {
           setProviderNames(names);
         }
@@ -45,7 +45,7 @@ export function useSlashCommandSuggestions(
     return () => {
       cancelled = true;
     };
-  }, [client, enabled]);
+  }, [api, enabled]);
 
   const suggestions = useMemo(() => {
     if (!enabled) {

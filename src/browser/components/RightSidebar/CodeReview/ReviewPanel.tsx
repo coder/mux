@@ -37,7 +37,6 @@ import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { applyFrontendFilters } from "@/browser/utils/review/filterHunks";
 import { cn } from "@/common/lib/utils";
-import { useORPC } from "@/browser/orpc/react";
 
 interface ReviewPanelProps {
   workspaceId: string;
@@ -121,7 +120,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   onReviewNote,
   focusTrigger,
 }) => {
-  const client = useORPC();
   const panelRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [hunks, setHunks] = useState<DiffHunk[]>([]);
@@ -203,10 +201,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           "numstat"
         );
 
-        const numstatResult = await client.workspace.executeBash({
-          workspaceId,
-          script: numstatCommand,
-          options: { timeout_secs: 30 },
+        const numstatResult = await window.api.workspace.executeBash(workspaceId, numstatCommand, {
+          timeout_secs: 30,
         });
 
         if (cancelled) return;
@@ -231,14 +227,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [
-    client,
-    workspaceId,
-    workspacePath,
-    filters.diffBase,
-    filters.includeUncommitted,
-    refreshTrigger,
-  ]);
+  }, [workspaceId, workspacePath, filters.diffBase, filters.includeUncommitted, refreshTrigger]);
 
   // Load diff hunks - when workspace, diffBase, selected path, or refreshTrigger changes
   useEffect(() => {
@@ -264,10 +253,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         );
 
         // Fetch diff
-        const diffResult = await client.workspace.executeBash({
-          workspaceId,
-          script: diffCommand,
-          options: { timeout_secs: 30 },
+        const diffResult = await window.api.workspace.executeBash(workspaceId, diffCommand, {
+          timeout_secs: 30,
         });
 
         if (cancelled) return;

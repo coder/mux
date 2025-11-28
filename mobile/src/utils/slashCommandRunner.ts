@@ -2,16 +2,11 @@ import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { RUNTIME_MODE, SSH_RUNTIME_PREFIX } from "@/common/types/runtime";
 import type { FrontendWorkspaceMetadata } from "../types";
-import type { ORPCClient } from "../orpc/client";
+import type { MuxMobileClient, SendMessageOptions } from "../api/client";
 import { buildMobileCompactionPayload } from "./slashCommandHelpers";
-import type { InferClientInputs } from "@orpc/client";
-
-type SendMessageOptions = NonNullable<
-  InferClientInputs<ORPCClient>["workspace"]["sendMessage"]["options"]
->;
 
 export interface SlashCommandRunnerContext {
-  client: Pick<ORPCClient, "workspace" | "providers" | "projects">;
+  api: Pick<MuxMobileClient, "workspace" | "providers" | "projects">;
   workspaceId?: string | null;
   metadata?: FrontendWorkspaceMetadata | null;
   sendMessageOptions: SendMessageOptions;
@@ -96,7 +91,7 @@ async function handleTruncate(
 ): Promise<boolean> {
   try {
     const workspaceId = ensureWorkspaceId(ctx);
-    const result = await ctx.client.workspace.truncateHistory({ workspaceId, percentage });
+    const result = await ctx.api.workspace.truncateHistory(workspaceId, percentage);
     if (!result.success) {
       ctx.showError("History", result.error ?? "Failed to truncate history");
       return true;
@@ -125,25 +120,14 @@ async function handleCompaction(
       ctx.sendMessageOptions
     );
 
-    const result = await ctx.client.workspace.sendMessage({
-      workspaceId,
-      message: messageText,
-      options: {
-        ...sendOptions,
-        muxMetadata: metadata,
-        editMessageId: ctx.editingMessageId,
-      },
-    });
+    const result = (await ctx.api.workspace.sendMessage(workspaceId, messageText, {
+      ...sendOptions,
+      muxMetadata: metadata,
+      editMessageId: ctx.editingMessageId,
+    })) as { success: boolean; error?: string };
 
     if (!result.success) {
-      const err = result.error;
-      const errorMsg =
-        typeof err === "string"
-          ? err
-          : err?.type === "unknown"
-            ? err.raw
-            : (err?.type ?? "Failed to start compaction");
-      ctx.showError("Compaction", errorMsg);
+      ctx.showError("Compaction", result.error ?? "Failed to start compaction");
       return true;
     }
 
@@ -164,11 +148,11 @@ async function handleProviderSet(
   parsed: Extract<ParsedCommand, { type: "providers-set" }>
 ): Promise<boolean> {
   try {
-    const result = await ctx.client.providers.setProviderConfig({
-      provider: parsed.provider,
-      keyPath: parsed.keyPath,
-      value: parsed.value,
-    });
+    const result = await ctx.api.providers.setProviderConfig(
+      parsed.provider,
+      parsed.keyPath,
+      parsed.value
+    );
     if (!result.success) {
       ctx.showError("Providers", result.error ?? "Failed to update provider");
       return true;
@@ -187,10 +171,7 @@ async function handleFork(
 ): Promise<boolean> {
   try {
     const workspaceId = ensureWorkspaceId(ctx);
-    const result = await ctx.client.workspace.fork({
-      sourceWorkspaceId: workspaceId,
-      newName: parsed.newName,
-    });
+    const result = await ctx.api.workspace.fork(workspaceId, parsed.newName);
     if (!result.success) {
       ctx.showError("Fork", result.error ?? "Failed to fork workspace");
       return true;
@@ -200,11 +181,11 @@ async function handleFork(
     ctx.showInfo("Fork", `Switched to ${result.metadata.name}`);
 
     if (parsed.startMessage) {
-      await ctx.client.workspace.sendMessage({
-        workspaceId: result.metadata.id,
-        message: parsed.startMessage,
-        options: ctx.sendMessageOptions,
-      });
+      await ctx.api.workspace.sendMessage(
+        result.metadata.id,
+        parsed.startMessage,
+        ctx.sendMessageOptions
+      );
     }
     return true;
   } catch (error) {
@@ -231,12 +212,12 @@ async function handleNew(
   try {
     const trunkBranch = await resolveTrunkBranch(ctx, projectPath, parsed.trunkBranch);
     const runtimeConfig = parseRuntimeStringForMobile(parsed.runtime);
-    const result = await ctx.client.workspace.create({
+    const result = await ctx.api.workspace.create(
       projectPath,
-      branchName: parsed.workspaceName,
+      parsed.workspaceName,
       trunkBranch,
-      runtimeConfig,
-    });
+      runtimeConfig
+    );
     if (!result.success) {
       ctx.showError("New workspace", result.error ?? "Failed to create workspace");
       return true;
@@ -246,11 +227,11 @@ async function handleNew(
     ctx.showInfo("New workspace", `Created ${result.metadata.name}`);
 
     if (parsed.startMessage) {
-      await ctx.client.workspace.sendMessage({
-        workspaceId: result.metadata.id,
-        message: parsed.startMessage,
-        options: ctx.sendMessageOptions,
-      });
+      await ctx.api.workspace.sendMessage(
+        result.metadata.id,
+        parsed.startMessage,
+        ctx.sendMessageOptions
+      );
     }
 
     return true;
@@ -269,7 +250,7 @@ async function resolveTrunkBranch(
     return explicit;
   }
   try {
-    const { recommendedTrunk, branches } = await ctx.client.projects.listBranches({ projectPath });
+    const { recommendedTrunk, branches } = await ctx.api.projects.listBranches(projectPath);
     return recommendedTrunk ?? branches?.[0] ?? "main";
   } catch (error) {
     ctx.showInfo(

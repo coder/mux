@@ -70,7 +70,6 @@ const defaultFetchWithUnlimitedTimeout = (async (
   input: RequestInfo | URL,
   init?: RequestInit
 ): Promise<Response> => {
-  // dispatcher is a Node.js undici-specific property for custom HTTP agents
   const requestInit: RequestInit = {
     ...(init ?? {}),
     dispatcher: unlimitedTimeoutAgent,
@@ -197,20 +196,17 @@ export class AIService extends EventEmitter {
     this.streamManager.on("stream-delta", (data) => this.emit("stream-delta", data));
     this.streamManager.on("stream-end", (data) => this.emit("stream-end", data));
 
-    // Handle stream-abort: dispose of partial based on abandonPartial flag
+    // Handle stream-abort: commit partial to history before forwarding
+    // Note: If abandonPartial option was used, partial is already deleted by IPC handler
     this.streamManager.on("stream-abort", (data: StreamAbortEvent) => {
       void (async () => {
-        if (data.abandonPartial) {
-          // Caller requested discarding partial - delete without committing
-          await this.partialService.deletePartial(data.workspaceId);
-        } else {
+        // Check if partial still exists (not abandoned)
+        const partial = await this.partialService.readPartial(data.workspaceId);
+        if (partial) {
           // Commit interrupted message to history with partial:true metadata
           // This ensures /clear and /truncate can clean up interrupted messages
-          const partial = await this.partialService.readPartial(data.workspaceId);
-          if (partial) {
-            await this.partialService.commitToHistory(data.workspaceId);
-            await this.partialService.deletePartial(data.workspaceId);
-          }
+          await this.partialService.commitToHistory(data.workspaceId);
+          await this.partialService.deletePartial(data.workspaceId);
         }
 
         // Forward abort event to consumers
@@ -1087,15 +1083,12 @@ export class AIService extends EventEmitter {
     }
   }
 
-  async stopStream(
-    workspaceId: string,
-    options?: { soft?: boolean; abandonPartial?: boolean }
-  ): Promise<Result<void>> {
+  async stopStream(workspaceId: string, abandonPartial?: boolean): Promise<Result<void>> {
     if (this.mockModeEnabled && this.mockScenarioPlayer) {
       this.mockScenarioPlayer.stop(workspaceId);
       return Ok(undefined);
     }
-    return this.streamManager.stopStream(workspaceId, options);
+    return this.streamManager.stopStream(workspaceId, abandonPartial);
   }
 
   /**

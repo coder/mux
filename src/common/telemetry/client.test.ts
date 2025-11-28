@@ -8,10 +8,6 @@ jest.mock("posthog-js", () => ({
   },
 }));
 
-// Ensure NODE_ENV is set to test for telemetry detection
-// Must be set before importing the client module
-process.env.NODE_ENV = "test";
-
 import { initTelemetry, trackEvent, isTelemetryInitialized } from "./client";
 
 describe("Telemetry", () => {
@@ -42,7 +38,7 @@ describe("Telemetry", () => {
     });
 
     it("should correctly detect test environment", () => {
-      // Verify NODE_ENV is set to test (we set it above for telemetry detection)
+      // Verify we're in a test environment
       expect(process.env.NODE_ENV).toBe("test");
     });
   });

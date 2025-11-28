@@ -15,7 +15,6 @@ import {
   calculateBackoffDelay,
   INITIAL_DELAY,
 } from "@/browser/utils/messages/retryState";
-import { useORPC } from "@/browser/orpc/react";
 
 export interface RetryState {
   attempt: number;
@@ -28,7 +27,7 @@ export interface RetryState {
  *
  * DESIGN PRINCIPLE: Single Source of Truth for ALL Retry Logic
  * ============================================================
- * This hook is the ONLY place that calls client.workspace.resumeStream().
+ * This hook is the ONLY place that calls window.api.workspace.resumeStream().
  * All other components (RetryBarrier, etc.) emit RESUME_CHECK_REQUESTED events
  * and let this hook handle the actual retry logic.
  *
@@ -63,7 +62,6 @@ export interface RetryState {
  * - Manual retry button (event from RetryBarrier)
  */
 export function useResumeManager() {
-  const client = useORPC();
   // Get workspace states from store
   // NOTE: We use a ref-based approach instead of useSyncExternalStore to avoid
   // re-rendering AppInner on every workspace state change. This hook only needs
@@ -185,7 +183,7 @@ export function useResumeManager() {
         }
       }
 
-      const result = await client.workspace.resumeStream({ workspaceId, options });
+      const result = await window.api.workspace.resumeStream(workspaceId, options);
 
       if (!result.success) {
         // Store error in retry state so RetryBarrier can display it

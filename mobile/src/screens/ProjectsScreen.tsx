@@ -20,6 +20,7 @@ import { IconButton } from "../components/IconButton";
 import { SecretsModal } from "../components/SecretsModal";
 import { RenameWorkspaceModal } from "../components/RenameWorkspaceModal";
 import { WorkspaceActivityIndicator } from "../components/WorkspaceActivityIndicator";
+import { createClient } from "../api/client";
 import type { FrontendWorkspaceMetadata, Secret, WorkspaceActivitySnapshot } from "../types";
 
 interface WorkspaceListItem {
@@ -89,7 +90,7 @@ export function ProjectsScreen(): JSX.Element {
   const theme = useTheme();
   const spacing = theme.spacing;
   const router = useRouter();
-  const { client, projectsQuery, workspacesQuery, activityQuery } = useProjectsData();
+  const { api, projectsQuery, workspacesQuery, activityQuery } = useProjectsData();
   const [search, setSearch] = useState("");
   const [secretsModalState, setSecretsModalState] = useState<{
     visible: boolean;
@@ -105,6 +106,8 @@ export function ProjectsScreen(): JSX.Element {
     currentName: string;
     projectName: string;
   } | null>(null);
+
+  const client = createClient();
 
   const groupedProjects = useMemo((): ProjectGroup[] => {
     const projects = projectsQuery.data ?? [];
@@ -209,7 +212,7 @@ export function ProjectsScreen(): JSX.Element {
 
   const handleOpenSecrets = async (projectPath: string, projectName: string) => {
     try {
-      const secrets = await client.projects.secrets.get({ projectPath });
+      const secrets = await client.projects.secrets.get(projectPath);
       setSecretsModalState({
         visible: true,
         projectPath,
@@ -226,13 +229,10 @@ export function ProjectsScreen(): JSX.Element {
     if (!secretsModalState) return;
 
     try {
-      const result = await client.projects.secrets.update({
-        projectPath: secretsModalState.projectPath,
-        secrets,
-      });
+      const result = await client.projects.secrets.update(secretsModalState.projectPath, secrets);
 
       if (!result.success) {
-        Alert.alert("Error", result.error ?? "Failed to save secrets");
+        Alert.alert("Error", result.error);
         return;
       }
 
@@ -267,32 +267,30 @@ export function ProjectsScreen(): JSX.Element {
             text: "Delete",
             style: "destructive",
             onPress: async () => {
-              const result = await client.workspace.remove({ workspaceId: metadata.id });
+              const result = await api.workspace.remove(metadata.id);
 
               if (!result.success) {
-                const errorMsg = result.error ?? "Failed to delete workspace";
                 // Check if it's a "dirty workspace" error
                 const isDirtyError =
-                  errorMsg.toLowerCase().includes("uncommitted") ||
-                  errorMsg.toLowerCase().includes("unpushed");
+                  result.error.toLowerCase().includes("uncommitted") ||
+                  result.error.toLowerCase().includes("unpushed");
 
                 if (isDirtyError) {
                   // Show force delete option
                   Alert.alert(
                     "Workspace Has Changes",
-                    `${errorMsg}\n\nForce delete will discard these changes permanently.`,
+                    `${result.error}\n\nForce delete will discard these changes permanently.`,
                     [
                       { text: "Cancel", style: "cancel" },
                       {
                         text: "Force Delete",
                         style: "destructive",
                         onPress: async () => {
-                          const forceResult = await client.workspace.remove({
-                            workspaceId: metadata.id,
-                            options: { force: true },
+                          const forceResult = await api.workspace.remove(metadata.id, {
+                            force: true,
                           });
                           if (!forceResult.success) {
-                            Alert.alert("Error", forceResult.error ?? "Failed to force delete");
+                            Alert.alert("Error", forceResult.error);
                           } else {
                             await workspacesQuery.refetch();
                           }
@@ -302,7 +300,7 @@ export function ProjectsScreen(): JSX.Element {
                   );
                 } else {
                   // Generic error
-                  Alert.alert("Error", errorMsg);
+                  Alert.alert("Error", result.error);
                 }
               } else {
                 // Success - refetch to update UI
@@ -313,7 +311,7 @@ export function ProjectsScreen(): JSX.Element {
         ]
       );
     },
-    [client, workspacesQuery]
+    [api, workspacesQuery]
   );
 
   const handleRenameWorkspace = useCallback((metadata: FrontendWorkspaceMetadata) => {
@@ -327,17 +325,17 @@ export function ProjectsScreen(): JSX.Element {
 
   const executeRename = useCallback(
     async (workspaceId: string, newName: string): Promise<void> => {
-      const result = await client.workspace.rename({ workspaceId, newName });
+      const result = await api.workspace.rename(workspaceId, newName);
 
       if (!result.success) {
         // Show error - modal will display it
-        throw new Error(result.error ?? "Failed to rename workspace");
+        throw new Error(result.error);
       }
 
       // Success - refetch workspace list
       await workspacesQuery.refetch();
     },
-    [client, workspacesQuery]
+    [api, workspacesQuery]
   );
 
   const renderWorkspaceRow = (item: WorkspaceListItem) => {

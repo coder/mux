@@ -21,8 +21,8 @@ import type {
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { TodoItem, StatusSetToolResult } from "@/common/types/tools";
 
-import type { WorkspaceChatMessage, StreamErrorMessage, DeleteMessage } from "@/common/orpc/types";
-import { isInitStart, isInitOutput, isInitEnd, isMuxMessage } from "@/common/orpc/types";
+import type { WorkspaceChatMessage, StreamErrorMessage, DeleteMessage } from "@/common/types/ipc";
+import { isInitStart, isInitOutput, isInitEnd, isMuxMessage } from "@/common/types/ipc";
 import type {
   DynamicToolPart,
   DynamicToolPartPending,
@@ -64,6 +64,7 @@ function hasFailureResult(result: unknown): boolean {
 export class StreamingMessageAggregator {
   private messages = new Map<string, MuxMessage>();
   private activeStreams = new Map<string, StreamingContext>();
+  private streamSequenceCounter = 0; // For ordering parts within a streaming message
 
   // Simple cache for derived values (invalidated on every mutation)
   private cachedAllMessages: MuxMessage[] | null = null;
@@ -325,6 +326,7 @@ export class StreamingMessageAggregator {
   clear(): void {
     this.messages.clear();
     this.activeStreams.clear();
+    this.streamSequenceCounter = 0;
     this.invalidateCache();
   }
 

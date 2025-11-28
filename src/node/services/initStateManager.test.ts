@@ -4,7 +4,7 @@ import * as os from "os";
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { Config } from "@/node/config";
 import { InitStateManager } from "./initStateManager";
-import type { WorkspaceInitEvent } from "@/common/orpc/types";
+import type { WorkspaceInitEvent } from "@/common/types/ipc";
 
 describe("InitStateManager", () => {
   let tempDir: string;

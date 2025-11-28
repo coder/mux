@@ -1,11 +1,6 @@
 import type { SlashSuggestion } from "@/browser/utils/slashCommands/types";
-import type { InferClientInputs } from "@orpc/client";
-import type { ORPCClient } from "../orpc/client";
 import { buildMobileCompactionPayload, filterSuggestionsForMobile } from "./slashCommandHelpers";
-
-type SendMessageOptions = NonNullable<
-  InferClientInputs<ORPCClient>["workspace"]["sendMessage"]["options"]
->;
+import type { SendMessageOptions } from "../api/client";
 
 describe("filterSuggestionsForMobile", () => {
   it("filters out hidden commands by root key", () => {

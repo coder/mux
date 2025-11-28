@@ -1,21 +1,16 @@
-import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type {
+  FrontendWorkspaceMetadata,
+  WorkspaceActivitySnapshot,
+} from "@/common/types/workspace";
+import type { IPCApi } from "@/common/types/ipc";
+import type { ProjectConfig } from "@/common/types/project";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import type { WorkspaceContext } from "./WorkspaceContext";
 import { WorkspaceProvider, useWorkspaceContext } from "./WorkspaceContext";
 import { ProjectProvider } from "@/browser/contexts/ProjectContext";
-import { useWorkspaceStoreRaw as getWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
-import type { RecursivePartial } from "@/browser/testUtils";
-
-import type { ORPCClient } from "@/browser/orpc/react";
-
-// Mock ORPC
-let currentClientMock: RecursivePartial<ORPCClient> = {};
-void mock.module("@/browser/orpc/react", () => ({
-  useORPC: () => currentClientMock as ORPCClient,
-  ORPCProvider: ({ children }: { children: React.ReactNode }) => children,
-}));
+import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 
 // Helper to create test workspace metadata with default runtime config
 const createWorkspaceMetadata = (
@@ -35,13 +30,14 @@ describe("WorkspaceContext", () => {
     cleanup();
 
     // Reset global workspace store to avoid cross-test leakage
-    getWorkspaceStoreRaw().dispose();
+    useWorkspaceStoreRaw().dispose();
 
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    globalThis.document = undefined as unknown as Document;
-    globalThis.localStorage = undefined as unknown as Storage;
-
-    currentClientMock = {};
+    // @ts-expect-error - Resetting global state in tests
+    globalThis.window = undefined;
+    // @ts-expect-error - Resetting global state in tests
+    globalThis.document = undefined;
+    // @ts-expect-error - Resetting global state in tests
+    globalThis.localStorage = undefined;
   });
 
   test("syncs workspace store subscriptions when metadata loads", async () => {
@@ -66,10 +62,7 @@ describe("WorkspaceContext", () => {
     await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(1));
     await waitFor(() =>
       expect(
-        workspaceApi.onChat.mock.calls.some(
-          ([{ workspaceId }]: [{ workspaceId: string }, ...unknown[]]) =>
-            workspaceId === "ws-sync-load"
-        )
+        workspaceApi.onChat.mock.calls.some(([workspaceId]) => workspaceId === "ws-sync-load")
       ).toBe(true)
     );
   });
@@ -84,9 +77,20 @@ describe("WorkspaceContext", () => {
     await setup();
 
     await waitFor(() => expect(workspaceApi.onMetadata.mock.calls.length).toBeGreaterThan(0));
-    expect(workspaceApi.onMetadata).toHaveBeenCalled();
-  });
+    const metadataListener: Parameters<IPCApi["workspace"]["onMetadata"]>[0] =
+      workspaceApi.onMetadata.mock.calls[0][0];
 
+    const newWorkspace = createWorkspaceMetadata({ id: "ws-from-event" });
+    act(() => {
+      metadataListener({ workspaceId: newWorkspace.id, metadata: newWorkspace });
+    });
+
+    await waitFor(() =>
+      expect(
+        workspaceApi.onChat.mock.calls.some(([workspaceId]) => workspaceId === "ws-from-event")
+      ).toBe(true)
+    );
+  });
   test("loads workspace metadata on mount", async () => {
     const initialWorkspaces: FrontendWorkspaceMetadata[] = [
       createWorkspaceMetadata({
@@ -95,10 +99,19 @@ describe("WorkspaceContext", () => {
         projectName: "alpha",
         name: "main",
         namedWorkspacePath: "/alpha-main",
+        createdAt: "2025-01-01T00:00:00.000Z",
+      }),
+      createWorkspaceMetadata({
+        id: "ws-2",
+        projectPath: "/beta",
+        projectName: "beta",
+        name: "dev",
+        namedWorkspacePath: "/beta-dev",
+        createdAt: "2025-01-02T00:00:00.000Z",
       }),
     ];
 
-    createMockAPI({
+    const { workspace: workspaceApi } = createMockAPI({
       workspace: {
         list: () => Promise.resolve(initialWorkspaces),
       },
@@ -106,36 +119,55 @@ describe("WorkspaceContext", () => {
 
     const ctx = await setup();
 
-    await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(1));
-
-    const metadata = ctx().workspaceMetadata.get("ws-1");
-    expect(metadata?.createdAt).toBe("2025-01-01T00:00:00.000Z");
+    await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(2));
+    expect(workspaceApi.list).toHaveBeenCalled();
+    expect(ctx().loading).toBe(false);
+    expect(ctx().workspaceMetadata.has("ws-1")).toBe(true);
+    expect(ctx().workspaceMetadata.has("ws-2")).toBe(true);
   });
 
   test("sets empty map on API error during load", async () => {
     createMockAPI({
       workspace: {
-        list: () => Promise.reject(new Error("API Error")),
+        list: () => Promise.reject(new Error("network failure")),
       },
     });
 
     const ctx = await setup();
 
-    await waitFor(() => expect(ctx().loading).toBe(false));
-    expect(ctx().workspaceMetadata.size).toBe(0);
+    // Should have empty workspaces after failed load
+    await waitFor(() => {
+      expect(ctx().workspaceMetadata.size).toBe(0);
+      expect(ctx().loading).toBe(false);
+    });
   });
 
   test("refreshWorkspaceMetadata reloads workspace data", async () => {
     const initialWorkspaces: FrontendWorkspaceMetadata[] = [
-      createWorkspaceMetadata({ id: "ws-1" }),
+      createWorkspaceMetadata({
+        id: "ws-1",
+        projectPath: "/alpha",
+        projectName: "alpha",
+        name: "main",
+        namedWorkspacePath: "/alpha-main",
+        createdAt: "2025-01-01T00:00:00.000Z",
+      }),
     ];
+
     const updatedWorkspaces: FrontendWorkspaceMetadata[] = [
-      createWorkspaceMetadata({ id: "ws-1" }),
-      createWorkspaceMetadata({ id: "ws-2" }),
+      ...initialWorkspaces,
+      createWorkspaceMetadata({
+        id: "ws-2",
+        projectPath: "/beta",
+        projectName: "beta",
+        name: "dev",
+        namedWorkspacePath: "/beta-dev",
+        createdAt: "2025-01-02T00:00:00.000Z",
+      }),
     ];
 
     let callCount = 0;
-    createMockAPI({
+    const { workspace: workspaceApi } = createMockAPI({
       workspace: {
         list: () => {
           callCount++;
@@ -148,261 +180,541 @@ describe("WorkspaceContext", () => {
 
     await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(1));
 
-    await ctx().refreshWorkspaceMetadata();
+    await act(async () => {
+      await ctx().refreshWorkspaceMetadata();
+    });
 
-    await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(2));
+    expect(ctx().workspaceMetadata.size).toBe(2);
+    expect(workspaceApi.list.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
   test("createWorkspace creates new workspace and reloads data", async () => {
-    const { workspace: workspaceApi } = createMockAPI();
+    const newWorkspace: FrontendWorkspaceMetadata = createWorkspaceMetadata({
+      id: "ws-new",
+      projectPath: "/gamma",
+      projectName: "gamma",
+      name: "feature",
+      namedWorkspacePath: "/gamma-feature",
+      createdAt: "2025-01-03T00:00:00.000Z",
+    });
+
+    const { workspace: workspaceApi, projects: projectsApi } = createMockAPI({
+      workspace: {
+        list: () => Promise.resolve([]),
+        create: () =>
+          Promise.resolve({
+            success: true as const,
+            metadata: newWorkspace,
+          }),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+    });
 
     const ctx = await setup();
 
-    const newMetadata = createWorkspaceMetadata({ id: "ws-new" });
-    workspaceApi.create.mockResolvedValue({ success: true as const, metadata: newMetadata });
+    await waitFor(() => expect(ctx().loading).toBe(false));
 
-    await ctx().createWorkspace("path", "name", "main");
+    let result: Awaited<ReturnType<WorkspaceContext["createWorkspace"]>>;
+    await act(async () => {
+      result = await ctx().createWorkspace("/gamma", "feature", "main");
+    });
 
-    expect(workspaceApi.create).toHaveBeenCalled();
-    // Verify list called (might be 1 or 2 times depending on optimization)
-    expect(workspaceApi.list).toHaveBeenCalled();
+    expect(workspaceApi.create).toHaveBeenCalledWith("/gamma", "feature", "main", undefined);
+    expect(projectsApi.list).toHaveBeenCalled();
+    expect(result!.workspaceId).toBe("ws-new");
+    expect(result!.projectPath).toBe("/gamma");
+    expect(result!.projectName).toBe("gamma");
   });
 
   test("createWorkspace throws on failure", async () => {
-    const { workspace: workspaceApi } = createMockAPI();
+    createMockAPI({
+      workspace: {
+        list: () => Promise.resolve([]),
+        create: () =>
+          Promise.resolve({
+            success: false,
+            error: "Failed to create workspace",
+          }),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+    });
 
     const ctx = await setup();
 
-    workspaceApi.create.mockResolvedValue({ success: false, error: "Failed" });
+    await waitFor(() => expect(ctx().loading).toBe(false));
 
-    return expect(ctx().createWorkspace("path", "name", "main")).rejects.toThrow("Failed");
+    expect(async () => {
+      await act(async () => {
+        await ctx().createWorkspace("/gamma", "feature", "main");
+      });
+    }).toThrow("Failed to create workspace");
   });
 
   test("removeWorkspace removes workspace and clears selection if active", async () => {
-    const initialWorkspaces = [
-      createWorkspaceMetadata({
-        id: "ws-remove",
-        projectPath: "/remove",
-        projectName: "remove",
-        name: "main",
-        namedWorkspacePath: "/remove-main",
-      }),
-    ];
-
-    createMockAPI({
-      workspace: {
-        list: () => Promise.resolve(initialWorkspaces),
-      },
-      localStorage: {
-        selectedWorkspace: JSON.stringify({
-          workspaceId: "ws-remove",
-          projectPath: "/remove",
-          projectName: "remove",
-          namedWorkspacePath: "/remove-main",
-        }),
-      },
+    const workspace: FrontendWorkspaceMetadata = createWorkspaceMetadata({
+      id: "ws-1",
+      projectPath: "/alpha",
+      projectName: "alpha",
+      name: "main",
+      namedWorkspacePath: "/alpha-main",
+      createdAt: "2025-01-01T00:00:00.000Z",
     });
-
-    const ctx = await setup();
-
-    await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(1));
-    expect(ctx().selectedWorkspace?.workspaceId).toBe("ws-remove");
-
-    await ctx().removeWorkspace("ws-remove");
-
-    await waitFor(() => expect(ctx().selectedWorkspace).toBeNull());
-  });
-
-  test("removeWorkspace handles failure gracefully", async () => {
-    const { workspace: workspaceApi } = createMockAPI();
-
-    const ctx = await setup();
-
-    workspaceApi.remove.mockResolvedValue({
-      success: false,
-      error: "Failed",
-    });
-
-    const result = await ctx().removeWorkspace("ws-1");
-    expect(result.success).toBe(false);
-    expect(result.error).toBe("Failed");
-  });
-
-  test("renameWorkspace renames workspace and updates selection if active", async () => {
-    const initialWorkspaces = [
-      createWorkspaceMetadata({
-        id: "ws-rename",
-        projectPath: "/rename",
-        projectName: "rename",
-        name: "old",
-        namedWorkspacePath: "/rename-old",
-      }),
-    ];
 
     const { workspace: workspaceApi } = createMockAPI({
       workspace: {
-        list: () => Promise.resolve(initialWorkspaces),
+        list: () => Promise.resolve([workspace]),
+        remove: () => Promise.resolve({ success: true as const }),
       },
-      localStorage: {
-        selectedWorkspace: JSON.stringify({
-          workspaceId: "ws-rename",
-          projectPath: "/rename",
-          projectName: "rename",
-          namedWorkspacePath: "/rename-old",
-        }),
+      projects: {
+        list: () => Promise.resolve([]),
       },
     });
 
     const ctx = await setup();
 
-    await waitFor(() => expect(ctx().selectedWorkspace?.namedWorkspacePath).toBe("/rename-old"));
+    await waitFor(() => expect(ctx().loading).toBe(false));
 
-    workspaceApi.rename.mockResolvedValue({
-      success: true as const,
-      data: { newWorkspaceId: "ws-rename-new" },
+    // Set the selected workspace via context API
+    act(() => {
+      ctx().setSelectedWorkspace({
+        workspaceId: "ws-1",
+        projectPath: "/alpha",
+        projectName: "alpha",
+        namedWorkspacePath: "/alpha-main",
+      });
     });
 
-    // Mock list to return updated workspace after rename
-    workspaceApi.list.mockResolvedValue([
-      createWorkspaceMetadata({
-        id: "ws-rename-new",
-        projectPath: "/rename",
-        projectName: "rename",
-        name: "new",
-        namedWorkspacePath: "/rename-new",
-      }),
-    ]);
-    workspaceApi.getInfo.mockResolvedValue(
-      createWorkspaceMetadata({
-        id: "ws-rename-new",
-        projectPath: "/rename",
-        projectName: "rename",
-        name: "new",
-        namedWorkspacePath: "/rename-new",
-      })
-    );
+    expect(ctx().selectedWorkspace?.workspaceId).toBe("ws-1");
 
-    await ctx().renameWorkspace("ws-rename", "new");
+    let result: Awaited<ReturnType<WorkspaceContext["removeWorkspace"]>>;
+    await act(async () => {
+      result = await ctx().removeWorkspace("ws-1");
+    });
 
-    expect(workspaceApi.rename).toHaveBeenCalled();
-    await waitFor(() => expect(ctx().selectedWorkspace?.namedWorkspacePath).toBe("/rename-new"));
+    expect(workspaceApi.remove).toHaveBeenCalledWith("ws-1", undefined);
+    expect(result!.success).toBe(true);
+    // Verify selectedWorkspace was cleared
+    expect(ctx().selectedWorkspace).toBeNull();
+  });
+
+  test("removeWorkspace handles failure gracefully", async () => {
+    const workspace: FrontendWorkspaceMetadata = createWorkspaceMetadata({
+      id: "ws-1",
+      projectPath: "/alpha",
+      projectName: "alpha",
+      name: "main",
+      namedWorkspacePath: "/alpha-main",
+      createdAt: "2025-01-01T00:00:00.000Z",
+    });
+
+    const { workspace: workspaceApi } = createMockAPI({
+      workspace: {
+        list: () => Promise.resolve([workspace]),
+        remove: () => Promise.resolve({ success: false, error: "Permission denied" }),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+
+    let result: Awaited<ReturnType<WorkspaceContext["removeWorkspace"]>>;
+    await act(async () => {
+      result = await ctx().removeWorkspace("ws-1");
+    });
+
+    expect(workspaceApi.remove).toHaveBeenCalledWith("ws-1", undefined);
+    expect(result!.success).toBe(false);
+    expect(result!.error).toBe("Permission denied");
+  });
+
+  test("renameWorkspace renames workspace and updates selection if active", async () => {
+    const oldWorkspace: FrontendWorkspaceMetadata = createWorkspaceMetadata({
+      id: "ws-1",
+      projectPath: "/alpha",
+      projectName: "alpha",
+      name: "main",
+      namedWorkspacePath: "/alpha-main",
+      createdAt: "2025-01-01T00:00:00.000Z",
+    });
+
+    const newWorkspace: FrontendWorkspaceMetadata = createWorkspaceMetadata({
+      id: "ws-2",
+      projectPath: "/alpha",
+      projectName: "alpha",
+      name: "renamed",
+      namedWorkspacePath: "/alpha-renamed",
+      createdAt: "2025-01-01T00:00:00.000Z",
+    });
+
+    const { workspace: workspaceApi } = createMockAPI({
+      workspace: {
+        list: () => Promise.resolve([oldWorkspace]),
+        rename: () =>
+          Promise.resolve({
+            success: true as const,
+            data: { newWorkspaceId: "ws-2" },
+          }),
+        getInfo: (workspaceId: string) => {
+          if (workspaceId === "ws-2") {
+            return Promise.resolve(newWorkspace);
+          }
+          return Promise.resolve(null);
+        },
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+
+    // Set the selected workspace via context API
+    act(() => {
+      ctx().setSelectedWorkspace({
+        workspaceId: "ws-1",
+        projectPath: "/alpha",
+        projectName: "alpha",
+        namedWorkspacePath: "/alpha-main",
+      });
+    });
+
+    expect(ctx().selectedWorkspace?.workspaceId).toBe("ws-1");
+
+    let result: Awaited<ReturnType<WorkspaceContext["renameWorkspace"]>>;
+    await act(async () => {
+      result = await ctx().renameWorkspace("ws-1", "renamed");
+    });
+
+    expect(workspaceApi.rename).toHaveBeenCalledWith("ws-1", "renamed");
+    expect(result!.success).toBe(true);
+    expect(workspaceApi.getInfo).toHaveBeenCalledWith("ws-2");
+    // Verify selectedWorkspace was updated with new ID
+    expect(ctx().selectedWorkspace).toEqual({
+      workspaceId: "ws-2",
+      projectPath: "/alpha",
+      projectName: "alpha",
+      namedWorkspacePath: "/alpha-renamed",
+    });
   });
 
   test("renameWorkspace handles failure gracefully", async () => {
-    const { workspace: workspaceApi } = createMockAPI();
+    const workspace: FrontendWorkspaceMetadata = createWorkspaceMetadata({
+      id: "ws-1",
+      projectPath: "/alpha",
+      projectName: "alpha",
+      name: "main",
+      namedWorkspacePath: "/alpha-main",
+      createdAt: "2025-01-01T00:00:00.000Z",
+    });
+
+    const { workspace: workspaceApi } = createMockAPI({
+      workspace: {
+        list: () => Promise.resolve([workspace]),
+        rename: () => Promise.resolve({ success: false, error: "Name already exists" }),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+    });
 
     const ctx = await setup();
 
-    workspaceApi.rename.mockResolvedValue({
-      success: false,
-      error: "Failed",
+    await waitFor(() => expect(ctx().loading).toBe(false));
+
+    let result: Awaited<ReturnType<WorkspaceContext["renameWorkspace"]>>;
+    await act(async () => {
+      result = await ctx().renameWorkspace("ws-1", "renamed");
     });
 
-    const result = await ctx().renameWorkspace("ws-1", "new");
-    expect(result.success).toBe(false);
-    expect(result.error).toBe("Failed");
+    expect(workspaceApi.rename).toHaveBeenCalledWith("ws-1", "renamed");
+    expect(result!.success).toBe(false);
+    expect(result!.error).toBe("Name already exists");
   });
 
   test("getWorkspaceInfo fetches workspace metadata", async () => {
-    const { workspace: workspaceApi } = createMockAPI();
-    const mockInfo = createWorkspaceMetadata({ id: "ws-info" });
-    workspaceApi.getInfo.mockResolvedValue(mockInfo);
+    const workspace: FrontendWorkspaceMetadata = createWorkspaceMetadata({
+      id: "ws-1",
+      projectPath: "/alpha",
+      projectName: "alpha",
+      name: "main",
+      namedWorkspacePath: "/alpha-main",
+      createdAt: "2025-01-01T00:00:00.000Z",
+    });
+
+    const { workspace: workspaceApi } = createMockAPI({
+      workspace: {
+        list: () => Promise.resolve([]),
+        getInfo: (workspaceId: string) => {
+          if (workspaceId === "ws-1") {
+            return Promise.resolve(workspace);
+          }
+          return Promise.resolve(null);
+        },
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+    });
 
     const ctx = await setup();
 
-    const info = await ctx().getWorkspaceInfo("ws-info");
-    expect(info).toEqual(mockInfo);
-    expect(workspaceApi.getInfo).toHaveBeenCalledWith({ workspaceId: "ws-info" });
+    await waitFor(() => expect(ctx().loading).toBe(false));
+
+    const info = await ctx().getWorkspaceInfo("ws-1");
+    expect(workspaceApi.getInfo).toHaveBeenCalledWith("ws-1");
+    expect(info).toEqual(workspace);
   });
 
   test("beginWorkspaceCreation clears selection and tracks pending state", async () => {
     createMockAPI({
-      localStorage: {
-        selectedWorkspace: JSON.stringify({
-          workspaceId: "ws-existing",
-          projectPath: "/existing",
-          projectName: "existing",
-          namedWorkspacePath: "/existing-main",
-        }),
+      workspace: {
+        list: () => Promise.resolve([]),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
       },
     });
 
     const ctx = await setup();
 
-    await waitFor(() => expect(ctx().selectedWorkspace).toBeTruthy());
+    await waitFor(() => expect(ctx().loading).toBe(false));
+
+    expect(ctx().pendingNewWorkspaceProject).toBeNull();
 
     act(() => {
-      ctx().beginWorkspaceCreation("/new/project");
+      ctx().setSelectedWorkspace({
+        workspaceId: "ws-123",
+        projectPath: "/alpha",
+        projectName: "alpha",
+        namedWorkspacePath: "alpha/ws-123",
+      });
     });
+    expect(ctx().selectedWorkspace?.workspaceId).toBe("ws-123");
 
+    act(() => {
+      ctx().beginWorkspaceCreation("/alpha");
+    });
+    expect(ctx().pendingNewWorkspaceProject).toBe("/alpha");
     expect(ctx().selectedWorkspace).toBeNull();
-    expect(ctx().pendingNewWorkspaceProject).toBe("/new/project");
+
+    act(() => {
+      ctx().clearPendingWorkspaceCreation();
+    });
+    expect(ctx().pendingNewWorkspaceProject).toBeNull();
   });
 
   test("reacts to metadata update events (new workspace)", async () => {
-    const { workspace: workspaceApi } = createMockAPI();
-    await setup();
+    let metadataListener:
+      | ((event: { workspaceId: string; metadata: FrontendWorkspaceMetadata | null }) => void)
+      | null = null;
 
-    // Verify subscription started
-    await waitFor(() => expect(workspaceApi.onMetadata).toHaveBeenCalled());
-
-    // Note: We cannot easily simulate incoming events from the async generator mock
-    // in this simple setup. We verify the subscription happens.
-  });
-
-  test("selectedWorkspace persists to localStorage", async () => {
-    createMockAPI();
-    const ctx = await setup();
-
-    const selection = {
-      workspaceId: "ws-persist",
-      projectPath: "/persist",
-      projectName: "persist",
-      namedWorkspacePath: "/persist-main",
-    };
-
-    act(() => {
-      ctx().setSelectedWorkspace(selection);
-    });
-
-    await waitFor(() => expect(localStorage.getItem("selectedWorkspace")).toContain("ws-persist"));
-  });
-
-  test("selectedWorkspace restores from localStorage on mount", async () => {
-    createMockAPI({
-      localStorage: {
-        selectedWorkspace: JSON.stringify({
-          workspaceId: "ws-restore",
-          projectPath: "/restore",
-          projectName: "restore",
-          namedWorkspacePath: "/restore-main",
-        }),
+    const { projects: projectsApi } = createMockAPI({
+      workspace: {
+        list: () => Promise.resolve([]),
+        // Preload.ts type is incorrect - it should allow metadata: null for deletions
+        /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment */
+        onMetadata: ((
+          listener: (event: {
+            workspaceId: string;
+            metadata: FrontendWorkspaceMetadata | null;
+          }) => void
+        ) => {
+          metadataListener = listener;
+          return () => {
+            metadataListener = null;
+          };
+        }) as any,
+        /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment */
+      },
+      projects: {
+        list: () => Promise.resolve([]),
       },
     });
 
     const ctx = await setup();
 
-    await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe("ws-restore"));
+    await waitFor(() => expect(ctx().loading).toBe(false));
+
+    const newWorkspace: FrontendWorkspaceMetadata = createWorkspaceMetadata({
+      id: "ws-new",
+      projectPath: "/gamma",
+      projectName: "gamma",
+      name: "feature",
+      namedWorkspacePath: "/gamma-feature",
+      createdAt: "2025-01-03T00:00:00.000Z",
+    });
+
+    await act(async () => {
+      metadataListener!({ workspaceId: "ws-new", metadata: newWorkspace });
+      // Give async side effects time to run
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    expect(ctx().workspaceMetadata.has("ws-new")).toBe(true);
+    // Should reload projects when new workspace is created
+    expect(projectsApi.list.mock.calls.length).toBeGreaterThan(1);
   });
 
-  test("launch project takes precedence over localStorage selection", async () => {
+  test("reacts to metadata update events (delete workspace)", async () => {
+    const workspace: FrontendWorkspaceMetadata = createWorkspaceMetadata({
+      id: "ws-1",
+      projectPath: "/alpha",
+      projectName: "alpha",
+      name: "main",
+      namedWorkspacePath: "/alpha-main",
+      createdAt: "2025-01-01T00:00:00.000Z",
+    });
+
+    let metadataListener:
+      | ((event: { workspaceId: string; metadata: FrontendWorkspaceMetadata | null }) => void)
+      | null = null;
+
+    createMockAPI({
+      workspace: {
+        list: () => Promise.resolve([workspace]),
+        // Preload.ts type is incorrect - it should allow metadata: null for deletions
+        /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment */
+        onMetadata: ((
+          listener: (event: {
+            workspaceId: string;
+            metadata: FrontendWorkspaceMetadata | null;
+          }) => void
+        ) => {
+          metadataListener = listener;
+          return () => {
+            metadataListener = null;
+          };
+        }) as any,
+        /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment */
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().workspaceMetadata.has("ws-1")).toBe(true));
+
+    act(() => {
+      metadataListener!({ workspaceId: "ws-1", metadata: null });
+    });
+
+    expect(ctx().workspaceMetadata.has("ws-1")).toBe(false);
+  });
+
+  test("selectedWorkspace persists to localStorage", async () => {
     createMockAPI({
       workspace: {
         list: () =>
           Promise.resolve([
             createWorkspaceMetadata({
-              id: "ws-existing",
-              projectPath: "/existing",
-              projectName: "existing",
+              id: "ws-1",
+              projectPath: "/alpha",
+              projectName: "alpha",
               name: "main",
-              namedWorkspacePath: "/existing-main",
+              namedWorkspacePath: "/alpha-main",
+            }),
+          ]),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+
+    // Set selected workspace
+    act(() => {
+      ctx().setSelectedWorkspace({
+        workspaceId: "ws-1",
+        projectPath: "/alpha",
+        projectName: "alpha",
+        namedWorkspacePath: "/alpha-main",
+      });
+    });
+
+    // Verify it's set and persisted to localStorage
+    await waitFor(() => {
+      expect(ctx().selectedWorkspace?.workspaceId).toBe("ws-1");
+      const stored = globalThis.localStorage.getItem("selectedWorkspace");
+      expect(stored).toBeTruthy();
+      const parsed = JSON.parse(stored!) as { workspaceId?: string };
+      expect(parsed.workspaceId).toBe("ws-1");
+    });
+  });
+
+  test("selectedWorkspace restores from localStorage on mount", async () => {
+    // Pre-populate localStorage
+    const mockSelection = {
+      workspaceId: "ws-1",
+      projectPath: "/alpha",
+      projectName: "alpha",
+      namedWorkspacePath: "/alpha-main",
+    };
+
+    createMockAPI({
+      workspace: {
+        list: () =>
+          Promise.resolve([
+            createWorkspaceMetadata({
+              id: "ws-1",
+              projectPath: "/alpha",
+              projectName: "alpha",
+              name: "main",
+              namedWorkspacePath: "/alpha-main",
+            }),
+          ]),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+      localStorage: {
+        selectedWorkspace: JSON.stringify(mockSelection),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+
+    // Should have restored from localStorage (happens after loading completes)
+    await waitFor(() => {
+      expect(ctx().selectedWorkspace?.workspaceId).toBe("ws-1");
+    });
+    expect(ctx().selectedWorkspace?.projectPath).toBe("/alpha");
+  });
+
+  test("URL hash overrides localStorage for selectedWorkspace", async () => {
+    createMockAPI({
+      workspace: {
+        list: () =>
+          Promise.resolve([
+            createWorkspaceMetadata({
+              id: "ws-1",
+              projectPath: "/alpha",
+              projectName: "alpha",
+              name: "main",
+              namedWorkspacePath: "/alpha-main",
             }),
             createWorkspaceMetadata({
-              id: "ws-launch",
-              projectPath: "/launch-project",
-              projectName: "launch-project",
-              name: "main",
-              namedWorkspacePath: "/launch-project-main",
+              id: "ws-2",
+              projectPath: "/beta",
+              projectName: "beta",
+              name: "dev",
+              namedWorkspacePath: "/beta-dev",
             }),
           ]),
       },
@@ -411,16 +723,81 @@ describe("WorkspaceContext", () => {
       },
       localStorage: {
         selectedWorkspace: JSON.stringify({
-          workspaceId: "ws-existing",
-          projectPath: "/existing",
-          projectName: "existing",
-          namedWorkspacePath: "/existing-main",
+          workspaceId: "ws-1",
+          projectPath: "/alpha",
+          projectName: "alpha",
+          namedWorkspacePath: "/alpha-main",
         }),
+      },
+      locationHash: "#workspace=ws-2",
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+
+    // Should have selected ws-2 from URL hash, not ws-1 from localStorage
+    await waitFor(() => {
+      expect(ctx().selectedWorkspace?.workspaceId).toBe("ws-2");
+    });
+    expect(ctx().selectedWorkspace?.projectPath).toBe("/beta");
+  });
+
+  test("URL hash with non-existent workspace ID does not crash", async () => {
+    createMockAPI({
+      workspace: {
+        list: () =>
+          Promise.resolve([
+            createWorkspaceMetadata({
+              id: "ws-1",
+              projectPath: "/alpha",
+              projectName: "alpha",
+              name: "main",
+              namedWorkspacePath: "/alpha-main",
+            }),
+          ]),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+      locationHash: "#workspace=non-existent",
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+
+    // Should not have selected anything (workspace doesn't exist)
+    expect(ctx().selectedWorkspace).toBeNull();
+  });
+
+  test("launch project selects first workspace when no selection exists", async () => {
+    createMockAPI({
+      workspace: {
+        list: () =>
+          Promise.resolve([
+            createWorkspaceMetadata({
+              id: "ws-1",
+              projectPath: "/launch-project",
+              projectName: "launch-project",
+              name: "main",
+              namedWorkspacePath: "/launch-project-main",
+            }),
+            createWorkspaceMetadata({
+              id: "ws-2",
+              projectPath: "/launch-project",
+              projectName: "launch-project",
+              name: "dev",
+              namedWorkspacePath: "/launch-project-dev",
+            }),
+          ]),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
       },
       server: {
         getLaunchProject: () => Promise.resolve("/launch-project"),
       },
-      locationHash: "#/launch-project", // Simulate launch project via URL hash
     });
 
     const ctx = await setup();
@@ -546,23 +923,42 @@ async function setup() {
       </WorkspaceProvider>
     </ProjectProvider>
   );
-
-  // Inject client immediately to handle race conditions where effects run before store update
-  getWorkspaceStoreRaw().setClient(currentClientMock as ORPCClient);
-
   await waitFor(() => expect(contextRef.current).toBeTruthy());
   return () => contextRef.current!;
 }
 
 interface MockAPIOptions {
-  workspace?: RecursivePartial<ORPCClient["workspace"]>;
-  projects?: RecursivePartial<ORPCClient["projects"]>;
-  server?: RecursivePartial<ORPCClient["server"]>;
+  workspace?: Partial<IPCApi["workspace"]>;
+  projects?: Partial<IPCApi["projects"]>;
+  server?: {
+    getLaunchProject?: () => Promise<string | null>;
+  };
   localStorage?: Record<string, string>;
   locationHash?: string;
 }
 
+// Mock type helpers - only include methods used in tests
+interface MockedWorkspaceAPI {
+  create: ReturnType<typeof mock<IPCApi["workspace"]["create"]>>;
+  list: ReturnType<typeof mock<IPCApi["workspace"]["list"]>>;
+  remove: ReturnType<typeof mock<IPCApi["workspace"]["remove"]>>;
+  rename: ReturnType<typeof mock<IPCApi["workspace"]["rename"]>>;
+  getInfo: ReturnType<typeof mock<IPCApi["workspace"]["getInfo"]>>;
+  onMetadata: ReturnType<typeof mock<IPCApi["workspace"]["onMetadata"]>>;
+  onChat: ReturnType<typeof mock<IPCApi["workspace"]["onChat"]>>;
+  activity: {
+    list: ReturnType<typeof mock<IPCApi["workspace"]["activity"]["list"]>>;
+    subscribe: ReturnType<typeof mock<IPCApi["workspace"]["activity"]["subscribe"]>>;
+  };
+}
+
+// Just type the list method directly since Pick with conditional types causes issues
+interface MockedProjectsAPI {
+  list: ReturnType<typeof mock<() => Promise<Array<[string, ProjectConfig]>>>>;
+}
+
 function createMockAPI(options: MockAPIOptions = {}) {
+  // Create fresh window environment with explicit typing
   const happyWindow = new GlobalWindow();
   globalThis.window = happyWindow as unknown as Window & typeof globalThis;
   globalThis.document = happyWindow.document as unknown as Document;
@@ -580,8 +976,19 @@ function createMockAPI(options: MockAPIOptions = {}) {
     happyWindow.location.hash = options.locationHash;
   }
 
-  // Create mocks
-  const workspace = {
+  // Create workspace API with proper types
+  const defaultActivityList: IPCApi["workspace"]["activity"]["list"] = () =>
+    Promise.resolve({} as Record<string, WorkspaceActivitySnapshot>);
+  const defaultActivitySubscribe: IPCApi["workspace"]["activity"]["subscribe"] = () => () =>
+    undefined;
+
+  const workspaceActivity = options.workspace?.activity;
+  const activityListImpl: IPCApi["workspace"]["activity"]["list"] =
+    workspaceActivity?.list?.bind(workspaceActivity) ?? defaultActivityList;
+  const activitySubscribeImpl: IPCApi["workspace"]["activity"]["subscribe"] =
+    workspaceActivity?.subscribe?.bind(workspaceActivity) ?? defaultActivitySubscribe;
+
+  const workspace: MockedWorkspaceAPI = {
     create: mock(
       options.workspace?.create ??
         (() =>
@@ -591,82 +998,57 @@ function createMockAPI(options: MockAPIOptions = {}) {
           }))
     ),
     list: mock(options.workspace?.list ?? (() => Promise.resolve([]))),
-    remove: mock(options.workspace?.remove ?? (() => Promise.resolve({ success: true as const }))),
+    remove: mock(
+      options.workspace?.remove ??
+        (() => Promise.resolve({ success: true as const, data: undefined }))
+    ),
     rename: mock(
       options.workspace?.rename ??
-        (() => Promise.resolve({ success: true as const, data: { newWorkspaceId: "ws-1" } }))
+        (() =>
+          Promise.resolve({
+            success: true as const,
+            data: { newWorkspaceId: "ws-1" },
+          }))
     ),
     getInfo: mock(options.workspace?.getInfo ?? (() => Promise.resolve(null))),
-    // Async generators for subscriptions
     onMetadata: mock(
       options.workspace?.onMetadata ??
-        (async () => {
-          await Promise.resolve();
-          return (
-            // eslint-disable-next-line require-yield
-            (async function* () {
-              await Promise.resolve();
-            })() as unknown as Awaited<ReturnType<ORPCClient["workspace"]["onMetadata"]>>
-          );
+        (() => () => {
+          // Empty cleanup function
         })
     ),
     onChat: mock(
       options.workspace?.onChat ??
-        (async () => {
-          await Promise.resolve();
-          return (
-            // eslint-disable-next-line require-yield
-            (async function* () {
-              await Promise.resolve();
-            })() as unknown as Awaited<ReturnType<ORPCClient["workspace"]["onChat"]>>
-          );
+        ((_workspaceId: string, _callback: Parameters<IPCApi["workspace"]["onChat"]>[1]) => () => {
+          // Empty cleanup function
         })
     ),
     activity: {
-      list: mock(options.workspace?.activity?.list ?? (() => Promise.resolve({}))),
-      subscribe: mock(
-        options.workspace?.activity?.subscribe ??
-          (async () => {
-            await Promise.resolve();
-            return (
-              // eslint-disable-next-line require-yield
-              (async function* () {
-                await Promise.resolve();
-              })() as unknown as Awaited<
-                ReturnType<ORPCClient["workspace"]["activity"]["subscribe"]>
-              >
-            );
-          })
-      ),
+      list: mock(activityListImpl),
+      subscribe: mock(activitySubscribeImpl),
     },
-    // Needed for ProjectCreateModal
-    truncateHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
-    interruptStream: mock(() => Promise.resolve({ success: true as const, data: undefined })),
   };
 
-  const projects = {
+  // Create projects API with proper types
+  const projects: MockedProjectsAPI = {
     list: mock(options.projects?.list ?? (() => Promise.resolve([]))),
-    listBranches: mock(() => Promise.resolve({ branches: ["main"], recommendedTrunk: "main" })),
-    secrets: {
-      get: mock(() => Promise.resolve([])),
-    },
   };
 
-  const server = {
-    getLaunchProject: mock(options.server?.getLaunchProject ?? (() => Promise.resolve(null))),
-  };
-
-  const terminal = {
-    openWindow: mock(() => Promise.resolve()),
-  };
-
-  // Update the global mock
-  currentClientMock = {
+  // Set up window.api with proper typing
+  // Tests only mock the methods they need, so cast to full API type
+  const windowWithApi = happyWindow as unknown as Window & { api: IPCApi };
+  (windowWithApi.api as unknown) = {
     workspace,
     projects,
-    server,
-    terminal,
   };
+
+  // Set up server API if provided
+  if (options.server) {
+    (windowWithApi.api as { server?: { getLaunchProject: () => Promise<string | null> } }).server =
+      {
+        getLaunchProject: mock(options.server.getLaunchProject ?? (() => Promise.resolve(null))),
+      };
+  }
 
   return { workspace, projects, window: happyWindow };
 }

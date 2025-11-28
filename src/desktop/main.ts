@@ -1,11 +1,8 @@
 // Enable source map support for better error stack traces in production
 import "source-map-support/register";
-import { RPCHandler } from "@orpc/server/message-port";
-import { onError } from "@orpc/server";
-import { router } from "@/node/orpc/router";
 import "disposablestack/auto";
 
-import type { MenuItemConstructorOptions } from "electron";
+import type { IpcMainInvokeEvent, MenuItemConstructorOptions } from "electron";
 import {
   app,
   BrowserWindow,
@@ -18,10 +15,12 @@ import {
 import * as fs from "fs";
 import * as path from "path";
 import type { Config } from "@/node/config";
-import type { ServiceContainer } from "@/node/services/serviceContainer";
+import type { IpcMain } from "@/node/services/ipcMain";
 import { VERSION } from "@/version";
+import { IPC_CHANNELS } from "@/common/constants/ipc-constants";
 import { getMuxHome, migrateLegacyMuxHome } from "@/common/constants/paths";
-
+import { log } from "@/node/services/log";
+import { parseDebugUpdater } from "@/common/utils/env";
 import assert from "@/common/utils/assert";
 import { loadTokenizerModules } from "@/node/utils/main/tokenizer";
 
@@ -39,10 +38,12 @@ import { loadTokenizerModules } from "@/node/utils/main/tokenizer";
 //
 // Enforcement: scripts/check_eager_imports.sh validates this in CI
 //
-// Lazy-load Config and ServiceContainer to avoid loading heavy AI SDK dependencies at startup
+// Lazy-load Config and IpcMain to avoid loading heavy AI SDK dependencies at startup
 // These will be loaded on-demand when createWindow() is called
 let config: Config | null = null;
-let services: ServiceContainer | null = null;
+let ipcMain: IpcMain | null = null;
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
+let updaterService: typeof import("@/desktop/updater").UpdaterService.prototype | null = null;
 const isE2ETest = process.env.MUX_E2E === "1";
 const forceDistLoad = process.env.MUX_E2E_LOAD_DIST === "1";
 
@@ -260,67 +261,43 @@ function closeSplashScreen() {
 }
 
 /**
- * Load backend services (Config, ServiceContainer, AI SDK, tokenizer)
+ * Load backend services (Config, IpcMain, AI SDK, tokenizer)
  *
  * Heavy initialization (~100ms) happens here while splash is visible.
  * Note: Spinner may freeze briefly during this phase. This is acceptable since
  * the splash still provides visual feedback that the app is loading.
  */
 async function loadServices(): Promise<void> {
-  if (config && services) return; // Already loaded
+  if (config && ipcMain) return; // Already loaded
 
   const startTime = Date.now();
   console.log(`[${timestamp()}] Loading services...`);
 
   /* eslint-disable no-restricted-syntax */
   // Dynamic imports are justified here for performance:
-  // - ServiceContainer transitively imports the entire AI SDK (ai, @ai-sdk/anthropic, etc.)
+  // - IpcMain transitively imports the entire AI SDK (ai, @ai-sdk/anthropic, etc.)
   // - These are large modules (~100ms load time) that would block splash from appearing
   // - Loading happens once, then cached
   const [
     { Config: ConfigClass },
-    { ServiceContainer: ServiceContainerClass },
+    { IpcMain: IpcMainClass },
+    { UpdaterService: UpdaterServiceClass },
     { TerminalWindowManager: TerminalWindowManagerClass },
   ] = await Promise.all([
     import("@/node/config"),
-    import("@/node/services/serviceContainer"),
+    import("@/node/services/ipcMain"),
+    import("@/desktop/updater"),
     import("@/desktop/terminalWindowManager"),
   ]);
   /* eslint-enable no-restricted-syntax */
   config = new ConfigClass();
-
-  services = new ServiceContainerClass(config);
-  await services.initialize();
-
-  const orpcHandler = new RPCHandler(router(), {
-    interceptors: [
-      onError((error) => {
-        console.error("ORPC Error:", error);
-      }),
-    ],
-  });
-
-  electronIpcMain.on("start-orpc-server", (event) => {
-    const [serverPort] = event.ports;
-    orpcHandler.upgrade(serverPort, {
-      context: {
-        projectService: services!.projectService,
-        workspaceService: services!.workspaceService,
-        providerService: services!.providerService,
-        terminalService: services!.terminalService,
-        windowService: services!.windowService,
-        updateService: services!.updateService,
-        tokenizerService: services!.tokenizerService,
-        serverService: services!.serverService,
-      },
-    });
-    serverPort.start();
-  });
+  ipcMain = new IpcMainClass(config);
+  await ipcMain.initialize();
 
   // Set TerminalWindowManager for desktop mode (pop-out terminal windows)
   const terminalWindowManager = new TerminalWindowManagerClass(config);
-  services.setProjectDirectoryPicker(async () => {
-    const win = BrowserWindow.getFocusedWindow();
+  ipcMain.setProjectDirectoryPicker(async (event: IpcMainInvokeEvent) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return null;
 
     const res = await dialog.showOpenDialog(win, {
@@ -332,21 +309,35 @@ async function loadServices(): Promise<void> {
     return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0];
   });
 
-  services.setTerminalWindowManager(terminalWindowManager);
+  ipcMain.setTerminalWindowManager(terminalWindowManager);
 
   loadTokenizerModules().catch((error) => {
     console.error("Failed to preload tokenizer modules:", error);
   });
 
   // Initialize updater service in packaged builds or when DEBUG_UPDATER is set
-  // Moved to UpdateService (services.updateService)
+  const debugConfig = parseDebugUpdater(process.env.DEBUG_UPDATER);
+
+  if (app.isPackaged || debugConfig.enabled) {
+    updaterService = new UpdaterServiceClass();
+    const debugInfo = debugConfig.fakeVersion
+      ? `debug with fake version ${debugConfig.fakeVersion}`
+      : `debug enabled`;
+    console.log(
+      `[${timestamp()}] Updater service initialized (packaged: ${app.isPackaged}, ${debugConfig.enabled ? debugInfo : ""})`
+    );
+  } else {
+    console.log(
+      `[${timestamp()}] Updater service disabled in dev mode (set DEBUG_UPDATER=1 or DEBUG_UPDATER=<version> to enable)`
+    );
+  }
 
   const loadTime = Date.now() - startTime;
   console.log(`[${timestamp()}] Services loaded in ${loadTime}ms`);
 }
 
 function createWindow() {
-  assert(services, "Services must be loaded before creating window");
+  assert(ipcMain, "Services must be loaded before creating window");
 
   // Calculate window size based on screen dimensions (80% of available space)
   const primaryDisplay = screen.getPrimaryDisplay();
@@ -372,9 +363,52 @@ function createWindow() {
     show: false, // Don't show until ready-to-show event
   });
 
-  // Register window service with the main window
-  console.log(`[${timestamp()}] [window] Registering window service...`);
-  services.windowService.setMainWindow(mainWindow);
+  // Register IPC handlers with the main window
+  console.log(`[${timestamp()}] [window] Registering IPC handlers...`);
+  ipcMain.register(electronIpcMain, mainWindow);
+
+  // Register updater IPC handlers (available in both dev and prod)
+  electronIpcMain.handle(IPC_CHANNELS.UPDATE_CHECK, () => {
+    // Note: log interface already includes timestamp and file location
+    log.debug(`UPDATE_CHECK called (updaterService: ${updaterService ? "available" : "null"})`);
+    if (!updaterService) {
+      // Send "idle" status if updater not initialized (dev mode without DEBUG_UPDATER)
+      if (mainWindow) {
+        mainWindow.webContents.send(IPC_CHANNELS.UPDATE_STATUS, {
+          type: "idle" as const,
+        });
+      }
+      return;
+    }
+    log.debug("Calling updaterService.checkForUpdates()");
+    updaterService.checkForUpdates();
+  });
+
+  electronIpcMain.handle(IPC_CHANNELS.UPDATE_DOWNLOAD, async () => {
+    if (!updaterService) throw new Error("Updater not available in development");
+    await updaterService.downloadUpdate();
+  });
+
+  electronIpcMain.handle(IPC_CHANNELS.UPDATE_INSTALL, () => {
+    if (!updaterService) throw new Error("Updater not available in development");
+    updaterService.installUpdate();
+  });
+
+  // Handle status subscription requests
+  // Note: React StrictMode in dev causes components to mount twice, resulting in duplicate calls
+  electronIpcMain.on(IPC_CHANNELS.UPDATE_STATUS_SUBSCRIBE, () => {
+    log.debug("UPDATE_STATUS_SUBSCRIBE called");
+    if (!mainWindow) return;
+    const status = updaterService ? updaterService.getStatus() : { type: "idle" };
+    log.debug("Sending current status to renderer:", status);
+    mainWindow.webContents.send(IPC_CHANNELS.UPDATE_STATUS, status);
+  });
+
+  // Set up updater service with the main window (only in production)
+  if (updaterService) {
+    updaterService.setMainWindow(mainWindow);
+    // Note: Checks are initiated by frontend to respect telemetry preference
+  }
 
   // Show window once it's ready and close splash
   console.time("main window startup");

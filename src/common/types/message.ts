@@ -3,7 +3,7 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { StreamErrorType } from "./errors";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
-import type { ImagePart } from "@/common/orpc/schemas";
+import type { ImagePart } from "./ipc";
 
 // Message to continue with after compaction
 export interface ContinueMessage {

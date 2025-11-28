@@ -3,9 +3,8 @@ import { cn } from "@/common/lib/utils";
 import { VERSION } from "@/version";
 import { SettingsButton } from "./SettingsButton";
 import { TooltipWrapper, Tooltip } from "./Tooltip";
-import type { UpdateStatus } from "@/common/orpc/types";
+import type { UpdateStatus } from "@/common/types/ipc";
 import { isTelemetryEnabled } from "@/common/telemetry";
-import { useORPC } from "@/browser/orpc/react";
 
 // Update check intervals
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
@@ -74,7 +73,6 @@ function parseBuildInfo(version: unknown) {
 }
 
 export function TitleBar() {
-  const client = useORPC();
   const { buildDate, extendedTimestamp, gitDescribe } = parseBuildInfo(VERSION satisfies unknown);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
   const [isCheckingOnHover, setIsCheckingOnHover] = useState(false);
@@ -88,41 +86,29 @@ export function TitleBar() {
     }
 
     // Skip update checks in browser mode - app updates only apply to Electron
-    if (!window.api) {
+    if (window.api.platform === "browser") {
       return;
     }
 
-    const controller = new AbortController();
-    const { signal } = controller;
-
-    (async () => {
-      try {
-        const iterator = await client.update.onStatus(undefined, { signal });
-        for await (const status of iterator) {
-          if (signal.aborted) break;
-          setUpdateStatus(status);
-          setIsCheckingOnHover(false); // Clear checking state when status updates
-        }
-      } catch (error) {
-        if (!signal.aborted) {
-          console.error("Update status stream error:", error);
-        }
-      }
-    })();
+    // Subscribe to update status changes (will receive current status immediately)
+    const unsubscribe = window.api.update.onStatus((status) => {
+      setUpdateStatus(status);
+      setIsCheckingOnHover(false); // Clear checking state when status updates
+    });
 
     // Check for updates on mount
-    client.update.check(undefined).catch(console.error);
+    window.api.update.check().catch(console.error);
 
     // Check periodically
     const checkInterval = setInterval(() => {
-      client.update.check(undefined).catch(console.error);
+      window.api.update.check().catch(console.error);
     }, UPDATE_CHECK_INTERVAL_MS);
 
     return () => {
-      controller.abort();
+      unsubscribe();
       clearInterval(checkInterval);
     };
-  }, [telemetryEnabled, client]);
+  }, [telemetryEnabled]);
 
   const handleIndicatorHover = () => {
     if (!telemetryEnabled) return;
@@ -141,7 +127,7 @@ export function TitleBar() {
     ) {
       lastHoverCheckTime.current = now;
       setIsCheckingOnHover(true);
-      client.update.check().catch((error) => {
+      window.api.update.check().catch((error) => {
         console.error("Update check failed:", error);
         setIsCheckingOnHover(false);
       });
@@ -152,9 +138,9 @@ export function TitleBar() {
     if (!telemetryEnabled) return; // No-op if telemetry disabled
 
     if (updateStatus.type === "available") {
-      client.update.download().catch(console.error);
+      window.api.update.download().catch(console.error);
     } else if (updateStatus.type === "downloaded") {
-      void client.update.install();
+      window.api.update.install();
     }
   };
 

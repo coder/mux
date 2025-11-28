@@ -25,9 +25,6 @@ export default defineConfig({
     {
       name: "electron",
       testDir: "./tests/e2e",
-      // Electron tests are resource-intensive (each spawns a full browser).
-      // Limit parallelism to avoid timing issues with transient UI elements like toasts.
-      fullyParallel: false,
     },
   ],
 });

@@ -10,7 +10,6 @@
     "ios": "expo run:ios"
   },
   "dependencies": {
-    "@orpc/client": "^1.11.3",
     "@gorhom/bottom-sheet": "^5.2.6",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/slider": "5.0.1",

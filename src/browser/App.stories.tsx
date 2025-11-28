@@ -1,16 +1,141 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { useMemo } from "react";
+import { useRef } from "react";
 import { AppLoader } from "./components/AppLoader";
 import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { WorkspaceChatMessage } from "@/common/orpc/types";
+import type { IPCApi } from "@/common/types/ipc";
+import type { ChatStats } from "@/common/types/chatStats";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
-import { createMockORPCClient, type MockORPCClientOptions } from "../../.storybook/mocks/orpc";
 
 // Stable timestamp for testing active states (use fixed time minus small offsets)
 // This ensures workspaces don't show as "Older than 1 day" and keeps stories deterministic
 const NOW = 1700000000000; // Fixed timestamp: Nov 14, 2023
 const STABLE_TIMESTAMP = NOW - 60000; // 1 minute ago
+
+// Mock window.api for App component
+function setupMockAPI(options: {
+  projects?: Map<string, ProjectConfig>;
+  workspaces?: FrontendWorkspaceMetadata[];
+  selectedWorkspaceId?: string;
+  apiOverrides?: Partial<IPCApi>;
+}) {
+  const mockProjects = options.projects ?? new Map();
+  const mockWorkspaces = options.workspaces ?? [];
+  const mockStats: ChatStats = {
+    consumers: [],
+    totalTokens: 0,
+    model: "mock-model",
+    tokenizerName: "mock-tokenizer",
+    usageHistory: [],
+  };
+
+  const mockApi: IPCApi = {
+    tokenizer: {
+      countTokens: () => Promise.resolve(0),
+      countTokensBatch: (_model, texts) => Promise.resolve(texts.map(() => 0)),
+      calculateStats: () => Promise.resolve(mockStats),
+    },
+    providers: {
+      setProviderConfig: () => Promise.resolve({ success: true, data: undefined }),
+      setModels: () => Promise.resolve({ success: true, data: undefined }),
+      getConfig: () =>
+        Promise.resolve(
+          {} as Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>
+        ),
+      list: () => Promise.resolve([]),
+    },
+    workspace: {
+      create: (projectPath: string, branchName: string) =>
+        Promise.resolve({
+          success: true,
+          metadata: {
+            // Mock stable ID (production uses crypto.randomBytes(5).toString('hex'))
+            id: Math.random().toString(36).substring(2, 12),
+            name: branchName,
+            projectPath,
+            projectName: projectPath.split("/").pop() ?? "project",
+            namedWorkspacePath: `/mock/workspace/${branchName}`,
+            runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+          },
+        }),
+      list: () => Promise.resolve(mockWorkspaces),
+      rename: (workspaceId: string) =>
+        Promise.resolve({
+          success: true,
+          data: { newWorkspaceId: workspaceId },
+        }),
+      remove: () => Promise.resolve({ success: true }),
+      fork: () => Promise.resolve({ success: false, error: "Not implemented in mock" }),
+      openTerminal: () => Promise.resolve(undefined),
+      onChat: () => () => undefined,
+      onMetadata: () => () => undefined,
+      sendMessage: () => Promise.resolve({ success: true, data: undefined }),
+      resumeStream: () => Promise.resolve({ success: true, data: undefined }),
+      interruptStream: () => Promise.resolve({ success: true, data: undefined }),
+      clearQueue: () => Promise.resolve({ success: true, data: undefined }),
+      truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
+      activity: {
+        list: () => Promise.resolve({}),
+        subscribe: () => () => undefined,
+      },
+      replaceChatHistory: () => Promise.resolve({ success: true, data: undefined }),
+      getInfo: () => Promise.resolve(null),
+      executeBash: () =>
+        Promise.resolve({
+          success: true,
+          data: { success: true, output: "", exitCode: 0, wall_duration_ms: 0 },
+        }),
+    },
+    projects: {
+      list: () => Promise.resolve(Array.from(mockProjects.entries())),
+      create: () =>
+        Promise.resolve({
+          success: true,
+          data: { projectConfig: { workspaces: [] }, normalizedPath: "/mock/project/path" },
+        }),
+      remove: () => Promise.resolve({ success: true, data: undefined }),
+      pickDirectory: () => Promise.resolve(null),
+      listBranches: () =>
+        Promise.resolve({
+          branches: ["main", "develop", "feature/new-feature"],
+          recommendedTrunk: "main",
+        }),
+      secrets: {
+        get: () => Promise.resolve([]),
+        update: () => Promise.resolve({ success: true, data: undefined }),
+      },
+    },
+    window: {
+      setTitle: () => Promise.resolve(undefined),
+    },
+    terminal: {
+      create: () =>
+        Promise.resolve({
+          sessionId: "mock-session",
+          workspaceId: "mock-workspace",
+          cols: 80,
+          rows: 24,
+        }),
+      close: () => Promise.resolve(undefined),
+      resize: () => Promise.resolve(undefined),
+      sendInput: () => undefined,
+      onOutput: () => () => undefined,
+      onExit: () => () => undefined,
+      openWindow: () => Promise.resolve(undefined),
+      closeWindow: () => Promise.resolve(undefined),
+    },
+    update: {
+      check: () => Promise.resolve(undefined),
+      download: () => Promise.resolve(undefined),
+      install: () => undefined,
+      onStatus: () => () => undefined,
+    },
+    ...options.apiOverrides,
+  };
+
+  // @ts-expect-error - Assigning mock API to window for Storybook
+  window.api = mockApi;
+}
 
 const meta = {
   title: "App/Full Application",
@@ -28,14 +153,21 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-// Story wrapper that creates ORPC client and passes to AppLoader
-const AppWithMocks: React.FC<MockORPCClientOptions> = (props) => {
-  const client = useMemo(
-    () => createMockORPCClient(props),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- props are stable per story render
-    []
-  );
-  return <AppLoader client={client} />;
+// Story wrapper that sets up mocks synchronously before rendering
+const AppWithMocks: React.FC<{
+  projects?: Map<string, ProjectConfig>;
+  workspaces?: FrontendWorkspaceMetadata[];
+  selectedWorkspaceId?: string;
+}> = ({ projects, workspaces, selectedWorkspaceId }) => {
+  // Set up mock API only once per component instance (not on every render)
+  // Use useRef to ensure it runs synchronously before first render
+  const initialized = useRef(false);
+  if (!initialized.current) {
+    setupMockAPI({ projects, workspaces, selectedWorkspaceId });
+    initialized.current = true;
+  }
+
+  return <AppLoader />;
 };
 
 export const WelcomeScreen: Story = {
@@ -406,25 +538,628 @@ export const ActiveWorkspaceWithChat: Story = {
       },
     ];
 
-    // Set initial workspace selection
-    localStorage.setItem(
-      "selectedWorkspace",
-      JSON.stringify({
-        workspaceId: workspaceId,
-        projectPath: "/home/user/projects/my-app",
-        projectName: "my-app",
-        namedWorkspacePath: "/home/user/.mux/src/my-app/feature",
-      })
-    );
-    localStorage.setItem(
-      `input:${workspaceId}`,
-      "Add OAuth2 support with Google and GitHub providers"
-    );
-    localStorage.setItem(`model:${workspaceId}`, "anthropic:claude-sonnet-4-5");
+    const AppWithChatMocks: React.FC = () => {
+      // Set up mock API only once per component instance (not on every render)
+      const initialized = useRef(false);
+      if (!initialized.current) {
+        setupMockAPI({
+          projects,
+          workspaces,
+          apiOverrides: {
+            tokenizer: {
+              countTokens: () => Promise.resolve(42),
+              countTokensBatch: (_model, texts) => Promise.resolve(texts.map(() => 42)),
+              calculateStats: () =>
+                Promise.resolve({
+                  consumers: [],
+                  totalTokens: 0,
+                  model: "mock-model",
+                  tokenizerName: "mock-tokenizer",
+                  usageHistory: [],
+                }),
+            },
+            providers: {
+              setProviderConfig: () => Promise.resolve({ success: true, data: undefined }),
+              setModels: () => Promise.resolve({ success: true, data: undefined }),
+              getConfig: () =>
+                Promise.resolve(
+                  {} as Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>
+                ),
+              list: () => Promise.resolve(["anthropic", "openai", "xai"]),
+            },
+            workspace: {
+              create: (projectPath: string, branchName: string) =>
+                Promise.resolve({
+                  success: true,
+                  metadata: {
+                    // Mock stable ID (production uses crypto.randomBytes(5).toString('hex'))
+                    id: Math.random().toString(36).substring(2, 12),
+                    name: branchName,
+                    projectPath,
+                    projectName: projectPath.split("/").pop() ?? "project",
+                    namedWorkspacePath: `/mock/workspace/${branchName}`,
+                    runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+                  },
+                }),
+              list: () => Promise.resolve(workspaces),
+              rename: (workspaceId: string) =>
+                Promise.resolve({
+                  success: true,
+                  data: { newWorkspaceId: workspaceId },
+                }),
+              remove: () => Promise.resolve({ success: true }),
+              fork: () => Promise.resolve({ success: false, error: "Not implemented in mock" }),
+              openTerminal: () => Promise.resolve(undefined),
+              onChat: (wsId, callback) => {
+                // Active workspace with complete chat history
+                if (wsId === workspaceId) {
+                  setTimeout(() => {
+                    // User message
+                    callback({
+                      id: "msg-1",
+                      role: "user",
+                      parts: [
+                        { type: "text", text: "Add authentication to the user API endpoint" },
+                      ],
+                      metadata: {
+                        historySequence: 1,
+                        timestamp: STABLE_TIMESTAMP - 300000,
+                      },
+                    });
 
-    // Git status mocks for each workspace
-    const gitStatusMocks: Record<string, string> = {
-      [workspaceId]: `---PRIMARY---
+                    // Assistant message with tool calls
+                    callback({
+                      id: "msg-2",
+                      role: "assistant",
+                      parts: [
+                        {
+                          type: "text",
+                          text: "I'll help you add authentication to the user API endpoint. Let me first check the current implementation.",
+                        },
+                        {
+                          type: "dynamic-tool",
+                          toolCallId: "call-1",
+                          toolName: "read_file",
+                          state: "output-available",
+                          input: { target_file: "src/api/users.ts" },
+                          output: {
+                            success: true,
+                            content:
+                              "export function getUser(req, res) {\n  const user = db.users.find(req.params.id);\n  res.json(user);\n}",
+                          },
+                        },
+                      ],
+                      metadata: {
+                        historySequence: 2,
+                        timestamp: STABLE_TIMESTAMP - 290000,
+                        model: "anthropic:claude-sonnet-4-5",
+                        usage: {
+                          inputTokens: 1250,
+                          outputTokens: 450,
+                          totalTokens: 1700,
+                        },
+                        duration: 3500,
+                      },
+                    });
+
+                    // User response
+                    callback({
+                      id: "msg-3",
+                      role: "user",
+                      parts: [{ type: "text", text: "Yes, add JWT token validation" }],
+                      metadata: {
+                        historySequence: 3,
+                        timestamp: STABLE_TIMESTAMP - 280000,
+                      },
+                    });
+
+                    // Assistant message with file edit (large diff)
+                    callback({
+                      id: "msg-4",
+                      role: "assistant",
+                      parts: [
+                        {
+                          type: "text",
+                          text: "I'll add JWT token validation to the endpoint. Let me update the file with proper authentication middleware and error handling.",
+                        },
+                        {
+                          type: "dynamic-tool",
+                          toolCallId: "call-2",
+                          toolName: "file_edit_replace_string",
+                          state: "output-available",
+                          input: {
+                            file_path: "src/api/users.ts",
+                            old_string:
+                              "import express from 'express';\nimport { db } from '../db';\n\nexport function getUser(req, res) {\n  const user = db.users.find(req.params.id);\n  res.json(user);\n}",
+                            new_string:
+                              "import express from 'express';\nimport { db } from '../db';\nimport { verifyToken } from '../auth/jwt';\nimport { logger } from '../utils/logger';\n\nexport async function getUser(req, res) {\n  try {\n    const token = req.headers.authorization?.split(' ')[1];\n    if (!token) {\n      logger.warn('Missing authorization token');\n      return res.status(401).json({ error: 'Unauthorized' });\n    }\n    const decoded = await verifyToken(token);\n    const user = await db.users.find(req.params.id);\n    res.json(user);\n  } catch (err) {\n    logger.error('Auth error:', err);\n    return res.status(401).json({ error: 'Invalid token' });\n  }\n}",
+                          },
+                          output: {
+                            success: true,
+                            diff: [
+                              "--- src/api/users.ts",
+                              "+++ src/api/users.ts",
+                              "@@ -2,0 +3,2 @@",
+                              "+import { verifyToken } from '../auth/jwt';",
+                              "+import { logger } from '../utils/logger';",
+                              "@@ -4,28 +6,14 @@",
+                              "-// TODO: Add authentication middleware",
+                              "-// Current implementation is insecure and allows unauthorized access",
+                              "-// Need to validate JWT tokens before processing requests",
+                              "-// Also need to add rate limiting to prevent abuse",
+                              "-// Consider adding request logging for audit trail",
+                              "-// Add input validation for user IDs",
+                              "-// Handle edge cases for deleted/suspended users",
+                              "-",
+                              "-/**",
+                              "- * Get user by ID",
+                              "- * @param {Object} req - Express request object",
+                              "- * @param {Object} res - Express response object",
+                              "- */",
+                              "-export function getUser(req, res) {",
+                              "-  // FIXME: No authentication check",
+                              "-  // FIXME: No error handling",
+                              "-  // FIXME: Synchronous database call blocks event loop",
+                              "-  // FIXME: No input validation",
+                              "-  // FIXME: Direct database access without repository pattern",
+                              "-  // FIXME: No logging",
+                              "-",
+                              "-  const user = db.users.find(req.params.id);",
+                              "-",
+                              "-  // TODO: Check if user exists",
+                              "-  // TODO: Filter sensitive fields (password hash, etc)",
+                              "-  // TODO: Check permissions - user should only access their own data",
+                              "-",
+                              "-  res.json(user);",
+                              "+export async function getUser(req, res) {",
+                              "+  try {",
+                              "+    const token = req.headers.authorization?.split(' ')[1];",
+                              "+    if (!token) {",
+                              "+      logger.warn('Missing authorization token');",
+                              "+      return res.status(401).json({ error: 'Unauthorized' });",
+                              "+    }",
+                              "+    const decoded = await verifyToken(token);",
+                              "+    const user = await db.users.find(req.params.id);",
+                              "+    res.json(user);",
+                              "+  } catch (err) {",
+                              "+    logger.error('Auth error:', err);",
+                              "+    return res.status(401).json({ error: 'Invalid token' });",
+                              "+  }",
+                              "@@ -34,3 +22,2 @@",
+                              "-// TODO: Add updateUser function",
+                              "-// TODO: Add deleteUser function",
+                              "-// TODO: Add listUsers function with pagination",
+                              "+// Note: updateUser, deleteUser, and listUsers endpoints will be added in separate PR",
+                              "+// to keep changes focused and reviewable",
+                              "@@ -41,0 +29,11 @@",
+                              "+",
+                              "+export async function rotateApiKey(req, res) {",
+                              "+  const admin = await db.admins.find(req.user.id);",
+                              "+  if (!admin) {",
+                              "+    return res.status(403).json({ error: 'Forbidden' });",
+                              "+  }",
+                              "+",
+                              "+  const apiKey = await db.tokens.rotate(admin.orgId);",
+                              "+  logger.info('Rotated API key', { orgId: admin.orgId });",
+                              "+  res.json({ apiKey });",
+                              "+}",
+                            ].join("\n"),
+                            edits_applied: 1,
+                          },
+                        },
+                      ],
+                      metadata: {
+                        historySequence: 4,
+                        timestamp: STABLE_TIMESTAMP - 270000,
+                        model: "anthropic:claude-sonnet-4-5",
+                        usage: {
+                          inputTokens: 2100,
+                          outputTokens: 680,
+                          totalTokens: 2780,
+                        },
+                        duration: 4200,
+                      },
+                    });
+
+                    // Assistant with code block example
+                    callback({
+                      id: "msg-5",
+                      role: "assistant",
+                      parts: [
+                        {
+                          type: "text",
+                          text: "Perfect! I've added JWT authentication. Here's what the updated endpoint looks like:\n\n```typescript\nimport { verifyToken } from '../auth/jwt';\n\nexport function getUser(req, res) {\n  const token = req.headers.authorization?.split(' ')[1];\n  if (!token || !verifyToken(token)) {\n    return res.status(401).json({ error: 'Unauthorized' });\n  }\n  const user = db.users.find(req.params.id);\n  res.json(user);\n}\n```\n\nThe endpoint now requires a valid JWT token in the Authorization header. Let me run the tests to verify everything works.",
+                        },
+                      ],
+                      metadata: {
+                        historySequence: 5,
+                        timestamp: STABLE_TIMESTAMP - 260000,
+                        model: "anthropic:claude-sonnet-4-5",
+                        usage: {
+                          inputTokens: 1800,
+                          outputTokens: 520,
+                          totalTokens: 2320,
+                        },
+                        duration: 3200,
+                      },
+                    });
+
+                    // User asking to run tests
+                    callback({
+                      id: "msg-6",
+                      role: "user",
+                      parts: [
+                        { type: "text", text: "Can you run the tests to make sure it works?" },
+                      ],
+                      metadata: {
+                        historySequence: 6,
+                        timestamp: STABLE_TIMESTAMP - 240000,
+                      },
+                    });
+
+                    // Assistant running tests
+                    callback({
+                      id: "msg-7",
+                      role: "assistant",
+                      parts: [
+                        {
+                          type: "text",
+                          text: "I'll run the tests to verify the authentication is working correctly.",
+                        },
+                        {
+                          type: "dynamic-tool",
+                          toolCallId: "call-3",
+                          toolName: "run_terminal_cmd",
+                          state: "output-available",
+                          input: {
+                            command: "npm test src/api/users.test.ts",
+                            explanation: "Running tests for the users API endpoint",
+                          },
+                          output: {
+                            success: true,
+                            stdout:
+                              "PASS src/api/users.test.ts\n  ✓ should return user when authenticated (24ms)\n  ✓ should return 401 when no token (18ms)\n  ✓ should return 401 when invalid token (15ms)\n\nTest Suites: 1 passed, 1 total\nTests:       3 passed, 3 total",
+                            exitCode: 0,
+                          },
+                        },
+                      ],
+                      metadata: {
+                        historySequence: 7,
+                        timestamp: STABLE_TIMESTAMP - 230000,
+                        model: "anthropic:claude-sonnet-4-5",
+                        usage: {
+                          inputTokens: 2800,
+                          outputTokens: 420,
+                          totalTokens: 3220,
+                        },
+                        duration: 5100,
+                      },
+                    });
+
+                    // User follow-up about error handling
+                    callback({
+                      id: "msg-8",
+                      role: "user",
+                      parts: [
+                        {
+                          type: "text",
+                          text: "Great! What about error handling if the JWT library throws?",
+                        },
+                      ],
+                      metadata: {
+                        historySequence: 8,
+                        timestamp: STABLE_TIMESTAMP - 180000,
+                      },
+                    });
+
+                    // Assistant response with thinking (reasoning)
+                    callback({
+                      id: "msg-9",
+                      role: "assistant",
+                      parts: [
+                        {
+                          type: "reasoning",
+                          text: "The user is asking about error handling for JWT verification. The verifyToken function could throw if the token is malformed or if there's an issue with the secret. I should wrap it in a try-catch block and return a proper error response.",
+                        },
+                        {
+                          type: "text",
+                          text: "Good catch! We should add try-catch error handling around the JWT verification. Let me update that.",
+                        },
+                        {
+                          type: "dynamic-tool",
+                          toolCallId: "call-4",
+                          toolName: "search_replace",
+                          state: "output-available",
+                          input: {
+                            file_path: "src/api/users.ts",
+                            old_string:
+                              "  const token = req.headers.authorization?.split(' ')[1];\n  if (!token || !verifyToken(token)) {\n    return res.status(401).json({ error: 'Unauthorized' });\n  }",
+                            new_string:
+                              "  try {\n    const token = req.headers.authorization?.split(' ')[1];\n    if (!token || !verifyToken(token)) {\n      return res.status(401).json({ error: 'Unauthorized' });\n    }\n  } catch (err) {\n    console.error('Token verification failed:', err);\n    return res.status(401).json({ error: 'Invalid token' });\n  }",
+                          },
+                          output: {
+                            success: true,
+                            message: "File updated successfully",
+                          },
+                        },
+                      ],
+                      metadata: {
+                        historySequence: 9,
+                        timestamp: STABLE_TIMESTAMP - 170000,
+                        model: "anthropic:claude-sonnet-4-5",
+                        usage: {
+                          inputTokens: 3500,
+                          outputTokens: 520,
+                          totalTokens: 4020,
+                          reasoningTokens: 150,
+                        },
+                        duration: 6200,
+                      },
+                    });
+
+                    // Assistant quick update with a single-line reasoning trace to exercise inline display
+                    callback({
+                      id: "msg-9a",
+                      role: "assistant",
+                      parts: [
+                        {
+                          type: "reasoning",
+                          text: "Cache is warm already; rerunning the full suite would be redundant.",
+                        },
+                        {
+                          type: "text",
+                          text: "Cache is warm from the last test run, so I'll shift focus to documentation next.",
+                        },
+                      ],
+                      metadata: {
+                        historySequence: 10,
+                        timestamp: STABLE_TIMESTAMP - 165000,
+                        model: "anthropic:claude-sonnet-4-5",
+                        usage: {
+                          inputTokens: 1200,
+                          outputTokens: 180,
+                          totalTokens: 1380,
+                          reasoningTokens: 20,
+                        },
+                        duration: 900,
+                      },
+                    });
+
+                    // Assistant message with status_set tool to show agent status
+                    callback({
+                      id: "msg-10",
+                      role: "assistant",
+                      parts: [
+                        {
+                          type: "text",
+                          text: "I've created PR #1234 with the authentication changes. The CI pipeline is running tests now.",
+                        },
+                        {
+                          type: "dynamic-tool",
+                          toolCallId: "call-5",
+                          toolName: "status_set",
+                          state: "output-available",
+                          input: {
+                            emoji: "🚀",
+                            message: "PR #1234 waiting for CI",
+                            url: "https://github.com/example/repo/pull/1234",
+                          },
+                          output: {
+                            success: true,
+                            emoji: "🚀",
+                            message: "PR #1234 waiting for CI",
+                            url: "https://github.com/example/repo/pull/1234",
+                          },
+                        },
+                      ],
+                      metadata: {
+                        historySequence: 11,
+                        timestamp: STABLE_TIMESTAMP - 160000,
+                        model: "anthropic:claude-sonnet-4-5",
+                        usage: {
+                          inputTokens: 800,
+                          outputTokens: 150,
+                          totalTokens: 950,
+                        },
+                        duration: 1200,
+                      },
+                    });
+
+                    // User follow-up asking about documentation
+                    callback({
+                      id: "msg-11",
+                      role: "user",
+                      parts: [
+                        {
+                          type: "text",
+                          text: "Should we add documentation for the authentication changes?",
+                        },
+                      ],
+                      metadata: {
+                        historySequence: 12,
+                        timestamp: STABLE_TIMESTAMP - 150000,
+                      },
+                    });
+
+                    // Mark as caught up
+                    callback({ type: "caught-up" });
+
+                    // Now start streaming assistant response with reasoning
+                    callback({
+                      type: "stream-start",
+                      workspaceId: workspaceId,
+                      messageId: "msg-12",
+                      model: "anthropic:claude-sonnet-4-5",
+                      historySequence: 13,
+                    });
+
+                    // Send reasoning delta
+                    callback({
+                      type: "reasoning-delta",
+                      workspaceId: workspaceId,
+                      messageId: "msg-12",
+                      delta:
+                        "The user is asking about documentation. This is important because the authentication changes introduce a breaking change for API clients. They'll need to know how to include JWT tokens in their requests. I should suggest adding both inline code comments and updating the API documentation to explain the new authentication requirements, including examples of how to obtain and use tokens.",
+                      tokens: 65,
+                      timestamp: STABLE_TIMESTAMP - 140000,
+                    });
+                  }, 100);
+
+                  // Keep sending reasoning deltas to maintain streaming state
+                  // tokens: 0 to avoid flaky token counts in visual tests
+                  const intervalId = setInterval(() => {
+                    callback({
+                      type: "reasoning-delta",
+                      workspaceId: workspaceId,
+                      messageId: "msg-12",
+                      delta: ".",
+                      tokens: 0,
+                      timestamp: NOW,
+                    });
+                  }, 2000);
+
+                  return () => {
+                    clearInterval(intervalId);
+                  };
+                } else if (wsId === streamingWorkspaceId) {
+                  // Streaming workspace - show active work in progress
+                  setTimeout(() => {
+                    const now = NOW; // Use stable timestamp
+
+                    // Previous completed message with status_set (MUST be sent BEFORE caught-up)
+                    callback({
+                      id: "stream-msg-0",
+                      role: "assistant",
+                      parts: [
+                        {
+                          type: "text",
+                          text: "I'm working on the database refactoring.",
+                        },
+                        {
+                          type: "dynamic-tool",
+                          toolCallId: "status-call-0",
+                          toolName: "status_set",
+                          state: "output-available",
+                          input: {
+                            emoji: "⚙️",
+                            message: "Refactoring in progress",
+                          },
+                          output: {
+                            success: true,
+                            emoji: "⚙️",
+                            message: "Refactoring in progress",
+                          },
+                        },
+                      ],
+                      metadata: {
+                        historySequence: 0,
+                        timestamp: now - 5000, // 5 seconds ago
+                        model: "anthropic:claude-sonnet-4-5",
+                        usage: {
+                          inputTokens: 200,
+                          outputTokens: 50,
+                          totalTokens: 250,
+                        },
+                        duration: 800,
+                      },
+                    });
+
+                    // User message (recent)
+                    callback({
+                      id: "stream-msg-1",
+                      role: "user",
+                      parts: [
+                        {
+                          type: "text",
+                          text: "Refactor the database connection to use connection pooling",
+                        },
+                      ],
+                      metadata: {
+                        historySequence: 1,
+                        timestamp: now - 3000, // 3 seconds ago
+                      },
+                    });
+
+                    // CRITICAL: Send caught-up AFTER historical messages so they get processed!
+                    // Streaming state is maintained by continuous stream-delta events, not by withholding caught-up
+                    callback({ type: "caught-up" });
+
+                    // Now send stream events - they'll be processed immediately
+                    // Stream start event (very recent - just started)
+                    callback({
+                      type: "stream-start",
+                      workspaceId: streamingWorkspaceId,
+                      messageId: "stream-msg-2",
+                      model: "anthropic:claude-sonnet-4-5",
+                      historySequence: 2,
+                    });
+
+                    // Stream delta event - shows text being typed out (just happened)
+                    callback({
+                      type: "stream-delta",
+                      workspaceId: streamingWorkspaceId,
+                      messageId: "stream-msg-2",
+                      delta:
+                        "I'll help you refactor the database connection to use connection pooling.",
+                      tokens: 15,
+                      timestamp: now - 1000, // 1 second ago
+                    });
+
+                    // Tool call start event - shows tool being invoked (happening now)
+                    callback({
+                      type: "tool-call-start",
+                      workspaceId: streamingWorkspaceId,
+                      messageId: "stream-msg-2",
+                      toolCallId: "stream-call-1",
+                      toolName: "read_file",
+                      args: { target_file: "src/db/connection.ts" },
+                      tokens: 8,
+                      timestamp: now - 500, // 0.5 seconds ago
+                    });
+                  }, 100);
+
+                  // Keep sending deltas to maintain streaming state
+                  // tokens: 0 to avoid flaky token counts in visual tests
+                  const intervalId = setInterval(() => {
+                    callback({
+                      type: "stream-delta",
+                      workspaceId: streamingWorkspaceId,
+                      messageId: "stream-msg-2",
+                      delta: ".",
+                      tokens: 0,
+                      timestamp: NOW,
+                    });
+                  }, 2000);
+
+                  // Return cleanup function that stops the interval
+                  return () => clearInterval(intervalId);
+                } else {
+                  // Other workspaces - send caught-up immediately
+                  setTimeout(() => {
+                    callback({ type: "caught-up" });
+                  }, 100);
+
+                  return () => {
+                    // Cleanup
+                  };
+                }
+              },
+              onMetadata: () => () => undefined,
+              activity: {
+                list: () => Promise.resolve({}),
+                subscribe: () => () => undefined,
+              },
+              sendMessage: () => Promise.resolve({ success: true, data: undefined }),
+              resumeStream: () => Promise.resolve({ success: true, data: undefined }),
+              interruptStream: () => Promise.resolve({ success: true, data: undefined }),
+              clearQueue: () => Promise.resolve({ success: true, data: undefined }),
+              truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
+              replaceChatHistory: () => Promise.resolve({ success: true, data: undefined }),
+              getInfo: () => Promise.resolve(null),
+              executeBash: (wsId: string, command: string) => {
+                // Mock git status script responses for each workspace
+                const gitStatusMocks: Record<string, string> = {
+                  [workspaceId]: `---PRIMARY---
 main
 ---SHOW_BRANCH---
 ! [HEAD] WIP: Add JWT authentication
@@ -435,7 +1170,7 @@ main
 -  [i7j8k9l] Add tests
 ---DIRTY---
 3`,
-      [streamingWorkspaceId]: `---PRIMARY---
+                  [streamingWorkspaceId]: `---PRIMARY---
 main
 ---SHOW_BRANCH---
 ! [HEAD] Refactoring database connection
@@ -445,7 +1180,7 @@ main
 -  [f5g6h7i] Add retry logic
 ---DIRTY---
 1`,
-      "ws-clean": `---PRIMARY---
+                  "ws-clean": `---PRIMARY---
 main
 ---SHOW_BRANCH---
 ! [HEAD] Latest commit
@@ -454,7 +1189,7 @@ main
 ++ [m1n2o3p] Latest commit
 ---DIRTY---
 0`,
-      "ws-ahead": `---PRIMARY---
+                  "ws-ahead": `---PRIMARY---
 main
 ---SHOW_BRANCH---
 ! [HEAD] Add new dashboard design
@@ -464,7 +1199,7 @@ main
 -  [g6h7i8j] Update styles
 ---DIRTY---
 0`,
-      "ws-behind": `---PRIMARY---
+                  "ws-behind": `---PRIMARY---
 main
 ---SHOW_BRANCH---
  ! [origin/main] Latest API changes
@@ -474,7 +1209,7 @@ main
  + [h7i8j9k] Fix API bug
 ---DIRTY---
 0`,
-      "ws-dirty": `---PRIMARY---
+                  "ws-dirty": `---PRIMARY---
 main
 ---SHOW_BRANCH---
 ! [HEAD] Fix null pointer
@@ -483,7 +1218,7 @@ main
 -  [e5f6g7h] Fix null pointer
 ---DIRTY---
 7`,
-      "ws-diverged": `---PRIMARY---
+                  "ws-diverged": `---PRIMARY---
 main
 ---SHOW_BRANCH---
 ! [HEAD] Database migration
@@ -494,7 +1229,7 @@ main
  + [l2m3n4o] Hotfix on main
 ---DIRTY---
 5`,
-      "ws-ssh": `---PRIMARY---
+                  "ws-ssh": `---PRIMARY---
 main
 ---SHOW_BRANCH---
 ! [HEAD] Production deployment
@@ -503,581 +1238,52 @@ main
 -  [g7h8i9j] Production deployment
 ---DIRTY---
 0`,
-    };
+                };
 
-    const executeBash = (wsId: string, script: string) => {
-      if (script.includes("git status") || script.includes("git show-branch")) {
-        const output = gitStatusMocks[wsId] || "";
-        return Promise.resolve({
-          success: true as const,
-          output,
-          exitCode: 0,
-          wall_duration_ms: 50,
+                // Return mock git status if this is the git status script
+                if (command.includes("git status") || command.includes("git show-branch")) {
+                  const output = gitStatusMocks[wsId] || "";
+                  return Promise.resolve({
+                    success: true,
+                    data: { success: true, output, exitCode: 0, wall_duration_ms: 50 },
+                  });
+                }
+
+                // Default response for other commands
+                return Promise.resolve({
+                  success: true,
+                  data: { success: true, output: "", exitCode: 0, wall_duration_ms: 0 },
+                });
+              },
+            },
+          },
         });
+
+        // Set initial workspace selection
+        localStorage.setItem(
+          "selectedWorkspace",
+          JSON.stringify({
+            workspaceId: workspaceId,
+            projectPath: "/home/user/projects/my-app",
+            projectName: "my-app",
+            namedWorkspacePath: "/home/user/.mux/src/my-app/feature",
+          })
+        );
+
+        // Pre-fill input with text so token count is visible
+        localStorage.setItem(
+          `input:${workspaceId}`,
+          "Add OAuth2 support with Google and GitHub providers"
+        );
+        localStorage.setItem(`model:${workspaceId}`, "anthropic:claude-sonnet-4-5");
+
+        initialized.current = true;
       }
-      return Promise.resolve({
-        success: true as const,
-        output: "",
-        exitCode: 0,
-        wall_duration_ms: 0,
-      });
+
+      return <AppLoader />;
     };
 
-    const onChat = (wsId: string, callback: (msg: WorkspaceChatMessage) => void) => {
-      // Active workspace with complete chat history
-      if (wsId === workspaceId) {
-        setTimeout(() => {
-          // User message
-          callback({
-            id: "msg-1",
-            role: "user",
-            parts: [{ type: "text", text: "Add authentication to the user API endpoint" }],
-            createdAt: new Date(STABLE_TIMESTAMP - 300000),
-          });
-
-          // Assistant message with tool calls
-          callback({
-            id: "msg-2",
-            role: "assistant",
-            parts: [
-              {
-                type: "text",
-                text: "I'll help you add authentication to the user API endpoint. Let me first check the current implementation.",
-              },
-              {
-                type: "dynamic-tool",
-                toolCallId: "call-1",
-                toolName: "read_file",
-                state: "output-available",
-                input: { target_file: "src/api/users.ts" },
-                output: {
-                  success: true,
-                  content:
-                    "export function getUser(req, res) {\n  const user = db.users.find(req.params.id);\n  res.json(user);\n}",
-                },
-              },
-            ],
-            metadata: {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 290000,
-              model: "anthropic:claude-sonnet-4-5",
-              usage: {
-                inputTokens: 1250,
-                outputTokens: 450,
-                totalTokens: 1700,
-              },
-              duration: 3500,
-            },
-          });
-
-          // User response
-          callback({
-            id: "msg-3",
-            role: "user",
-            parts: [{ type: "text", text: "Yes, add JWT token validation" }],
-            metadata: {
-              historySequence: 3,
-              timestamp: STABLE_TIMESTAMP - 280000,
-            },
-          });
-
-          // Assistant message with file edit (large diff)
-          callback({
-            id: "msg-4",
-            role: "assistant",
-            parts: [
-              {
-                type: "text",
-                text: "I'll add JWT token validation to the endpoint. Let me update the file with proper authentication middleware and error handling.",
-              },
-              {
-                type: "dynamic-tool",
-                toolCallId: "call-2",
-                toolName: "file_edit_replace_string",
-                state: "output-available",
-                input: {
-                  file_path: "src/api/users.ts",
-                  old_string:
-                    "import express from 'express';\nimport { db } from '../db';\n\nexport function getUser(req, res) {\n  const user = db.users.find(req.params.id);\n  res.json(user);\n}",
-                  new_string:
-                    "import express from 'express';\nimport { db } from '../db';\nimport { verifyToken } from '../auth/jwt';\nimport { logger } from '../utils/logger';\n\nexport async function getUser(req, res) {\n  try {\n    const token = req.headers.authorization?.split(' ')[1];\n    if (!token) {\n      logger.warn('Missing authorization token');\n      return res.status(401).json({ error: 'Unauthorized' });\n    }\n    const decoded = await verifyToken(token);\n    const user = await db.users.find(req.params.id);\n    res.json(user);\n  } catch (err) {\n    logger.error('Auth error:', err);\n    return res.status(401).json({ error: 'Invalid token' });\n  }\n}",
-                },
-                output: {
-                  success: true,
-                  diff: [
-                    "--- src/api/users.ts",
-                    "+++ src/api/users.ts",
-                    "@@ -2,0 +3,2 @@",
-                    "+import { verifyToken } from '../auth/jwt';",
-                    "+import { logger } from '../utils/logger';",
-                    "@@ -4,28 +6,14 @@",
-                    "-// TODO: Add authentication middleware",
-                    "-// Current implementation is insecure and allows unauthorized access",
-                    "-// Need to validate JWT tokens before processing requests",
-                    "-// Also need to add rate limiting to prevent abuse",
-                    "-// Consider adding request logging for audit trail",
-                    "-// Add input validation for user IDs",
-                    "-// Handle edge cases for deleted/suspended users",
-                    "-",
-                    "-/**",
-                    "- * Get user by ID",
-                    "- * @param {Object} req - Express request object",
-                    "- * @param {Object} res - Express response object",
-                    "- */",
-                    "-export function getUser(req, res) {",
-                    "-  // FIXME: No authentication check",
-                    "-  // FIXME: No error handling",
-                    "-  // FIXME: Synchronous database call blocks event loop",
-                    "-  // FIXME: No input validation",
-                    "-  // FIXME: Direct database access without repository pattern",
-                    "-  // FIXME: No logging",
-                    "-",
-                    "-  const user = db.users.find(req.params.id);",
-                    "-",
-                    "-  // TODO: Check if user exists",
-                    "-  // TODO: Filter sensitive fields (password hash, etc)",
-                    "-  // TODO: Check permissions - user should only access their own data",
-                    "-",
-                    "-  res.json(user);",
-                    "+export async function getUser(req, res) {",
-                    "+  try {",
-                    "+    const token = req.headers.authorization?.split(' ')[1];",
-                    "+    if (!token) {",
-                    "+      logger.warn('Missing authorization token');",
-                    "+      return res.status(401).json({ error: 'Unauthorized' });",
-                    "+    }",
-                    "+    const decoded = await verifyToken(token);",
-                    "+    const user = await db.users.find(req.params.id);",
-                    "+    res.json(user);",
-                    "+  } catch (err) {",
-                    "+    logger.error('Auth error:', err);",
-                    "+    return res.status(401).json({ error: 'Invalid token' });",
-                    "+  }",
-                    "@@ -34,3 +22,2 @@",
-                    "-// TODO: Add updateUser function",
-                    "-// TODO: Add deleteUser function",
-                    "-// TODO: Add listUsers function with pagination",
-                    "+// Note: updateUser, deleteUser, and listUsers endpoints will be added in separate PR",
-                    "+// to keep changes focused and reviewable",
-                    "@@ -41,0 +29,11 @@",
-                    "+",
-                    "+export async function rotateApiKey(req, res) {",
-                    "+  const admin = await db.admins.find(req.user.id);",
-                    "+  if (!admin) {",
-                    "+    return res.status(403).json({ error: 'Forbidden' });",
-                    "+  }",
-                    "+",
-                    "+  const apiKey = await db.tokens.rotate(admin.orgId);",
-                    "+  logger.info('Rotated API key', { orgId: admin.orgId });",
-                    "+  res.json({ apiKey });",
-                    "+}",
-                  ].join("\n"),
-                  edits_applied: 1,
-                },
-              },
-            ],
-            metadata: {
-              historySequence: 4,
-              timestamp: STABLE_TIMESTAMP - 270000,
-              model: "anthropic:claude-sonnet-4-5",
-              usage: {
-                inputTokens: 2100,
-                outputTokens: 680,
-                totalTokens: 2780,
-              },
-              duration: 4200,
-            },
-          });
-
-          // Assistant with code block example
-          callback({
-            id: "msg-5",
-            role: "assistant",
-            parts: [
-              {
-                type: "text",
-                text: "Perfect! I've added JWT authentication. Here's what the updated endpoint looks like:\n\n```typescript\nimport { verifyToken } from '../auth/jwt';\n\nexport function getUser(req, res) {\n  const token = req.headers.authorization?.split(' ')[1];\n  if (!token || !verifyToken(token)) {\n    return res.status(401).json({ error: 'Unauthorized' });\n  }\n  const user = db.users.find(req.params.id);\n  res.json(user);\n}\n```\n\nThe endpoint now requires a valid JWT token in the Authorization header. Let me run the tests to verify everything works.",
-              },
-            ],
-            metadata: {
-              historySequence: 5,
-              timestamp: STABLE_TIMESTAMP - 260000,
-              model: "anthropic:claude-sonnet-4-5",
-              usage: {
-                inputTokens: 1800,
-                outputTokens: 520,
-                totalTokens: 2320,
-              },
-              duration: 3200,
-            },
-          });
-
-          // User asking to run tests
-          callback({
-            id: "msg-6",
-            role: "user",
-            parts: [{ type: "text", text: "Can you run the tests to make sure it works?" }],
-            metadata: {
-              historySequence: 6,
-              timestamp: STABLE_TIMESTAMP - 240000,
-            },
-          });
-
-          // Assistant running tests
-          callback({
-            id: "msg-7",
-            role: "assistant",
-            parts: [
-              {
-                type: "text",
-                text: "I'll run the tests to verify the authentication is working correctly.",
-              },
-              {
-                type: "dynamic-tool",
-                toolCallId: "call-3",
-                toolName: "run_terminal_cmd",
-                state: "output-available",
-                input: {
-                  command: "npm test src/api/users.test.ts",
-                  explanation: "Running tests for the users API endpoint",
-                },
-                output: {
-                  success: true,
-                  stdout:
-                    "PASS src/api/users.test.ts\n  ✓ should return user when authenticated (24ms)\n  ✓ should return 401 when no token (18ms)\n  ✓ should return 401 when invalid token (15ms)\n\nTest Suites: 1 passed, 1 total\nTests:       3 passed, 3 total",
-                  exitCode: 0,
-                },
-              },
-            ],
-            metadata: {
-              historySequence: 7,
-              timestamp: STABLE_TIMESTAMP - 230000,
-              model: "anthropic:claude-sonnet-4-5",
-              usage: {
-                inputTokens: 2800,
-                outputTokens: 420,
-                totalTokens: 3220,
-              },
-              duration: 5100,
-            },
-          });
-
-          // User follow-up about error handling
-          callback({
-            id: "msg-8",
-            role: "user",
-            parts: [
-              {
-                type: "text",
-                text: "Great! What about error handling if the JWT library throws?",
-              },
-            ],
-            metadata: {
-              historySequence: 8,
-              timestamp: STABLE_TIMESTAMP - 180000,
-            },
-          });
-
-          // Assistant response with thinking (reasoning)
-          callback({
-            id: "msg-9",
-            role: "assistant",
-            parts: [
-              {
-                type: "reasoning",
-                text: "The user is asking about error handling for JWT verification. The verifyToken function could throw if the token is malformed or if there's an issue with the secret. I should wrap it in a try-catch block and return a proper error response.",
-              },
-              {
-                type: "text",
-                text: "Good catch! We should add try-catch error handling around the JWT verification. Let me update that.",
-              },
-              {
-                type: "dynamic-tool",
-                toolCallId: "call-4",
-                toolName: "search_replace",
-                state: "output-available",
-                input: {
-                  file_path: "src/api/users.ts",
-                  old_string:
-                    "  const token = req.headers.authorization?.split(' ')[1];\n  if (!token || !verifyToken(token)) {\n    return res.status(401).json({ error: 'Unauthorized' });\n  }",
-                  new_string:
-                    "  try {\n    const token = req.headers.authorization?.split(' ')[1];\n    if (!token || !verifyToken(token)) {\n      return res.status(401).json({ error: 'Unauthorized' });\n    }\n  } catch (err) {\n    console.error('Token verification failed:', err);\n    return res.status(401).json({ error: 'Invalid token' });\n  }",
-                },
-                output: {
-                  success: true,
-                  message: "File updated successfully",
-                },
-              },
-            ],
-            metadata: {
-              historySequence: 9,
-              timestamp: STABLE_TIMESTAMP - 170000,
-              model: "anthropic:claude-sonnet-4-5",
-              usage: {
-                inputTokens: 3500,
-                outputTokens: 520,
-                totalTokens: 4020,
-                reasoningTokens: 150,
-              },
-              duration: 6200,
-            },
-          });
-
-          // Assistant quick update with a single-line reasoning trace to exercise inline display
-          callback({
-            id: "msg-9a",
-            role: "assistant",
-            parts: [
-              {
-                type: "reasoning",
-                text: "Cache is warm already; rerunning the full suite would be redundant.",
-              },
-              {
-                type: "text",
-                text: "Cache is warm from the last test run, so I'll shift focus to documentation next.",
-              },
-            ],
-            metadata: {
-              historySequence: 10,
-              timestamp: STABLE_TIMESTAMP - 165000,
-              model: "anthropic:claude-sonnet-4-5",
-              usage: {
-                inputTokens: 1200,
-                outputTokens: 180,
-                totalTokens: 1380,
-                reasoningTokens: 20,
-              },
-              duration: 900,
-            },
-          });
-
-          // Assistant message with status_set tool to show agent status
-          callback({
-            id: "msg-10",
-            role: "assistant",
-            parts: [
-              {
-                type: "text",
-                text: "I've created PR #1234 with the authentication changes. The CI pipeline is running tests now.",
-              },
-              {
-                type: "dynamic-tool",
-                toolCallId: "call-5",
-                toolName: "status_set",
-                state: "output-available",
-                input: {
-                  emoji: "🚀",
-                  message: "PR #1234 waiting for CI",
-                  url: "https://github.com/example/repo/pull/1234",
-                },
-                output: {
-                  success: true,
-                  emoji: "🚀",
-                  message: "PR #1234 waiting for CI",
-                  url: "https://github.com/example/repo/pull/1234",
-                },
-              },
-            ],
-            metadata: {
-              historySequence: 11,
-              timestamp: STABLE_TIMESTAMP - 160000,
-              model: "anthropic:claude-sonnet-4-5",
-              usage: {
-                inputTokens: 800,
-                outputTokens: 150,
-                totalTokens: 950,
-              },
-              duration: 1200,
-            },
-          });
-
-          // User follow-up asking about documentation
-          callback({
-            id: "msg-11",
-            role: "user",
-            parts: [
-              {
-                type: "text",
-                text: "Should we add documentation for the authentication changes?",
-              },
-            ],
-            metadata: {
-              historySequence: 12,
-              timestamp: STABLE_TIMESTAMP - 150000,
-            },
-          });
-
-          // Mark as caught up
-          callback({ type: "caught-up" });
-
-          // Now start streaming assistant response with reasoning
-          callback({
-            type: "stream-start",
-            workspaceId: workspaceId,
-            messageId: "msg-12",
-            model: "anthropic:claude-sonnet-4-5",
-            historySequence: 13,
-          });
-
-          // Send reasoning delta
-          callback({
-            type: "reasoning-delta",
-            workspaceId: workspaceId,
-            messageId: "msg-12",
-            delta:
-              "The user is asking about documentation. This is important because the authentication changes introduce a breaking change for API clients. They'll need to know how to include JWT tokens in their requests. I should suggest adding both inline code comments and updating the API documentation to explain the new authentication requirements, including examples of how to obtain and use tokens.",
-            tokens: 65,
-            timestamp: STABLE_TIMESTAMP - 140000,
-          });
-        }, 100);
-
-        // Keep sending reasoning deltas to maintain streaming state
-        // tokens: 0 to avoid flaky token counts in visual tests
-        const intervalId = setInterval(() => {
-          callback({
-            type: "reasoning-delta",
-            workspaceId: workspaceId,
-            messageId: "msg-12",
-            delta: ".",
-            tokens: 0,
-            timestamp: NOW,
-          });
-        }, 2000);
-
-        return () => {
-          clearInterval(intervalId);
-        };
-      } else if (wsId === streamingWorkspaceId) {
-        // Streaming workspace - show active work in progress
-        setTimeout(() => {
-          const now = NOW; // Use stable timestamp
-
-          // Previous completed message with status_set (MUST be sent BEFORE caught-up)
-          callback({
-            id: "stream-msg-0",
-            role: "assistant",
-            parts: [
-              {
-                type: "text",
-                text: "I'm working on the database refactoring.",
-              },
-              {
-                type: "dynamic-tool",
-                toolCallId: "status-call-0",
-                toolName: "status_set",
-                state: "output-available",
-                input: {
-                  emoji: "⚙️",
-                  message: "Refactoring in progress",
-                },
-                output: {
-                  success: true,
-                  emoji: "⚙️",
-                  message: "Refactoring in progress",
-                },
-              },
-            ],
-            metadata: {
-              historySequence: 0,
-              timestamp: now - 5000, // 5 seconds ago
-              model: "anthropic:claude-sonnet-4-5",
-              usage: {
-                inputTokens: 200,
-                outputTokens: 50,
-                totalTokens: 250,
-              },
-              duration: 800,
-            },
-          });
-
-          // User message (recent)
-          callback({
-            id: "stream-msg-1",
-            role: "user",
-            parts: [
-              {
-                type: "text",
-                text: "Refactor the database connection to use connection pooling",
-              },
-            ],
-            metadata: {
-              historySequence: 1,
-              timestamp: now - 3000, // 3 seconds ago
-            },
-          });
-
-          // CRITICAL: Send caught-up AFTER historical messages so they get processed!
-          // Streaming state is maintained by continuous stream-delta events, not by withholding caught-up
-          callback({ type: "caught-up" });
-
-          // Now send stream events - they'll be processed immediately
-          // Stream start event (very recent - just started)
-          callback({
-            type: "stream-start",
-            workspaceId: streamingWorkspaceId,
-            messageId: "stream-msg-2",
-            model: "anthropic:claude-sonnet-4-5",
-            historySequence: 2,
-          });
-
-          // Stream delta event - shows text being typed out (just happened)
-          callback({
-            type: "stream-delta",
-            workspaceId: streamingWorkspaceId,
-            messageId: "stream-msg-2",
-            delta: "I'll help you refactor the database connection to use connection pooling.",
-            tokens: 15,
-            timestamp: now - 1000, // 1 second ago
-          });
-
-          // Tool call start event - shows tool being invoked (happening now)
-          callback({
-            type: "tool-call-start",
-            workspaceId: streamingWorkspaceId,
-            messageId: "stream-msg-2",
-            toolCallId: "stream-call-1",
-            toolName: "read_file",
-            args: { target_file: "src/db/connection.ts" },
-            tokens: 8,
-            timestamp: now - 500, // 0.5 seconds ago
-          });
-        }, 100);
-
-        // Keep sending deltas to maintain streaming state
-        // tokens: 0 to avoid flaky token counts in visual tests
-        const intervalId = setInterval(() => {
-          callback({
-            type: "stream-delta",
-            workspaceId: streamingWorkspaceId,
-            messageId: "stream-msg-2",
-            delta: ".",
-            tokens: 0,
-            timestamp: NOW,
-          });
-        }, 2000);
-
-        // Return cleanup function that stops the interval
-        return () => clearInterval(intervalId);
-      } else {
-        // Other workspaces - send caught-up immediately
-        setTimeout(() => {
-          callback({ type: "caught-up" });
-        }, 100);
-
-        return () => {
-          // Cleanup
-        };
-      }
-    };
-
-    return (
-      <AppWithMocks
-        projects={projects}
-        workspaces={workspaces}
-        onChat={onChat}
-        executeBash={executeBash}
-      />
-    );
+    return <AppWithChatMocks />;
   },
 };
 
@@ -1087,62 +1293,80 @@ main
  */
 export const MarkdownTables: Story = {
   render: () => {
-    const workspaceId = "my-app-feature";
+    const AppWithTableMocks = () => {
+      const initialized = useRef(false);
 
-    const workspaces: FrontendWorkspaceMetadata[] = [
-      {
-        id: workspaceId,
-        name: "feature",
-        projectPath: "/home/user/projects/my-app",
-        projectName: "my-app",
-        namedWorkspacePath: "/home/user/.mux/src/my-app/feature",
-        runtimeConfig: DEFAULT_RUNTIME_CONFIG,
-      },
-    ];
+      if (!initialized.current) {
+        const workspaceId = "my-app-feature";
 
-    const projects = new Map<string, ProjectConfig>([
-      [
-        "/home/user/projects/my-app",
-        {
-          workspaces: [
-            { path: "/home/user/.mux/src/my-app/feature", id: workspaceId, name: "feature" },
-          ],
-        },
-      ],
-    ]);
-
-    // Set initial workspace selection
-    localStorage.setItem(
-      "selectedWorkspace",
-      JSON.stringify({
-        workspaceId: workspaceId,
-        projectPath: "/home/user/projects/my-app",
-        projectName: "my-app",
-        namedWorkspacePath: "/home/user/.mux/src/my-app/feature",
-      })
-    );
-
-    const onChat = (_wsId: string, emit: (msg: WorkspaceChatMessage) => void) => {
-      setTimeout(() => {
-        // User message
-        emit({
-          id: "msg-1",
-          role: "user",
-          parts: [{ type: "text", text: "Show me some table examples" }],
-          metadata: {
-            historySequence: 1,
-            timestamp: STABLE_TIMESTAMP,
+        const workspaces: FrontendWorkspaceMetadata[] = [
+          {
+            id: workspaceId,
+            name: "feature",
+            projectPath: "/home/user/projects/my-app",
+            projectName: "my-app",
+            namedWorkspacePath: "/home/user/.mux/src/my-app/feature",
+            runtimeConfig: DEFAULT_RUNTIME_CONFIG,
           },
-        } as WorkspaceChatMessage);
+        ];
 
-        // Assistant message with tables
-        emit({
-          id: "msg-2",
-          role: "assistant",
-          parts: [
-            {
-              type: "text",
-              text: `Here are various markdown table examples:
+        setupMockAPI({
+          projects: new Map([
+            [
+              "/home/user/projects/my-app",
+              {
+                workspaces: [
+                  { path: "/home/user/.mux/src/my-app/feature", id: workspaceId, name: "feature" },
+                ],
+              },
+            ],
+          ]),
+          workspaces,
+          selectedWorkspaceId: workspaceId,
+          apiOverrides: {
+            workspace: {
+              create: (projectPath: string, branchName: string) =>
+                Promise.resolve({
+                  success: true,
+                  metadata: {
+                    id: Math.random().toString(36).substring(2, 12),
+                    name: branchName,
+                    projectPath,
+                    projectName: projectPath.split("/").pop() ?? "project",
+                    namedWorkspacePath: `/mock/workspace/${branchName}`,
+                    runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+                  },
+                }),
+              list: () => Promise.resolve(workspaces),
+              rename: (workspaceId: string) =>
+                Promise.resolve({
+                  success: true,
+                  data: { newWorkspaceId: workspaceId },
+                }),
+              remove: () => Promise.resolve({ success: true }),
+              fork: () => Promise.resolve({ success: false, error: "Not implemented in mock" }),
+              openTerminal: () => Promise.resolve(undefined),
+              onChat: (workspaceId, callback) => {
+                setTimeout(() => {
+                  // User message
+                  callback({
+                    id: "msg-1",
+                    role: "user",
+                    parts: [{ type: "text", text: "Show me some table examples" }],
+                    metadata: {
+                      historySequence: 1,
+                      timestamp: STABLE_TIMESTAMP,
+                    },
+                  });
+
+                  // Assistant message with tables
+                  callback({
+                    id: "msg-2",
+                    role: "assistant",
+                    parts: [
+                      {
+                        type: "text",
+                        text: `Here are various markdown table examples:
 
 ## Simple Table
 
@@ -1199,26 +1423,67 @@ export const MarkdownTables: Story = {
 | \`server.port\` | 3000 | Port number for HTTP server | \`PORT\` |
 
 These tables should render cleanly without any disruptive copy or download actions.`,
-            },
-          ],
-          metadata: {
-            historySequence: 2,
-            timestamp: STABLE_TIMESTAMP + 1000,
-            model: "anthropic:claude-sonnet-4-5",
-            usage: {
-              inputTokens: 100,
-              outputTokens: 500,
-              totalTokens: 600,
-            },
-            duration: 2000,
-          },
-        } as WorkspaceChatMessage);
+                      },
+                    ],
+                    metadata: {
+                      historySequence: 2,
+                      timestamp: STABLE_TIMESTAMP + 1000,
+                      model: "anthropic:claude-sonnet-4-5",
+                      usage: {
+                        inputTokens: 100,
+                        outputTokens: 500,
+                        totalTokens: 600,
+                      },
+                      duration: 2000,
+                    },
+                  });
 
-        // Mark as caught up
-        emit({ type: "caught-up" } as WorkspaceChatMessage);
-      }, 100);
+                  // Mark as caught up
+                  callback({ type: "caught-up" });
+                }, 100);
+
+                return () => {
+                  // Cleanup
+                };
+              },
+              onMetadata: () => () => undefined,
+              activity: {
+                list: () => Promise.resolve({}),
+                subscribe: () => () => undefined,
+              },
+              sendMessage: () => Promise.resolve({ success: true, data: undefined }),
+              resumeStream: () => Promise.resolve({ success: true, data: undefined }),
+              interruptStream: () => Promise.resolve({ success: true, data: undefined }),
+              clearQueue: () => Promise.resolve({ success: true, data: undefined }),
+              truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
+              replaceChatHistory: () => Promise.resolve({ success: true, data: undefined }),
+              getInfo: () => Promise.resolve(null),
+              executeBash: () =>
+                Promise.resolve({
+                  success: true,
+                  data: { success: true, output: "", exitCode: 0, wall_duration_ms: 0 },
+                }),
+            },
+          },
+        });
+
+        // Set initial workspace selection
+        localStorage.setItem(
+          "selectedWorkspace",
+          JSON.stringify({
+            workspaceId: workspaceId,
+            projectPath: "/home/user/projects/my-app",
+            projectName: "my-app",
+            namedWorkspacePath: "/home/user/.mux/src/my-app/feature",
+          })
+        );
+
+        initialized.current = true;
+      }
+
+      return <AppLoader />;
     };
 
-    return <AppWithMocks projects={projects} workspaces={workspaces} onChat={onChat} />;
+    return <AppWithTableMocks />;
   },
 };

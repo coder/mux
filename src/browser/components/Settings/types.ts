@@ -7,20 +7,17 @@ export interface SettingsSection {
   component: React.ComponentType;
 }
 
-/** AWS credential status for Bedrock provider */
-export interface AWSCredentialStatus {
-  region?: string;
-  bearerTokenSet: boolean;
-  accessKeyIdSet: boolean;
-  secretAccessKeySet: boolean;
-}
-
 export interface ProviderConfigDisplay {
   apiKeySet: boolean;
   baseUrl?: string;
   models?: string[];
-  /** AWS-specific fields (only present for bedrock provider) */
-  aws?: AWSCredentialStatus;
+  // Bedrock-specific fields
+  region?: string;
+  bearerTokenSet?: boolean;
+  accessKeyIdSet?: boolean;
+  secretAccessKeySet?: boolean;
+  // Allow additional fields for extensibility
+  [key: string]: unknown;
 }
 
 export type ProvidersConfigMap = Record<string, ProviderConfigDisplay>;

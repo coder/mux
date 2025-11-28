@@ -3,7 +3,6 @@ import { ChevronDown, ChevronRight, Check, X } from "lucide-react";
 import type { ProvidersConfigMap } from "../types";
 import { SUPPORTED_PROVIDERS, PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import type { ProviderName } from "@/common/constants/providers";
-import { useORPC } from "@/browser/orpc/react";
 
 interface FieldConfig {
   key: string;
@@ -59,7 +58,6 @@ function getProviderFields(provider: ProviderName): FieldConfig[] {
 }
 
 export function ProvidersSection() {
-  const client = useORPC();
   const [config, setConfig] = useState<ProvidersConfigMap>({});
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
   const [editingField, setEditingField] = useState<{
@@ -72,10 +70,10 @@ export function ProvidersSection() {
   // Load config on mount
   useEffect(() => {
     void (async () => {
-      const cfg = await client.providers.getConfig();
+      const cfg = await window.api.providers.getConfig();
       setConfig(cfg);
     })();
-  }, [client]);
+  }, []);
 
   const handleToggleProvider = (provider: string) => {
     setExpandedProvider((prev) => (prev === provider ? null : provider));
@@ -86,8 +84,10 @@ export function ProvidersSection() {
     setEditingField({ provider, field });
     // For secrets, start empty since we only show masked value
     // For text fields, show current value
-    const currentValue = getFieldValue(provider, field);
-    setEditValue(fieldConfig.type === "text" && currentValue ? currentValue : "");
+    const currentValue = (config[provider] as Record<string, unknown> | undefined)?.[field];
+    setEditValue(
+      fieldConfig.type === "text" && typeof currentValue === "string" ? currentValue : ""
+    );
   };
 
   const handleCancelEdit = () => {
@@ -101,40 +101,41 @@ export function ProvidersSection() {
     setSaving(true);
     try {
       const { provider, field } = editingField;
-      await client.providers.setProviderConfig({ provider, keyPath: [field], value: editValue });
+      await window.api.providers.setProviderConfig(provider, [field], editValue);
 
       // Refresh config
-      const cfg = await client.providers.getConfig();
+      const cfg = await window.api.providers.getConfig();
       setConfig(cfg);
       setEditingField(null);
       setEditValue("");
     } finally {
       setSaving(false);
     }
-  }, [client, editingField, editValue]);
+  }, [editingField, editValue]);
 
-  const handleClearField = useCallback(
-    async (provider: string, field: string) => {
-      setSaving(true);
-      try {
-        await client.providers.setProviderConfig({ provider, keyPath: [field], value: "" });
-        const cfg = await client.providers.getConfig();
-        setConfig(cfg);
-      } finally {
-        setSaving(false);
-      }
-    },
-    [client]
-  );
+  const handleClearField = useCallback(async (provider: string, field: string) => {
+    setSaving(true);
+    try {
+      await window.api.providers.setProviderConfig(provider, [field], "");
+      const cfg = await window.api.providers.getConfig();
+      setConfig(cfg);
+    } finally {
+      setSaving(false);
+    }
+  }, []);
 
   const isConfigured = (provider: string): boolean => {
     const providerConfig = config[provider];
     if (!providerConfig) return false;
 
-    // For Bedrock, check if any AWS credential field is set
-    if (provider === "bedrock" && providerConfig.aws) {
-      const { aws } = providerConfig;
-      return !!(aws.region ?? aws.bearerTokenSet ?? aws.accessKeyIdSet ?? aws.secretAccessKeySet);
+    // For Bedrock, check if any credential field is set
+    if (provider === "bedrock") {
+      return !!(
+        providerConfig.region ??
+        providerConfig.bearerTokenSet ??
+        providerConfig.accessKeyIdSet ??
+        providerConfig.secretAccessKeySet
+      );
     }
 
     // For other providers, check apiKeySet
@@ -142,40 +143,20 @@ export function ProvidersSection() {
   };
 
   const getFieldValue = (provider: string, field: string): string | undefined => {
-    const providerConfig = config[provider];
+    const providerConfig = config[provider] as Record<string, unknown> | undefined;
     if (!providerConfig) return undefined;
-
-    // For bedrock, check aws nested object for region
-    if (provider === "bedrock" && field === "region") {
-      return providerConfig.aws?.region;
-    }
-
-    // For standard fields like baseUrl
-    const value = providerConfig[field as keyof typeof providerConfig];
+    const value = providerConfig[field];
     return typeof value === "string" ? value : undefined;
   };
 
   const isFieldSet = (provider: string, field: string, fieldConfig: FieldConfig): boolean => {
-    const providerConfig = config[provider];
-    if (!providerConfig) return false;
-
     if (fieldConfig.type === "secret") {
       // For apiKey, we have apiKeySet from the sanitized config
-      if (field === "apiKey") return providerConfig.apiKeySet ?? false;
-
-      // For AWS secrets, check the aws nested object
-      if (provider === "bedrock" && providerConfig.aws) {
-        const { aws } = providerConfig;
-        switch (field) {
-          case "bearerToken":
-            return aws.bearerTokenSet ?? false;
-          case "accessKeyId":
-            return aws.accessKeyIdSet ?? false;
-          case "secretAccessKey":
-            return aws.secretAccessKeySet ?? false;
-        }
-      }
-      return false;
+      if (field === "apiKey") return config[provider]?.apiKeySet ?? false;
+      // For other secrets, check if the field exists in the raw config
+      // Since we don't expose secret values, we assume they're not set if undefined
+      const providerConfig = config[provider] as Record<string, unknown> | undefined;
+      return providerConfig?.[`${field}Set`] === true;
     }
     return !!getFieldValue(provider, field);
   };

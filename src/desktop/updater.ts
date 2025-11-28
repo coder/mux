@@ -1,5 +1,7 @@
 import { autoUpdater } from "electron-updater";
 import type { UpdateInfo } from "electron-updater";
+import type { BrowserWindow } from "electron";
+import { IPC_CHANNELS } from "@/common/constants/ipc-constants";
 import { log } from "@/node/services/log";
 import { parseDebugUpdater } from "@/common/utils/env";
 
@@ -26,10 +28,10 @@ export type UpdateStatus =
  * - Install updates when requested by the user
  */
 export class UpdaterService {
+  private mainWindow: BrowserWindow | null = null;
   private updateStatus: UpdateStatus = { type: "idle" };
-  private checkTimeout: ReturnType<typeof setTimeout> | null = null;
+  private checkTimeout: NodeJS.Timeout | null = null;
   private readonly fakeVersion: string | undefined;
-  private subscribers = new Set<(status: UpdateStatus) => void>();
 
   constructor() {
     // Configure auto-updater
@@ -103,6 +105,16 @@ export class UpdaterService {
       clearTimeout(this.checkTimeout);
       this.checkTimeout = null;
     }
+  }
+
+  /**
+   * Set the main window for sending status updates
+   */
+  setMainWindow(window: BrowserWindow) {
+    log.debug("setMainWindow() called");
+    this.mainWindow = window;
+    // Send current status to newly connected window
+    this.notifyRenderer();
   }
 
   /**
@@ -228,16 +240,6 @@ export class UpdaterService {
   /**
    * Get the current update status
    */
-
-  /**
-   * Subscribe to status updates
-   */
-  subscribe(callback: (status: UpdateStatus) => void): () => void {
-    this.subscribers.add(callback);
-    return () => {
-      this.subscribers.delete(callback);
-    };
-  }
   getStatus(): UpdateStatus {
     return this.updateStatus;
   }
@@ -247,13 +249,11 @@ export class UpdaterService {
    */
   private notifyRenderer() {
     log.debug("notifyRenderer() called, status:", this.updateStatus);
-    // Notify subscribers (ORPC)
-    for (const subscriber of this.subscribers) {
-      try {
-        subscriber(this.updateStatus);
-      } catch (err) {
-        log.error("Error notifying subscriber:", err);
-      }
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      log.debug("Sending status to renderer via IPC");
+      this.mainWindow.webContents.send(IPC_CHANNELS.UPDATE_STATUS, this.updateStatus);
+    } else {
+      log.debug("Cannot send - mainWindow is null or destroyed");
     }
   }
 }

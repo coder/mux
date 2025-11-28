@@ -21,7 +21,6 @@ import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsConte
 
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
-import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useThinking } from "@/browser/contexts/ThinkingContext";
 import {
@@ -41,7 +40,6 @@ import { checkAutoCompaction } from "@/browser/utils/compaction/autoCompactionCh
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useAutoCompactionSettings } from "../hooks/useAutoCompactionSettings";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
-import { useORPC } from "@/browser/orpc/react";
 
 interface AIViewProps {
   workspaceId: string;
@@ -60,7 +58,6 @@ const AIViewInner: React.FC<AIViewProps> = ({
   runtimeConfig,
   className,
 }) => {
-  const client = useORPC();
   const chatAreaRef = useRef<HTMLDivElement>(null);
 
   // Track active tab to conditionally enable resize functionality
@@ -173,14 +170,14 @@ const AIViewInner: React.FC<AIViewProps> = ({
     const queuedMessage = workspaceState?.queuedMessage;
     if (!queuedMessage) return;
 
-    await client.workspace.clearQueue({ workspaceId });
+    await window.api.workspace.clearQueue(workspaceId);
     chatInputAPI.current?.restoreText(queuedMessage.content);
 
     // Restore images if present
     if (queuedMessage.imageParts && queuedMessage.imageParts.length > 0) {
       chatInputAPI.current?.restoreImages(queuedMessage.imageParts);
     }
-  }, [client, workspaceId, workspaceState?.queuedMessage, chatInputAPI]);
+  }, [workspaceId, workspaceState?.queuedMessage, chatInputAPI]);
 
   const handleEditLastUserMessage = useCallback(async () => {
     if (!workspaceState) return;
@@ -228,25 +225,24 @@ const AIViewInner: React.FC<AIViewProps> = ({
       setAutoScroll(true);
 
       // Truncate history in backend
-      await client.workspace.truncateHistory({ workspaceId, percentage });
+      await window.api.workspace.truncateHistory(workspaceId, percentage);
     },
-    [workspaceId, setAutoScroll, client]
+    [workspaceId, setAutoScroll]
   );
 
   const handleProviderConfig = useCallback(
     async (provider: string, keyPath: string[], value: string) => {
-      const result = await client.providers.setProviderConfig({ provider, keyPath, value });
+      const result = await window.api.providers.setProviderConfig(provider, keyPath, value);
       if (!result.success) {
         throw new Error(result.error);
       }
     },
-    [client]
+    []
   );
 
-  const openTerminal = useOpenTerminal();
   const handleOpenTerminal = useCallback(() => {
-    openTerminal(workspaceId);
-  }, [workspaceId, openTerminal]);
+    void window.api.terminal.openWindow(workspaceId);
+  }, [workspaceId]);
 
   // Auto-scroll when messages or todos update (during streaming)
   useEffect(() => {
@@ -337,7 +333,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const { messages, canInterrupt, isCompacting, loading, currentModel } = workspaceState;
 
   // Get active stream message ID for token counting
-  const activeStreamMessageId = aggregator?.getActiveStreamMessageId();
+  const activeStreamMessageId = aggregator.getActiveStreamMessageId();
 
   // Use pending send model for auto-compaction check, not the last stream's model.
   // This ensures the threshold is based on the model the user will actually send with,
@@ -508,12 +504,12 @@ const AIViewInner: React.FC<AIViewProps> = ({
                   cancelText={`hit ${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} to cancel`}
                   tokenCount={
                     activeStreamMessageId
-                      ? aggregator?.getStreamingTokenCount(activeStreamMessageId)
+                      ? aggregator.getStreamingTokenCount(activeStreamMessageId)
                       : undefined
                   }
                   tps={
                     activeStreamMessageId
-                      ? aggregator?.getStreamingTPS(activeStreamMessageId)
+                      ? aggregator.getStreamingTPS(activeStreamMessageId)
                       : undefined
                   }
                 />

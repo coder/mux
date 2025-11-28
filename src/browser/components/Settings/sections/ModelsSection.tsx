@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import type { ProvidersConfigMap } from "../types";
 import { SUPPORTED_PROVIDERS, PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
-import { useORPC } from "@/browser/orpc/react";
 
 interface NewModelForm {
   provider: string;
@@ -10,7 +9,6 @@ interface NewModelForm {
 }
 
 export function ModelsSection() {
-  const client = useORPC();
   const [config, setConfig] = useState<ProvidersConfigMap>({});
   const [newModel, setNewModel] = useState<NewModelForm>({ provider: "", modelId: "" });
   const [saving, setSaving] = useState(false);
@@ -18,10 +16,10 @@ export function ModelsSection() {
   // Load config on mount
   useEffect(() => {
     void (async () => {
-      const cfg = await client.providers.getConfig();
+      const cfg = await window.api.providers.getConfig();
       setConfig(cfg);
     })();
-  }, [client]);
+  }, []);
 
   // Get all custom models across providers
   const getAllModels = (): Array<{ provider: string; modelId: string }> => {
@@ -44,10 +42,10 @@ export function ModelsSection() {
       const currentModels = config[newModel.provider]?.models ?? [];
       const updatedModels = [...currentModels, newModel.modelId.trim()];
 
-      await client.providers.setModels({ provider: newModel.provider, models: updatedModels });
+      await window.api.providers.setModels(newModel.provider, updatedModels);
 
       // Refresh config
-      const cfg = await client.providers.getConfig();
+      const cfg = await window.api.providers.getConfig();
       setConfig(cfg);
       setNewModel({ provider: "", modelId: "" });
 
@@ -56,7 +54,7 @@ export function ModelsSection() {
     } finally {
       setSaving(false);
     }
-  }, [client, newModel, config]);
+  }, [newModel, config]);
 
   const handleRemoveModel = useCallback(
     async (provider: string, modelId: string) => {
@@ -65,10 +63,10 @@ export function ModelsSection() {
         const currentModels = config[provider]?.models ?? [];
         const updatedModels = currentModels.filter((m) => m !== modelId);
 
-        await client.providers.setModels({ provider, models: updatedModels });
+        await window.api.providers.setModels(provider, updatedModels);
 
         // Refresh config
-        const cfg = await client.providers.getConfig();
+        const cfg = await window.api.providers.getConfig();
         setConfig(cfg);
 
         // Notify other components about the change
@@ -77,7 +75,7 @@ export function ModelsSection() {
         setSaving(false);
       }
     },
-    [client, config]
+    [config]
   );
 
   const allModels = getAllModels();

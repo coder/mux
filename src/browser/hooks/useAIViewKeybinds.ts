@@ -9,7 +9,6 @@ import { getThinkingPolicyForModel } from "@/browser/utils/thinking/policy";
 import { getDefaultModel } from "@/browser/hooks/useModelLRU";
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { isCompactingStream, cancelCompaction } from "@/browser/utils/compaction/handler";
-import { useORPC } from "@/browser/orpc/react";
 
 interface UseAIViewKeybindsParams {
   workspaceId: string;
@@ -22,7 +21,7 @@ interface UseAIViewKeybindsParams {
   chatInputAPI: React.RefObject<ChatInputAPI | null>;
   jumpToBottom: () => void;
   handleOpenTerminal: () => void;
-  aggregator: StreamingMessageAggregator | undefined; // For compaction detection
+  aggregator: StreamingMessageAggregator; // For compaction detection
   setEditingMessage: (editing: { id: string; content: string } | undefined) => void;
   vimEnabled: boolean; // For vim-aware interrupt keybind
 }
@@ -53,8 +52,6 @@ export function useAIViewKeybinds({
   setEditingMessage,
   vimEnabled,
 }: UseAIViewKeybindsParams): void {
-  const client = useORPC();
-
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Check vim-aware interrupt keybind
@@ -65,11 +62,11 @@ export function useAIViewKeybinds({
       // Interrupt stream: Ctrl+C in vim mode, Esc in normal mode
       // Only intercept if actively compacting (otherwise allow browser default for copy in vim mode)
       if (matchesKeybind(e, interruptKeybind)) {
-        if (canInterrupt && aggregator && isCompactingStream(aggregator)) {
+        if (canInterrupt && isCompactingStream(aggregator)) {
           // Ctrl+C during compaction: restore original state and enter edit mode
           // Stores cancellation marker in localStorage (persists across reloads)
           e.preventDefault();
-          void cancelCompaction(client, workspaceId, aggregator, (messageId, command) => {
+          void cancelCompaction(workspaceId, aggregator, (messageId, command) => {
             setEditingMessage({ id: messageId, content: command });
           });
           setAutoRetry(false);
@@ -82,7 +79,7 @@ export function useAIViewKeybinds({
         if (canInterrupt || showRetryBarrier) {
           e.preventDefault();
           setAutoRetry(false); // User explicitly stopped - don't auto-retry
-          void client.workspace.interruptStream({ workspaceId });
+          void window.api.workspace.interruptStream(workspaceId);
           return;
         }
       }
@@ -161,6 +158,5 @@ export function useAIViewKeybinds({
     aggregator,
     setEditingMessage,
     vimEnabled,
-    client,
   ]);
 }

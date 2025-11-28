@@ -1,9 +1,7 @@
 import assert from "@/common/utils/assert";
 import type { MuxMessage, DisplayedMessage, QueuedMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { WorkspaceChatMessage } from "@/common/orpc/types";
-import type { RouterClient } from "@orpc/server";
-import type { AppRouter } from "@/node/orpc/router";
+import type { WorkspaceChatMessage } from "@/common/types/ipc";
 import type { TodoItem } from "@/common/types/tools";
 import { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
@@ -17,7 +15,7 @@ import {
   isMuxMessage,
   isQueuedMessageChanged,
   isRestoreToInput,
-} from "@/common/orpc/types";
+} from "@/common/types/ipc";
 import { MapStore } from "./MapStore";
 import { collectUsageHistory, createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";
@@ -97,7 +95,6 @@ export class WorkspaceStore {
 
   // Usage and consumer stores (two-store approach for CostsTab optimization)
   private usageStore = new MapStore<string, WorkspaceUsageState>();
-  private client: RouterClient<AppRouter> | null = null;
   private consumersStore = new MapStore<string, WorkspaceConsumersState>();
 
   // Manager for consumer calculations (debouncing, caching, lazy loading)
@@ -259,10 +256,6 @@ export class WorkspaceStore {
     // message completion events (not on deltas) to prevent App.tsx re-renders.
   }
 
-  setClient(client: RouterClient<AppRouter>) {
-    this.client = client;
-  }
-
   /**
    * Dispatch resume check event for a workspace.
    * Triggers useResumeManager to check if interrupted stream can be resumed.
@@ -417,10 +410,11 @@ export class WorkspaceStore {
 
   /**
    * Get aggregator for a workspace (used by components that need direct access).
-   * Returns undefined if workspace does not exist.
+   *
+   * REQUIRES: Workspace must have been added via addWorkspace() first.
    */
-  getAggregator(workspaceId: string): StreamingMessageAggregator | undefined {
-    return this.aggregators.get(workspaceId);
+  getAggregator(workspaceId: string): StreamingMessageAggregator {
+    return this.assertGet(workspaceId);
   }
 
   /**
@@ -595,35 +589,13 @@ export class WorkspaceStore {
 
     // Subscribe to IPC events
     // Wrap in queueMicrotask to ensure IPC events don't update during React render
-    if (this.client) {
-      const controller = new AbortController();
-      const { signal } = controller;
+    const unsubscribe = window.api.workspace.onChat(workspaceId, (data: WorkspaceChatMessage) => {
+      queueMicrotask(() => {
+        this.handleChatMessage(workspaceId, data);
+      });
+    });
 
-      // Fire and forget the async loop
-      (async () => {
-        try {
-          const iterator = await this.client!.workspace.onChat({ workspaceId }, { signal });
-
-          for await (const data of iterator) {
-            if (signal.aborted) break;
-            queueMicrotask(() => {
-              this.handleChatMessage(workspaceId, data);
-            });
-          }
-        } catch (error) {
-          if (!signal.aborted) {
-            console.error(
-              `[WorkspaceStore] Error in onChat subscription for ${workspaceId}:`,
-              error
-            );
-          }
-        }
-      })();
-
-      this.ipcUnsubscribers.set(workspaceId, () => controller.abort());
-    } else {
-      console.warn(`[WorkspaceStore] No ORPC client available for workspace ${workspaceId}`);
-    }
+    this.ipcUnsubscribers.set(workspaceId, unsubscribe);
   }
 
   /**
@@ -948,9 +920,7 @@ export function useWorkspaceSidebarState(workspaceId: string): WorkspaceSidebarS
 /**
  * Hook to get an aggregator for a workspace.
  */
-export function useWorkspaceAggregator(
-  workspaceId: string
-): StreamingMessageAggregator | undefined {
+export function useWorkspaceAggregator(workspaceId: string) {
   const store = useWorkspaceStoreRaw();
   return store.getAggregator(workspaceId);
 }
