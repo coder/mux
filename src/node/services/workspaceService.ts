@@ -875,17 +875,19 @@ export class WorkspaceService extends EventEmitter {
 
   async interruptStream(
     workspaceId: string,
-    options?: { abandonPartial?: boolean }
+    options?: { soft?: boolean; abandonPartial?: boolean }
   ): Promise<Result<void>> {
     try {
       const session = this.getOrCreateSession(workspaceId);
-      const stopResult = await session.interruptStream(options?.abandonPartial);
+      const stopResult = await session.interruptStream(options);
       if (!stopResult.success) {
         log.error("Failed to stop stream:", stopResult.error);
         return Err(stopResult.error);
       }
 
-      if (options?.abandonPartial) {
+      // For hard interrupts, delete partial immediately. For soft interrupts,
+      // defer to stream-abort handler (stream is still running and may recreate partial).
+      if (options?.abandonPartial && !options?.soft) {
         log.debug("Abandoning partial for workspace:", workspaceId);
         await this.partialService.deletePartial(workspaceId);
       }

@@ -185,7 +185,12 @@ export const workspace = {
   interruptStream: {
     input: z.object({
       workspaceId: z.string(),
-      options: z.object({ abandonPartial: z.boolean().optional() }).optional(),
+      options: z
+        .object({
+          soft: z.boolean().optional(),
+          abandonPartial: z.boolean().optional(),
+        })
+        .optional(),
     }),
     output: ResultSchema(z.void(), z.string()),
   },
