@@ -885,6 +885,8 @@ export class WorkspaceService extends EventEmitter {
         return Err(stopResult.error);
       }
 
+      // Partial is deleted in agentSession.interruptStream
+
       return Ok(undefined);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
