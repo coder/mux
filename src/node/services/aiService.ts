@@ -413,9 +413,9 @@ export class AIService extends EventEmitter {
         const { createAnthropic } = await PROVIDER_REGISTRY.anthropic();
         // Wrap fetch to inject cache_control on tools and messages
         // (SDK doesn't translate providerOptions to cache_control for these)
-        const fetchWithCacheControl = wrapFetchWithAnthropicCacheControl(
-          defaultFetchWithUnlimitedTimeout
-        );
+        // Use getProviderFetch to preserve any user-configured custom fetch (e.g., proxies)
+        const baseFetch = getProviderFetch(providerConfig);
+        const fetchWithCacheControl = wrapFetchWithAnthropicCacheControl(baseFetch);
         const provider = createAnthropic({
           ...normalizedConfig,
           headers,
@@ -736,10 +736,12 @@ export class AIService extends EventEmitter {
         const { createGateway } = await PROVIDER_REGISTRY["mux-gateway"]();
         // For Anthropic models via gateway, wrap fetch to inject cache_control on tools
         // (gateway provider doesn't process providerOptions.anthropic.cacheControl)
+        // Use getProviderFetch to preserve any user-configured custom fetch (e.g., proxies)
+        const baseFetch = getProviderFetch(providerConfig);
         const isAnthropicModel = modelId.startsWith("anthropic/");
         const fetchWithCacheControl = isAnthropicModel
-          ? wrapFetchWithAnthropicCacheControl(defaultFetchWithUnlimitedTimeout)
-          : defaultFetchWithUnlimitedTimeout;
+          ? wrapFetchWithAnthropicCacheControl(baseFetch)
+          : baseFetch;
         // Use configured baseURL or fall back to default gateway URL
         const gatewayBaseURL =
           providerConfig.baseURL ?? "https://gateway.mux.coder.com/api/v1/ai-gateway/v1/ai";

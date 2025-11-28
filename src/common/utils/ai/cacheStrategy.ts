@@ -151,19 +151,36 @@ export function applyCacheControlToTools<T extends Record<string, Tool>>(
   const cachedTools = {} as unknown as T;
   for (const [key, existingTool] of Object.entries(tools)) {
     if (key === lastToolKey) {
-      // Re-create the tool with providerOptions - SDK requires this at creation time
-      // Simply spreading providerOptions onto an existing tool doesn't work
-      const cachedTool = createTool({
-        description: existingTool.description,
-        inputSchema: existingTool.inputSchema,
-        execute: existingTool.execute,
-        providerOptions: {
-          anthropic: {
-            cacheControl: { type: "ephemeral" },
+      // For provider-defined tools (like Anthropic's webSearch), we cannot recreate them
+      // with createTool() - they have special properties. Instead, spread providerOptions
+      // directly onto the tool object. While this doesn't work for regular tools (SDK
+      // requires providerOptions at creation time), provider-defined tools handle it.
+      const isProviderDefinedTool = (existingTool as { type?: string }).type === "provider-defined";
+
+      if (isProviderDefinedTool) {
+        // Provider-defined tools: add providerOptions directly (SDK handles it differently)
+        cachedTools[key as keyof T] = {
+          ...existingTool,
+          providerOptions: {
+            anthropic: {
+              cacheControl: { type: "ephemeral" },
+            },
           },
-        },
-      });
-      cachedTools[key as keyof T] = cachedTool as unknown as T[keyof T];
+        } as unknown as T[keyof T];
+      } else {
+        // Regular tools: re-create with providerOptions (SDK requires this at creation time)
+        const cachedTool = createTool({
+          description: existingTool.description,
+          inputSchema: existingTool.inputSchema,
+          execute: existingTool.execute,
+          providerOptions: {
+            anthropic: {
+              cacheControl: { type: "ephemeral" },
+            },
+          },
+        });
+        cachedTools[key as keyof T] = cachedTool as unknown as T[keyof T];
+      }
     } else {
       // Other tools are copied as-is
       cachedTools[key as keyof T] = existingTool as unknown as T[keyof T];
