@@ -225,8 +225,11 @@ export const RestoreToInputEventSchema = z.object({
   imageParts: z.array(ImagePartSchema).optional(),
 });
 
+// Order matters: z.union() tries schemas in order until one passes.
+// Put discriminatedUnion first since streaming events (stream-delta, etc.)
+// are most frequent and have a `type` field for O(1) lookup.
+// MuxMessageSchema lacks `type`, so trying it first caused validation overhead.
 export const WorkspaceChatMessageSchema = z.union([
-  MuxMessageSchema,
   z.discriminatedUnion("type", [
     CaughtUpMessageSchema,
     StreamErrorMessageSchema,
@@ -241,9 +244,11 @@ export const WorkspaceChatMessageSchema = z.union([
     ReasoningDeltaEventSchema,
     ReasoningEndEventSchema,
     UsageDeltaEventSchema,
+    QueuedMessageChangedEventSchema,
+    RestoreToInputEventSchema,
   ]),
   WorkspaceInitEventSchema,
-  z.discriminatedUnion("type", [QueuedMessageChangedEventSchema, RestoreToInputEventSchema]),
+  MuxMessageSchema,
 ]);
 
 // Update Status
