@@ -66,10 +66,10 @@ function addCacheControlToLastContentPart(msg: ModelMessage): ModelMessage {
 
 /**
  * Apply cache control to messages for Anthropic models.
- * Caches all messages except the last user message for optimal cache hits.
+ * Adds a cache marker to the last message so the entire conversation is cached.
  *
  * NOTE: The SDK requires providerOptions on content parts, not on the message.
- * We add cache_control to the last content part of the second-to-last message.
+ * We add cache_control to the last content part of the last message.
  */
 export function applyCacheControl(messages: ModelMessage[], modelString: string): ModelMessage[] {
   // Only apply cache control for Anthropic models
@@ -77,14 +77,13 @@ export function applyCacheControl(messages: ModelMessage[], modelString: string)
     return messages;
   }
 
-  // Need at least 2 messages to add a cache breakpoint
-  if (messages.length < 2) {
+  // Need at least 1 message to add a cache breakpoint
+  if (messages.length < 1) {
     return messages;
   }
 
-  // Add cache breakpoint at the second-to-last message
-  // This caches everything up to (but not including) the current user message
-  const cacheIndex = messages.length - 2;
+  // Add cache breakpoint at the last message
+  const cacheIndex = messages.length - 1;
 
   return messages.map((msg, index) => {
     if (index === cacheIndex) {

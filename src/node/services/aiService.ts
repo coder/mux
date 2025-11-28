@@ -102,7 +102,7 @@ if (typeof globalFetchWithExtras.certificate === "function") {
  *
  * Injects cache_control on:
  * 1. Last tool (caches all tool definitions)
- * 2. Second-to-last message's last content part (caches conversation history)
+ * 2. Last message's last content part (caches entire conversation)
  */
 function wrapFetchWithAnthropicCacheControl(baseFetch: typeof fetch): typeof fetch {
   const cachingFetch = async (
@@ -123,11 +123,11 @@ function wrapFetchWithAnthropicCacheControl(baseFetch: typeof fetch): typeof fet
         lastTool.cache_control ??= { type: "ephemeral" };
       }
 
-      // Inject cache_control on second-to-last message's last content part
-      // This caches conversation history up to (but not including) the current user message
-      if (Array.isArray(json.messages) && json.messages.length >= 2) {
-        const secondToLastMsg = json.messages[json.messages.length - 2] as Record<string, unknown>;
-        const content = secondToLastMsg.content;
+      // Inject cache_control on last message's last content part
+      // This caches the entire conversation
+      if (Array.isArray(json.messages) && json.messages.length >= 1) {
+        const lastMsg = json.messages[json.messages.length - 1] as Record<string, unknown>;
+        const content = lastMsg.content;
 
         if (Array.isArray(content) && content.length > 0) {
           // Array content: add cache_control to last part
