@@ -44,6 +44,68 @@ import { PTYService } from "@/node/services/ptyService";
 import type { TerminalWindowManager } from "@/desktop/terminalWindowManager";
 import type { TerminalCreateParams, TerminalResizeParams } from "@/common/types/terminal";
 import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
+
+/** Maximum number of retry attempts when workspace name collides */
+const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
+
+/**
+ * Checks if an error indicates a workspace name collision
+ */
+function isWorkspaceNameCollision(error: string | undefined): boolean {
+  return error?.includes("Workspace already exists") ?? false;
+}
+
+/**
+ * Generates a unique workspace name by appending a random suffix
+ */
+function appendCollisionSuffix(baseName: string): string {
+  const suffix = Math.random().toString(36).substring(2, 6);
+  return `${baseName}-${suffix}`;
+}
+
+import type {
+  Runtime,
+  WorkspaceCreationResult,
+  WorkspaceCreationParams,
+} from "@/node/runtime/Runtime";
+
+/**
+ * Try to create a workspace, retrying with hash suffix on name collision.
+ * Returns the final branch name used and the creation result.
+ */
+async function createWorkspaceWithCollisionRetry(
+  runtime: Runtime,
+  params: Omit<WorkspaceCreationParams, "directoryName">,
+  baseBranchName: string
+): Promise<{ branchName: string; result: WorkspaceCreationResult }> {
+  let currentBranchName = baseBranchName;
+
+  for (let attempt = 0; attempt <= MAX_WORKSPACE_NAME_COLLISION_RETRIES; attempt++) {
+    const result = await runtime.createWorkspace({
+      ...params,
+      branchName: currentBranchName,
+      directoryName: currentBranchName,
+    });
+
+    if (result.success) {
+      return { branchName: currentBranchName, result };
+    }
+
+    // If collision and not last attempt, retry with suffix
+    if (isWorkspaceNameCollision(result.error) && attempt < MAX_WORKSPACE_NAME_COLLISION_RETRIES) {
+      log.debug(`Workspace name collision for "${currentBranchName}", retrying with suffix`);
+      currentBranchName = appendCollisionSuffix(baseBranchName);
+      continue;
+    }
+
+    // Non-collision error or exhausted retries - return failure
+    return { branchName: currentBranchName, result };
+  }
+
+  // Should never reach here due to return in final iteration
+  throw new Error("Unexpected: workspace creation loop completed without return");
+}
+
 import { generateWorkspaceName } from "./workspaceTitleGenerator";
 /**
  * IpcMain - Manages all IPC handlers and service coordination
@@ -307,17 +369,20 @@ export class IpcMain {
 
       const initLogger = this.createInitLogger(workspaceId);
 
-      const createResult = await runtime.createWorkspace({
-        projectPath,
-        branchName,
-        trunkBranch: recommendedTrunk,
-        directoryName: branchName,
-        initLogger,
-      });
+      // Create workspace with automatic collision retry
+      const { branchName: finalBranchName, result: createResult } =
+        await createWorkspaceWithCollisionRetry(
+          runtime,
+          { projectPath, branchName, trunkBranch: recommendedTrunk, initLogger },
+          branchName
+        );
 
       if (!createResult.success || !createResult.workspacePath) {
         return Err({ type: "unknown", raw: createResult.error ?? "Failed to create workspace" });
       }
+
+      // Use the final branch name (may have suffix if collision occurred)
+      branchName = finalBranchName;
 
       const projectName =
         projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "unknown";
@@ -618,18 +683,20 @@ export class IpcMain {
 
         const initLogger = this.createInitLogger(workspaceId);
 
-        // Phase 1: Create workspace structure (FAST - returns immediately)
-        const createResult = await runtime.createWorkspace({
-          projectPath,
-          branchName,
-          trunkBranch: normalizedTrunkBranch,
-          directoryName: branchName, // Use branch name as directory name
-          initLogger,
-        });
+        // Phase 1: Create workspace structure with retry on name collision
+        const { branchName: finalBranchName, result: createResult } =
+          await createWorkspaceWithCollisionRetry(
+            runtime,
+            { projectPath, branchName, trunkBranch: normalizedTrunkBranch, initLogger },
+            branchName
+          );
 
         if (!createResult.success || !createResult.workspacePath) {
           return { success: false, error: createResult.error ?? "Failed to create workspace" };
         }
+
+        // Use the final branch name (may have suffix if collision occurred)
+        branchName = finalBranchName;
 
         const projectName =
           projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "unknown";
