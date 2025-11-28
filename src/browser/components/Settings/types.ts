@@ -16,6 +16,8 @@ export interface ProviderConfigDisplay {
   bearerTokenSet?: boolean;
   accessKeyIdSet?: boolean;
   secretAccessKeySet?: boolean;
+  // Mux Gateway-specific fields
+  couponCodeSet?: boolean;
   // Allow additional fields for extensibility
   [key: string]: unknown;
 }
