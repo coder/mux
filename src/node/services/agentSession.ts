@@ -415,10 +415,10 @@ export class AgentSession {
       return Ok(undefined);
     }
 
-    // Delete partial BEFORE stopping to prevent abort handler from committing it
-    // The abort handler in aiService.ts runs immediately when stopStream is called,
-    // so we must delete first to ensure it finds no partial to commit
-    if (options?.abandonPartial) {
+    // For hard interrupts, delete partial BEFORE stopping to prevent abort handler
+    // from committing it. For soft interrupts, defer to stream-abort handler since
+    // the stream continues running and would recreate the partial.
+    if (options?.abandonPartial && !options?.soft) {
       const deleteResult = await this.partialService.deletePartial(this.workspaceId);
       if (!deleteResult.success) {
         return Err(deleteResult.error);

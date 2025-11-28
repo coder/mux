@@ -197,17 +197,20 @@ export class AIService extends EventEmitter {
     this.streamManager.on("stream-delta", (data) => this.emit("stream-delta", data));
     this.streamManager.on("stream-end", (data) => this.emit("stream-end", data));
 
-    // Handle stream-abort: commit partial to history before forwarding
-    // Note: If abandonPartial option was used, partial is already deleted by IPC handler
+    // Handle stream-abort: dispose of partial based on abandonPartial flag
     this.streamManager.on("stream-abort", (data: StreamAbortEvent) => {
       void (async () => {
-        // Check if partial still exists (not abandoned)
-        const partial = await this.partialService.readPartial(data.workspaceId);
-        if (partial) {
+        if (data.abandonPartial) {
+          // Caller requested discarding partial - delete without committing
+          await this.partialService.deletePartial(data.workspaceId);
+        } else {
           // Commit interrupted message to history with partial:true metadata
           // This ensures /clear and /truncate can clean up interrupted messages
-          await this.partialService.commitToHistory(data.workspaceId);
-          await this.partialService.deletePartial(data.workspaceId);
+          const partial = await this.partialService.readPartial(data.workspaceId);
+          if (partial) {
+            await this.partialService.commitToHistory(data.workspaceId);
+            await this.partialService.deletePartial(data.workspaceId);
+          }
         }
 
         // Forward abort event to consumers

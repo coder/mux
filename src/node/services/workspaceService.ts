@@ -885,7 +885,9 @@ export class WorkspaceService extends EventEmitter {
         return Err(stopResult.error);
       }
 
-      if (options?.abandonPartial) {
+      // For hard interrupts, delete partial immediately. For soft interrupts,
+      // defer to stream-abort handler (stream is still running and may recreate partial).
+      if (options?.abandonPartial && !options?.soft) {
         log.debug("Abandoning partial for workspace:", workspaceId);
         await this.partialService.deletePartial(workspaceId);
       }
