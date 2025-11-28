@@ -269,7 +269,9 @@ export function ProvidersSection() {
                               : (fieldValue ?? "Default")}
                           </span>
                           <div className="flex gap-2">
-                            {fieldConfig.type === "text" && fieldValue && (
+                            {(fieldConfig.type === "text"
+                              ? !!fieldValue
+                              : fieldConfig.type === "secret" && fieldIsSet) && (
                               <button
                                 type="button"
                                 onClick={() => void handleClearField(provider, fieldConfig.key)}
