@@ -56,6 +56,13 @@ export async function importBedrock() {
 }
 
 /**
+ * Dynamically import the Gateway provider from the AI SDK
+ */
+export async function importMuxGateway() {
+  return import("ai");
+}
+
+/**
  * Centralized provider registry mapping provider names to their import functions
  *
  * This is the single source of truth for supported providers. By mapping to import
@@ -76,6 +83,7 @@ export const PROVIDER_REGISTRY = {
   ollama: importOllama,
   openrouter: importOpenRouter,
   bedrock: importBedrock,
+  "mux-gateway": importMuxGateway,
 } as const;
 
 /**
@@ -99,6 +107,7 @@ export const PROVIDER_DISPLAY_NAMES: Record<ProviderName, string> = {
   ollama: "Ollama",
   openrouter: "OpenRouter",
   bedrock: "Amazon Bedrock",
+  "mux-gateway": "Mux Gateway",
 };
 
 /**

@@ -44,6 +44,13 @@ function getProviderFields(provider: ProviderName): FieldConfig[] {
     ];
   }
 
+  // Mux Gateway only needs couponCode
+  if (provider === "mux-gateway") {
+    return [
+      { key: "couponCode", label: "Coupon Code", placeholder: "Enter coupon code", type: "secret" },
+    ];
+  }
+
   // Default for most providers
   return [
     { key: "apiKey", label: "API Key", placeholder: "Enter API key", type: "secret" },
@@ -138,6 +145,11 @@ export function ProvidersSection() {
       );
     }
 
+    // For Mux Gateway, check couponCodeSet
+    if (provider === "mux-gateway") {
+      return providerConfig.couponCodeSet ?? false;
+    }
+
     // For other providers, check apiKeySet
     return providerConfig.apiKeySet ?? false;
   };
@@ -153,6 +165,8 @@ export function ProvidersSection() {
     if (fieldConfig.type === "secret") {
       // For apiKey, we have apiKeySet from the sanitized config
       if (field === "apiKey") return config[provider]?.apiKeySet ?? false;
+      // For couponCode (mux-gateway), check couponCodeSet
+      if (field === "couponCode") return config[provider]?.couponCodeSet ?? false;
       // For other secrets, check if the field exists in the raw config
       // Since we don't expose secret values, we assume they're not set if undefined
       const providerConfig = config[provider] as Record<string, unknown> | undefined;

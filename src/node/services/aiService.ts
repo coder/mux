@@ -656,6 +656,25 @@ export class AIService extends EventEmitter {
         return Ok(provider(modelId));
       }
 
+      // Handle Mux Gateway provider
+      if (providerName === "mux-gateway") {
+        // Mux Gateway uses couponCode as the API key
+        const couponCode = providerConfig.couponCode;
+        if (typeof couponCode !== "string" || !couponCode) {
+          return Err({
+            type: "api_key_not_found",
+            provider: providerName,
+          });
+        }
+
+        const { createGateway } = await PROVIDER_REGISTRY["mux-gateway"]();
+        const gateway = createGateway({
+          apiKey: couponCode,
+          baseURL: "https://gateway.mux.coder.com/api/v1/ai-gateway/v1/ai",
+        });
+        return Ok(gateway(modelId));
+      }
+
       return Err({
         type: "provider_not_supported",
         provider: providerName,
