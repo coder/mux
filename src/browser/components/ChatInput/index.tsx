@@ -31,6 +31,7 @@ import {
   handleCompactCommand,
   forkWorkspace,
   prepareCompactionMessage,
+  executeCompaction,
   type CommandHandlerContext,
 } from "@/browser/utils/chatCommands";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
@@ -698,6 +699,70 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             mediaType: img.mediaType,
           };
         });
+
+        // Auto-compaction check (workspace variant only)
+        // Check if we should auto-compact before sending this message
+        // Result is computed in parent (AIView) and passed down to avoid duplicate calculation
+        const shouldAutoCompact =
+          props.autoCompactionCheck &&
+          props.autoCompactionCheck.usagePercentage >=
+            props.autoCompactionCheck.thresholdPercentage &&
+          !isCompacting; // Skip if already compacting to prevent double-compaction queue
+
+        if (variant === "workspace" && !editingMessage && shouldAutoCompact) {
+          try {
+            const result = await executeCompaction({
+              client,
+              workspaceId: props.workspaceId,
+              continueMessage: {
+                text: messageText,
+                imageParts,
+                model: sendMessageOptions.model,
+              },
+              sendMessageOptions,
+            });
+
+            if (!result.success) {
+              // Restore on error
+              setInput(messageText);
+              setImageAttachments(previousImageAttachments);
+              setToast({
+                id: Date.now().toString(),
+                type: "error",
+                title: "Auto-Compaction Failed",
+                message: result.error ?? "Failed to start auto-compaction",
+              });
+            } else {
+              // Clear input and images on success
+              setInput("");
+              setImageAttachments([]);
+              if (inputRef.current) {
+                inputRef.current.style.height = "36px";
+              }
+              setToast({
+                id: Date.now().toString(),
+                type: "success",
+                message: "Context threshold reached - auto-compacting...",
+              });
+              props.onMessageSent?.();
+            }
+          } catch (error) {
+            // Restore on unexpected error
+            setInput(messageText);
+            setImageAttachments(previousImageAttachments);
+            setToast({
+              id: Date.now().toString(),
+              type: "error",
+              title: "Auto-Compaction Failed",
+              message:
+                error instanceof Error ? error.message : "Unexpected error during auto-compaction",
+            });
+          } finally {
+            setIsSending(false);
+          }
+
+          return; // Skip normal send
+        }
 
         // When editing a /compact command, regenerate the actual summarization request
         let actualMessageText = messageText;
