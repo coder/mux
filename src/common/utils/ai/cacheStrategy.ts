@@ -1,15 +1,75 @@
-import type { ModelMessage, Tool } from "ai";
+import { tool as createTool, type ModelMessage, type Tool } from "ai";
 
 /**
- * Check if a model supports Anthropic cache control
+ * Check if a model supports Anthropic cache control.
+ * Matches:
+ * - Direct Anthropic provider: "anthropic:claude-opus-4-5"
+ * - Gateway providers routing to Anthropic: "mux-gateway:anthropic/claude-opus-4-5"
+ * - OpenRouter Anthropic models: "openrouter:anthropic/claude-3.5-sonnet"
  */
 export function supportsAnthropicCache(modelString: string): boolean {
-  return modelString.startsWith("anthropic:");
+  // Direct Anthropic provider
+  if (modelString.startsWith("anthropic:")) {
+    return true;
+  }
+  // Gateway/router providers routing to Anthropic (format: "provider:anthropic/model")
+  const [, modelId] = modelString.split(":");
+  if (modelId?.startsWith("anthropic/")) {
+    return true;
+  }
+  return false;
+}
+
+/** Cache control providerOptions for Anthropic */
+const ANTHROPIC_CACHE_CONTROL = {
+  anthropic: {
+    cacheControl: { type: "ephemeral" as const },
+  },
+};
+
+/**
+ * Add providerOptions to the last content part of a message.
+ * The SDK requires providerOptions on content parts, not on the message itself.
+ *
+ * For system messages with string content, we use message-level providerOptions
+ * (which the SDK handles correctly). For user/assistant messages with array
+ * content, we add providerOptions to the last content part.
+ */
+function addCacheControlToLastContentPart(msg: ModelMessage): ModelMessage {
+  const content = msg.content;
+
+  // String content (typically system messages): use message-level providerOptions
+  // The SDK correctly translates this for system messages
+  if (typeof content === "string") {
+    return {
+      ...msg,
+      providerOptions: ANTHROPIC_CACHE_CONTROL,
+    };
+  }
+
+  // Array content: add providerOptions to the last part
+  // Use type assertion since we're adding providerOptions which is valid but not in base types
+  if (Array.isArray(content) && content.length > 0) {
+    const lastIndex = content.length - 1;
+    const newContent = content.map((part, i) =>
+      i === lastIndex ? { ...part, providerOptions: ANTHROPIC_CACHE_CONTROL } : part
+    );
+    // Type assertion needed: ModelMessage types are strict unions but providerOptions
+    // on content parts is valid per SDK docs
+    const result = { ...msg, content: newContent };
+    return result as ModelMessage;
+  }
+
+  // Empty or unexpected content: return as-is
+  return msg;
 }
 
 /**
  * Apply cache control to messages for Anthropic models.
  * Caches all messages except the last user message for optimal cache hits.
+ *
+ * NOTE: The SDK requires providerOptions on content parts, not on the message.
+ * We add cache_control to the last content part of the second-to-last message.
  */
 export function applyCacheControl(messages: ModelMessage[], modelString: string): ModelMessage[] {
   // Only apply cache control for Anthropic models
@@ -28,16 +88,7 @@ export function applyCacheControl(messages: ModelMessage[], modelString: string)
 
   return messages.map((msg, index) => {
     if (index === cacheIndex) {
-      return {
-        ...msg,
-        providerOptions: {
-          anthropic: {
-            cacheControl: {
-              type: "ephemeral" as const,
-            },
-          },
-        },
-      };
+      return addCacheControlToLastContentPart(msg);
     }
     return msg;
   });
@@ -77,6 +128,9 @@ export function createCachedSystemMessage(
  * 2. Conversation history (1 breakpoint)
  * 3. Last tool only (1 breakpoint) - caches all tools up to and including this one
  * = 3 total, leaving 1 for future use
+ *
+ * NOTE: The SDK requires providerOptions to be passed during tool() creation,
+ * not added afterwards. We re-create the last tool with providerOptions included.
  */
 export function applyCacheControlToTools<T extends Record<string, Tool>>(
   tools: T,
@@ -95,23 +149,24 @@ export function applyCacheControlToTools<T extends Record<string, Tool>>(
   // Anthropic caches everything up to the cache breakpoint, so marking
   // only the last tool will cache all tools
   const cachedTools = {} as unknown as T;
-  for (const [key, tool] of Object.entries(tools)) {
+  for (const [key, existingTool] of Object.entries(tools)) {
     if (key === lastToolKey) {
-      // Last tool gets cache control
-      const cachedTool = {
-        ...tool,
+      // Re-create the tool with providerOptions - SDK requires this at creation time
+      // Simply spreading providerOptions onto an existing tool doesn't work
+      const cachedTool = createTool({
+        description: existingTool.description,
+        inputSchema: existingTool.inputSchema,
+        execute: existingTool.execute,
         providerOptions: {
           anthropic: {
-            cacheControl: {
-              type: "ephemeral" as const,
-            },
+            cacheControl: { type: "ephemeral" },
           },
         },
-      };
+      });
       cachedTools[key as keyof T] = cachedTool as unknown as T[keyof T];
     } else {
-      // Other tools are copied as-is (use unknown for type safety)
-      cachedTools[key as keyof T] = tool as unknown as T[keyof T];
+      // Other tools are copied as-is
+      cachedTools[key as keyof T] = existingTool as unknown as T[keyof T];
     }
   }
 

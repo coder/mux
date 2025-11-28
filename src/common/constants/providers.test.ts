@@ -10,11 +10,13 @@ describe("Provider Registry", () => {
     expect(Object.keys(PROVIDER_REGISTRY).length).toBeGreaterThan(0);
   });
 
-  test("all registry values are import functions", () => {
-    // Registry should map provider names to async import functions
+  test("all registry values are import functions that return promises", () => {
+    // Registry should map provider names to functions returning promises
     for (const importFn of Object.values(PROVIDER_REGISTRY)) {
       expect(typeof importFn).toBe("function");
-      expect(importFn.constructor.name).toBe("AsyncFunction");
+      // Verify calling the function returns a Promise (don't await - just type check)
+      const result = importFn();
+      expect(result).toBeInstanceOf(Promise);
     }
   });
 

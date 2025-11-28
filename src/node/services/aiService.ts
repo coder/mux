@@ -95,6 +95,63 @@ if (typeof globalFetchWithExtras.certificate === "function") {
 }
 
 /**
+ * Wrap fetch to inject Anthropic cache_control directly into the request body.
+ * The AI SDK's providerOptions.anthropic.cacheControl doesn't get translated
+ * to raw cache_control for tools or message content parts, so we inject it
+ * at the HTTP level.
+ *
+ * Injects cache_control on:
+ * 1. Last tool (caches all tool definitions)
+ * 2. Second-to-last message's last content part (caches conversation history)
+ */
+function wrapFetchWithAnthropicCacheControl(baseFetch: typeof fetch): typeof fetch {
+  const cachingFetch = async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1]
+  ): Promise<Response> => {
+    // Only modify POST requests with JSON body
+    if (init?.method?.toUpperCase() !== "POST" || typeof init?.body !== "string") {
+      return baseFetch(input, init);
+    }
+
+    try {
+      const json = JSON.parse(init.body) as Record<string, unknown>;
+
+      // Inject cache_control on the last tool if tools array exists
+      if (Array.isArray(json.tools) && json.tools.length > 0) {
+        const lastTool = json.tools[json.tools.length - 1] as Record<string, unknown>;
+        lastTool.cache_control ??= { type: "ephemeral" };
+      }
+
+      // Inject cache_control on second-to-last message's last content part
+      // This caches conversation history up to (but not including) the current user message
+      if (Array.isArray(json.messages) && json.messages.length >= 2) {
+        const secondToLastMsg = json.messages[json.messages.length - 2] as Record<string, unknown>;
+        const content = secondToLastMsg.content;
+
+        if (Array.isArray(content) && content.length > 0) {
+          // Array content: add cache_control to last part
+          const lastPart = content[content.length - 1] as Record<string, unknown>;
+          lastPart.cache_control ??= { type: "ephemeral" };
+        }
+        // Note: String content messages are rare after SDK conversion; skip for now
+      }
+
+      // Update body with modified JSON
+      const newBody = JSON.stringify(json);
+      const headers = new Headers(init?.headers);
+      headers.delete("content-length"); // Body size changed
+      return baseFetch(input, { ...init, headers, body: newBody });
+    } catch {
+      // If parsing fails, pass through unchanged
+      return baseFetch(input, init);
+    }
+  };
+
+  return Object.assign(cachingFetch, baseFetch) as typeof fetch;
+}
+
+/**
  * Get fetch function for provider - use custom if provided, otherwise unlimited timeout default
  */
 function getProviderFetch(providerConfig: ProviderConfig): typeof fetch {
@@ -354,7 +411,16 @@ export class AIService extends EventEmitter {
 
         // Lazy-load Anthropic provider to reduce startup time
         const { createAnthropic } = await PROVIDER_REGISTRY.anthropic();
-        const provider = createAnthropic({ ...normalizedConfig, headers });
+        // Wrap fetch to inject cache_control on tools and messages
+        // (SDK doesn't translate providerOptions to cache_control for these)
+        const fetchWithCacheControl = wrapFetchWithAnthropicCacheControl(
+          defaultFetchWithUnlimitedTimeout
+        );
+        const provider = createAnthropic({
+          ...normalizedConfig,
+          headers,
+          fetch: fetchWithCacheControl,
+        });
         return Ok(provider(modelId));
       }
 
@@ -668,9 +734,19 @@ export class AIService extends EventEmitter {
         }
 
         const { createGateway } = await PROVIDER_REGISTRY["mux-gateway"]();
+        // For Anthropic models via gateway, wrap fetch to inject cache_control on tools
+        // (gateway provider doesn't process providerOptions.anthropic.cacheControl)
+        const isAnthropicModel = modelId.startsWith("anthropic/");
+        const fetchWithCacheControl = isAnthropicModel
+          ? wrapFetchWithAnthropicCacheControl(defaultFetchWithUnlimitedTimeout)
+          : defaultFetchWithUnlimitedTimeout;
+        // Use configured baseURL or fall back to default gateway URL
+        const gatewayBaseURL =
+          providerConfig.baseURL ?? "https://gateway.mux.coder.com/api/v1/ai-gateway/v1/ai";
         const gateway = createGateway({
           apiKey: couponCode,
-          baseURL: "https://gateway.mux.coder.com/api/v1/ai-gateway/v1/ai",
+          baseURL: gatewayBaseURL,
+          fetch: fetchWithCacheControl,
         });
         return Ok(gateway(modelId));
       }

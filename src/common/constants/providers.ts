@@ -9,56 +9,56 @@
 /**
  * Dynamically import the Anthropic provider package
  */
-export async function importAnthropic() {
-  return await import("@ai-sdk/anthropic");
+export function importAnthropic() {
+  return import("@ai-sdk/anthropic");
 }
 
 /**
  * Dynamically import the OpenAI provider package
  */
-export async function importOpenAI() {
-  return await import("@ai-sdk/openai");
+export function importOpenAI() {
+  return import("@ai-sdk/openai");
 }
 
 /**
  * Dynamically import the Ollama provider package
  */
-export async function importOllama() {
-  return await import("ollama-ai-provider-v2");
+export function importOllama() {
+  return import("ollama-ai-provider-v2");
 }
 
 /**
  * Dynamically import the Google provider package
  */
-export async function importGoogle() {
-  return await import("@ai-sdk/google");
+export function importGoogle() {
+  return import("@ai-sdk/google");
 }
 
 /**
  * Dynamically import the OpenRouter provider package
  */
-export async function importOpenRouter() {
-  return await import("@openrouter/ai-sdk-provider");
+export function importOpenRouter() {
+  return import("@openrouter/ai-sdk-provider");
 }
 
 /**
  * Dynamically import the xAI provider package
  */
-export async function importXAI() {
-  return await import("@ai-sdk/xai");
+export function importXAI() {
+  return import("@ai-sdk/xai");
 }
 
 /**
  * Dynamically import the Amazon Bedrock provider package
  */
-export async function importBedrock() {
+export function importBedrock() {
   return import("@ai-sdk/amazon-bedrock");
 }
 
 /**
  * Dynamically import the Gateway provider from the AI SDK
  */
-export async function importMuxGateway() {
+export function importMuxGateway() {
   return import("ai");
 }
 

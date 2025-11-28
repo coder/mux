@@ -11,15 +11,22 @@ import {
 
 describe("cacheStrategy", () => {
   describe("supportsAnthropicCache", () => {
-    it("should return true for Anthropic models", () => {
+    it("should return true for direct Anthropic models", () => {
       expect(supportsAnthropicCache("anthropic:claude-3-5-sonnet-20241022")).toBe(true);
       expect(supportsAnthropicCache("anthropic:claude-3-5-haiku-20241022")).toBe(true);
+    });
+
+    it("should return true for gateway providers routing to Anthropic", () => {
+      expect(supportsAnthropicCache("mux-gateway:anthropic/claude-opus-4-5")).toBe(true);
+      expect(supportsAnthropicCache("mux-gateway:anthropic/claude-sonnet-4-5-20250514")).toBe(true);
+      expect(supportsAnthropicCache("openrouter:anthropic/claude-3.5-sonnet")).toBe(true);
     });
 
     it("should return false for non-Anthropic models", () => {
       expect(supportsAnthropicCache("openai:gpt-4")).toBe(false);
       expect(supportsAnthropicCache("google:gemini-2.0")).toBe(false);
       expect(supportsAnthropicCache("openrouter:meta-llama/llama-3.1")).toBe(false);
+      expect(supportsAnthropicCache("mux-gateway:openai/gpt-5.1")).toBe(false);
     });
   });
 
@@ -82,6 +89,46 @@ describe("cacheStrategy", () => {
         },
       });
       expect(result[1]).toEqual(messages[1]); // Last message unchanged
+    });
+
+    it("should add cache control to last content part for array content", () => {
+      // Messages with array content (typical for user/assistant with multiple parts)
+      const messages: ModelMessage[] = [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Hello" },
+            { type: "text", text: "World" },
+          ],
+        },
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "Hi there!" },
+            { type: "text", text: "How can I help?" },
+          ],
+        },
+        { role: "user", content: "Final question" },
+      ];
+      const result = applyCacheControl(messages, "anthropic:claude-3-5-sonnet");
+
+      expect(result[0]).toEqual(messages[0]); // First message unchanged
+
+      // Second message (array content): cache control on LAST content part only
+      const secondMsg = result[1];
+      expect(secondMsg.role).toBe("assistant");
+      expect(Array.isArray(secondMsg.content)).toBe(true);
+      const content = secondMsg.content as Array<{
+        type: string;
+        text: string;
+        providerOptions?: unknown;
+      }>;
+      expect(content[0].providerOptions).toBeUndefined(); // First part unchanged
+      expect(content[1].providerOptions).toEqual({
+        anthropic: { cacheControl: { type: "ephemeral" } },
+      }); // Last part has cache control
+
+      expect(result[2]).toEqual(messages[2]); // Last message unchanged
     });
   });
 
