@@ -6,7 +6,7 @@
  */
 
 import { createHighlighter } from "shiki";
-import { SHIKI_THEME, mapToShikiLang, extractShikiLines } from "../src/utils/highlighting/shiki-shared";
+import { SHIKI_DARK_THEME, mapToShikiLang, extractShikiLines } from "../src/browser/utils/highlighting/shiki-shared";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CodeBlockSSR } from "../src/browser/components/Messages/CodeBlockSSR";
 
