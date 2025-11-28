@@ -178,7 +178,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     [storageKeys.modelKey, addModel]
   );
 
-
   // When entering creation mode (or when the default model changes), reset the
   // project-scoped model to the explicit default so manual picks don't bleed
   // into subsequent creation flows.
