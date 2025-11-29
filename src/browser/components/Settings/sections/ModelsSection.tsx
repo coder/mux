@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Pencil, Check, X } from "lucide-react";
 import type { ProvidersConfigMap } from "../types";
 import { SUPPORTED_PROVIDERS, PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 
@@ -8,10 +8,18 @@ interface NewModelForm {
   modelId: string;
 }
 
+interface EditingState {
+  provider: string;
+  originalModelId: string;
+  newModelId: string;
+}
+
 export function ModelsSection() {
   const [config, setConfig] = useState<ProvidersConfigMap>({});
   const [newModel, setNewModel] = useState<NewModelForm>({ provider: "", modelId: "" });
   const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState<EditingState | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   // Load config on mount
   useEffect(() => {
@@ -34,13 +42,31 @@ export function ModelsSection() {
     return models;
   };
 
+  // Check if a model already exists (for duplicate prevention)
+  const modelExists = useCallback(
+    (provider: string, modelId: string, excludeOriginal?: string): boolean => {
+      const currentModels = config[provider]?.models ?? [];
+      return currentModels.some((m) => m === modelId && m !== excludeOriginal);
+    },
+    [config]
+  );
+
   const handleAddModel = useCallback(async () => {
     if (!newModel.provider || !newModel.modelId.trim()) return;
 
+    const trimmedModelId = newModel.modelId.trim();
+
+    // Check for duplicates
+    if (modelExists(newModel.provider, trimmedModelId)) {
+      setError(`Model "${trimmedModelId}" already exists for this provider`);
+      return;
+    }
+
+    setError(null);
     setSaving(true);
     try {
       const currentModels = config[newModel.provider]?.models ?? [];
-      const updatedModels = [...currentModels, newModel.modelId.trim()];
+      const updatedModels = [...currentModels, trimmedModelId];
 
       await window.api.providers.setModels(newModel.provider, updatedModels);
 
@@ -54,7 +80,7 @@ export function ModelsSection() {
     } finally {
       setSaving(false);
     }
-  }, [newModel, config]);
+  }, [newModel, config, modelExists]);
 
   const handleRemoveModel = useCallback(
     async (provider: string, modelId: string) => {
@@ -77,6 +103,55 @@ export function ModelsSection() {
     },
     [config]
   );
+
+  const handleStartEdit = useCallback((provider: string, modelId: string) => {
+    setEditing({ provider, originalModelId: modelId, newModelId: modelId });
+    setError(null);
+  }, []);
+
+  const handleCancelEdit = useCallback(() => {
+    setEditing(null);
+    setError(null);
+  }, []);
+
+  const handleSaveEdit = useCallback(async () => {
+    if (!editing) return;
+
+    const trimmedModelId = editing.newModelId.trim();
+    if (!trimmedModelId) {
+      setError("Model ID cannot be empty");
+      return;
+    }
+
+    // Only validate duplicates if the model ID actually changed
+    if (trimmedModelId !== editing.originalModelId) {
+      if (modelExists(editing.provider, trimmedModelId)) {
+        setError(`Model "${trimmedModelId}" already exists for this provider`);
+        return;
+      }
+    }
+
+    setError(null);
+    setSaving(true);
+    try {
+      const currentModels = config[editing.provider]?.models ?? [];
+      const updatedModels = currentModels.map((m) =>
+        m === editing.originalModelId ? trimmedModelId : m
+      );
+
+      await window.api.providers.setModels(editing.provider, updatedModels);
+
+      // Refresh config
+      const cfg = await window.api.providers.getConfig();
+      setConfig(cfg);
+      setEditing(null);
+
+      // Notify other components about the change
+      window.dispatchEvent(new Event("providers-config-changed"));
+    } finally {
+      setSaving(false);
+    }
+  }, [editing, config, modelExists]);
 
   const allModels = getAllModels();
 
@@ -122,6 +197,7 @@ export function ModelsSection() {
             Add
           </button>
         </div>
+        {error && !editing && <div className="text-error mt-2 text-xs">{error}</div>}
       </div>
 
       {/* List of custom models */}
@@ -130,29 +206,93 @@ export function ModelsSection() {
           <div className="text-muted text-xs font-medium tracking-wide uppercase">
             Custom Models
           </div>
-          {allModels.map(({ provider, modelId }) => (
-            <div
-              key={`${provider}-${modelId}`}
-              className="border-border-medium bg-background-secondary flex items-center justify-between rounded-md border px-4 py-2"
-            >
-              <div className="flex items-center gap-3">
-                <span className="text-muted text-xs">
-                  {PROVIDER_DISPLAY_NAMES[provider as keyof typeof PROVIDER_DISPLAY_NAMES] ??
-                    provider}
-                </span>
-                <span className="text-foreground font-mono text-sm">{modelId}</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => void handleRemoveModel(provider, modelId)}
-                disabled={saving}
-                className="text-muted hover:text-error p-1 transition-colors"
-                title="Remove model"
+          {allModels.map(({ provider, modelId }) => {
+            const isEditing =
+              editing?.provider === provider && editing?.originalModelId === modelId;
+
+            return (
+              <div
+                key={`${provider}-${modelId}`}
+                className="border-border-medium bg-background-secondary flex items-center justify-between rounded-md border px-4 py-2"
               >
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </div>
-          ))}
+                <div className="flex min-w-0 flex-1 items-center gap-3">
+                  <span className="text-muted shrink-0 text-xs">
+                    {PROVIDER_DISPLAY_NAMES[provider as keyof typeof PROVIDER_DISPLAY_NAMES] ??
+                      provider}
+                  </span>
+                  {isEditing ? (
+                    <div className="flex min-w-0 flex-1 flex-col gap-1">
+                      <input
+                        type="text"
+                        value={editing.newModelId}
+                        onChange={(e) =>
+                          setEditing((prev) =>
+                            prev ? { ...prev, newModelId: e.target.value } : null
+                          )
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") void handleSaveEdit();
+                          if (e.key === "Escape") handleCancelEdit();
+                        }}
+                        className="bg-modal-bg border-border-medium focus:border-accent min-w-0 flex-1 rounded border px-2 py-1 font-mono text-xs focus:outline-none"
+                        autoFocus
+                      />
+                      {error && <div className="text-error text-xs">{error}</div>}
+                    </div>
+                  ) : (
+                    <span className="text-foreground min-w-0 truncate font-mono text-sm">
+                      {modelId}
+                    </span>
+                  )}
+                </div>
+                <div className="ml-2 flex shrink-0 items-center gap-1">
+                  {isEditing ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => void handleSaveEdit()}
+                        disabled={saving}
+                        className="text-accent hover:text-accent-dark p-1 transition-colors"
+                        title="Save changes (Enter)"
+                      >
+                        <Check className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCancelEdit}
+                        disabled={saving}
+                        className="text-muted hover:text-foreground p-1 transition-colors"
+                        title="Cancel (Escape)"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => handleStartEdit(provider, modelId)}
+                        disabled={saving || editing !== null}
+                        className="text-muted hover:text-foreground p-1 transition-colors disabled:opacity-50"
+                        title="Edit model"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleRemoveModel(provider, modelId)}
+                        disabled={saving || editing !== null}
+                        className="text-muted hover:text-error p-1 transition-colors disabled:opacity-50"
+                        title="Remove model"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       ) : (
         <div className="text-muted py-8 text-center text-sm">
