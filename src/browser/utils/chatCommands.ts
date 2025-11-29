@@ -160,13 +160,56 @@ export async function processSlashCommand(
   }
 
   if (parsed.type === "model-set") {
+    const modelString = parsed.modelString;
+
+    // Validate provider:model format
+    if (!modelString.includes(":")) {
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: `Invalid model format: expected "provider:model"`,
+      });
+      return { clearInput: false, toastShown: true };
+    }
+
+    const [provider, modelId] = modelString.split(":", 2);
+    if (!provider || !modelId) {
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: `Invalid model format: expected "provider:model"`,
+      });
+      return { clearInput: false, toastShown: true };
+    }
+
+    // Validate provider is supported
+    const { isValidProvider } = await import("@/common/constants/providers");
+    if (!isValidProvider(provider)) {
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: `Unknown provider "${provider}"`,
+      });
+      return { clearInput: false, toastShown: true };
+    }
+
+    // Check if model needs to be added to provider's custom models
+    const config = await window.api.providers.getConfig();
+    const existingModels = config[provider]?.models ?? [];
+    if (!existingModels.includes(modelId)) {
+      // Add model via the same API as settings
+      await window.api.providers.setModels(provider, [...existingModels, modelId]);
+      // Notify other components about the change
+      window.dispatchEvent(new Event("providers-config-changed"));
+    }
+
     setInput("");
-    setPreferredModel(parsed.modelString);
-    onModelChange?.(parsed.modelString);
+    setPreferredModel(modelString);
+    onModelChange?.(modelString);
     setToast({
       id: Date.now().toString(),
       type: "success",
-      message: `Model changed to ${parsed.modelString}`,
+      message: `Model changed to ${modelString}`,
     });
     return { clearInput: true, toastShown: true };
   }

@@ -144,7 +144,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const modelSelectorRef = useRef<ModelSelectorRef>(null);
   const [mode, setMode] = useMode();
-  const { recentModels, addModel, evictModel, defaultModel, setDefaultModel } = useModelLRU();
+  const { recentModels, addModel, defaultModel, setDefaultModel } = useModelLRU();
   const commandListId = useId();
   const telemetry = useTelemetry();
   const [vimEnabled, setVimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, {
@@ -904,7 +904,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                   value={preferredModel}
                   onChange={setPreferredModel}
                   recentModels={recentModels}
-                  onRemoveModel={evictModel}
                   onComplete={() => inputRef.current?.focus()}
                   defaultModel={defaultModel}
                   onSetDefaultModel={setDefaultModel}

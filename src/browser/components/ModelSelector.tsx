@@ -7,14 +7,14 @@ import React, {
   forwardRef,
 } from "react";
 import { cn } from "@/common/lib/utils";
-import { Star } from "lucide-react";
+import { Settings, Star } from "lucide-react";
 import { TooltipWrapper, Tooltip } from "./Tooltip";
+import { useSettings } from "@/browser/contexts/SettingsContext";
 
 interface ModelSelectorProps {
   value: string;
   onChange: (value: string) => void;
   recentModels: string[];
-  onRemoveModel?: (model: string) => void;
   onComplete?: () => void;
   defaultModel?: string | null;
   onSetDefaultModel?: (model: string) => void;
@@ -25,10 +25,8 @@ export interface ModelSelectorRef {
 }
 
 export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
-  (
-    { value, onChange, recentModels, onRemoveModel, onComplete, defaultModel, onSetDefaultModel },
-    ref
-  ) => {
+  ({ value, onChange, recentModels, onComplete, defaultModel, onSetDefaultModel }, ref) => {
+    const { open: openSettings } = useSettings();
     const [isEditing, setIsEditing] = useState(false);
     const [inputValue, setInputValue] = useState(value);
     const [error, setError] = useState<string | null>(null);
@@ -83,22 +81,14 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     ).sort();
 
     const handleSave = () => {
-      // If an item is highlighted, use that instead of inputValue
-      const valueToSave =
-        highlightedIndex >= 0 && highlightedIndex < filteredModels.length
-          ? filteredModels[highlightedIndex]
-          : inputValue.trim();
-
-      if (!valueToSave) {
-        setError("Model cannot be empty");
+      // No matches - do nothing, let user keep typing or cancel
+      if (filteredModels.length === 0) {
         return;
       }
 
-      // Basic validation: should have format "provider:model" or be an abbreviation
-      if (!valueToSave.includes(":") && valueToSave.length < 3) {
-        setError("Invalid model format");
-        return;
-      }
+      // Use highlighted item, or first item if none highlighted
+      const selectedIndex = highlightedIndex >= 0 ? highlightedIndex : 0;
+      const valueToSave = filteredModels[selectedIndex];
 
       onChange(valueToSave);
       setIsEditing(false);
@@ -113,9 +103,11 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
         handleCancel();
       } else if (e.key === "Enter") {
         e.preventDefault();
-        handleSave();
-        // Focus the main ChatInput after selecting a model
-        onComplete?.();
+        // Only call onComplete if save succeeded (had matches)
+        if (filteredModels.length > 0) {
+          handleSave();
+          onComplete?.();
+        }
       } else if (e.key === "Tab") {
         e.preventDefault();
         // Tab auto-completes the highlighted item without closing
@@ -158,22 +150,6 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       setError(null);
       setShowDropdown(false);
     };
-
-    const handleRemoveModel = useCallback(
-      (model: string, event: React.MouseEvent<HTMLButtonElement>) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!onRemoveModel) {
-          return;
-        }
-        onRemoveModel(model);
-        setHighlightedIndex(-1);
-        if (inputValue === model) {
-          setInputValue("");
-        }
-      },
-      [inputValue, onRemoveModel]
-    );
 
     const handleClick = useCallback(() => {
       setIsEditing(true);
@@ -222,6 +198,19 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
           >
             {value}
           </div>
+          <TooltipWrapper inline>
+            <button
+              type="button"
+              onClick={() => openSettings("models")}
+              className="text-muted-light hover:text-foreground flex items-center justify-center rounded-sm p-0.5 transition-colors duration-150"
+              aria-label="Manage models"
+            >
+              <Settings className="h-3 w-3" />
+            </button>
+            <Tooltip className="tooltip" align="center">
+              Manage models
+            </Tooltip>
+          </TooltipWrapper>
         </div>
       );
     }
@@ -241,24 +230,28 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
             <div className="text-danger-soft font-monospace mt-0.5 text-[9px]">{error}</div>
           )}
         </div>
-        {showDropdown && filteredModels.length > 0 && (
+        {showDropdown && (
           <div className="bg-separator border-border-light absolute bottom-full left-0 z-[1000] mb-1 max-h-[200px] min-w-80 overflow-y-auto rounded border shadow-[0_4px_12px_rgba(0,0,0,0.3)]">
-            {filteredModels.map((model, index) => (
-              <div
-                key={model}
-                ref={(el) => (dropdownItemRefs.current[index] = el)}
-                className={cn(
-                  "text-[11px] font-monospace py-1.5 px-2.5 cursor-pointer transition-colors duration-100",
-                  "first:rounded-t last:rounded-b",
-                  index === highlightedIndex
-                    ? "text-foreground bg-hover"
-                    : "text-light bg-transparent hover:bg-hover hover:text-foreground"
-                )}
-                onClick={() => handleSelectModel(model)}
-              >
-                <div className="grid w-full grid-cols-[1fr_48px] items-center gap-2">
-                  <span className="min-w-0 truncate">{model}</span>
-                  <div className="grid w-[48px] grid-cols-[22px_22px] justify-items-center gap-1">
+            {filteredModels.length === 0 ? (
+              <div className="text-muted-light font-monospace px-2.5 py-1.5 text-[11px]">
+                No matching models
+              </div>
+            ) : (
+              filteredModels.map((model, index) => (
+                <div
+                  key={model}
+                  ref={(el) => (dropdownItemRefs.current[index] = el)}
+                  className={cn(
+                    "text-[11px] font-monospace py-1.5 px-2.5 cursor-pointer transition-colors duration-100",
+                    "first:rounded-t last:rounded-b",
+                    index === highlightedIndex
+                      ? "text-foreground bg-hover"
+                      : "text-light bg-transparent hover:bg-hover hover:text-foreground"
+                  )}
+                  onClick={() => handleSelectModel(model)}
+                >
+                  <div className="grid w-full grid-cols-[1fr_24px] items-center gap-2">
+                    <span className="min-w-0 truncate">{model}</span>
                     {onSetDefaultModel && (
                       <TooltipWrapper inline>
                         <button
@@ -287,21 +280,10 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                         </Tooltip>
                       </TooltipWrapper>
                     )}
-                    {onRemoveModel && defaultModel !== model && (
-                      <button
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={(event) => handleRemoveModel(model, event)}
-                        className="text-muted-light border-border-light/40 hover:border-danger-soft/60 hover:text-danger-soft rounded-sm border px-1 py-0.5 text-[9px] font-semibold tracking-wide uppercase transition-colors duration-150"
-                        aria-label={`Remove ${model} from recent models`}
-                      >
-                        ×
-                      </button>
-                    )}
                   </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         )}
       </div>
