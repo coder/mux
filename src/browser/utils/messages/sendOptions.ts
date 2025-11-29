@@ -60,6 +60,7 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
 
   return {
     model,
+    mode: mode === "exec" || mode === "plan" ? mode : "exec", // Only pass exec/plan to backend
     thinkingLevel: effectiveThinkingLevel,
     toolPolicy: modeToToolPolicy(mode),
     additionalSystemInstructions,

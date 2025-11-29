@@ -2,13 +2,14 @@ import type { APIClient } from "@/browser/contexts/API";
 import type { DraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
 import {
   getInputKey,
+  getModelKey,
   getModeKey,
   getPendingScopeId,
   getProjectScopeId,
   getThinkingLevelKey,
 } from "@/common/constants/storage";
 import type { SendMessageError } from "@/common/types/errors";
-import type { SendMessageOptions, WorkspaceChatMessage } from "@/common/orpc/types";
+import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { RuntimeMode } from "@/common/types/runtime";
 import type {
   FrontendWorkspaceMetadata,
@@ -58,13 +59,6 @@ const useDraftWorkspaceSettingsMock = mock(
 
 void mock.module("@/browser/hooks/useDraftWorkspaceSettings", () => ({
   useDraftWorkspaceSettings: useDraftWorkspaceSettingsMock,
-}));
-
-let currentSendOptions: SendMessageOptions;
-const useSendMessageOptionsMock = mock(() => currentSendOptions);
-
-void mock.module("@/browser/hooks/useSendMessageOptions", () => ({
-  useSendMessageOptions: useSendMessageOptionsMock,
 }));
 
 let currentORPCClient: MockOrpcClient | null = null;
@@ -278,11 +272,6 @@ describe("useCreationWorkspace", () => {
     updatePersistedStateCalls.length = 0;
     draftSettingsInvocations = [];
     draftSettingsState = createDraftSettingsHarness();
-    currentSendOptions = {
-      model: "gpt-4",
-      thinkingLevel: "medium",
-      mode: "exec",
-    } satisfies SendMessageOptions;
   });
 
   afterEach(() => {
@@ -376,6 +365,8 @@ describe("useCreationWorkspace", () => {
 
     persistedPreferences[getModeKey(getProjectScopeId(TEST_PROJECT_PATH))] = "plan";
     persistedPreferences[getThinkingLevelKey(getProjectScopeId(TEST_PROJECT_PATH))] = "high";
+    // Set model preference for the project scope (read by getSendOptionsFromStorage)
+    persistedPreferences[getModelKey(getProjectScopeId(TEST_PROJECT_PATH))] = "gpt-4";
 
     draftSettingsState = createDraftSettingsHarness({
       runtimeMode: "ssh",
@@ -412,8 +403,10 @@ describe("useCreationWorkspace", () => {
     expect(options?.projectPath).toBe(TEST_PROJECT_PATH);
     expect(options?.trunkBranch).toBe("dev");
     expect(options?.model).toBe("gpt-4");
-    expect(options?.mode).toBe("exec");
-    expect(options?.thinkingLevel).toBe("medium");
+    // Mode was set to "plan" in persistedPreferences, so that's what we expect
+    expect(options?.mode).toBe("plan");
+    // thinkingLevel was set to "high" in persistedPreferences
+    expect(options?.thinkingLevel).toBe("high");
     expect(options?.runtimeConfig).toEqual({
       type: "ssh",
       host: "example.com",

@@ -253,12 +253,21 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         }
   );
 
-  // When entering creation mode (or when the default model changes), reset the
-  // project-scoped model to the explicit default so manual picks don't bleed
-  // into subsequent creation flows.
+  // When entering creation mode, initialize the project-scoped model to the
+  // default so previous manual picks don't bleed into new creation flows.
+  // Only runs once per creation session (not when defaultModel changes, which
+  // would clobber the user's intentional model selection).
+  const creationModelInitialized = useRef<string | null>(null);
   useEffect(() => {
     if (variant === "creation" && defaultModel) {
-      updatePersistedState(storageKeys.modelKey, defaultModel);
+      // Only initialize once per project scope
+      if (creationModelInitialized.current !== storageKeys.modelKey) {
+        creationModelInitialized.current = storageKeys.modelKey;
+        updatePersistedState(storageKeys.modelKey, defaultModel);
+      }
+    } else if (variant !== "creation") {
+      // Reset when leaving creation mode so re-entering triggers initialization
+      creationModelInitialized.current = null;
     }
   }, [variant, defaultModel, storageKeys.modelKey]);
 
