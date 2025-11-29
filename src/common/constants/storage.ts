@@ -127,6 +127,24 @@ export const PREFERRED_COMPACTION_MODEL_KEY = "preferredCompactionModel";
 export const VIM_ENABLED_KEY = "vimEnabled";
 
 /**
+ * Tutorial state storage key (global)
+ * Stores: { disabled: boolean, completed: { settings?: true, creation?: true, workspace?: true } }
+ */
+export const TUTORIAL_STATE_KEY = "tutorialState";
+
+export type TutorialSequence = "settings" | "creation" | "workspace";
+
+export interface TutorialState {
+  disabled: boolean;
+  completed: Partial<Record<TutorialSequence, true>>;
+}
+
+export const DEFAULT_TUTORIAL_STATE: TutorialState = {
+  disabled: false,
+  completed: {},
+};
+
+/**
  * Get the localStorage key for hunk expand/collapse state in Review tab
  * Stores user's manual expand/collapse preferences per hunk
  * Format: "reviewExpandState:{workspaceId}"

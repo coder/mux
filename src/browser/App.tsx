@@ -36,6 +36,7 @@ import { useStartWorkspaceCreation, getFirstProjectPath } from "./hooks/useStart
 
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
 import { SettingsModal } from "./components/Settings/SettingsModal";
+import { TutorialProvider } from "./contexts/TutorialContext";
 
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high"];
 
@@ -653,9 +654,11 @@ function App() {
   return (
     <ThemeProvider>
       <SettingsProvider>
-        <CommandRegistryProvider>
-          <AppInner />
-        </CommandRegistryProvider>
+        <TutorialProvider>
+          <CommandRegistryProvider>
+            <AppInner />
+          </CommandRegistryProvider>
+        </TutorialProvider>
       </SettingsProvider>
     </ThemeProvider>
   );

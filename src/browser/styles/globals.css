@@ -1274,3 +1274,22 @@ input[type="checkbox"] {
 .text-dim {
   color: var(--color-dim);
 }
+
+/* Tutorial highlight effect */
+.tutorial-highlight {
+  position: relative;
+  z-index: 9997;
+  border-radius: 6px;
+  box-shadow: 0 0 0 2px var(--color-accent);
+  animation: tutorial-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes tutorial-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 2px var(--color-accent);
+  }
+  50% {
+    box-shadow: 0 0 0 3px var(--color-accent), 0 0 12px var(--color-accent);
+  }
+}
+

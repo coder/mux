@@ -5,6 +5,7 @@ import { SettingsButton } from "./SettingsButton";
 import { TooltipWrapper, Tooltip } from "./Tooltip";
 import type { UpdateStatus } from "@/common/types/ipc";
 import { isTelemetryEnabled } from "@/common/telemetry";
+import { useTutorial } from "@/browser/contexts/TutorialContext";
 
 // Update check intervals
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
@@ -78,6 +79,16 @@ export function TitleBar() {
   const [isCheckingOnHover, setIsCheckingOnHover] = useState(false);
   const lastHoverCheckTime = useRef<number>(0);
   const telemetryEnabled = isTelemetryEnabled();
+  const { startSequence } = useTutorial();
+
+  // Start settings tutorial on first launch
+  useEffect(() => {
+    // Small delay to ensure UI is rendered before showing tutorial
+    const timer = setTimeout(() => {
+      startSequence("settings");
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [startSequence]);
 
   useEffect(() => {
     // Skip update checks if telemetry is disabled

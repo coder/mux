@@ -63,6 +63,7 @@ import { CreationCenterContent } from "./CreationCenterContent";
 import { cn } from "@/common/lib/utils";
 import { CreationControls } from "./CreationControls";
 import { useCreationWorkspace } from "./useCreationWorkspace";
+import { useTutorial } from "@/browser/contexts/TutorialContext";
 
 const LEADING_COMMAND_NOISE = /^(?:\s|\u200B|\u200C|\u200D|\u200E|\u200F|\uFEFF)+/;
 
@@ -150,6 +151,18 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   const [vimEnabled, setVimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, {
     listener: true,
   });
+  const { startSequence: startTutorial } = useTutorial();
+
+  // Start creation tutorial when entering creation mode
+  useEffect(() => {
+    if (variant === "creation") {
+      // Small delay to ensure UI is rendered
+      const timer = setTimeout(() => {
+        startTutorial("creation");
+      }, 600);
+      return () => clearTimeout(timer);
+    }
+  }, [variant, startTutorial]);
 
   // Get current send message options from shared hook (must be at component top level)
   // For creation variant, use project-scoped key; for workspace, use workspace ID
@@ -898,7 +911,11 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
 
             <div className="@container flex flex-wrap items-center gap-x-3 gap-y-2">
               {/* Model Selector - always visible */}
-              <div className="flex items-center" data-component="ModelSelectorGroup">
+              <div
+                className="flex items-center"
+                data-component="ModelSelectorGroup"
+                data-tutorial="model-selector"
+              >
                 <ModelSelector
                   ref={modelSelectorRef}
                   value={preferredModel}
@@ -959,7 +976,11 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 </div>
               )}
 
-              <div className="ml-auto flex items-center gap-2" data-component="ModelControls">
+              <div
+                className="ml-auto flex items-center gap-2"
+                data-component="ModelControls"
+                data-tutorial="mode-selector"
+              >
                 <ModeSelector mode={mode} onChange={setMode} />
                 <TooltipWrapper inline>
                   <button

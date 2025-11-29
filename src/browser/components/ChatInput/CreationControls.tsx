@@ -23,7 +23,11 @@ export function CreationControls(props: CreationControlsProps) {
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
       {/* Trunk Branch Selector */}
       {props.branches.length > 0 && (
-        <div className="flex items-center gap-1" data-component="TrunkBranchGroup">
+        <div
+          className="flex items-center gap-1"
+          data-component="TrunkBranchGroup"
+          data-tutorial="trunk-branch"
+        >
           <label htmlFor="trunk-branch" className="text-muted text-xs">
             From:
           </label>
@@ -39,7 +43,11 @@ export function CreationControls(props: CreationControlsProps) {
       )}
 
       {/* Runtime Selector */}
-      <div className="flex items-center gap-1" data-component="RuntimeSelectorGroup">
+      <div
+        className="flex items-center gap-1"
+        data-component="RuntimeSelectorGroup"
+        data-tutorial="runtime-selector"
+      >
         <label className="text-muted text-xs">Runtime:</label>
         <Select
           value={props.runtimeMode}
