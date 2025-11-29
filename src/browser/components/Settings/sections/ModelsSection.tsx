@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Plus, Trash2, Pencil, Check, X } from "lucide-react";
+import { Plus, Trash2, Pencil, Check, X, Loader2 } from "lucide-react";
 import type { ProvidersConfigMap } from "../types";
 import { SUPPORTED_PROVIDERS, PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 
@@ -15,7 +15,7 @@ interface EditingState {
 }
 
 export function ModelsSection() {
-  const [config, setConfig] = useState<ProvidersConfigMap>({});
+  const [config, setConfig] = useState<ProvidersConfigMap | null>(null);
   const [newModel, setNewModel] = useState<NewModelForm>({ provider: "", modelId: "" });
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState<EditingState | null>(null);
@@ -29,22 +29,10 @@ export function ModelsSection() {
     })();
   }, []);
 
-  // Get all custom models across providers
-  const getAllModels = (): Array<{ provider: string; modelId: string }> => {
-    const models: Array<{ provider: string; modelId: string }> = [];
-    for (const [provider, providerConfig] of Object.entries(config)) {
-      if (providerConfig.models) {
-        for (const modelId of providerConfig.models) {
-          models.push({ provider, modelId });
-        }
-      }
-    }
-    return models;
-  };
-
   // Check if a model already exists (for duplicate prevention)
   const modelExists = useCallback(
     (provider: string, modelId: string, excludeOriginal?: string): boolean => {
+      if (!config) return false;
       const currentModels = config[provider]?.models ?? [];
       return currentModels.some((m) => m === modelId && m !== excludeOriginal);
     },
@@ -52,7 +40,7 @@ export function ModelsSection() {
   );
 
   const handleAddModel = useCallback(async () => {
-    if (!newModel.provider || !newModel.modelId.trim()) return;
+    if (!config || !newModel.provider || !newModel.modelId.trim()) return;
 
     const trimmedModelId = newModel.modelId.trim();
 
@@ -84,6 +72,7 @@ export function ModelsSection() {
 
   const handleRemoveModel = useCallback(
     async (provider: string, modelId: string) => {
+      if (!config) return;
       setSaving(true);
       try {
         const currentModels = config[provider]?.models ?? [];
@@ -115,7 +104,7 @@ export function ModelsSection() {
   }, []);
 
   const handleSaveEdit = useCallback(async () => {
-    if (!editing) return;
+    if (!config || !editing) return;
 
     const trimmedModelId = editing.newModelId.trim();
     if (!trimmedModelId) {
@@ -152,6 +141,29 @@ export function ModelsSection() {
       setSaving(false);
     }
   }, [editing, config, modelExists]);
+
+  // Show loading state while config is being fetched
+  if (config === null) {
+    return (
+      <div className="flex items-center justify-center gap-2 py-12">
+        <Loader2 className="text-muted h-5 w-5 animate-spin" />
+        <span className="text-muted text-sm">Loading settings...</span>
+      </div>
+    );
+  }
+
+  // Get all custom models across providers
+  const getAllModels = (): Array<{ provider: string; modelId: string }> => {
+    const models: Array<{ provider: string; modelId: string }> = [];
+    for (const [provider, providerConfig] of Object.entries(config)) {
+      if (providerConfig.models) {
+        for (const modelId of providerConfig.models) {
+          models.push({ provider, modelId });
+        }
+      }
+    }
+    return models;
+  };
 
   const allModels = getAllModels();
 
