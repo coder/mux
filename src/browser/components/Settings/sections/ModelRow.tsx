@@ -1,8 +1,8 @@
 import React from "react";
 import { Check, Pencil, Star, Trash2, X } from "lucide-react";
 import { cn } from "@/common/lib/utils";
-import { PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import { TooltipWrapper, Tooltip } from "@/browser/components/Tooltip";
+import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 
 export interface ModelRowProps {
   provider: string;
@@ -28,10 +28,11 @@ export function ModelRow(props: ModelRowProps) {
   return (
     <div className="border-border-medium bg-background-secondary flex items-center justify-between rounded-md border px-3 py-1.5">
       <div className="flex min-w-0 flex-1 items-center gap-2">
-        <span className="text-muted w-16 shrink-0 text-xs">
-          {PROVIDER_DISPLAY_NAMES[props.provider as keyof typeof PROVIDER_DISPLAY_NAMES] ??
-            props.provider}
-        </span>
+        <ProviderWithIcon
+          provider={props.provider}
+          displayName
+          className="text-muted w-20 shrink-0 text-xs"
+        />
         {props.isEditing ? (
           <div className="flex min-w-0 flex-1 items-center gap-1">
             <input

@@ -1,9 +1,6 @@
 import React from "react";
-import AnthropicIcon from "@/browser/assets/icons/anthropic.svg?react";
-import OpenAIIcon from "@/browser/assets/icons/openai.svg?react";
-import AWSIcon from "@/browser/assets/icons/aws.svg?react";
-import MuxIcon from "@/browser/assets/icons/mux.svg?react";
 import { TooltipWrapper, Tooltip } from "@/browser/components/Tooltip";
+import { ProviderIcon } from "@/browser/components/ProviderIcon";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 
 interface ModelDisplayProps {
@@ -36,22 +33,6 @@ function parseModelString(modelString: string): {
   return { provider, modelName: rest, isMuxGateway: false, innerProvider: "" };
 }
 
-/** Get icon component for a provider name */
-function getProviderIcon(provider: string): React.ReactNode {
-  switch (provider) {
-    case "anthropic":
-      return <AnthropicIcon />;
-    case "openai":
-      return <OpenAIIcon />;
-    case "bedrock":
-      return <AWSIcon />;
-    case "mux-gateway":
-      return <MuxIcon />;
-    default:
-      return null;
-  }
-}
-
 /**
  * Display a model name with its provider icon.
  * Supports format "provider:model-name" (e.g., "anthropic:claude-sonnet-4-5")
@@ -65,8 +46,7 @@ export const ModelDisplay: React.FC<ModelDisplayProps> = ({ modelString, showToo
   const { provider, modelName, isMuxGateway, innerProvider } = parseModelString(modelString);
 
   // For mux-gateway, show the inner provider's icon (the model's actual provider)
-  const providerIcon = isMuxGateway ? getProviderIcon(innerProvider) : getProviderIcon(provider);
-  const muxIcon = isMuxGateway ? getProviderIcon("mux-gateway") : null;
+  const iconProvider = isMuxGateway ? innerProvider : provider;
   const displayName = formatModelDisplayName(modelName);
   const suffix = isMuxGateway ? " (mux gateway)" : "";
 
@@ -75,16 +55,10 @@ export const ModelDisplay: React.FC<ModelDisplayProps> = ({ modelString, showToo
 
   const content = (
     <span className="inline normal-case" data-model-display>
-      {muxIcon && (
-        <span className={iconClass} data-model-icon="mux">
-          {muxIcon}
-        </span>
+      {isMuxGateway && (
+        <ProviderIcon provider="mux-gateway" className={iconClass} data-model-icon="mux" />
       )}
-      {providerIcon && (
-        <span className={iconClass} data-model-icon>
-          {providerIcon}
-        </span>
-      )}
+      <ProviderIcon provider={iconProvider} className={iconClass} data-model-icon />
       <span className="inline">
         {displayName}
         {suffix}
