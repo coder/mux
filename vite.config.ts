@@ -103,9 +103,6 @@ export default defineConfig(({ mode }) => ({
       // If using polling, set a reasonable interval (in milliseconds)
       interval: 1000,
       
-      // Limit the depth of directory traversal
-      depth: 3,
-      
       // Additional options for Windows specifically
       ...(process.platform === 'win32' && {
         // Increase the binary interval for better Windows performance
