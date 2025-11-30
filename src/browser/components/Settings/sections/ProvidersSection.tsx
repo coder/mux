@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { ChevronDown, ChevronRight, Check, X } from "lucide-react";
 import type { ProvidersConfigMap } from "../types";
-import { SUPPORTED_PROVIDERS, PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
+import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
 import type { ProviderName } from "@/common/constants/providers";
+import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 
 interface FieldConfig {
   key: string;
@@ -204,9 +205,11 @@ export function ProvidersSection() {
                 ) : (
                   <ChevronRight className="text-muted h-4 w-4" />
                 )}
-                <span className="text-foreground text-sm font-medium">
-                  {PROVIDER_DISPLAY_NAMES[provider]}
-                </span>
+                <ProviderWithIcon
+                  provider={provider}
+                  displayName
+                  className="text-foreground text-sm font-medium"
+                />
               </div>
               <div
                 className={`h-2 w-2 rounded-full ${configured ? "bg-green-500" : "bg-border-medium"}`}
