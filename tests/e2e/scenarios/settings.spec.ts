@@ -109,8 +109,8 @@ test.describe("Settings Modal", () => {
     await ui.settings.open();
     await ui.settings.selectSection("Models");
 
-    // Verify add model form elements - use exact match for title
-    await expect(page.getByText("Add Custom Model", { exact: true })).toBeVisible();
+    // Verify add model form elements
+    await expect(page.getByText("Custom Models")).toBeVisible();
     await expect(page.getByRole("combobox")).toBeVisible(); // Provider dropdown
     await expect(page.getByPlaceholder(/model-id/i)).toBeVisible();
     await expect(page.getByRole("button", { name: /^Add$/i })).toBeVisible();
