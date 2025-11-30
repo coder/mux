@@ -262,7 +262,7 @@ export const SidebarNavigation: Story = {
 
     // Content should update to show Models section text
     await waitFor(async () => {
-      const modelsText = canvas.getByText(/Add custom models/i);
+      const modelsText = canvas.getByText(/Manage your models/i);
       await expect(modelsText).toBeVisible();
     });
   },
