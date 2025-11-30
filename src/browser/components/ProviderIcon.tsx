@@ -33,7 +33,7 @@ export function ProviderIcon(props: ProviderIconProps) {
   return (
     <span
       className={cn(
-        "inline-block h-[1em] w-[1em] align-[-0.125em] [&_svg]:block [&_svg]:h-full [&_svg]:w-full [&_svg_.st0]:fill-current [&_svg_circle]:!fill-current [&_svg_path]:!fill-current [&_svg_rect]:!fill-current",
+        "inline-block h-[1em] w-[1em] align-[-0.125em] [&_svg]:block [&_svg]:h-full [&_svg]:w-full [&_svg]:fill-current [&_svg_.st0]:fill-current",
         props.className
       )}
     >
