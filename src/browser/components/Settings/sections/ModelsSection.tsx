@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Plus, Trash2, Pencil, Check, X, Loader2, Star } from "lucide-react";
+import { Plus, Loader2 } from "lucide-react";
 import type { ProvidersConfigMap } from "../types";
 import { SUPPORTED_PROVIDERS, PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import { cn } from "@/common/lib/utils";
 import { useModelLRU } from "@/browser/hooks/useModelLRU";
-import { TooltipWrapper, Tooltip } from "@/browser/components/Tooltip";
+import { ModelRow } from "./ModelRow";
 
 interface NewModelForm {
   provider: string;
@@ -180,137 +179,6 @@ export function ModelsSection() {
 
   const customModels = getCustomModels();
 
-  // Model row component for consistent styling
-  const ModelRow = ({
-    provider,
-    modelId,
-    fullId,
-    aliases,
-    isCustom,
-  }: {
-    provider: string;
-    modelId: string;
-    fullId: string;
-    aliases?: string[];
-    isCustom: boolean;
-  }) => {
-    const isEditing =
-      editing?.provider === provider && editing?.originalModelId === modelId && isCustom;
-    const isDefault = defaultModel === fullId;
-
-    return (
-      <div
-        key={fullId}
-        className="border-border-medium bg-background-secondary flex items-center justify-between rounded-md border px-4 py-2"
-      >
-        <div className="flex min-w-0 flex-1 items-center gap-3">
-          <span className="text-muted w-20 shrink-0 text-xs">
-            {PROVIDER_DISPLAY_NAMES[provider as keyof typeof PROVIDER_DISPLAY_NAMES] ?? provider}
-          </span>
-          {isEditing ? (
-            <div className="flex min-w-0 flex-1 flex-col gap-1">
-              <input
-                type="text"
-                value={editing.newModelId}
-                onChange={(e) =>
-                  setEditing((prev) => (prev ? { ...prev, newModelId: e.target.value } : null))
-                }
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void handleSaveEdit();
-                  if (e.key === "Escape") handleCancelEdit();
-                }}
-                className="bg-modal-bg border-border-medium focus:border-accent min-w-0 flex-1 rounded border px-2 py-1 font-mono text-xs focus:outline-none"
-                autoFocus
-              />
-              {error && <div className="text-error text-xs">{error}</div>}
-            </div>
-          ) : (
-            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="text-foreground min-w-0 truncate font-mono text-sm">{modelId}</span>
-              {aliases && aliases.length > 0 && (
-                <span className="text-muted-light text-xs">
-                  aliases: {aliases.map((a) => `/${a}`).join(", ")}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-        <div className="ml-2 flex shrink-0 items-center gap-1">
-          {isEditing ? (
-            <>
-              <button
-                type="button"
-                onClick={() => void handleSaveEdit()}
-                disabled={saving}
-                className="text-accent hover:text-accent-dark p-1 transition-colors"
-                title="Save changes (Enter)"
-              >
-                <Check className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                onClick={handleCancelEdit}
-                disabled={saving}
-                className="text-muted hover:text-foreground p-1 transition-colors"
-                title="Cancel (Escape)"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </>
-          ) : (
-            <>
-              {/* Favorite/default button */}
-              <TooltipWrapper inline>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!isDefault) setDefaultModel(fullId);
-                  }}
-                  className={cn(
-                    "p-1 transition-colors",
-                    isDefault
-                      ? "cursor-default text-yellow-400"
-                      : "text-muted hover:text-yellow-400"
-                  )}
-                  disabled={isDefault}
-                  aria-label={isDefault ? "Current default model" : "Set as default model"}
-                >
-                  <Star className={cn("h-4 w-4", isDefault && "fill-current")} />
-                </button>
-                <Tooltip className="tooltip" align="center">
-                  {isDefault ? "Default model" : "Set as default"}
-                </Tooltip>
-              </TooltipWrapper>
-              {/* Edit/delete buttons only for custom models */}
-              {isCustom && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => handleStartEdit(provider, modelId)}
-                    disabled={saving || editing !== null}
-                    className="text-muted hover:text-foreground p-1 transition-colors disabled:opacity-50"
-                    title="Edit model"
-                  >
-                    <Pencil className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleRemoveModel(provider, modelId)}
-                    disabled={saving || editing !== null}
-                    className="text-muted hover:text-error p-1 transition-colors disabled:opacity-50"
-                    title="Remove model"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-    );
-  };
-
   return (
     <div className="space-y-6">
       <p className="text-muted text-xs">
@@ -330,6 +198,9 @@ export function ModelsSection() {
             fullId={model.fullId}
             aliases={model.aliases}
             isCustom={false}
+            isDefault={defaultModel === model.fullId}
+            isEditing={false}
+            onSetDefault={() => setDefaultModel(model.fullId)}
           />
         ))}
       </div>
@@ -378,15 +249,33 @@ export function ModelsSection() {
 
         {/* List custom models */}
         {customModels.length > 0 ? (
-          customModels.map((model) => (
-            <ModelRow
-              key={model.fullId}
-              provider={model.provider}
-              modelId={model.modelId}
-              fullId={model.fullId}
-              isCustom={true}
-            />
-          ))
+          customModels.map((model) => {
+            const isModelEditing =
+              editing?.provider === model.provider && editing?.originalModelId === model.modelId;
+            return (
+              <ModelRow
+                key={model.fullId}
+                provider={model.provider}
+                modelId={model.modelId}
+                fullId={model.fullId}
+                isCustom={true}
+                isDefault={defaultModel === model.fullId}
+                isEditing={isModelEditing}
+                editValue={isModelEditing ? editing.newModelId : undefined}
+                editError={isModelEditing ? error : undefined}
+                saving={saving}
+                hasActiveEdit={editing !== null}
+                onSetDefault={() => setDefaultModel(model.fullId)}
+                onStartEdit={() => handleStartEdit(model.provider, model.modelId)}
+                onSaveEdit={() => void handleSaveEdit()}
+                onCancelEdit={handleCancelEdit}
+                onEditChange={(value) =>
+                  setEditing((prev) => (prev ? { ...prev, newModelId: value } : null))
+                }
+                onRemove={() => void handleRemoveModel(model.provider, model.modelId)}
+              />
+            );
+          })
         ) : (
           <div className="text-muted py-4 text-center text-xs">
             No custom models. Add one above to use models not listed in built-in.
