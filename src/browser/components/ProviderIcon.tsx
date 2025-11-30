@@ -1,6 +1,7 @@
 import React from "react";
 import AnthropicIcon from "@/browser/assets/icons/anthropic.svg?react";
 import OpenAIIcon from "@/browser/assets/icons/openai.svg?react";
+import GoogleIcon from "@/browser/assets/icons/google.svg?react";
 import AWSIcon from "@/browser/assets/icons/aws.svg?react";
 import MuxIcon from "@/browser/assets/icons/mux.svg?react";
 import { PROVIDER_DISPLAY_NAMES, type ProviderName } from "@/common/constants/providers";
@@ -9,6 +10,7 @@ import { cn } from "@/common/lib/utils";
 const PROVIDER_ICONS: Partial<Record<ProviderName | "mux-gateway", React.FC>> = {
   anthropic: AnthropicIcon,
   openai: OpenAIIcon,
+  google: GoogleIcon,
   bedrock: AWSIcon,
   "mux-gateway": MuxIcon,
 };
