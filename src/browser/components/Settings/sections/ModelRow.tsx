@@ -26,14 +26,14 @@ export interface ModelRowProps {
 
 export function ModelRow(props: ModelRowProps) {
   return (
-    <div className="border-border-medium bg-background-secondary flex items-center justify-between rounded-md border px-4 py-2">
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        <span className="text-muted w-20 shrink-0 text-xs">
+    <div className="border-border-medium bg-background-secondary flex items-center justify-between rounded-md border px-3 py-1.5">
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        <span className="text-muted w-16 shrink-0 text-xs">
           {PROVIDER_DISPLAY_NAMES[props.provider as keyof typeof PROVIDER_DISPLAY_NAMES] ??
             props.provider}
         </span>
         {props.isEditing ? (
-          <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <div className="flex min-w-0 flex-1 items-center gap-1">
             <input
               type="text"
               value={props.editValue ?? props.modelId}
@@ -42,44 +42,49 @@ export function ModelRow(props: ModelRowProps) {
                 if (e.key === "Enter") props.onSaveEdit?.();
                 if (e.key === "Escape") props.onCancelEdit?.();
               }}
-              className="bg-modal-bg border-border-medium focus:border-accent min-w-0 flex-1 rounded border px-2 py-1 font-mono text-xs focus:outline-none"
+              className="bg-modal-bg border-border-medium focus:border-accent min-w-0 flex-1 rounded border px-2 py-0.5 font-mono text-xs focus:outline-none"
               autoFocus
             />
             {props.editError && <div className="text-error text-xs">{props.editError}</div>}
           </div>
         ) : (
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <span className="text-foreground min-w-0 truncate font-mono text-sm">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="text-foreground min-w-0 truncate font-mono text-xs">
               {props.modelId}
             </span>
             {props.aliases && props.aliases.length > 0 && (
-              <span className="text-muted-light text-xs">
-                aliases: {props.aliases.map((a) => `/${a}`).join(", ")}
-              </span>
+              <TooltipWrapper inline>
+                <span className="text-muted-light shrink-0 text-xs">
+                  ({props.aliases.join(", ")})
+                </span>
+                <Tooltip className="tooltip" align="center">
+                  Use with /m {props.aliases[0]}
+                </Tooltip>
+              </TooltipWrapper>
             )}
           </div>
         )}
       </div>
-      <div className="ml-2 flex shrink-0 items-center gap-1">
+      <div className="ml-2 flex shrink-0 items-center gap-0.5">
         {props.isEditing ? (
           <>
             <button
               type="button"
               onClick={props.onSaveEdit}
               disabled={props.saving}
-              className="text-accent hover:text-accent-dark p-1 transition-colors"
+              className="text-accent hover:text-accent-dark p-0.5 transition-colors"
               title="Save changes (Enter)"
             >
-              <Check className="h-4 w-4" />
+              <Check className="h-3.5 w-3.5" />
             </button>
             <button
               type="button"
               onClick={props.onCancelEdit}
               disabled={props.saving}
-              className="text-muted hover:text-foreground p-1 transition-colors"
+              className="text-muted hover:text-foreground p-0.5 transition-colors"
               title="Cancel (Escape)"
             >
-              <X className="h-4 w-4" />
+              <X className="h-3.5 w-3.5" />
             </button>
           </>
         ) : (
@@ -92,7 +97,7 @@ export function ModelRow(props: ModelRowProps) {
                   if (!props.isDefault) props.onSetDefault();
                 }}
                 className={cn(
-                  "p-1 transition-colors",
+                  "p-0.5 transition-colors",
                   props.isDefault
                     ? "cursor-default text-yellow-400"
                     : "text-muted hover:text-yellow-400"
@@ -100,7 +105,7 @@ export function ModelRow(props: ModelRowProps) {
                 disabled={props.isDefault}
                 aria-label={props.isDefault ? "Current default model" : "Set as default model"}
               >
-                <Star className={cn("h-4 w-4", props.isDefault && "fill-current")} />
+                <Star className={cn("h-3.5 w-3.5", props.isDefault && "fill-current")} />
               </button>
               <Tooltip className="tooltip" align="center">
                 {props.isDefault ? "Default model" : "Set as default"}
@@ -113,19 +118,19 @@ export function ModelRow(props: ModelRowProps) {
                   type="button"
                   onClick={props.onStartEdit}
                   disabled={Boolean(props.saving) || Boolean(props.hasActiveEdit)}
-                  className="text-muted hover:text-foreground p-1 transition-colors disabled:opacity-50"
+                  className="text-muted hover:text-foreground p-0.5 transition-colors disabled:opacity-50"
                   title="Edit model"
                 >
-                  <Pencil className="h-4 w-4" />
+                  <Pencil className="h-3.5 w-3.5" />
                 </button>
                 <button
                   type="button"
                   onClick={props.onRemove}
                   disabled={Boolean(props.saving) || Boolean(props.hasActiveEdit)}
-                  className="text-muted hover:text-error p-1 transition-colors disabled:opacity-50"
+                  className="text-muted hover:text-error p-0.5 transition-colors disabled:opacity-50"
                   title="Remove model"
                 >
-                  <Trash2 className="h-4 w-4" />
+                  <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </>
             )}
