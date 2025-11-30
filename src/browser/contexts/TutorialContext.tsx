@@ -14,7 +14,7 @@ const TUTORIAL_SEQUENCES: Record<TutorialSequence, TutorialStep[]> = {
     {
       target: "settings-button",
       title: "Settings",
-      content: "Access model configuration, API keys, keyboard shortcuts, and preferences here.",
+      content: "Configure providers, models and other settings here.",
       position: "bottom",
     },
   ],
@@ -30,20 +30,20 @@ const TUTORIAL_SEQUENCES: Record<TutorialSequence, TutorialStep[]> = {
       target: "mode-selector",
       title: "Exec vs Plan Mode",
       content:
-        "Exec mode lets the AI edit files and run commands. Plan mode is read-only—great for exploring ideas safely.",
+        "Exec mode lets the AI edit files and run commands. Plan mode is read-only - use it to scope the agent's implementation.",
       position: "top",
     },
     {
       target: "trunk-branch",
       title: "Branch From",
       content:
-        "Choose which branch to fork from. Your workspace will be created as a new branch from this starting point.",
+        "Choose which branch to create your workspace from.",
       position: "top",
     },
     {
       target: "runtime-selector",
       title: "Runtime Environment",
-      content: "Run locally using git worktrees, or connect via SSH to work on a remote machine.",
+      content: "Run locally using git worktrees, or connect via SSH to setup the worktree on a remote machine in an isolated environment.",
       position: "top",
     },
   ],
@@ -52,7 +52,7 @@ const TUTORIAL_SEQUENCES: Record<TutorialSequence, TutorialStep[]> = {
       target: "terminal-button",
       title: "Terminal Access",
       content:
-        "Open a terminal window in your workspace to run commands directly alongside the AI.",
+        "Open a terminal window in your workspace.",
       position: "bottom",
     },
   ],
