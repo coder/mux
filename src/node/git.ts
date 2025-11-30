@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import type { Config } from "@/node/config";
+import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { execAsync } from "@/node/utils/disposableExec";
 import { createRuntime } from "./runtime/runtimeFactory";
@@ -83,9 +84,8 @@ export async function createWorktree(
     // Use directoryName if provided, otherwise fall back to branchName (legacy)
     const dirName = options.directoryName ?? branchName;
     // Compute workspace path using Runtime (single source of truth)
-    const runtime = createRuntime(
-      options.runtimeConfig ?? { type: "local", srcBaseDir: config.srcDir }
-    );
+    const runtimeConfig = options.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG;
+    const runtime = createRuntime(runtimeConfig);
     const workspacePath = runtime.getWorkspacePath(projectPath, dirName);
     const { trunkBranch } = options;
     const normalizedTrunkBranch = typeof trunkBranch === "string" ? trunkBranch.trim() : "";

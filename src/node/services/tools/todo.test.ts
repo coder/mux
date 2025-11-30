@@ -14,8 +14,8 @@ describe("Todo Storage", () => {
   beforeEach(async () => {
     // Create a temporary directory for each test
     runtimeTempDir = await fs.mkdtemp(path.join(os.tmpdir(), "todo-test-"));
-    // Create a local runtime for testing
-    runtime = createRuntime({ type: "local", srcBaseDir: "/tmp" });
+    // Create a worktree runtime for testing
+    runtime = createRuntime({ type: "worktree", srcBaseDir: "/tmp" });
   });
 
   afterEach(async () => {
