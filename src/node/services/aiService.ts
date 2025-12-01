@@ -724,9 +724,9 @@ export class AIService extends EventEmitter {
 
       // Handle Mux Gateway provider
       if (providerName === "mux-gateway") {
-        // Mux Gateway uses couponCode as the API key
-        const couponCode = providerConfig.couponCode;
-        if (typeof couponCode !== "string" || !couponCode) {
+        // Mux Gateway uses voucher as the API key (fallback to legacy couponCode)
+        const voucher = providerConfig.voucher ?? providerConfig.couponCode;
+        if (typeof voucher !== "string" || !voucher) {
           return Err({
             type: "api_key_not_found",
             provider: providerName,
@@ -746,7 +746,7 @@ export class AIService extends EventEmitter {
         const gatewayBaseURL =
           providerConfig.baseURL ?? "https://gateway.mux.coder.com/api/v1/ai-gateway/v1/ai";
         const gateway = createGateway({
-          apiKey: couponCode,
+          apiKey: voucher,
           baseURL: gatewayBaseURL,
           fetch: fetchWithCacheControl,
         });

@@ -1536,13 +1536,13 @@ export class IpcMain {
           // Load current providers config or create empty
           const providersConfig = this.config.loadProvidersConfig() ?? {};
 
-          // Track if this is first time setting couponCode for mux-gateway
-          const isFirstMuxGatewayCoupon =
+          // Track if this is first time setting voucher for mux-gateway
+          const isFirstMuxGatewayVoucher =
             provider === "mux-gateway" &&
             keyPath.length === 1 &&
-            keyPath[0] === "couponCode" &&
+            keyPath[0] === "voucher" &&
             value !== "" &&
-            !providersConfig[provider]?.couponCode;
+            !providersConfig[provider]?.voucher;
 
           // Ensure provider exists
           if (!providersConfig[provider]) {
@@ -1570,7 +1570,7 @@ export class IpcMain {
           }
 
           // Add default models when setting up mux-gateway for the first time
-          if (isFirstMuxGatewayCoupon) {
+          if (isFirstMuxGatewayVoucher) {
             const providerConfig = providersConfig[provider] as Record<string, unknown>;
             if (!providerConfig.models || (providerConfig.models as string[]).length === 0) {
               providerConfig.models = [
@@ -1652,9 +1652,9 @@ export class IpcMain {
             providerData.secretAccessKeySet = !!providerConfig.secretAccessKey;
           }
 
-          // Mux Gateway-specific fields
+          // Mux Gateway-specific fields (fallback to legacy couponCode)
           if (provider === "mux-gateway") {
-            providerData.couponCodeSet = !!providerConfig.couponCode;
+            providerData.voucherSet = !!(providerConfig.voucher ?? providerConfig.couponCode);
           }
 
           sanitized[provider] = providerData;
