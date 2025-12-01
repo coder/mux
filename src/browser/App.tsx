@@ -565,6 +565,7 @@ function AppInner() {
                 <AIView
                   key={selectedWorkspace.workspaceId}
                   workspaceId={selectedWorkspace.workspaceId}
+                  projectPath={selectedWorkspace.projectPath}
                   projectName={selectedWorkspace.projectName}
                   branch={
                     selectedWorkspace.namedWorkspacePath?.split("/").pop() ??

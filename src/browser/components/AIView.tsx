@@ -36,6 +36,7 @@ import { useAIViewKeybinds } from "@/browser/hooks/useAIViewKeybinds";
 import { evictModelFromLRU } from "@/browser/hooks/useModelLRU";
 import { QueuedMessage } from "./Messages/QueuedMessage";
 import { CompactionWarning } from "./CompactionWarning";
+import { ConcurrentLocalWarning } from "./ConcurrentLocalWarning";
 import { checkAutoCompaction } from "@/browser/utils/compaction/autoCompactionCheck";
 import { executeCompaction } from "@/browser/utils/chatCommands";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
@@ -44,6 +45,7 @@ import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 
 interface AIViewProps {
   workspaceId: string;
+  projectPath: string;
   projectName: string;
   branch: string;
   namedWorkspacePath: string; // User-friendly path for display and terminal
@@ -55,6 +57,7 @@ interface AIViewProps {
 
 const AIViewInner: React.FC<AIViewProps> = ({
   workspaceId,
+  projectPath,
   projectName,
   branch,
   namedWorkspacePath,
@@ -580,6 +583,11 @@ const AIViewInner: React.FC<AIViewProps> = ({
             onCompactClick={handleCompactClick}
           />
         )}
+        <ConcurrentLocalWarning
+          workspaceId={workspaceId}
+          projectPath={projectPath}
+          runtimeConfig={runtimeConfig}
+        />
         <ChatInput
           variant="workspace"
           workspaceId={workspaceId}
