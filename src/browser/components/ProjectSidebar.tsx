@@ -15,7 +15,8 @@ import { matchesKeybind, formatKeybind, KEYBINDS } from "@/browser/utils/ui/keyb
 import { PlatformPaths } from "@/common/utils/paths";
 import {
   partitionWorkspacesByAge,
-  formatOldWorkspaceThreshold,
+  formatDaysThreshold,
+  AGE_THRESHOLDS_DAYS,
 } from "@/browser/utils/ui/workspaceFiltering";
 import { TooltipWrapper, Tooltip } from "./Tooltip";
 import SecretsModal from "./SecretsModal";
@@ -207,7 +208,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     setExpandedProjectsArray(Array.from(projects));
   };
 
-  // Track which projects have old workspaces expanded (per-project)
+  // Track which projects have old workspaces expanded (per-project, per-tier)
+  // Key format: `${projectPath}:${tierIndex}` where tierIndex is 0, 1, 2 for 1/7/30 days
   const [expandedOldWorkspaces, setExpandedOldWorkspaces] = usePersistedState<
     Record<string, boolean>
   >("expandedOldWorkspaces", {});
@@ -247,10 +249,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     setExpandedProjects(newExpanded);
   };
 
-  const toggleOldWorkspaces = (projectPath: string) => {
+  const toggleOldWorkspaces = (projectPath: string, tierIndex: number) => {
+    const key = `${projectPath}:${tierIndex}`;
     setExpandedOldWorkspaces((prev) => ({
       ...prev,
-      [projectPath]: !prev[projectPath],
+      [key]: !prev[key],
     }));
   };
 
@@ -559,11 +562,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             {(() => {
                               const allWorkspaces =
                                 sortedWorkspacesByProject.get(projectPath) ?? [];
-                              const { recent, old } = partitionWorkspacesByAge(
+                              const { recent, buckets } = partitionWorkspacesByAge(
                                 allWorkspaces,
                                 workspaceRecency
                               );
-                              const showOldWorkspaces = expandedOldWorkspaces[projectPath] ?? false;
 
                               const renderWorkspace = (metadata: FrontendWorkspaceMetadata) => (
                                 <WorkspaceListItem
@@ -579,41 +581,64 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 />
                               );
 
+                              // Render a tier and all subsequent tiers recursively
+                              // Each tier only shows if the previous tier is expanded
+                              const renderTier = (tierIndex: number): React.ReactNode => {
+                                const bucket = buckets[tierIndex];
+                                // Sum remaining workspaces from this tier onward
+                                const remainingCount = buckets
+                                  .slice(tierIndex)
+                                  .reduce((sum, b) => sum + b.length, 0);
+
+                                if (remainingCount === 0) return null;
+
+                                const key = `${projectPath}:${tierIndex}`;
+                                const isExpanded = expandedOldWorkspaces[key] ?? false;
+                                const thresholdDays = AGE_THRESHOLDS_DAYS[tierIndex];
+                                const thresholdLabel = formatDaysThreshold(thresholdDays);
+
+                                return (
+                                  <>
+                                    <button
+                                      onClick={() => toggleOldWorkspaces(projectPath, tierIndex)}
+                                      aria-label={
+                                        isExpanded
+                                          ? `Collapse workspaces older than ${thresholdLabel}`
+                                          : `Expand workspaces older than ${thresholdLabel}`
+                                      }
+                                      aria-expanded={isExpanded}
+                                      className="text-muted border-hover hover:text-label [&:hover_.arrow]:text-label flex w-full cursor-pointer items-center justify-between border-t border-none bg-transparent px-3 py-2 pl-[22px] text-xs font-medium transition-all duration-150 hover:bg-white/[0.03]"
+                                    >
+                                      <div className="flex items-center gap-1.5">
+                                        <span>Older than {thresholdLabel}</span>
+                                        <span className="text-dim font-normal">
+                                          ({remainingCount})
+                                        </span>
+                                      </div>
+                                      <span
+                                        className="arrow text-dim text-[11px] transition-transform duration-200 ease-in-out"
+                                        style={{
+                                          transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                                        }}
+                                      >
+                                        <ChevronRight size={12} />
+                                      </span>
+                                    </button>
+                                    {isExpanded && (
+                                      <>
+                                        {bucket.map(renderWorkspace)}
+                                        {tierIndex + 1 < buckets.length &&
+                                          renderTier(tierIndex + 1)}
+                                      </>
+                                    )}
+                                  </>
+                                );
+                              };
+
                               return (
                                 <>
                                   {recent.map(renderWorkspace)}
-                                  {old.length > 0 && (
-                                    <>
-                                      <button
-                                        onClick={() => toggleOldWorkspaces(projectPath)}
-                                        aria-label={
-                                          showOldWorkspaces
-                                            ? `Collapse workspaces older than ${formatOldWorkspaceThreshold()}`
-                                            : `Expand workspaces older than ${formatOldWorkspaceThreshold()}`
-                                        }
-                                        aria-expanded={showOldWorkspaces}
-                                        className="text-muted border-hover hover:text-label [&:hover_.arrow]:text-label flex w-full cursor-pointer items-center justify-between border-t border-none bg-transparent px-3 py-2 pl-[22px] text-xs font-medium transition-all duration-150 hover:bg-white/[0.03]"
-                                      >
-                                        <div className="flex items-center gap-1.5">
-                                          <span>Older than {formatOldWorkspaceThreshold()}</span>
-                                          <span className="text-dim font-normal">
-                                            ({old.length})
-                                          </span>
-                                        </div>
-                                        <span
-                                          className="arrow text-dim text-[11px] transition-transform duration-200 ease-in-out"
-                                          style={{
-                                            transform: showOldWorkspaces
-                                              ? "rotate(90deg)"
-                                              : "rotate(0deg)",
-                                          }}
-                                        >
-                                          <ChevronRight size={12} />
-                                        </span>
-                                      </button>
-                                      {showOldWorkspaces && old.map(renderWorkspace)}
-                                    </>
-                                  )}
+                                  {renderTier(0)}
                                 </>
                               );
                             })()}
