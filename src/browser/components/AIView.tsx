@@ -91,8 +91,10 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const pendingSendOptions = useSendMessageOptions(workspaceId);
   const pendingModel = pendingSendOptions.model;
 
-  const { threshold: autoCompactionThreshold } =
-    useAutoCompactionSettings(workspaceId, pendingModel);
+  const { threshold: autoCompactionThreshold } = useAutoCompactionSettings(
+    workspaceId,
+    pendingModel
+  );
   const handledModelErrorsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {

@@ -69,10 +69,8 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
   const currentModel = contextUsage?.model ?? null;
 
   // Auto-compaction settings: threshold per-model (100 = disabled)
-  const {
-    threshold: autoCompactThreshold,
-    setThreshold: setAutoCompactThreshold,
-  } = useAutoCompactionSettings(workspaceId, currentModel);
+  const { threshold: autoCompactThreshold, setThreshold: setAutoCompactThreshold } =
+    useAutoCompactionSettings(workspaceId, currentModel);
 
   // Session usage for cost
   const sessionUsage = React.useMemo(() => {
@@ -187,56 +185,59 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                       </span>
                     </div>
                     <div className="relative w-full py-2">
-                      {/* Bar container - relative for slider positioning */}
-                      <div className="bg-border-light relative flex h-1.5 w-full overflow-visible rounded-[3px]">
-                        {cachedPercentage > 0 && (
+                      {/* Bar container - relative for slider positioning, overflow-hidden for rounded corners */}
+                      <div className="bg-border-light relative h-1.5 w-full overflow-hidden rounded-[3px]">
+                        {/* Segments container - flex layout for stacked percentages */}
+                        <div className="flex h-full w-full">
+                          {cachedPercentage > 0 && (
+                            <div
+                              key="cached"
+                              className="h-full transition-[width] duration-300"
+                              style={{
+                                width: `${cachedPercentage}%`,
+                                background: TOKEN_COMPONENT_COLORS.cached,
+                              }}
+                            />
+                          )}
+                          {cacheCreatePercentage > 0 && (
+                            <div
+                              key="cacheCreate"
+                              className="h-full transition-[width] duration-300"
+                              style={{
+                                width: `${cacheCreatePercentage}%`,
+                                background: TOKEN_COMPONENT_COLORS.cached,
+                              }}
+                            />
+                          )}
                           <div
-                            key="cached"
+                            key="input"
                             className="h-full transition-[width] duration-300"
                             style={{
-                              width: `${cachedPercentage}%`,
-                              background: TOKEN_COMPONENT_COLORS.cached,
+                              width: `${inputPercentage}%`,
+                              background: TOKEN_COMPONENT_COLORS.input,
                             }}
                           />
-                        )}
-                        {cacheCreatePercentage > 0 && (
                           <div
-                            key="cacheCreate"
+                            key="output"
                             className="h-full transition-[width] duration-300"
                             style={{
-                              width: `${cacheCreatePercentage}%`,
-                              background: TOKEN_COMPONENT_COLORS.cached,
+                              width: `${outputPercentage}%`,
+                              background: TOKEN_COMPONENT_COLORS.output,
                             }}
                           />
-                        )}
-                        <div
-                          key="input"
-                          className="h-full transition-[width] duration-300"
-                          style={{
-                            width: `${inputPercentage}%`,
-                            background: TOKEN_COMPONENT_COLORS.input,
-                          }}
-                        />
-                        <div
-                          key="output"
-                          className="h-full transition-[width] duration-300"
-                          style={{
-                            width: `${outputPercentage}%`,
-                            background: TOKEN_COMPONENT_COLORS.output,
-                          }}
-                        />
-                        {reasoningPercentage > 0 && (
-                          <div
-                            key="reasoning"
-                            className="h-full transition-[width] duration-300"
-                            style={{
-                              width: `${reasoningPercentage}%`,
-                              background: TOKEN_COMPONENT_COLORS.thinking,
-                            }}
-                          />
-                        )}
+                          {reasoningPercentage > 0 && (
+                            <div
+                              key="reasoning"
+                              className="h-full transition-[width] duration-300"
+                              style={{
+                                width: `${reasoningPercentage}%`,
+                                background: TOKEN_COMPONENT_COLORS.thinking,
+                              }}
+                            />
+                          )}
+                        </div>
                       </div>
-                      {/* Threshold slider overlay */}
+                      {/* Threshold slider overlay - positioned relative to outer container */}
                       {maxTokens && (
                         <HorizontalThresholdSlider
                           key="slider"

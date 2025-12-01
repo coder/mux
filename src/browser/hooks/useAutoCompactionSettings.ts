@@ -1,7 +1,5 @@
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import {
-  getAutoCompactionThresholdKey,
-} from "@/common/constants/storage";
+import { getAutoCompactionThresholdKey } from "@/common/constants/storage";
 import { DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT } from "@/common/constants/ui";
 
 export interface AutoCompactionSettings {

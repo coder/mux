@@ -73,7 +73,9 @@ export const HorizontalThresholdSlider: React.FC<HorizontalThresholdSliderProps>
     };
 
     const applyThreshold = (pct: number) => {
-      config.setThreshold(pct >= DISABLE_THRESHOLD ? 100 : Math.min(pct, AUTO_COMPACTION_THRESHOLD_MAX));
+      config.setThreshold(
+        pct >= DISABLE_THRESHOLD ? 100 : Math.min(pct, AUTO_COMPACTION_THRESHOLD_MAX)
+      );
     };
 
     applyThreshold(calcPercent(e.clientX));

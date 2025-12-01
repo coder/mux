@@ -139,10 +139,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const model = lastUsage?.model ?? null;
 
   // Auto-compaction settings: threshold per-model
-  const {
-    threshold: autoCompactThreshold,
-    setThreshold: setAutoCompactThreshold,
-  } = useAutoCompactionSettings(workspaceId, model);
+  const { threshold: autoCompactThreshold, setThreshold: setAutoCompactThreshold } =
+    useAutoCompactionSettings(workspaceId, model);
 
   // Memoize vertical meter data calculation to prevent unnecessary re-renders
   const verticalMeterData = React.useMemo(() => {
