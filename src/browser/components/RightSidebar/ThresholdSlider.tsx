@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from "react";
+import React, { useRef } from "react";
 import {
   AUTO_COMPACTION_THRESHOLD_MIN,
   AUTO_COMPACTION_THRESHOLD_MAX,
@@ -20,6 +20,26 @@ interface HorizontalThresholdSliderProps {
 /** Threshold at which we consider auto-compaction disabled (dragged all the way right) */
 const DISABLE_THRESHOLD = 100;
 
+/** Size of the triangle markers in pixels */
+const TRIANGLE_SIZE = 4;
+
+// ----- Subcomponents -----
+
+/** CSS triangle pointing in specified direction */
+const Triangle: React.FC<{ direction: "up" | "down"; color: string }> = ({ direction, color }) => (
+  <div
+    style={{
+      width: 0,
+      height: 0,
+      borderLeft: `${TRIANGLE_SIZE}px solid transparent`,
+      borderRight: `${TRIANGLE_SIZE}px solid transparent`,
+      ...(direction === "down"
+        ? { borderTop: `${TRIANGLE_SIZE}px solid ${color}` }
+        : { borderBottom: `${TRIANGLE_SIZE}px solid ${color}` }),
+    }}
+  />
+);
+
 // ----- Main component: HorizontalThresholdSlider -----
 
 /**
@@ -29,145 +49,81 @@ const DISABLE_THRESHOLD = 100;
  * Drag left/right to adjust threshold. Drag to 100% to disable.
  *
  * USAGE: Place as a sibling AFTER the progress bar, both inside a relative container.
+ *
+ * NOTE: This component uses inline styles instead of Tailwind classes intentionally.
+ * When using Tailwind classes (e.g., `className="absolute cursor-ew-resize"`), the
+ * component would intermittently fail to render or receive pointer events, despite
+ * the React component mounting correctly. The root cause appears to be related to
+ * how Tailwind's JIT compiler or class application interacts with dynamically
+ * rendered components in this context. Inline styles work reliably.
  */
 export const HorizontalThresholdSlider: React.FC<HorizontalThresholdSliderProps> = ({ config }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragValue, setDragValue] = useState<number | null>(null);
 
-  // Current display position
-  const position = dragValue ?? config.threshold;
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
 
-  // Derive enabled state from threshold
-  const isEnabled = config.threshold < DISABLE_THRESHOLD;
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
 
-  const calculatePercentage = useCallback(
-    (clientX: number): number => {
-      const container = containerRef.current;
-      if (!container) return config.threshold;
-
-      const rect = container.getBoundingClientRect();
+    const calcPercent = (clientX: number) => {
       const raw = ((clientX - rect.left) / rect.width) * 100;
-      // Allow dragging up to 100 (disabled state)
       const clamped = Math.max(AUTO_COMPACTION_THRESHOLD_MIN, Math.min(100, raw));
       return Math.round(clamped / 5) * 5;
-    },
-    [config.threshold]
-  );
+    };
 
-  const applyThreshold = useCallback(
-    (percentage: number) => {
-      if (percentage >= DISABLE_THRESHOLD) {
-        // Set to 100 to disable
-        config.setThreshold(100);
-      } else {
-        // Clamp to max allowed active threshold (e.g. 90%)
-        config.setThreshold(Math.min(percentage, AUTO_COMPACTION_THRESHOLD_MAX));
-      }
-    },
-    [config]
-  );
+    const applyThreshold = (pct: number) => {
+      config.setThreshold(pct >= DISABLE_THRESHOLD ? 100 : Math.min(pct, AUTO_COMPACTION_THRESHOLD_MAX));
+    };
 
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
+    applyThreshold(calcPercent(e.clientX));
 
-      const percentage = calculatePercentage(e.clientX);
-      setIsDragging(true);
-      setDragValue(percentage);
-      applyThreshold(percentage);
+    const onMove = (ev: MouseEvent) => applyThreshold(calcPercent(ev.clientX));
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
 
-      const handleMouseMove = (moveEvent: MouseEvent) => {
-        const newPercentage = calculatePercentage(moveEvent.clientX);
-        setDragValue(newPercentage);
-        applyThreshold(newPercentage);
-      };
-
-      const handleMouseUp = () => {
-        setIsDragging(false);
-        setDragValue(null);
-        document.removeEventListener("mousemove", handleMouseMove);
-        document.removeEventListener("mouseup", handleMouseUp);
-      };
-
-      document.addEventListener("mousemove", handleMouseMove);
-      document.addEventListener("mouseup", handleMouseUp);
-    },
-    [calculatePercentage, applyThreshold]
-  );
-
-  // Tooltip text
-  const title = isDragging
-    ? dragValue !== null && dragValue >= DISABLE_THRESHOLD
-      ? "Release to disable auto-compact"
-      : `Auto-compact at ${dragValue}%`
-    : isEnabled
-    ? `Auto-compact at ${config.threshold}% · Drag to adjust`
-    : "Auto-compact disabled · Drag left to enable";
-
-  const lineColor = isEnabled
-    ? "var(--color-plan-mode)"
-    : "var(--color-muted)";
-  const opacity = isDragging ? 1 : 0.8;
+  const isEnabled = config.threshold < DISABLE_THRESHOLD;
+  const color = isEnabled ? "var(--color-plan-mode)" : "var(--color-muted)";
+  const title = isEnabled
+    ? `Auto-compact at ${config.threshold}% · Drag to adjust (per-model)`
+    : "Auto-compact disabled · Drag left to enable (per-model)";
 
   return (
     <div
       ref={containerRef}
-      className="absolute inset-0 z-10"
-      style={{ pointerEvents: "none" }} // pass clicks through the empty parts of the container if needed, but we want the hit area to catch them
+      style={{
+        position: "absolute",
+        cursor: "ew-resize",
+        top: 0,
+        bottom: 0,
+        left: 0,
+        right: 0,
+        zIndex: 50,
+      }}
+      onMouseDown={handleMouseDown}
+      title={title}
     >
-      {/* Hit Area - Wider than the bar for easier grabbing */}
+      {/* Indicator: top triangle + line + bottom triangle, centered on threshold */}
       <div
-        className="absolute cursor-ew-resize"
         style={{
-          top: -12, // Extend 12px up
-          bottom: -12, // Extend 12px down
-          left: 0,
-          right: 0,
-          pointerEvents: "auto", // Re-enable pointer events for the hit area
-          zIndex: 20,
-          backgroundColor: "rgba(0,0,0,0)", // Ensure hit area captures events even if transparent
-        }}
-        onMouseDown={handleMouseDown}
-        title={title}
-      />
-
-      {/* Visual Indicator - Strictly positioned relative to the bar (containerRef) */}
-      <div
-        className="pointer-events-none absolute flex flex-col items-center"
-        style={{
-          left: `${position}%`,
-          top: -4, // Visual overshoot top
-          bottom: -4, // Visual overshoot bottom
+          position: "absolute",
+          left: `${config.threshold}%`,
+          top: `calc(50% - ${TRIANGLE_SIZE + 3}px)`,
           transform: "translateX(-50%)",
-          zIndex: 10,
+          pointerEvents: "none",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
         }}
       >
-        {/* Top triangle (pointing down) */}
-        <div
-          style={{
-            width: 0,
-            height: 0,
-            borderLeft: "4px solid transparent",
-            borderRight: "4px solid transparent",
-            borderTop: `5px solid ${lineColor}`,
-            opacity,
-          }}
-        />
-        {/* Line */}
-        <div style={{ flex: 1, width: 2, background: lineColor, opacity }} />
-        {/* Bottom triangle (pointing up) */}
-        <div
-          style={{
-            width: 0,
-            height: 0,
-            borderLeft: "4px solid transparent",
-            borderRight: "4px solid transparent",
-            borderBottom: `5px solid ${lineColor}`,
-            opacity,
-          }}
-        />
+        <Triangle direction="down" color={color} />
+        <div style={{ width: 1, height: 6, background: color }} />
+        <Triangle direction="up" color={color} />
       </div>
     </div>
   );

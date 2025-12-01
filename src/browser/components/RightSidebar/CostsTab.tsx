@@ -235,17 +235,17 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                             }}
                           />
                         )}
-                        {/* Threshold slider overlay - inside bar for proper positioning */}
-                        {maxTokens && (
-                          <HorizontalThresholdSlider
-                            key="slider"
-                            config={{
-                              threshold: autoCompactThreshold,
-                              setThreshold: setAutoCompactThreshold,
-                            }}
-                          />
-                        )}
                       </div>
+                      {/* Threshold slider overlay */}
+                      {maxTokens && (
+                        <HorizontalThresholdSlider
+                          key="slider"
+                          config={{
+                            threshold: autoCompactThreshold,
+                            setThreshold: setAutoCompactThreshold,
+                          }}
+                        />
+                      )}
                     </div>
                   </div>
                   {showWarning && (
