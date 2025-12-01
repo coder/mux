@@ -23,6 +23,7 @@ export interface WorkspaceListItemProps {
   projectPath: string;
   projectName: string;
   isSelected: boolean;
+  isDeleting?: boolean;
   lastReadTimestamp: number;
   // Event handlers
   onSelectWorkspace: (selection: WorkspaceSelection) => void;
@@ -35,6 +36,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   projectPath,
   projectName,
   isSelected,
+  isDeleting,
   lastReadTimestamp,
   onSelectWorkspace,
   onRemoveWorkspace,
@@ -104,7 +106,8 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
       <div
         className={cn(
           "py-1.5 pl-4 pr-2 cursor-pointer border-l-[3px] border-transparent transition-all duration-150 text-[13px] relative hover:bg-hover [&:hover_button]:opacity-100 flex gap-2",
-          isSelected && "bg-hover border-l-blue-400"
+          isSelected && "bg-hover border-l-blue-400",
+          isDeleting && "opacity-50 pointer-events-none"
         )}
         onClick={() =>
           onSelectWorkspace({
@@ -199,7 +202,14 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
             </div>
           </div>
           <div className="min-w-0">
-            <WorkspaceStatusIndicator workspaceId={workspaceId} />
+            {isDeleting ? (
+              <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
+                <span className="-mt-0.5 shrink-0 text-[10px]">🗑️</span>
+                <span className="min-w-0 truncate">Deleting...</span>
+              </div>
+            ) : (
+              <WorkspaceStatusIndicator workspaceId={workspaceId} />
+            )}
           </div>
         </div>
       </div>

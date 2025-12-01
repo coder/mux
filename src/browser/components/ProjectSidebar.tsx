@@ -211,6 +211,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const [expandedOldWorkspaces, setExpandedOldWorkspaces] = usePersistedState<
     Record<string, boolean>
   >("expandedOldWorkspaces", {});
+  const [deletingWorkspaceIds, setDeletingWorkspaceIds] = useState<Set<string>>(new Set());
   const [removeError, setRemoveError] = useState<{
     workspaceId: string;
     error: string;
@@ -289,22 +290,34 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   const handleRemoveWorkspace = useCallback(
     async (workspaceId: string, buttonElement: HTMLElement) => {
-      const result = await onRemoveWorkspace(workspaceId);
-      if (!result.success) {
-        const error = result.error ?? "Failed to remove workspace";
-        const rect = buttonElement.getBoundingClientRect();
-        const anchor = {
-          top: rect.top + window.scrollY,
-          left: rect.right + 10, // 10px to the right of button
-        };
+      // Mark workspace as being deleted for UI feedback
+      setDeletingWorkspaceIds((prev) => new Set(prev).add(workspaceId));
 
-        // Show force delete modal on any error to handle all cases
-        // (uncommitted changes, submodules, etc.)
-        setForceDeleteModal({
-          isOpen: true,
-          workspaceId,
-          error,
-          anchor,
+      try {
+        const result = await onRemoveWorkspace(workspaceId);
+        if (!result.success) {
+          const error = result.error ?? "Failed to remove workspace";
+          const rect = buttonElement.getBoundingClientRect();
+          const anchor = {
+            top: rect.top + window.scrollY,
+            left: rect.right + 10, // 10px to the right of button
+          };
+
+          // Show force delete modal on any error to handle all cases
+          // (uncommitted changes, submodules, etc.)
+          setForceDeleteModal({
+            isOpen: true,
+            workspaceId,
+            error,
+            anchor,
+          });
+        }
+      } finally {
+        // Clear deleting state (workspace removed or error shown)
+        setDeletingWorkspaceIds((prev) => {
+          const next = new Set(prev);
+          next.delete(workspaceId);
+          return next;
         });
       }
     },
@@ -326,13 +339,25 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     // Close modal immediately to show that action is in progress
     setForceDeleteModal(null);
 
-    // Use the same state update logic as regular removal
-    const result = await onRemoveWorkspace(workspaceId, { force: true });
-    if (!result.success) {
-      const errorMessage = result.error ?? "Failed to remove workspace";
-      console.error("Force delete failed:", result.error);
+    // Mark workspace as being deleted for UI feedback
+    setDeletingWorkspaceIds((prev) => new Set(prev).add(workspaceId));
 
-      showRemoveError(workspaceId, errorMessage, modalState?.anchor ?? undefined);
+    try {
+      // Use the same state update logic as regular removal
+      const result = await onRemoveWorkspace(workspaceId, { force: true });
+      if (!result.success) {
+        const errorMessage = result.error ?? "Failed to remove workspace";
+        console.error("Force delete failed:", result.error);
+
+        showRemoveError(workspaceId, errorMessage, modalState?.anchor ?? undefined);
+      }
+    } finally {
+      // Clear deleting state
+      setDeletingWorkspaceIds((prev) => {
+        const next = new Set(prev);
+        next.delete(workspaceId);
+        return next;
+      });
     }
   };
 
@@ -572,6 +597,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   projectPath={projectPath}
                                   projectName={projectName}
                                   isSelected={selectedWorkspace?.workspaceId === metadata.id}
+                                  isDeleting={deletingWorkspaceIds.has(metadata.id)}
                                   lastReadTimestamp={lastReadTimestamps[metadata.id] ?? 0}
                                   onSelectWorkspace={onSelectWorkspace}
                                   onRemoveWorkspace={handleRemoveWorkspace}
