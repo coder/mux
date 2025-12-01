@@ -17,21 +17,28 @@ export interface AutoCompactionSettings {
 }
 
 /**
- * Custom hook for auto-compaction settings per workspace.
- * Persists both enabled state and threshold percentage to localStorage.
+ * Custom hook for auto-compaction settings.
+ * - Enabled state is per-workspace
+ * - Threshold is per-model (different models have different context windows)
  *
- * @param workspaceId - Workspace identifier
+ * @param workspaceId - Workspace identifier for enabled state
+ * @param model - Model identifier for threshold (e.g., "claude-sonnet-4-5")
  * @returns Settings object with getters and setters
  */
-export function useAutoCompactionSettings(workspaceId: string): AutoCompactionSettings {
+export function useAutoCompactionSettings(
+  workspaceId: string,
+  model: string | null
+): AutoCompactionSettings {
   const [enabled, setEnabled] = usePersistedState<boolean>(
     getAutoCompactionEnabledKey(workspaceId),
     true,
     { listener: true }
   );
 
+  // Use model for threshold key, fall back to "default" if no model
+  const thresholdKey = getAutoCompactionThresholdKey(model ?? "default");
   const [threshold, setThreshold] = usePersistedState<number>(
-    getAutoCompactionThresholdKey(workspaceId),
+    thresholdKey,
     DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT,
     { listener: true }
   );

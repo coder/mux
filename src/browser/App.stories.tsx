@@ -1487,3 +1487,170 @@ These tables should render cleanly without any disruptive copy or download actio
     return <AppWithTableMocks />;
   },
 };
+
+/**
+ * Story showing the auto-compaction warning when context usage is approaching the threshold.
+ * The warning appears above the chat input when usage is >= 60% (threshold 70% minus 10% warning advance).
+ * claude-sonnet-4-5 has max_input_tokens: 200,000, so we set usage to ~130,000 tokens (65%) to trigger warning.
+ */
+export const AutoCompactionWarning: Story = {
+  render: () => {
+    const workspaceId = "ws-high-usage";
+
+    const projects = new Map<string, ProjectConfig>([
+      [
+        "/home/user/projects/my-app",
+        {
+          workspaces: [
+            { path: "/home/user/.mux/src/my-app/feature", id: workspaceId, name: "main" },
+          ],
+        },
+      ],
+    ]);
+
+    const workspaces: FrontendWorkspaceMetadata[] = [
+      {
+        id: workspaceId,
+        name: "main",
+        projectPath: "/home/user/projects/my-app",
+        projectName: "my-app",
+        namedWorkspacePath: "/home/user/.mux/src/my-app/feature",
+        runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+        createdAt: new Date(NOW - 3600000).toISOString(),
+      },
+    ];
+
+    const AppWithHighUsage: React.FC = () => {
+      const initialized = useRef(false);
+      if (!initialized.current) {
+        // Enable auto-compaction for this workspace (enabled per-workspace, threshold per-model)
+        localStorage.setItem(`autoCompaction:enabled:${workspaceId}`, "true");
+        localStorage.setItem(`autoCompaction:threshold:claude-sonnet-4-5`, "70");
+
+        setupMockAPI({
+          projects,
+          workspaces,
+          apiOverrides: {
+            tokenizer: {
+              countTokens: () => Promise.resolve(100),
+              countTokensBatch: (_model, texts) => Promise.resolve(texts.map(() => 100)),
+              calculateStats: () =>
+                Promise.resolve({
+                  consumers: [],
+                  totalTokens: 0,
+                  model: "claude-sonnet-4-5",
+                  tokenizerName: "claude",
+                  usageHistory: [],
+                }),
+            },
+            providers: {
+              setProviderConfig: () => Promise.resolve({ success: true, data: undefined }),
+              setModels: () => Promise.resolve({ success: true, data: undefined }),
+              getConfig: () =>
+                Promise.resolve(
+                  {} as Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>
+                ),
+              list: () => Promise.resolve(["anthropic"]),
+            },
+            workspace: {
+              create: (projectPath: string, branchName: string) =>
+                Promise.resolve({
+                  success: true,
+                  metadata: {
+                    id: Math.random().toString(36).substring(2, 12),
+                    name: branchName,
+                    projectPath,
+                    projectName: projectPath.split("/").pop() ?? "project",
+                    namedWorkspacePath: `/mock/workspace/${branchName}`,
+                    runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+                  },
+                }),
+              list: () => Promise.resolve(workspaces),
+              rename: (wsId: string) =>
+                Promise.resolve({ success: true, data: { newWorkspaceId: wsId } }),
+              remove: () => Promise.resolve({ success: true }),
+              fork: () => Promise.resolve({ success: false, error: "Not implemented in mock" }),
+              openTerminal: () => Promise.resolve(undefined),
+              onChat: (wsId, callback) => {
+                if (wsId === workspaceId) {
+                  setTimeout(() => {
+                    // User message
+                    callback({
+                      id: "msg-1",
+                      role: "user",
+                      parts: [{ type: "text", text: "Help me with this large codebase" }],
+                      metadata: {
+                        historySequence: 1,
+                        timestamp: STABLE_TIMESTAMP - 60000,
+                      },
+                    });
+
+                    // Assistant message with HIGH usage to trigger compaction warning
+                    // 130,000 tokens = 65% of 200,000 max, which is above 60% warning threshold
+                    callback({
+                      id: "msg-2",
+                      role: "assistant",
+                      parts: [
+                        {
+                          type: "text",
+                          text: "I've analyzed the codebase. The context window is getting full - notice the compaction warning below!",
+                        },
+                      ],
+                      metadata: {
+                        historySequence: 2,
+                        timestamp: STABLE_TIMESTAMP,
+                        model: "claude-sonnet-4-5",
+                        usage: {
+                          inputTokens: 125000, // High input to trigger warning
+                          outputTokens: 5000,
+                          totalTokens: 130000,
+                        },
+                        duration: 5000,
+                      },
+                    });
+
+                    callback({ type: "caught-up" });
+                  }, 100);
+                }
+                return () => undefined;
+              },
+              onMetadata: () => () => undefined,
+              activity: {
+                list: () => Promise.resolve({}),
+                subscribe: () => () => undefined,
+              },
+              sendMessage: () => Promise.resolve({ success: true, data: undefined }),
+              resumeStream: () => Promise.resolve({ success: true, data: undefined }),
+              interruptStream: () => Promise.resolve({ success: true, data: undefined }),
+              clearQueue: () => Promise.resolve({ success: true, data: undefined }),
+              truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
+              replaceChatHistory: () => Promise.resolve({ success: true, data: undefined }),
+              getInfo: () => Promise.resolve(null),
+              executeBash: () =>
+                Promise.resolve({
+                  success: true,
+                  data: { success: true, output: "", exitCode: 0, wall_duration_ms: 0 },
+                }),
+            },
+          },
+        });
+
+        localStorage.setItem(
+          "selectedWorkspace",
+          JSON.stringify({
+            workspaceId: workspaceId,
+            projectPath: "/home/user/projects/my-app",
+            projectName: "my-app",
+            namedWorkspacePath: "/home/user/.mux/src/my-app/feature",
+          })
+        );
+
+        initialized.current = true;
+      }
+
+      return <AppLoader />;
+    };
+
+    return <AppWithHighUsage />;
+  },
+};

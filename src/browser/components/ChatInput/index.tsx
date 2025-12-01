@@ -260,6 +260,15 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     [setInput]
   );
 
+  // Method to prepend text to input (used by manual compact trigger)
+  const prependText = useCallback(
+    (text: string) => {
+      setInput((prev) => text + prev);
+      focusMessageInput();
+    },
+    [focusMessageInput, setInput]
+  );
+
   // Method to restore images to input (used by queued message edit)
   const restoreImages = useCallback((images: ImagePart[]) => {
     const attachments: ImageAttachment[] = images.map((img, index) => ({
@@ -277,10 +286,19 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         focus: focusMessageInput,
         restoreText,
         appendText,
+        prependText,
         restoreImages,
       });
     }
-  }, [props.onReady, focusMessageInput, restoreText, appendText, restoreImages, props]);
+  }, [
+    props.onReady,
+    focusMessageInput,
+    restoreText,
+    appendText,
+    prependText,
+    restoreImages,
+    props,
+  ]);
 
   useEffect(() => {
     const handleGlobalKeyDown = (event: KeyboardEvent) => {

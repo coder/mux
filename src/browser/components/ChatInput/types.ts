@@ -6,6 +6,7 @@ export interface ChatInputAPI {
   focus: () => void;
   restoreText: (text: string) => void;
   appendText: (text: string) => void;
+  prependText: (text: string) => void;
   restoreImages: (images: ImagePart[]) => void;
 }
 

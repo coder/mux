@@ -3,6 +3,7 @@ import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useResizeObserver } from "@/browser/hooks/useResizeObserver";
+import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
 import { CostsTab } from "./RightSidebar/CostsTab";
 import { VerticalTokenMeter } from "./RightSidebar/VerticalTokenMeter";
 import { ReviewPanel } from "./RightSidebar/CodeReview/ReviewPanel";
@@ -135,15 +136,22 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const reviewPanelId = `${baseId}-panel-review`;
 
   const lastUsage = usage?.liveUsage ?? usage?.usageHistory[usage.usageHistory.length - 1];
+  const model = lastUsage?.model ?? null;
+
+  // Auto-compaction settings: enabled per-workspace, threshold per-model
+  const {
+    enabled: autoCompactEnabled,
+    setEnabled: setAutoCompactEnabled,
+    threshold: autoCompactThreshold,
+    setThreshold: setAutoCompactThreshold,
+  } = useAutoCompactionSettings(workspaceId, model);
 
   // Memoize vertical meter data calculation to prevent unnecessary re-renders
   const verticalMeterData = React.useMemo(() => {
-    // Get model from last usage
-    const model = lastUsage?.model ?? "unknown";
     return lastUsage
-      ? calculateTokenMeterData(lastUsage, model, use1M, true)
+      ? calculateTokenMeterData(lastUsage, model ?? "unknown", use1M, true)
       : { segments: [], totalTokens: 0, totalPercentage: 0 };
-  }, [lastUsage, use1M]);
+  }, [lastUsage, model, use1M]);
 
   // Calculate if we should show collapsed view with hysteresis
   // Strategy: Observe ChatArea width directly (independent of sidebar width)
@@ -184,7 +192,18 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Single render point for VerticalTokenMeter
   // Shows when: (1) collapsed, OR (2) Review tab is active
   const showMeter = showCollapsed || selectedTab === "review";
-  const verticalMeter = showMeter ? <VerticalTokenMeter data={verticalMeterData} /> : null;
+  const autoCompactionProps = React.useMemo(
+    () => ({
+      enabled: autoCompactEnabled,
+      threshold: autoCompactThreshold,
+      setEnabled: setAutoCompactEnabled,
+      setThreshold: setAutoCompactThreshold,
+    }),
+    [autoCompactEnabled, autoCompactThreshold, setAutoCompactEnabled, setAutoCompactThreshold]
+  );
+  const verticalMeter = showMeter ? (
+    <VerticalTokenMeter data={verticalMeterData} autoCompaction={autoCompactionProps} />
+  ) : null;
 
   return (
     <SidebarContainer

@@ -8,7 +8,8 @@ import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { supports1MContext } from "@/common/utils/ai/models";
 import { TOKEN_COMPONENT_COLORS } from "@/common/utils/tokens/tokenMeterUtils";
 import { ConsumerBreakdown } from "./ConsumerBreakdown";
-import { AutoCompactionSettings } from "./AutoCompactionSettings";
+import { ThresholdSlider } from "./ThresholdSlider";
+import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
 
 // Format token display - show k for thousands with 1 decimal
 const formatTokens = (tokens: number) =>
@@ -62,6 +63,18 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
   const [viewMode, setViewMode] = usePersistedState<ViewMode>("costsTab:viewMode", "session");
   const { options } = useProviderOptions();
   const use1M = options.anthropic?.use1MContext ?? false;
+
+  // Get model from context usage for per-model threshold storage
+  const contextUsage = usage.liveUsage ?? usage.usageHistory[usage.usageHistory.length - 1];
+  const currentModel = contextUsage?.model ?? null;
+
+  // Auto-compaction settings: enabled per-workspace, threshold per-model
+  const {
+    enabled: autoCompactEnabled,
+    setEnabled: setAutoCompactEnabled,
+    threshold: autoCompactThreshold,
+    setThreshold: setAutoCompactThreshold,
+  } = useAutoCompactionSettings(workspaceId, currentModel);
 
   // Session usage for cost
   const sessionUsage = React.useMemo(() => {
@@ -164,7 +177,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
 
               return (
                 <>
-                  <div data-testid="context-usage" className="relative mb-2 flex flex-col gap-1">
+                  <div data-testid="context-usage" className="relative flex flex-col gap-1">
                     <div className="flex items-baseline justify-between">
                       <span className="text-foreground inline-flex items-baseline gap-1 font-medium">
                         Context Usage
@@ -175,8 +188,8 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                         {` (${totalPercentage.toFixed(1)}%)`}
                       </span>
                     </div>
-                    <div className="relative w-full">
-                      <div className="bg-border-light flex h-1.5 w-full overflow-hidden rounded-[3px]">
+                    <div className="relative w-full py-1">
+                      <div className="bg-border-light relative flex h-1.5 w-full rounded-[3px]">
                         {cachedPercentage > 0 && (
                           <div
                             className="h-full transition-[width] duration-300"
@@ -218,6 +231,16 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                             }}
                           />
                         )}
+                        {/* Threshold slider overlay - only show when model limits are known */}
+                        {maxTokens && (
+                          <ThresholdSlider
+                            threshold={autoCompactThreshold}
+                            enabled={autoCompactEnabled}
+                            onThresholdChange={setAutoCompactThreshold}
+                            onEnabledChange={setAutoCompactEnabled}
+                            orientation="horizontal"
+                          />
+                        )}
                       </div>
                     </div>
                   </div>
@@ -232,8 +255,6 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
           </div>
         </div>
       )}
-
-      {hasUsageData && <AutoCompactionSettings workspaceId={workspaceId} />}
 
       {hasUsageData && (
         <div data-testid="cost-section" className="mb-6">

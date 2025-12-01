@@ -180,11 +180,12 @@ export function getAutoCompactionEnabledKey(workspaceId: string): string {
 }
 
 /**
- * Get the localStorage key for auto-compaction threshold percentage per workspace
- * Format: "autoCompaction:threshold:{workspaceId}"
+ * Get the localStorage key for auto-compaction threshold percentage per model
+ * Format: "autoCompaction:threshold:{model}"
+ * Stored per-model because different models have different context windows
  */
-export function getAutoCompactionThresholdKey(workspaceId: string): string {
-  return `autoCompaction:threshold:${workspaceId}`;
+export function getAutoCompactionThresholdKey(model: string): string {
+  return `autoCompaction:threshold:${model}`;
 }
 
 /**
@@ -201,7 +202,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getFileTreeExpandStateKey,
   getReviewSearchStateKey,
   getAutoCompactionEnabledKey,
-  getAutoCompactionThresholdKey,
+  // Note: getAutoCompactionThresholdKey is per-model, not per-workspace
 ];
 
 /**

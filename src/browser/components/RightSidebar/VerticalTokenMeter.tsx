@@ -1,13 +1,28 @@
 import React from "react";
 import { TooltipWrapper, Tooltip } from "../Tooltip";
 import { TokenMeter } from "./TokenMeter";
+import { ThresholdSlider } from "./ThresholdSlider";
 import {
   type TokenMeterData,
   formatTokens,
   getSegmentLabel,
 } from "@/common/utils/tokens/tokenMeterUtils";
 
-const VerticalTokenMeterComponent: React.FC<{ data: TokenMeterData }> = ({ data }) => {
+interface VerticalTokenMeterProps {
+  data: TokenMeterData;
+  /** Auto-compaction settings - if provided, shows threshold slider */
+  autoCompaction?: {
+    enabled: boolean;
+    threshold: number;
+    setEnabled: (enabled: boolean) => void;
+    setThreshold: (threshold: number) => void;
+  };
+}
+
+const VerticalTokenMeterComponent: React.FC<VerticalTokenMeterProps> = ({
+  data,
+  autoCompaction,
+}) => {
   if (data.segments.length === 0) return null;
 
   // Scale the bar based on context window usage (0-100%)
@@ -15,7 +30,7 @@ const VerticalTokenMeterComponent: React.FC<{ data: TokenMeterData }> = ({ data 
 
   return (
     <div
-      className="bg-separator border-border-light flex h-full w-5 flex-col items-center border-l py-3"
+      className="bg-separator border-border-light flex h-full w-5 flex-col items-center overflow-visible border-l py-3"
       data-component="vertical-token-meter"
     >
       {data.maxTokens && (
@@ -27,9 +42,19 @@ const VerticalTokenMeterComponent: React.FC<{ data: TokenMeterData }> = ({ data 
         </div>
       )}
       <div
-        className="flex min-h-0 w-full flex-1 flex-col items-center"
+        className="relative flex min-h-0 w-full flex-1 flex-col items-center overflow-visible"
         data-wrapper="meter-wrapper"
       >
+        {/* Threshold slider overlay */}
+        {data.maxTokens && autoCompaction && (
+          <ThresholdSlider
+            threshold={autoCompaction.threshold}
+            enabled={autoCompaction.enabled}
+            onThresholdChange={autoCompaction.setThreshold}
+            onEnabledChange={autoCompaction.setEnabled}
+            orientation="vertical"
+          />
+        )}
         <div
           className="flex min-h-[20px] w-full flex-col items-center"
           style={{ flex: usagePercentage }}
