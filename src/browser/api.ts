@@ -61,6 +61,21 @@ function parseWorkspaceActivity(value: unknown): WorkspaceActivitySnapshot | nul
   };
 }
 
+// Fire-and-forget helper for IPC calls that don't need a response
+// Uses fetch with keepalive to ensure the request completes even if page unloads
+function sendIPCFireAndForget(channel: string, ...args: unknown[]): void {
+  // Don't await - fire and forget
+  void fetch(`${API_BASE}/ipc/${encodeURIComponent(channel)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ args }),
+    keepalive: true, // Ensures request completes even on page unload
+  }).catch((err) => {
+    console.error(`Fire-and-forget IPC error (${channel}):`, err);
+  });
+}
 // WebSocket connection manager
 class WebSocketManager {
   private ws: WebSocket | null = null;
@@ -337,8 +352,8 @@ const webApi: IPCApi = {
     close: (sessionId) => invokeIPC(IPC_CHANNELS.TERMINAL_CLOSE, sessionId),
     resize: (params) => invokeIPC(IPC_CHANNELS.TERMINAL_RESIZE, params),
     sendInput: (sessionId: string, data: string) => {
-      // Send via IPC - in browser mode this becomes an HTTP POST
-      void invokeIPC(IPC_CHANNELS.TERMINAL_INPUT, sessionId, data);
+      // Fire-and-forget for minimal latency - no need to wait for response
+      sendIPCFireAndForget(IPC_CHANNELS.TERMINAL_INPUT, sessionId, data);
     },
     onOutput: (sessionId: string, callback: (data: string) => void) => {
       // Subscribe to terminal output events via WebSocket

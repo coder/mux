@@ -83,6 +83,25 @@ class HttpIpcMainAdapter {
   on(channel: string, handler: (event: unknown, ...args: unknown[]) => void): void {
     if (!this.listeners.has(channel)) {
       this.listeners.set(channel, []);
+      // Register HTTP route for fire-and-forget handlers too
+      // Unlike handle(), we don't wait for or return any result
+      this.app.post(`/ipc/${encodeURIComponent(channel)}`, (req, res) => {
+        try {
+          const schema = z.object({ args: z.array(z.unknown()).optional() });
+          const body = schema.parse(req.body);
+          const args: unknown[] = body.args ?? [];
+          // Fire-and-forget: call all listeners, respond immediately
+          const listeners = this.listeners.get(channel);
+          if (listeners) {
+            listeners.forEach((listener) => listener(null, ...args));
+          }
+          res.json({ success: true });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error(`Error in fire-and-forget handler ${channel}:`, error);
+          res.json({ success: false, error: message });
+        }
+      });
     }
     this.listeners.get(channel)!.push(handler);
   }

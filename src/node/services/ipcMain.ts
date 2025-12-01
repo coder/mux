@@ -1877,13 +1877,13 @@ export class IpcMain {
     });
 
     // Handle terminal input (keyboard, etc.)
-    // Use handle() for both Electron and browser mode
-    ipcMain.handle(IPC_CHANNELS.TERMINAL_INPUT, (_event, sessionId: string, data: string) => {
+    // Use on() instead of handle() for fire-and-forget - reduces input latency
+    ipcMain.on(IPC_CHANNELS.TERMINAL_INPUT, (_event, sessionId: string, data: string) => {
       try {
         this.ptyService.sendInput(sessionId, data);
       } catch (err) {
         log.error(`Error sending input to terminal ${sessionId}:`, err);
-        throw err;
+        // No throw - fire-and-forget doesn't return errors to caller
       }
     });
 

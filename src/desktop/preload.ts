@@ -187,7 +187,9 @@ const api: IPCApi = {
     close: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_CLOSE, sessionId),
     resize: (params) => ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_RESIZE, params),
     sendInput: (sessionId: string, data: string) => {
-      void ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_INPUT, sessionId, data);
+      // Use send() instead of invoke() for fire-and-forget - no need to wait for response
+      // This reduces input latency significantly for fast typing
+      ipcRenderer.send(IPC_CHANNELS.TERMINAL_INPUT, sessionId, data);
     },
     onOutput: (sessionId: string, callback: (data: string) => void) => {
       const channel = `terminal:output:${sessionId}`;
