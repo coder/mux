@@ -57,6 +57,7 @@ import {
 
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { MuxFrontendMetadata } from "@/common/types/message";
+import { MODEL_ABBREVIATION_EXAMPLES } from "@/common/constants/knownModels";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 import { getTokenCountPromise } from "@/browser/utils/tokenizer/rendererClient";
 import { CreationCenterContent } from "./CreationCenterContent";
@@ -933,8 +934,11 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                     <br />
                     <br />
                     <strong>Abbreviations:</strong>
-                    <br />• <code>/model opus</code> - Claude Opus 4.1
-                    <br />• <code>/model sonnet</code> - Claude Sonnet 4.5
+                    {MODEL_ABBREVIATION_EXAMPLES.map((ex) => (
+                      <React.Fragment key={ex.abbrev}>
+                        <br />• <code>/model {ex.abbrev}</code> - {ex.displayName}
+                      </React.Fragment>
+                    ))}
                     <br />
                     <br />
                     <strong>Full format:</strong>
