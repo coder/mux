@@ -2,20 +2,23 @@
 
 Workspaces in mux provide isolated development environments for parallel agent work. Each workspace maintains its own Git state, allowing you to explore different approaches, run multiple tasks simultaneously, or test changes without affecting your main repository.
 
-## Workspace Types
+## Runtimes
 
-mux supports two workspace backends:
+mux supports three [runtime types](./runtime.md):
 
-- **[Local Workspaces](./local.md)**: Use [git worktrees](https://git-scm.com/docs/git-worktree) on your local machine. Worktrees share the `.git` directory with your main repository while maintaining independent working changes.
+- **[Local](./runtime/local.md)**: Run directly in your project directory. No isolation—best for quick edits to your working copy.
 
-- **[SSH Workspaces](./ssh.md)**: Regular git clones on a remote server accessed via SSH. These are completely independent repositories stored on the remote machine.
+- **[Worktree](./runtime/worktree.md)**: Isolated directories using [git worktrees](https://git-scm.com/docs/git-worktree). Worktrees share `.git` with your main repository while maintaining independent working changes.
 
-## Choosing a Backend
+- **[SSH](./runtime/ssh.md)**: Remote execution over SSH. Ideal for heavy workloads, security isolation, or leveraging remote infrastructure.
 
-The workspace backend is selected when you create a workspace:
+## Choosing a Runtime
 
-- **Local**: Best for fast iteration, local testing, and when you want to leverage your local machine's resources
-- **SSH**: Ideal for heavy workloads, long-running tasks, or when you need access to remote infrastructure
+The runtime is selected when you create a workspace:
+
+- **Local**: Quick tasks in your current working copy
+- **Worktree**: Best for parallel agent work with isolation
+- **SSH**: Heavy workloads, security, or remote infrastructure
 
 ## Key Concepts
 

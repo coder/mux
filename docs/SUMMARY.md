@@ -9,8 +9,10 @@
 # Features
 
 - [Workspaces](./workspaces.md)
-  - [Local](./local.md)
-  - [SSH](./ssh.md)
+  - [Runtimes](./runtime.md)
+    - [Local](./runtime/local.md)
+    - [Worktree](./runtime/worktree.md)
+    - [SSH](./runtime/ssh.md)
   - [Forking](./fork.md)
   - [Init Hooks](./init-hooks.md)
 - [VS Code Extension](./vscode-extension.md)

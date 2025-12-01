@@ -564,6 +564,11 @@ const AIViewInner: React.FC<AIViewProps> = ({
                   onEdit={() => void handleEditQueuedMessage()}
                 />
               )}
+              <ConcurrentLocalWarning
+                workspaceId={workspaceId}
+                projectPath={projectPath}
+                runtimeConfig={runtimeConfig}
+              />
             </div>
           </div>
           {!autoScroll && (
@@ -583,11 +588,6 @@ const AIViewInner: React.FC<AIViewProps> = ({
             onCompactClick={handleCompactClick}
           />
         )}
-        <ConcurrentLocalWarning
-          workspaceId={workspaceId}
-          projectPath={projectPath}
-          runtimeConfig={runtimeConfig}
-        />
         <ChatInput
           variant="workspace"
           workspaceId={workspaceId}

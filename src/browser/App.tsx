@@ -559,27 +559,31 @@ function AppInner() {
         <div className="mobile-main-content flex min-w-0 flex-1 flex-col overflow-hidden">
           <div className="mobile-layout flex flex-1 overflow-hidden">
             {selectedWorkspace ? (
-              <ErrorBoundary
-                workspaceInfo={`${selectedWorkspace.projectName}/${selectedWorkspace.namedWorkspacePath?.split("/").pop() ?? selectedWorkspace.workspaceId}`}
-              >
-                <AIView
-                  key={selectedWorkspace.workspaceId}
-                  workspaceId={selectedWorkspace.workspaceId}
-                  projectPath={selectedWorkspace.projectPath}
-                  projectName={selectedWorkspace.projectName}
-                  branch={
-                    selectedWorkspace.namedWorkspacePath?.split("/").pop() ??
-                    selectedWorkspace.workspaceId
-                  }
-                  namedWorkspacePath={selectedWorkspace.namedWorkspacePath ?? ""}
-                  runtimeConfig={
-                    workspaceMetadata.get(selectedWorkspace.workspaceId)?.runtimeConfig
-                  }
-                  incompatibleRuntime={
-                    workspaceMetadata.get(selectedWorkspace.workspaceId)?.incompatibleRuntime
-                  }
-                />
-              </ErrorBoundary>
+              (() => {
+                const currentMetadata = workspaceMetadata.get(selectedWorkspace.workspaceId);
+                // Use metadata.name for workspace name (works for both worktree and local runtimes)
+                // Fallback to path-based derivation for legacy compatibility
+                const workspaceName =
+                  currentMetadata?.name ??
+                  selectedWorkspace.namedWorkspacePath?.split("/").pop() ??
+                  selectedWorkspace.workspaceId;
+                return (
+                  <ErrorBoundary
+                    workspaceInfo={`${selectedWorkspace.projectName}/${workspaceName}`}
+                  >
+                    <AIView
+                      key={selectedWorkspace.workspaceId}
+                      workspaceId={selectedWorkspace.workspaceId}
+                      projectPath={selectedWorkspace.projectPath}
+                      projectName={selectedWorkspace.projectName}
+                      branch={workspaceName}
+                      namedWorkspacePath={selectedWorkspace.namedWorkspacePath ?? ""}
+                      runtimeConfig={currentMetadata?.runtimeConfig}
+                      incompatibleRuntime={currentMetadata?.incompatibleRuntime}
+                    />
+                  </ErrorBoundary>
+                );
+              })()
             ) : creationProjectPath ? (
               (() => {
                 const projectPath = creationProjectPath;

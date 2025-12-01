@@ -472,6 +472,132 @@ describeIntegration("Workspace deletion integration tests", () => {
     }
   );
 
+  // Local project-dir runtime specific tests
+  // These test the new LocalRuntime that uses project directory directly (no worktree isolation)
+  describe("Local project-dir runtime tests", () => {
+    const getLocalProjectDirConfig = (): RuntimeConfig => {
+      // Local project-dir: type "local" without srcBaseDir
+      return { type: "local" };
+    };
+
+    test.concurrent(
+      "should delete only the specified workspace, not all workspaces with same path",
+      async () => {
+        const env = await createTestEnvironment();
+        const tempGitRepo = await createTempGitRepo();
+
+        try {
+          const runtimeConfig = getLocalProjectDirConfig();
+
+          // Create multiple local workspaces for the same project
+          // All will have the same workspacePath (the project directory)
+          const { workspaceId: ws1Id } = await createWorkspaceWithInit(
+            env,
+            tempGitRepo,
+            "local-ws-1",
+            runtimeConfig,
+            true, // waitForInit
+            false // not SSH
+          );
+
+          const { workspaceId: ws2Id } = await createWorkspaceWithInit(
+            env,
+            tempGitRepo,
+            "local-ws-2",
+            runtimeConfig,
+            true,
+            false
+          );
+
+          const { workspaceId: ws3Id } = await createWorkspaceWithInit(
+            env,
+            tempGitRepo,
+            "local-ws-3",
+            runtimeConfig,
+            true,
+            false
+          );
+
+          // Verify all three workspaces exist in config
+          let config = env.config.loadConfigOrDefault();
+          let project = config.projects.get(tempGitRepo);
+          expect(project?.workspaces.length).toBe(3);
+          expect(project?.workspaces.some((w) => w.id === ws1Id)).toBe(true);
+          expect(project?.workspaces.some((w) => w.id === ws2Id)).toBe(true);
+          expect(project?.workspaces.some((w) => w.id === ws3Id)).toBe(true);
+
+          // Delete workspace 2
+          const deleteResult = await env.mockIpcRenderer.invoke(
+            IPC_CHANNELS.WORKSPACE_REMOVE,
+            ws2Id
+          );
+          expect(deleteResult.success).toBe(true);
+
+          // Verify ONLY workspace 2 was removed, workspaces 1 and 3 still exist
+          config = env.config.loadConfigOrDefault();
+          project = config.projects.get(tempGitRepo);
+
+          // BUG: Currently all 3 get deleted because they share the same workspacePath
+          // After fix: Only ws2 should be deleted
+          expect(project?.workspaces.length).toBe(2);
+          expect(project?.workspaces.some((w) => w.id === ws1Id)).toBe(true);
+          expect(project?.workspaces.some((w) => w.id === ws2Id)).toBe(false); // deleted
+          expect(project?.workspaces.some((w) => w.id === ws3Id)).toBe(true);
+
+          // Cleanup remaining workspaces
+          await env.mockIpcRenderer.invoke(IPC_CHANNELS.WORKSPACE_REMOVE, ws1Id);
+          await env.mockIpcRenderer.invoke(IPC_CHANNELS.WORKSPACE_REMOVE, ws3Id);
+        } finally {
+          await cleanupTestEnvironment(env);
+          await cleanupTempGitRepo(tempGitRepo);
+        }
+      },
+      TEST_TIMEOUT_LOCAL_MS
+    );
+
+    test.concurrent(
+      "should not delete project directory when deleting local workspace",
+      async () => {
+        const env = await createTestEnvironment();
+        const tempGitRepo = await createTempGitRepo();
+
+        try {
+          const runtimeConfig = getLocalProjectDirConfig();
+          const { workspaceId } = await createWorkspaceWithInit(
+            env,
+            tempGitRepo,
+            "local-ws-test",
+            runtimeConfig,
+            true,
+            false
+          );
+
+          // Verify workspace exists
+          const existsBefore = await workspaceExists(env, workspaceId);
+          expect(existsBefore).toBe(true);
+
+          // Delete workspace
+          const deleteResult = await env.mockIpcRenderer.invoke(
+            IPC_CHANNELS.WORKSPACE_REMOVE,
+            workspaceId
+          );
+          expect(deleteResult.success).toBe(true);
+
+          // Project directory should still exist (LocalRuntime.deleteWorkspace is a no-op)
+          const projectDirExists = await fs
+            .access(tempGitRepo)
+            .then(() => true)
+            .catch(() => false);
+          expect(projectDirExists).toBe(true);
+        } finally {
+          await cleanupTestEnvironment(env);
+          await cleanupTempGitRepo(tempGitRepo);
+        }
+      },
+      TEST_TIMEOUT_LOCAL_MS
+    );
+  });
+
   // SSH-specific tests (unpushed refs only matter for SSH, not local worktrees which share .git)
   describe("SSH-only tests", () => {
     const getRuntimeConfig = (branchName: string): RuntimeConfig | undefined => {

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useMemo } from "react";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { isLocalProjectRuntime } from "@/common/types/runtime";
@@ -6,19 +6,14 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import { useSyncExternalStore } from "react";
 
 /**
- * Warning shown when a local project-dir workspace has another workspace
+ * Subtle indicator shown when a local project-dir workspace has another workspace
  * for the same project that is currently streaming.
- *
- * This warns users that agents may interfere with each other when
- * working on the same directory without isolation.
  */
 export const ConcurrentLocalWarning: React.FC<{
   workspaceId: string;
   projectPath: string;
   runtimeConfig?: RuntimeConfig;
 }> = (props) => {
-  const [dismissed, setDismissed] = useState(false);
-
   // Only show for local project-dir runtimes (not worktree or SSH)
   const isLocalProject = isLocalProjectRuntime(props.runtimeConfig);
 
@@ -43,15 +38,12 @@ export const ConcurrentLocalWarning: React.FC<{
   }, [isLocalProject, workspaceMetadata, props.workspaceId, props.projectPath]);
 
   // Subscribe to streaming state of other local workspaces
-  // We need to check if any of them have canInterrupt === true
   const streamingWorkspaceName = useSyncExternalStore(
     (listener) => {
-      // Subscribe to all other local workspaces
       const unsubscribers = otherLocalWorkspaceIds.map((id) => store.subscribeKey(id, listener));
       return () => unsubscribers.forEach((unsub) => unsub());
     },
     () => {
-      // Find first streaming workspace
       for (const id of otherLocalWorkspaceIds) {
         try {
           const state = store.getWorkspaceSidebarState(id);
@@ -67,28 +59,14 @@ export const ConcurrentLocalWarning: React.FC<{
     }
   );
 
-  // Don't show if:
-  // - Not a local project-dir runtime
-  // - No other local workspaces are streaming
-  // - User dismissed the warning
-  if (!isLocalProject || !streamingWorkspaceName || dismissed) {
+  if (!isLocalProject || !streamingWorkspaceName) {
     return null;
   }
 
   return (
-    <div className="mx-4 mt-2 mb-1 flex items-center justify-between gap-2 rounded bg-yellow-900/30 px-3 py-1.5 text-xs text-yellow-200">
-      <span>
-        <strong>{streamingWorkspaceName}</strong> is also running in this project. Agents may
-        interfere — consider using only one at a time.
-      </span>
-      <button
-        type="button"
-        onClick={() => setDismissed(true)}
-        className="shrink-0 text-yellow-400 hover:text-yellow-200"
-        title="Dismiss warning"
-      >
-        ✕
-      </button>
+    <div className="text-center text-xs text-yellow-600/80">
+      ⚠ <span className="text-yellow-500">{streamingWorkspaceName}</span> is also running in this
+      project directory — agents may interfere
     </div>
   );
 };

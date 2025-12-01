@@ -33,9 +33,10 @@ Here are some specific use cases we enable:
 
 ## Features
 
-- **Isolated workspaces** with central view on git divergence
-  - **Local**: git worktrees on your local machine ([docs](https://cmux.io/local.html))
-  - **SSH**: regular git clones on a remote server ([docs](https://cmux.io/ssh.html))
+- **Isolated workspaces** with central view on git divergence ([docs](https://cmux.io/runtime.html))
+  - **[Local](https://cmux.io/runtime/local.html)**: run directly in your project directory
+  - **[Worktree](https://cmux.io/runtime/worktree.html)**: git worktrees on your local machine
+  - **[SSH](https://cmux.io/runtime/ssh.html)**: remote execution on a server over SSH
 - **Multi-model** (`sonnet-4-*`, `grok-*`, `gpt-5-*`, `opus-4-*`)
   - Ollama supported for local LLMs ([docs](https://cmux.io/models.html#ollama-local))
   - OpenRouter supported for long-tail of LLMs ([docs](https://cmux.io/models.html#openrouter-cloud))

@@ -1512,7 +1512,7 @@ export class IpcMain {
         log.info(`Workspace ${workspaceId} metadata exists but not found in config`);
         return { success: true }; // Consider it already removed
       }
-      const { projectPath, workspacePath } = workspace;
+      const { projectPath, workspacePath: _workspacePath } = workspace;
 
       // Create runtime instance for this workspace
       // For local runtimes, workdir should be srcDir, not the individual workspace path
@@ -1538,12 +1538,14 @@ export class IpcMain {
       // Delete workspace metadata (fire and forget)
       void this.extensionMetadata.deleteWorkspace(workspaceId);
 
-      // Update config to remove the workspace from all projects
+      // Update config to remove the workspace by ID
+      // NOTE: Filter by ID, not path. For local project-dir runtimes, multiple workspaces
+      // share the same path (the project directory), so filtering by path would delete them all.
       const projectsConfig = this.config.loadConfigOrDefault();
       let configUpdated = false;
       for (const [_projectPath, projectConfig] of projectsConfig.projects.entries()) {
         const initialCount = projectConfig.workspaces.length;
-        projectConfig.workspaces = projectConfig.workspaces.filter((w) => w.path !== workspacePath);
+        projectConfig.workspaces = projectConfig.workspaces.filter((w) => w.id !== workspaceId);
         if (projectConfig.workspaces.length < initialCount) {
           configUpdated = true;
         }

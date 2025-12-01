@@ -85,5 +85,5 @@ repository.
 ## Related
 
 - [Workspaces Overview](./workspaces.md)
-- [SSH Workspaces](./ssh.md)
+- [SSH Runtime](./runtime/ssh.md)
 - [VS Code Remote-SSH Documentation](https://code.visualstudio.com/docs/remote/ssh)

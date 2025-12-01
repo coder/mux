@@ -1,17 +1,17 @@
-# SSH Workspaces
+# SSH Runtime
 
 mux supports using remote hosts over SSH for workspaces. When configured, all tool operations will
 execute over SSH and the agent is securely isolated from your local machine.
 
-Our security architecture considers the remote machine potentially hostile. No keys or credentials are implicitly transferred there—just the git archive and [Project Secrets](./project-secrets.md).
+Our security architecture considers the remote machine potentially hostile. No keys or credentials are implicitly transferred there—just the git archive and [Project Secrets](../project-secrets.md).
 
 We highly recommend using SSH workspaces for an optimal experience:
 
 - **Security**: Prompt injection risk is contained to the credentials / files on the remote machine.
-  - SSH remotes pair nicely with [agentic git identities](./agentic-git-identity.md)
+  - SSH remotes pair nicely with [agentic git identities](../agentic-git-identity.md)
 - **Performance**: Run many, many agents in parallel while maintaining good battery life and UI performance
 
-![ssh workspaces](./img/new-workspace-ssh.webp)
+![ssh workspaces](../img/new-workspace-ssh.webp)
 
 The Host can be:
 
