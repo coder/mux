@@ -8,7 +8,7 @@ import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { supports1MContext } from "@/common/utils/ai/models";
 import { TOKEN_COMPONENT_COLORS } from "@/common/utils/tokens/tokenMeterUtils";
 import { ConsumerBreakdown } from "./ConsumerBreakdown";
-import { ThresholdSlider } from "./ThresholdSlider";
+import { HorizontalThresholdSlider } from "./ThresholdSlider";
 import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
 
 // Format token display - show k for thousands with 1 decimal
@@ -234,14 +234,13 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                         )}
                         {/* Threshold slider overlay - inside bar for proper positioning */}
                         {maxTokens && (
-                          <ThresholdSlider
+                          <HorizontalThresholdSlider
                             config={{
                               enabled: autoCompactEnabled,
                               threshold: autoCompactThreshold,
                               setEnabled: setAutoCompactEnabled,
                               setThreshold: setAutoCompactThreshold,
                             }}
-                            orientation="horizontal"
                           />
                         )}
                       </div>
