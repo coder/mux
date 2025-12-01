@@ -210,6 +210,13 @@ const api: IPCApi = {
     closeWindow: (workspaceId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_WINDOW_CLOSE, workspaceId),
   },
+  menu: {
+    onOpenSettings: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on(IPC_CHANNELS.MENU_OPEN_SETTINGS, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.MENU_OPEN_SETTINGS, handler);
+    },
+  },
 };
 
 // Expose the API along with platform/versions

@@ -50,6 +50,9 @@ export const IPC_CHANNELS = {
   // Window channels
   WINDOW_SET_TITLE: "window:setTitle",
 
+  // Menu channels (main -> renderer)
+  MENU_OPEN_SETTINGS: "menu:openSettings",
+
   // Debug channels (for testing only)
   DEBUG_TRIGGER_STREAM_ERROR: "debug:triggerStreamError",
 

@@ -187,6 +187,16 @@ function createMenu() {
       submenu: [
         { role: "about" },
         { type: "separator" },
+        {
+          label: "Settings...",
+          accelerator: "Cmd+,",
+          click: () => {
+            if (mainWindow) {
+              mainWindow.webContents.send(IPC_CHANNELS.MENU_OPEN_SETTINGS);
+            }
+          },
+        },
+        { type: "separator" },
         { role: "services", submenu: [] },
         { type: "separator" },
         { role: "hide" },

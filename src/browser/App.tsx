@@ -479,6 +479,14 @@ function AppInner() {
     openSettings,
   ]);
 
+  // Subscribe to menu bar "Open Settings" (macOS Cmd+, from app menu)
+  useEffect(() => {
+    const unsubscribe = window.api.menu?.onOpenSettings(() => {
+      openSettings();
+    });
+    return () => unsubscribe?.();
+  }, [openSettings]);
+
   // Handle workspace fork switch event
   useEffect(() => {
     const handleForkSwitch = (e: Event) => {
