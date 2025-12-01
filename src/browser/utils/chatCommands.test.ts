@@ -13,14 +13,21 @@ beforeEach(() => {
 describe("parseRuntimeString", () => {
   const workspaceName = "test-workspace";
 
-  test("returns undefined for undefined runtime (default to local)", () => {
+  test("returns undefined for undefined runtime (default to worktree)", () => {
     expect(parseRuntimeString(undefined, workspaceName)).toBeUndefined();
   });
 
-  test("returns undefined for explicit 'local' runtime", () => {
-    expect(parseRuntimeString("local", workspaceName)).toBeUndefined();
-    expect(parseRuntimeString("LOCAL", workspaceName)).toBeUndefined();
-    expect(parseRuntimeString(" local ", workspaceName)).toBeUndefined();
+  test("returns undefined for explicit 'worktree' runtime", () => {
+    expect(parseRuntimeString("worktree", workspaceName)).toBeUndefined();
+    expect(parseRuntimeString("WORKTREE", workspaceName)).toBeUndefined();
+    expect(parseRuntimeString(" worktree ", workspaceName)).toBeUndefined();
+  });
+
+  test("returns local config for explicit 'local' runtime", () => {
+    // "local" now returns project-dir runtime config (no srcBaseDir)
+    expect(parseRuntimeString("local", workspaceName)).toEqual({ type: "local" });
+    expect(parseRuntimeString("LOCAL", workspaceName)).toEqual({ type: "local" });
+    expect(parseRuntimeString(" local ", workspaceName)).toEqual({ type: "local" });
   });
 
   test("parses valid SSH runtime", () => {
@@ -87,10 +94,10 @@ describe("parseRuntimeString", () => {
 
   test("throws error for unknown runtime type", () => {
     expect(() => parseRuntimeString("docker", workspaceName)).toThrow(
-      "Unknown runtime type: 'docker'"
+      "Unknown runtime type: 'docker'. Use 'ssh <host>', 'worktree', or 'local'"
     );
     expect(() => parseRuntimeString("remote", workspaceName)).toThrow(
-      "Unknown runtime type: 'remote'"
+      "Unknown runtime type: 'remote'. Use 'ssh <host>', 'worktree', or 'local'"
     );
   });
 });

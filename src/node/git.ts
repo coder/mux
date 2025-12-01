@@ -84,7 +84,8 @@ export async function createWorktree(
     const dirName = options.directoryName ?? branchName;
     // Compute workspace path using Runtime (single source of truth)
     const runtime = createRuntime(
-      options.runtimeConfig ?? { type: "local", srcBaseDir: config.srcDir }
+      options.runtimeConfig ?? { type: "local", srcBaseDir: config.srcDir },
+      { projectPath }
     );
     const workspacePath = runtime.getWorkspacePath(projectPath, dirName);
     const { trunkBranch } = options;

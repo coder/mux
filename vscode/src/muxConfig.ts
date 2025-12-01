@@ -58,6 +58,6 @@ export async function getAllWorkspaces(): Promise<WorkspaceWithContext[]> {
  * Uses Runtime to compute path using main app's logic
  */
 export function getWorkspacePath(workspace: WorkspaceWithContext): string {
-  const runtime = createRuntime(workspace.runtimeConfig);
+  const runtime = createRuntime(workspace.runtimeConfig, { projectPath: workspace.projectPath });
   return runtime.getWorkspacePath(workspace.projectPath, workspace.name);
 }

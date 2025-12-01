@@ -1,7 +1,9 @@
 import type { Runtime } from "./Runtime";
 import { LocalRuntime } from "./LocalRuntime";
+import { WorktreeRuntime } from "./WorktreeRuntime";
 import { SSHRuntime } from "./SSHRuntime";
 import type { RuntimeConfig } from "@/common/types/runtime";
+import { isLocalProjectRuntime } from "@/common/types/runtime";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 
 // Re-export for backward compatibility with existing imports
@@ -19,9 +21,26 @@ export class IncompatibleRuntimeError extends Error {
 }
 
 /**
- * Create a Runtime instance based on the configuration
+ * Options for creating a runtime.
  */
-export function createRuntime(config: RuntimeConfig): Runtime {
+export interface CreateRuntimeOptions {
+  /**
+   * Project path - required for project-dir local runtimes (type: "local" without srcBaseDir).
+   * For other runtime types, this is optional and used only for getWorkspacePath calculations.
+   */
+  projectPath?: string;
+}
+
+/**
+ * Create a Runtime instance based on the configuration.
+ *
+ * Handles three runtime types:
+ * - "local" without srcBaseDir: Project-dir runtime (no isolation) - requires projectPath in options
+ * - "local" with srcBaseDir: Legacy worktree config (backward compat)
+ * - "worktree": Explicit worktree runtime
+ * - "ssh": Remote SSH runtime
+ */
+export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOptions): Runtime {
   // Check for incompatible configs from newer versions
   if (isIncompatibleRuntimeConfig(config)) {
     throw new IncompatibleRuntimeError(
@@ -32,7 +51,22 @@ export function createRuntime(config: RuntimeConfig): Runtime {
 
   switch (config.type) {
     case "local":
-      return new LocalRuntime(config.srcBaseDir);
+      // Check if this is legacy "local" with srcBaseDir (= worktree semantics)
+      // or new "local" without srcBaseDir (= project-dir semantics)
+      if (isLocalProjectRuntime(config)) {
+        // Project-dir: uses project path directly, no isolation
+        if (!options?.projectPath) {
+          throw new Error(
+            "LocalRuntime requires projectPath in options for project-dir config (type: 'local' without srcBaseDir)"
+          );
+        }
+        return new LocalRuntime(options.projectPath);
+      }
+      // Legacy: "local" with srcBaseDir is treated as worktree
+      return new WorktreeRuntime(config.srcBaseDir);
+
+    case "worktree":
+      return new WorktreeRuntime(config.srcBaseDir);
 
     case "ssh":
       return new SSHRuntime({
@@ -47,4 +81,11 @@ export function createRuntime(config: RuntimeConfig): Runtime {
       throw new Error(`Unknown runtime type: ${unknownConfig.type ?? "undefined"}`);
     }
   }
+}
+
+/**
+ * Helper to check if a runtime config requires projectPath for createRuntime.
+ */
+export function runtimeRequiresProjectPath(config: RuntimeConfig): boolean {
+  return isLocalProjectRuntime(config);
 }

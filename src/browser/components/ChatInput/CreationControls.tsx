@@ -15,14 +15,18 @@ interface CreationControlsProps {
 
 /**
  * Additional controls shown only during workspace creation
- * - Trunk branch selector (which branch to fork from)
- * - Runtime mode (local vs SSH)
+ * - Trunk branch selector (which branch to fork from) - hidden for Local runtime
+ * - Runtime mode (Local, Worktree, SSH)
  */
 export function CreationControls(props: CreationControlsProps) {
+  // Local runtime doesn't need a trunk branch selector (uses project dir as-is)
+  const showTrunkBranchSelector =
+    props.branches.length > 0 && props.runtimeMode !== RUNTIME_MODE.LOCAL;
+
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-      {/* Trunk Branch Selector */}
-      {props.branches.length > 0 && (
+      {/* Trunk Branch Selector - hidden for Local runtime */}
+      {showTrunkBranchSelector && (
         <div
           className="flex items-center gap-1"
           data-component="TrunkBranchGroup"
@@ -53,11 +57,13 @@ export function CreationControls(props: CreationControlsProps) {
           value={props.runtimeMode}
           options={[
             { value: RUNTIME_MODE.LOCAL, label: "Local" },
+            { value: RUNTIME_MODE.WORKTREE, label: "Worktree" },
             { value: RUNTIME_MODE.SSH, label: "SSH" },
           ]}
           onChange={(newMode) => {
             const mode = newMode as RuntimeMode;
-            props.onRuntimeChange(mode, mode === RUNTIME_MODE.LOCAL ? "" : props.sshHost);
+            // Clear SSH host when switching away from SSH
+            props.onRuntimeChange(mode, mode === RUNTIME_MODE.SSH ? props.sshHost : "");
           }}
           disabled={props.disabled}
           aria-label="Runtime mode"
@@ -77,8 +83,10 @@ export function CreationControls(props: CreationControlsProps) {
           <Tooltip className="tooltip" align="center" width="wide">
             <strong>Runtime:</strong>
             <br />
-            • Local: git worktree in ~/.mux/src
-            <br />• SSH: remote clone in ~/mux on SSH host
+            • Local: work directly in project directory (no isolation)
+            <br />
+            • Worktree: git worktree in ~/.mux/src (isolated)
+            <br />• SSH: remote clone on SSH host
           </Tooltip>
         </TooltipWrapper>
       </div>

@@ -7,12 +7,13 @@ import { realpathSync } from "fs";
 import * as os from "os";
 import * as path from "path";
 import type { Runtime } from "@/node/runtime/Runtime";
-import { LocalRuntime } from "@/node/runtime/LocalRuntime";
+import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
 import { SSHRuntime } from "@/node/runtime/SSHRuntime";
 import type { SSHServerConfig } from "./ssh-fixture";
 
 /**
  * Runtime type for test matrix
+ * Note: "local" here means worktree runtime (isolated git worktrees), not project-dir runtime
  */
 export type RuntimeType = "local" | "ssh";
 
@@ -27,8 +28,9 @@ export function createTestRuntime(
   switch (type) {
     case "local":
       // Resolve symlinks (e.g., /tmp -> /private/tmp on macOS) to match git worktree paths
+      // Note: "local" in tests means WorktreeRuntime (isolated git worktrees)
       const resolvedWorkdir = realpathSync(workdir);
-      return new LocalRuntime(resolvedWorkdir);
+      return new WorktreeRuntime(resolvedWorkdir);
     case "ssh":
       if (!sshConfig) {
         throw new Error("SSH config required for SSH runtime");

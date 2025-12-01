@@ -404,22 +404,30 @@ async function handleForkCommand(
  * Parse runtime string from -r flag into RuntimeConfig for backend
  * Supports formats:
  * - "ssh <host>" or "ssh <user@host>" -> SSH runtime
- * - "local" -> Local runtime (explicit)
- * - undefined -> Local runtime (default)
+ * - "worktree" -> Worktree runtime (git worktrees)
+ * - "local" -> Local runtime (project-dir, no isolation)
+ * - undefined -> Worktree runtime (default)
  */
 export function parseRuntimeString(
   runtime: string | undefined,
   _workspaceName: string
 ): RuntimeConfig | undefined {
   if (!runtime) {
-    return undefined; // Default to local (backend decides)
+    return undefined; // Default to worktree (backend decides)
   }
 
   const trimmed = runtime.trim();
   const lowerTrimmed = trimmed.toLowerCase();
 
+  // Worktree runtime (explicit or default)
+  if (lowerTrimmed === RUNTIME_MODE.WORKTREE) {
+    return undefined; // Explicit worktree - let backend use default
+  }
+
+  // Local runtime (project-dir, no isolation)
   if (lowerTrimmed === RUNTIME_MODE.LOCAL) {
-    return undefined; // Explicit local - let backend use default
+    // Return "local" type without srcBaseDir to indicate project-dir runtime
+    return { type: RUNTIME_MODE.LOCAL };
   }
 
   // Parse "ssh <host>" or "ssh <user@host>" format
@@ -439,7 +447,7 @@ export function parseRuntimeString(
     };
   }
 
-  throw new Error(`Unknown runtime type: '${runtime}'. Use 'ssh <host>' or 'local'`);
+  throw new Error(`Unknown runtime type: '${runtime}'. Use 'ssh <host>', 'worktree', or 'local'`);
 }
 
 export interface CreateWorkspaceOptions {
