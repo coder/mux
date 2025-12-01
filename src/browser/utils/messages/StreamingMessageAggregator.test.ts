@@ -1,6 +1,6 @@
 import { createMuxMessage } from "@/common/types/message";
 import type { BashToolResult } from "@/common/types/tools";
-import type { DeleteMessage } from "@/common/orpc/types";
+import type { DeleteMessage } from "@/common/types/ipc";
 import { describe, test, expect } from "bun:test";
 import { StreamingMessageAggregator } from "./StreamingMessageAggregator";
 

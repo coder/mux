@@ -39,6 +39,8 @@ import { InitStateManager } from "@/node/services/initStateManager";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { isSSHRuntime } from "@/common/types/runtime";
+import { listScripts } from "@/utils/scripts/discovery";
+import { runWorkspaceScript } from "@/node/services/scriptRunner";
 import { validateProjectPath } from "@/node/utils/pathUtils";
 import { PTYService } from "@/node/services/ptyService";
 import type { TerminalWindowManager } from "@/desktop/terminalWindowManager";
@@ -1425,6 +1427,75 @@ export class IpcMain {
         log.error(`Failed to open terminal: ${message}`);
       }
     });
+
+    // Scripts IPC handlers
+    ipcMain.handle(
+      IPC_CHANNELS.WORKSPACE_LIST_SCRIPTS,
+      async (_event, workspaceId: string) => {
+        try {
+          const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+          if (!metadataResult.success) {
+            return Err(`Failed to get workspace metadata: ${metadataResult.error}`);
+          }
+
+          const metadata = metadataResult.data;
+          const runtimeConfig = metadata.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG;
+          const runtime = createRuntime(runtimeConfig);
+          const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+
+          const scripts = await listScripts(runtime, workspacePath);
+          return Ok(scripts);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return Err(`Failed to list scripts: ${message}`);
+        }
+      }
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.WORKSPACE_EXECUTE_SCRIPT,
+      async (
+        _event,
+        workspaceId: string,
+        scriptName: string,
+        args?: string[]
+      ) => {
+        try {
+          const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+          if (!metadataResult.success) {
+            return Err(`Failed to get workspace metadata: ${metadataResult.error}`);
+          }
+
+          const metadata = metadataResult.data;
+          const runtimeConfig = metadata.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG;
+          const runtime = createRuntime(runtimeConfig);
+          const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+
+          // Load project secrets
+          const projectSecrets = this.config.getProjectSecrets(metadata.projectPath);
+
+          const result = await runWorkspaceScript(
+            runtime,
+            workspacePath,
+            scriptName,
+            args ?? [],
+            {
+              secrets: secretsToRecord(projectSecrets),
+              timeoutSecs: 300,
+            }
+          );
+
+          if (!result.success) {
+            return Err(result.error);
+          }
+
+          return Ok(result.data.toolResult);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return Err(`Failed to execute script: ${message}`);
+        }
+      }
+    );
 
     // Debug IPC - only for testing
     ipcMain.handle(

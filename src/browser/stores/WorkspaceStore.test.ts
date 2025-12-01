@@ -1,5 +1,5 @@
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { WorkspaceChatMessage } from "@/common/orpc/types";
+import type { WorkspaceChatMessage } from "@/common/types/ipc";
 import { createMuxMessage } from "@/common/types/message";
 import type { BashToolResult } from "@/common/types/tools";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
@@ -43,14 +43,8 @@ global.window = mockWindow as unknown as Window & typeof globalThis;
 // Mock dispatchEvent
 global.window.dispatchEvent = jest.fn();
 
-// Helper to get IPC callback in a type-safe way
-function getOnChatCallback<T = { type: string }>(): (data: T) => void {
-  const mock = mockWindow.api.workspace.onChat as jest.Mock<
-    () => void,
-    [string, (data: T) => void]
-  >;
-  return mock.mock.calls[0][1];
-}
+// Reference to mock for easier access
+const mockOnChat = mockWindow.api.workspace.onChat as jest.Mock;
 
 // Helper to create and add a workspace
 function createAndAddWorkspace(
@@ -72,36 +66,24 @@ function createAndAddWorkspace(
 }
 
 // Helper to get callback from mock for pushing messages
-let pendingMessages: WorkspaceChatMessage[] = [];
-let resolvers: Array<(msg: WorkspaceChatMessage) => void> = [];
 
-function getOnChatCallback<T extends WorkspaceChatMessage>(): (msg: T) => void {
-  return (msg: T) => {
-    if (resolvers.length > 0) {
-      const resolver = resolvers.shift()!;
-      resolver(msg);
-    } else {
-      pendingMessages.push(msg);
-    }
-  };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getOnChatCallback<T = any>(): (msg: T) => void {
+  if (!currentChatCallback) {
+    throw new Error("No chat callback registered - was addWorkspace called?");
+  }
+  return currentChatCallback as (msg: T) => void;
 }
 
-// Set up mock to use push-based message queue
-mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-  WorkspaceChatMessage,
-  void,
-  unknown
-> {
-  while (true) {
-    if (pendingMessages.length > 0) {
-      yield pendingMessages.shift()!;
-    } else {
-      const msg = await new Promise<WorkspaceChatMessage>((resolve) => {
-        resolvers.push(resolve);
-      });
-      yield msg;
-    }
-  }
+// Track current chat callback for tests to push messages
+let currentChatCallback: ((msg: WorkspaceChatMessage) => void) | null = null;
+
+// Set up mock to capture the callback and allow tests to push messages
+mockOnChat.mockImplementation((_workspaceId: string, callback: (msg: WorkspaceChatMessage) => void) => {
+  currentChatCallback = callback;
+  return () => {
+    currentChatCallback = null;
+  };
 });
 
 describe("WorkspaceStore", () => {
@@ -112,8 +94,7 @@ describe("WorkspaceStore", () => {
     jest.clearAllMocks();
     mockExecuteBash.mockClear();
     mockOnChat.mockClear();
-    pendingMessages = [];
-    resolvers = [];
+    currentChatCallback = null;
     mockOnModelUsed = jest.fn();
     store = new WorkspaceStore(mockOnModelUsed);
   });
@@ -279,16 +260,15 @@ describe("WorkspaceStore", () => {
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
       };
 
-      // Add workspace
+      // Add workspace - this will set currentChatCallback
       store.addWorkspace(metadata1);
-      const unsubscribeSpy = jest.fn();
-      (mockWindow.api.workspace.onChat as jest.Mock).mockReturnValue(unsubscribeSpy);
 
       // Sync with empty map (removes all workspaces)
+      // This should unsubscribe from the workspace
       store.syncWorkspaces(new Map());
 
-      // Note: The unsubscribe function from the first add won't be captured
-      // since we mocked it before. In real usage, this would be called.
+      // Verify workspace was removed by checking states
+      expect(store.getAllStates().size).toBe(0);
     });
   });
 

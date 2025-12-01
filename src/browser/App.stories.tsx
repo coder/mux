@@ -85,6 +85,12 @@ function setupMockAPI(options: {
           success: true,
           data: { success: true, output: "", exitCode: 0, wall_duration_ms: 0 },
         }),
+      listScripts: () => Promise.resolve({ success: true, data: [] }),
+      executeScript: () =>
+        Promise.resolve({
+          success: true,
+          data: { success: true, output: "", exitCode: 0, wall_duration_ms: 0 },
+        }),
     },
     projects: {
       list: () => Promise.resolve(Array.from(mockProjects.entries())),
@@ -1255,6 +1261,12 @@ main
                   data: { success: true, output: "", exitCode: 0, wall_duration_ms: 0 },
                 });
               },
+              listScripts: () => Promise.resolve({ success: true, data: [] }),
+              executeScript: () =>
+                Promise.resolve({
+                  success: true,
+                  data: { success: true, output: "", exitCode: 0, wall_duration_ms: 0 },
+                }),
             },
           },
         });
@@ -1459,6 +1471,12 @@ These tables should render cleanly without any disruptive copy or download actio
               replaceChatHistory: () => Promise.resolve({ success: true, data: undefined }),
               getInfo: () => Promise.resolve(null),
               executeBash: () =>
+                Promise.resolve({
+                  success: true,
+                  data: { success: true, output: "", exitCode: 0, wall_duration_ms: 0 },
+                }),
+              listScripts: () => Promise.resolve({ success: true, data: [] }),
+              executeScript: () =>
                 Promise.resolve({
                   success: true,
                   data: { success: true, output: "", exitCode: 0, wall_duration_ms: 0 },

@@ -1,4 +1,5 @@
 import type { Result } from "./result";
+import type { ScriptInfo } from "@/utils/scripts/discovery";
 import type {
   FrontendWorkspaceMetadata,
   WorkspaceMetadata,
@@ -338,6 +339,12 @@ export interface IPCApi {
       }
     ): Promise<Result<BashToolResult, string>>;
     openTerminal(workspacePath: string): Promise<void>;
+    listScripts(workspaceId: string): Promise<Result<ScriptInfo[], string>>;
+    executeScript(
+      workspaceId: string,
+      scriptName: string,
+      args?: string[]
+    ): Promise<Result<BashToolResult, string>>;
 
     // Event subscriptions (renderer-only)
     // These methods are designed to send current state immediately upon subscription,
