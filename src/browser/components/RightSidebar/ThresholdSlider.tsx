@@ -109,7 +109,14 @@ export const HorizontalThresholdSlider: React.FC<HorizontalThresholdSliderProps>
   return (
     <div
       ref={containerRef}
-      className="absolute inset-0 z-10 cursor-ew-resize"
+      className="absolute z-10 cursor-ew-resize"
+      style={{
+        // Extend hit area beyond the thin bar for easier clicking
+        left: 0,
+        right: 0,
+        top: -8,
+        bottom: -8,
+      }}
       onMouseDown={handleMouseDown}
       title={title}
     >
