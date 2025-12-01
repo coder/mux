@@ -125,16 +125,34 @@ function wrapFetchWithAnthropicCacheControl(baseFetch: typeof fetch): typeof fet
 
       // Inject cache_control on last message's last content part
       // This caches the entire conversation
-      if (Array.isArray(json.messages) && json.messages.length >= 1) {
-        const lastMsg = json.messages[json.messages.length - 1] as Record<string, unknown>;
-        const content = lastMsg.content;
+      // Handle both formats:
+      // - Direct Anthropic provider: json.messages (Anthropic API format)
+      // - Gateway provider: json.prompt (AI SDK internal format)
+      const messages = Array.isArray(json.messages)
+        ? json.messages
+        : Array.isArray(json.prompt)
+          ? json.prompt
+          : null;
 
+      if (messages && messages.length >= 1) {
+        const lastMsg = messages[messages.length - 1] as Record<string, unknown>;
+
+        // For gateway: add providerOptions.anthropic.cacheControl at message level
+        // (gateway validates schema strictly, doesn't allow raw cache_control on messages)
+        if (Array.isArray(json.prompt)) {
+          const providerOpts = (lastMsg.providerOptions ?? {}) as Record<string, unknown>;
+          const anthropicOpts = (providerOpts.anthropic ?? {}) as Record<string, unknown>;
+          anthropicOpts.cacheControl ??= { type: "ephemeral" };
+          providerOpts.anthropic = anthropicOpts;
+          lastMsg.providerOptions = providerOpts;
+        }
+
+        // For direct Anthropic: add cache_control to last content part
+        const content = lastMsg.content;
         if (Array.isArray(content) && content.length > 0) {
-          // Array content: add cache_control to last part
           const lastPart = content[content.length - 1] as Record<string, unknown>;
           lastPart.cache_control ??= { type: "ephemeral" };
         }
-        // Note: String content messages are rare after SDK conversion; skip for now
       }
 
       // Update body with modified JSON
