@@ -68,10 +68,8 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
   const contextUsage = usage.liveUsage ?? usage.usageHistory[usage.usageHistory.length - 1];
   const currentModel = contextUsage?.model ?? null;
 
-  // Auto-compaction settings: enabled per-workspace, threshold per-model
+  // Auto-compaction settings: threshold per-model (100 = disabled)
   const {
-    enabled: autoCompactEnabled,
-    setEnabled: setAutoCompactEnabled,
     threshold: autoCompactThreshold,
     setThreshold: setAutoCompactThreshold,
   } = useAutoCompactionSettings(workspaceId, currentModel);
@@ -193,6 +191,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                       <div className="bg-border-light relative flex h-1.5 w-full overflow-visible rounded-[3px]">
                         {cachedPercentage > 0 && (
                           <div
+                            key="cached"
                             className="h-full transition-[width] duration-300"
                             style={{
                               width: `${cachedPercentage}%`,
@@ -202,6 +201,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                         )}
                         {cacheCreatePercentage > 0 && (
                           <div
+                            key="cacheCreate"
                             className="h-full transition-[width] duration-300"
                             style={{
                               width: `${cacheCreatePercentage}%`,
@@ -210,6 +210,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                           />
                         )}
                         <div
+                          key="input"
                           className="h-full transition-[width] duration-300"
                           style={{
                             width: `${inputPercentage}%`,
@@ -217,6 +218,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                           }}
                         />
                         <div
+                          key="output"
                           className="h-full transition-[width] duration-300"
                           style={{
                             width: `${outputPercentage}%`,
@@ -225,6 +227,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                         />
                         {reasoningPercentage > 0 && (
                           <div
+                            key="reasoning"
                             className="h-full transition-[width] duration-300"
                             style={{
                               width: `${reasoningPercentage}%`,
@@ -235,10 +238,9 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                         {/* Threshold slider overlay - inside bar for proper positioning */}
                         {maxTokens && (
                           <HorizontalThresholdSlider
+                            key="slider"
                             config={{
-                              enabled: autoCompactEnabled,
                               threshold: autoCompactThreshold,
-                              setEnabled: setAutoCompactEnabled,
                               setThreshold: setAutoCompactThreshold,
                             }}
                           />

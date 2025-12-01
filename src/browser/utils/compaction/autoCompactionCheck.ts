@@ -56,8 +56,7 @@ const WARNING_ADVANCE_PERCENT = 10;
  * @param usage - Current workspace usage state (from useWorkspaceUsage)
  * @param model - Current model string (optional - returns safe default if not provided)
  * @param use1M - Whether 1M context is enabled
- * @param enabled - Whether auto-compaction is enabled for this workspace
- * @param threshold - Usage percentage threshold (0.0-1.0, default 0.7 = 70%)
+ * @param threshold - Usage percentage threshold (0.0-1.0, default 0.7 = 70%). If >= 1.0, auto-compaction is considered disabled.
  * @param warningAdvancePercent - Show warning this many percentage points before threshold (default 10)
  * @returns Check result with warning flag and usage percentage
  */
@@ -65,14 +64,14 @@ export function checkAutoCompaction(
   usage: WorkspaceUsageState | undefined,
   model: string | null,
   use1M: boolean,
-  enabled: boolean,
   threshold: number = DEFAULT_AUTO_COMPACTION_THRESHOLD,
   warningAdvancePercent: number = WARNING_ADVANCE_PERCENT
 ): AutoCompactionCheckResult {
   const thresholdPercentage = threshold * 100;
+  const isEnabled = threshold < 1.0;
 
   // Short-circuit if auto-compaction is disabled or missing required data
-  if (!enabled || !model || !usage) {
+  if (!isEnabled || !model || !usage) {
     return {
       shouldShowWarning: false,
       shouldForceCompact: false,

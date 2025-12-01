@@ -91,7 +91,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const pendingSendOptions = useSendMessageOptions(workspaceId);
   const pendingModel = pendingSendOptions.model;
 
-  const { enabled: autoCompactionEnabled, threshold: autoCompactionThreshold } =
+  const { threshold: autoCompactionThreshold } =
     useAutoCompactionSettings(workspaceId, pendingModel);
   const handledModelErrorsRef = useRef<Set<string>>(new Set());
 
@@ -138,7 +138,6 @@ const AIViewInner: React.FC<AIViewProps> = ({
     workspaceUsage,
     pendingModel,
     use1M,
-    autoCompactionEnabled,
     autoCompactionThreshold / 100
   );
 

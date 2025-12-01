@@ -7,9 +7,7 @@ import {
 // ----- Types -----
 
 export interface AutoCompactionConfig {
-  enabled: boolean;
   threshold: number;
-  setEnabled: (enabled: boolean) => void;
   setThreshold: (threshold: number) => void;
 }
 
@@ -38,7 +36,10 @@ export const HorizontalThresholdSlider: React.FC<HorizontalThresholdSliderProps>
   const [dragValue, setDragValue] = useState<number | null>(null);
 
   // Current display position
-  const position = dragValue ?? (config.enabled ? config.threshold : DISABLE_THRESHOLD);
+  const position = dragValue ?? config.threshold;
+
+  // Derive enabled state from threshold
+  const isEnabled = config.threshold < DISABLE_THRESHOLD;
 
   const calculatePercentage = useCallback(
     (clientX: number): number => {
@@ -47,6 +48,7 @@ export const HorizontalThresholdSlider: React.FC<HorizontalThresholdSliderProps>
 
       const rect = container.getBoundingClientRect();
       const raw = ((clientX - rect.left) / rect.width) * 100;
+      // Allow dragging up to 100 (disabled state)
       const clamped = Math.max(AUTO_COMPACTION_THRESHOLD_MIN, Math.min(100, raw));
       return Math.round(clamped / 5) * 5;
     },
@@ -56,9 +58,10 @@ export const HorizontalThresholdSlider: React.FC<HorizontalThresholdSliderProps>
   const applyThreshold = useCallback(
     (percentage: number) => {
       if (percentage >= DISABLE_THRESHOLD) {
-        config.setEnabled(false);
+        // Set to 100 to disable
+        config.setThreshold(100);
       } else {
-        if (!config.enabled) config.setEnabled(true);
+        // Clamp to max allowed active threshold (e.g. 90%)
         config.setThreshold(Math.min(percentage, AUTO_COMPACTION_THRESHOLD_MAX));
       }
     },
@@ -99,11 +102,11 @@ export const HorizontalThresholdSlider: React.FC<HorizontalThresholdSliderProps>
     ? dragValue !== null && dragValue >= DISABLE_THRESHOLD
       ? "Release to disable auto-compact"
       : `Auto-compact at ${dragValue}%`
-    : config.enabled
+    : isEnabled
     ? `Auto-compact at ${config.threshold}% · Drag to adjust`
     : "Auto-compact disabled · Drag left to enable";
 
-  const lineColor = config.enabled
+  const lineColor = isEnabled
     ? "var(--color-plan-mode)"
     : "var(--color-muted)";
   const opacity = isDragging ? 1 : 0.8;
@@ -124,6 +127,7 @@ export const HorizontalThresholdSlider: React.FC<HorizontalThresholdSliderProps>
           right: 0,
           pointerEvents: "auto", // Re-enable pointer events for the hit area
           zIndex: 20,
+          backgroundColor: "rgba(0,0,0,0)", // Ensure hit area captures events even if transparent
         }}
         onMouseDown={handleMouseDown}
         title={title}

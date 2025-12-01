@@ -138,10 +138,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const lastUsage = usage?.liveUsage ?? usage?.usageHistory[usage.usageHistory.length - 1];
   const model = lastUsage?.model ?? null;
 
-  // Auto-compaction settings: enabled per-workspace, threshold per-model
+  // Auto-compaction settings: threshold per-model
   const {
-    enabled: autoCompactEnabled,
-    setEnabled: setAutoCompactEnabled,
     threshold: autoCompactThreshold,
     setThreshold: setAutoCompactThreshold,
   } = useAutoCompactionSettings(workspaceId, model);
@@ -194,12 +192,10 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const showMeter = showCollapsed || selectedTab === "review";
   const autoCompactionProps = React.useMemo(
     () => ({
-      enabled: autoCompactEnabled,
       threshold: autoCompactThreshold,
-      setEnabled: setAutoCompactEnabled,
       setThreshold: setAutoCompactThreshold,
     }),
-    [autoCompactEnabled, autoCompactThreshold, setAutoCompactEnabled, setAutoCompactThreshold]
+    [autoCompactThreshold, setAutoCompactThreshold]
   );
   const verticalMeter = showMeter ? (
     <VerticalTokenMeter data={verticalMeterData} autoCompaction={autoCompactionProps} />
