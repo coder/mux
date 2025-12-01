@@ -378,6 +378,61 @@ export const ManyWorkspaces: Story = {
 };
 
 /**
+ * Story demonstrating the incompatible workspace error view.
+ *
+ * When a user downgrades to an older version of mux that doesn't support
+ * a workspace's runtime configuration, the workspace shows an error message
+ * instead of crashing. This ensures graceful degradation.
+ */
+export const IncompatibleWorkspace: Story = {
+  render: () => {
+    const workspaceId = "incompatible-ws";
+
+    const projects = new Map<string, ProjectConfig>([
+      [
+        "/home/user/projects/my-app",
+        {
+          workspaces: [
+            { path: "/home/user/.mux/src/my-app/main", id: "my-app-main", name: "main" },
+            {
+              path: "/home/user/.mux/src/my-app/incompatible",
+              id: workspaceId,
+              name: "incompatible",
+            },
+          ],
+        },
+      ],
+    ]);
+
+    const workspaces: FrontendWorkspaceMetadata[] = [
+      {
+        id: "my-app-main",
+        name: "main",
+        projectPath: "/home/user/projects/my-app",
+        projectName: "my-app",
+        namedWorkspacePath: "/home/user/.mux/src/my-app/main",
+        runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+      },
+      {
+        id: workspaceId,
+        name: "incompatible",
+        projectPath: "/home/user/projects/my-app",
+        projectName: "my-app",
+        namedWorkspacePath: "/home/user/.mux/src/my-app/incompatible",
+        runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+        // This field is set when a workspace has an incompatible runtime config
+        incompatibleRuntime:
+          "This workspace was created with a newer version of mux.\nPlease upgrade mux to use this workspace.",
+      },
+    ];
+
+    return (
+      <AppWithMocks projects={projects} workspaces={workspaces} selectedWorkspaceId={workspaceId} />
+    );
+  },
+};
+
+/**
  * Story demonstrating all possible UI indicators in the project sidebar.
  *
  * This story showcases:
