@@ -127,7 +127,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Track if we've already triggered force compaction for this stream
   const forceCompactionTriggeredRef = useRef<string | null>(null);
 
-    // Extract state from workspace state
+  // Extract state from workspace state
   const { messages, canInterrupt, isCompacting, loading, currentModel } = workspaceState;
 
   // Get active stream message ID for token counting

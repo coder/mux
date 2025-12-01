@@ -23,10 +23,7 @@ import { resolveCompactionModel } from "@/browser/utils/messages/compactionModel
 import type { ImageAttachment } from "../components/ImageAttachments";
 import { dispatchWorkspaceSwitch } from "./workspaceEvents";
 import { getRuntimeKey, copyWorkspaceStorage } from "@/common/constants/storage";
-import {
-  DEFAULT_COMPACTION_WORD_TARGET,
-  WORDS_TO_TOKENS_RATIO,
-} from "@/common/constants/ui";
+import { DEFAULT_COMPACTION_WORD_TARGET, WORDS_TO_TOKENS_RATIO } from "@/common/constants/ui";
 
 // ============================================================================
 // Workspace Creation
