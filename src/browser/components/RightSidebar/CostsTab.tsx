@@ -189,7 +189,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                       </span>
                     </div>
                     <div className="relative w-full py-1">
-                      <div className="bg-border-light relative flex h-1.5 w-full rounded-[3px]">
+                      <div className="bg-border-light flex h-1.5 w-full rounded-[3px]">
                         {cachedPercentage > 0 && (
                           <div
                             className="h-full transition-[width] duration-300"
@@ -231,17 +231,18 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                             }}
                           />
                         )}
-                        {/* Threshold slider overlay - only show when model limits are known */}
-                        {maxTokens && (
-                          <ThresholdSlider
-                            threshold={autoCompactThreshold}
-                            enabled={autoCompactEnabled}
-                            onThresholdChange={setAutoCompactThreshold}
-                            onEnabledChange={setAutoCompactEnabled}
-                            orientation="horizontal"
-                          />
-                        )}
                       </div>
+                      {/* Threshold slider overlay - only show when model limits are known */}
+                      {maxTokens && (
+                        <ThresholdSlider
+                          threshold={autoCompactThreshold}
+                          enabled={autoCompactEnabled}
+                          onThresholdChange={setAutoCompactThreshold}
+                          onEnabledChange={setAutoCompactEnabled}
+                          orientation="horizontal"
+                          barHeight={6}
+                        />
+                      )}
                     </div>
                   </div>
                   {showWarning && (
