@@ -94,7 +94,8 @@ export class LocalRuntime extends LocalBaseRuntime {
   }
 
   /**
-   * Renaming is not supported for LocalRuntime since we use the project directory directly.
+   * Renaming is a no-op for LocalRuntime - the workspace path is always the project directory.
+   * Returns success so the metadata (workspace name) can be updated in config.
    */
   // eslint-disable-next-line @typescript-eslint/require-await
   async renameWorkspace(
@@ -105,10 +106,8 @@ export class LocalRuntime extends LocalBaseRuntime {
   ): Promise<
     { success: true; oldPath: string; newPath: string } | { success: false; error: string }
   > {
-    return {
-      success: false,
-      error: "Cannot rename a local project-dir workspace. The project directory path is fixed.",
-    };
+    // No filesystem operation needed - path stays the same
+    return { success: true, oldPath: this.projectPath, newPath: this.projectPath };
   }
 
   /**

@@ -132,15 +132,15 @@ describe("LocalRuntime", () => {
   });
 
   describe("renameWorkspace", () => {
-    it("returns error - operation not supported", async () => {
+    it("is a no-op that returns success with same path", async () => {
       const runtime = new LocalRuntime(testDir);
 
       const result = await runtime.renameWorkspace(testDir, "old", "new");
 
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error).toContain("Cannot rename");
-        expect(result.error).toContain("project-dir");
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.oldPath).toBe(testDir);
+        expect(result.newPath).toBe(testDir);
       }
     });
   });
