@@ -229,10 +229,79 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
     description: TOOL_DEFINITIONS.bash.description + "\nRuns in " + config.cwd + " - no cd needed",
     inputSchema: TOOL_DEFINITIONS.bash.schema,
-    execute: async ({ script, timeout_secs }, { abortSignal }): Promise<BashToolResult> => {
+    execute: async (
+      { script, timeout_secs, run_in_background },
+      { abortSignal }
+    ): Promise<BashToolResult> => {
       // Validate script input
       const validationError = validateScript(script, config);
       if (validationError) return validationError;
+
+      // Handle background execution
+      if (run_in_background) {
+        // TODO: Add Windows support for background processes (process groups work differently)
+        if (process.platform === "win32") {
+          return {
+            success: false,
+            error: "Background execution is not yet supported on Windows",
+            exitCode: -1,
+            wall_duration_ms: 0,
+          };
+        }
+
+        if (!config.workspaceId || !config.backgroundProcessManager || !config.runtime) {
+          return {
+            success: false,
+            error:
+              "Background execution is only available for AI tool calls, not direct IPC invocation",
+            exitCode: -1,
+            wall_duration_ms: 0,
+          };
+        }
+
+        if (timeout_secs !== undefined) {
+          return {
+            success: false,
+            error: "Cannot specify timeout with run_in_background",
+            exitCode: -1,
+            wall_duration_ms: 0,
+          };
+        }
+
+        const startTime = performance.now();
+        const spawnResult = await config.backgroundProcessManager.spawn(
+          config.runtime,
+          config.workspaceId,
+          script,
+          {
+            cwd: config.cwd,
+            secrets: config.secrets,
+            niceness: config.niceness,
+          }
+        );
+
+        if (!spawnResult.success) {
+          return {
+            success: false,
+            error: spawnResult.error,
+            exitCode: -1,
+            wall_duration_ms: Math.round(performance.now() - startTime),
+          };
+        }
+
+        const stdoutPath = `${spawnResult.outputDir}/stdout.log`;
+        const stderrPath = `${spawnResult.outputDir}/stderr.log`;
+
+        return {
+          success: true,
+          output: `Background process started with ID: ${spawnResult.processId}`,
+          exitCode: 0,
+          wall_duration_ms: Math.round(performance.now() - startTime),
+          backgroundProcessId: spawnResult.processId,
+          stdout_path: stdoutPath,
+          stderr_path: stderrPath,
+        };
+      }
 
       // Setup execution parameters
       const effectiveTimeout = timeout_secs ?? BASH_DEFAULT_TIMEOUT_SECS;

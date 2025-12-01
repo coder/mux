@@ -1178,6 +1178,189 @@ describeIntegration("Runtime integration tests", () => {
           }
         });
       });
+
+      describe("spawnBackground() - Background processes", () => {
+        // Generate unique IDs for each test to avoid conflicts
+        const genId = () => `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+        test.concurrent("spawns process and captures output to file", async () => {
+          const runtime = createRuntime();
+          await using workspace = await TestWorkspace.create(runtime, type);
+          const workspaceId = genId();
+
+          const result = await runtime.spawnBackground('echo "hello from background"', {
+            cwd: workspace.path,
+            workspaceId,
+          });
+
+          expect(result.success).toBe(true);
+          if (!result.success) return;
+
+          expect(result.pid).toBeGreaterThan(0);
+          expect(result.handle.outputDir).toContain(workspaceId);
+          expect(result.handle.outputDir).toMatch(/bg-[0-9a-f]{8}/);
+
+          // Wait for process to complete and output to be written
+          await new Promise((resolve) => setTimeout(resolve, 500));
+
+          // Read stdout from file
+          const stdoutPath = `${result.handle.outputDir}/stdout.log`;
+          const stdout = await readFileString(runtime, stdoutPath);
+          expect(stdout.trim()).toBe("hello from background");
+
+          await result.handle.dispose();
+        });
+
+        test.concurrent("captures exit code via trap", async () => {
+          const runtime = createRuntime();
+          await using workspace = await TestWorkspace.create(runtime, type);
+          const workspaceId = genId();
+
+          // Spawn a process that exits with code 42
+          const result = await runtime.spawnBackground("exit 42", {
+            cwd: workspace.path,
+            workspaceId,
+          });
+
+          expect(result.success).toBe(true);
+          if (!result.success) return;
+
+          // Wait for process to exit and trap to write exit code
+          await new Promise((resolve) => setTimeout(resolve, 500));
+
+          // Check exit code
+          const exitCode = await result.handle.getExitCode();
+          expect(exitCode).toBe(42);
+
+          await result.handle.dispose();
+        });
+
+        test.concurrent("getExitCode() returns null while process runs", async () => {
+          const runtime = createRuntime();
+          await using workspace = await TestWorkspace.create(runtime, type);
+          const workspaceId = genId();
+
+          // Spawn a long-running process
+          const result = await runtime.spawnBackground("sleep 30", {
+            cwd: workspace.path,
+            workspaceId,
+          });
+
+          expect(result.success).toBe(true);
+          if (!result.success) return;
+
+          // Should be running (exit code null)
+          expect(await result.handle.getExitCode()).toBe(null);
+
+          // Terminate it
+          await result.handle.terminate();
+
+          // Should have exit code after termination
+          expect(await result.handle.getExitCode()).not.toBe(null);
+
+          await result.handle.dispose();
+        });
+
+        test.concurrent("terminate() kills running process", async () => {
+          const runtime = createRuntime();
+          await using workspace = await TestWorkspace.create(runtime, type);
+          const workspaceId = genId();
+
+          // Spawn a process that runs indefinitely
+          const result = await runtime.spawnBackground("sleep 60", {
+            cwd: workspace.path,
+            workspaceId,
+          });
+
+          expect(result.success).toBe(true);
+          if (!result.success) return;
+
+          // Verify it's running (exit code null)
+          expect(await result.handle.getExitCode()).toBe(null);
+
+          // Terminate
+          await result.handle.terminate();
+
+          // Give it a moment to die
+          await new Promise((resolve) => setTimeout(resolve, 100));
+
+          // Should have exit code (not running anymore)
+          expect(await result.handle.getExitCode()).not.toBe(null);
+
+          await result.handle.dispose();
+        });
+
+        test.concurrent("captures stderr to file", async () => {
+          const runtime = createRuntime();
+          await using workspace = await TestWorkspace.create(runtime, type);
+          const workspaceId = genId();
+
+          const result = await runtime.spawnBackground('echo "error message" >&2', {
+            cwd: workspace.path,
+            workspaceId,
+          });
+
+          expect(result.success).toBe(true);
+          if (!result.success) return;
+
+          // Wait for output
+          await new Promise((resolve) => setTimeout(resolve, 500));
+
+          // Read stderr from file
+          const stderrPath = `${result.handle.outputDir}/stderr.log`;
+          const stderr = await readFileString(runtime, stderrPath);
+          expect(stderr.trim()).toBe("error message");
+
+          await result.handle.dispose();
+        });
+
+        test.concurrent("respects working directory", async () => {
+          const runtime = createRuntime();
+          await using workspace = await TestWorkspace.create(runtime, type);
+          const workspaceId = genId();
+
+          const result = await runtime.spawnBackground("pwd", {
+            cwd: workspace.path,
+            workspaceId,
+          });
+
+          expect(result.success).toBe(true);
+          if (!result.success) return;
+
+          // Wait for output
+          await new Promise((resolve) => setTimeout(resolve, 500));
+
+          const stdoutPath = `${result.handle.outputDir}/stdout.log`;
+          const stdout = await readFileString(runtime, stdoutPath);
+          expect(stdout.trim()).toBe(workspace.path);
+
+          await result.handle.dispose();
+        });
+
+        test.concurrent("passes environment variables", async () => {
+          const runtime = createRuntime();
+          await using workspace = await TestWorkspace.create(runtime, type);
+          const workspaceId = genId();
+
+          const result = await runtime.spawnBackground('echo "secret=$MY_SECRET"', {
+            cwd: workspace.path,
+            workspaceId,
+            env: { MY_SECRET: "hunter2" },
+          });
+
+          expect(result.success).toBe(true);
+          if (!result.success) return;
+
+          // Wait for output
+          await new Promise((resolve) => setTimeout(resolve, 500));
+
+          const stdoutPath = `${result.handle.outputDir}/stdout.log`;
+          const stdout = await readFileString(runtime, stdoutPath);
+          expect(stdout.trim()).toBe("secret=hunter2");
+
+          await result.handle.dispose();
+        });
+      });
     }
   );
 });

@@ -18,6 +18,7 @@ import { ServerService } from "@/node/services/serverService";
 import { MenuEventService } from "@/node/services/menuEventService";
 import { VoiceService } from "@/node/services/voiceService";
 import { TelemetryService } from "@/node/services/telemetryService";
+import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 
 /**
  * ServiceContainer - Central dependency container for all backend services.
@@ -44,6 +45,7 @@ export class ServiceContainer {
   private readonly initStateManager: InitStateManager;
   private readonly extensionMetadata: ExtensionMetadataService;
   private readonly ptyService: PTYService;
+  private readonly backgroundProcessManager: BackgroundProcessManager;
 
   constructor(config: Config) {
     this.config = config;
@@ -54,11 +56,13 @@ export class ServiceContainer {
     this.extensionMetadata = new ExtensionMetadataService(
       path.join(config.rootDir, "extensionMetadata.json")
     );
+    this.backgroundProcessManager = new BackgroundProcessManager();
     this.aiService = new AIService(
       config,
       this.historyService,
       this.partialService,
-      this.initStateManager
+      this.initStateManager,
+      this.backgroundProcessManager
     );
     this.workspaceService = new WorkspaceService(
       config,
@@ -66,7 +70,8 @@ export class ServiceContainer {
       this.partialService,
       this.aiService,
       this.initStateManager,
-      this.extensionMetadata
+      this.extensionMetadata,
+      this.backgroundProcessManager
     );
     this.providerService = new ProviderService(config);
     // Terminal services - PTYService is cross-platform
@@ -102,5 +107,13 @@ export class ServiceContainer {
 
   setTerminalWindowManager(manager: TerminalWindowManager): void {
     this.terminalService.setTerminalWindowManager(manager);
+  }
+
+  /**
+   * Dispose all services. Called on app quit to clean up resources.
+   * Terminates all background processes to prevent orphans.
+   */
+  async dispose(): Promise<void> {
+    await this.backgroundProcessManager.terminateAll();
   }
 }

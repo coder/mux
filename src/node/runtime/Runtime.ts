@@ -50,12 +50,15 @@ export interface ExecOptions {
   /** Environment variables to inject */
   env?: Record<string, string>;
   /**
-   * Timeout in seconds (REQUIRED)
+   * Timeout in seconds.
    *
-   * Prevents zombie processes by ensuring all spawned processes are eventually killed.
+   * When provided, prevents zombie processes by ensuring spawned processes are killed.
    * Even long-running commands should have a reasonable upper bound (e.g., 3600s for 1 hour).
+   *
+   * When omitted, no timeout is applied - use only for internal operations like
+   * spawning background processes that are designed to run indefinitely.
    */
-  timeout: number;
+  timeout?: number;
   /** Process niceness level (-20 to 19, lower = higher priority) */
   niceness?: number;
   /** Abort signal for cancellation */
@@ -63,6 +66,61 @@ export interface ExecOptions {
   /** Force PTY allocation (SSH only - adds -t flag) */
   forcePTY?: boolean;
 }
+
+/**
+ * Options for spawning a background process
+ */
+export interface BackgroundSpawnOptions {
+  /** Working directory for command execution */
+  cwd: string;
+  /** Workspace ID for output directory organization */
+  workspaceId: string;
+  /** Environment variables to inject */
+  env?: Record<string, string>;
+  /** Process niceness level (-20 to 19, lower = higher priority) */
+  niceness?: number;
+}
+
+/**
+ * Handle to a background process.
+ * Abstracts away whether process is local or remote.
+ *
+ * Output is written directly to files by the runtime.
+ * This handle is for lifecycle management and output directory operations.
+ */
+export interface BackgroundHandle {
+  /** Output directory containing stdout.log, stderr.log, meta.json */
+  readonly outputDir: string;
+
+  /**
+   * Get the exit code if the process has exited.
+   * Returns null if still running.
+   * Async because SSH needs to read remote exit_code file.
+   */
+  getExitCode(): Promise<number | null>;
+
+  /**
+   * Terminate the process (SIGTERM → wait → SIGKILL).
+   */
+  terminate(): Promise<void>;
+
+  /**
+   * Clean up resources (called after process exits or on error).
+   */
+  dispose(): Promise<void>;
+
+  /**
+   * Write meta.json to the output directory.
+   */
+  writeMeta(metaJson: string): Promise<void>;
+}
+
+/**
+ * Result of spawning a background process
+ */
+export type BackgroundSpawnResult =
+  | { success: true; handle: BackgroundHandle; pid: number }
+  | { success: false; error: string };
 
 /**
  * Streaming result from executing a command
@@ -210,6 +268,21 @@ export interface Runtime {
    * @throws RuntimeError if execution fails in an unrecoverable way
    */
   exec(command: string, options: ExecOptions): Promise<ExecStream>;
+
+  /**
+   * Spawn a detached background process.
+   * Returns a handle for monitoring output and terminating the process.
+   * Unlike exec(), background processes have no timeout and run until terminated.
+   *
+   * Output directory is determined by runtime implementation:
+   * - LocalRuntime: {bgOutputDir}/{workspaceId}/{processId}/ (default: /tmp/mux-bashes)
+   * - SSHRuntime: {bgOutputDir}/{workspaceId}/{processId}/ (default: /tmp/mux-bashes)
+   *
+   * @param script Bash script to execute
+   * @param options Execution options (cwd, workspaceId, processId, env, niceness)
+   * @returns BackgroundHandle on success, or error
+   */
+  spawnBackground(script: string, options: BackgroundSpawnOptions): Promise<BackgroundSpawnResult>;
 
   /**
    * Read file contents as a stream

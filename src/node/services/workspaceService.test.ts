@@ -6,6 +6,7 @@ import type { PartialService } from "./partialService";
 import type { AIService } from "./aiService";
 import type { InitStateManager } from "./initStateManager";
 import type { ExtensionMetadataService } from "./ExtensionMetadataService";
+import type { BackgroundProcessManager } from "./backgroundProcessManager";
 
 // Helper to access private renamingWorkspaces set
 function addToRenamingWorkspaces(service: WorkspaceService, workspaceId: string): void {
@@ -46,6 +47,9 @@ describe("WorkspaceService rename lock", () => {
 
     const mockInitStateManager: Partial<InitStateManager> = {};
     const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
+    const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
+      cleanup: mock(() => Promise.resolve()),
+    };
 
     workspaceService = new WorkspaceService(
       mockConfig as Config,
@@ -53,7 +57,8 @@ describe("WorkspaceService rename lock", () => {
       mockPartialService as PartialService,
       mockAIService,
       mockInitStateManager as InitStateManager,
-      mockExtensionMetadataService as ExtensionMetadataService
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
     );
   });
 

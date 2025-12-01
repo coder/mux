@@ -1,0 +1,277 @@
+import { describe, it, expect } from "bun:test";
+import {
+  shellQuote,
+  buildWrapperScript,
+  buildSpawnCommand,
+  buildTerminateCommand,
+  parseExitCode,
+  EXIT_CODE_SIGKILL,
+  EXIT_CODE_SIGTERM,
+} from "./backgroundCommands";
+
+describe("backgroundCommands", () => {
+  describe("shellQuote", () => {
+    it("should quote empty string", () => {
+      expect(shellQuote("")).toBe("''");
+    });
+
+    it("should quote simple string", () => {
+      expect(shellQuote("hello")).toBe("'hello'");
+    });
+
+    it("should escape single quotes", () => {
+      expect(shellQuote("it's")).toBe("'it'\"'\"'s'");
+    });
+
+    it("should handle multiple single quotes", () => {
+      expect(shellQuote("it's a 'test'")).toBe("'it'\"'\"'s a '\"'\"'test'\"'\"''");
+    });
+
+    it("should handle special characters without escaping", () => {
+      // Single quotes protect everything except single quotes themselves
+      expect(shellQuote("$HOME")).toBe("'$HOME'");
+      expect(shellQuote("a && b")).toBe("'a && b'");
+      expect(shellQuote("foo\nbar")).toBe("'foo\nbar'");
+    });
+
+    it("should handle paths with spaces", () => {
+      expect(shellQuote("/path/with spaces/file")).toBe("'/path/with spaces/file'");
+    });
+  });
+
+  describe("buildWrapperScript", () => {
+    it("should build script with trap, cd, and user script", () => {
+      const result = buildWrapperScript({
+        exitCodePath: "/tmp/exit_code",
+        cwd: "/home/user/project",
+        script: "echo hello",
+      });
+
+      expect(result).toBe(
+        "trap 'echo $? > '/tmp/exit_code'' EXIT && " + "cd '/home/user/project' && " + "echo hello"
+      );
+    });
+
+    it("should include env exports when provided", () => {
+      const result = buildWrapperScript({
+        exitCodePath: "/tmp/exit_code",
+        cwd: "/home/user",
+        env: { FOO: "bar", BAZ: "qux" },
+        script: "env",
+      });
+
+      expect(result).toContain("export FOO='bar'");
+      expect(result).toContain("export BAZ='qux'");
+    });
+
+    it("should handle paths with spaces", () => {
+      const result = buildWrapperScript({
+        exitCodePath: "/tmp/my dir/exit_code",
+        cwd: "/home/user/my project",
+        script: "ls",
+      });
+
+      expect(result).toContain("'/tmp/my dir/exit_code'");
+      expect(result).toContain("'/home/user/my project'");
+    });
+
+    it("should escape single quotes in env values", () => {
+      const result = buildWrapperScript({
+        exitCodePath: "/tmp/exit_code",
+        cwd: "/home",
+        env: { MSG: "it's a test" },
+        script: "echo $MSG",
+      });
+
+      expect(result).toContain("export MSG='it'\"'\"'s a test'");
+    });
+
+    it("should join parts with &&", () => {
+      const result = buildWrapperScript({
+        exitCodePath: "/tmp/ec",
+        cwd: "/",
+        script: "true",
+      });
+
+      // Should have trap && cd && script
+      const parts = result.split(" && ");
+      expect(parts.length).toBe(3);
+      expect(parts[0]).toMatch(/^trap/);
+      expect(parts[1]).toMatch(/^cd/);
+      expect(parts[2]).toBe("true");
+    });
+  });
+
+  describe("buildSpawnCommand", () => {
+    it("should use setsid nohup pattern", () => {
+      const result = buildSpawnCommand({
+        wrapperScript: "echo hello",
+        stdoutPath: "/tmp/stdout.log",
+        stderrPath: "/tmp/stderr.log",
+      });
+
+      expect(result).toMatch(/^\(setsid nohup bash -c /);
+    });
+
+    it("should include niceness prefix when provided", () => {
+      const result = buildSpawnCommand({
+        wrapperScript: "echo hello",
+        stdoutPath: "/tmp/stdout.log",
+        stderrPath: "/tmp/stderr.log",
+        niceness: 10,
+      });
+
+      expect(result).toMatch(/^\(nice -n 10 setsid nohup/);
+    });
+
+    it("should not include niceness prefix when not provided", () => {
+      const result = buildSpawnCommand({
+        wrapperScript: "echo hello",
+        stdoutPath: "/tmp/stdout.log",
+        stderrPath: "/tmp/stderr.log",
+      });
+
+      expect(result).not.toContain("nice");
+    });
+
+    it("should use custom bash path when provided", () => {
+      const result = buildSpawnCommand({
+        wrapperScript: "echo hello",
+        stdoutPath: "/tmp/stdout.log",
+        stderrPath: "/tmp/stderr.log",
+        bashPath: "/usr/local/bin/bash",
+      });
+
+      expect(result).toContain("/usr/local/bin/bash -c");
+    });
+
+    it("should redirect stdout and stderr", () => {
+      const result = buildSpawnCommand({
+        wrapperScript: "echo hello",
+        stdoutPath: "/tmp/out.log",
+        stderrPath: "/tmp/err.log",
+      });
+
+      expect(result).toContain("> '/tmp/out.log'");
+      expect(result).toContain("2> '/tmp/err.log'");
+    });
+
+    it("should redirect stdin from /dev/null", () => {
+      const result = buildSpawnCommand({
+        wrapperScript: "cat",
+        stdoutPath: "/tmp/out",
+        stderrPath: "/tmp/err",
+      });
+
+      expect(result).toContain("< /dev/null");
+    });
+
+    it("should background and echo PID", () => {
+      const result = buildSpawnCommand({
+        wrapperScript: "sleep 60",
+        stdoutPath: "/tmp/out",
+        stderrPath: "/tmp/err",
+      });
+
+      expect(result).toMatch(/& echo \$!\)$/);
+    });
+
+    it("should quote the wrapper script", () => {
+      const result = buildSpawnCommand({
+        wrapperScript: "echo 'hello world'",
+        stdoutPath: "/tmp/out",
+        stderrPath: "/tmp/err",
+      });
+
+      // The wrapper script should be quoted
+      expect(result).toContain("-c 'echo '\"'\"'hello world'\"'\"''");
+    });
+  });
+
+  describe("buildTerminateCommand", () => {
+    it("should use negative PID for process group", () => {
+      const result = buildTerminateCommand(1234, "/tmp/exit_code");
+
+      expect(result).toContain("kill -TERM -1234");
+      expect(result).toContain("kill -KILL -1234");
+    });
+
+    it("should check process status with positive PID", () => {
+      const result = buildTerminateCommand(1234, "/tmp/exit_code");
+
+      // kill -0 checks if process exists (uses positive PID)
+      expect(result).toContain("kill -0 1234");
+    });
+
+    it("should include SIGTERM then SIGKILL pattern", () => {
+      const result = buildTerminateCommand(1234, "/tmp/exit_code");
+
+      // Should send TERM first
+      expect(result).toMatch(/kill -TERM.*sleep 2.*kill -KILL/);
+    });
+
+    it("should write exit code 137 on force kill", () => {
+      const result = buildTerminateCommand(1234, "/tmp/exit_code");
+
+      expect(result).toContain("echo 137 > '/tmp/exit_code'");
+    });
+
+    it("should suppress errors with 2>/dev/null", () => {
+      const result = buildTerminateCommand(1234, "/tmp/exit_code");
+
+      // Both kill commands should suppress errors
+      expect(result).toMatch(/kill -TERM -1234 2>\/dev\/null/);
+      expect(result).toMatch(/kill -KILL -1234 2>\/dev\/null/);
+    });
+
+    it("should continue on error with || true", () => {
+      const result = buildTerminateCommand(1234, "/tmp/exit_code");
+
+      expect(result).toContain("|| true");
+    });
+
+    it("should quote exit code path", () => {
+      const result = buildTerminateCommand(1234, "/tmp/my dir/exit_code");
+
+      expect(result).toContain("'/tmp/my dir/exit_code'");
+    });
+  });
+
+  describe("parseExitCode", () => {
+    it("should parse valid exit code", () => {
+      expect(parseExitCode("0")).toBe(0);
+      expect(parseExitCode("1")).toBe(1);
+      expect(parseExitCode("137")).toBe(137);
+    });
+
+    it("should handle whitespace", () => {
+      expect(parseExitCode("  0  ")).toBe(0);
+      expect(parseExitCode("137\n")).toBe(137);
+      expect(parseExitCode("\t42\t")).toBe(42);
+    });
+
+    it("should return null for empty string", () => {
+      expect(parseExitCode("")).toBeNull();
+      expect(parseExitCode("   ")).toBeNull();
+    });
+
+    it("should return null for non-numeric input", () => {
+      expect(parseExitCode("abc")).toBeNull();
+    });
+
+    it("should parse leading numbers (parseInt behavior)", () => {
+      // parseInt("12abc", 10) returns 12 - this is standard JS behavior
+      expect(parseExitCode("12abc")).toBe(12);
+    });
+  });
+
+  describe("exit code constants", () => {
+    it("should have correct SIGKILL exit code", () => {
+      expect(EXIT_CODE_SIGKILL).toBe(137); // 128 + 9
+    });
+
+    it("should have correct SIGTERM exit code", () => {
+      expect(EXIT_CODE_SIGTERM).toBe(143); // 128 + 15
+    });
+  });
+});

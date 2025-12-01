@@ -28,8 +28,8 @@ import { LocalBaseRuntime } from "./LocalBaseRuntime";
 export class WorktreeRuntime extends LocalBaseRuntime {
   private readonly srcBaseDir: string;
 
-  constructor(srcBaseDir: string) {
-    super();
+  constructor(srcBaseDir: string, bgOutputDir: string) {
+    super(bgOutputDir);
     // Expand tilde to actual home directory path for local file system operations
     this.srcBaseDir = expandTilde(srcBaseDir);
   }
