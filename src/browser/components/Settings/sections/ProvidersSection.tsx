@@ -116,6 +116,9 @@ export function ProvidersSection() {
       setConfig(cfg);
       setEditingField(null);
       setEditValue("");
+
+      // Notify other components about the change
+      window.dispatchEvent(new Event("providers-config-changed"));
     } finally {
       setSaving(false);
     }
@@ -127,6 +130,9 @@ export function ProvidersSection() {
       await window.api.providers.setProviderConfig(provider, [field], "");
       const cfg = await window.api.providers.getConfig();
       setConfig(cfg);
+
+      // Notify other components about the change
+      window.dispatchEvent(new Event("providers-config-changed"));
     } finally {
       setSaving(false);
     }
