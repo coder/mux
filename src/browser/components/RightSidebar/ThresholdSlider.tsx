@@ -3,90 +3,93 @@ import {
   AUTO_COMPACTION_THRESHOLD_MIN,
   AUTO_COMPACTION_THRESHOLD_MAX,
 } from "@/common/constants/ui";
+import { TooltipWrapper, Tooltip } from "../Tooltip";
 
-interface ThresholdSliderProps {
-  /** Current threshold percentage (50-90, or 100 for disabled) */
-  threshold: number;
-  /** Whether auto-compaction is enabled */
+// ----- Types -----
+
+export interface AutoCompactionConfig {
   enabled: boolean;
-  /** Callback when threshold changes */
-  onThresholdChange: (threshold: number) => void;
-  /** Callback when enabled state changes */
-  onEnabledChange: (enabled: boolean) => void;
-  /** Orientation of the slider */
-  orientation: "horizontal" | "vertical";
+  threshold: number;
+  setEnabled: (enabled: boolean) => void;
+  setThreshold: (threshold: number) => void;
 }
 
-// Threshold at which we consider auto-compaction disabled (dragged all the way right/down)
+type Orientation = "horizontal" | "vertical";
+
+interface ThresholdSliderProps {
+  config: AutoCompactionConfig;
+  orientation: Orientation;
+}
+
+// ----- Constants -----
+
+/** Threshold at which we consider auto-compaction disabled (dragged all the way right/down) */
 const DISABLE_THRESHOLD = 100;
 
-export const ThresholdSlider: React.FC<ThresholdSliderProps> = ({
-  threshold,
-  enabled,
-  onThresholdChange,
-  onEnabledChange,
-  orientation,
-}) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragValue, setDragValue] = useState<number | null>(null);
+// ----- Hook: useDraggableThreshold -----
 
-  // Calculate position from threshold (50-100 -> 50%-100%)
-  const effectiveThreshold = enabled ? threshold : DISABLE_THRESHOLD;
-  const position = isDragging && dragValue !== null ? dragValue : effectiveThreshold;
+interface DragState {
+  isDragging: boolean;
+  dragValue: number | null;
+}
 
-  const updateThreshold = useCallback(
-    (clientX: number, clientY: number) => {
+function useDraggableThreshold(
+  containerRef: React.RefObject<HTMLDivElement>,
+  config: AutoCompactionConfig,
+  orientation: Orientation
+) {
+  const [dragState, setDragState] = useState<DragState>({
+    isDragging: false,
+    dragValue: null,
+  });
+
+  const calculatePercentage = useCallback(
+    (clientX: number, clientY: number): number => {
       const container = containerRef.current;
-      if (!container) return;
+      if (!container) return config.threshold;
 
       const rect = container.getBoundingClientRect();
-      let percentage: number;
+      const raw =
+        orientation === "horizontal"
+          ? ((clientX - rect.left) / rect.width) * 100
+          : ((clientY - rect.top) / rect.height) * 100;
 
-      if (orientation === "horizontal") {
-        percentage = ((clientX - rect.left) / rect.width) * 100;
-      } else {
-        // Vertical: top = low %, bottom = high %
-        percentage = ((clientY - rect.top) / rect.height) * 100;
-      }
+      // Clamp and round to nearest 5
+      const clamped = Math.max(AUTO_COMPACTION_THRESHOLD_MIN, Math.min(100, raw));
+      return Math.round(clamped / 5) * 5;
+    },
+    [containerRef, orientation, config.threshold]
+  );
 
-      // Clamp to valid range
-      percentage = Math.max(AUTO_COMPACTION_THRESHOLD_MIN, Math.min(100, percentage));
-
-      // Round to nearest 5 for nice values
-      percentage = Math.round(percentage / 5) * 5;
-
-      // Update visual position during drag
-      setDragValue(percentage);
-
+  const applyThreshold = useCallback(
+    (percentage: number) => {
       if (percentage >= DISABLE_THRESHOLD) {
-        // Dragged to end - disable auto-compaction
-        onEnabledChange(false);
+        config.setEnabled(false);
       } else {
-        // Within valid range - update threshold and ensure enabled
-        if (!enabled) {
-          onEnabledChange(true);
-        }
-        onThresholdChange(Math.min(percentage, AUTO_COMPACTION_THRESHOLD_MAX));
+        if (!config.enabled) config.setEnabled(true);
+        config.setThreshold(Math.min(percentage, AUTO_COMPACTION_THRESHOLD_MAX));
       }
     },
-    [orientation, enabled, onThresholdChange, onEnabledChange]
+    [config]
   );
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      setIsDragging(true);
-      updateThreshold(e.clientX, e.clientY);
 
-      const handleMouseMove = (e: MouseEvent) => {
-        updateThreshold(e.clientX, e.clientY);
+      const percentage = calculatePercentage(e.clientX, e.clientY);
+      setDragState({ isDragging: true, dragValue: percentage });
+      applyThreshold(percentage);
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        const newPercentage = calculatePercentage(moveEvent.clientX, moveEvent.clientY);
+        setDragState({ isDragging: true, dragValue: newPercentage });
+        applyThreshold(newPercentage);
       };
 
       const handleMouseUp = () => {
-        setIsDragging(false);
-        setDragValue(null);
+        setDragState({ isDragging: false, dragValue: null });
         document.removeEventListener("mousemove", handleMouseMove);
         document.removeEventListener("mouseup", handleMouseUp);
       };
@@ -94,132 +97,170 @@ export const ThresholdSlider: React.FC<ThresholdSliderProps> = ({
       document.addEventListener("mousemove", handleMouseMove);
       document.addEventListener("mouseup", handleMouseUp);
     },
-    [updateThreshold]
+    [calculatePercentage, applyThreshold]
   );
 
-  // Tooltip text
-  const tooltipText = isDragging
-    ? dragValue !== null && dragValue >= DISABLE_THRESHOLD
+  return { ...dragState, handleMouseDown };
+}
+
+// ----- Helper: compute display position -----
+
+function computePosition(config: AutoCompactionConfig, dragValue: number | null): number {
+  if (dragValue !== null) return dragValue;
+  return config.enabled ? config.threshold : DISABLE_THRESHOLD;
+}
+
+// ----- Helper: tooltip text -----
+
+function getTooltipText(
+  config: AutoCompactionConfig,
+  isDragging: boolean,
+  dragValue: number | null,
+  orientation: Orientation
+): string {
+  if (isDragging && dragValue !== null) {
+    return dragValue >= DISABLE_THRESHOLD
       ? "Release to disable auto-compact"
-      : `Auto-compact at ${dragValue ?? threshold}%`
-    : enabled
-      ? `Auto-compact at ${threshold}% · Drag to adjust`
-      : "Auto-compact disabled · Drag left to enable";
+      : `Auto-compact at ${dragValue}%`;
+  }
+  const direction = orientation === "horizontal" ? "left" : "up";
+  return config.enabled
+    ? `Auto-compact at ${config.threshold}% · Drag to adjust`
+    : `Auto-compact disabled · Drag ${direction} to enable`;
+}
 
-  const lineColor = enabled ? "var(--color-plan-mode)" : "var(--color-muted)";
+// ----- Sub-components: Triangle indicators -----
 
+interface TriangleProps {
+  direction: "up" | "down" | "left" | "right";
+  color: string;
+  opacity: number;
+}
+
+const Triangle: React.FC<TriangleProps> = ({ direction, color, opacity }) => {
+  const size = 4;
+  const tipSize = 5;
+
+  const styles: Record<TriangleProps["direction"], React.CSSProperties> = {
+    up: {
+      borderLeft: `${size}px solid transparent`,
+      borderRight: `${size}px solid transparent`,
+      borderBottom: `${tipSize}px solid ${color}`,
+    },
+    down: {
+      borderLeft: `${size}px solid transparent`,
+      borderRight: `${size}px solid transparent`,
+      borderTop: `${tipSize}px solid ${color}`,
+    },
+    left: {
+      borderTop: `${size}px solid transparent`,
+      borderBottom: `${size}px solid transparent`,
+      borderRight: `${tipSize}px solid ${color}`,
+    },
+    right: {
+      borderTop: `${size}px solid transparent`,
+      borderBottom: `${size}px solid transparent`,
+      borderLeft: `${tipSize}px solid ${color}`,
+    },
+  };
+
+  return <div style={{ width: 0, height: 0, opacity, ...styles[direction] }} />;
+};
+
+// ----- Sub-component: ThresholdIndicator -----
+
+interface ThresholdIndicatorProps {
+  position: number;
+  color: string;
+  opacity: number;
+  orientation: Orientation;
+}
+
+const ThresholdIndicator: React.FC<ThresholdIndicatorProps> = ({
+  position,
+  color,
+  opacity,
+  orientation,
+}) => {
   if (orientation === "horizontal") {
-    // Absolute overlay covering the bar area
     return (
       <div
-        ref={containerRef}
-        className="absolute inset-0 cursor-ew-resize"
-        style={{ zIndex: 10 }}
-        onMouseDown={handleMouseDown}
-        title={tooltipText}
+        className="pointer-events-none absolute flex flex-col items-center"
+        style={{
+          left: `${position}%`,
+          top: -4,
+          bottom: -4,
+          transform: "translateX(-50%)",
+        }}
       >
-        {/* Vertical line indicator with triangles */}
-        <div
-          className="pointer-events-none absolute"
-          style={{
-            left: `${position}%`,
-            top: -4,
-            bottom: -4,
-            transform: "translateX(-50%)",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-          }}
-        >
-          {/* Top triangle */}
-          <div
-            style={{
-              width: 0,
-              height: 0,
-              borderLeft: "4px solid transparent",
-              borderRight: "4px solid transparent",
-              borderTop: `5px solid ${lineColor}`,
-              opacity: isDragging ? 1 : 0.8,
-            }}
-          />
-          {/* Line */}
-          <div
-            style={{
-              flex: 1,
-              width: 2,
-              background: lineColor,
-              opacity: isDragging ? 1 : 0.8,
-            }}
-          />
-          {/* Bottom triangle */}
-          <div
-            style={{
-              width: 0,
-              height: 0,
-              borderLeft: "4px solid transparent",
-              borderRight: "4px solid transparent",
-              borderBottom: `5px solid ${lineColor}`,
-              opacity: isDragging ? 1 : 0.8,
-            }}
-          />
-        </div>
+        <Triangle direction="down" color={color} opacity={opacity} />
+        <div className="flex-1" style={{ width: 2, background: color, opacity }} />
+        <Triangle direction="up" color={color} opacity={opacity} />
       </div>
     );
   }
 
-  // Vertical orientation - absolute overlay
+  // Vertical
   return (
     <div
-      ref={containerRef}
-      className="absolute inset-0 cursor-ns-resize"
-      style={{ zIndex: 10 }}
-      onMouseDown={handleMouseDown}
-      title={tooltipText}
+      className="pointer-events-none absolute flex items-center"
+      style={{
+        top: `${position}%`,
+        left: -4,
+        right: -4,
+        transform: "translateY(-50%)",
+      }}
     >
-      {/* Horizontal line indicator with triangles */}
+      <Triangle direction="right" color={color} opacity={opacity} />
+      <div className="flex-1" style={{ height: 2, background: color, opacity }} />
+      <Triangle direction="left" color={color} opacity={opacity} />
+    </div>
+  );
+};
+
+// ----- Main component -----
+
+/**
+ * ThresholdSlider renders an interactive threshold indicator overlay.
+ *
+ * IMPORTANT: This component must be placed inside a container with:
+ * - `position: relative` (for absolute positioning)
+ * - `overflow: visible` (so triangles can extend beyond bounds)
+ *
+ * The slider fills its container via `inset-0` and positions the indicator
+ * line at the threshold percentage.
+ */
+export const ThresholdSlider: React.FC<ThresholdSliderProps> = ({ config, orientation }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { isDragging, dragValue, handleMouseDown } = useDraggableThreshold(
+    containerRef,
+    config,
+    orientation
+  );
+
+  const position = computePosition(config, dragValue);
+  const lineColor = config.enabled ? "var(--color-plan-mode)" : "var(--color-muted)";
+  const opacity = isDragging ? 1 : 0.8;
+  const tooltipText = getTooltipText(config, isDragging, dragValue, orientation);
+  const cursor = orientation === "horizontal" ? "cursor-ew-resize" : "cursor-ns-resize";
+
+  return (
+    <TooltipWrapper>
       <div
-        className="pointer-events-none absolute"
-        style={{
-          top: `${position}%`,
-          left: -3,
-          right: -3,
-          transform: "translateY(-50%)",
-          display: "flex",
-          alignItems: "center",
-        }}
+        ref={containerRef}
+        className={`absolute inset-0 z-10 ${cursor}`}
+        onMouseDown={handleMouseDown}
       >
-        {/* Left triangle */}
-        <div
-          style={{
-            width: 0,
-            height: 0,
-            borderTop: "4px solid transparent",
-            borderBottom: "4px solid transparent",
-            borderLeft: `5px solid ${lineColor}`,
-            opacity: isDragging ? 1 : 0.8,
-          }}
-        />
-        {/* Line */}
-        <div
-          style={{
-            flex: 1,
-            height: 2,
-            background: lineColor,
-            opacity: isDragging ? 1 : 0.8,
-          }}
-        />
-        {/* Right triangle */}
-        <div
-          style={{
-            width: 0,
-            height: 0,
-            borderTop: "4px solid transparent",
-            borderBottom: "4px solid transparent",
-            borderRight: `5px solid ${lineColor}`,
-            opacity: isDragging ? 1 : 0.8,
-          }}
+        <ThresholdIndicator
+          position={position}
+          color={lineColor}
+          opacity={opacity}
+          orientation={orientation}
         />
       </div>
-    </div>
+      <Tooltip align="center" width="auto">
+        {tooltipText}
+      </Tooltip>
+    </TooltipWrapper>
   );
 };
