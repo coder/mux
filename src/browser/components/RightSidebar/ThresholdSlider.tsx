@@ -100,34 +100,44 @@ export const HorizontalThresholdSlider: React.FC<HorizontalThresholdSliderProps>
       ? "Release to disable auto-compact"
       : `Auto-compact at ${dragValue}%`
     : config.enabled
-      ? `Auto-compact at ${config.threshold}% · Drag to adjust`
-      : "Auto-compact disabled · Drag left to enable";
+    ? `Auto-compact at ${config.threshold}% · Drag to adjust`
+    : "Auto-compact disabled · Drag left to enable";
 
-  const lineColor = config.enabled ? "var(--color-plan-mode)" : "var(--color-muted)";
+  const lineColor = config.enabled
+    ? "var(--color-plan-mode)"
+    : "var(--color-muted)";
   const opacity = isDragging ? 1 : 0.8;
 
   return (
     <div
       ref={containerRef}
-      className="absolute z-10 cursor-ew-resize"
-      style={{
-        // Extend hit area beyond the thin bar for easier clicking
-        left: 0,
-        right: 0,
-        top: -8,
-        bottom: -8,
-      }}
-      onMouseDown={handleMouseDown}
-      title={title}
+      className="absolute inset-0 z-10"
+      style={{ pointerEvents: "none" }} // pass clicks through the empty parts of the container if needed, but we want the hit area to catch them
     >
-      {/* Vertical line with triangle handles */}
+      {/* Hit Area - Wider than the bar for easier grabbing */}
+      <div
+        className="absolute cursor-ew-resize"
+        style={{
+          top: -12, // Extend 12px up
+          bottom: -12, // Extend 12px down
+          left: 0,
+          right: 0,
+          pointerEvents: "auto", // Re-enable pointer events for the hit area
+          zIndex: 20,
+        }}
+        onMouseDown={handleMouseDown}
+        title={title}
+      />
+
+      {/* Visual Indicator - Strictly positioned relative to the bar (containerRef) */}
       <div
         className="pointer-events-none absolute flex flex-col items-center"
         style={{
           left: `${position}%`,
-          top: -4,
-          bottom: -4,
+          top: -4, // Visual overshoot top
+          bottom: -4, // Visual overshoot bottom
           transform: "translateX(-50%)",
+          zIndex: 10,
         }}
       >
         {/* Top triangle (pointing down) */}
