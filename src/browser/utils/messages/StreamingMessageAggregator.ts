@@ -88,8 +88,12 @@ export class StreamingMessageAggregator {
   private agentStatus: { emoji: string; message: string; url?: string } | undefined = undefined;
 
   // Last URL set via status_set - persists even when agentStatus is cleared
-  // This ensures URL stays available across stream boundaries
+  // This ensures URL stays available across stream boundaries and through compaction
+  // Persisted to localStorage keyed by workspaceId
   private lastStatusUrl: string | undefined = undefined;
+
+  // Workspace ID for localStorage persistence
+  private readonly workspaceId: string | undefined;
 
   // Workspace init hook state (ephemeral, not persisted to history)
   private initState: {
@@ -111,9 +115,46 @@ export class StreamingMessageAggregator {
   // REQUIRED: Backend guarantees every workspace has createdAt via config.ts
   private readonly createdAt: string;
 
-  constructor(createdAt: string) {
+  constructor(createdAt: string, workspaceId?: string) {
     this.createdAt = createdAt;
+    this.workspaceId = workspaceId;
+    // Load persisted lastStatusUrl from localStorage
+    if (workspaceId) {
+      this.lastStatusUrl = this.loadLastStatusUrl();
+    }
     this.updateRecency();
+  }
+
+  /** localStorage key for persisting lastStatusUrl. Only call when workspaceId is defined. */
+  private getStatusUrlKey(): string | undefined {
+    if (!this.workspaceId) return undefined;
+    return `mux:workspace:${this.workspaceId}:lastStatusUrl`;
+  }
+
+  /** Load lastStatusUrl from localStorage */
+  private loadLastStatusUrl(): string | undefined {
+    const key = this.getStatusUrlKey();
+    if (!key) return undefined;
+    try {
+      const stored = localStorage.getItem(key);
+      return stored ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Persist lastStatusUrl to localStorage.
+   * Once set, the URL can only be replaced with a new URL, never deleted.
+   */
+  private saveLastStatusUrl(url: string): void {
+    const key = this.getStatusUrlKey();
+    if (!key) return;
+    try {
+      localStorage.setItem(key, url);
+    } catch {
+      // Ignore localStorage errors
+    }
   }
   private invalidateCache(): void {
     this.cachedAllMessages = null;
@@ -232,16 +273,39 @@ export class StreamingMessageAggregator {
       this.messages.set(message.id, message);
     }
 
-    // Then, reconstruct derived state from the most recent assistant message
     // Use "streaming" context if there's an active stream (reconnection), otherwise "historical"
     const context = hasActiveStream ? "streaming" : "historical";
 
-    const sortedMessages = [...messages].sort(
-      (a, b) => (b.metadata?.historySequence ?? 0) - (a.metadata?.historySequence ?? 0)
+    // Sort messages in chronological order for processing
+    const chronologicalMessages = [...messages].sort(
+      (a, b) => (a.metadata?.historySequence ?? 0) - (b.metadata?.historySequence ?? 0)
     );
 
-    // Find the most recent assistant message
-    const lastAssistantMessage = sortedMessages.find((msg) => msg.role === "assistant");
+    // First pass: scan all messages to build up lastStatusUrl from tool calls
+    // This ensures URL persistence works even if the URL was set in an earlier message
+    // Also persists to localStorage for future loads (survives compaction)
+    for (const message of chronologicalMessages) {
+      if (message.role === "assistant") {
+        for (const part of message.parts) {
+          if (
+            isDynamicToolPart(part) &&
+            part.state === "output-available" &&
+            part.toolName === "status_set" &&
+            hasSuccessResult(part.output)
+          ) {
+            const result = part.output as Extract<StatusSetToolResult, { success: true }>;
+            if (result.url) {
+              this.lastStatusUrl = result.url;
+              this.saveLastStatusUrl(result.url);
+            }
+          }
+        }
+      }
+    }
+
+    // Second pass: reconstruct derived state from the most recent assistant message only
+    // (TODOs and agentStatus should reflect only the latest state)
+    const lastAssistantMessage = chronologicalMessages.findLast((msg) => msg.role === "assistant");
 
     if (lastAssistantMessage) {
       // Process all tool results from the most recent assistant message
@@ -577,9 +641,10 @@ export class StreamingMessageAggregator {
     if (toolName === "status_set" && hasSuccessResult(output)) {
       const result = output as Extract<StatusSetToolResult, { success: true }>;
 
-      // Update lastStatusUrl if a new URL is provided
+      // Update lastStatusUrl if a new URL is provided, and persist to localStorage
       if (result.url) {
         this.lastStatusUrl = result.url;
+        this.saveLastStatusUrl(result.url);
       }
 
       // Use the provided URL, or fall back to the last URL ever set

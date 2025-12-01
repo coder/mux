@@ -685,8 +685,8 @@ export class WorkspaceStore {
     createdAt: string
   ): StreamingMessageAggregator {
     if (!this.aggregators.has(workspaceId)) {
-      // Create new aggregator with required createdAt
-      this.aggregators.set(workspaceId, new StreamingMessageAggregator(createdAt));
+      // Create new aggregator with required createdAt and workspaceId for localStorage persistence
+      this.aggregators.set(workspaceId, new StreamingMessageAggregator(createdAt, workspaceId));
       this.workspaceCreatedAt.set(workspaceId, createdAt);
     }
 
