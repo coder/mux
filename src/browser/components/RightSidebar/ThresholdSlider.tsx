@@ -3,6 +3,7 @@ import {
   AUTO_COMPACTION_THRESHOLD_MIN,
   AUTO_COMPACTION_THRESHOLD_MAX,
 } from "@/common/constants/ui";
+import { TooltipWrapper, Tooltip } from "../Tooltip";
 
 // ----- Types -----
 
@@ -169,12 +170,37 @@ export const ThresholdSlider: React.FC<ThresholdSliderProps> = ({ config, orient
     ? { width: 1, height: 6, background: color }
     : { width: 6, height: 1, background: color };
 
+  // Indicator content (triangles + line)
+  const indicatorContent = (
+    <>
+      <Triangle direction={isHorizontal ? "down" : "right"} color={color} />
+      <div style={lineStyle} />
+      <Triangle direction={isHorizontal ? "up" : "left"} color={color} />
+    </>
+  );
+
   return (
-    <div ref={containerRef} style={containerStyle} onMouseDown={handleMouseDown} title={title}>
+    <div ref={containerRef} style={containerStyle} onMouseDown={handleMouseDown}>
       <div style={indicatorStyle}>
-        <Triangle direction={isHorizontal ? "down" : "right"} color={color} />
-        <div style={lineStyle} />
-        <Triangle direction={isHorizontal ? "up" : "left"} color={color} />
+        {isHorizontal ? (
+          // Horizontal: native title tooltip (works well positioned at cursor)
+          <div
+            title={title}
+            style={{ display: "flex", flexDirection: "column", alignItems: "center" }}
+          >
+            {indicatorContent}
+          </div>
+        ) : (
+          // Vertical: portal-based Tooltip to avoid clipping by overflow:hidden containers
+          <TooltipWrapper inline>
+            <div style={{ display: "flex", flexDirection: "row", alignItems: "center" }}>
+              {indicatorContent}
+            </div>
+            <Tooltip position="left">
+              <div style={{ fontSize: 11 }}>{title}</div>
+            </Tooltip>
+          </TooltipWrapper>
+        )}
       </div>
     </div>
   );

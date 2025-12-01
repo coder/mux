@@ -60,7 +60,7 @@ export const TooltipWrapper: React.FC<TooltipWrapperProps> = ({ inline = false, 
 interface TooltipProps {
   align?: "left" | "center" | "right";
   width?: "auto" | "wide";
-  position?: "top" | "bottom";
+  position?: "top" | "bottom" | "left" | "right";
   children: React.ReactNode;
   className?: string;
   interactive?: boolean;
@@ -109,52 +109,99 @@ export const Tooltip: React.FC<TooltipProps> = ({
       let left: number;
       let finalPosition = position;
       const gap = 8; // Gap between trigger and tooltip
+      const isHorizontalPosition = position === "left" || position === "right";
 
-      // Vertical positioning with collision detection
-      if (position === "bottom") {
-        top = trigger.bottom + gap;
-        // Check if tooltip would overflow bottom of viewport
-        if (top + tooltip.height > viewportHeight) {
-          // Flip to top
-          finalPosition = "top";
-          top = trigger.top - tooltip.height - gap;
+      if (isHorizontalPosition) {
+        // Horizontal positioning (left/right of trigger)
+        top = trigger.top + trigger.height / 2 - tooltip.height / 2;
+
+        if (position === "left") {
+          left = trigger.left - tooltip.width - gap;
+          // Check if tooltip would overflow left of viewport
+          if (left < 8) {
+            finalPosition = "right";
+            left = trigger.right + gap;
+          }
+        } else {
+          // position === "right"
+          left = trigger.right + gap;
+          // Check if tooltip would overflow right of viewport
+          if (left + tooltip.width > viewportWidth - 8) {
+            finalPosition = "left";
+            left = trigger.left - tooltip.width - gap;
+          }
         }
+
+        // Vertical collision detection for horizontal tooltips
+        top = Math.max(8, Math.min(viewportHeight - tooltip.height - 8, top));
       } else {
-        // position === "top"
-        top = trigger.top - tooltip.height - gap;
-        // Check if tooltip would overflow top of viewport
-        if (top < 0) {
-          // Flip to bottom
-          finalPosition = "bottom";
+        // Vertical positioning (top/bottom of trigger) with collision detection
+        if (position === "bottom") {
           top = trigger.bottom + gap;
+          // Check if tooltip would overflow bottom of viewport
+          if (top + tooltip.height > viewportHeight) {
+            // Flip to top
+            finalPosition = "top";
+            top = trigger.top - tooltip.height - gap;
+          }
+        } else {
+          // position === "top"
+          top = trigger.top - tooltip.height - gap;
+          // Check if tooltip would overflow top of viewport
+          if (top < 0) {
+            // Flip to bottom
+            finalPosition = "bottom";
+            top = trigger.bottom + gap;
+          }
         }
+
+        // Horizontal positioning based on align
+        if (align === "left") {
+          left = trigger.left;
+        } else if (align === "right") {
+          left = trigger.right - tooltip.width;
+        } else {
+          // center
+          left = trigger.left + trigger.width / 2 - tooltip.width / 2;
+        }
+
+        // Horizontal collision detection
+        const minLeft = 8; // Min distance from viewport edge
+        const maxLeft = viewportWidth - tooltip.width - 8;
+        left = Math.max(minLeft, Math.min(maxLeft, left));
       }
 
-      // Horizontal positioning based on align
-      if (align === "left") {
-        left = trigger.left;
-      } else if (align === "right") {
-        left = trigger.right - tooltip.width;
-      } else {
-        // center
-        left = trigger.left + trigger.width / 2 - tooltip.width / 2;
-      }
+      // Calculate arrow style based on final position
+      const arrowStyle: React.CSSProperties = {};
+      const finalIsHorizontal = finalPosition === "left" || finalPosition === "right";
 
-      // Horizontal collision detection
-      const minLeft = 8; // Min distance from viewport edge
-      const maxLeft = viewportWidth - tooltip.width - 8;
-      const originalLeft = left;
-      left = Math.max(minLeft, Math.min(maxLeft, left));
-
-      // Calculate arrow position - stays aligned with trigger even if tooltip shifts
-      let arrowLeft: number;
-      if (align === "center") {
-        arrowLeft = trigger.left + trigger.width / 2 - left;
-      } else if (align === "right") {
-        arrowLeft = tooltip.width - 15; // 10px from right + 5px arrow width
+      if (finalIsHorizontal) {
+        // Arrow on left or right side of tooltip, vertically centered
+        arrowStyle.top = "50%";
+        arrowStyle.transform = "translateY(-50%)";
+        if (finalPosition === "left") {
+          arrowStyle.left = "100%";
+          arrowStyle.borderColor = "transparent transparent transparent #2d2d30";
+        } else {
+          arrowStyle.right = "100%";
+          arrowStyle.borderColor = "transparent #2d2d30 transparent transparent";
+        }
       } else {
-        // left
-        arrowLeft = Math.max(10, Math.min(originalLeft - left + 10, tooltip.width - 15));
+        // Arrow on top or bottom of tooltip
+        let arrowLeft: number;
+        if (align === "center") {
+          arrowLeft = trigger.left + trigger.width / 2 - left;
+        } else if (align === "right") {
+          arrowLeft = tooltip.width - 15;
+        } else {
+          arrowLeft = Math.max(10, Math.min(trigger.left - left + 10, tooltip.width - 15));
+        }
+        arrowStyle.left = `${arrowLeft}px`;
+        arrowStyle[finalPosition === "bottom" ? "bottom" : "top"] = "100%";
+        arrowStyle.borderColor =
+          finalPosition === "bottom"
+            ? "transparent transparent #2d2d30 transparent"
+            : "#2d2d30 transparent transparent transparent";
       }
 
       // Update all state atomically to prevent flashing
@@ -166,14 +213,7 @@ export const Tooltip: React.FC<TooltipProps> = ({
           visibility: "visible",
           opacity: 1,
         },
-        arrowStyle: {
-          left: `${arrowLeft}px`,
-          [finalPosition === "bottom" ? "bottom" : "top"]: "100%",
-          borderColor:
-            finalPosition === "bottom"
-              ? "transparent transparent #2d2d30 transparent"
-              : "#2d2d30 transparent transparent transparent",
-        },
+        arrowStyle,
         isPositioned: true,
       });
     };
