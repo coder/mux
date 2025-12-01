@@ -1,7 +1,7 @@
 import React from "react";
 import { TooltipWrapper, Tooltip } from "../Tooltip";
 import { TokenMeter } from "./TokenMeter";
-import type { AutoCompactionConfig } from "./ThresholdSlider";
+import { VerticalThresholdSlider, type AutoCompactionConfig } from "./ThresholdSlider";
 import {
   type TokenMeterData,
   formatTokens,
@@ -10,11 +10,14 @@ import {
 
 interface VerticalTokenMeterProps {
   data: TokenMeterData;
-  /** Auto-compaction settings - reserved for future vertical slider */
+  /** Auto-compaction settings for threshold slider */
   autoCompaction?: AutoCompactionConfig;
 }
 
-const VerticalTokenMeterComponent: React.FC<VerticalTokenMeterProps> = ({ data }) => {
+const VerticalTokenMeterComponent: React.FC<VerticalTokenMeterProps> = ({
+  data,
+  autoCompaction,
+}) => {
   if (data.segments.length === 0) return null;
 
   // Scale the bar based on context window usage (0-100%)
@@ -35,14 +38,15 @@ const VerticalTokenMeterComponent: React.FC<VerticalTokenMeterProps> = ({ data }
         </div>
       )}
 
-      {/* Bar container - flex to scale bar proportionally to usage */}
-      <div className="flex min-h-0 w-full flex-1 flex-col items-center">
+      {/* Bar container - relative for slider positioning, flex for proportional scaling */}
+      <div className="relative flex min-h-0 w-full flex-1 flex-col items-center">
         {/* Used portion - grows based on usage percentage */}
         <div
-          className="flex min-h-[20px] w-full flex-col items-center px-[6px]"
+          className="flex min-h-[20px] w-full flex-col items-center"
           style={{ flex: usagePercentage }}
         >
-          <div className="flex flex-1 flex-col">
+          {/* [&>*] selector makes TooltipWrapper fill available space */}
+          <div className="flex w-full flex-1 flex-col items-center [&>*]:flex [&>*]:flex-1 [&>*]:flex-col">
             <TooltipWrapper>
               <TokenMeter
                 segments={data.segments}
@@ -84,6 +88,9 @@ const VerticalTokenMeterComponent: React.FC<VerticalTokenMeterProps> = ({ data }
         </div>
         {/* Empty portion - takes remaining space */}
         <div className="w-full" style={{ flex: Math.max(0, 100 - usagePercentage) }} />
+
+        {/* Threshold slider overlay - only when autoCompaction config provided and maxTokens known */}
+        {autoCompaction && data.maxTokens && <VerticalThresholdSlider config={autoCompaction} />}
       </div>
     </div>
   );

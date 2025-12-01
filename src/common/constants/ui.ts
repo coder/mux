@@ -12,9 +12,10 @@ export const COMPACTED_EMOJI = "📦";
 
 /**
  * Auto-compaction threshold bounds (percentage)
- * Too low risks frequent interruptions; too high risks hitting context limits
+ * MIN: Allow any value - user can choose aggressive compaction if desired
+ * MAX: Cap at 90% to leave buffer before hitting context limit
  */
-export const AUTO_COMPACTION_THRESHOLD_MIN = 50;
+export const AUTO_COMPACTION_THRESHOLD_MIN = 0;
 export const AUTO_COMPACTION_THRESHOLD_MAX = 90;
 
 /**

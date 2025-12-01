@@ -11,13 +11,14 @@ export interface AutoCompactionConfig {
   setThreshold: (threshold: number) => void;
 }
 
-interface HorizontalThresholdSliderProps {
+interface ThresholdSliderProps {
   config: AutoCompactionConfig;
+  orientation: "horizontal" | "vertical";
 }
 
 // ----- Constants -----
 
-/** Threshold at which we consider auto-compaction disabled (dragged all the way right) */
+/** Threshold at which we consider auto-compaction disabled (dragged all the way to end) */
 const DISABLE_THRESHOLD = 100;
 
 /** Size of the triangle markers in pixels */
@@ -26,27 +27,65 @@ const TRIANGLE_SIZE = 4;
 // ----- Subcomponents -----
 
 /** CSS triangle pointing in specified direction */
-const Triangle: React.FC<{ direction: "up" | "down"; color: string }> = ({ direction, color }) => (
-  <div
-    style={{
-      width: 0,
-      height: 0,
-      borderLeft: `${TRIANGLE_SIZE}px solid transparent`,
-      borderRight: `${TRIANGLE_SIZE}px solid transparent`,
-      ...(direction === "down"
-        ? { borderTop: `${TRIANGLE_SIZE}px solid ${color}` }
-        : { borderBottom: `${TRIANGLE_SIZE}px solid ${color}` }),
-    }}
-  />
-);
+const Triangle: React.FC<{ direction: "up" | "down" | "left" | "right"; color: string }> = ({
+  direction,
+  color,
+}) => {
+  const styles: React.CSSProperties = { width: 0, height: 0 };
 
-// ----- Main component: HorizontalThresholdSlider -----
+  if (direction === "up" || direction === "down") {
+    styles.borderLeft = `${TRIANGLE_SIZE}px solid transparent`;
+    styles.borderRight = `${TRIANGLE_SIZE}px solid transparent`;
+    if (direction === "down") {
+      styles.borderTop = `${TRIANGLE_SIZE}px solid ${color}`;
+    } else {
+      styles.borderBottom = `${TRIANGLE_SIZE}px solid ${color}`;
+    }
+  } else {
+    styles.borderTop = `${TRIANGLE_SIZE}px solid transparent`;
+    styles.borderBottom = `${TRIANGLE_SIZE}px solid transparent`;
+    if (direction === "right") {
+      styles.borderLeft = `${TRIANGLE_SIZE}px solid ${color}`;
+    } else {
+      styles.borderRight = `${TRIANGLE_SIZE}px solid ${color}`;
+    }
+  }
+
+  return <div style={styles} />;
+};
+
+// ----- Shared utilities -----
+
+/** Clamp and snap percentage to valid threshold values */
+const snapPercent = (raw: number): number => {
+  const clamped = Math.max(AUTO_COMPACTION_THRESHOLD_MIN, Math.min(100, raw));
+  return Math.round(clamped / 5) * 5;
+};
+
+/** Apply threshold, handling the disable case */
+const applyThreshold = (pct: number, setThreshold: (v: number) => void): void => {
+  setThreshold(pct >= DISABLE_THRESHOLD ? 100 : Math.min(pct, AUTO_COMPACTION_THRESHOLD_MAX));
+};
+
+/** Get tooltip text based on threshold */
+const getTooltip = (threshold: number, orientation: "horizontal" | "vertical"): string => {
+  const isEnabled = threshold < DISABLE_THRESHOLD;
+  const direction = orientation === "horizontal" ? "left" : "up";
+  return isEnabled
+    ? `Auto-compact at ${threshold}% · Drag to adjust (per-model)`
+    : `Auto-compact disabled · Drag ${direction} to enable (per-model)`;
+};
+
+// ----- Main component: ThresholdSlider -----
 
 /**
- * A draggable threshold indicator for horizontal progress bars.
+ * A draggable threshold indicator for progress bars (horizontal or vertical).
  *
- * Renders as a vertical line with triangle handles at the threshold position.
- * Drag left/right to adjust threshold. Drag to 100% to disable.
+ * - Horizontal: Renders as a vertical line with up/down triangle handles.
+ *   Drag left/right to adjust threshold. Drag to 100% (right) to disable.
+ *
+ * - Vertical: Renders as a horizontal line with left/right triangle handles.
+ *   Drag up/down to adjust threshold. Drag to 100% (bottom) to disable.
  *
  * USAGE: Place as a sibling AFTER the progress bar, both inside a relative container.
  *
@@ -57,8 +96,9 @@ const Triangle: React.FC<{ direction: "up" | "down"; color: string }> = ({ direc
  * how Tailwind's JIT compiler or class application interacts with dynamically
  * rendered components in this context. Inline styles work reliably.
  */
-export const HorizontalThresholdSlider: React.FC<HorizontalThresholdSliderProps> = ({ config }) => {
+export const ThresholdSlider: React.FC<ThresholdSliderProps> = ({ config, orientation }) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const isHorizontal = orientation === "horizontal";
 
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -66,21 +106,20 @@ export const HorizontalThresholdSlider: React.FC<HorizontalThresholdSliderProps>
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
 
-    const calcPercent = (clientX: number) => {
-      const raw = ((clientX - rect.left) / rect.width) * 100;
-      const clamped = Math.max(AUTO_COMPACTION_THRESHOLD_MIN, Math.min(100, raw));
-      return Math.round(clamped / 5) * 5;
+    const calcPercent = (clientX: number, clientY: number) => {
+      if (isHorizontal) {
+        return snapPercent(((clientX - rect.left) / rect.width) * 100);
+      } else {
+        // Vertical: top = low %, bottom = high %
+        return snapPercent(((clientY - rect.top) / rect.height) * 100);
+      }
     };
 
-    const applyThreshold = (pct: number) => {
-      config.setThreshold(
-        pct >= DISABLE_THRESHOLD ? 100 : Math.min(pct, AUTO_COMPACTION_THRESHOLD_MAX)
-      );
-    };
+    const apply = (pct: number) => applyThreshold(pct, config.setThreshold);
 
-    applyThreshold(calcPercent(e.clientX));
+    apply(calcPercent(e.clientX, e.clientY));
 
-    const onMove = (ev: MouseEvent) => applyThreshold(calcPercent(ev.clientX));
+    const onMove = (ev: MouseEvent) => apply(calcPercent(ev.clientX, ev.clientY));
     const onUp = () => {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
@@ -91,42 +130,64 @@ export const HorizontalThresholdSlider: React.FC<HorizontalThresholdSliderProps>
 
   const isEnabled = config.threshold < DISABLE_THRESHOLD;
   const color = isEnabled ? "var(--color-plan-mode)" : "var(--color-muted)";
-  const title = isEnabled
-    ? `Auto-compact at ${config.threshold}% · Drag to adjust (per-model)`
-    : "Auto-compact disabled · Drag left to enable (per-model)";
+  const title = getTooltip(config.threshold, orientation);
+
+  // Container styles
+  const containerStyle: React.CSSProperties = {
+    position: "absolute",
+    cursor: isHorizontal ? "ew-resize" : "ns-resize",
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    zIndex: 50,
+  };
+
+  // Indicator positioning - use transform for centering on both axes
+  const indicatorStyle: React.CSSProperties = {
+    position: "absolute",
+    pointerEvents: "none",
+    display: "flex",
+    alignItems: "center",
+    ...(isHorizontal
+      ? {
+          left: `${config.threshold}%`,
+          top: "50%",
+          transform: "translate(-50%, -50%)",
+          flexDirection: "column",
+        }
+      : {
+          top: `${config.threshold}%`,
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          flexDirection: "row",
+        }),
+  };
+
+  // Line between triangles
+  const lineStyle: React.CSSProperties = isHorizontal
+    ? { width: 1, height: 6, background: color }
+    : { width: 6, height: 1, background: color };
 
   return (
-    <div
-      ref={containerRef}
-      style={{
-        position: "absolute",
-        cursor: "ew-resize",
-        top: 0,
-        bottom: 0,
-        left: 0,
-        right: 0,
-        zIndex: 50,
-      }}
-      onMouseDown={handleMouseDown}
-      title={title}
-    >
-      {/* Indicator: top triangle + line + bottom triangle, centered on threshold */}
-      <div
-        style={{
-          position: "absolute",
-          left: `${config.threshold}%`,
-          top: `calc(50% - ${TRIANGLE_SIZE + 3}px)`,
-          transform: "translateX(-50%)",
-          pointerEvents: "none",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-        }}
-      >
-        <Triangle direction="down" color={color} />
-        <div style={{ width: 1, height: 6, background: color }} />
-        <Triangle direction="up" color={color} />
+    <div ref={containerRef} style={containerStyle} onMouseDown={handleMouseDown} title={title}>
+      <div style={indicatorStyle}>
+        <Triangle direction={isHorizontal ? "down" : "right"} color={color} />
+        <div style={lineStyle} />
+        <Triangle direction={isHorizontal ? "up" : "left"} color={color} />
       </div>
     </div>
   );
 };
+
+// ----- Convenience exports -----
+
+/** Horizontal threshold slider (alias for backwards compatibility) */
+export const HorizontalThresholdSlider: React.FC<{ config: AutoCompactionConfig }> = ({
+  config,
+}) => <ThresholdSlider config={config} orientation="horizontal" />;
+
+/** Vertical threshold slider */
+export const VerticalThresholdSlider: React.FC<{ config: AutoCompactionConfig }> = ({ config }) => (
+  <ThresholdSlider config={config} orientation="vertical" />
+);
