@@ -37,6 +37,7 @@ import {
   createCachedSystemMessage,
   applyCacheControlToTools,
 } from "@/common/utils/ai/cacheStrategy";
+import { withRepetitionProtection } from "@/node/utils/ai/repetitionStreamWrapper";
 
 // Type definitions for stream parts with extended properties
 interface ReasoningDeltaPart {
@@ -541,6 +542,10 @@ export class StreamManager extends EventEmitter {
 
     const messageId = `assistant-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
+    // Create repetition detector for Gemini models (known token exhaustion bug)
+    // @see https://github.com/google-gemini/gemini-cli/issues/13322
+    // Removed inline detector in favor of stream wrapper approach
+
     const streamInfo: WorkspaceStreamInfo = {
       state: StreamState.STARTING,
       streamResult,
@@ -658,7 +663,15 @@ export class StreamManager extends EventEmitter {
         { toolCallId: string; toolName: string; input: unknown; output?: unknown }
       >();
 
-      for await (const part of streamInfo.streamResult.fullStream) {
+      // Wrap stream with repetition protection (handles Gemini infinite loops)
+      const protectedStream = withRepetitionProtection(
+        streamInfo.streamResult.fullStream,
+        streamInfo.model,
+        streamInfo.abortController,
+        workspaceId
+      );
+
+      for await (const part of protectedStream) {
         // Check if stream was cancelled BEFORE processing any parts
         // This improves interruption responsiveness by catching aborts earlier
         if (streamInfo.abortController.signal.aborted) {
