@@ -1,5 +1,6 @@
 import * as fs from "fs/promises";
 import * as path from "path";
+import writeFileAtomic from "write-file-atomic";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { Config } from "@/node/config";
@@ -55,7 +56,8 @@ export class SessionFileManager<T> {
         const sessionDir = this.config.getSessionDir(workspaceId);
         await fs.mkdir(sessionDir, { recursive: true });
         const filePath = this.getFilePath(workspaceId);
-        await fs.writeFile(filePath, JSON.stringify(data, null, 2));
+        // Atomic write prevents corruption if app crashes mid-write
+        await writeFileAtomic(filePath, JSON.stringify(data, null, 2));
         return Ok(undefined);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

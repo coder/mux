@@ -1,5 +1,6 @@
 import * as fs from "fs/promises";
 import * as path from "path";
+import writeFileAtomic from "write-file-atomic";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { MuxMessage } from "@/common/types/message";
@@ -80,7 +81,9 @@ export class PartialService {
           },
         };
 
-        await fs.writeFile(partialPath, JSON.stringify(partialMessage, null, 2));
+        // Atomic write: writes to temp file then renames, preventing corruption
+        // if app crashes mid-write (prevents "Unexpected end of JSON input" on read)
+        await writeFileAtomic(partialPath, JSON.stringify(partialMessage, null, 2));
         return Ok(undefined);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

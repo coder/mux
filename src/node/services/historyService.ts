@@ -1,5 +1,6 @@
 import * as fs from "fs/promises";
 import * as path from "path";
+import writeFileAtomic from "write-file-atomic";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { MuxMessage } from "@/common/types/message";
@@ -235,7 +236,8 @@ export class HistoryService {
           .map((msg) => JSON.stringify({ ...msg, workspaceId }) + "\n")
           .join("");
 
-        await fs.writeFile(historyPath, historyEntries);
+        // Atomic write prevents corruption if app crashes mid-write
+        await writeFileAtomic(historyPath, historyEntries);
         return Ok(undefined);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -272,7 +274,8 @@ export class HistoryService {
           .map((msg) => JSON.stringify({ ...msg, workspaceId }) + "\n")
           .join("");
 
-        await fs.writeFile(historyPath, historyEntries);
+        // Atomic write prevents corruption if app crashes mid-write
+        await writeFileAtomic(historyPath, historyEntries);
 
         // Update sequence counter to continue from where we truncated
         if (truncatedMessages.length > 0) {
@@ -399,7 +402,8 @@ export class HistoryService {
           .map((msg) => JSON.stringify({ ...msg, workspaceId }) + "\n")
           .join("");
 
-        await fs.writeFile(historyPath, historyEntries);
+        // Atomic write prevents corruption if app crashes mid-write
+        await writeFileAtomic(historyPath, historyEntries);
 
         // Update sequence counter to continue from where we are
         if (remainingMessages.length > 0) {
@@ -455,7 +459,8 @@ export class HistoryService {
           .map((msg) => JSON.stringify({ ...msg, workspaceId: newWorkspaceId }) + "\n")
           .join("");
 
-        await fs.writeFile(newHistoryPath, historyEntries);
+        // Atomic write prevents corruption if app crashes mid-write
+        await writeFileAtomic(newHistoryPath, historyEntries);
 
         // Transfer sequence counter to new workspace ID
         const oldCounter = this.sequenceCounters.get(oldWorkspaceId) ?? 0;
