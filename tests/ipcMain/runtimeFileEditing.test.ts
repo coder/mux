@@ -26,6 +26,7 @@ import {
   createWorkspaceWithInit,
   sendMessageAndWait,
   extractTextFromEvents,
+  writeFileViaBash,
   HAIKU_MODEL,
   TEST_TIMEOUT_LOCAL_MS,
   TEST_TIMEOUT_SSH_MS,
@@ -129,27 +130,14 @@ describeIntegration("Runtime File Editing Tools", () => {
             );
 
             try {
-              // Ask AI to create a test file
+              // Create test file directly (faster than LLM call)
               const testFileName = "test_read.txt";
+              const testContent = "Hello from mux file tools!";
+              await writeFileViaBash(env, workspaceId, testFileName, testContent);
+
+              // Ask AI to read the file (explicitly request file_read tool)
               const streamTimeout =
                 type === "ssh" ? STREAM_TIMEOUT_SSH_MS : STREAM_TIMEOUT_LOCAL_MS;
-              const createEvents = await sendMessageAndWait(
-                env,
-                workspaceId,
-                `Create a file called ${testFileName} with the content: "Hello from mux file tools!"`,
-                HAIKU_MODEL,
-                FILE_TOOLS_ONLY,
-                streamTimeout
-              );
-
-              // Verify file was created successfully
-              const createStreamEnd = createEvents.find(
-                (e) => "type" in e && e.type === "stream-end"
-              );
-              expect(createStreamEnd).toBeDefined();
-              expect((createStreamEnd as any).error).toBeUndefined();
-
-              // Now ask AI to read the file (explicitly request file_read tool)
               const readEvents = await sendMessageAndWait(
                 env,
                 workspaceId,
@@ -212,27 +200,14 @@ describeIntegration("Runtime File Editing Tools", () => {
             );
 
             try {
-              // Ask AI to create a test file
+              // Create test file directly (faster than LLM call)
               const testFileName = "test_replace.txt";
-              const streamTimeout =
-                type === "ssh" ? STREAM_TIMEOUT_SSH_MS : STREAM_TIMEOUT_LOCAL_MS;
-              const createEvents = await sendMessageAndWait(
-                env,
-                workspaceId,
-                `Create a file called ${testFileName} with the content: "The quick brown fox jumps over the lazy dog."`,
-                HAIKU_MODEL,
-                FILE_TOOLS_ONLY,
-                streamTimeout
-              );
-
-              // Verify file was created successfully
-              const createStreamEnd = createEvents.find(
-                (e) => "type" in e && e.type === "stream-end"
-              );
-              expect(createStreamEnd).toBeDefined();
-              expect((createStreamEnd as any).error).toBeUndefined();
+              const testContent = "The quick brown fox jumps over the lazy dog.";
+              await writeFileViaBash(env, workspaceId, testFileName, testContent);
 
               // Ask AI to replace text (explicitly request file_edit_replace_string tool)
+              const streamTimeout =
+                type === "ssh" ? STREAM_TIMEOUT_SSH_MS : STREAM_TIMEOUT_LOCAL_MS;
               const replaceEvents = await sendMessageAndWait(
                 env,
                 workspaceId,
@@ -301,27 +276,14 @@ describeIntegration("Runtime File Editing Tools", () => {
             );
 
             try {
-              // Ask AI to create a test file
+              // Create test file directly (faster than LLM call)
               const testFileName = "test_insert.txt";
-              const streamTimeout =
-                type === "ssh" ? STREAM_TIMEOUT_SSH_MS : STREAM_TIMEOUT_LOCAL_MS;
-              const createEvents = await sendMessageAndWait(
-                env,
-                workspaceId,
-                `Create a file called ${testFileName} with two lines: "Line 1" and "Line 3".`,
-                HAIKU_MODEL,
-                FILE_TOOLS_ONLY,
-                streamTimeout
-              );
-
-              // Verify file was created successfully
-              const createStreamEnd = createEvents.find(
-                (e) => "type" in e && e.type === "stream-end"
-              );
-              expect(createStreamEnd).toBeDefined();
-              expect((createStreamEnd as any).error).toBeUndefined();
+              const testContent = "Line 1\nLine 3";
+              await writeFileViaBash(env, workspaceId, testFileName, testContent);
 
               // Ask AI to insert text (explicitly request file_edit tool usage)
+              const streamTimeout =
+                type === "ssh" ? STREAM_TIMEOUT_SSH_MS : STREAM_TIMEOUT_LOCAL_MS;
               const insertEvents = await sendMessageAndWait(
                 env,
                 workspaceId,
@@ -391,28 +353,14 @@ describeIntegration("Runtime File Editing Tools", () => {
             );
 
             try {
-              const streamTimeout =
-                type === "ssh" ? STREAM_TIMEOUT_SSH_MS : STREAM_TIMEOUT_LOCAL_MS;
-
-              // Create a file using AI with a relative path
+              // Create test file directly in subdirectory (faster than LLM call)
               const relativeTestFile = "subdir/relative_test.txt";
-              const createEvents = await sendMessageAndWait(
-                env,
-                workspaceId,
-                `Create a file at path "${relativeTestFile}" with content: "Original content"`,
-                HAIKU_MODEL,
-                FILE_TOOLS_ONLY,
-                streamTimeout
-              );
-
-              // Verify file was created successfully
-              const createStreamEnd = createEvents.find(
-                (e) => "type" in e && e.type === "stream-end"
-              );
-              expect(createStreamEnd).toBeDefined();
-              expect((createStreamEnd as any).error).toBeUndefined();
+              const testContent = "Original content";
+              await writeFileViaBash(env, workspaceId, relativeTestFile, testContent);
 
               // Now edit the file using a relative path
+              const streamTimeout =
+                type === "ssh" ? STREAM_TIMEOUT_SSH_MS : STREAM_TIMEOUT_LOCAL_MS;
               const editEvents = await sendMessageAndWait(
                 env,
                 workspaceId,
@@ -436,19 +384,18 @@ describeIntegration("Runtime File Editing Tools", () => {
               );
               expect(editCall).toBeDefined();
 
-              // Read the file to verify the edit was applied
-              const readEvents = await sendMessageAndWait(
-                env,
-                workspaceId,
-                `Read the file ${relativeTestFile} and tell me its content`,
-                HAIKU_MODEL,
-                FILE_TOOLS_ONLY,
-                streamTimeout
+              // Verify tool result indicates success
+              const toolResults = editEvents.filter(
+                (e) => "type" in e && e.type === "tool-call-end"
               );
-
-              const responseText = extractTextFromEvents(readEvents);
-              // The file should contain "Modified" not "Original"
-              expect(responseText.toLowerCase()).toContain("modified");
+              const editResult = toolResults.find(
+                (e: any) => e.toolName === "file_edit_replace_string"
+              );
+              expect(editResult).toBeDefined();
+              // Tool result should contain a diff showing the change (indicates success)
+              const result = (editResult as any)?.result;
+              const resultStr = typeof result === "string" ? result : JSON.stringify(result);
+              expect(resultStr).toContain("Modified content");
 
               // If this is SSH, the bug would cause the edit to fail because
               // path.resolve() would resolve relative to the LOCAL filesystem

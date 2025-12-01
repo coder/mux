@@ -29,6 +29,61 @@ export const STREAM_TIMEOUT_LOCAL_MS = 15000; // Stream timeout for local runtim
 export const STREAM_TIMEOUT_SSH_MS = 25000; // Stream timeout for SSH runtime
 
 /**
+ * Write a file in the workspace using bash (works for both local and SSH runtimes)
+ * Use this to set up test fixtures without LLM calls
+ */
+export async function writeFileViaBash(
+  env: TestEnvironment,
+  workspaceId: string,
+  filePath: string,
+  content: string
+): Promise<void> {
+  // Escape content for shell - use base64 to handle any content safely
+  const base64Content = Buffer.from(content).toString("base64");
+  const dir = path.dirname(filePath);
+
+  // Create directory if needed, then decode base64 to file
+  const command =
+    dir && dir !== "."
+      ? `mkdir -p "${dir}" && echo "${base64Content}" | base64 -d > "${filePath}"`
+      : `echo "${base64Content}" | base64 -d > "${filePath}"`;
+
+  const result: any = await env.mockIpcRenderer.invoke(
+    IPC_CHANNELS.WORKSPACE_EXECUTE_BASH,
+    workspaceId,
+    command,
+    { timeout: 10 }
+  );
+
+  if (!result.success || result.data?.exitCode !== 0) {
+    throw new Error(`Failed to write file ${filePath}: ${JSON.stringify(result)}`);
+  }
+}
+
+/**
+ * Read a file in the workspace using bash (works for both local and SSH runtimes)
+ * Use this to verify test results without LLM calls
+ */
+export async function readFileViaBash(
+  env: TestEnvironment,
+  workspaceId: string,
+  filePath: string
+): Promise<string> {
+  const result: any = await env.mockIpcRenderer.invoke(
+    IPC_CHANNELS.WORKSPACE_EXECUTE_BASH,
+    workspaceId,
+    `cat "${filePath}"`,
+    { timeout: 10 }
+  );
+
+  if (!result.success || result.data?.exitCode !== 0) {
+    throw new Error(`Failed to read file ${filePath}: ${JSON.stringify(result)}`);
+  }
+
+  return result.data?.stdout ?? "";
+}
+
+/**
  * Generate a unique branch name
  * Uses high-resolution time (nanosecond precision) to prevent collisions
  */
