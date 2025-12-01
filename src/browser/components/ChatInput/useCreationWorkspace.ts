@@ -16,6 +16,7 @@ import {
 } from "@/common/constants/storage";
 import type { Toast } from "@/browser/components/ChatInputToast";
 import { createErrorToast } from "@/browser/components/ChatInputToasts";
+import type { ImagePart } from "@/common/types/ipc";
 
 interface UseCreationWorkspaceOptions {
   projectPath: string;
@@ -49,7 +50,7 @@ interface UseCreationWorkspaceReturn {
   toast: Toast | null;
   setToast: (toast: Toast | null) => void;
   isSending: boolean;
-  handleSend: (message: string) => Promise<boolean>;
+  handleSend: (message: string, imageParts?: ImagePart[]) => Promise<boolean>;
 }
 
 /**
@@ -95,7 +96,7 @@ export function useCreationWorkspace({
   }, [projectPath]);
 
   const handleSend = useCallback(
-    async (message: string): Promise<boolean> => {
+    async (message: string, imageParts?: ImagePart[]): Promise<boolean> => {
       if (!message.trim() || isSending) return false;
 
       setIsSending(true);
@@ -114,6 +115,7 @@ export function useCreationWorkspace({
           runtimeConfig,
           projectPath, // Pass projectPath when workspaceId is null
           trunkBranch: settings.trunkBranch, // Pass selected trunk branch from settings
+          imageParts: imageParts && imageParts.length > 0 ? imageParts : undefined,
         });
 
         if (!result.success) {

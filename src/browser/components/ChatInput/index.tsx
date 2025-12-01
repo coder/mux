@@ -563,9 +563,13 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     // Handle standard message sending based on variant
     if (variant === "creation") {
       setIsSending(true);
-      const ok = await creationState.handleSend(messageText);
+      const ok = await creationState.handleSend(
+        messageText,
+        imageParts.length > 0 ? imageParts : undefined
+      );
       if (ok) {
         setInput("");
+        setImageAttachments([]);
         if (inputRef.current) {
           inputRef.current.style.height = "36px";
         }
@@ -882,9 +886,9 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
               mode={mode}
               onChange={setInput}
               onKeyDown={handleKeyDown}
-              onPaste={variant === "workspace" ? handlePaste : undefined}
-              onDragOver={variant === "workspace" ? handleDragOver : undefined}
-              onDrop={variant === "workspace" ? handleDrop : undefined}
+              onPaste={handlePaste}
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
               suppressKeys={showCommandSuggestions ? COMMAND_SUGGESTION_KEYS : undefined}
               placeholder={placeholder}
               disabled={!editingMessage && (disabled || isSending)}
@@ -897,10 +901,8 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             />
           </div>
 
-          {/* Image attachments - workspace only */}
-          {variant === "workspace" && (
-            <ImageAttachments images={imageAttachments} onRemove={handleRemoveImage} />
-          )}
+          {/* Image attachments */}
+          <ImageAttachments images={imageAttachments} onRemove={handleRemoveImage} />
 
           <div className="flex flex-col gap-1" data-component="ChatModeToggles">
             {/* Editing indicator - workspace only */}
