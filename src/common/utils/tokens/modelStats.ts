@@ -1,5 +1,6 @@
 import modelsData from "./models.json";
 import { modelsExtra } from "./models-extra";
+import { normalizeGatewayModel } from "../ai/models";
 
 export interface ModelStats {
   max_input_tokens: number;
@@ -92,7 +93,8 @@ function generateLookupKeys(modelString: string): string[] {
  * @returns ModelStats or null if model not found
  */
 export function getModelStats(modelString: string): ModelStats | null {
-  const lookupKeys = generateLookupKeys(modelString);
+  const normalized = normalizeGatewayModel(modelString);
+  const lookupKeys = generateLookupKeys(normalized);
 
   // Try each lookup pattern in main models.json
   for (const key of lookupKeys) {

@@ -1,4 +1,5 @@
 import { tool as createTool, type ModelMessage, type Tool } from "ai";
+import { normalizeGatewayModel } from "./models";
 
 /**
  * Check if a model supports Anthropic cache control.
@@ -8,12 +9,13 @@ import { tool as createTool, type ModelMessage, type Tool } from "ai";
  * - OpenRouter Anthropic models: "openrouter:anthropic/claude-3.5-sonnet"
  */
 export function supportsAnthropicCache(modelString: string): boolean {
-  // Direct Anthropic provider
-  if (modelString.startsWith("anthropic:")) {
+  const normalized = normalizeGatewayModel(modelString);
+  // Direct Anthropic provider (or normalized gateway model)
+  if (normalized.startsWith("anthropic:")) {
     return true;
   }
-  // Gateway/router providers routing to Anthropic (format: "provider:anthropic/model")
-  const [, modelId] = modelString.split(":");
+  // Other gateway/router providers routing to Anthropic (format: "provider:anthropic/model")
+  const [, modelId] = normalized.split(":");
   if (modelId?.startsWith("anthropic/")) {
     return true;
   }

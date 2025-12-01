@@ -88,6 +88,26 @@ describe("getModelStats", () => {
     });
   });
 
+  describe("mux-gateway models", () => {
+    test("should handle mux-gateway:anthropic/model format", () => {
+      const stats = getModelStats("mux-gateway:anthropic/claude-sonnet-4-5");
+      expect(stats).not.toBeNull();
+      expect(stats?.input_cost_per_token).toBe(0.000003);
+      expect(stats?.output_cost_per_token).toBe(0.000015);
+    });
+
+    test("should handle mux-gateway:openai/model format", () => {
+      const stats = getModelStats("mux-gateway:openai/gpt-4o");
+      expect(stats).not.toBeNull();
+      expect(stats?.max_input_tokens).toBeGreaterThan(0);
+    });
+
+    test("should return null for mux-gateway with unknown model", () => {
+      const stats = getModelStats("mux-gateway:anthropic/unknown-model-xyz");
+      expect(stats).toBeNull();
+    });
+  });
+
   describe("model without provider prefix", () => {
     test("should handle model string without provider", () => {
       const stats = getModelStats("gpt-5.1");

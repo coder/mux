@@ -6,6 +6,7 @@ import type { CountTokensInput } from "./tokenizer.worker";
 import { models, type ModelName } from "ai-tokenizer";
 import { run } from "./workerPool";
 import { TOKENIZER_MODEL_OVERRIDES, DEFAULT_WARM_MODELS } from "@/common/constants/knownModels";
+import { normalizeGatewayModel } from "@/common/utils/ai/models";
 
 /**
  * Public tokenizer interface exposed to callers.
@@ -48,10 +49,11 @@ function normalizeModelKey(modelName: string): ModelName | null {
  * Optionally logs a warning when falling back.
  */
 function resolveModelName(modelString: string): ModelName {
-  let modelName = normalizeModelKey(modelString);
+  const normalized = normalizeGatewayModel(modelString);
+  let modelName = normalizeModelKey(normalized);
 
   if (!modelName) {
-    const provider = modelString.split(":")[0] || "anthropic";
+    const provider = normalized.split(":")[0] || "anthropic";
     const fallbackModel =
       provider === "anthropic"
         ? "anthropic/claude-sonnet-4.5"
