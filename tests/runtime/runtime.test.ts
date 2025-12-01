@@ -113,6 +113,21 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.stdout.trim()).toBe("test-value");
         });
 
+        test.concurrent("sets NON_INTERACTIVE_ENV_VARS to prevent prompts", async () => {
+          const runtime = createRuntime();
+          await using workspace = await TestWorkspace.create(runtime, type);
+
+          // Verify GIT_TERMINAL_PROMPT is set to 0 (prevents credential prompts)
+          const result = await execBuffered(
+            runtime,
+            'echo "GIT_TERMINAL_PROMPT=$GIT_TERMINAL_PROMPT GIT_EDITOR=$GIT_EDITOR"',
+            { cwd: workspace.path, timeout: 30 }
+          );
+
+          expect(result.stdout).toContain("GIT_TERMINAL_PROMPT=0");
+          expect(result.stdout).toContain("GIT_EDITOR=true");
+        });
+
         test.concurrent("handles empty output", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
