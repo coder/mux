@@ -581,8 +581,17 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 />
                               );
 
+                              // Find the next tier with workspaces (skip empty tiers)
+                              const findNextNonEmptyTier = (startIndex: number): number => {
+                                for (let i = startIndex; i < buckets.length; i++) {
+                                  if (buckets[i].length > 0) return i;
+                                }
+                                return -1;
+                              };
+
                               // Render a tier and all subsequent tiers recursively
                               // Each tier only shows if the previous tier is expanded
+                              // Empty tiers are skipped automatically
                               const renderTier = (tierIndex: number): React.ReactNode => {
                                 const bucket = buckets[tierIndex];
                                 // Sum remaining workspaces from this tier onward
@@ -627,18 +636,23 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     {isExpanded && (
                                       <>
                                         {bucket.map(renderWorkspace)}
-                                        {tierIndex + 1 < buckets.length &&
-                                          renderTier(tierIndex + 1)}
+                                        {(() => {
+                                          const nextTier = findNextNonEmptyTier(tierIndex + 1);
+                                          return nextTier !== -1 ? renderTier(nextTier) : null;
+                                        })()}
                                       </>
                                     )}
                                   </>
                                 );
                               };
 
+                              // Find first non-empty tier to start rendering
+                              const firstTier = findNextNonEmptyTier(0);
+
                               return (
                                 <>
                                   {recent.map(renderWorkspace)}
-                                  {renderTier(0)}
+                                  {firstTier !== -1 && renderTier(firstTier)}
                                 </>
                               );
                             })()}
