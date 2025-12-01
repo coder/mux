@@ -174,8 +174,10 @@ describeIntegration("IpcMain workspace init hook integration tests", () => {
         expect(outputLines).toContain("Installing dependencies...");
         expect(outputLines).toContain("Build complete!");
 
-        expect(errorEvents.length).toBe(1);
-        expect(errorEvents[0].line).toBe("Warning: deprecated package");
+        // Should have at least the hook's stderr message
+        // (may also have pull-latest notes if fetch/rebase fails, which is expected)
+        const hookErrorEvent = errorEvents.find((e) => e.line === "Warning: deprecated package");
+        expect(hookErrorEvent).toBeDefined();
 
         // Last event should be end with exitCode 0
         const finalEvent = initEvents[initEvents.length - 1];

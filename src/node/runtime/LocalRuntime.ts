@@ -365,12 +365,54 @@ export class LocalRuntime implements Runtime {
 
       initLogger.logStep("Worktree created successfully");
 
+      // Pull latest from origin (best-effort, non-blocking on failure)
+      await this.pullLatestFromOrigin(workspacePath, trunkBranch, initLogger);
+
       return { success: true, workspacePath };
     } catch (error) {
       return {
         success: false,
         error: getErrorMessage(error),
       };
+    }
+  }
+
+  /**
+   * Fetch and rebase on latest origin/<trunkBranch>
+   * Best-effort operation - logs status but doesn't fail workspace creation
+   */
+  private async pullLatestFromOrigin(
+    workspacePath: string,
+    trunkBranch: string,
+    initLogger: InitLogger
+  ): Promise<void> {
+    try {
+      initLogger.logStep(`Fetching latest from origin/${trunkBranch}...`);
+
+      // Fetch the trunk branch from origin
+      using fetchProc = execAsync(`git -C "${workspacePath}" fetch origin "${trunkBranch}"`);
+      await fetchProc.result;
+
+      initLogger.logStep("Fast-forward merging...");
+
+      // Attempt fast-forward merge from origin/<trunkBranch>
+      try {
+        using mergeProc = execAsync(
+          `git -C "${workspacePath}" merge --ff-only "origin/${trunkBranch}"`
+        );
+        await mergeProc.result;
+        initLogger.logStep("Fast-forwarded to latest origin successfully");
+      } catch (mergeError) {
+        // Fast-forward not possible (diverged branches) - just warn
+        const errorMsg = getErrorMessage(mergeError);
+        initLogger.logStderr(`Note: Fast-forward skipped (${errorMsg}), using local branch state`);
+      }
+    } catch (error) {
+      // Fetch failed - log and continue (common for repos without remote)
+      const errorMsg = getErrorMessage(error);
+      initLogger.logStderr(
+        `Note: Could not fetch from origin (${errorMsg}), using local branch state`
+      );
     }
   }
 

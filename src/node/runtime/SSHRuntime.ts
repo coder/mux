@@ -906,7 +906,10 @@ export class SSHRuntime implements Runtime {
       }
       initLogger.logStep("Branch checked out successfully");
 
-      // 3. Run .mux/init hook if it exists
+      // 3. Pull latest from origin (best-effort, non-blocking on failure)
+      await this.pullLatestFromOrigin(workspacePath, trunkBranch, initLogger, abortSignal);
+
+      // 4. Run .mux/init hook if it exists
       // Note: runInitHook calls logComplete() internally if hook exists
       const hookExists = await checkInitHookExists(projectPath);
       if (hookExists) {
@@ -925,6 +928,68 @@ export class SSHRuntime implements Runtime {
         success: false,
         error: errorMsg,
       };
+    }
+  }
+
+  /**
+   * Fetch and rebase on latest origin/<trunkBranch> on remote
+   * Best-effort operation - logs status but doesn't fail workspace initialization
+   */
+  private async pullLatestFromOrigin(
+    workspacePath: string,
+    trunkBranch: string,
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    try {
+      initLogger.logStep(`Fetching latest from origin/${trunkBranch}...`);
+
+      // Fetch the trunk branch from origin
+      const fetchCmd = `git fetch origin ${shescape.quote(trunkBranch)}`;
+      const fetchStream = await this.exec(fetchCmd, {
+        cwd: workspacePath,
+        timeout: 120, // 2 minutes for network operation
+        abortSignal,
+      });
+
+      const fetchExitCode = await fetchStream.exitCode;
+      if (fetchExitCode !== 0) {
+        const fetchStderr = await streamToString(fetchStream.stderr);
+        initLogger.logStderr(
+          `Note: Could not fetch from origin (${fetchStderr}), using local branch state`
+        );
+        return;
+      }
+
+      initLogger.logStep("Fast-forward merging...");
+
+      // Attempt fast-forward merge from origin/<trunkBranch>
+      const mergeCmd = `git merge --ff-only origin/${shescape.quote(trunkBranch)}`;
+      const mergeStream = await this.exec(mergeCmd, {
+        cwd: workspacePath,
+        timeout: 60, // 1 minute for fast-forward merge
+        abortSignal,
+      });
+
+      const [mergeStderr, mergeExitCode] = await Promise.all([
+        streamToString(mergeStream.stderr),
+        mergeStream.exitCode,
+      ]);
+
+      if (mergeExitCode !== 0) {
+        // Fast-forward not possible (diverged branches) - just warn
+        initLogger.logStderr(
+          `Note: Fast-forward skipped (${mergeStderr || "branches diverged"}), using local branch state`
+        );
+      } else {
+        initLogger.logStep("Fast-forwarded to latest origin successfully");
+      }
+    } catch (error) {
+      // Non-fatal: log and continue
+      const errorMsg = getErrorMessage(error);
+      initLogger.logStderr(
+        `Note: Could not fetch from origin (${errorMsg}), using local branch state`
+      );
     }
   }
 
