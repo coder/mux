@@ -14,8 +14,8 @@ interface RuntimeBadgeProps {
 function SSHIcon() {
   return (
     <svg
-      width="12"
-      height="12"
+      width="10"
+      height="10"
       viewBox="0 0 16 16"
       fill="none"
       stroke="currentColor"
@@ -24,10 +24,10 @@ function SSHIcon() {
       strokeLinejoin="round"
       aria-label="SSH Runtime"
     >
-      <rect x="2" y="2" width="12" height="4" rx="1" />
-      <rect x="2" y="10" width="12" height="4" rx="1" />
-      <line x1="5" y1="4" x2="5" y2="4" />
-      <line x1="5" y1="12" x2="5" y2="12" />
+      <rect x="2" y="2" width="12" height="5" rx="1" />
+      <rect x="2" y="9" width="12" height="5" rx="1" />
+      <circle cx="5" cy="4.5" r="0.5" fill="currentColor" />
+      <circle cx="5" cy="11.5" r="0.5" fill="currentColor" />
     </svg>
   );
 }
@@ -36,8 +36,8 @@ function SSHIcon() {
 function WorktreeIcon() {
   return (
     <svg
-      width="12"
-      height="12"
+      width="10"
+      height="10"
       viewBox="0 0 16 16"
       fill="none"
       stroke="currentColor"
@@ -46,12 +46,12 @@ function WorktreeIcon() {
       strokeLinejoin="round"
       aria-label="Worktree Runtime"
     >
-      {/* Git branch icon */}
-      <circle cx="5" cy="4" r="2" />
-      <circle cx="11" cy="4" r="2" />
-      <circle cx="5" cy="12" r="2" />
-      <line x1="5" y1="6" x2="5" y2="10" />
-      <path d="M5 8 C 5 4 11 8 11 6" />
+      {/* Simplified git branch: vertical line with branch off */}
+      <circle cx="8" cy="3" r="2" />
+      <circle cx="8" cy="13" r="2" />
+      <line x1="8" y1="5" x2="8" y2="11" />
+      <circle cx="12" cy="7" r="2" />
+      <path d="M10 7 L8 9" />
     </svg>
   );
 }
@@ -60,8 +60,8 @@ function WorktreeIcon() {
 function _LocalIcon() {
   return (
     <svg
-      width="12"
-      height="12"
+      width="10"
+      height="10"
       viewBox="0 0 16 16"
       fill="none"
       stroke="currentColor"
