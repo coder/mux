@@ -1,9 +1,9 @@
-import React, { useRef } from "react";
+import React, { useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   AUTO_COMPACTION_THRESHOLD_MIN,
   AUTO_COMPACTION_THRESHOLD_MAX,
 } from "@/common/constants/ui";
-import { TooltipWrapper, Tooltip } from "../Tooltip";
 
 // ----- Types -----
 
@@ -69,12 +69,52 @@ const applyThreshold = (pct: number, setThreshold: (v: number) => void): void =>
 };
 
 /** Get tooltip text based on threshold */
-const getTooltip = (threshold: number, orientation: "horizontal" | "vertical"): string => {
+const getTooltipText = (threshold: number, orientation: "horizontal" | "vertical"): string => {
   const isEnabled = threshold < DISABLE_THRESHOLD;
   const direction = orientation === "horizontal" ? "left" : "up";
   return isEnabled
     ? `Auto-compact at ${threshold}% · Drag to adjust (per-model)`
     : `Auto-compact disabled · Drag ${direction} to enable (per-model)`;
+};
+
+// ----- Portal Tooltip (vertical only) -----
+
+interface VerticalSliderTooltipProps {
+  text: string;
+  anchorRect: DOMRect;
+  threshold: number;
+}
+
+/**
+ * Portal-based tooltip for vertical slider only.
+ * Renders to document.body to escape the narrow container's clipping.
+ * Horizontal slider uses native `title` attribute instead (simpler, no clipping issues).
+ */
+const VerticalSliderTooltip: React.FC<VerticalSliderTooltipProps> = ({
+  text,
+  anchorRect,
+  threshold,
+}) => {
+  // Position to the left of the bar, aligned with threshold position
+  const indicatorY = anchorRect.top + (anchorRect.height * threshold) / 100;
+
+  const style: React.CSSProperties = {
+    position: "fixed",
+    zIndex: 9999,
+    background: "#2d2d30",
+    color: "#cccccc",
+    padding: "6px 10px",
+    borderRadius: 4,
+    fontSize: 12,
+    whiteSpace: "nowrap",
+    pointerEvents: "none",
+    boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+    right: window.innerWidth - anchorRect.left + 8,
+    top: indicatorY,
+    transform: "translateY(-50%)",
+  };
+
+  return createPortal(<div style={style}>{text}</div>, document.body);
 };
 
 // ----- Main component: ThresholdSlider -----
@@ -99,6 +139,7 @@ const getTooltip = (threshold: number, orientation: "horizontal" | "vertical"): 
  */
 export const ThresholdSlider: React.FC<ThresholdSliderProps> = ({ config, orientation }) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [isHovered, setIsHovered] = useState(false);
   const isHorizontal = orientation === "horizontal";
 
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -131,7 +172,7 @@ export const ThresholdSlider: React.FC<ThresholdSliderProps> = ({ config, orient
 
   const isEnabled = config.threshold < DISABLE_THRESHOLD;
   const color = isEnabled ? "var(--color-plan-mode)" : "var(--color-muted)";
-  const title = getTooltip(config.threshold, orientation);
+  const tooltipText = getTooltipText(config.threshold, orientation);
 
   // Container styles
   const containerStyle: React.CSSProperties = {
@@ -170,38 +211,34 @@ export const ThresholdSlider: React.FC<ThresholdSliderProps> = ({ config, orient
     ? { width: 1, height: 6, background: color }
     : { width: 6, height: 1, background: color };
 
-  // Indicator content (triangles + line)
-  const indicatorContent = (
-    <>
-      <Triangle direction={isHorizontal ? "down" : "right"} color={color} />
-      <div style={lineStyle} />
-      <Triangle direction={isHorizontal ? "up" : "left"} color={color} />
-    </>
-  );
+  // Get container rect for tooltip positioning (vertical only)
+  const containerRect = containerRef.current?.getBoundingClientRect();
 
   return (
-    <div ref={containerRef} style={containerStyle} onMouseDown={handleMouseDown}>
+    <div
+      ref={containerRef}
+      style={containerStyle}
+      onMouseDown={handleMouseDown}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      // Horizontal uses native title (simpler, no clipping issues with wide tooltips)
+      title={isHorizontal ? tooltipText : undefined}
+    >
+      {/* Visual indicator - pointer events disabled */}
       <div style={indicatorStyle}>
-        {isHorizontal ? (
-          // Horizontal: native title tooltip (works well positioned at cursor)
-          <div
-            title={title}
-            style={{ display: "flex", flexDirection: "column", alignItems: "center" }}
-          >
-            {indicatorContent}
-          </div>
-        ) : (
-          // Vertical: portal-based Tooltip to avoid clipping by overflow:hidden containers
-          <TooltipWrapper inline>
-            <div style={{ display: "flex", flexDirection: "row", alignItems: "center" }}>
-              {indicatorContent}
-            </div>
-            <Tooltip position="left">
-              <div style={{ fontSize: 11 }}>{title}</div>
-            </Tooltip>
-          </TooltipWrapper>
-        )}
+        <Triangle direction={isHorizontal ? "down" : "right"} color={color} />
+        <div style={lineStyle} />
+        <Triangle direction={isHorizontal ? "up" : "left"} color={color} />
       </div>
+
+      {/* Portal tooltip for vertical only - escapes narrow container clipping */}
+      {!isHorizontal && isHovered && containerRect && (
+        <VerticalSliderTooltip
+          text={tooltipText}
+          anchorRect={containerRect}
+          threshold={config.threshold}
+        />
+      )}
     </div>
   );
 };

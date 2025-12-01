@@ -45,8 +45,8 @@ const VerticalTokenMeterComponent: React.FC<VerticalTokenMeterProps> = ({
           className="flex min-h-[20px] w-full flex-col items-center"
           style={{ flex: usagePercentage }}
         >
-          {/* [&>*] selector makes TooltipWrapper fill available space */}
-          <div className="flex w-full flex-1 flex-col items-center [&>*]:flex [&>*]:flex-1 [&>*]:flex-col">
+          {/* [&>*] selector makes TooltipWrapper span fill available space */}
+          <div className="flex h-full w-full flex-col items-center [&>*]:flex [&>*]:h-full [&>*]:flex-col">
             <TooltipWrapper>
               <TokenMeter
                 segments={data.segments}
@@ -54,7 +54,7 @@ const VerticalTokenMeterComponent: React.FC<VerticalTokenMeterProps> = ({
                 data-meter="token-bar"
                 data-segment-count={data.segments.length}
               />
-              <Tooltip>
+              <Tooltip position="left">
                 <div className="font-primary flex flex-col gap-2 text-xs">
                   <div className="text-foreground text-[13px] font-semibold">Last Request</div>
                   <div className="border-border-light my-1 border-t" />
