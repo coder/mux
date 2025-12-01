@@ -12,6 +12,7 @@ export type SendMessageError =
   | { type: "api_key_not_found"; provider: string }
   | { type: "provider_not_supported"; provider: string }
   | { type: "invalid_model_string"; message: string }
+  | { type: "incompatible_workspace"; message: string }
   | { type: "unknown"; raw: string };
 
 /**

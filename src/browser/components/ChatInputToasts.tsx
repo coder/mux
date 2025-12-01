@@ -195,6 +195,21 @@ export const createErrorToast = (error: SendMessageErrorType): Toast => {
       };
     }
 
+    case "incompatible_workspace": {
+      return {
+        id: Date.now().toString(),
+        type: "error",
+        title: "Incompatible Workspace",
+        message: error.message,
+        solution: (
+          <>
+            <SolutionLabel>Solution:</SolutionLabel>
+            Upgrade mux to use this workspace, or delete it and create a new one.
+          </>
+        ),
+      };
+    }
+
     case "unknown":
     default: {
       const formatted = formatSendMessageError(error);

@@ -36,7 +36,7 @@ import type { BashToolResult } from "@/common/types/tools";
 import { secretsToRecord } from "@/common/types/secrets";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { InitStateManager } from "@/node/services/initStateManager";
-import { createRuntime } from "@/node/runtime/runtimeFactory";
+import { createRuntime, IncompatibleRuntimeError } from "@/node/runtime/runtimeFactory";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { isSSHRuntime } from "@/common/types/runtime";
 import { validateProjectPath } from "@/node/utils/pathUtils";
@@ -1157,6 +1157,16 @@ export class IpcMain {
           const errorMessage =
             error instanceof Error ? error.message : JSON.stringify(error, null, 2);
           log.error("Unexpected error in sendMessage handler:", error);
+
+          // Handle incompatible workspace errors from downgraded configs
+          if (error instanceof IncompatibleRuntimeError) {
+            const sendError: SendMessageError = {
+              type: "incompatible_workspace",
+              message: error.message,
+            };
+            return { success: false, error: sendError };
+          }
+
           const sendError: SendMessageError = {
             type: "unknown",
             raw: `Failed to send message: ${errorMessage}`,
@@ -1187,6 +1197,16 @@ export class IpcMain {
           // Convert to SendMessageError for typed error handling
           const errorMessage = error instanceof Error ? error.message : String(error);
           log.error("Unexpected error in resumeStream handler:", error);
+
+          // Handle incompatible workspace errors from downgraded configs
+          if (error instanceof IncompatibleRuntimeError) {
+            const sendError: SendMessageError = {
+              type: "incompatible_workspace",
+              message: error.message,
+            };
+            return { success: false, error: sendError };
+          }
+
           const sendError: SendMessageError = {
             type: "unknown",
             raw: `Failed to resume stream: ${errorMessage}`,

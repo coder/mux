@@ -74,6 +74,13 @@ export interface GitStatus {
 export interface FrontendWorkspaceMetadata extends WorkspaceMetadata {
   /** Worktree path (uses workspace name as directory) */
   namedWorkspacePath: string;
+
+  /**
+   * If set, this workspace has an incompatible runtime configuration
+   * (e.g., from a newer version of mux). The workspace should be displayed
+   * but interactions should show this error message.
+   */
+  incompatibleRuntime?: string;
 }
 
 export interface WorkspaceActivitySnapshot {

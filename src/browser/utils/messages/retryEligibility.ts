@@ -52,6 +52,7 @@ export function isNonRetryableSendError(error: SendMessageError): boolean {
     case "api_key_not_found": // Missing API key - user must configure
     case "provider_not_supported": // Unsupported provider - user must switch
     case "invalid_model_string": // Bad model format - user must fix
+    case "incompatible_workspace": // Workspace from newer mux version - user must upgrade
       return true;
     case "unknown":
       return false; // Unknown errors might be transient

@@ -7,6 +7,7 @@ import type { WorkspaceMetadata, FrontendWorkspaceMetadata } from "@/common/type
 import type { Secret, SecretsConfig } from "@/common/types/secrets";
 import type { Workspace, ProjectConfig, ProjectsConfig } from "@/common/types/project";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
+import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { getMuxHome } from "@/common/constants/paths";
 import { PlatformPaths } from "@/common/utils/paths";
 
@@ -141,10 +142,19 @@ export class Config {
     workspacePath: string,
     _projectPath: string
   ): FrontendWorkspaceMetadata {
-    return {
+    const result: FrontendWorkspaceMetadata = {
       ...metadata,
       namedWorkspacePath: workspacePath,
     };
+
+    // Check for incompatible runtime configs (from newer mux versions)
+    if (isIncompatibleRuntimeConfig(metadata.runtimeConfig)) {
+      result.incompatibleRuntime =
+        "This workspace was created with a newer version of mux. " +
+        "Please upgrade mux to use this workspace.";
+    }
+
+    return result;
   }
 
   /**

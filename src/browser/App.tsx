@@ -574,6 +574,9 @@ function AppInner() {
                   runtimeConfig={
                     workspaceMetadata.get(selectedWorkspace.workspaceId)?.runtimeConfig
                   }
+                  incompatibleRuntime={
+                    workspaceMetadata.get(selectedWorkspace.workspaceId)?.incompatibleRuntime
+                  }
                 />
               </ErrorBoundary>
             ) : creationProjectPath ? (
