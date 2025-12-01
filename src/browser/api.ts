@@ -274,6 +274,10 @@ const webApi: IPCApi = {
     executeBash: (workspaceId, script, options) =>
       invokeIPC(IPC_CHANNELS.WORKSPACE_EXECUTE_BASH, workspaceId, script, options),
     openTerminal: (workspaceId) => invokeIPC(IPC_CHANNELS.WORKSPACE_OPEN_TERMINAL, workspaceId),
+    listScripts: (workspaceId) =>
+      invokeIPC(IPC_CHANNELS.WORKSPACE_LIST_SCRIPTS, workspaceId),
+    executeScript: (workspaceId, scriptName, args) =>
+      invokeIPC(IPC_CHANNELS.WORKSPACE_EXECUTE_SCRIPT, workspaceId, scriptName, args),
     activity: {
       list: async (): Promise<Record<string, WorkspaceActivitySnapshot>> => {
         const response = await invokeIPC<Record<string, unknown>>(

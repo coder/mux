@@ -1,4 +1,7 @@
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { WorkspaceChatMessage } from "@/common/types/ipc";
+import { createMuxMessage } from "@/common/types/message";
+import type { BashToolResult } from "@/common/types/tools";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { WorkspaceStore } from "./WorkspaceStore";
 
@@ -12,6 +15,13 @@ const mockExecuteBash = jest.fn(() => ({
     exitCode: 0,
   },
 }));
+
+const SCRIPT_RESULT: BashToolResult = {
+  success: true,
+  output: "ok",
+  exitCode: 0,
+  wall_duration_ms: 1,
+};
 
 const mockWindow = {
   api: {
@@ -33,14 +43,8 @@ global.window = mockWindow as unknown as Window & typeof globalThis;
 // Mock dispatchEvent
 global.window.dispatchEvent = jest.fn();
 
-// Helper to get IPC callback in a type-safe way
-function getOnChatCallback<T = { type: string }>(): (data: T) => void {
-  const mock = mockWindow.api.workspace.onChat as jest.Mock<
-    () => void,
-    [string, (data: T) => void]
-  >;
-  return mock.mock.calls[0][1];
-}
+// Reference to mock for easier access
+const mockOnChat = mockWindow.api.workspace.onChat as jest.Mock;
 
 // Helper to create and add a workspace
 function createAndAddWorkspace(
@@ -61,6 +65,27 @@ function createAndAddWorkspace(
   return metadata;
 }
 
+// Helper to get callback from mock for pushing messages
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getOnChatCallback<T = any>(): (msg: T) => void {
+  if (!currentChatCallback) {
+    throw new Error("No chat callback registered - was addWorkspace called?");
+  }
+  return currentChatCallback as (msg: T) => void;
+}
+
+// Track current chat callback for tests to push messages
+let currentChatCallback: ((msg: WorkspaceChatMessage) => void) | null = null;
+
+// Set up mock to capture the callback and allow tests to push messages
+mockOnChat.mockImplementation((_workspaceId: string, callback: (msg: WorkspaceChatMessage) => void) => {
+  currentChatCallback = callback;
+  return () => {
+    currentChatCallback = null;
+  };
+});
+
 describe("WorkspaceStore", () => {
   let store: WorkspaceStore;
   let mockOnModelUsed: jest.Mock;
@@ -68,6 +93,8 @@ describe("WorkspaceStore", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockExecuteBash.mockClear();
+    mockOnChat.mockClear();
+    currentChatCallback = null;
     mockOnModelUsed = jest.fn();
     store = new WorkspaceStore(mockOnModelUsed);
   });
@@ -233,19 +260,67 @@ describe("WorkspaceStore", () => {
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
       };
 
-      // Add workspace
+      // Add workspace - this will set currentChatCallback
       store.addWorkspace(metadata1);
-      const unsubscribeSpy = jest.fn();
-      (mockWindow.api.workspace.onChat as jest.Mock).mockReturnValue(unsubscribeSpy);
 
       // Sync with empty map (removes all workspaces)
+      // This should unsubscribe from the workspace
       store.syncWorkspaces(new Map());
 
-      // Note: The unsubscribe function from the first add won't be captured
-      // since we mocked it before. In real usage, this would be called.
+      // Verify workspace was removed by checking states
+      expect(store.getAllStates().size).toBe(0);
     });
   });
 
+  describe("script execution state", () => {
+    it("treats pending scripts as interruptible", async () => {
+      const workspaceId = "script-workspace";
+      createAndAddWorkspace(store, workspaceId);
+
+      const onChatCallback = getOnChatCallback<WorkspaceChatMessage>();
+
+      onChatCallback({ type: "caught-up" });
+
+      const timestamp = Date.now();
+      const baseMetadata = {
+        historySequence: 1,
+        timestamp,
+        muxMetadata: {
+          type: "script-execution" as const,
+          id: "script-exec-1",
+          historySequence: 1,
+          timestamp,
+          command: "/script wait_pr_checks",
+          scriptName: "wait_pr_checks",
+          args: [] as string[],
+        },
+      };
+
+      const scriptMessage = createMuxMessage("script-1", "user", "Run script", baseMetadata);
+      onChatCallback(scriptMessage);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const pendingState = store.getWorkspaceState(workspaceId);
+      expect(pendingState.canInterrupt).toBe(true);
+      expect(pendingState.pendingScriptExecution).toMatchObject({
+        scriptName: "wait_pr_checks",
+      });
+
+      const completedScript = createMuxMessage("script-1", "user", "Run script", {
+        ...baseMetadata,
+        muxMetadata: {
+          ...baseMetadata.muxMetadata,
+          result: SCRIPT_RESULT,
+        },
+      });
+      onChatCallback(completedScript);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const finalState = store.getWorkspaceState(workspaceId);
+      expect(finalState.pendingScriptExecution).toBeNull();
+      expect(finalState.canInterrupt).toBe(false);
+    });
+  });
   describe("getWorkspaceState", () => {
     it("should return initial state for newly added workspace", () => {
       createAndAddWorkspace(store, "new-workspace");

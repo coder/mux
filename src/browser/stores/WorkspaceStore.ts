@@ -3,7 +3,10 @@ import type { MuxMessage, DisplayedMessage, QueuedMessage } from "@/common/types
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { WorkspaceChatMessage } from "@/common/types/ipc";
 import type { TodoItem } from "@/common/types/tools";
-import { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
+import {
+  StreamingMessageAggregator,
+  type PendingScriptExecutionInfo,
+} from "@/browser/utils/messages/StreamingMessageAggregator";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getRetryStateKey } from "@/common/constants/storage";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
@@ -37,6 +40,7 @@ export interface WorkspaceState {
   todos: TodoItem[];
   agentStatus: { emoji: string; message: string; url?: string } | undefined;
   pendingStreamStartTime: number | null;
+  pendingScriptExecution: PendingScriptExecutionInfo | null;
 }
 
 /**
@@ -326,12 +330,14 @@ export class WorkspaceStore {
       const activeStreams = aggregator.getActiveStreams();
       const messages = aggregator.getAllMessages();
       const metadata = this.workspaceMetadata.get(workspaceId);
+      const pendingScriptExecution = aggregator.getPendingScriptExecution();
+      const canInterrupt = activeStreams.length > 0 || pendingScriptExecution !== null;
 
       return {
         name: metadata?.name ?? workspaceId, // Fall back to ID if metadata missing
         messages: aggregator.getDisplayedMessages(),
         queuedMessage: this.queuedMessages.get(workspaceId) ?? null,
-        canInterrupt: activeStreams.length > 0,
+        canInterrupt,
         isCompacting: aggregator.isCompacting(),
         loading: !hasMessages && !isCaughtUp,
         muxMessages: messages,
@@ -340,6 +346,7 @@ export class WorkspaceStore {
         todos: aggregator.getCurrentTodos(),
         agentStatus: aggregator.getAgentStatus(),
         pendingStreamStartTime: aggregator.getPendingStreamStartTime(),
+        pendingScriptExecution,
       };
     });
   }

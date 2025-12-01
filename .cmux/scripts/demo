@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Description: Demo script to showcase the script execution feature. Accepts no arguments.
+set -euo pipefail
+
+# Progress messages to stderr (shown to user, not sent to agent)
+echo "Running demo script..." >&2
+echo "Current workspace: $(pwd)" >&2
+echo "Timestamp: $(date)" >&2
+
+# Structured output to stdout (sent to agent)
+cat <<'EOF'
+## 🎉 Script Execution Demo
+
+✅ Script executed successfully!
+
+**Output Semantics:**
+- `stdout`: Sent to the agent as tool result
+- `stderr`: Shown to user only (progress/debug info)
+
+The demo script completed. You can create workspace-specific scripts to automate tasks.
+EOF

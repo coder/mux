@@ -2,8 +2,8 @@ import { existsSync, renameSync, symlinkSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 
-const LEGACY_MUX_DIR_NAME = ".cmux";
-const MUX_DIR_NAME = ".mux";
+export const LEGACY_MUX_DIR_NAME = ".cmux";
+export const MUX_DIR_NAME = ".mux";
 
 /**
  * Migrate from the legacy ~/.cmux directory into ~/.mux for rebranded installs.
