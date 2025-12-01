@@ -38,7 +38,7 @@ describe("LocalRuntime", () => {
 
   describe("constructor and getWorkspacePath", () => {
     it("stores projectPath and returns it regardless of arguments", () => {
-      const runtime = new LocalRuntime("/home/user/my-project");
+      const runtime = new LocalRuntime("/home/user/my-project", testDir);
       // Both arguments are ignored - always returns the project path
       expect(runtime.getWorkspacePath("/other/path", "some-branch")).toBe("/home/user/my-project");
       expect(runtime.getWorkspacePath("", "")).toBe("/home/user/my-project");
@@ -46,14 +46,14 @@ describe("LocalRuntime", () => {
 
     it("does not expand tilde (unlike WorktreeRuntime)", () => {
       // LocalRuntime stores the path as-is; callers must pass expanded paths
-      const runtime = new LocalRuntime("~/my-project");
+      const runtime = new LocalRuntime("~/my-project", testDir);
       expect(runtime.getWorkspacePath("", "")).toBe("~/my-project");
     });
   });
 
   describe("createWorkspace", () => {
     it("succeeds when directory exists", async () => {
-      const runtime = new LocalRuntime(testDir);
+      const runtime = new LocalRuntime(testDir, testDir);
       const logger = createMockLogger();
 
       const result = await runtime.createWorkspace({
@@ -72,7 +72,7 @@ describe("LocalRuntime", () => {
 
     it("fails when directory does not exist", async () => {
       const nonExistentPath = path.join(testDir, "does-not-exist");
-      const runtime = new LocalRuntime(nonExistentPath);
+      const runtime = new LocalRuntime(nonExistentPath, testDir);
       const logger = createMockLogger();
 
       const result = await runtime.createWorkspace({
@@ -90,7 +90,7 @@ describe("LocalRuntime", () => {
 
   describe("deleteWorkspace", () => {
     it("returns success without deleting anything", async () => {
-      const runtime = new LocalRuntime(testDir);
+      const runtime = new LocalRuntime(testDir, testDir);
 
       // Create a test file to verify it isn't deleted
       const testFile = path.join(testDir, "delete-test.txt");
@@ -115,7 +115,7 @@ describe("LocalRuntime", () => {
     });
 
     it("returns success even with force=true (still no-op)", async () => {
-      const runtime = new LocalRuntime(testDir);
+      const runtime = new LocalRuntime(testDir, testDir);
 
       const result = await runtime.deleteWorkspace(testDir, "main", true);
 
@@ -134,7 +134,7 @@ describe("LocalRuntime", () => {
 
   describe("renameWorkspace", () => {
     it("is a no-op that returns success with same path", async () => {
-      const runtime = new LocalRuntime(testDir);
+      const runtime = new LocalRuntime(testDir, testDir);
 
       const result = await runtime.renameWorkspace(testDir, "old", "new");
 
@@ -148,7 +148,7 @@ describe("LocalRuntime", () => {
 
   describe("forkWorkspace", () => {
     it("returns error - operation not supported", async () => {
-      const runtime = new LocalRuntime(testDir);
+      const runtime = new LocalRuntime(testDir, testDir);
       const logger = createMockLogger();
 
       const result = await runtime.forkWorkspace({
@@ -166,7 +166,7 @@ describe("LocalRuntime", () => {
 
   describe("inherited LocalBaseRuntime methods", () => {
     it("exec runs commands in projectPath", async () => {
-      const runtime = new LocalRuntime(testDir);
+      const runtime = new LocalRuntime(testDir, testDir);
 
       const stream = await runtime.exec("pwd", {
         cwd: testDir,
@@ -187,7 +187,7 @@ describe("LocalRuntime", () => {
     });
 
     it("stat works on projectPath", async () => {
-      const runtime = new LocalRuntime(testDir);
+      const runtime = new LocalRuntime(testDir, testDir);
 
       const stat = await runtime.stat(testDir);
 
@@ -195,7 +195,7 @@ describe("LocalRuntime", () => {
     });
 
     it("resolvePath expands tilde", async () => {
-      const runtime = new LocalRuntime(testDir);
+      const runtime = new LocalRuntime(testDir, testDir);
 
       const resolved = await runtime.resolvePath("~");
 
@@ -203,7 +203,7 @@ describe("LocalRuntime", () => {
     });
 
     it("normalizePath resolves relative paths", () => {
-      const runtime = new LocalRuntime(testDir);
+      const runtime = new LocalRuntime(testDir, testDir);
 
       const result = runtime.normalizePath(".", testDir);
 

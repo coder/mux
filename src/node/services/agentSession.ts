@@ -27,6 +27,7 @@ import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { MessageQueue } from "./messageQueue";
 import type { StreamEndEvent } from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
+import type { BackgroundProcessManager } from "./backgroundProcessManager";
 
 // Type guard for compaction request metadata
 interface CompactionRequestMetadata {
@@ -61,6 +62,7 @@ interface AgentSessionOptions {
   partialService: PartialService;
   aiService: AIService;
   initStateManager: InitStateManager;
+  backgroundProcessManager: BackgroundProcessManager;
 }
 
 export class AgentSession {
@@ -70,6 +72,7 @@ export class AgentSession {
   private readonly partialService: PartialService;
   private readonly aiService: AIService;
   private readonly initStateManager: InitStateManager;
+  private readonly backgroundProcessManager: BackgroundProcessManager;
   private readonly emitter = new EventEmitter();
   private readonly aiListeners: Array<{ event: string; handler: (...args: unknown[]) => void }> =
     [];
@@ -81,8 +84,15 @@ export class AgentSession {
 
   constructor(options: AgentSessionOptions) {
     assert(options, "AgentSession requires options");
-    const { workspaceId, config, historyService, partialService, aiService, initStateManager } =
-      options;
+    const {
+      workspaceId,
+      config,
+      historyService,
+      partialService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    } = options;
 
     assert(typeof workspaceId === "string", "workspaceId must be a string");
     const trimmedWorkspaceId = workspaceId.trim();
@@ -94,6 +104,7 @@ export class AgentSession {
     this.partialService = partialService;
     this.aiService = aiService;
     this.initStateManager = initStateManager;
+    this.backgroundProcessManager = backgroundProcessManager;
 
     this.compactionHandler = new CompactionHandler({
       workspaceId: this.workspaceId,
@@ -113,6 +124,8 @@ export class AgentSession {
 
     // Stop any active stream (fire and forget - disposal shouldn't block)
     void this.aiService.stopStream(this.workspaceId, { abandonPartial: true });
+    // Terminate background processes for this workspace
+    void this.backgroundProcessManager.cleanup(this.workspaceId);
 
     for (const { event, handler } of this.aiListeners) {
       this.aiService.off(event, handler as never);
@@ -367,6 +380,12 @@ export class AgentSession {
 
     // Add type: "message" for discriminated union (createMuxMessage doesn't add it)
     this.emitChatEvent({ ...userMessage, type: "message" });
+
+    // If this is a compaction request, terminate background processes first
+    // They won't be included in the summary, so continuing with orphaned processes would be confusing
+    if (isCompactionRequestMetadata(typedMuxMetadata)) {
+      await this.backgroundProcessManager.cleanup(this.workspaceId);
+    }
 
     // If this is a compaction request with a continue message, queue it for auto-send after compaction
     if (

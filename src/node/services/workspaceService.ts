@@ -32,6 +32,7 @@ import { hasSrcBaseDir, getSrcBaseDir } from "@/common/types/runtime";
 import { defaultModel } from "@/common/utils/ai/models";
 import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
+import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { createBashTool } from "@/node/services/tools/bash";
@@ -87,7 +88,8 @@ export class WorkspaceService extends EventEmitter {
     private readonly partialService: PartialService,
     private readonly aiService: AIService,
     private readonly initStateManager: InitStateManager,
-    private readonly extensionMetadata: ExtensionMetadataService
+    private readonly extensionMetadata: ExtensionMetadataService,
+    private readonly backgroundProcessManager: BackgroundProcessManager
   ) {
     super();
     this.setupMetadataListeners();
@@ -223,6 +225,7 @@ export class WorkspaceService extends EventEmitter {
       partialService: this.partialService,
       aiService: this.aiService,
       initStateManager: this.initStateManager,
+      backgroundProcessManager: this.backgroundProcessManager,
     });
 
     const chatUnsubscribe = session.onChatEvent((event) => {

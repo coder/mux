@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as fsPromises from "fs/promises";
 import * as path from "path";
 import { Readable, Writable } from "stream";
+import { randomBytes } from "crypto";
 import type {
   Runtime,
   ExecOptions,
@@ -15,14 +16,24 @@ import type {
   WorkspaceForkParams,
   WorkspaceForkResult,
   InitLogger,
+  BackgroundSpawnOptions,
+  BackgroundSpawnResult,
 } from "./Runtime";
 import { RuntimeError as RuntimeErrorClass } from "./Runtime";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { getBashPath } from "@/node/utils/main/bashPath";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
-import { DisposableProcess } from "@/node/utils/disposableExec";
+import { DisposableProcess, execAsync } from "@/node/utils/disposableExec";
 import { expandTilde } from "./tildeExpansion";
-import { getInitHookPath, createLineBufferedLoggers } from "./initHook";
+import {
+  checkInitHookExists,
+  getInitHookPath,
+  createLineBufferedLoggers,
+  getInitHookEnv,
+} from "./initHook";
+import { LocalBackgroundHandle } from "./LocalBackgroundHandle";
+import { buildWrapperScript, buildSpawnCommand } from "./backgroundCommands";
+import { log } from "@/node/services/log";
 
 /**
  * Abstract base class for local runtimes (both WorktreeRuntime and LocalRuntime).
@@ -44,6 +55,12 @@ import { getInitHookPath, createLineBufferedLoggers } from "./initHook";
  * - forkWorkspace()
  */
 export abstract class LocalBaseRuntime implements Runtime {
+  protected readonly bgOutputDir: string;
+
+  constructor(bgOutputDir: string) {
+    this.bgOutputDir = expandTilde(bgOutputDir);
+  }
+
   async exec(command: string, options: ExecOptions): Promise<ExecStream> {
     const startTime = performance.now();
 
@@ -312,6 +329,72 @@ export abstract class LocalBaseRuntime implements Runtime {
       return path.resolve(basePath);
     }
     return path.resolve(basePath, target);
+  }
+
+  /**
+   * Spawn a background process that persists independently of mux.
+   * Output is written to files in bgOutputDir/{workspaceId}/{processId}/.
+   */
+  async spawnBackground(
+    script: string,
+    options: BackgroundSpawnOptions
+  ): Promise<BackgroundSpawnResult> {
+    log.debug(`LocalBaseRuntime.spawnBackground: Spawning in ${options.cwd}`);
+
+    // Check if working directory exists
+    try {
+      await fsPromises.access(options.cwd);
+    } catch {
+      return { success: false, error: `Working directory does not exist: ${options.cwd}` };
+    }
+
+    // Generate unique process ID and compute output directory
+    const processId = `bg-${randomBytes(4).toString("hex")}`;
+    const outputDir = path.join(this.bgOutputDir, options.workspaceId, processId);
+    const stdoutPath = path.join(outputDir, "stdout.log");
+    const stderrPath = path.join(outputDir, "stderr.log");
+    const exitCodePath = path.join(outputDir, "exit_code");
+
+    // Create output directory and empty files
+    await fsPromises.mkdir(outputDir, { recursive: true });
+    await fsPromises.writeFile(stdoutPath, "");
+    await fsPromises.writeFile(stderrPath, "");
+
+    // Build wrapper script and spawn command using shared builders (same as SSH for parity)
+    const wrapperScript = buildWrapperScript({
+      exitCodePath,
+      cwd: options.cwd,
+      env: { ...options.env, ...NON_INTERACTIVE_ENV_VARS },
+      script,
+    });
+
+    const spawnCommand = buildSpawnCommand({
+      wrapperScript,
+      stdoutPath,
+      stderrPath,
+      bashPath: getBashPath(),
+      niceness: options.niceness,
+      useSetsid: process.platform !== "win32",
+    });
+
+    try {
+      using proc = execAsync(spawnCommand);
+      const result = await proc.result;
+
+      const pid = parseInt(result.stdout.trim(), 10);
+      if (isNaN(pid) || pid <= 0) {
+        log.debug(`LocalBaseRuntime.spawnBackground: Invalid PID: ${result.stdout}`);
+        return { success: false, error: `Failed to get valid PID from spawn: ${result.stdout}` };
+      }
+
+      log.debug(`LocalBaseRuntime.spawnBackground: Spawned with PID ${pid}`);
+      const handle = new LocalBackgroundHandle(pid, outputDir);
+      return { success: true, handle, pid };
+    } catch (e) {
+      const err = e as Error;
+      log.debug(`LocalBaseRuntime.spawnBackground: Failed to spawn: ${err.message}`);
+      return { success: false, error: err.message };
+    }
   }
 
   // Abstract methods that subclasses must implement

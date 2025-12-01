@@ -12,6 +12,12 @@ export const RuntimeModeSchema = z.enum(["local", "worktree", "ssh"]);
  *
  * This allows two-way compatibility: users can upgrade/downgrade without breaking workspaces.
  */
+// Common field for background process output directory
+const bgOutputDirField = z
+  .string()
+  .optional()
+  .meta({ description: "Directory for background process output (e.g., /tmp/mux-bashes)" });
+
 export const RuntimeConfigSchema = z.union([
   // Legacy local with srcBaseDir (treated as worktree)
   z.object({
@@ -19,10 +25,12 @@ export const RuntimeConfigSchema = z.union([
     srcBaseDir: z.string().meta({
       description: "Base directory where all workspaces are stored (legacy worktree config)",
     }),
+    bgOutputDir: bgOutputDirField,
   }),
   // New project-dir local (no srcBaseDir)
   z.object({
     type: z.literal("local"),
+    bgOutputDir: bgOutputDirField,
   }),
   // Explicit worktree runtime
   z.object({
@@ -30,6 +38,7 @@ export const RuntimeConfigSchema = z.union([
     srcBaseDir: z
       .string()
       .meta({ description: "Base directory where all workspaces are stored (e.g., ~/.mux/src)" }),
+    bgOutputDir: bgOutputDirField,
   }),
   // SSH runtime
   z.object({
@@ -40,6 +49,7 @@ export const RuntimeConfigSchema = z.union([
     srcBaseDir: z
       .string()
       .meta({ description: "Base directory on remote host where all workspaces are stored" }),
+    bgOutputDir: bgOutputDirField,
     identityFile: z
       .string()
       .optional()

@@ -266,7 +266,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         }
 
         const diffOutput = diffResult.data.output ?? "";
-        const truncationInfo = diffResult.data.truncated;
+        const truncationInfo =
+          "truncated" in diffResult.data ? diffResult.data.truncated : undefined;
 
         const fileDiffs = parseDiff(diffOutput);
         const allHunks = extractAllHunks(fileDiffs);

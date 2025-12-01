@@ -1,6 +1,8 @@
 import { type Tool } from "ai";
 import { createFileReadTool } from "@/node/services/tools/file_read";
 import { createBashTool } from "@/node/services/tools/bash";
+import { createBashBackgroundListTool } from "@/node/services/tools/bash_background_list";
+import { createBashBackgroundTerminateTool } from "@/node/services/tools/bash_background_terminate";
 import { createFileEditReplaceStringTool } from "@/node/services/tools/file_edit_replace_string";
 // DISABLED: import { createFileEditReplaceLinesTool } from "@/node/services/tools/file_edit_replace_lines";
 import { createFileEditInsertTool } from "@/node/services/tools/file_edit_insert";
@@ -12,6 +14,7 @@ import { log } from "@/node/services/log";
 
 import type { Runtime } from "@/node/runtime/Runtime";
 import type { InitStateManager } from "@/node/services/initStateManager";
+import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 
 /**
  * Configuration for tools that need runtime context
@@ -31,6 +34,10 @@ export interface ToolConfiguration {
   runtimeTempDir: string;
   /** Overflow policy for bash tool output (optional, not exposed to AI) */
   overflow_policy?: "truncate" | "tmpfile";
+  /** Background process manager for bash tool (optional, AI-only) */
+  backgroundProcessManager?: BackgroundProcessManager;
+  /** Workspace ID for tracking background processes (optional for token estimation) */
+  workspaceId?: string;
 }
 
 /**
@@ -101,6 +108,8 @@ export async function getToolsForModel(
     // and line number miscalculations. Use file_edit_replace_string instead.
     // file_edit_replace_lines: wrap(createFileEditReplaceLinesTool(config)),
     bash: wrap(createBashTool(config)),
+    bash_background_list: wrap(createBashBackgroundListTool(config)),
+    bash_background_terminate: wrap(createBashBackgroundTerminateTool(config)),
     web_fetch: wrap(createWebFetchTool(config)),
   };
 

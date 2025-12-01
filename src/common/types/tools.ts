@@ -7,6 +7,7 @@
 export interface BashToolArgs {
   script: string;
   timeout_secs?: number; // Optional: defaults to 3 seconds for interactivity
+  run_in_background?: boolean; // Run without blocking (for long-running processes)
 }
 
 interface CommonBashFields {
@@ -25,6 +26,14 @@ export type BashToolResult =
         reason: string;
         totalLines: number;
       };
+    })
+  | (CommonBashFields & {
+      success: true;
+      output: string;
+      exitCode: 0;
+      backgroundProcessId: string; // Background spawn succeeded
+      stdout_path: string; // Path to stdout log file
+      stderr_path: string; // Path to stderr log file
     })
   | (CommonBashFields & {
       success: false;
@@ -189,6 +198,32 @@ export interface StatusSetToolArgs {
   message: string;
   url?: string;
 }
+
+// Bash Background Tool Types
+export interface BashBackgroundTerminateArgs {
+  process_id: string;
+}
+
+export type BashBackgroundTerminateResult =
+  | { success: true; message: string }
+  | { success: false; error: string };
+
+// Bash Background List Tool Types
+export type BashBackgroundListArgs = Record<string, never>;
+
+export interface BashBackgroundListProcess {
+  process_id: string;
+  status: "running" | "exited" | "killed" | "failed";
+  script: string;
+  uptime_ms: number;
+  exitCode?: number;
+  stdout_path: string; // Path to stdout log file
+  stderr_path: string; // Path to stderr log file
+}
+
+export type BashBackgroundListResult =
+  | { success: true; processes: BashBackgroundListProcess[] }
+  | { success: false; error: string };
 
 export type StatusSetToolResult =
   | {

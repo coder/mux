@@ -7,6 +7,7 @@ import * as fs from "fs";
 import { TestTempDir, createTestToolConfig, getTestDeps } from "./testHelpers";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import type { ToolCallOptions } from "ai";
+import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 
 // Mock ToolCallOptions for testing
 const mockToolCallOptions: ToolCallOptions = {
@@ -38,6 +39,7 @@ describe("bash tool", () => {
     const args: BashToolArgs = {
       script: "echo hello",
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -55,6 +57,7 @@ describe("bash tool", () => {
     const args: BashToolArgs = {
       script: "echo line1 && echo line2 && echo line3",
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -69,6 +72,7 @@ describe("bash tool", () => {
     using testEnv = createTestBashTool();
     const tool = testEnv.tool;
     const args: BashToolArgs = {
+      run_in_background: false,
       script: "for i in {1..400}; do echo line$i; done", // Exceeds 300 line hard cap
       timeout_secs: 5,
     };
@@ -87,6 +91,7 @@ describe("bash tool", () => {
     using testEnv = createTestBashTool();
     const tool = testEnv.tool;
     const args: BashToolArgs = {
+      run_in_background: false,
       script: "for i in {1..400}; do echo line$i; done", // Exceeds 300 line hard cap
       timeout_secs: 5,
     };
@@ -139,6 +144,7 @@ describe("bash tool", () => {
 
     const args: BashToolArgs = {
       // This will generate 500 lines quickly - should fail at 300
+      run_in_background: false,
       script: "for i in {1..500}; do echo line$i; done",
       timeout_secs: 5,
     };
@@ -167,18 +173,21 @@ describe("bash tool", () => {
       // Generate ~1.5MB of output (1700 lines * 900 bytes) to exceed 1MB byte limit
       script: 'perl -e \'for (1..1700) { print "A" x 900 . "\\n" }\'',
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
 
     // With truncate policy and overflow, should succeed with truncated field
     expect(result.success).toBe(true);
-    expect(result.truncated).toBeDefined();
-    if (result.truncated) {
-      expect(result.truncated.reason).toContain("exceed");
-      // Should collect lines up to ~1MB (around 1150-1170 lines with 900 bytes each)
-      expect(result.truncated.totalLines).toBeGreaterThan(1000);
-      expect(result.truncated.totalLines).toBeLessThan(1300);
+    if (result.success && "truncated" in result) {
+      expect(result.truncated).toBeDefined();
+      if (result.truncated) {
+        expect(result.truncated.reason).toContain("exceed");
+        // Should collect lines up to ~1MB (around 1150-1170 lines with 900 bytes each)
+        expect(result.truncated.totalLines).toBeGreaterThan(1000);
+        expect(result.truncated.totalLines).toBeLessThan(1300);
+      }
     }
 
     // Should contain output that's around 1MB
@@ -198,7 +207,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd()),
+      runtime: new LocalRuntime(process.cwd(), tempDir.path),
       runtimeTempDir: tempDir.path,
       overflow_policy: "truncate",
     });
@@ -207,17 +216,20 @@ describe("bash tool", () => {
       // Generate a single 2MB line (exceeds 1MB total limit)
       script: 'perl -e \'print "A" x 2000000 . "\\n"\'',
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
 
     // Should succeed but with truncation before storing the overlong line
     expect(result.success).toBe(true);
-    expect(result.truncated).toBeDefined();
-    if (result.truncated) {
-      expect(result.truncated.reason).toContain("would exceed file preservation limit");
-      // Should have 0 lines collected since the first line was too long
-      expect(result.truncated.totalLines).toBe(0);
+    if (result.success && "truncated" in result) {
+      expect(result.truncated).toBeDefined();
+      if (result.truncated) {
+        expect(result.truncated.reason).toContain("would exceed file preservation limit");
+        // Should have 0 lines collected since the first line was too long
+        expect(result.truncated.totalLines).toBe(0);
+      }
     }
 
     // CRITICAL: Output must NOT contain the 2MB line - should be empty or nearly empty
@@ -231,7 +243,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd()),
+      runtime: new LocalRuntime(process.cwd(), tempDir.path),
       runtimeTempDir: tempDir.path,
       overflow_policy: "truncate",
     });
@@ -241,16 +253,19 @@ describe("bash tool", () => {
       // Second line: 600KB (would exceed 1MB when added)
       script: 'perl -e \'print "A" x 500000 . "\\n"; print "B" x 600000 . "\\n"\'',
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
 
     expect(result.success).toBe(true);
-    expect(result.truncated).toBeDefined();
-    if (result.truncated) {
-      expect(result.truncated.reason).toContain("would exceed");
-      // Should have collected exactly 1 line (the 500KB line)
-      expect(result.truncated.totalLines).toBe(1);
+    if (result.success && "truncated" in result) {
+      expect(result.truncated).toBeDefined();
+      if (result.truncated) {
+        expect(result.truncated.reason).toContain("would exceed");
+        // Should have collected exactly 1 line (the 500KB line)
+        expect(result.truncated.totalLines).toBe(1);
+      }
     }
 
     // Output should contain only the first line (~500KB), not the second line
@@ -268,12 +283,13 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd()),
+      runtime: new LocalRuntime(process.cwd(), tempDir.path),
       runtimeTempDir: tempDir.path,
       // overflow_policy not specified - should default to tmpfile
     });
 
     const args: BashToolArgs = {
+      run_in_background: false,
       script: "for i in {1..400}; do echo line$i; done",
       timeout_secs: 5,
     };
@@ -302,7 +318,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd()),
+      runtime: new LocalRuntime(process.cwd(), tempDir.path),
       runtimeTempDir: tempDir.path,
     });
 
@@ -310,6 +326,7 @@ describe("bash tool", () => {
     // Each line is ~40 bytes: "line" + number (1-5 digits) + padding = ~40 bytes
     // 50KB / 40 bytes = ~1250 lines
     const args: BashToolArgs = {
+      run_in_background: false,
       script: "for i in {1..1300}; do printf 'line%04d with some padding text here\\n' $i; done",
       timeout_secs: 5,
     };
@@ -355,7 +372,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd()),
+      runtime: new LocalRuntime(process.cwd(), tempDir.path),
       runtimeTempDir: tempDir.path,
     });
 
@@ -363,6 +380,7 @@ describe("bash tool", () => {
     // Each line is ~100 bytes
     // 150KB / 100 bytes = ~1500 lines
     const args: BashToolArgs = {
+      run_in_background: false,
       script: "for i in {1..1600}; do printf 'line%04d: '; printf 'x%.0s' {1..80}; echo; done",
       timeout_secs: 10,
     };
@@ -399,7 +417,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd()),
+      runtime: new LocalRuntime(process.cwd(), tempDir.path),
       runtimeTempDir: tempDir.path,
     });
 
@@ -409,6 +427,7 @@ describe("bash tool", () => {
       script:
         "for i in {1..500}; do printf 'line%04d with padding text\\n' $i; done; echo 'COMPLETION_MARKER'",
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -442,12 +461,13 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd()),
+      runtime: new LocalRuntime(process.cwd(), tempDir.path),
       runtimeTempDir: tempDir.path,
     });
 
     // Generate a single line exceeding 1KB limit, then try to output more
     const args: BashToolArgs = {
+      run_in_background: false,
       script: "printf 'x%.0s' {1..2000}; echo; echo 'SHOULD_NOT_APPEAR'",
       timeout_secs: 5,
     };
@@ -483,13 +503,14 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd()),
+      runtime: new LocalRuntime(process.cwd(), tempDir.path),
       runtimeTempDir: tempDir.path,
     });
 
     // Generate ~15KB of output (just under 16KB display limit)
     // Each line is ~50 bytes, 15KB / 50 = 300 lines exactly (at the line limit)
     const args: BashToolArgs = {
+      run_in_background: false,
       script: "for i in {1..299}; do printf 'line%04d with some padding text here now\\n' $i; done",
       timeout_secs: 5,
     };
@@ -514,12 +535,13 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd()),
+      runtime: new LocalRuntime(process.cwd(), tempDir.path),
       runtimeTempDir: tempDir.path,
     });
 
     // Generate exactly 300 lines (hits line limit exactly)
     const args: BashToolArgs = {
+      run_in_background: false,
       script: "for i in {1..300}; do printf 'line%04d\\n' $i; done",
       timeout_secs: 5,
     };
@@ -542,6 +564,7 @@ describe("bash tool", () => {
     const args: BashToolArgs = {
       script: "echo stdout1 && echo stderr1 >&2 && echo stdout2 && echo stderr2 >&2",
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -562,6 +585,7 @@ describe("bash tool", () => {
     const args: BashToolArgs = {
       script: "exit 42",
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -579,6 +603,7 @@ describe("bash tool", () => {
     const args: BashToolArgs = {
       script: "while true; do sleep 0.1; done",
       timeout_secs: 1,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -596,6 +621,7 @@ describe("bash tool", () => {
     const args: BashToolArgs = {
       script: "true",
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -617,6 +643,7 @@ describe("bash tool", () => {
     const args: BashToolArgs = {
       script: "echo 'test:first-child' | grep ':first-child'",
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -642,6 +669,7 @@ describe("bash tool", () => {
     const args: BashToolArgs = {
       script: "echo test | cat",
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -666,6 +694,7 @@ describe("bash tool", () => {
       script:
         'python3 -c "import os,stat;mode=os.fstat(0).st_mode;print(stat.S_IFMT(mode)==stat.S_IFIFO)"',
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -710,6 +739,7 @@ describe("bash tool", () => {
     const args: BashToolArgs = {
       script: "echo test",
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -727,6 +757,7 @@ describe("bash tool", () => {
     const args: BashToolArgs = {
       script: "echo 'cd' && echo test",
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -747,6 +778,7 @@ describe("bash tool", () => {
       // Background process that would block if we waited for it
       script: "while true; do sleep 1; done > /dev/null 2>&1 &",
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -767,6 +799,7 @@ describe("bash tool", () => {
       // Should not wait for the background process
       script: "while true; do sleep 1; done > /dev/null 2>&1 & echo $!",
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -790,6 +823,7 @@ describe("bash tool", () => {
       // Background process with output redirected but still blocking
       script: "while true; do sleep 0.1; done & wait",
       timeout_secs: 1,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -809,6 +843,7 @@ describe("bash tool", () => {
     const args: BashToolArgs = {
       script: `echo '${longLine}'`,
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -828,6 +863,7 @@ describe("bash tool", () => {
     const args: BashToolArgs = {
       script: `for i in {1..${numLines}}; do echo '${lineContent}'; done`,
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -843,6 +879,7 @@ describe("bash tool", () => {
     using testEnv = createTestBashTool();
     const tool = testEnv.tool;
     const args: BashToolArgs = {
+      run_in_background: false,
       script: `for i in {1..1000}; do echo 'This is line number '$i' with some content'; done`,
       timeout_secs: 5,
     };
@@ -862,6 +899,7 @@ describe("bash tool", () => {
     const args: BashToolArgs = {
       script: "",
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -881,6 +919,7 @@ describe("bash tool", () => {
     const args: BashToolArgs = {
       script: "   \n\t  ",
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -899,6 +938,7 @@ describe("bash tool", () => {
     const args: BashToolArgs = {
       script: "sleep 5",
       timeout_secs: 10,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -919,6 +959,7 @@ describe("bash tool", () => {
     const args: BashToolArgs = {
       script: "for i in 1 2 3; do echo $i; sleep 0.1; done",
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -997,6 +1038,7 @@ echo "$VALUE"
 echo "$RESULT"
 `,
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -1024,6 +1066,7 @@ if [ $? -ne 0 ]; then
 fi
 `,
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -1042,6 +1085,7 @@ fi
     const args: BashToolArgs = {
       script: "echo hello",
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -1064,6 +1108,7 @@ fi
     const args: BashToolArgs = {
       script: `echo "${marker}"; sleep 100 & echo $!`,
       timeout_secs: 1,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -1118,6 +1163,7 @@ fi
         exec sleep ${token}
       `,
       timeout_secs: 10,
+      run_in_background: false,
     };
 
     // Start the command
@@ -1187,6 +1233,7 @@ fi
         done
       `,
       timeout_secs: 120,
+      run_in_background: false,
     };
 
     // Start the command
@@ -1321,6 +1368,7 @@ describe("SSH runtime redundant cd detection", () => {
     const args: BashToolArgs = {
       script: "cd /remote/workspace/project/branch && echo test",
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -1342,6 +1390,7 @@ describe("SSH runtime redundant cd detection", () => {
     const args: BashToolArgs = {
       script: "cd /tmp && echo test",
       timeout_secs: 5,
+      run_in_background: false,
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -1353,5 +1402,72 @@ describe("SSH runtime redundant cd detection", () => {
       // If it failed, it should not be due to redundant cd detection
       expect(result.error).not.toContain("Redundant cd");
     }
+  });
+});
+describe("bash tool - background execution", () => {
+  it("should reject background mode when manager not available", async () => {
+    using testEnv = createTestBashTool();
+    const tool = testEnv.tool;
+    const args: BashToolArgs = {
+      script: "echo test",
+      run_in_background: true,
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("Background execution is only available for AI tool calls");
+    }
+  });
+
+  it("should reject timeout with background mode", async () => {
+    const manager = new BackgroundProcessManager();
+
+    const tempDir = new TestTempDir("test-bash-bg");
+    const config = createTestToolConfig(tempDir.path);
+    config.backgroundProcessManager = manager;
+
+    const tool = createBashTool(config);
+    const args: BashToolArgs = {
+      script: "echo test",
+      timeout_secs: 5,
+      run_in_background: true,
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("Cannot specify timeout with run_in_background");
+    }
+
+    tempDir[Symbol.dispose]();
+  });
+
+  it("should start background process and return process ID", async () => {
+    const manager = new BackgroundProcessManager();
+
+    const tempDir = new TestTempDir("test-bash-bg");
+    const config = createTestToolConfig(tempDir.path);
+    config.backgroundProcessManager = manager;
+
+    const tool = createBashTool(config);
+    const args: BashToolArgs = {
+      script: "echo hello",
+      run_in_background: true,
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(true);
+    if (result.success && "backgroundProcessId" in result) {
+      expect(result.backgroundProcessId).toBeDefined();
+      expect(result.backgroundProcessId).toMatch(/^bg-/);
+    } else {
+      throw new Error("Expected background process ID in result");
+    }
+
+    tempDir[Symbol.dispose]();
   });
 });

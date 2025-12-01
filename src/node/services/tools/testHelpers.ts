@@ -48,16 +48,18 @@ function getTestInitStateManager(): InitStateManager {
 /**
  * Create basic tool configuration for testing.
  * Returns a config object with default values that can be overridden.
+ * Uses tempDir for both cwd and sessionsDir to isolate tests.
  */
 export function createTestToolConfig(
   tempDir: string,
-  options?: { niceness?: number }
+  options?: { niceness?: number; workspaceId?: string; sessionsDir?: string }
 ): ToolConfiguration {
   return {
     cwd: tempDir,
-    runtime: new LocalRuntime(tempDir),
+    runtime: new LocalRuntime(tempDir, options?.sessionsDir ?? tempDir),
     runtimeTempDir: tempDir,
     niceness: options?.niceness,
+    workspaceId: options?.workspaceId ?? "test-workspace",
   };
 }
 

@@ -25,8 +25,8 @@ import { LocalBaseRuntime } from "./LocalBaseRuntime";
 export class LocalRuntime extends LocalBaseRuntime {
   private readonly projectPath: string;
 
-  constructor(projectPath: string) {
-    super();
+  constructor(projectPath: string, bgOutputDir: string) {
+    super(bgOutputDir);
     this.projectPath = projectPath;
   }
 
