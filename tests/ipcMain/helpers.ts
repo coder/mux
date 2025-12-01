@@ -22,7 +22,7 @@ import type { ToolPolicy } from "../../src/common/utils/tools/toolPolicy";
 export const INIT_HOOK_WAIT_MS = 1500; // Wait for async init hook completion (local runtime)
 export const SSH_INIT_WAIT_MS = 7000; // SSH init includes sync + checkout + hook, takes longer
 export const HAIKU_MODEL = "anthropic:claude-haiku-4-5"; // Fast model for tests
-export const GPT_5_MINI_MODEL = "openai:gpt-5-mini"; // Fastest model for performance-critical tests
+export const CODEX_MINI_MODEL = "openai:gpt-5.1-codex-mini"; // Fastest model for performance-critical tests
 export const TEST_TIMEOUT_LOCAL_MS = 25000; // Recommended timeout for local runtime tests
 export const TEST_TIMEOUT_SSH_MS = 60000; // Recommended timeout for SSH runtime tests
 export const STREAM_TIMEOUT_LOCAL_MS = 15000; // Stream timeout for local runtime

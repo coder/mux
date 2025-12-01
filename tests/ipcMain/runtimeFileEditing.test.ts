@@ -27,11 +27,8 @@ import {
   sendMessageAndWait,
   extractTextFromEvents,
   writeFileViaBash,
+  configureTestRetries,
   HAIKU_MODEL,
-  TEST_TIMEOUT_LOCAL_MS,
-  TEST_TIMEOUT_SSH_MS,
-  STREAM_TIMEOUT_LOCAL_MS,
-  STREAM_TIMEOUT_SSH_MS,
 } from "./helpers";
 import {
   isDockerAvailable,
@@ -56,6 +53,13 @@ if (shouldRunIntegrationTests()) {
   validateApiKeys(["ANTHROPIC_API_KEY"]);
 }
 
+// Increased timeouts for file editing tests - these tests require LLM tool calls
+// which can be slow depending on API response times
+const STREAM_TIMEOUT_MS = 30000; // Stream timeout (was 15s)
+const SSH_STREAM_TIMEOUT_MS = 45000; // SSH stream timeout (was 25s)
+const LOCAL_TEST_TIMEOUT_MS = 45000; // Test timeout (was 25s)
+const SSH_TEST_TIMEOUT_MS = 90000; // SSH test timeout (was 60s)
+
 // SSH server config (shared across all SSH tests)
 let sshConfig: SSHServerConfig | undefined;
 
@@ -64,6 +68,9 @@ let sshConfig: SSHServerConfig | undefined;
 // ============================================================================
 
 describeIntegration("Runtime File Editing Tools", () => {
+  // Enable retries in CI for flaky API tests
+  configureTestRetries(3);
+
   beforeAll(async () => {
     // Check if Docker is available (required for SSH tests)
     if (!(await isDockerAvailable())) {
@@ -136,8 +143,7 @@ describeIntegration("Runtime File Editing Tools", () => {
               await writeFileViaBash(env, workspaceId, testFileName, testContent);
 
               // Ask AI to read the file (explicitly request file_read tool)
-              const streamTimeout =
-                type === "ssh" ? STREAM_TIMEOUT_SSH_MS : STREAM_TIMEOUT_LOCAL_MS;
+              const streamTimeout = type === "ssh" ? SSH_STREAM_TIMEOUT_MS : STREAM_TIMEOUT_MS;
               const readEvents = await sendMessageAndWait(
                 env,
                 workspaceId,
@@ -170,7 +176,7 @@ describeIntegration("Runtime File Editing Tools", () => {
             await cleanupTempGitRepo(tempGitRepo);
           }
         },
-        type === "ssh" ? TEST_TIMEOUT_SSH_MS : TEST_TIMEOUT_LOCAL_MS
+        type === "ssh" ? SSH_TEST_TIMEOUT_MS : LOCAL_TEST_TIMEOUT_MS
       );
 
       test.concurrent(
@@ -206,8 +212,7 @@ describeIntegration("Runtime File Editing Tools", () => {
               await writeFileViaBash(env, workspaceId, testFileName, testContent);
 
               // Ask AI to replace text (explicitly request file_edit_replace_string tool)
-              const streamTimeout =
-                type === "ssh" ? STREAM_TIMEOUT_SSH_MS : STREAM_TIMEOUT_LOCAL_MS;
+              const streamTimeout = type === "ssh" ? SSH_STREAM_TIMEOUT_MS : STREAM_TIMEOUT_MS;
               const replaceEvents = await sendMessageAndWait(
                 env,
                 workspaceId,
@@ -246,7 +251,7 @@ describeIntegration("Runtime File Editing Tools", () => {
             await cleanupTempGitRepo(tempGitRepo);
           }
         },
-        type === "ssh" ? TEST_TIMEOUT_SSH_MS : TEST_TIMEOUT_LOCAL_MS
+        type === "ssh" ? SSH_TEST_TIMEOUT_MS : LOCAL_TEST_TIMEOUT_MS
       );
 
       test.concurrent(
@@ -282,8 +287,7 @@ describeIntegration("Runtime File Editing Tools", () => {
               await writeFileViaBash(env, workspaceId, testFileName, testContent);
 
               // Ask AI to insert text (explicitly request file_edit tool usage)
-              const streamTimeout =
-                type === "ssh" ? STREAM_TIMEOUT_SSH_MS : STREAM_TIMEOUT_LOCAL_MS;
+              const streamTimeout = type === "ssh" ? SSH_STREAM_TIMEOUT_MS : STREAM_TIMEOUT_MS;
               const insertEvents = await sendMessageAndWait(
                 env,
                 workspaceId,
@@ -323,7 +327,7 @@ describeIntegration("Runtime File Editing Tools", () => {
             await cleanupTempGitRepo(tempGitRepo);
           }
         },
-        type === "ssh" ? TEST_TIMEOUT_SSH_MS : TEST_TIMEOUT_LOCAL_MS
+        type === "ssh" ? SSH_TEST_TIMEOUT_MS : LOCAL_TEST_TIMEOUT_MS
       );
 
       test.concurrent(
@@ -359,8 +363,7 @@ describeIntegration("Runtime File Editing Tools", () => {
               await writeFileViaBash(env, workspaceId, relativeTestFile, testContent);
 
               // Now edit the file using a relative path
-              const streamTimeout =
-                type === "ssh" ? STREAM_TIMEOUT_SSH_MS : STREAM_TIMEOUT_LOCAL_MS;
+              const streamTimeout = type === "ssh" ? SSH_STREAM_TIMEOUT_MS : STREAM_TIMEOUT_MS;
               const editEvents = await sendMessageAndWait(
                 env,
                 workspaceId,
@@ -408,7 +411,7 @@ describeIntegration("Runtime File Editing Tools", () => {
             await cleanupTempGitRepo(tempGitRepo);
           }
         },
-        type === "ssh" ? TEST_TIMEOUT_SSH_MS : TEST_TIMEOUT_LOCAL_MS
+        type === "ssh" ? SSH_TEST_TIMEOUT_MS : LOCAL_TEST_TIMEOUT_MS
       );
     }
   );
