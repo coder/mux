@@ -3,6 +3,7 @@ import { checkAutoCompaction } from "./autoCompactionCheck";
 import type { WorkspaceUsageState } from "@/browser/stores/WorkspaceStore";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import { FORCE_COMPACTION_TOKEN_BUFFER } from "@/common/constants/ui";
 
 // Helper to create a mock usage entry
 const createUsageEntry = (
@@ -28,7 +29,8 @@ const createUsageEntry = (
 const createMockUsage = (
   lastEntryTokens: number,
   historicalTokens?: number,
-  model: string = KNOWN_MODELS.SONNET.id
+  model: string = KNOWN_MODELS.SONNET.id,
+  liveUsage?: ChatUsageDisplay
 ): WorkspaceUsageState => {
   const usageHistory: ChatUsageDisplay[] = [];
 
@@ -40,7 +42,7 @@ const createMockUsage = (
   // Add recent usage
   usageHistory.push(createUsageEntry(lastEntryTokens, model));
 
-  return { usageHistory, totalTokens: 0 };
+  return { usageHistory, totalTokens: 0, liveUsage };
 };
 
 describe("checkAutoCompaction", () => {
@@ -295,6 +297,79 @@ describe("checkAutoCompaction", () => {
 
       expect(result.usagePercentage).toBeCloseTo(61.728, 2);
       expect(result.shouldShowWarning).toBe(true); // Above 60%
+    });
+  });
+
+  describe("Force Compaction (Live Usage)", () => {
+    const SONNET_MAX_TOKENS = 200_000;
+    const BUFFER = FORCE_COMPACTION_TOKEN_BUFFER;
+
+    test("shouldForceCompact is false when no liveUsage (falls back to lastUsage with room)", () => {
+      const usage = createMockUsage(100_000); // 100k remaining - plenty of room
+      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false, true);
+
+      expect(result.shouldForceCompact).toBe(false);
+    });
+
+    test("shouldForceCompact is false when currentUsage has plenty of room", () => {
+      const liveUsage = createUsageEntry(100_000); // 100k remaining
+      const usage = createMockUsage(50_000, undefined, KNOWN_MODELS.SONNET.id, liveUsage);
+      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false, true);
+
+      expect(result.shouldForceCompact).toBe(false);
+    });
+
+    test("shouldForceCompact is true when remaining <= buffer", () => {
+      // Exactly at buffer threshold
+      const liveUsage = createUsageEntry(SONNET_MAX_TOKENS - BUFFER);
+      const usage = createMockUsage(50_000, undefined, KNOWN_MODELS.SONNET.id, liveUsage);
+      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false, true);
+
+      expect(result.shouldForceCompact).toBe(true);
+    });
+
+    test("shouldForceCompact is true when over context limit", () => {
+      const liveUsage = createUsageEntry(SONNET_MAX_TOKENS + 5000);
+      const usage = createMockUsage(50_000, undefined, KNOWN_MODELS.SONNET.id, liveUsage);
+      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false, true);
+
+      expect(result.shouldForceCompact).toBe(true);
+    });
+
+    test("shouldForceCompact is false when just above buffer", () => {
+      // 1 token above buffer threshold
+      const liveUsage = createUsageEntry(SONNET_MAX_TOKENS - BUFFER - 1);
+      const usage = createMockUsage(50_000, undefined, KNOWN_MODELS.SONNET.id, liveUsage);
+      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false, true);
+
+      expect(result.shouldForceCompact).toBe(false);
+    });
+
+    test("shouldForceCompact respects 1M context mode", () => {
+      // With 1M context, exactly at buffer threshold
+      const liveUsage = createUsageEntry(1_000_000 - BUFFER);
+      const usage = createMockUsage(50_000, undefined, KNOWN_MODELS.SONNET.id, liveUsage);
+      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, true, true);
+
+      expect(result.shouldForceCompact).toBe(true);
+    });
+
+    test("shouldForceCompact triggers with empty history but liveUsage near limit", () => {
+      // Bug fix: empty history but liveUsage should still trigger
+      const liveUsage = createUsageEntry(SONNET_MAX_TOKENS - BUFFER);
+      const usage: WorkspaceUsageState = { usageHistory: [], totalTokens: 0, liveUsage };
+      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false, true);
+
+      expect(result.shouldForceCompact).toBe(true);
+      expect(result.usagePercentage).toBe(0); // No lastUsage for percentage
+    });
+
+    test("shouldForceCompact is false when auto-compaction disabled", () => {
+      const liveUsage = createUsageEntry(199_000); // Very close to limit
+      const usage = createMockUsage(50_000, undefined, KNOWN_MODELS.SONNET.id, liveUsage);
+      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false, false); // disabled
+
+      expect(result.shouldForceCompact).toBe(false);
     });
   });
 });

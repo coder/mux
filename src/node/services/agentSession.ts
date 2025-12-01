@@ -465,6 +465,7 @@ export class AgentSession {
     forward("reasoning-delta", (payload) => this.emitChatEvent(payload));
     forward("reasoning-end", (payload) => this.emitChatEvent(payload));
     forward("usage-delta", (payload) => this.emitChatEvent(payload));
+    forward("stream-abort", (payload) => this.emitChatEvent(payload));
 
     forward("stream-end", async (payload) => {
       const handled = await this.compactionHandler.handleCompletion(payload as StreamEndEvent);
@@ -473,25 +474,6 @@ export class AgentSession {
       }
       // Stream end: auto-send queued messages
       this.sendQueuedMessages();
-    });
-
-    forward("stream-abort", (payload) => {
-      this.emitChatEvent(payload);
-
-      // Stream aborted: restore queued messages to input
-      if (!this.messageQueue.isEmpty()) {
-        const displayText = this.messageQueue.getDisplayText();
-        const imageParts = this.messageQueue.getImageParts();
-        this.messageQueue.clear();
-        this.emitQueuedMessageChanged();
-
-        this.emitChatEvent({
-          type: "restore-to-input",
-          workspaceId: this.workspaceId,
-          text: displayText,
-          imageParts: imageParts,
-        });
-      }
     });
 
     const errorHandler = (...args: unknown[]) => {
@@ -569,6 +551,27 @@ export class AgentSession {
     this.assertNotDisposed("clearQueue");
     this.messageQueue.clear();
     this.emitQueuedMessageChanged();
+  }
+
+  /**
+   * Restore queued messages to input box.
+   * Called by IPC handler on user-initiated interrupt.
+   */
+  restoreQueueToInput(): void {
+    this.assertNotDisposed("restoreQueueToInput");
+    if (!this.messageQueue.isEmpty()) {
+      const displayText = this.messageQueue.getDisplayText();
+      const imageParts = this.messageQueue.getImageParts();
+      this.messageQueue.clear();
+      this.emitQueuedMessageChanged();
+
+      this.emitChatEvent({
+        type: "restore-to-input",
+        workspaceId: this.workspaceId,
+        text: displayText,
+        imageParts: imageParts,
+      });
+    }
   }
 
   private emitQueuedMessageChanged(): void {

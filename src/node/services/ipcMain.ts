@@ -1208,6 +1208,8 @@ export class IpcMain {
             return { success: false, error: stopResult.error };
           }
 
+          session.restoreQueueToInput();
+
           return { success: true, data: undefined };
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);

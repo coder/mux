@@ -37,6 +37,7 @@ import { evictModelFromLRU } from "@/browser/hooks/useModelLRU";
 import { QueuedMessage } from "./Messages/QueuedMessage";
 import { CompactionWarning } from "./CompactionWarning";
 import { checkAutoCompaction } from "@/browser/utils/compaction/autoCompactionCheck";
+import { executeCompaction } from "@/browser/utils/chatCommands";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useAutoCompactionSettings } from "../hooks/useAutoCompactionSettings";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
@@ -120,6 +121,67 @@ const AIViewInner: React.FC<AIViewProps> = ({
     undefined
   );
 
+  // Use send options for auto-compaction check
+  const pendingSendOptions = useSendMessageOptions(workspaceId);
+
+  // Track if we've already triggered force compaction for this stream
+  const forceCompactionTriggeredRef = useRef<string | null>(null);
+
+    // Extract state from workspace state
+  const { messages, canInterrupt, isCompacting, loading, currentModel } = workspaceState;
+
+  // Get active stream message ID for token counting
+  const activeStreamMessageId = aggregator.getActiveStreamMessageId();
+
+  // Use pending send model for auto-compaction check, not the last stream's model.
+  // This ensures the threshold is based on the model the user will actually send with,
+  // preventing context-length errors when switching from a large-context to smaller model.
+  const pendingModel = pendingSendOptions.model;
+
+  const autoCompactionResult = checkAutoCompaction(
+    workspaceUsage,
+    pendingModel,
+    use1M,
+    autoCompactionEnabled,
+    autoCompactionThreshold / 100
+  );
+
+  // Show warning when: shouldShowWarning flag is true AND not currently compacting
+  const shouldShowCompactionWarning = !isCompacting && autoCompactionResult.shouldShowWarning;
+
+  // Force compaction when live usage shows we're about to hit context limit
+  useEffect(() => {
+    if (
+      !autoCompactionResult.shouldForceCompact ||
+      !canInterrupt ||
+      isCompacting ||
+      forceCompactionTriggeredRef.current === activeStreamMessageId
+    ) {
+      return;
+    }
+
+    forceCompactionTriggeredRef.current = activeStreamMessageId ?? null;
+    void executeCompaction({
+      workspaceId,
+      sendMessageOptions: pendingSendOptions,
+      continueMessage: { text: "Continue with the current task" },
+    });
+  }, [
+    autoCompactionResult.shouldForceCompact,
+    canInterrupt,
+    isCompacting,
+    activeStreamMessageId,
+    workspaceId,
+    pendingSendOptions,
+  ]);
+
+  // Reset force compaction trigger when stream ends
+  useEffect(() => {
+    if (!canInterrupt) {
+      forceCompactionTriggeredRef.current = null;
+    }
+  }, [canInterrupt]);
+
   // Auto-retry state - minimal setter for keybinds and message sent handler
   // RetryBarrier manages its own state, but we need this for interrupt keybind
   const [, setAutoRetry] = usePersistedState<boolean>(
@@ -143,9 +205,6 @@ const AIViewInner: React.FC<AIViewProps> = ({
     handleScroll,
     markUserInteraction,
   } = useAutoScroll();
-
-  // Use send options for auto-compaction check
-  const pendingSendOptions = useSendMessageOptions(workspaceId);
 
   // ChatInput API for focus management
   const chatInputAPI = useRef<ChatInputAPI | null>(null);
@@ -328,28 +387,6 @@ const AIViewInner: React.FC<AIViewProps> = ({
       </div>
     );
   }
-
-  // Extract state from workspace state
-  const { messages, canInterrupt, isCompacting, loading, currentModel } = workspaceState;
-
-  // Get active stream message ID for token counting
-  const activeStreamMessageId = aggregator.getActiveStreamMessageId();
-
-  // Use pending send model for auto-compaction check, not the last stream's model.
-  // This ensures the threshold is based on the model the user will actually send with,
-  // preventing context-length errors when switching from a large-context to smaller model.
-  const pendingModel = pendingSendOptions.model;
-
-  const autoCompactionResult = checkAutoCompaction(
-    workspaceUsage,
-    pendingModel,
-    use1M,
-    autoCompactionEnabled,
-    autoCompactionThreshold / 100
-  );
-
-  // Show warning when: shouldShowWarning flag is true AND not currently compacting
-  const shouldShowCompactionWarning = !isCompacting && autoCompactionResult.shouldShowWarning;
 
   // Note: We intentionally do NOT reset autoRetry when streams start.
   // If user pressed the interrupt key, autoRetry stays false until they manually retry.

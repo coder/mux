@@ -16,12 +16,29 @@
  */
 
 import type { WorkspaceUsageState } from "@/browser/stores/WorkspaceStore";
+import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { getModelStats } from "@/common/utils/tokens/modelStats";
 import { supports1MContext } from "@/common/utils/ai/models";
-import { DEFAULT_AUTO_COMPACTION_THRESHOLD } from "@/common/constants/ui";
+import {
+  DEFAULT_AUTO_COMPACTION_THRESHOLD,
+  FORCE_COMPACTION_TOKEN_BUFFER,
+} from "@/common/constants/ui";
+
+/** Sum all token components from a ChatUsageDisplay */
+function getTotalTokens(usage: ChatUsageDisplay): number {
+  return (
+    usage.input.tokens +
+    usage.cached.tokens +
+    usage.cacheCreate.tokens +
+    usage.output.tokens +
+    usage.reasoning.tokens
+  );
+}
 
 export interface AutoCompactionCheckResult {
   shouldShowWarning: boolean;
+  /** True when live usage shows ≤FORCE_COMPACTION_TOKEN_BUFFER remaining in context */
+  shouldForceCompact: boolean;
   usagePercentage: number;
   thresholdPercentage: number;
 }
@@ -54,11 +71,11 @@ export function checkAutoCompaction(
 ): AutoCompactionCheckResult {
   const thresholdPercentage = threshold * 100;
 
-  // Short-circuit if auto-compaction is disabled
-  // Or if no usage data yet
-  if (!enabled || !model || !usage || usage.usageHistory.length === 0) {
+  // Short-circuit if auto-compaction is disabled or missing required data
+  if (!enabled || !model || !usage) {
     return {
       shouldShowWarning: false,
+      shouldForceCompact: false,
       usagePercentage: 0,
       thresholdPercentage,
     };
@@ -67,31 +84,44 @@ export function checkAutoCompaction(
   // Determine max tokens for this model
   const modelStats = getModelStats(model);
   const maxTokens = use1M && supports1MContext(model) ? 1_000_000 : modelStats?.max_input_tokens;
-  const lastUsage = usage.usageHistory[usage.usageHistory.length - 1];
 
   // No max tokens known - safe default (can't calculate percentage)
   if (!maxTokens) {
     return {
       shouldShowWarning: false,
+      shouldForceCompact: false,
       usagePercentage: 0,
       thresholdPercentage,
     };
   }
 
-  const currentContextTokens =
-    lastUsage.input.tokens +
-    lastUsage.cached.tokens +
-    lastUsage.cacheCreate.tokens +
-    lastUsage.output.tokens +
-    lastUsage.reasoning.tokens;
+  // Current usage: live when streaming, else last historical (pattern from CostsTab)
+  const lastUsage = usage.usageHistory[usage.usageHistory.length - 1];
+  const currentUsage = usage.liveUsage ?? lastUsage;
 
-  const usagePercentage = (currentContextTokens / maxTokens) * 100;
+  // Force-compact when approaching context limit (can trigger even with empty history if streaming)
+  let shouldForceCompact = false;
+  if (currentUsage) {
+    const remainingTokens = maxTokens - getTotalTokens(currentUsage);
+    shouldForceCompact = remainingTokens <= FORCE_COMPACTION_TOKEN_BUFFER;
+  }
 
-  // Show warning if within advance window (e.g., 60% for 70% threshold with 10% advance)
+  // Warning/percentage based on lastUsage (completed requests only)
+  if (!lastUsage) {
+    return {
+      shouldShowWarning: false,
+      shouldForceCompact,
+      usagePercentage: 0,
+      thresholdPercentage,
+    };
+  }
+
+  const usagePercentage = (getTotalTokens(lastUsage) / maxTokens) * 100;
   const shouldShowWarning = usagePercentage >= thresholdPercentage - warningAdvancePercent;
 
   return {
     shouldShowWarning,
+    shouldForceCompact,
     usagePercentage,
     thresholdPercentage,
   };
