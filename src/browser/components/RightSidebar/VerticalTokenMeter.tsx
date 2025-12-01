@@ -42,7 +42,7 @@ const VerticalTokenMeterComponent: React.FC<VerticalTokenMeterProps> = ({
         </div>
       )}
       <div
-        className="relative flex min-h-0 w-full flex-1 flex-col items-center"
+        className="relative flex min-h-0 w-full flex-1 flex-col items-center overflow-visible"
         data-wrapper="meter-wrapper"
       >
         {/* Threshold slider overlay - positioned over the entire meter area */}

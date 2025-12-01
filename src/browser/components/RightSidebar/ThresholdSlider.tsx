@@ -3,7 +3,6 @@ import {
   AUTO_COMPACTION_THRESHOLD_MIN,
   AUTO_COMPACTION_THRESHOLD_MAX,
 } from "@/common/constants/ui";
-import { TooltipWrapper, Tooltip } from "../Tooltip";
 
 interface ThresholdSliderProps {
   /** Current threshold percentage (50-90, or 100 for disabled) */
@@ -16,8 +15,6 @@ interface ThresholdSliderProps {
   onEnabledChange: (enabled: boolean) => void;
   /** Orientation of the slider */
   orientation: "horizontal" | "vertical";
-  /** Height of the bar for vertical positioning (horizontal orientation only) */
-  barHeight?: number;
 }
 
 // Threshold at which we consider auto-compaction disabled (dragged all the way right/down)
@@ -29,7 +26,6 @@ export const ThresholdSlider: React.FC<ThresholdSliderProps> = ({
   onThresholdChange,
   onEnabledChange,
   orientation,
-  barHeight = 6,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -80,6 +76,7 @@ export const ThresholdSlider: React.FC<ThresholdSliderProps> = ({
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
+      e.stopPropagation();
       setIsDragging(true);
       updateThreshold(e.clientX, e.clientY);
 
@@ -100,8 +97,8 @@ export const ThresholdSlider: React.FC<ThresholdSliderProps> = ({
     [updateThreshold]
   );
 
-  // Tooltip shows live feedback during drag
-  const tooltipContent = isDragging
+  // Tooltip text
+  const tooltipText = isDragging
     ? dragValue !== null && dragValue >= DISABLE_THRESHOLD
       ? "Release to disable auto-compact"
       : `Auto-compact at ${dragValue ?? threshold}%`
@@ -109,131 +106,120 @@ export const ThresholdSlider: React.FC<ThresholdSliderProps> = ({
       ? `Auto-compact at ${threshold}% · Drag to adjust`
       : "Auto-compact disabled · Drag left to enable";
 
-  if (orientation === "horizontal") {
-    // Render as a positioned overlay - the parent should have position:relative
-    return (
-      <TooltipWrapper inline>
-        <div
-          ref={containerRef}
-          className="absolute cursor-ew-resize"
-          style={{
-            left: 0,
-            right: 0,
-            top: "50%",
-            transform: "translateY(-50%)",
-            height: barHeight + 16, // bar + 8px padding each side for easier grabbing
-          }}
-          onMouseDown={handleMouseDown}
-        >
-          {/* Vertical line indicator with grab handle */}
-          <div
-            className="pointer-events-none absolute flex flex-col items-center"
-            style={{
-              left: `${position}%`,
-              transform: "translateX(-50%)",
-              top: 0,
-              bottom: 0,
-            }}
-          >
-            {/* Top handle - small triangle */}
-            <div
-              className={`h-0 w-0 shrink-0 transition-opacity ${
-                isDragging ? "opacity-100" : "opacity-70"
-              }`}
-              style={{
-                borderLeft: "4px solid transparent",
-                borderRight: "4px solid transparent",
-                borderTop: `5px solid ${enabled ? "var(--color-plan-mode)" : "var(--color-muted)"}`,
-              }}
-            />
-            {/* The line itself */}
-            <div
-              className={`flex-1 transition-opacity ${isDragging ? "opacity-100" : "opacity-70"}`}
-              style={{
-                width: 2,
-                background: enabled ? "var(--color-plan-mode)" : "var(--color-muted)",
-              }}
-            />
-            {/* Bottom handle - small triangle pointing up */}
-            <div
-              className={`h-0 w-0 shrink-0 transition-opacity ${
-                isDragging ? "opacity-100" : "opacity-70"
-              }`}
-              style={{
-                borderLeft: "4px solid transparent",
-                borderRight: "4px solid transparent",
-                borderBottom: `5px solid ${enabled ? "var(--color-plan-mode)" : "var(--color-muted)"}`,
-              }}
-            />
-          </div>
-        </div>
-        <Tooltip align="center" width="auto">
-          {tooltipContent}
-        </Tooltip>
-      </TooltipWrapper>
-    );
-  }
+  const lineColor = enabled ? "var(--color-plan-mode)" : "var(--color-muted)";
 
-  // Vertical orientation
-  return (
-    <TooltipWrapper inline>
+  if (orientation === "horizontal") {
+    // Absolute overlay covering the bar area
+    return (
       <div
         ref={containerRef}
-        className="absolute cursor-ns-resize"
-        style={{
-          top: 0,
-          bottom: 0,
-          left: "50%",
-          transform: "translateX(-50%)",
-          width: 20, // wider hit area
-        }}
+        className="absolute inset-0 cursor-ew-resize"
+        style={{ zIndex: 10 }}
         onMouseDown={handleMouseDown}
+        title={tooltipText}
       >
-        {/* Horizontal line indicator with grab handles */}
+        {/* Vertical line indicator with triangles */}
         <div
-          className="pointer-events-none absolute flex items-center"
+          className="pointer-events-none absolute"
           style={{
-            top: `${position}%`,
-            transform: "translateY(-50%)",
-            left: 0,
-            right: 0,
+            left: `${position}%`,
+            top: -4,
+            bottom: -4,
+            transform: "translateX(-50%)",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
           }}
         >
-          {/* Left handle - small triangle */}
+          {/* Top triangle */}
           <div
-            className={`h-0 w-0 shrink-0 transition-opacity ${
-              isDragging ? "opacity-100" : "opacity-70"
-            }`}
             style={{
-              borderTop: "4px solid transparent",
-              borderBottom: "4px solid transparent",
-              borderLeft: `5px solid ${enabled ? "var(--color-plan-mode)" : "var(--color-muted)"}`,
+              width: 0,
+              height: 0,
+              borderLeft: "4px solid transparent",
+              borderRight: "4px solid transparent",
+              borderTop: `5px solid ${lineColor}`,
+              opacity: isDragging ? 1 : 0.8,
             }}
           />
-          {/* The line itself */}
+          {/* Line */}
           <div
-            className={`flex-1 transition-opacity ${isDragging ? "opacity-100" : "opacity-70"}`}
             style={{
-              height: 2,
-              background: enabled ? "var(--color-plan-mode)" : "var(--color-muted)",
+              flex: 1,
+              width: 2,
+              background: lineColor,
+              opacity: isDragging ? 1 : 0.8,
             }}
           />
-          {/* Right handle - small triangle pointing left */}
+          {/* Bottom triangle */}
           <div
-            className={`h-0 w-0 shrink-0 transition-opacity ${
-              isDragging ? "opacity-100" : "opacity-70"
-            }`}
             style={{
-              borderTop: "4px solid transparent",
-              borderBottom: "4px solid transparent",
-              borderRight: `5px solid ${enabled ? "var(--color-plan-mode)" : "var(--color-muted)"}`,
+              width: 0,
+              height: 0,
+              borderLeft: "4px solid transparent",
+              borderRight: "4px solid transparent",
+              borderBottom: `5px solid ${lineColor}`,
+              opacity: isDragging ? 1 : 0.8,
             }}
           />
         </div>
       </div>
-      <Tooltip align="center" width="auto">
-        {tooltipContent}
-      </Tooltip>
-    </TooltipWrapper>
+    );
+  }
+
+  // Vertical orientation - absolute overlay
+  return (
+    <div
+      ref={containerRef}
+      className="absolute inset-0 cursor-ns-resize"
+      style={{ zIndex: 10 }}
+      onMouseDown={handleMouseDown}
+      title={tooltipText}
+    >
+      {/* Horizontal line indicator with triangles */}
+      <div
+        className="pointer-events-none absolute"
+        style={{
+          top: `${position}%`,
+          left: -3,
+          right: -3,
+          transform: "translateY(-50%)",
+          display: "flex",
+          alignItems: "center",
+        }}
+      >
+        {/* Left triangle */}
+        <div
+          style={{
+            width: 0,
+            height: 0,
+            borderTop: "4px solid transparent",
+            borderBottom: "4px solid transparent",
+            borderLeft: `5px solid ${lineColor}`,
+            opacity: isDragging ? 1 : 0.8,
+          }}
+        />
+        {/* Line */}
+        <div
+          style={{
+            flex: 1,
+            height: 2,
+            background: lineColor,
+            opacity: isDragging ? 1 : 0.8,
+          }}
+        />
+        {/* Right triangle */}
+        <div
+          style={{
+            width: 0,
+            height: 0,
+            borderTop: "4px solid transparent",
+            borderBottom: "4px solid transparent",
+            borderRight: `5px solid ${lineColor}`,
+            opacity: isDragging ? 1 : 0.8,
+          }}
+        />
+      </div>
+    </div>
   );
 };
