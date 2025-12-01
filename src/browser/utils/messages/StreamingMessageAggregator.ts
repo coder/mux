@@ -1002,10 +1002,33 @@ export class StreamingMessageAggregator {
   }
 
   /**
-   * Handle usage-delta event: update cumulative usage for active stream
+   * Handle usage-delta event: accumulate usage for active stream across steps
+   *
+   * In multi-step mode (tool use), each step emits per-step usage:
+   * - inputTokens: Current context window (grows each step) - use latest
+   * - cachedInputTokens: Current cache state - use latest
+   * - outputTokens: Tokens generated this step only - accumulate
+   * - reasoningTokens: Reasoning tokens this step only - accumulate
    */
   handleUsageDelta(data: UsageDeltaEvent): void {
-    this.activeStreamStepUsage.set(data.messageId, data.usage);
+    const existing = this.activeStreamStepUsage.get(data.messageId);
+    if (existing) {
+      // Accumulate output/reasoning tokens, keep latest input (context grows each step)
+      const outputTokens = (existing.outputTokens ?? 0) + (data.usage.outputTokens ?? 0);
+      const reasoningTokens = (existing.reasoningTokens ?? 0) + (data.usage.reasoningTokens ?? 0);
+      this.activeStreamStepUsage.set(data.messageId, {
+        inputTokens: data.usage.inputTokens, // Latest context window
+        cachedInputTokens: data.usage.cachedInputTokens, // Latest cache state
+        outputTokens,
+        reasoningTokens,
+        // Preserve provider's totalTokens - don't recompute since provider semantics differ
+        // (OpenAI inputTokens includes cached; Anthropic excludes). Cost calculation uses
+        // individual components, not totalTokens.
+        totalTokens: data.usage.totalTokens,
+      });
+    } else {
+      this.activeStreamStepUsage.set(data.messageId, data.usage);
+    }
   }
 
   /**

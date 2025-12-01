@@ -415,10 +415,10 @@ describe("StreamingMessageAggregator", () => {
       expect(aggregator.getActiveStreamUsage("msg-1")).toBeUndefined();
     });
 
-    test("latest usage-delta replaces previous for same messageId", () => {
+    test("accumulates output tokens across steps, keeps latest input", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
-      // First step usage
+      // First step usage (AI calls a tool)
       aggregator.handleUsageDelta({
         type: "usage-delta",
         workspaceId: "ws-1",
@@ -434,12 +434,52 @@ describe("StreamingMessageAggregator", () => {
         usage: { inputTokens: 1500, outputTokens: 100, totalTokens: 1600 },
       });
 
-      // Should have latest values, not summed
-      expect(aggregator.getActiveStreamUsage("msg-1")).toEqual({
-        inputTokens: 1500,
-        outputTokens: 100,
-        totalTokens: 1600,
+      // Input should be latest (context window grows), output should be summed
+      const usage = aggregator.getActiveStreamUsage("msg-1");
+      expect(usage?.inputTokens).toBe(1500); // Latest context window
+      expect(usage?.outputTokens).toBe(150); // Accumulated: 50 + 100
+      expect(usage?.totalTokens).toBe(1600); // Provider's latest value (not recomputed)
+      expect(usage?.reasoningTokens).toBe(0); // Accumulated (none in this test)
+    });
+
+    test("accumulates reasoning tokens and includes cachedInputTokens in total", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      // First step: some reasoning, with cache hit
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-1",
+        usage: {
+          inputTokens: 800, // Anthropic: excludes cached
+          cachedInputTokens: 200,
+          outputTokens: 30,
+          reasoningTokens: 20,
+          totalTokens: 1050,
+        },
       });
+
+      // Second step: more output and reasoning, cache grows
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-1",
+        usage: {
+          inputTokens: 900, // Context grew
+          cachedInputTokens: 300, // More cached
+          outputTokens: 70,
+          reasoningTokens: 50,
+          totalTokens: 1320,
+        },
+      });
+
+      const usage = aggregator.getActiveStreamUsage("msg-1");
+      expect(usage?.inputTokens).toBe(900); // Latest
+      expect(usage?.cachedInputTokens).toBe(300); // Latest
+      expect(usage?.outputTokens).toBe(100); // Accumulated: 30 + 70
+      expect(usage?.reasoningTokens).toBe(70); // Accumulated: 20 + 50
+      // totalTokens preserved from provider (not recomputed - avoids OpenAI/Anthropic semantic differences)
+      expect(usage?.totalTokens).toBe(1320);
     });
 
     test("tracks usage independently per messageId", () => {
