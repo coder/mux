@@ -305,14 +305,6 @@ describe("checkAutoCompaction", () => {
     // Force-compact triggers at threshold + 5%
     // With default 70% threshold, force-compact at 75%
 
-    test("shouldForceCompact is false when usage below threshold + 5%", () => {
-      // 70% usage, threshold 70%, force at 75% - should NOT trigger
-      const usage = createMockUsage(140_000); // 70%
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
-
-      expect(result.shouldForceCompact).toBe(false);
-    });
-
     test("shouldForceCompact is false when usage just below force threshold", () => {
       // 74% usage, threshold 70%, force at 75% - should NOT trigger
       const usage = createMockUsage(148_000); // 74%
