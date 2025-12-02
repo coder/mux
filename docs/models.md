@@ -13,7 +13,8 @@ mux supports multiple AI providers through its flexible provider architecture.
 Best supported provider with full feature support:
 
 - `anthropic:claude-sonnet-4-5`
-- `anthropic:claude-opus-4-1`
+- `anthropic:claude-opus-4-5`
+- `anthropic:claude-haiku-4-5`
 
 **Setup:**
 
@@ -40,8 +41,10 @@ Or set environment variables:
 
 GPT-5 family of models:
 
-- `openai:gpt-5`
+- `openai:gpt-5.1`
 - `openai:gpt-5-pro`
+- `openai:gpt-5.1-codex`
+- `openai:gpt-5.1-codex-mini`
 
 #### Google (Cloud)
 
@@ -64,8 +67,6 @@ Access Gemini models directly via Google's generative AI API:
 }
 ```
 
-- `openai:gpt-5-codex`
-
 **Note:** Anthropic models are better supported than GPT-5 class models due to an outstanding issue in the Vercel AI SDK.
 
 TODO: add issue link here.
@@ -74,8 +75,8 @@ TODO: add issue link here.
 
 Frontier reasoning models from xAI with built-in search orchestration:
 
-- `xai:grok-4-1` — Fast unified model (switches between reasoning/non-reasoning based on thinking toggle)
-- `xai:grok-code` — Optimized for coding tasks
+- `xai:grok-4-1-fast` — Fast unified model (switches between reasoning/non-reasoning based on thinking toggle)
+- `xai:grok-code-fast-1` — Optimized for coding tasks
 
 **Setup:**
 
