@@ -49,7 +49,7 @@ include fmt.mk
 .PHONY: test test-unit test-integration test-watch test-coverage test-e2e smoke-test
 .PHONY: dist dist-mac dist-win dist-linux
 .PHONY: vscode-ext vscode-ext-install
-.PHONY: docs docs-build docs-watch
+.PHONY: docs docs-server docs-watch check-docs-links
 .PHONY: storybook storybook-build test-storybook chromatic
 .PHONY: benchmark-terminal
 .PHONY: ensure-deps rebuild-native
@@ -213,7 +213,7 @@ build/icon.png: docs/img/logo.webp scripts/generate-icons.ts
 	@bun scripts/generate-icons.ts png
 
 ## Quality checks (can run in parallel)
-static-check: lint typecheck fmt-check check-eager-imports check-bench-agent ## Run all static checks (includes startup performance checks)
+static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links ## Run all static checks (includes startup performance checks)
 
 check-bench-agent: ## Verify terminal-bench agent configuration and imports
 	@./scripts/check-bench-agent.sh
@@ -337,14 +337,18 @@ vscode-ext-install: ## Build and install VS Code extension locally
 	@$(MAKE) -C vscode install
 
 ## Documentation
-docs: ## Serve documentation locally
-	@./scripts/docs.sh
-
-docs-build: ## Build documentation
+docs: ## Build documentation
 	@./scripts/docs_build.sh
+
+docs-server: ## Serve documentation locally (opens browser)
+	@./scripts/docs.sh
 
 docs-watch: ## Watch and rebuild documentation
 	@cd docs && mdbook watch
+
+check-docs-links: docs ## Check documentation for broken links
+	@echo "🔗 Checking documentation links..."
+	@cd docs && mdbook-linkcheck --standalone .
 
 ## Storybook
 storybook: node_modules/.installed ## Start Storybook development server
