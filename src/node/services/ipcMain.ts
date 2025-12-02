@@ -1281,7 +1281,11 @@ export class IpcMain {
 
     ipcMain.handle(
       IPC_CHANNELS.WORKSPACE_INTERRUPT_STREAM,
-      async (_event, workspaceId: string, options?: { abandonPartial?: boolean }) => {
+      async (
+        _event,
+        workspaceId: string,
+        options?: { abandonPartial?: boolean; sendQueuedImmediately?: boolean }
+      ) => {
         log.debug("interruptStream handler: Received", { workspaceId, options });
         try {
           const session = this.getOrCreateSession(workspaceId);
@@ -1291,7 +1295,12 @@ export class IpcMain {
             return { success: false, error: stopResult.error };
           }
 
-          session.restoreQueueToInput();
+          if (options?.sendQueuedImmediately) {
+            // Send queued messages immediately instead of restoring to input
+            session.sendQueuedMessages();
+          } else {
+            session.restoreQueueToInput();
+          }
 
           return { success: true, data: undefined };
         } catch (error) {

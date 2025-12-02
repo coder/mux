@@ -245,6 +245,12 @@ const AIViewInner: React.FC<AIViewProps> = ({
     }
   }, [workspaceId, workspaceState?.queuedMessage, chatInputAPI]);
 
+  // Handler for sending queued message immediately (interrupt + send)
+  const handleSendQueuedImmediately = useCallback(async () => {
+    if (!workspaceState?.queuedMessage || !workspaceState.canInterrupt) return;
+    await window.api.workspace.interruptStream(workspaceId, { sendQueuedImmediately: true });
+  }, [workspaceId, workspaceState?.queuedMessage, workspaceState?.canInterrupt]);
+
   const handleEditLastUserMessage = useCallback(async () => {
     if (!workspaceState) return;
 
@@ -562,6 +568,9 @@ const AIViewInner: React.FC<AIViewProps> = ({
                 <QueuedMessage
                   message={workspaceState.queuedMessage}
                   onEdit={() => void handleEditQueuedMessage()}
+                  onSendImmediately={
+                    workspaceState.canInterrupt ? handleSendQueuedImmediately : undefined
+                  }
                 />
               )}
               <ConcurrentLocalWarning

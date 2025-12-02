@@ -320,7 +320,7 @@ export interface IPCApi {
     ): Promise<Result<void, SendMessageError>>;
     interruptStream(
       workspaceId: string,
-      options?: { abandonPartial?: boolean }
+      options?: { abandonPartial?: boolean; sendQueuedImmediately?: boolean }
     ): Promise<Result<void, string>>;
     clearQueue(workspaceId: string): Promise<Result<void, string>>;
     truncateHistory(workspaceId: string, percentage?: number): Promise<Result<void, string>>;

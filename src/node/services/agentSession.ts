@@ -591,9 +591,9 @@ export class AgentSession {
 
   /**
    * Send queued messages if any exist.
-   * Called when tool execution completes or stream ends.
+   * Called when tool execution completes, stream ends, or user clicks send immediately.
    */
-  private sendQueuedMessages(): void {
+  sendQueuedMessages(): void {
     if (!this.messageQueue.isEmpty()) {
       const { message, options } = this.messageQueue.produceMessage();
       this.messageQueue.clear();
