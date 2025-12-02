@@ -18,7 +18,11 @@ jobs:
 
       - uses: ./.github/actions/setup-mux
 
+      # Skip signing setup for PRs - electron-builder skips signing anyway,
+      # but setting CSC_LINK forces our Makefile to build sequentially.
+      # Without CSC_LINK, x64 and arm64 build in parallel (~90s savings).
       - name: Setup code signing
+        if: github.event_name != 'pull_request'
         run: ./scripts/setup-macos-signing.sh
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
@@ -28,6 +32,7 @@ jobs:
           AC_APIKEY_ISSUER_ID: ${{ secrets.AC_APIKEY_ISSUER_ID }}
 
       - name: Verify signing setup
+        if: github.event_name != 'pull_request'
         run: |
           if [ -n "${CSC_LINK:-}" ]; then
             echo "✅ Code signing enabled"
@@ -39,8 +44,6 @@ jobs:
 
       - name: Package for macOS
         run: make dist-mac
-        env:
-          CSC_FOR_PULL_REQUEST: ${{ github.event.pull_request.number == 234 }}
 
       - name: Upload macOS DMG (x64)
         uses: actions/upload-artifact@v4
