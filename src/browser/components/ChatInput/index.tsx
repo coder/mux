@@ -160,32 +160,17 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   // Track if OpenAI API key is configured for voice input
   const [openAIKeySet, setOpenAIKeySet] = useState(false);
 
-  // Voice input handling - appends transcribed text to input
-  const handleVoiceTranscript = useCallback(
-    (text: string, _isFinal: boolean) => {
-      // Whisper only returns final results, append to input with space separator if needed
+  // Voice input - appends transcribed text to input
+  const voiceInput = useVoiceInput({
+    onTranscript: (text) => {
       setInput((prev) => {
         const separator = prev.length > 0 && !prev.endsWith(" ") ? " " : "";
         return prev + separator + text;
       });
     },
-    [setInput]
-  );
-
-  const handleVoiceError = useCallback(
-    (error: string) => {
-      setToast({
-        id: Date.now().toString(),
-        type: "error",
-        message: error,
-      });
+    onError: (error) => {
+      setToast({ id: Date.now().toString(), type: "error", message: error });
     },
-    [setToast]
-  );
-
-  const voiceInput = useVoiceInput({
-    onTranscript: handleVoiceTranscript,
-    onError: handleVoiceError,
     onSend: () => void handleSend(),
     openAIKeySet,
   });
@@ -508,7 +493,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         });
         return;
       }
-      voiceInput.toggleListening();
+      voiceInput.toggle();
     };
     window.addEventListener(CUSTOM_EVENTS.TOGGLE_VOICE_INPUT, handler as EventListener);
     return () =>
@@ -857,7 +842,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         });
         return;
       }
-      voiceInput.toggleListening();
+      voiceInput.toggle();
       return;
     }
 
@@ -990,43 +975,42 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           />
 
           <div className="relative flex items-end" data-component="ChatInputControls">
-            {/* Recording/transcribing overlay - dramatically replaces textarea */}
-            {voiceInput.isListening || voiceInput.isTranscribing ? (
+            {/* Recording/transcribing overlay - replaces textarea when active */}
+            {voiceInput.state !== "idle" ? (
               <button
                 type="button"
                 ref={(el) => el?.focus()}
-                onClick={voiceInput.isListening ? voiceInput.toggleListening : undefined}
+                onClick={voiceInput.state === "recording" ? voiceInput.toggle : undefined}
                 onKeyDown={(e) => {
-                  // Space stops recording and sends immediately after transcription
-                  if (e.key === " " && voiceInput.isListening) {
+                  if (e.key === " " && voiceInput.state === "recording") {
                     e.preventDefault();
-                    voiceInput.stopListeningAndSend();
+                    voiceInput.stop({ send: true });
                   }
                 }}
-                disabled={voiceInput.isTranscribing}
+                disabled={voiceInput.state === "transcribing"}
                 className={cn(
                   "mb-1 flex min-h-[60px] w-full items-center justify-center gap-3 rounded-md border px-4 py-4 transition-all",
-                  voiceInput.isListening
+                  voiceInput.state === "recording"
                     ? "cursor-pointer border-blue-500 bg-blue-500/10"
                     : "cursor-wait border-amber-500 bg-amber-500/10"
                 )}
-                aria-label={voiceInput.isListening ? "Stop recording" : "Transcribing..."}
+                aria-label={voiceInput.state === "recording" ? "Stop recording" : "Transcribing..."}
               >
                 <WaveformBars
-                  colorClass={voiceInput.isListening ? "bg-blue-500" : "bg-amber-500"}
+                  colorClass={voiceInput.state === "recording" ? "bg-blue-500" : "bg-amber-500"}
                 />
                 <span
                   className={cn(
                     "text-sm font-medium",
-                    voiceInput.isListening ? "text-blue-500" : "text-amber-500"
+                    voiceInput.state === "recording" ? "text-blue-500" : "text-amber-500"
                   )}
                 >
-                  {voiceInput.isListening
+                  {voiceInput.state === "recording"
                     ? `Recording... space to send, ${formatKeybind(KEYBINDS.TOGGLE_VOICE_INPUT)} to stop`
                     : "Transcribing..."}
                 </span>
                 <WaveformBars
-                  colorClass={voiceInput.isListening ? "bg-blue-500" : "bg-amber-500"}
+                  colorClass={voiceInput.state === "recording" ? "bg-blue-500" : "bg-amber-500"}
                   mirrored
                 />
               </button>
@@ -1057,12 +1041,10 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 {/* Floating voice input button inside textarea */}
                 <div className="absolute right-2 bottom-2">
                   <VoiceInputButton
-                    isListening={voiceInput.isListening}
-                    isTranscribing={voiceInput.isTranscribing}
-                    isSupported={voiceInput.isSupported}
+                    state={voiceInput.state}
                     isApiKeySet={voiceInput.isApiKeySet}
                     shouldShowUI={voiceInput.shouldShowUI}
-                    onToggle={voiceInput.toggleListening}
+                    onToggle={voiceInput.toggle}
                     disabled={disabled || isSending}
                   />
                 </div>
