@@ -31,6 +31,7 @@ import type {
 import { isDynamicToolPart } from "@/common/types/toolParts";
 import { createDeltaStorage, type DeltaRecordStorage } from "./StreamingTPSCalculator";
 import { computeRecencyTimestamp } from "./recency";
+import { getStatusUrlKey } from "@/common/constants/storage";
 
 // Maximum number of messages to display in the DOM for performance
 // Full history is still maintained internally for token counting and stats
@@ -125,18 +126,11 @@ export class StreamingMessageAggregator {
     this.updateRecency();
   }
 
-  /** localStorage key for persisting lastStatusUrl. Only call when workspaceId is defined. */
-  private getStatusUrlKey(): string | undefined {
-    if (!this.workspaceId) return undefined;
-    return `mux:workspace:${this.workspaceId}:lastStatusUrl`;
-  }
-
   /** Load lastStatusUrl from localStorage */
   private loadLastStatusUrl(): string | undefined {
-    const key = this.getStatusUrlKey();
-    if (!key) return undefined;
+    if (!this.workspaceId) return undefined;
     try {
-      const stored = localStorage.getItem(key);
+      const stored = localStorage.getItem(getStatusUrlKey(this.workspaceId));
       return stored ?? undefined;
     } catch {
       return undefined;
@@ -148,10 +142,9 @@ export class StreamingMessageAggregator {
    * Once set, the URL can only be replaced with a new URL, never deleted.
    */
   private saveLastStatusUrl(url: string): void {
-    const key = this.getStatusUrlKey();
-    if (!key) return;
+    if (!this.workspaceId) return;
     try {
-      localStorage.setItem(key, url);
+      localStorage.setItem(getStatusUrlKey(this.workspaceId), url);
     } catch {
       // Ignore localStorage errors
     }

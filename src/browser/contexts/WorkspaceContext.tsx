@@ -11,7 +11,7 @@ import {
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
 import type { RuntimeConfig } from "@/common/types/runtime";
-import { deleteWorkspaceStorage } from "@/common/constants/storage";
+import { deleteWorkspaceStorage, migrateWorkspaceStorage } from "@/common/constants/storage";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
@@ -320,6 +320,11 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       try {
         const result = await window.api.workspace.rename(workspaceId, newName);
         if (result.success) {
+          const newWorkspaceId = result.data.newWorkspaceId;
+
+          // Migrate localStorage keys from old to new workspace ID
+          migrateWorkspaceStorage(workspaceId, newWorkspaceId);
+
           // Backend has already updated the config - reload projects to get updated state
           await refreshProjects();
 
@@ -328,8 +333,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
           // Update selected workspace if it was renamed
           if (selectedWorkspace?.workspaceId === workspaceId) {
-            const newWorkspaceId = result.data.newWorkspaceId;
-
             // Get updated workspace metadata from backend
             const newMetadata = await window.api.workspace.getInfo(newWorkspaceId);
             if (newMetadata) {

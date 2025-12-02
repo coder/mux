@@ -163,6 +163,15 @@ export function getFileTreeExpandStateKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for persisted status URL for a workspace
+ * Stores the last URL set via status_set tool (survives compaction)
+ * Format: "statusUrl:{workspaceId}"
+ */
+export function getStatusUrlKey(workspaceId: string): string {
+  return `statusUrl:${workspaceId}`;
+}
+
+/**
  * Get the localStorage key for unified Review search state per workspace
  * Stores: { input: string, useRegex: boolean, matchCase: boolean }
  * Format: "reviewSearchState:{workspaceId}"
@@ -202,6 +211,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getFileTreeExpandStateKey,
   getReviewSearchStateKey,
   getAutoCompactionEnabledKey,
+  getStatusUrlKey,
   // Note: getAutoCompactionThresholdKey is per-model, not per-workspace
 ];
 
@@ -241,4 +251,13 @@ export function deleteWorkspaceStorage(workspaceId: string): void {
     const key = getKey(workspaceId);
     localStorage.removeItem(key);
   }
+}
+
+/**
+ * Migrate all workspace-specific localStorage keys from old to new workspace ID
+ * Should be called when a workspace is renamed to preserve settings
+ */
+export function migrateWorkspaceStorage(oldWorkspaceId: string, newWorkspaceId: string): void {
+  copyWorkspaceStorage(oldWorkspaceId, newWorkspaceId);
+  deleteWorkspaceStorage(oldWorkspaceId);
 }
