@@ -500,6 +500,23 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
       window.removeEventListener(CUSTOM_EVENTS.TOGGLE_VOICE_INPUT, handler as EventListener);
   }, [voiceInput, setToast]);
 
+  // Global keybinds during recording (work regardless of focus)
+  useEffect(() => {
+    if (voiceInput.state !== "recording") return;
+
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === " ") {
+        e.preventDefault();
+        voiceInput.stop({ send: true });
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        voiceInput.cancel();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [voiceInput]);
+
   // Auto-focus chat input when workspace changes (workspace only)
   const workspaceIdForFocus = variant === "workspace" ? props.workspaceId : null;
   useEffect(() => {
@@ -992,17 +1009,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             {voiceInput.state !== "idle" ? (
               <button
                 type="button"
-                ref={(el) => el?.focus()}
                 onClick={voiceInput.state === "recording" ? voiceInput.toggle : undefined}
-                onKeyDown={(e) => {
-                  if (e.key === " " && voiceInput.state === "recording") {
-                    e.preventDefault();
-                    voiceInput.stop({ send: true });
-                  } else if (e.key === "Escape" && voiceInput.state === "recording") {
-                    e.preventDefault();
-                    voiceInput.cancel();
-                  }
-                }}
                 disabled={voiceInput.state === "transcribing"}
                 className={cn(
                   "mb-1 flex min-h-[60px] w-full items-center justify-center gap-3 rounded-md border px-4 py-4 transition-all focus:outline-none",
