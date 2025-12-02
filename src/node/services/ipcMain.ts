@@ -228,7 +228,7 @@ export class IpcMain {
     workspaceId: string,
     snapshot: WorkspaceActivitySnapshot | null
   ): void {
-    if (!this.mainWindow || this.mainWindow.isDestroyed()) {
+    if (!this.mainWindow || this.mainWindow?.isDestroyed()) {
       return;
     }
     this.mainWindow.webContents.send(IPC_CHANNELS.WORKSPACE_ACTIVITY, {
@@ -508,7 +508,7 @@ export class IpcMain {
     });
 
     const chatUnsubscribe = session.onChatEvent((event) => {
-      if (!this.mainWindow || this.mainWindow.isDestroyed()) {
+      if (!this.mainWindow || this.mainWindow?.isDestroyed()) {
         return;
       }
       const channel = getChatChannel(event.workspaceId);
@@ -516,7 +516,7 @@ export class IpcMain {
     });
 
     const metadataUnsubscribe = session.onMetadataEvent((event) => {
-      if (!this.mainWindow || this.mainWindow.isDestroyed()) {
+      if (!this.mainWindow || this.mainWindow?.isDestroyed()) {
         return;
       }
       this.mainWindow.webContents.send(IPC_CHANNELS.WORKSPACE_METADATA, {
@@ -969,7 +969,7 @@ export class IpcMain {
           const session = this.sessions.get(workspaceId);
           if (session) {
             session.emitMetadata(updatedMetadata);
-          } else if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+          } else if (this.mainWindow && !this.mainWindow?.isDestroyed()) {
             this.mainWindow.webContents.send(IPC_CHANNELS.WORKSPACE_METADATA, {
               workspaceId,
               metadata: updatedMetadata,
@@ -1379,7 +1379,7 @@ export class IpcMain {
             type: "delete",
             historySequences: deletedSequences,
           };
-          if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+          if (this.mainWindow && !this.mainWindow?.isDestroyed()) {
             this.mainWindow.webContents.send(getChatChannel(workspaceId), deleteMessage);
           }
         }
@@ -1419,7 +1419,7 @@ export class IpcMain {
           }
 
           // Send delete event to frontend for all old messages
-          if (deletedSequences.length > 0 && this.mainWindow && !this.mainWindow.isDestroyed()) {
+          if (deletedSequences.length > 0 && this.mainWindow && !this.mainWindow?.isDestroyed()) {
             const deleteMessage: DeleteMessage = {
               type: "delete",
               historySequences: deletedSequences,
@@ -1428,7 +1428,7 @@ export class IpcMain {
           }
 
           // Send the new summary message to frontend
-          if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+          if (this.mainWindow && !this.mainWindow?.isDestroyed()) {
             this.mainWindow.webContents.send(getChatChannel(workspaceId), summaryMessage);
           }
 
@@ -1634,7 +1634,7 @@ export class IpcMain {
       const existingSession = this.sessions.get(workspaceId);
       if (existingSession) {
         existingSession.emitMetadata(null);
-      } else if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      } else if (this.mainWindow && !this.mainWindow?.isDestroyed()) {
         this.mainWindow.webContents.send(IPC_CHANNELS.WORKSPACE_METADATA, {
           workspaceId,
           metadata: null,
@@ -2093,7 +2093,7 @@ export class IpcMain {
         const chatChannel = getChatChannel(workspaceId);
 
         await session.replayHistory((event) => {
-          if (!this.mainWindow || this.mainWindow.isDestroyed()) {
+          if (!this.mainWindow || this.mainWindow?.isDestroyed()) {
             return;
           }
           this.mainWindow.webContents.send(chatChannel, event.message);
