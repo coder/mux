@@ -59,7 +59,14 @@ export interface StreamAbortEvent {
   messageId: string;
   // Metadata may contain usage if abort occurred after stream completed processing
   metadata?: {
+    // Total usage across all steps (for cost calculation)
     usage?: LanguageModelV2Usage;
+    // Last step's usage (for context window display - inputTokens = current context size)
+    contextUsage?: LanguageModelV2Usage;
+    // Provider metadata for cost calculation (cache tokens, etc.)
+    providerMetadata?: Record<string, unknown>;
+    // Last step's provider metadata (for context window cache display)
+    contextProviderMetadata?: Record<string, unknown>;
     duration?: number;
   };
   abandonPartial?: boolean;

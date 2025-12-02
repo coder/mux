@@ -500,15 +500,27 @@ export class StreamManager extends EventEmitter {
       // while a new stream starts (e.g., old stream writing to partial.json)
       await streamInfo.processingPromise;
 
-      // Get usage and duration metadata (usage may be undefined if aborted early)
-      const { usage, duration } = await this.getStreamMetadata(streamInfo);
+      // For aborts, use our tracked cumulativeUsage directly instead of AI SDK's totalUsage.
+      // cumulativeUsage is updated on each finish-step event (before tool execution),
+      // so it has accurate data even when the stream is interrupted mid-tool-call.
+      // AI SDK's totalUsage may return zeros or stale data when aborted.
+      const duration = Date.now() - streamInfo.startTime;
+      const hasCumulativeUsage = (streamInfo.cumulativeUsage.totalTokens ?? 0) > 0;
+      const usage = hasCumulativeUsage ? streamInfo.cumulativeUsage : undefined;
+
+      // For context window display, use last step's usage (inputTokens = current context size)
+      const contextUsage = streamInfo.lastStepUsage;
+      const contextProviderMetadata = streamInfo.lastStepProviderMetadata;
+
+      // Include provider metadata for accurate cost calculation
+      const providerMetadata = streamInfo.cumulativeProviderMetadata;
 
       // Emit abort event with usage if available
       this.emit("stream-abort", {
         type: "stream-abort",
         workspaceId: workspaceId as string,
         messageId: streamInfo.messageId,
-        metadata: { usage, duration },
+        metadata: { usage, contextUsage, duration, providerMetadata, contextProviderMetadata },
         abandonPartial,
       });
 

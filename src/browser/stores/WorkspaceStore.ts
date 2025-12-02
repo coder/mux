@@ -144,6 +144,8 @@ export class WorkspaceStore {
       // Don't reset retry state here - stream might still fail after starting
       // Retry state will be reset on stream-end (successful completion)
       this.states.bump(workspaceId);
+      // Bump usage store so liveUsage is recomputed with new activeStreamId
+      this.usageStore.bump(workspaceId);
     },
     "stream-delta": (workspaceId, aggregator, data) => {
       aggregator.handleStreamDelta(data as never);
