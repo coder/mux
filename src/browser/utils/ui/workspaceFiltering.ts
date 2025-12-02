@@ -48,14 +48,13 @@ export function buildSortedWorkspacesByProject(
     }
   }
 
-  // Sort each project's workspaces by recency
-  for (const [projectPath, metadataList] of result) {
+  // Sort each project's workspaces by recency (sort mutates in place)
+  for (const metadataList of result.values()) {
     metadataList.sort((a, b) => {
       const aTimestamp = workspaceRecency[a.id] ?? 0;
       const bTimestamp = workspaceRecency[b.id] ?? 0;
       return bTimestamp - aTimestamp;
     });
-    result.set(projectPath, metadataList);
   }
 
   return result;

@@ -214,6 +214,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         setWorkspaceMetadata((prev) => {
           const updated = new Map(prev);
           const isNewWorkspace = !prev.has(event.workspaceId) && event.metadata !== null;
+          const existingMeta = prev.get(event.workspaceId);
+          const wasCreating = existingMeta?.status === "creating";
+          const isNowReady = event.metadata !== null && event.metadata.status !== "creating";
 
           if (event.metadata === null) {
             // Workspace deleted - remove from map
@@ -223,9 +226,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
             updated.set(event.workspaceId, event.metadata);
           }
 
-          // If this is a new workspace (e.g., from fork), reload projects
-          // to ensure the sidebar shows the updated workspace list
-          if (isNewWorkspace) {
+          // Reload projects when:
+          // 1. New workspace appears (e.g., from fork)
+          // 2. Workspace transitions from "creating" to ready (now saved to config)
+          if (isNewWorkspace || (wasCreating && isNowReady)) {
             void refreshProjects();
           }
 

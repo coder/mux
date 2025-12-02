@@ -46,6 +46,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   // Destructure metadata for convenience
   const { id: workspaceId, name: workspaceName, namedWorkspacePath, status } = metadata;
   const isCreating = status === "creating";
+  const isDisabled = isCreating || isDeleting;
   const gitStatus = useGitStatus(workspaceId);
 
   // Get rename context
@@ -102,14 +103,14 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
       <div
         className={cn(
           "py-1.5 pl-4 pr-2 border-l-[3px] border-transparent transition-all duration-150 text-[13px] relative flex gap-2",
-          isCreating || isDeleting
+          isDisabled
             ? "cursor-default opacity-70"
             : "cursor-pointer hover:bg-hover [&:hover_button]:opacity-100",
-          isSelected && !isCreating && "bg-hover border-l-blue-400",
+          isSelected && !isDisabled && "bg-hover border-l-blue-400",
           isDeleting && "pointer-events-none"
         )}
         onClick={() => {
-          if (isCreating) return; // Disable click while creating
+          if (isDisabled) return;
           onSelectWorkspace({
             projectPath,
             projectName,
@@ -118,7 +119,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
           });
         }}
         onKeyDown={(e) => {
-          if (isCreating) return; // Disable keyboard while creating
+          if (isDisabled) return;
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             onSelectWorkspace({
@@ -130,12 +131,16 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
           }
         }}
         role="button"
-        tabIndex={isCreating ? -1 : 0}
+        tabIndex={isDisabled ? -1 : 0}
         aria-current={isSelected ? "true" : undefined}
         aria-label={
-          isCreating ? `Creating workspace ${displayName}` : `Select workspace ${displayName}`
+          isCreating
+            ? `Creating workspace ${displayName}`
+            : isDeleting
+              ? `Deleting workspace ${displayName}`
+              : `Select workspace ${displayName}`
         }
-        aria-disabled={isCreating}
+        aria-disabled={isDisabled}
         data-workspace-path={namedWorkspacePath}
         data-workspace-id={workspaceId}
       >
@@ -158,14 +163,14 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
               <span
                 className={cn(
                   "text-foreground -mx-1 min-w-0 flex-1 truncate rounded-sm px-1 text-left text-[14px] transition-colors duration-200",
-                  !isCreating && "cursor-pointer hover:bg-white/5"
+                  !isDisabled && "cursor-pointer hover:bg-white/5"
                 )}
                 onDoubleClick={(e) => {
-                  if (isCreating) return; // Disable rename while creating
+                  if (isDisabled) return;
                   e.stopPropagation();
                   startRenaming();
                 }}
-                title={isCreating ? "Creating workspace..." : "Double-click to rename"}
+                title={isDisabled ? undefined : "Double-click to rename"}
               >
                 {canInterrupt || isCreating ? (
                   <Shimmer className="w-full truncate" colorClass="var(--color-foreground)">
