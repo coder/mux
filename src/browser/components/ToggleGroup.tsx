@@ -30,7 +30,7 @@ export function ToggleGroup<T extends string>({
         onClick={() => onChange(nextOption.value)}
         type="button"
         className={cn(
-          "px-2 py-1 text-[11px] font-sans rounded-sm border-none cursor-pointer transition-all duration-150",
+          "px-1.5 py-0.5 text-[11px] font-sans rounded-sm border-none cursor-pointer transition-all duration-150",
           "text-toggle-text-active bg-toggle-active font-medium",
           activeOption?.activeClassName
         )}
@@ -52,7 +52,7 @@ export function ToggleGroup<T extends string>({
             aria-pressed={isActive}
             type="button"
             className={cn(
-              "px-2 py-1 text-[11px] font-sans rounded-sm border-none cursor-pointer transition-all duration-150 bg-transparent",
+              "px-1.5 py-0.5 text-[11px] font-sans rounded-sm border-none cursor-pointer transition-all duration-150 bg-transparent",
               isActive
                 ? "text-toggle-text-active bg-toggle-active font-medium"
                 : "text-toggle-text font-normal hover:text-toggle-text-hover hover:bg-toggle-hover",
