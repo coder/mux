@@ -487,7 +487,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       section: section.help,
       run: () => {
         try {
-          window.open("https://cmux.io/keybinds.html", "_blank");
+          window.open("https://mux.coder.com/keybinds.html", "_blank");
         } catch {
           /* ignore */
         }
