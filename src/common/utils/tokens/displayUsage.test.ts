@@ -209,6 +209,39 @@ describe("createDisplayUsage", () => {
       // Input stays as-is for gateway Anthropic
       expect(result!.input.tokens).toBe(36600);
     });
+
+    test("subtracts cached tokens for direct Google model", () => {
+      // Google also reports inputTokens INCLUSIVE of cachedInputTokens
+      const googleUsage: LanguageModelV2Usage = {
+        inputTokens: 74300, // Includes 42600 cached
+        outputTokens: 1600,
+        totalTokens: 75900,
+        cachedInputTokens: 42600,
+      };
+
+      const result = createDisplayUsage(googleUsage, "google:gemini-3-pro-preview");
+
+      expect(result).toBeDefined();
+      expect(result!.cached.tokens).toBe(42600);
+      // Input should be raw minus cached: 74300 - 42600 = 31700
+      expect(result!.input.tokens).toBe(31700);
+    });
+
+    test("subtracts cached tokens for gateway Google model", () => {
+      const googleUsage: LanguageModelV2Usage = {
+        inputTokens: 74300,
+        outputTokens: 1600,
+        totalTokens: 75900,
+        cachedInputTokens: 42600,
+      };
+
+      const result = createDisplayUsage(googleUsage, "mux-gateway:google/gemini-3-pro-preview");
+
+      expect(result).toBeDefined();
+      expect(result!.cached.tokens).toBe(42600);
+      // Should also subtract: 74300 - 42600 = 31700
+      expect(result!.input.tokens).toBe(31700);
+    });
   });
 
   test("returns undefined for undefined usage", () => {

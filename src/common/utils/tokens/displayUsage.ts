@@ -36,9 +36,13 @@ export function createDisplayUsage(
 
   // Detect provider from normalized model string
   const isOpenAI = normalizedModel.startsWith("openai:");
+  const isGoogle = normalizedModel.startsWith("google:");
 
-  // For OpenAI, subtract cached tokens to get uncached input tokens
-  const inputTokens = isOpenAI ? Math.max(0, rawInputTokens - cachedTokens) : rawInputTokens;
+  // OpenAI and Google report inputTokens INCLUSIVE of cachedInputTokens
+  // Anthropic reports them separately (inputTokens EXCLUDES cached)
+  // Subtract cached tokens for providers that include them to avoid double-counting
+  const inputTokens =
+    isOpenAI || isGoogle ? Math.max(0, rawInputTokens - cachedTokens) : rawInputTokens;
 
   // Extract cache creation tokens from provider metadata (Anthropic-specific)
   const cacheCreateTokens =
