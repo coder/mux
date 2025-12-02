@@ -82,7 +82,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
   }, []);
 
   const start = useCallback(async () => {
-    if (!isSupported || state !== "idle" || !callbacksRef.current.openAIKeySet) return;
+    if (!isSupported || isMobile || state !== "idle" || !callbacksRef.current.openAIKeySet) return;
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
