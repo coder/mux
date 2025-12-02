@@ -846,6 +846,19 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
       return;
     }
 
+    // Space on empty input starts voice recording
+    if (
+      e.key === " " &&
+      input.trim() === "" &&
+      voiceInput.shouldShowUI &&
+      voiceInput.isApiKeySet &&
+      voiceInput.state === "idle"
+    ) {
+      e.preventDefault();
+      voiceInput.start();
+      return;
+    }
+
     // Handle open model selector
     if (matchesKeybind(e, KEYBINDS.OPEN_MODEL_SELECTOR)) {
       e.preventDefault();
@@ -985,6 +998,9 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                   if (e.key === " " && voiceInput.state === "recording") {
                     e.preventDefault();
                     voiceInput.stop({ send: true });
+                  } else if (e.key === "Escape" && voiceInput.state === "recording") {
+                    e.preventDefault();
+                    voiceInput.cancel();
                   }
                 }}
                 disabled={voiceInput.state === "transcribing"}
@@ -1006,7 +1022,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                   )}
                 >
                   {voiceInput.state === "recording"
-                    ? `Recording... space to send, ${formatKeybind(KEYBINDS.TOGGLE_VOICE_INPUT)} to stop`
+                    ? `Recording... space to send, ${formatKeybind(KEYBINDS.TOGGLE_VOICE_INPUT)} to stop, esc to cancel`
                     : "Transcribing..."}
                 </span>
                 <WaveformBars

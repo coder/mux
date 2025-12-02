@@ -24,6 +24,8 @@ export interface UseVoiceInputResult {
   shouldShowUI: boolean;
   start: () => void;
   stop: (options?: { send?: boolean }) => void;
+  /** Cancel recording without transcribing (discard audio) */
+  cancel: () => void;
   toggle: () => void;
 }
 
@@ -42,6 +44,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const sendAfterTranscribeRef = useRef(false);
+  const cancelledRef = useRef(false);
 
   // Store callbacks in refs to avoid stale closures
   const callbacksRef = useRef(options);
@@ -97,11 +100,17 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
       };
 
       recorder.onstop = () => {
+        const wasCancelled = cancelledRef.current;
+        cancelledRef.current = false;
         const blob = new Blob(audioChunksRef.current, { type: mimeType });
         audioChunksRef.current = [];
         stream.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
-        void transcribe(blob);
+        if (wasCancelled) {
+          setState("idle");
+        } else {
+          void transcribe(blob);
+        }
       };
 
       recorder.onerror = () => {
@@ -132,7 +141,14 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
       mediaRecorderRef.current?.stop();
       mediaRecorderRef.current = null;
     }
-    // Note: setState("idle") not called here - transcribe() handles transition
+  }, []);
+
+  const cancel = useCallback(() => {
+    cancelledRef.current = true;
+    if (mediaRecorderRef.current?.state !== "inactive") {
+      mediaRecorderRef.current?.stop();
+      mediaRecorderRef.current = null;
+    }
   }, []);
 
   const toggle = useCallback(() => {
@@ -158,6 +174,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
     shouldShowUI: isSupported && !isMobile,
     start: () => void start(),
     stop,
+    cancel,
     toggle,
   };
 }
