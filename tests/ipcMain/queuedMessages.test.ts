@@ -183,6 +183,74 @@ describeIntegration("IpcMain queuedMessages integration tests", () => {
   );
 
   test.concurrent(
+    "should send queued message immediately when sendQueuedImmediately is true",
+    async () => {
+      const { env, workspaceId, cleanup } = await setupWorkspace("anthropic");
+      try {
+        // Start a stream
+        void sendMessageWithModel(
+          env.mockIpcRenderer,
+          workspaceId,
+          "Count to 10 slowly",
+          modelString("anthropic", "claude-haiku-4-5")
+        );
+
+        const collector = createEventCollector(env.sentEvents, workspaceId);
+        await collector.waitForEvent("stream-start", 5000);
+
+        // Queue a message
+        await sendMessageWithModel(
+          env.mockIpcRenderer,
+          workspaceId,
+          "This message should be sent immediately",
+          modelString("anthropic", "claude-haiku-4-5")
+        );
+
+        // Verify message was queued
+        const queued = await getQueuedMessages(collector);
+        expect(queued).toEqual(["This message should be sent immediately"]);
+
+        // Interrupt the stream with sendQueuedImmediately flag
+        const interruptResult = await env.mockIpcRenderer.invoke(
+          IPC_CHANNELS.WORKSPACE_INTERRUPT_STREAM,
+          workspaceId,
+          { sendQueuedImmediately: true }
+        );
+        expect(interruptResult.success).toBe(true);
+
+        // Wait for stream abort
+        await collector.waitForEvent("stream-abort", 5000);
+
+        // Should NOT get restore-to-input event (message is sent, not restored)
+        // Instead, we should see the queued message being sent as a new user message
+        const autoSendHappened = await waitFor(() => {
+          collector.collect();
+          const userMessages = collector
+            .getEvents()
+            .filter((e) => "role" in e && e.role === "user");
+          return userMessages.length === 2; // First + immediately sent
+        }, 5000);
+        expect(autoSendHappened).toBe(true);
+
+        // Verify queue was cleared
+        const queuedAfter = await getQueuedMessages(collector);
+        expect(queuedAfter).toEqual([]);
+
+        // Clear events to track second stream separately
+        env.sentEvents.length = 0;
+
+        // Wait for the immediately-sent message's stream
+        const collector2 = createEventCollector(env.sentEvents, workspaceId);
+        await collector2.waitForEvent("stream-start", 5000);
+        await collector2.waitForEvent("stream-end", 15000);
+      } finally {
+        await cleanup();
+      }
+    },
+    30000
+  );
+
+  test.concurrent(
     "should combine multiple queued messages with newline separator",
     async () => {
       const { env, workspaceId, cleanup } = await setupWorkspace("anthropic");
