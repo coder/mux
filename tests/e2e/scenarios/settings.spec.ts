@@ -97,7 +97,9 @@ test.describe("Settings Modal", () => {
 
     // Verify all providers are listed with correct display names
     await expect(page.getByRole("button", { name: /Anthropic/i })).toBeVisible();
-    await expect(page.getByRole("button", { name: /OpenAI/i })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /OpenAI/i }).filter({ has: page.getByText("OpenAI icon") })
+    ).toBeVisible();
     await expect(page.getByRole("button", { name: /Google/i })).toBeVisible();
     await expect(page.getByRole("button", { name: /xAI/i })).toBeVisible();
     await expect(page.getByRole("button", { name: /Ollama/i })).toBeVisible();
