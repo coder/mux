@@ -49,6 +49,7 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 - Package manager: bun only. Use `bun install`, `bun add`, `bun run` (which proxies to Make when relevant). Run `bun install` if modules/types go missing.
 - Makefile is source of truth (new commands land there, not `package.json`).
 - Primary targets: `make dev|start|build|lint|lint-fix|fmt|fmt-check|typecheck|test|test-integration|clean|help`.
+- Full `static-check` includes docs link checking which requires mdbook tools. Use `nix develop` to get them, or the check gracefully skips if unavailable.
 
 ## Refactoring & Runtime Etiquette
 

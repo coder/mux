@@ -346,9 +346,14 @@ docs-server: ## Serve documentation locally (opens browser)
 docs-watch: ## Watch and rebuild documentation
 	@cd docs && mdbook watch
 
-check-docs-links: docs ## Check documentation for broken links
-	@echo "🔗 Checking documentation links..."
-	@cd docs && mdbook-linkcheck --standalone .
+check-docs-links: ## Check documentation for broken links (requires mdbook tools via nix)
+	@if command -v mdbook >/dev/null 2>&1 && command -v mdbook-linkcheck >/dev/null 2>&1; then \
+		$(MAKE) docs && \
+		echo "🔗 Checking documentation links..." && \
+		cd docs && mdbook-linkcheck --standalone .; \
+	else \
+		echo "⏭️  Skipping docs link check (mdbook tools not installed - use 'nix develop' for full checks)"; \
+	fi
 
 ## Storybook
 storybook: node_modules/.installed ## Start Storybook development server
