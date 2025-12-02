@@ -3,11 +3,10 @@ import { cn } from "@/common/lib/utils";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import React, { useCallback, useState } from "react";
+import React, { useState } from "react";
 import { GitStatusIndicator } from "./GitStatusIndicator";
 import { RuntimeBadge } from "./RuntimeBadge";
 import { Tooltip, TooltipWrapper } from "./Tooltip";
-import { WorkspaceStatusDot } from "./WorkspaceStatusDot";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
 
@@ -24,11 +23,13 @@ export interface WorkspaceListItemProps {
   projectName: string;
   isSelected: boolean;
   isDeleting?: boolean;
-  lastReadTimestamp: number;
+  /** @deprecated No longer used since status dot was removed, kept for API compatibility */
+  lastReadTimestamp?: number;
   // Event handlers
   onSelectWorkspace: (selection: WorkspaceSelection) => void;
   onRemoveWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
-  onToggleUnread: (workspaceId: string) => void;
+  /** @deprecated No longer used since status dot was removed, kept for API compatibility */
+  onToggleUnread?: (workspaceId: string) => void;
 }
 
 const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
@@ -37,10 +38,10 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   projectName,
   isSelected,
   isDeleting,
-  lastReadTimestamp,
+  lastReadTimestamp: _lastReadTimestamp,
   onSelectWorkspace,
   onRemoveWorkspace,
-  onToggleUnread,
+  onToggleUnread: _onToggleUnread,
 }) => {
   // Destructure metadata for convenience
   const { id: workspaceId, name: workspaceName, namedWorkspacePath } = metadata;
@@ -93,12 +94,6 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
     }
   };
 
-  // Memoize toggle unread handler to prevent AgentStatusIndicator re-renders
-  const handleToggleUnread = useCallback(
-    () => onToggleUnread(workspaceId),
-    [onToggleUnread, workspaceId]
-  );
-
   const { canInterrupt } = useWorkspaceSidebarState(workspaceId);
 
   return (
@@ -135,16 +130,9 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
         data-workspace-path={namedWorkspacePath}
         data-workspace-id={workspaceId}
       >
-        <div>
-          <WorkspaceStatusDot
-            workspaceId={workspaceId}
-            lastReadTimestamp={lastReadTimestamp}
-            onClick={handleToggleUnread}
-          />
-        </div>
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="flex min-w-0 items-center gap-1.5">
-            <RuntimeBadge runtimeConfig={metadata.runtimeConfig} />
+            <RuntimeBadge runtimeConfig={metadata.runtimeConfig} isWorking={canInterrupt} />
             {isEditing ? (
               <input
                 className="bg-input-bg text-input-text border-input-border font-inherit focus:border-input-border-focus -mx-1 min-w-0 flex-1 rounded-sm border px-1 text-left text-[13px] outline-none"
@@ -181,6 +169,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                 gitStatus={gitStatus}
                 workspaceId={workspaceId}
                 tooltipPosition="right"
+                isWorking={canInterrupt}
               />
 
               <TooltipWrapper inline>

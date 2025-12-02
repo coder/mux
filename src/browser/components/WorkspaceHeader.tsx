@@ -4,8 +4,8 @@ import { RuntimeBadge } from "./RuntimeBadge";
 import { TooltipWrapper, Tooltip } from "./Tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
+import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import type { RuntimeConfig } from "@/common/types/runtime";
-import { WorkspaceStatusDot } from "./WorkspaceStatusDot";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
 
 interface WorkspaceHeaderProps {
@@ -24,6 +24,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   runtimeConfig,
 }) => {
   const gitStatus = useGitStatus(workspaceId);
+  const { canInterrupt } = useWorkspaceSidebarState(workspaceId);
   const handleOpenTerminal = useCallback(() => {
     void window.api.terminal.openWindow(workspaceId);
   }, [workspaceId]);
@@ -46,13 +47,13 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   return (
     <div className="bg-separator border-border-light flex h-8 items-center justify-between border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:flex-wrap [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:py-2 [@media(max-width:768px)]:pl-[60px]">
       <div className="text-foreground flex min-w-0 items-center gap-2 overflow-hidden font-semibold">
-        <WorkspaceStatusDot workspaceId={workspaceId} />
+        <RuntimeBadge runtimeConfig={runtimeConfig} isWorking={canInterrupt} />
         <GitStatusIndicator
           gitStatus={gitStatus}
           workspaceId={workspaceId}
           tooltipPosition="bottom"
+          isWorking={canInterrupt}
         />
-        <RuntimeBadge runtimeConfig={runtimeConfig} />
         <span className="min-w-0 truncate font-mono text-xs">
           {projectName} / {branch}
         </span>

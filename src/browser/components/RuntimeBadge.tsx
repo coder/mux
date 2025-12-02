@@ -8,6 +8,8 @@ import { TooltipWrapper, Tooltip } from "./Tooltip";
 interface RuntimeBadgeProps {
   runtimeConfig?: RuntimeConfig;
   className?: string;
+  /** When true, shows blue pulsing styling to indicate agent is working */
+  isWorking?: boolean;
 }
 
 /** Server rack icon for SSH runtime */
@@ -56,8 +58,8 @@ function WorktreeIcon() {
   );
 }
 
-/** Folder icon for local project-dir runtime (reserved for future use) */
-function _LocalIcon() {
+/** Folder icon for local project-dir runtime */
+function LocalIcon() {
   return (
     <svg
       width="10"
@@ -81,9 +83,17 @@ function _LocalIcon() {
  * Shows icon-only badge with tooltip describing the runtime type.
  * - SSH: server icon with hostname
  * - Worktree: git branch icon (isolated worktree)
- * - Local: folder icon (project directory, no badge shown by default)
+ * - Local: folder icon (project directory)
+ *
+ * When isWorking=true, badges show blue color with pulse animation.
+ * When idle, badges show gray styling.
  */
-export function RuntimeBadge({ runtimeConfig, className }: RuntimeBadgeProps) {
+export function RuntimeBadge({ runtimeConfig, className, isWorking = false }: RuntimeBadgeProps) {
+  // Dynamic styling based on working state
+  const workingStyles = isWorking
+    ? "bg-blue-500/20 text-blue-400 border-blue-500/40 animate-pulse"
+    : "bg-muted/30 text-muted border-muted/50";
+
   // SSH runtime: show server icon with hostname
   if (isSSHRuntime(runtimeConfig)) {
     const hostname = extractSshHostname(runtimeConfig);
@@ -91,8 +101,8 @@ export function RuntimeBadge({ runtimeConfig, className }: RuntimeBadgeProps) {
       <TooltipWrapper inline>
         <span
           className={cn(
-            "inline-flex items-center rounded px-1 py-0.5",
-            "bg-accent/10 text-accent border border-accent/30",
+            "inline-flex items-center rounded px-1 py-0.5 border transition-colors",
+            workingStyles,
             className
           )}
         >
@@ -109,8 +119,8 @@ export function RuntimeBadge({ runtimeConfig, className }: RuntimeBadgeProps) {
       <TooltipWrapper inline>
         <span
           className={cn(
-            "inline-flex items-center rounded px-1 py-0.5",
-            "bg-muted/50 text-muted-foreground border border-muted",
+            "inline-flex items-center rounded px-1 py-0.5 border transition-colors",
+            workingStyles,
             className
           )}
         >
@@ -121,10 +131,22 @@ export function RuntimeBadge({ runtimeConfig, className }: RuntimeBadgeProps) {
     );
   }
 
-  // Local project-dir runtime: don't show badge (it's the simplest/default)
-  // Could optionally show LocalIcon if we want visibility
+  // Local project-dir runtime: show folder icon
   if (isLocalProjectRuntime(runtimeConfig)) {
-    return null; // No badge for simple local runtimes
+    return (
+      <TooltipWrapper inline>
+        <span
+          className={cn(
+            "inline-flex items-center rounded px-1 py-0.5 border transition-colors",
+            workingStyles,
+            className
+          )}
+        >
+          <LocalIcon />
+        </span>
+        <Tooltip align="right">Local: project directory</Tooltip>
+      </TooltipWrapper>
+    );
   }
 
   return null;

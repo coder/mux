@@ -35,6 +35,8 @@ export interface GitStatusIndicatorViewProps {
   onTooltipMouseEnter: () => void;
   onTooltipMouseLeave: () => void;
   onContainerRef: (el: HTMLSpanElement | null) => void;
+  /** When true, shows blue pulsing styling to indicate agent is working */
+  isWorking?: boolean;
 }
 
 /**
@@ -57,6 +59,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   onTooltipMouseEnter,
   onTooltipMouseLeave,
   onContainerRef,
+  isWorking = false,
 }) => {
   // Handle null gitStatus (loading state)
   if (!gitStatus) {
@@ -202,13 +205,20 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
     </div>
   );
 
+  // Dynamic color based on working state
+  const statusColor = isWorking ? "text-blue-400 animate-pulse" : "text-muted";
+  const dirtyColor = isWorking ? "text-blue-400" : "text-git-dirty";
+
   return (
     <>
       <span
         ref={onContainerRef}
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
-        className="text-accent relative mr-1.5 flex items-center gap-1 font-mono text-[11px]"
+        className={cn(
+          "relative mr-1.5 flex items-center gap-1 font-mono text-[11px] transition-colors",
+          statusColor
+        )}
       >
         {gitStatus.ahead > 0 && (
           <span className="flex items-center font-normal">↑{gitStatus.ahead}</span>
@@ -217,7 +227,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
           <span className="flex items-center font-normal">↓{gitStatus.behind}</span>
         )}
         {gitStatus.dirty && (
-          <span className="text-git-dirty flex items-center leading-none font-normal">*</span>
+          <span className={cn("flex items-center leading-none font-normal", dirtyColor)}>*</span>
         )}
       </span>
 
