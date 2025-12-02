@@ -77,6 +77,16 @@ export function createSSHWorkspace(
   });
 }
 
+/** Create local project-dir workspace (no isolation, uses project path directly) */
+export function createLocalWorkspace(
+  opts: Partial<WorkspaceFixture> & { id: string; name: string; projectName: string }
+): FrontendWorkspaceMetadata {
+  return createWorkspace({
+    ...opts,
+    runtimeConfig: { type: "local" },
+  });
+}
+
 /** Create workspace with incompatible runtime (for downgrade testing) */
 export function createIncompatibleWorkspace(
   opts: Partial<WorkspaceFixture> & {

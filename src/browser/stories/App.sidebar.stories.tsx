@@ -5,8 +5,12 @@
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import {
   NOW,
+  STABLE_TIMESTAMP,
   createWorkspace,
   createSSHWorkspace,
+  createLocalWorkspace,
+  createUserMessage,
+  createStreamingChatHandler,
   groupWorkspacesByProject,
   createMockAPI,
   installMockAPI,
@@ -169,6 +173,121 @@ export const GitStatusVariations: AppStory = {
             projects: groupWorkspacesByProject(workspaces),
             workspaces,
             gitStatus,
+          })
+        );
+      }}
+    />
+  ),
+};
+
+/**
+ * All runtime badge variations showing different runtime types.
+ * Each type has distinct colors:
+ * - SSH: blue theme
+ * - Worktree: purple theme
+ * - Local: gray theme
+ *
+ * The streaming workspaces show the "working" state with pulse animation.
+ */
+export const RuntimeBadgeVariations: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        // Idle workspaces (one of each type)
+        const sshIdle = createSSHWorkspace({
+          id: "ws-ssh-idle",
+          name: "ssh-idle",
+          projectName: "runtime-demo",
+          host: "dev.example.com",
+          createdAt: new Date(NOW - 3600000).toISOString(),
+        });
+        const worktreeIdle = createWorkspace({
+          id: "ws-worktree-idle",
+          name: "worktree-idle",
+          projectName: "runtime-demo",
+          createdAt: new Date(NOW - 7200000).toISOString(),
+        });
+        const localIdle = createLocalWorkspace({
+          id: "ws-local-idle",
+          name: "local-idle",
+          projectName: "runtime-demo",
+          createdAt: new Date(NOW - 10800000).toISOString(),
+        });
+
+        // Working workspaces (streaming - shows pulse animation)
+        const sshWorking = createSSHWorkspace({
+          id: "ws-ssh-working",
+          name: "ssh-working",
+          projectName: "runtime-demo",
+          host: "prod.example.com",
+          createdAt: new Date(NOW - 1800000).toISOString(),
+        });
+        const worktreeWorking = createWorkspace({
+          id: "ws-worktree-working",
+          name: "worktree-working",
+          projectName: "runtime-demo",
+          createdAt: new Date(NOW - 900000).toISOString(),
+        });
+        const localWorking = createLocalWorkspace({
+          id: "ws-local-working",
+          name: "local-working",
+          projectName: "runtime-demo",
+          createdAt: new Date(NOW - 300000).toISOString(),
+        });
+
+        const workspaces = [
+          sshIdle,
+          worktreeIdle,
+          localIdle,
+          sshWorking,
+          worktreeWorking,
+          localWorking,
+        ];
+
+        // Create streaming handlers for working workspaces
+        const workingMessage = createUserMessage("msg-1", "Working on task...", {
+          historySequence: 1,
+          timestamp: STABLE_TIMESTAMP,
+        });
+
+        const chatHandlers = new Map([
+          [
+            "ws-ssh-working",
+            createStreamingChatHandler({
+              messages: [workingMessage],
+              streamingMessageId: "stream-ssh",
+              model: "claude-sonnet-4-20250514",
+              historySequence: 2,
+              streamText: "Processing SSH task...",
+            }),
+          ],
+          [
+            "ws-worktree-working",
+            createStreamingChatHandler({
+              messages: [workingMessage],
+              streamingMessageId: "stream-worktree",
+              model: "claude-sonnet-4-20250514",
+              historySequence: 2,
+              streamText: "Processing worktree task...",
+            }),
+          ],
+          [
+            "ws-local-working",
+            createStreamingChatHandler({
+              messages: [workingMessage],
+              streamingMessageId: "stream-local",
+              model: "claude-sonnet-4-20250514",
+              historySequence: 2,
+              streamText: "Processing local task...",
+            }),
+          ],
+        ]);
+
+        installMockAPI(
+          createMockAPI({
+            projects: groupWorkspacesByProject(workspaces),
+            workspaces,
+            chatHandlers,
           })
         );
       }}
