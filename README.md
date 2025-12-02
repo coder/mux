@@ -33,21 +33,21 @@ Here are some specific use cases we enable:
 
 ## Features
 
-- **Isolated workspaces** with central view on git divergence ([docs](https://cmux.io/runtime.html))
-  - **[Local](https://cmux.io/runtime/local.html)**: run directly in your project directory
-  - **[Worktree](https://cmux.io/runtime/worktree.html)**: git worktrees on your local machine
-  - **[SSH](https://cmux.io/runtime/ssh.html)**: remote execution on a server over SSH
+- **Isolated workspaces** with central view on git divergence ([docs](https://mux.coder.com/runtime.html))
+  - **[Local](https://mux.coder.com/runtime/local.html)**: run directly in your project directory
+  - **[Worktree](https://mux.coder.com/runtime/worktree.html)**: git worktrees on your local machine
+  - **[SSH](https://mux.coder.com/runtime/ssh.html)**: remote execution on a server over SSH
 - **Multi-model** (`sonnet-4-*`, `grok-*`, `gpt-5-*`, `opus-4-*`)
-  - Ollama supported for local LLMs ([docs](https://cmux.io/models.html#ollama-local))
-  - OpenRouter supported for long-tail of LLMs ([docs](https://cmux.io/models.html#openrouter-cloud))
-- **VS Code Extension**: Jump into mux workspaces directly from VS Code ([docs](https://cmux.io/vscode-extension.html))
+  - Ollama supported for local LLMs ([docs](https://mux.coder.com/models.html#ollama-local))
+  - OpenRouter supported for long-tail of LLMs ([docs](https://mux.coder.com/models.html#openrouter-cloud))
+- **VS Code Extension**: Jump into mux workspaces directly from VS Code ([docs](https://mux.coder.com/vscode-extension.html))
 - Supporting UI and keybinds for efficiently managing a suite of agents
 - Rich markdown outputs (mermaid diagrams, LaTeX, etc.)
 
 mux has a custom agent loop but much of the core UX is inspired by Claude Code. You'll find familiar features like Plan/Exec mode, vim inputs, `/compact` and new ones
-like [opportunistic compaction](https://cmux.io/context-management.html) and [mode prompts](https://cmux.io/instruction-files.html#mode-prompts).
+like [opportunistic compaction](https://mux.coder.com/context-management.html) and [mode prompts](https://mux.coder.com/instruction-files.html#mode-prompts).
 
-**[Read the full documentation →](https://cmux.io)**
+**[Read the full documentation →](https://mux.coder.com)**
 
 ## Install
 
@@ -58,7 +58,7 @@ like [opportunistic compaction](https://cmux.io/context-management.html) and [mo
 Download pre-built binaries from [the releases page](https://github.com/coder/mux/releases) for
 macOS and Linux.
 
-[More on installation →](https://cmux.io/install.html)
+[More on installation →](https://mux.coder.com/install.html)
 
 ## Screenshots
 
@@ -99,7 +99,7 @@ macOS and Linux.
 
 ## More reading
 
-See [the documentation](https://cmux.io) for more details.
+See [the documentation](https://mux.coder.com) for more details.
 
 ## Development
 
