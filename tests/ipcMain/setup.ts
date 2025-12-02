@@ -37,6 +37,7 @@ function createMockBrowserWindow(): {
       openDevTools: jest.fn(),
     } as unknown as WebContents,
     isMinimized: jest.fn(() => false),
+    isDestroyed: jest.fn(() => false),
     restore: jest.fn(),
     focus: jest.fn(),
     loadURL: jest.fn(),
