@@ -148,7 +148,7 @@ describe("collectUsageHistory", () => {
 });
 
 describe("createDisplayUsage", () => {
-  describe("OpenAI cached token handling", () => {
+  describe("Provider-specific cached token handling", () => {
     // OpenAI reports inputTokens INCLUSIVE of cachedInputTokens
     // We must subtract cached from input to avoid double-counting
     const openAIUsage: LanguageModelV2Usage = {
