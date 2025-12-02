@@ -971,12 +971,16 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         <CreationCenterContent
           projectName={props.projectName}
           isSending={creationState.isSending || isSending}
+          inputPreview={creationState.isSending || isSending ? input : undefined}
         />
       )}
 
-      {/* Input section */}
+      {/* Input section - dim when creating workspace */}
       <div
-        className="bg-separator border-border-light relative flex flex-col gap-1 border-t px-[15px] pt-[5px] pb-[15px]"
+        className={cn(
+          "bg-separator border-border-light relative flex flex-col gap-1 border-t px-[15px] pt-[5px] pb-[15px]",
+          variant === "creation" && (creationState.isSending || isSending) && "opacity-50"
+        )}
         data-component="ChatInputSection"
       >
         <div className="mx-auto w-full max-w-4xl">
