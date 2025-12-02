@@ -127,6 +127,16 @@ export function getTrunkBranchKey(projectPath: string): string {
 }
 
 /**
+ * Get the localStorage key for last SSH host preference for a project
+ * Stores the last entered SSH host separately from runtime mode
+ * so it persists when switching between runtime modes
+ * Format: "lastSshHost:{projectPath}"
+ */
+export function getLastSshHostKey(projectPath: string): string {
+  return `lastSshHost:${projectPath}`;
+}
+
+/**
  * Get the localStorage key for the preferred compaction model (global)
  * Format: "preferredCompactionModel"
  */

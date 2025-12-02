@@ -12,6 +12,7 @@ import {
   getModelKey,
   getRuntimeKey,
   getTrunkBranchKey,
+  getLastSshHostKey,
   getProjectScopeId,
 } from "@/common/constants/storage";
 import type { UIMode } from "@/common/types/mode";
@@ -78,8 +79,16 @@ export function useDraftWorkspaceSettings(
     { listener: true }
   );
 
-  // Parse runtime string into mode and host
-  const { mode: runtimeMode, host: sshHost } = parseRuntimeModeAndHost(runtimeString);
+  // Project-scoped SSH host preference (persisted separately from runtime mode)
+  // This allows the SSH host to be remembered when switching between runtime modes
+  const [lastSshHost, setLastSshHost] = usePersistedState<string>(
+    getLastSshHostKey(projectPath),
+    "",
+    { listener: true }
+  );
+
+  // Parse runtime string into mode (host from runtime string is ignored in favor of lastSshHost)
+  const { mode: runtimeMode } = parseRuntimeModeAndHost(runtimeString);
 
   // Initialize trunk branch from backend recommendation or first branch
   useEffect(() => {
@@ -89,15 +98,19 @@ export function useDraftWorkspaceSettings(
     }
   }, [branches, recommendedTrunk, trunkBranch, setTrunkBranch]);
 
-  // Setter for runtime options (updates persisted runtime string)
+  // Setter for runtime options (updates persisted runtime mode and SSH host separately)
   const setRuntimeOptions = (newMode: RuntimeMode, newHost: string) => {
     const newRuntimeString = buildRuntimeString(newMode, newHost);
     setRuntimeString(newRuntimeString);
+    // Always persist the SSH host separately so it's remembered across mode switches
+    if (newHost) {
+      setLastSshHost(newHost);
+    }
   };
 
   // Helper to get runtime string for IPC calls
   const getRuntimeString = (): string | undefined => {
-    return buildRuntimeString(runtimeMode, sshHost);
+    return buildRuntimeString(runtimeMode, lastSshHost);
   };
 
   return {
@@ -106,7 +119,7 @@ export function useDraftWorkspaceSettings(
       thinkingLevel,
       mode,
       runtimeMode,
-      sshHost,
+      sshHost: lastSshHost,
       trunkBranch,
     },
     setRuntimeOptions,

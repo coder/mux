@@ -41,8 +41,8 @@ export function CreationControls(props: CreationControlsProps) {
           ]}
           onChange={(newMode) => {
             const mode = newMode as RuntimeMode;
-            // Clear SSH host when switching away from SSH
-            props.onRuntimeChange(mode, mode === RUNTIME_MODE.SSH ? props.sshHost : "");
+            // Preserve SSH host across mode switches so it's remembered when returning to SSH
+            props.onRuntimeChange(mode, props.sshHost);
           }}
           disabled={props.disabled}
           aria-label="Runtime mode"
