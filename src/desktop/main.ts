@@ -44,6 +44,7 @@ let config: Config | null = null;
 let ipcMain: IpcMain | null = null;
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 let updaterService: typeof import("@/desktop/updater").UpdaterService.prototype | null = null;
+let updaterHandlersRegistered = false;
 const isE2ETest = process.env.MUX_E2E === "1";
 const forceDistLoad = process.env.MUX_E2E_LOAD_DIST === "1";
 
@@ -377,42 +378,47 @@ function createWindow() {
   console.log(`[${timestamp()}] [window] Registering IPC handlers...`);
   ipcMain.register(electronIpcMain, mainWindow);
 
-  // Register updater IPC handlers (available in both dev and prod)
-  electronIpcMain.handle(IPC_CHANNELS.UPDATE_CHECK, () => {
-    // Note: log interface already includes timestamp and file location
-    log.debug(`UPDATE_CHECK called (updaterService: ${updaterService ? "available" : "null"})`);
-    if (!updaterService) {
-      // Send "idle" status if updater not initialized (dev mode without DEBUG_UPDATER)
-      if (mainWindow) {
-        mainWindow.webContents.send(IPC_CHANNELS.UPDATE_STATUS, {
-          type: "idle" as const,
-        });
+  // Register updater IPC handlers once (available in both dev and prod)
+  // Guard prevents "Attempted to register a second handler" error when window is recreated
+  if (!updaterHandlersRegistered) {
+    updaterHandlersRegistered = true;
+
+    electronIpcMain.handle(IPC_CHANNELS.UPDATE_CHECK, () => {
+      // Note: log interface already includes timestamp and file location
+      log.debug(`UPDATE_CHECK called (updaterService: ${updaterService ? "available" : "null"})`);
+      if (!updaterService) {
+        // Send "idle" status if updater not initialized (dev mode without DEBUG_UPDATER)
+        if (mainWindow) {
+          mainWindow.webContents.send(IPC_CHANNELS.UPDATE_STATUS, {
+            type: "idle" as const,
+          });
+        }
+        return;
       }
-      return;
-    }
-    log.debug("Calling updaterService.checkForUpdates()");
-    updaterService.checkForUpdates();
-  });
+      log.debug("Calling updaterService.checkForUpdates()");
+      updaterService.checkForUpdates();
+    });
 
-  electronIpcMain.handle(IPC_CHANNELS.UPDATE_DOWNLOAD, async () => {
-    if (!updaterService) throw new Error("Updater not available in development");
-    await updaterService.downloadUpdate();
-  });
+    electronIpcMain.handle(IPC_CHANNELS.UPDATE_DOWNLOAD, async () => {
+      if (!updaterService) throw new Error("Updater not available in development");
+      await updaterService.downloadUpdate();
+    });
 
-  electronIpcMain.handle(IPC_CHANNELS.UPDATE_INSTALL, () => {
-    if (!updaterService) throw new Error("Updater not available in development");
-    updaterService.installUpdate();
-  });
+    electronIpcMain.handle(IPC_CHANNELS.UPDATE_INSTALL, () => {
+      if (!updaterService) throw new Error("Updater not available in development");
+      updaterService.installUpdate();
+    });
 
-  // Handle status subscription requests
-  // Note: React StrictMode in dev causes components to mount twice, resulting in duplicate calls
-  electronIpcMain.on(IPC_CHANNELS.UPDATE_STATUS_SUBSCRIBE, () => {
-    log.debug("UPDATE_STATUS_SUBSCRIBE called");
-    if (!mainWindow) return;
-    const status = updaterService ? updaterService.getStatus() : { type: "idle" };
-    log.debug("Sending current status to renderer:", status);
-    mainWindow.webContents.send(IPC_CHANNELS.UPDATE_STATUS, status);
-  });
+    // Handle status subscription requests
+    // Note: React StrictMode in dev causes components to mount twice, resulting in duplicate calls
+    electronIpcMain.on(IPC_CHANNELS.UPDATE_STATUS_SUBSCRIBE, () => {
+      log.debug("UPDATE_STATUS_SUBSCRIBE called");
+      if (!mainWindow) return;
+      const status = updaterService ? updaterService.getStatus() : { type: "idle" };
+      log.debug("Sending current status to renderer:", status);
+      mainWindow.webContents.send(IPC_CHANNELS.UPDATE_STATUS, status);
+    });
+  }
 
   // Set up updater service with the main window (only in production)
   if (updaterService) {
@@ -555,9 +561,22 @@ if (gotTheLock) {
     // This prevents "Cannot create BrowserWindow before app is ready" error
     if (app.isReady() && mainWindow === null) {
       void (async () => {
-        await showSplashScreen();
-        await loadServices();
-        createWindow();
+        try {
+          await showSplashScreen();
+          await loadServices();
+          createWindow();
+        } catch (error) {
+          console.error(`[${timestamp()}] Failed to recreate window:`, error);
+          closeSplashScreen();
+
+          const errorMessage =
+            error instanceof Error ? `${error.message}\n\n${error.stack ?? ""}` : String(error);
+
+          dialog.showErrorBox(
+            "Window Creation Failed",
+            `Failed to recreate the application window:\n\n${errorMessage}`
+          );
+        }
       })();
     }
   });
