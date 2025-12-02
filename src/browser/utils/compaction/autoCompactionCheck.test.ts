@@ -3,7 +3,6 @@ import { checkAutoCompaction } from "./autoCompactionCheck";
 import type { WorkspaceUsageState } from "@/browser/stores/WorkspaceStore";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import { FORCE_COMPACTION_TOKEN_BUFFER } from "@/common/constants/ui";
 
 // Helper to create a mock usage entry
 const createUsageEntry = (
@@ -302,63 +301,72 @@ describe("checkAutoCompaction", () => {
     });
   });
 
-  describe("Force Compaction (Live Usage)", () => {
+  describe("Force Compaction (threshold + 5% buffer)", () => {
+    // Force-compact triggers at threshold + 5%
+    // With default 70% threshold, force-compact at 75%
     const SONNET_MAX_TOKENS = 200_000;
-    const BUFFER = FORCE_COMPACTION_TOKEN_BUFFER;
 
-    test("shouldForceCompact is false when no liveUsage (falls back to lastUsage with room)", () => {
-      const usage = createMockUsage(100_000); // 100k remaining - plenty of room
+    test("shouldForceCompact is false when usage below threshold + 5%", () => {
+      // 70% usage, threshold 70%, force at 75% - should NOT trigger
+      const usage = createMockUsage(140_000); // 70%
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
 
       expect(result.shouldForceCompact).toBe(false);
     });
 
-    test("shouldForceCompact is false when currentUsage has plenty of room", () => {
-      const liveUsage = createUsageEntry(100_000); // 100k remaining
-      const usage = createMockUsage(50_000, undefined, KNOWN_MODELS.SONNET.id, liveUsage);
+    test("shouldForceCompact is false when usage just below force threshold", () => {
+      // 74% usage, threshold 70%, force at 75% - should NOT trigger
+      const usage = createMockUsage(148_000); // 74%
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
 
       expect(result.shouldForceCompact).toBe(false);
     });
 
-    test("shouldForceCompact is true when remaining <= buffer", () => {
-      // Exactly at buffer threshold
-      const liveUsage = createUsageEntry(SONNET_MAX_TOKENS - BUFFER);
-      const usage = createMockUsage(50_000, undefined, KNOWN_MODELS.SONNET.id, liveUsage);
+    test("shouldForceCompact is true when usage at force threshold", () => {
+      // 75% usage, threshold 70%, force at 75% - should trigger
+      const usage = createMockUsage(150_000); // 75%
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
 
       expect(result.shouldForceCompact).toBe(true);
     });
 
-    test("shouldForceCompact is true when over context limit", () => {
-      const liveUsage = createUsageEntry(SONNET_MAX_TOKENS + 5000);
-      const usage = createMockUsage(50_000, undefined, KNOWN_MODELS.SONNET.id, liveUsage);
+    test("shouldForceCompact is true when usage above force threshold", () => {
+      // 80% usage, threshold 70%, force at 75% - should trigger
+      const usage = createMockUsage(160_000); // 80%
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
 
       expect(result.shouldForceCompact).toBe(true);
     });
 
-    test("shouldForceCompact is false when just above buffer", () => {
-      // 1 token above buffer threshold
-      const liveUsage = createUsageEntry(SONNET_MAX_TOKENS - BUFFER - 1);
-      const usage = createMockUsage(50_000, undefined, KNOWN_MODELS.SONNET.id, liveUsage);
+    test("shouldForceCompact uses liveUsage when available", () => {
+      // lastUsage at 50%, liveUsage at 75% - should trigger based on live
+      const liveUsage = createUsageEntry(150_000); // 75%
+      const usage = createMockUsage(100_000, undefined, KNOWN_MODELS.SONNET.id, liveUsage);
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
 
-      expect(result.shouldForceCompact).toBe(false);
+      expect(result.shouldForceCompact).toBe(true);
+      expect(result.usagePercentage).toBe(75); // usagePercentage reflects live when streaming
+    });
+
+    test("shouldForceCompact respects custom threshold", () => {
+      // 55% usage with 50% threshold - force at 55%, should trigger
+      const usage = createMockUsage(110_000); // 55%
+      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false, 0.5);
+
+      expect(result.shouldForceCompact).toBe(true);
     });
 
     test("shouldForceCompact respects 1M context mode", () => {
-      // With 1M context, exactly at buffer threshold
-      const liveUsage = createUsageEntry(1_000_000 - BUFFER);
+      // 75% of 1M = 750k tokens
+      const liveUsage = createUsageEntry(750_000);
       const usage = createMockUsage(50_000, undefined, KNOWN_MODELS.SONNET.id, liveUsage);
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, true);
 
       expect(result.shouldForceCompact).toBe(true);
     });
 
-    test("shouldForceCompact triggers with empty history but liveUsage near limit", () => {
-      // Bug fix: empty history but liveUsage should still trigger
-      const liveUsage = createUsageEntry(SONNET_MAX_TOKENS - BUFFER);
+    test("shouldForceCompact triggers with empty history but liveUsage at force threshold", () => {
+      const liveUsage = createUsageEntry(150_000); // 75%
       const usage: WorkspaceUsageState = {
         usageHistory: [],
         totalTokens: 0,
@@ -367,12 +375,11 @@ describe("checkAutoCompaction", () => {
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
 
       expect(result.shouldForceCompact).toBe(true);
-      expect(result.usagePercentage).toBe(0); // No lastUsage for percentage
+      expect(result.usagePercentage).toBe(75); // usagePercentage reflects live even with empty history
     });
 
     test("shouldForceCompact is false when auto-compaction disabled", () => {
-      const liveUsage = createUsageEntry(199_000); // Very close to limit
-      const usage = createMockUsage(50_000, undefined, KNOWN_MODELS.SONNET.id, liveUsage);
+      const usage = createMockUsage(190_000); // 95% - would trigger if enabled
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false, 1.0); // disabled
 
       expect(result.shouldForceCompact).toBe(false);

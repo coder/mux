@@ -41,14 +41,11 @@ export const DEFAULT_COMPACTION_WORD_TARGET = 2000;
 export const WORDS_TO_TOKENS_RATIO = 1.3;
 
 /**
- * Force-compaction token buffer.
- * When auto-compaction is enabled and live usage shows this many tokens or fewer
- * remaining in the context window, force a compaction immediately.
- * Set to 2x the expected compaction output size to ensure room for the summary.
+ * Force-compact this many percentage points after threshold.
+ * Gives user a buffer zone between warning and force-compaction.
+ * E.g., with 70% threshold, force-compact triggers at 75%.
  */
-export const FORCE_COMPACTION_TOKEN_BUFFER = Math.round(
-  2 * DEFAULT_COMPACTION_WORD_TARGET * WORDS_TO_TOKENS_RATIO
-); // = 5200 tokens
+export const FORCE_COMPACTION_BUFFER_PERCENT = 5;
 
 /**
  * Duration (ms) to show "copied" feedback after copying to clipboard

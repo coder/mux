@@ -21,7 +21,7 @@ import { getModelStats } from "@/common/utils/tokens/modelStats";
 import { supports1MContext } from "@/common/utils/ai/models";
 import {
   DEFAULT_AUTO_COMPACTION_THRESHOLD,
-  FORCE_COMPACTION_TOKEN_BUFFER,
+  FORCE_COMPACTION_BUFFER_PERCENT,
 } from "@/common/constants/ui";
 
 /** Sum all token components from a ChatUsageDisplay */
@@ -37,8 +37,9 @@ function getTotalTokens(usage: ChatUsageDisplay): number {
 
 export interface AutoCompactionCheckResult {
   shouldShowWarning: boolean;
-  /** True when live usage shows ≤FORCE_COMPACTION_TOKEN_BUFFER remaining in context */
+  /** True when usage exceeds threshold + buffer (gives user control before force-compact) */
   shouldForceCompact: boolean;
+  /** Current usage percentage - live when streaming, otherwise last completed */
   usagePercentage: number;
   thresholdPercentage: number;
 }
@@ -94,30 +95,20 @@ export function checkAutoCompaction(
     };
   }
 
-  // Current usage: live when streaming, else last historical
-  // Use lastContextUsage (last step) for accurate context window size
+  // Current usage: live when streaming, else last completed
   const lastUsage = usage.lastContextUsage;
   const currentUsage = usage.liveUsage ?? lastUsage;
 
-  // Force-compact when approaching context limit (can trigger even with empty history if streaming)
-  let shouldForceCompact = false;
-  if (currentUsage) {
-    const remainingTokens = maxTokens - getTotalTokens(currentUsage);
-    shouldForceCompact = remainingTokens <= FORCE_COMPACTION_TOKEN_BUFFER;
-  }
+  // Usage percentage from current context (live when streaming, otherwise last completed)
+  const usagePercentage = currentUsage ? (getTotalTokens(currentUsage) / maxTokens) * 100 : 0;
 
-  // Warning/percentage based on lastUsage (completed requests only)
-  if (!lastUsage) {
-    return {
-      shouldShowWarning: false,
-      shouldForceCompact,
-      usagePercentage: 0,
-      thresholdPercentage,
-    };
-  }
+  // Force-compact when usage exceeds threshold + buffer
+  const forceCompactThreshold = thresholdPercentage + FORCE_COMPACTION_BUFFER_PERCENT;
+  const shouldForceCompact = usagePercentage >= forceCompactThreshold;
 
-  const usagePercentage = (getTotalTokens(lastUsage) / maxTokens) * 100;
-  const shouldShowWarning = usagePercentage >= thresholdPercentage - warningAdvancePercent;
+  // Warning based on last completed usage (not live) to avoid flickering
+  const lastUsagePercentage = lastUsage ? (getTotalTokens(lastUsage) / maxTokens) * 100 : 0;
+  const shouldShowWarning = lastUsagePercentage >= thresholdPercentage - warningAdvancePercent;
 
   return {
     shouldShowWarning,

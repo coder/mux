@@ -594,6 +594,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
           <CompactionWarning
             usagePercentage={autoCompactionResult.usagePercentage}
             thresholdPercentage={autoCompactionResult.thresholdPercentage}
+            isStreaming={canInterrupt}
             onCompactClick={handleCompactClick}
           />
         )}
