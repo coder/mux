@@ -1,8 +1,9 @@
 /**
- * Hook for voice input using OpenAI Whisper API via MediaRecorder.
+ * Voice input via OpenAI transcription (gpt-4o-transcribe).
  *
- * Records audio, sends to backend for Whisper transcription, returns text.
- * Hidden on mobile (native keyboards have built-in dictation).
+ * State machine: idle → recording → transcribing → idle
+ *
+ * Hidden on touch devices where native keyboard dictation is available.
  */
 
 import { useState, useCallback, useRef, useEffect } from "react";
@@ -12,6 +13,7 @@ export type VoiceInputState = "idle" | "recording" | "transcribing";
 export interface UseVoiceInputOptions {
   onTranscript: (text: string) => void;
   onError?: (error: string) => void;
+  /** Called after successful transcription if stop({ send: true }) was used */
   onSend?: () => void;
   openAIKeySet: boolean;
 }
@@ -20,69 +22,120 @@ export interface UseVoiceInputResult {
   state: VoiceInputState;
   isSupported: boolean;
   isApiKeySet: boolean;
-  /** Show UI on supported desktop platforms (mobile has native dictation) */
+  /** False on touch devices (they have native keyboard dictation) */
   shouldShowUI: boolean;
   start: () => void;
   stop: (options?: { send?: boolean }) => void;
-  /** Cancel recording without transcribing (discard audio) */
   cancel: () => void;
   toggle: () => void;
 }
 
-// Platform checks (evaluated once)
-const isMobile =
-  typeof window !== "undefined" &&
-  ("ontouchstart" in window || navigator.maxTouchPoints > 0) &&
-  window.innerWidth < 768;
+// =============================================================================
+// Platform Detection
+// =============================================================================
 
-const isSupported = typeof window !== "undefined" && typeof MediaRecorder !== "undefined";
+/**
+ * Detect touch devices where native keyboard dictation is typically available.
+ * This includes phones, tablets (iPad), and touch-enabled laptops in tablet mode.
+ * We hide our voice UI on these devices to avoid redundancy with system dictation.
+ */
+function hasTouchDictation(): boolean {
+  if (typeof window === "undefined") return false;
+  const hasTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+  // Touch-only check: most touch devices have native dictation.
+  // We don't check screen size because iPads are large but still have dictation.
+  return hasTouch;
+}
+
+const HAS_TOUCH_DICTATION = hasTouchDictation();
+const HAS_MEDIA_RECORDER = typeof window !== "undefined" && typeof MediaRecorder !== "undefined";
+
+// =============================================================================
+// Hook
+// =============================================================================
 
 export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResult {
   const [state, setState] = useState<VoiceInputState>("idle");
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  // Refs for MediaRecorder lifecycle
+  const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const sendAfterTranscribeRef = useRef(false);
-  const cancelledRef = useRef(false);
+  const chunksRef = useRef<Blob[]>([]);
 
-  // Store callbacks in refs to avoid stale closures
+  // Flags set before stopping to control post-stop behavior
+  const shouldSendRef = useRef(false);
+  const wasCancelledRef = useRef(false);
+
+  // Keep callbacks fresh without recreating functions
   const callbacksRef = useRef(options);
   useEffect(() => {
     callbacksRef.current = options;
   }, [options]);
 
+  // ---------------------------------------------------------------------------
+  // Transcription
+  // ---------------------------------------------------------------------------
+
   const transcribe = useCallback(async (audioBlob: Blob) => {
     setState("transcribing");
-    const shouldSend = sendAfterTranscribeRef.current;
-    sendAfterTranscribeRef.current = false;
+
+    // Capture and reset flags
+    const shouldSend = shouldSendRef.current;
+    shouldSendRef.current = false;
 
     try {
-      const arrayBuffer = await audioBlob.arrayBuffer();
+      // Encode audio as base64 for IPC transport
+      const buffer = await audioBlob.arrayBuffer();
       const base64 = btoa(
-        new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
+        new Uint8Array(buffer).reduce((str, byte) => str + String.fromCharCode(byte), "")
       );
 
       const result = await window.api.voice.transcribe(base64);
 
-      if (result.success && result.data.trim()) {
-        callbacksRef.current.onTranscript(result.data);
-        if (shouldSend) {
-          setTimeout(() => callbacksRef.current.onSend?.(), 0);
-        }
-      } else if (!result.success) {
+      if (!result.success) {
         callbacksRef.current.onError?.(result.error);
+        return;
+      }
+
+      const text = result.data.trim();
+      if (!text) return; // Empty transcription, nothing to do
+
+      callbacksRef.current.onTranscript(text);
+
+      // If stop({ send: true }) was called, trigger send after React flushes
+      if (shouldSend) {
+        setTimeout(() => callbacksRef.current.onSend?.(), 0);
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      callbacksRef.current.onError?.(`Transcription failed: ${message}`);
+      const msg = err instanceof Error ? err.message : String(err);
+      callbacksRef.current.onError?.(`Transcription failed: ${msg}`);
     } finally {
       setState("idle");
     }
   }, []);
 
+  // ---------------------------------------------------------------------------
+  // Release microphone and clean up recorder
+  // ---------------------------------------------------------------------------
+
+  const releaseStream = useCallback(() => {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Start Recording
+  // ---------------------------------------------------------------------------
+
   const start = useCallback(async () => {
-    if (!isSupported || isMobile || state !== "idle" || !callbacksRef.current.openAIKeySet) return;
+    // Guard: only start from idle state with valid configuration
+    const canStart =
+      HAS_MEDIA_RECORDER &&
+      !HAS_TOUCH_DICTATION &&
+      state === "idle" &&
+      callbacksRef.current.openAIKeySet;
+
+    if (!canStart) return;
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -93,20 +146,22 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
         : "audio/webm";
 
       const recorder = new MediaRecorder(stream, { mimeType });
-      audioChunksRef.current = [];
+      chunksRef.current = [];
 
       recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+        if (e.data.size > 0) chunksRef.current.push(e.data);
       };
 
       recorder.onstop = () => {
-        const wasCancelled = cancelledRef.current;
-        cancelledRef.current = false;
-        const blob = new Blob(audioChunksRef.current, { type: mimeType });
-        audioChunksRef.current = [];
-        stream.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
-        if (wasCancelled) {
+        // Check if this was a cancel (discard audio) or normal stop (transcribe)
+        const cancelled = wasCancelledRef.current;
+        wasCancelledRef.current = false;
+
+        const blob = new Blob(chunksRef.current, { type: mimeType });
+        chunksRef.current = [];
+        releaseStream();
+
+        if (cancelled) {
           setState("idle");
         } else {
           void transcribe(blob);
@@ -115,63 +170,76 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
 
       recorder.onerror = () => {
         callbacksRef.current.onError?.("Recording failed");
+        releaseStream();
         setState("idle");
-        stream.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
       };
 
-      mediaRecorderRef.current = recorder;
+      recorderRef.current = recorder;
       recorder.start();
       setState("recording");
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const isPermissionError =
-        message.includes("Permission denied") || message.includes("NotAllowedError");
+      const msg = err instanceof Error ? err.message : String(err);
+      const isPermissionDenied = msg.includes("Permission denied") || msg.includes("NotAllowed");
+
       callbacksRef.current.onError?.(
-        isPermissionError
+        isPermissionDenied
           ? "Microphone access denied. Please allow microphone access and try again."
-          : `Failed to start recording: ${message}`
+          : `Failed to start recording: ${msg}`
       );
     }
-  }, [state, transcribe]);
+  }, [state, transcribe, releaseStream]);
+
+  // ---------------------------------------------------------------------------
+  // Stop Recording (triggers transcription)
+  // ---------------------------------------------------------------------------
 
   const stop = useCallback((options?: { send?: boolean }) => {
-    if (options?.send) sendAfterTranscribeRef.current = true;
-    if (mediaRecorderRef.current?.state !== "inactive") {
-      mediaRecorderRef.current?.stop();
-      mediaRecorderRef.current = null;
+    if (options?.send) shouldSendRef.current = true;
+
+    if (recorderRef.current?.state !== "inactive") {
+      recorderRef.current?.stop();
+      recorderRef.current = null;
     }
   }, []);
+
+  // ---------------------------------------------------------------------------
+  // Cancel Recording (discard audio, no transcription)
+  // ---------------------------------------------------------------------------
 
   const cancel = useCallback(() => {
-    cancelledRef.current = true;
-    if (mediaRecorderRef.current?.state !== "inactive") {
-      mediaRecorderRef.current?.stop();
-      mediaRecorderRef.current = null;
-    }
-  }, []);
+    wasCancelledRef.current = true;
+    stop();
+  }, [stop]);
+
+  // ---------------------------------------------------------------------------
+  // Toggle (convenience for keybinds)
+  // ---------------------------------------------------------------------------
 
   const toggle = useCallback(() => {
-    if (state === "recording") {
-      stop();
-    } else if (state === "idle") {
-      void start();
-    }
+    if (state === "recording") stop();
+    else if (state === "idle") void start();
   }, [state, start, stop]);
 
+  // ---------------------------------------------------------------------------
   // Cleanup on unmount
+  // ---------------------------------------------------------------------------
+
   useEffect(() => {
     return () => {
-      mediaRecorderRef.current?.stop();
-      streamRef.current?.getTracks().forEach((t) => t.stop());
+      recorderRef.current?.stop();
+      releaseStream();
     };
-  }, []);
+  }, [releaseStream]);
+
+  // ---------------------------------------------------------------------------
+  // Return
+  // ---------------------------------------------------------------------------
 
   return {
     state,
-    isSupported,
+    isSupported: HAS_MEDIA_RECORDER,
     isApiKeySet: callbacksRef.current.openAIKeySet,
-    shouldShowUI: isSupported && !isMobile,
+    shouldShowUI: HAS_MEDIA_RECORDER && !HAS_TOUCH_DICTATION,
     start: () => void start(),
     stop,
     cancel,
