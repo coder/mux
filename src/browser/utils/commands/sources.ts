@@ -388,6 +388,17 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           window.dispatchEvent(ev);
         },
       });
+      list.push({
+        id: CommandIds.chatVoiceInput(),
+        title: "Toggle Voice Input",
+        subtitle: "Dictate instead of typing",
+        section: section.chat,
+        shortcutHint: formatKeybind(KEYBINDS.TOGGLE_VOICE_INPUT),
+        run: () => {
+          // Dispatch custom event; ChatInput listens for it
+          window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.TOGGLE_VOICE_INPUT));
+        },
+      });
     }
     return list;
   });

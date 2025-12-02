@@ -160,6 +160,10 @@ const api: IPCApi = {
   window: {
     setTitle: (title: string) => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_SET_TITLE, title),
   },
+  voice: {
+    transcribe: (audioBase64: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.VOICE_TRANSCRIBE, audioBase64),
+  },
   update: {
     check: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_CHECK),
     download: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_DOWNLOAD),

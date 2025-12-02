@@ -361,6 +361,9 @@ const webApi: IPCApi = {
     },
     closeWindow: (workspaceId) => invokeIPC(IPC_CHANNELS.TERMINAL_WINDOW_CLOSE, workspaceId),
   },
+  voice: {
+    transcribe: (audioBase64) => invokeIPC(IPC_CHANNELS.VOICE_TRANSCRIBE, audioBase64),
+  },
   update: {
     check: () => invokeIPC(IPC_CHANNELS.UPDATE_CHECK),
     download: () => invokeIPC(IPC_CHANNELS.UPDATE_DOWNLOAD),

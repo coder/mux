@@ -371,6 +371,10 @@ export interface IPCApi {
     openWindow(workspaceId: string): Promise<void>;
     closeWindow(workspaceId: string): Promise<void>;
   };
+  voice: {
+    /** Transcribe audio using OpenAI Whisper. Audio should be base64-encoded webm/opus. */
+    transcribe(audioBase64: string): Promise<Result<string, string>>;
+  };
   update: {
     check(): Promise<void>;
     download(): Promise<void>;

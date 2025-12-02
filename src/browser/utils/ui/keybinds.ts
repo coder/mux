@@ -285,4 +285,9 @@ export const KEYBINDS = {
   /** Open settings modal */
   // macOS: Cmd+, Win/Linux: Ctrl+,
   OPEN_SETTINGS: { key: ",", ctrl: true },
+
+  /** Toggle voice input (dictation) */
+  // macOS: Cmd+D, Win/Linux: Ctrl+D
+  // "D" for Dictate - intuitive and available
+  TOGGLE_VOICE_INPUT: { key: "d", ctrl: true },
 } as const;

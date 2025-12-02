@@ -44,6 +44,7 @@ import { PTYService } from "@/node/services/ptyService";
 import type { TerminalWindowManager } from "@/desktop/terminalWindowManager";
 import type { TerminalCreateParams, TerminalResizeParams } from "@/common/types/terminal";
 import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
+import OpenAI from "openai";
 
 /** Maximum number of retry attempts when workspace name collides */
 const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
@@ -633,6 +634,45 @@ export class IpcMain {
   }
 
   private registerWorkspaceHandlers(ipcMain: ElectronIpcMain): void {
+    // Voice transcription handler (uses OpenAI Whisper)
+    ipcMain.handle(
+      IPC_CHANNELS.VOICE_TRANSCRIBE,
+      async (_event, audioBase64: string): Promise<Result<string, string>> => {
+        try {
+          // Get OpenAI config
+          const providersConfig = this.config.loadProvidersConfig();
+          const openaiConfig = providersConfig?.openai;
+
+          if (!openaiConfig?.apiKey) {
+            return Err("OpenAI API key not configured. Set it in Settings > Providers.");
+          }
+
+          const client = new OpenAI({
+            apiKey: openaiConfig.apiKey,
+            baseURL: openaiConfig.baseUrl ?? openaiConfig.baseURL,
+          });
+
+          // Convert base64 to buffer
+          const audioBuffer = Buffer.from(audioBase64, "base64");
+
+          // Create a File object for the API
+          const audioFile = new File([audioBuffer], "audio.webm", { type: "audio/webm" });
+
+          // Call Whisper API
+          const transcription = await client.audio.transcriptions.create({
+            file: audioFile,
+            model: "whisper-1",
+          });
+
+          return Ok(transcription.text);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          log.error("[IpcMain] Voice transcription failed", error);
+          return Err(`Transcription failed: ${message}`);
+        }
+      }
+    );
+
     ipcMain.handle(
       IPC_CHANNELS.WORKSPACE_CREATE,
       async (

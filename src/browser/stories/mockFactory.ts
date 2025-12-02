@@ -456,6 +456,9 @@ export function createMockAPI(options: MockAPIOptions): IPCApi {
       openWindow: () => Promise.resolve(undefined),
       closeWindow: () => Promise.resolve(undefined),
     },
+    voice: {
+      transcribe: () => Promise.resolve({ success: false, error: "Not implemented in mock" }),
+    },
     update: {
       check: () => Promise.resolve(undefined),
       download: () => Promise.resolve(undefined),

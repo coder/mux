@@ -39,6 +39,7 @@ export const CommandIds = {
   chatTruncate: (pct: number) => `${COMMAND_ID_PREFIXES.CHAT_TRUNCATE}${pct}` as const,
   chatInterrupt: () => "chat:interrupt" as const,
   chatJumpBottom: () => "chat:jumpBottom" as const,
+  chatVoiceInput: () => "chat:voiceInput" as const,
 
   // Mode commands
   modeToggle: () => "mode:toggle" as const,

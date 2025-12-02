@@ -65,6 +65,8 @@ import { cn } from "@/common/lib/utils";
 import { CreationControls } from "./CreationControls";
 import { useCreationWorkspace } from "./useCreationWorkspace";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
+import { useVoiceInput } from "@/browser/hooks/useVoiceInput";
+import { VoiceInputButton } from "./VoiceInputButton";
 
 const LEADING_COMMAND_NOISE = /^(?:\s|\u200B|\u200C|\u200D|\u200E|\u200F|\uFEFF)+/;
 
@@ -153,6 +155,45 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     listener: true,
   });
   const { startSequence: startTutorial } = useTutorial();
+
+  // Track if OpenAI API key is configured for voice input
+  const [openAIKeySet, setOpenAIKeySet] = useState(false);
+
+  // Voice input handling - appends transcribed text to input
+  const handleVoiceTranscript = useCallback(
+    (text: string, _isFinal: boolean) => {
+      // Whisper only returns final results, append to input with space separator if needed
+      setInput((prev) => {
+        const separator = prev.length > 0 && !prev.endsWith(" ") ? " " : "";
+        return prev + separator + text;
+      });
+    },
+    [setInput]
+  );
+
+  const handleVoiceError = useCallback(
+    (error: string) => {
+      // Map common errors to user-friendly messages
+      const errorMessages: Record<string, string> = {
+        "not-allowed": "Microphone access denied. Please allow microphone access and try again.",
+        "no-speech": "No speech detected. Please try again.",
+        network: "Network error. Please check your connection.",
+        "audio-capture": "No microphone found. Please connect a microphone.",
+      };
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: errorMessages[error] ?? `Voice input error: ${error}`,
+      });
+    },
+    [setToast]
+  );
+
+  const voiceInput = useVoiceInput({
+    onTranscript: handleVoiceTranscript,
+    onError: handleVoiceError,
+    openAIKeySet,
+  });
 
   // Start creation tutorial when entering creation mode
   useEffect(() => {
@@ -370,6 +411,28 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     };
   }, []);
 
+  // Check if OpenAI API key is configured (for voice input)
+  useEffect(() => {
+    let isMounted = true;
+
+    const checkOpenAIKey = async () => {
+      try {
+        const config = await window.api.providers.getConfig();
+        if (isMounted) {
+          setOpenAIKeySet(config.openai?.apiKeySet ?? false);
+        }
+      } catch (error) {
+        console.error("Failed to check OpenAI API key:", error);
+      }
+    };
+
+    void checkOpenAIKey();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   // Allow external components (e.g., CommandPalette, Queued message edits) to insert text
   useEffect(() => {
     const handler = (e: Event) => {
@@ -436,6 +499,18 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     return () =>
       window.removeEventListener(CUSTOM_EVENTS.THINKING_LEVEL_TOAST, handler as EventListener);
   }, [variant, props, setToast]);
+
+  // Listen for voice input toggle from command palette
+  useEffect(() => {
+    if (!voiceInput.shouldShowUI) return;
+
+    const handler = () => {
+      voiceInput.toggleListening();
+    };
+    window.addEventListener(CUSTOM_EVENTS.TOGGLE_VOICE_INPUT, handler as EventListener);
+    return () =>
+      window.removeEventListener(CUSTOM_EVENTS.TOGGLE_VOICE_INPUT, handler as EventListener);
+  }, [voiceInput]);
 
   // Auto-focus chat input when workspace changes (workspace only)
   const workspaceIdForFocus = variant === "workspace" ? props.workspaceId : null;
@@ -768,6 +843,13 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
       return;
     }
 
+    // Handle voice input toggle (Ctrl+D / Cmd+D)
+    if (matchesKeybind(e, KEYBINDS.TOGGLE_VOICE_INPUT) && voiceInput.shouldShowUI) {
+      e.preventDefault();
+      voiceInput.toggleListening();
+      return;
+    }
+
     // Handle open model selector
     if (matchesKeybind(e, KEYBINDS.OPEN_MODEL_SELECTOR)) {
       e.preventDefault();
@@ -896,27 +978,81 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             anchorRef={variant === "creation" ? inputRef : undefined}
           />
 
-          <div className="flex items-end" data-component="ChatInputControls">
-            <VimTextArea
-              ref={inputRef}
-              value={input}
-              isEditing={!!editingMessage}
-              mode={mode}
-              onChange={setInput}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              onDragOver={handleDragOver}
-              onDrop={handleDrop}
-              suppressKeys={showCommandSuggestions ? COMMAND_SUGGESTION_KEYS : undefined}
-              placeholder={placeholder}
-              disabled={!editingMessage && (disabled || isSending)}
-              aria-label={editingMessage ? "Edit your last message" : "Message Claude"}
-              aria-autocomplete="list"
-              aria-controls={
-                showCommandSuggestions && commandSuggestions.length > 0 ? commandListId : undefined
-              }
-              aria-expanded={showCommandSuggestions && commandSuggestions.length > 0}
-            />
+          <div className="relative flex items-end" data-component="ChatInputControls">
+            {/* Recording overlay - dramatically replaces textarea when recording */}
+            {voiceInput.isListening ? (
+              <button
+                type="button"
+                onClick={voiceInput.toggleListening}
+                className="flex min-h-[60px] w-full cursor-pointer items-center justify-center gap-3 rounded-md border-2 border-red-500 bg-red-500/10 px-4 py-4 transition-all"
+                aria-label="Stop recording"
+              >
+                {/* Animated waveform bars */}
+                <div className="flex items-center gap-1">
+                  {[0, 1, 2, 3, 4].map((i) => (
+                    <div
+                      key={i}
+                      className="w-1 rounded-full bg-red-500"
+                      style={{
+                        height: `${12 + Math.sin(i * 0.8) * 8}px`,
+                        animation: `pulse 0.8s ease-in-out ${i * 0.1}s infinite alternate`,
+                      }}
+                    />
+                  ))}
+                </div>
+                <span className="text-sm font-medium text-red-500">
+                  Recording... tap to stop ({formatKeybind(KEYBINDS.TOGGLE_VOICE_INPUT)})
+                </span>
+                <div className="flex items-center gap-1">
+                  {[0, 1, 2, 3, 4].map((i) => (
+                    <div
+                      key={i}
+                      className="w-1 rounded-full bg-red-500"
+                      style={{
+                        height: `${12 + Math.sin((4 - i) * 0.8) * 8}px`,
+                        animation: `pulse 0.8s ease-in-out ${(4 - i) * 0.1}s infinite alternate`,
+                      }}
+                    />
+                  ))}
+                </div>
+              </button>
+            ) : (
+              <>
+                <VimTextArea
+                  ref={inputRef}
+                  value={input}
+                  isEditing={!!editingMessage}
+                  mode={mode}
+                  onChange={setInput}
+                  onKeyDown={handleKeyDown}
+                  onPaste={handlePaste}
+                  onDragOver={handleDragOver}
+                  onDrop={handleDrop}
+                  suppressKeys={showCommandSuggestions ? COMMAND_SUGGESTION_KEYS : undefined}
+                  placeholder={placeholder}
+                  disabled={!editingMessage && (disabled || isSending)}
+                  aria-label={editingMessage ? "Edit your last message" : "Message Claude"}
+                  aria-autocomplete="list"
+                  aria-controls={
+                    showCommandSuggestions && commandSuggestions.length > 0
+                      ? commandListId
+                      : undefined
+                  }
+                  aria-expanded={showCommandSuggestions && commandSuggestions.length > 0}
+                />
+                {/* Floating voice input button inside textarea */}
+                <div className="absolute bottom-2 right-2">
+                  <VoiceInputButton
+                    isListening={voiceInput.isListening}
+                    isTranscribing={voiceInput.isTranscribing}
+                    isSupported={voiceInput.isSupported}
+                    shouldShowUI={voiceInput.shouldShowUI}
+                    onToggle={voiceInput.toggleListening}
+                    disabled={disabled || isSending}
+                  />
+                </div>
+              </>
+            )}
           </div>
 
           {/* Image attachments */}

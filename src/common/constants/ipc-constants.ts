@@ -68,6 +68,9 @@ export const IPC_CHANNELS = {
   TOKENIZER_COUNT_TOKENS: "tokenizer:countTokens",
   TOKENIZER_COUNT_TOKENS_BATCH: "tokenizer:countTokensBatch",
 
+  // Voice channels
+  VOICE_TRANSCRIBE: "voice:transcribe",
+
   // Dynamic channel prefixes
   WORKSPACE_CHAT_PREFIX: "workspace:chat:",
   WORKSPACE_METADATA: "workspace:metadata",
