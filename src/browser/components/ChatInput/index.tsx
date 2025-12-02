@@ -1005,7 +1005,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 }}
                 disabled={voiceInput.state === "transcribing"}
                 className={cn(
-                  "mb-1 flex min-h-[60px] w-full items-center justify-center gap-3 rounded-md border px-4 py-4 transition-all",
+                  "mb-1 flex min-h-[60px] w-full items-center justify-center gap-3 rounded-md border px-4 py-4 transition-all focus:outline-none",
                   voiceInput.state === "recording"
                     ? "cursor-pointer border-blue-500 bg-blue-500/10"
                     : "cursor-wait border-amber-500 bg-amber-500/10"

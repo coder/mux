@@ -60,7 +60,12 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
           </>
         ) : (
           <>
-            {label} ({formatKeybind(KEYBINDS.TOGGLE_VOICE_INPUT)})
+            <strong>Voice input</strong> — press space on empty input
+            <br />
+            or {formatKeybind(KEYBINDS.TOGGLE_VOICE_INPUT)} anytime
+            <br />
+            <br />
+            While recording: space sends, esc cancels
           </>
         )}
       </Tooltip>
