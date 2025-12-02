@@ -135,7 +135,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const costsPanelId = `${baseId}-panel-costs`;
   const reviewPanelId = `${baseId}-panel-review`;
 
-  const lastUsage = usage?.liveUsage ?? usage?.usageHistory[usage.usageHistory.length - 1];
+  // Use lastContextUsage for context window display (last step = actual context size)
+  const lastUsage = usage?.liveUsage ?? usage?.lastContextUsage;
   const model = lastUsage?.model ?? null;
 
   // Auto-compaction settings: threshold per-model

@@ -75,8 +75,12 @@ export class StreamingMessageAggregator {
   private deltaHistory = new Map<string, DeltaRecordStorage>();
 
   // Active stream step usage (updated on each stream-step event)
-  // Tracks cumulative usage for the currently streaming message
+  // Tracks last step's usage for context window display
   private activeStreamStepUsage = new Map<string, LanguageModelV2Usage>();
+  // Tracks cumulative usage across all steps for live cost display
+  private activeStreamCumulativeUsage = new Map<string, LanguageModelV2Usage>();
+  // Tracks cumulative provider metadata for live cost display (with cache creation tokens)
+  private activeStreamCumulativeProviderMetadata = new Map<string, Record<string, unknown>>();
 
   // Current TODO list (updated when todo_write succeeds, cleared on stream end)
   // Stream-scoped: automatically reset when stream completes
@@ -1064,19 +1068,47 @@ export class StreamingMessageAggregator {
   clearTokenState(messageId: string): void {
     this.deltaHistory.delete(messageId);
     this.activeStreamStepUsage.delete(messageId);
+    this.activeStreamCumulativeUsage.delete(messageId);
+    this.activeStreamCumulativeProviderMetadata.delete(messageId);
   }
 
   /**
-   * Handle usage-delta event: update cumulative usage for active stream
+   * Handle usage-delta event: update usage tracking for active stream
    */
   handleUsageDelta(data: UsageDeltaEvent): void {
+    // Store last step's usage for context window display
     this.activeStreamStepUsage.set(data.messageId, data.usage);
+    // Store cumulative usage for cost display
+    this.activeStreamCumulativeUsage.set(data.messageId, data.cumulativeUsage);
+    // Store cumulative provider metadata for live cost display (with cache creation tokens)
+    if (data.cumulativeProviderMetadata) {
+      this.activeStreamCumulativeProviderMetadata.set(
+        data.messageId,
+        data.cumulativeProviderMetadata
+      );
+    }
   }
 
   /**
-   * Get active stream usage for a message (if streaming)
+   * Get active stream usage for context window display (last step's inputTokens = context size)
    */
   getActiveStreamUsage(messageId: string): LanguageModelV2Usage | undefined {
     return this.activeStreamStepUsage.get(messageId);
+  }
+
+  /**
+   * Get active stream cumulative usage for cost display (sum of all steps)
+   */
+  getActiveStreamCumulativeUsage(messageId: string): LanguageModelV2Usage | undefined {
+    return this.activeStreamCumulativeUsage.get(messageId);
+  }
+
+  /**
+   * Get cumulative provider metadata for cost display (with accumulated cache creation tokens)
+   */
+  getActiveStreamCumulativeProviderMetadata(
+    messageId: string
+  ): Record<string, unknown> | undefined {
+    return this.activeStreamCumulativeProviderMetadata.get(messageId);
   }
 }

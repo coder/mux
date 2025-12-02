@@ -65,22 +65,28 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
   const use1M = options.anthropic?.use1MContext ?? false;
 
   // Get model from context usage for per-model threshold storage
-  const contextUsage = usage.liveUsage ?? usage.usageHistory[usage.usageHistory.length - 1];
-  const currentModel = contextUsage?.model ?? null;
+  // Use lastContextUsage for context window display (last step's usage)
+  const contextUsageForModel = usage.liveUsage ?? usage.lastContextUsage;
+  const currentModel = contextUsageForModel?.model ?? null;
 
   // Auto-compaction settings: threshold per-model (100 = disabled)
   const { threshold: autoCompactThreshold, setThreshold: setAutoCompactThreshold } =
     useAutoCompactionSettings(workspaceId, currentModel);
 
-  // Session usage for cost
+  // Session usage for cost calculation
+  // Uses usageHistory (total across all steps) + liveCostUsage (cumulative during streaming)
   const sessionUsage = React.useMemo(() => {
     const historicalSum = sumUsageHistory(usage.usageHistory);
-    if (!usage.liveUsage) return historicalSum;
-    if (!historicalSum) return usage.liveUsage;
-    return sumUsageHistory([historicalSum, usage.liveUsage]);
-  }, [usage.usageHistory, usage.liveUsage]);
+    if (!usage.liveCostUsage) return historicalSum;
+    if (!historicalSum) return usage.liveCostUsage;
+    return sumUsageHistory([historicalSum, usage.liveCostUsage]);
+  }, [usage.usageHistory, usage.liveCostUsage]);
 
-  const hasUsageData = usage && (usage.usageHistory.length > 0 || usage.liveUsage !== undefined);
+  const hasUsageData =
+    usage &&
+    (usage.usageHistory.length > 0 ||
+      usage.lastContextUsage !== undefined ||
+      usage.liveUsage !== undefined);
   const hasConsumerData = consumers && (consumers.totalTokens > 0 || consumers.isCalculating);
   const hasAnyData = hasUsageData || hasConsumerData;
 
@@ -109,8 +115,8 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
           <div data-testid="context-usage-list" className="flex flex-col gap-3">
             {(() => {
               // Context usage: live when streaming, else last historical
-              const contextUsage =
-                usage.liveUsage ?? usage.usageHistory[usage.usageHistory.length - 1];
+              // Uses lastContextUsage (last step) for accurate context window size
+              const contextUsage = usage.liveUsage ?? usage.lastContextUsage;
               const model = contextUsage?.model ?? "unknown";
 
               // Get max tokens for the model from the model stats database

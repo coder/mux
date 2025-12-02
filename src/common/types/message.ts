@@ -37,8 +37,14 @@ export interface MuxMetadata {
   duration?: number;
   timestamp?: number;
   model?: string;
-  usage?: LanguageModelV2Usage; // AI SDK normalized usage (verbatim from streamResult.usage)
-  providerMetadata?: Record<string, unknown>; // Raw AI SDK provider data
+  // Total usage across all steps (for cost calculation)
+  usage?: LanguageModelV2Usage;
+  // Last step's usage only (for context window display - inputTokens = current context size)
+  contextUsage?: LanguageModelV2Usage;
+  // Aggregated provider metadata across all steps (for cost calculation)
+  providerMetadata?: Record<string, unknown>;
+  // Last step's provider metadata (for context window cache display)
+  contextProviderMetadata?: Record<string, unknown>;
   systemMessageTokens?: number; // Token count for system message sent with this request (calculated by AIService)
   partial?: boolean; // Whether this message was interrupted and is incomplete
   synthetic?: boolean; // Whether this message was synthetically generated (e.g., [CONTINUE] sentinel)

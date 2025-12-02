@@ -9,6 +9,7 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { getModelStats } from "./modelStats";
 import type { ChatUsageDisplay } from "./usageAggregator";
 import type { MuxMessage } from "@/common/types/message";
+import { normalizeGatewayModel } from "../ai/models";
 
 /**
  * Create a display-friendly usage object from AI SDK usage
@@ -29,8 +30,12 @@ export function createDisplayUsage(
   const cachedTokens = usage.cachedInputTokens ?? 0;
   const rawInputTokens = usage.inputTokens ?? 0;
 
-  // Detect provider from model string
-  const isOpenAI = model.startsWith("openai:");
+  // Normalize gateway models (e.g., "mux-gateway:openai/gpt-5.1" → "openai:gpt-5.1")
+  // before detecting provider, so gateway-routed requests get correct handling
+  const normalizedModel = normalizeGatewayModel(model);
+
+  // Detect provider from normalized model string
+  const isOpenAI = normalizedModel.startsWith("openai:");
 
   // For OpenAI, subtract cached tokens to get uncached input tokens
   const inputTokens = isOpenAI ? Math.max(0, rawInputTokens - cachedTokens) : rawInputTokens;
@@ -92,6 +97,10 @@ export function createDisplayUsage(
   };
 }
 
+/**
+ * Collect usage history for cost calculation.
+ * Uses totalUsage (sum of all steps) for accurate cost reporting.
+ */
 export function collectUsageHistory(
   messages: MuxMessage[],
   fallbackModel?: string
@@ -108,7 +117,7 @@ export function collectUsageHistory(
         cumulativeHistorical = msg.metadata.historicalUsage;
       }
 
-      // Extract current message's usage
+      // Extract current message's usage (total across all steps)
       if (msg.metadata?.usage) {
         // Use the model from this specific message (not global)
         const model = msg.metadata.model ?? fallbackModel ?? "unknown";

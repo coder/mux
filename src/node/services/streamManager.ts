@@ -28,6 +28,7 @@ import type { SendMessageError, StreamErrorType } from "@/common/types/errors";
 import type { MuxMetadata, MuxMessage } from "@/common/types/message";
 import type { PartialService } from "./partialService";
 import type { HistoryService } from "./historyService";
+import { addUsage, accumulateProviderMetadata } from "@/common/utils/tokens/usageHelpers";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { StreamingTokenTracker } from "@/node/utils/main/StreamingTokenTracker";
@@ -116,6 +117,14 @@ interface WorkspaceStreamInfo {
   runtimeTempDir: string;
   // Runtime for temp directory cleanup
   runtime: Runtime;
+  // Cumulative usage across all steps (for live cost display during streaming)
+  cumulativeUsage: LanguageModelV2Usage;
+  // Cumulative provider metadata across all steps (for live cost display with cache tokens)
+  cumulativeProviderMetadata?: Record<string, unknown>;
+  // Last step's usage (for context window display during streaming)
+  lastStepUsage?: LanguageModelV2Usage;
+  // Last step's provider metadata (for context window cache display)
+  lastStepProviderMetadata?: Record<string, unknown>;
 }
 
 /**
@@ -326,8 +335,10 @@ export class StreamManager extends EventEmitter {
     let usage = undefined;
     try {
       // Race usage retrieval against timeout to prevent hanging on abort
+      // CRITICAL: Use totalUsage (sum of all steps) not usage (last step only)
+      // For multi-step tool calls, usage would severely undercount actual token consumption
       usage = await Promise.race([
-        streamInfo.streamResult.usage,
+        streamInfo.streamResult.totalUsage,
         new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), timeoutMs)),
       ]);
     } catch (error) {
@@ -338,6 +349,66 @@ export class StreamManager extends EventEmitter {
       usage,
       duration: Date.now() - streamInfo.startTime,
     };
+  }
+
+  /**
+   * Aggregate provider metadata across all steps.
+   *
+   * CRITICAL: For multi-step tool calls, cache creation tokens are reported per-step.
+   * streamResult.providerMetadata only contains the LAST step's metadata, missing
+   * cache creation tokens from earlier steps. We must sum across all steps.
+   */
+  private async getAggregatedProviderMetadata(
+    streamInfo: WorkspaceStreamInfo,
+    timeoutMs = 1000
+  ): Promise<Record<string, unknown> | undefined> {
+    try {
+      const steps = await Promise.race([
+        streamInfo.streamResult.steps,
+        new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), timeoutMs)),
+      ]);
+
+      if (!steps || steps.length === 0) {
+        // Fall back to last step's provider metadata
+        return await streamInfo.streamResult.providerMetadata;
+      }
+
+      // If only one step, no aggregation needed
+      if (steps.length === 1) {
+        return steps[0].providerMetadata;
+      }
+
+      // Aggregate cache creation tokens across all steps
+      let totalCacheCreationTokens = 0;
+      let lastStepMetadata: Record<string, unknown> | undefined;
+
+      for (const step of steps) {
+        lastStepMetadata = step.providerMetadata;
+        const anthropicMeta = step.providerMetadata?.anthropic as
+          | { cacheCreationInputTokens?: number }
+          | undefined;
+        if (anthropicMeta?.cacheCreationInputTokens) {
+          totalCacheCreationTokens += anthropicMeta.cacheCreationInputTokens;
+        }
+      }
+
+      // If no cache creation tokens found, just return last step's metadata
+      if (totalCacheCreationTokens === 0) {
+        return lastStepMetadata;
+      }
+
+      // Merge aggregated cache creation tokens into the last step's metadata
+      return {
+        ...lastStepMetadata,
+        anthropic: {
+          ...(lastStepMetadata?.anthropic as Record<string, unknown> | undefined),
+          cacheCreationInputTokens: totalCacheCreationTokens,
+        },
+      };
+    } catch (error) {
+      log.debug("Could not aggregate provider metadata:", error);
+      return undefined;
+    }
   }
 
   /**
@@ -557,6 +628,9 @@ export class StreamManager extends EventEmitter {
       processingPromise: Promise.resolve(), // Placeholder, overwritten in startStream
       runtimeTempDir, // Stream-scoped temp directory for tool outputs
       runtime, // Runtime for temp directory cleanup
+      // Initialize cumulative tracking for multi-step streams
+      cumulativeUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      cumulativeProviderMetadata: undefined,
     };
 
     // Atomically register the stream
@@ -865,13 +939,27 @@ export class StreamManager extends EventEmitter {
             const finishStepPart = part as {
               type: "finish-step";
               usage: LanguageModelV2Usage;
+              providerMetadata?: Record<string, unknown>;
             };
+
+            // Update cumulative totals for this stream
+            streamInfo.cumulativeUsage = addUsage(streamInfo.cumulativeUsage, finishStepPart.usage);
+            streamInfo.cumulativeProviderMetadata = accumulateProviderMetadata(
+              streamInfo.cumulativeProviderMetadata,
+              finishStepPart.providerMetadata
+            );
+
+            // Track last step's data for context window display
+            streamInfo.lastStepUsage = finishStepPart.usage;
+            streamInfo.lastStepProviderMetadata = finishStepPart.providerMetadata;
 
             const usageEvent: UsageDeltaEvent = {
               type: "usage-delta",
               workspaceId: workspaceId as string,
               messageId: streamInfo.messageId,
-              usage: finishStepPart.usage,
+              usage: finishStepPart.usage, // For context window display
+              cumulativeUsage: streamInfo.cumulativeUsage, // For live cost display
+              cumulativeProviderMetadata: streamInfo.cumulativeProviderMetadata, // For live cache costs
             };
             this.emit("usage-delta", usageEvent);
             break;
@@ -896,8 +984,15 @@ export class StreamManager extends EventEmitter {
       // Check if stream completed successfully
       if (!streamInfo.abortController.signal.aborted) {
         // Get usage, duration, and provider metadata from stream result
+        // CRITICAL: Use totalUsage (via getStreamMetadata) and aggregated providerMetadata
+        // to correctly account for all steps in multi-tool-call conversations
         const { usage, duration } = await this.getStreamMetadata(streamInfo);
-        const providerMetadata = await streamInfo.streamResult.providerMetadata;
+        const providerMetadata = await this.getAggregatedProviderMetadata(streamInfo);
+
+        // For context window display, use last step's usage (inputTokens = current context size)
+        // This is stored in streamInfo during finish-step handling
+        const contextUsage = streamInfo.lastStepUsage;
+        const contextProviderMetadata = streamInfo.lastStepProviderMetadata;
 
         // Emit stream end event with parts preserved in temporal order
         const streamEndEvent: StreamEndEvent = {
@@ -907,8 +1002,10 @@ export class StreamManager extends EventEmitter {
           metadata: {
             ...streamInfo.initialMetadata, // AIService-provided metadata (systemMessageTokens, etc)
             model: streamInfo.model,
-            usage, // AI SDK normalized usage
-            providerMetadata, // Raw provider metadata
+            usage, // Total across all steps (for cost calculation)
+            contextUsage, // Last step only (for context window display)
+            providerMetadata, // Aggregated (for cost calculation)
+            contextProviderMetadata, // Last step (for context window display)
             duration,
           },
           parts: streamInfo.parts, // Parts array with temporal ordering (includes reasoning)

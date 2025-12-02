@@ -59,12 +59,21 @@ type DerivedState = Record<string, number>;
 /**
  * Usage metadata extracted from API responses (no tokenization).
  * Updates instantly when usage metadata arrives.
+ *
+ * For multi-step tool calls, cost and context usage differ:
+ * - usageHistory: Total usage per message (sum of all steps) for cost calculation
+ * - lastContextUsage: Last step's usage for context window display (inputTokens = actual context size)
  */
 export interface WorkspaceUsageState {
+  /** Usage history for cost calculation (total across all steps per message) */
   usageHistory: ChatUsageDisplay[];
+  /** Last message's context usage (last step only, for context window display) */
+  lastContextUsage?: ChatUsageDisplay;
   totalTokens: number;
-  /** Live usage during streaming (inputTokens = current context window) */
+  /** Live context usage during streaming (last step's inputTokens = current context window) */
   liveUsage?: ChatUsageDisplay;
+  /** Live cost usage during streaming (cumulative across all steps) */
+  liveCostUsage?: ChatUsageDisplay;
 }
 
 /**
@@ -441,6 +450,8 @@ export class WorkspaceStore {
 
       const messages = aggregator.getAllMessages();
       const model = aggregator.getCurrentModel();
+
+      // Collect usage history for cost calculation (total across all steps per message)
       const usageHistory = collectUsageHistory(messages, model);
 
       // Calculate total from usage history (now includes historical)
@@ -455,12 +466,47 @@ export class WorkspaceStore {
         0
       );
 
-      // Include active stream usage if currently streaming (already converted)
-      const activeStreamId = aggregator.getActiveStreamMessageId();
-      const rawUsage = activeStreamId ? aggregator.getActiveStreamUsage(activeStreamId) : undefined;
-      const liveUsage = rawUsage && model ? createDisplayUsage(rawUsage, model) : undefined;
+      // Get last message's context usage for context window display
+      // Uses contextUsage (last step) if available, falls back to usage for old messages
+      const lastContextUsage = (() => {
+        for (let i = messages.length - 1; i >= 0; i--) {
+          const msg = messages[i];
+          if (msg.role === "assistant") {
+            const rawUsage = msg.metadata?.contextUsage ?? msg.metadata?.usage;
+            const providerMeta =
+              msg.metadata?.contextProviderMetadata ?? msg.metadata?.providerMetadata;
+            if (rawUsage) {
+              const msgModel = msg.metadata?.model ?? model ?? "unknown";
+              return createDisplayUsage(rawUsage, msgModel, providerMeta);
+            }
+          }
+        }
+        return undefined;
+      })();
 
-      return { usageHistory, totalTokens, liveUsage };
+      // Include active stream usage if currently streaming
+      const activeStreamId = aggregator.getActiveStreamMessageId();
+
+      // Live context usage (last step's inputTokens = current context window)
+      const rawContextUsage = activeStreamId
+        ? aggregator.getActiveStreamUsage(activeStreamId)
+        : undefined;
+      const liveUsage =
+        rawContextUsage && model ? createDisplayUsage(rawContextUsage, model) : undefined;
+
+      // Live cost usage (cumulative across all steps, with accumulated cache creation tokens)
+      const rawCumulativeUsage = activeStreamId
+        ? aggregator.getActiveStreamCumulativeUsage(activeStreamId)
+        : undefined;
+      const rawCumulativeProviderMetadata = activeStreamId
+        ? aggregator.getActiveStreamCumulativeProviderMetadata(activeStreamId)
+        : undefined;
+      const liveCostUsage =
+        rawCumulativeUsage && model
+          ? createDisplayUsage(rawCumulativeUsage, model, rawCumulativeProviderMetadata)
+          : undefined;
+
+      return { usageHistory, lastContextUsage, totalTokens, liveUsage, liveCostUsage };
     });
   }
 

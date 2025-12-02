@@ -40,9 +40,11 @@ const createMockUsage = (
   }
 
   // Add recent usage
-  usageHistory.push(createUsageEntry(lastEntryTokens, model));
+  const recentUsage = createUsageEntry(lastEntryTokens, model);
+  usageHistory.push(recentUsage);
 
-  return { usageHistory, totalTokens: 0, liveUsage };
+  // lastContextUsage is the most recent context window state
+  return { usageHistory, lastContextUsage: recentUsage, totalTokens: 0, liveUsage };
 };
 
 describe("checkAutoCompaction", () => {
@@ -136,17 +138,17 @@ describe("checkAutoCompaction", () => {
 
     test("includes all token types in calculation", () => {
       // Create usage with all token types specified
+      const usageEntry = {
+        input: { tokens: 10_000 },
+        cached: { tokens: 5_000 },
+        cacheCreate: { tokens: 2_000 },
+        output: { tokens: 3_000 },
+        reasoning: { tokens: 1_000 },
+        model: KNOWN_MODELS.SONNET.id,
+      };
       const usage: WorkspaceUsageState = {
-        usageHistory: [
-          {
-            input: { tokens: 10_000 },
-            cached: { tokens: 5_000 },
-            cacheCreate: { tokens: 2_000 },
-            output: { tokens: 3_000 },
-            reasoning: { tokens: 1_000 },
-            model: KNOWN_MODELS.SONNET.id,
-          },
-        ],
+        usageHistory: [usageEntry],
+        lastContextUsage: usageEntry,
         totalTokens: 0,
       };
 
@@ -232,17 +234,17 @@ describe("checkAutoCompaction", () => {
     });
 
     test("handles zero tokens gracefully", () => {
+      const zeroEntry = {
+        input: { tokens: 0 },
+        cached: { tokens: 0 },
+        cacheCreate: { tokens: 0 },
+        output: { tokens: 0 },
+        reasoning: { tokens: 0 },
+        model: KNOWN_MODELS.SONNET.id,
+      };
       const usage: WorkspaceUsageState = {
-        usageHistory: [
-          {
-            input: { tokens: 0 },
-            cached: { tokens: 0 },
-            cacheCreate: { tokens: 0 },
-            output: { tokens: 0 },
-            reasoning: { tokens: 0 },
-            model: KNOWN_MODELS.SONNET.id,
-          },
-        ],
+        usageHistory: [zeroEntry],
+        lastContextUsage: zeroEntry,
         totalTokens: 0,
       };
 
@@ -357,7 +359,11 @@ describe("checkAutoCompaction", () => {
     test("shouldForceCompact triggers with empty history but liveUsage near limit", () => {
       // Bug fix: empty history but liveUsage should still trigger
       const liveUsage = createUsageEntry(SONNET_MAX_TOKENS - BUFFER);
-      const usage: WorkspaceUsageState = { usageHistory: [], totalTokens: 0, liveUsage };
+      const usage: WorkspaceUsageState = {
+        usageHistory: [],
+        totalTokens: 0,
+        liveUsage,
+      };
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
 
       expect(result.shouldForceCompact).toBe(true);

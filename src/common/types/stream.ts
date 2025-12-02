@@ -36,8 +36,14 @@ export interface StreamEndEvent {
   // Structured metadata from backend - directly mergeable with MuxMetadata
   metadata: {
     model: string;
+    // Total usage across all steps (for cost calculation)
     usage?: LanguageModelV2Usage;
+    // Last step's usage only (for context window display - inputTokens = current context size)
+    contextUsage?: LanguageModelV2Usage;
+    // Aggregated provider metadata across all steps (for cost calculation)
     providerMetadata?: Record<string, unknown>;
+    // Last step's provider metadata (for context window cache display)
+    contextProviderMetadata?: Record<string, unknown>;
     duration?: number;
     systemMessageTokens?: number;
     historySequence?: number; // Present when loading from history
@@ -129,7 +135,12 @@ export interface UsageDeltaEvent {
   type: "usage-delta";
   workspaceId: string;
   messageId: string;
-  usage: LanguageModelV2Usage; // This step's usage (inputTokens = full context)
+  // This step's usage (inputTokens = current context size, for context window display)
+  usage: LanguageModelV2Usage;
+  // Cumulative usage across all steps so far (for live cost display)
+  cumulativeUsage: LanguageModelV2Usage;
+  // Cumulative provider metadata across all steps (for live cost display with cache tokens)
+  cumulativeProviderMetadata?: Record<string, unknown>;
 }
 
 export type AIServiceEvent =

@@ -94,8 +94,9 @@ export function checkAutoCompaction(
     };
   }
 
-  // Current usage: live when streaming, else last historical (pattern from CostsTab)
-  const lastUsage = usage.usageHistory[usage.usageHistory.length - 1];
+  // Current usage: live when streaming, else last historical
+  // Use lastContextUsage (last step) for accurate context window size
+  const lastUsage = usage.lastContextUsage;
   const currentUsage = usage.liveUsage ?? lastUsage;
 
   // Force-compact when approaching context limit (can trigger even with empty history if streaming)
