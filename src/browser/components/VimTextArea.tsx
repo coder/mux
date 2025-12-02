@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { UIMode } from "@/common/types/mode";
 import * as vim from "@/browser/utils/vim";
 import { TooltipWrapper, Tooltip, HelpIndicator } from "./Tooltip";
@@ -64,11 +64,15 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
     const yankBufferRef = useRef<string>("");
 
     // Auto-resize when value changes
-    useEffect(() => {
+    // Uses useLayoutEffect to measure and set height synchronously before paint,
+    // preventing flash of wrong size on initial render
+    useLayoutEffect(() => {
       const el = textareaRef.current;
       if (!el) return;
+      // Reset to auto to get accurate scrollHeight measurement
       el.style.height = "auto";
       const max = window.innerHeight * 0.5; // 50vh
+      // scrollHeight gives the full content height; clamp to max
       el.style.height = Math.min(el.scrollHeight, max) + "px";
     }, [value]);
 
