@@ -1,6 +1,6 @@
 # mux VS Code Extension
 
-Open [mux](https://cmux.io) workspaces from VS Code or Cursor.
+Open [mux](https://mux.coder.com) workspaces from VS Code or Cursor.
 
 ## Installation
 
