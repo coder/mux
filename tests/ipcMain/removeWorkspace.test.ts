@@ -799,5 +799,201 @@ describeIntegration("Workspace deletion integration tests", () => {
       },
       TEST_TIMEOUT_SSH_MS
     );
+
+    test.concurrent(
+      "should allow deletion of squash-merged branches without force flag",
+      async () => {
+        const env = await createTestEnvironment();
+        const tempGitRepo = await createTempGitRepo();
+
+        try {
+          const branchName = generateBranchName("squash-merge-test");
+          const runtimeConfig = getRuntimeConfig(branchName);
+          const { workspaceId } = await createWorkspaceWithInit(
+            env,
+            tempGitRepo,
+            branchName,
+            runtimeConfig,
+            true, // waitForInit
+            true // isSSH
+          );
+
+          // Configure git for committing
+          await executeBash(env, workspaceId, 'git config user.email "test@example.com"');
+          await executeBash(env, workspaceId, 'git config user.name "Test User"');
+
+          // Get the current workspace path (inside SSH container)
+          const pwdResult = await executeBash(env, workspaceId, "pwd");
+          const workspacePath = pwdResult.output.trim();
+
+          // Create a bare repo inside the SSH container to act as "origin"
+          // This avoids issues with host paths not being accessible in container
+          const originPath = `${workspacePath}/../.test-origin-${branchName}`;
+          await executeBash(env, workspaceId, `git clone --bare . "${originPath}"`);
+
+          // Point origin to the bare repo (add if doesn't exist, set-url if it does)
+          await executeBash(
+            env,
+            workspaceId,
+            `git remote get-url origin >/dev/null 2>&1 && git remote set-url origin "${originPath}" || git remote add origin "${originPath}"`
+          );
+
+          // Create feature commits on the branch
+          await executeBash(env, workspaceId, 'echo "feature1" > feature.txt');
+          await executeBash(env, workspaceId, "git add feature.txt");
+          await executeBash(env, workspaceId, 'git commit -m "Feature commit 1"');
+
+          await executeBash(env, workspaceId, 'echo "feature2" >> feature.txt');
+          await executeBash(env, workspaceId, "git add feature.txt");
+          await executeBash(env, workspaceId, 'git commit -m "Feature commit 2"');
+
+          // Get the feature branch's final file content
+          const featureContent = await executeBash(env, workspaceId, "cat feature.txt");
+
+          // Simulate squash-merge: create a temp worktree, add the squash commit to main, push
+          // We need to work around bare repo limitations by using a temp checkout
+          const tempCheckoutPath = `${workspacePath}/../.test-temp-checkout-${branchName}`;
+          await executeBash(
+            env,
+            workspaceId,
+            `git clone "${originPath}" "${tempCheckoutPath}" && ` +
+              `cd "${tempCheckoutPath}" && ` +
+              `git config user.email "test@example.com" && ` +
+              `git config user.name "Test User" && ` +
+              // Checkout main (or master, depending on git version)
+              `(git checkout main 2>/dev/null || git checkout master) && ` +
+              // Create squash commit with same content (use printf '%s\n' to match echo's newline)
+              `printf '%s\\n' '${featureContent.output.trim().replace(/'/g, "'\\''")}' > feature.txt && ` +
+              `git add feature.txt && ` +
+              `git commit -m "Squash: Feature commits" && ` +
+              `git push origin HEAD`
+          );
+
+          // Cleanup temp checkout
+          await executeBash(env, workspaceId, `rm -rf "${tempCheckoutPath}"`);
+
+          // Fetch the updated origin in the workspace
+          await executeBash(env, workspaceId, "git fetch origin");
+
+          // Verify we have unpushed commits (branch commits are not ancestors of origin/main)
+          const logResult = await executeBash(
+            env,
+            workspaceId,
+            "git log --branches --not --remotes --oneline"
+          );
+          // Should show commits since our branch commits != squash commit SHA
+          expect(logResult.output.trim()).not.toBe("");
+
+          // Now attempt deletion without force - should succeed because content matches
+          const deleteResult = await env.mockIpcRenderer.invoke(
+            IPC_CHANNELS.WORKSPACE_REMOVE,
+            workspaceId
+          );
+
+          // Should succeed - squash-merge detection should recognize content is in main
+          expect(deleteResult.success).toBe(true);
+
+          // Cleanup the bare repo we created
+          // Note: This runs after workspace is deleted, may fail if path is gone
+          try {
+            using cleanupProc = execAsync(`rm -rf "${originPath}"`);
+            await cleanupProc.result;
+          } catch {
+            // Ignore cleanup errors
+          }
+
+          // Verify workspace was removed from config
+          const config = env.config.loadConfigOrDefault();
+          const project = config.projects.get(tempGitRepo);
+          if (project) {
+            const stillInConfig = project.workspaces.some((w) => w.id === workspaceId);
+            expect(stillInConfig).toBe(false);
+          }
+        } finally {
+          await cleanupTestEnvironment(env);
+          await cleanupTempGitRepo(tempGitRepo);
+        }
+      },
+      TEST_TIMEOUT_SSH_MS
+    );
+
+    test.concurrent(
+      "should block deletion when branch has genuinely unmerged content",
+      async () => {
+        const env = await createTestEnvironment();
+        const tempGitRepo = await createTempGitRepo();
+
+        try {
+          const branchName = generateBranchName("unmerged-content-test");
+          const runtimeConfig = getRuntimeConfig(branchName);
+          const { workspaceId } = await createWorkspaceWithInit(
+            env,
+            tempGitRepo,
+            branchName,
+            runtimeConfig,
+            true, // waitForInit
+            true // isSSH
+          );
+
+          // Configure git for committing
+          await executeBash(env, workspaceId, 'git config user.email "test@example.com"');
+          await executeBash(env, workspaceId, 'git config user.name "Test User"');
+
+          // Get the current workspace path (inside SSH container)
+          const pwdResult = await executeBash(env, workspaceId, "pwd");
+          const workspacePath = pwdResult.output.trim();
+
+          // Create a bare repo inside the SSH container to act as "origin"
+          const originPath = `${workspacePath}/../.test-origin-${branchName}`;
+          await executeBash(env, workspaceId, `git clone --bare . "${originPath}"`);
+
+          // Point origin to the bare repo (add if doesn't exist, set-url if it does)
+          await executeBash(
+            env,
+            workspaceId,
+            `git remote get-url origin >/dev/null 2>&1 && git remote set-url origin "${originPath}" || git remote add origin "${originPath}"`
+          );
+
+          // Create feature commits with unique content (not in origin)
+          await executeBash(env, workspaceId, 'echo "unique-unmerged-content" > unique.txt');
+          await executeBash(env, workspaceId, "git add unique.txt");
+          await executeBash(env, workspaceId, 'git commit -m "Unique commit"');
+
+          // Fetch origin (main doesn't have our content - we didn't push)
+          await executeBash(env, workspaceId, "git fetch origin");
+
+          // Attempt deletion without force - should fail because content differs
+          const deleteResult = await env.mockIpcRenderer.invoke(
+            IPC_CHANNELS.WORKSPACE_REMOVE,
+            workspaceId
+          );
+
+          // Should fail - genuinely unmerged content
+          expect(deleteResult.success).toBe(false);
+          expect(deleteResult.error).toMatch(/unpushed|changes/i);
+
+          // Verify workspace still exists
+          const stillExists = await workspaceExists(env, workspaceId);
+          expect(stillExists).toBe(true);
+
+          // Cleanup: force delete
+          await env.mockIpcRenderer.invoke(IPC_CHANNELS.WORKSPACE_REMOVE, workspaceId, {
+            force: true,
+          });
+
+          // Cleanup the bare repo
+          try {
+            using cleanupProc = execAsync(`rm -rf "${originPath}"`);
+            await cleanupProc.result;
+          } catch {
+            // Ignore cleanup errors
+          }
+        } finally {
+          await cleanupTestEnvironment(env);
+          await cleanupTempGitRepo(tempGitRepo);
+        }
+      },
+      TEST_TIMEOUT_SSH_MS
+    );
   });
 });

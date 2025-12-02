@@ -1087,23 +1087,59 @@ export class SSHRuntime implements Runtime {
                 # Get current branch for better error messaging
                 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
                 
-                # Get default branch (try origin/HEAD, fallback to main, then master)
-                DEFAULT=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-                if [ -z "$DEFAULT" ]; then
-                  if git rev-parse --verify origin/main >/dev/null 2>&1; then
-                    DEFAULT="main"
-                  elif git rev-parse --verify origin/master >/dev/null 2>&1; then
-                    DEFAULT="master"
+                # Get default branch (prefer main/master over origin/HEAD since origin/HEAD
+                # might point to a feature branch in some setups)
+                if git rev-parse --verify origin/main >/dev/null 2>&1; then
+                  DEFAULT="main"
+                elif git rev-parse --verify origin/master >/dev/null 2>&1; then
+                  DEFAULT="master"
+                else
+                  # Fallback to origin/HEAD if main/master don't exist
+                  DEFAULT=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+                fi
+                
+                # Check for squash-merge: if all changed files match origin/$DEFAULT, content is merged
+                if [ -n "$DEFAULT" ]; then
+                  # Fetch latest to ensure we have current remote state
+                  git fetch origin "$DEFAULT" --quiet 2>/dev/null || true
+                  
+                  # Get merge-base between current branch and default
+                  MERGE_BASE=$(git merge-base "origin/$DEFAULT" HEAD 2>/dev/null)
+                  if [ -n "$MERGE_BASE" ]; then
+                    # Get files changed on this branch since fork point
+                    CHANGED_FILES=$(git diff --name-only "$MERGE_BASE" HEAD 2>/dev/null)
+                    
+                    if [ -n "$CHANGED_FILES" ]; then
+                      # Check if all changed files match what's in origin/$DEFAULT
+                      ALL_MERGED=true
+                      while IFS= read -r f; do
+                        # Compare file content between HEAD and origin/$DEFAULT
+                        # If file doesn't exist in one but exists in other, they differ
+                        if ! git diff --quiet "HEAD:$f" "origin/$DEFAULT:$f" 2>/dev/null; then
+                          ALL_MERGED=false
+                          break
+                        fi
+                      done <<< "$CHANGED_FILES"
+                      
+                      if $ALL_MERGED; then
+                        # All changes are in default branch - safe to delete (squash-merge case)
+                        exit 0
+                      fi
+                    else
+                      # No changed files means nothing to merge - safe to delete
+                      exit 0
+                    fi
                   fi
                 fi
                 
-                # If we have both branch and default, use show-branch for better output
+                # If we get here, there are real unpushed changes
+                # Show helpful output for debugging
                 if [ -n "$BRANCH" ] && [ -n "$DEFAULT" ] && git show-branch "$BRANCH" "origin/$DEFAULT" >/dev/null 2>&1; then
                   echo "Branch status compared to origin/$DEFAULT:" >&2
                   echo "" >&2
                   git show-branch "$BRANCH" "origin/$DEFAULT" 2>&1 | head -20 >&2
                   echo "" >&2
-                  echo "Note: If your PR was squash-merged, these commits are already in origin/$DEFAULT and safe to delete." >&2
+                  echo "Note: Branch has changes not yet in origin/$DEFAULT." >&2
                 else
                   # Fallback to just showing the commit list
                   echo "$unpushed" | head -10 >&2
