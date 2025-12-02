@@ -7,6 +7,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 
 export type VoiceInputState = "idle" | "recording" | "transcribing";
 
@@ -16,6 +17,13 @@ export interface UseVoiceInputOptions {
   /** Called after successful transcription if stop({ send: true }) was used */
   onSend?: () => void;
   openAIKeySet: boolean;
+  /**
+   * When true, hook manages global keybinds during recording:
+   * - Space: stop and send (requires release after start)
+   * - Escape: cancel
+   * - Ctrl+D / Cmd+D: stop without sending
+   */
+  useRecordingKeybinds?: boolean;
 }
 
 export interface UseVoiceInputResult {
@@ -235,6 +243,48 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
       releaseStream();
     };
   }, [releaseStream]);
+
+  // ---------------------------------------------------------------------------
+  // Recording keybinds (when useRecordingKeybinds is true)
+  // ---------------------------------------------------------------------------
+
+  // Track if space is held to prevent start→send when user holds space
+  const spaceHeldRef = useRef(false);
+
+  useEffect(() => {
+    if (!options.useRecordingKeybinds || state !== "recording") {
+      spaceHeldRef.current = false;
+      return;
+    }
+
+    // Assume space is held when recording starts (conservative default)
+    spaceHeldRef.current = true;
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === " ") spaceHeldRef.current = false;
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === " " && !spaceHeldRef.current) {
+        e.preventDefault();
+        stop({ send: true });
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        cancel();
+      } else if (matchesKeybind(e, KEYBINDS.TOGGLE_VOICE_INPUT)) {
+        e.preventDefault();
+        stop();
+      }
+    };
+
+    // Use capture phase to intercept before focused elements consume the event
+    window.addEventListener("keyup", handleKeyUp, true);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      window.removeEventListener("keyup", handleKeyUp, true);
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [options.useRecordingKeybinds, state, stop, cancel]);
 
   // ---------------------------------------------------------------------------
   // Return
