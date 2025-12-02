@@ -37,7 +37,7 @@
     "dist:win": "make dist-win",
     "dist:linux": "make dist-linux",
     "docs": "make docs",
-    "docs:build": "make docs-build",
+    "docs:serve": "make docs-server",
     "docs:watch": "make docs-watch",
     "storybook": "make storybook",
     "storybook:build": "make storybook-build",

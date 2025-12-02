@@ -5,11 +5,11 @@ This directory contains the source for mux documentation built with [mdbook](htt
 ## Quick Start
 
 ```bash
-# Serve docs with hot reload (opens in browser)
+# Build docs
 bun docs
 
-# Build docs
-bun docs:build
+# Serve docs with hot reload (opens in browser)
+bun docs:serve
 
 # Watch for changes (no server)
 bun docs:watch
