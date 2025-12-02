@@ -984,9 +984,26 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
               <button
                 type="button"
                 onClick={voiceInput.isListening ? voiceInput.toggleListening : undefined}
+                onKeyDown={(e) => {
+                  // Space stops recording and sends immediately
+                  if (e.key === " " && voiceInput.isListening) {
+                    e.preventDefault();
+                    voiceInput.stopListening();
+                    // Small delay to let transcription complete, then send
+                    // The transcript callback will update input, then we send
+                    const checkAndSend = () => {
+                      if (!voiceInput.isTranscribing) {
+                        void handleSend();
+                      } else {
+                        setTimeout(checkAndSend, 100);
+                      }
+                    };
+                    setTimeout(checkAndSend, 100);
+                  }
+                }}
                 disabled={voiceInput.isTranscribing}
                 className={cn(
-                  "flex min-h-[60px] w-full items-center justify-center gap-3 rounded-md border-2 px-4 py-4 transition-all",
+                  "flex min-h-[60px] w-full items-center justify-center gap-3 rounded-md border px-4 py-4 transition-all",
                   voiceInput.isListening
                     ? "cursor-pointer border-blue-500 bg-blue-500/10"
                     : "cursor-wait border-amber-500 bg-amber-500/10"
@@ -1016,7 +1033,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                   )}
                 >
                   {voiceInput.isListening
-                    ? `Recording... tap to stop (${formatKeybind(KEYBINDS.TOGGLE_VOICE_INPUT)})`
+                    ? `Recording... space to send, ${formatKeybind(KEYBINDS.TOGGLE_VOICE_INPUT)} to stop`
                     : "Transcribing..."}
                 </span>
                 <div className="flex items-center gap-1">
