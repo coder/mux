@@ -1,4 +1,4 @@
-import type { ThemeMode } from "@/browser/contexts/ThemeContext";
+import { THEME_OPTIONS, type ThemeMode } from "@/browser/contexts/ThemeContext";
 import type { CommandAction } from "@/browser/contexts/CommandRegistryContext";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import type { ThinkingLevel } from "@/common/types/thinking";
@@ -319,28 +319,22 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     const list: CommandAction[] = [
       {
         id: CommandIds.themeToggle(),
-        title: `Switch to ${p.theme === "dark" ? "Light" : "Dark"} Theme`,
+        title: "Cycle Theme",
         section: section.appearance,
         run: () => p.onToggleTheme(),
       },
     ];
 
-    if (p.theme !== "dark") {
-      list.push({
-        id: CommandIds.themeSet("dark"),
-        title: "Use Dark Theme",
-        section: section.appearance,
-        run: () => p.onSetTheme("dark"),
-      });
-    }
-
-    if (p.theme !== "light") {
-      list.push({
-        id: CommandIds.themeSet("light"),
-        title: "Use Light Theme",
-        section: section.appearance,
-        run: () => p.onSetTheme("light"),
-      });
+    // Add command for each theme the user isn't currently using
+    for (const opt of THEME_OPTIONS) {
+      if (p.theme !== opt.value) {
+        list.push({
+          id: CommandIds.themeSet(opt.value),
+          title: `Use ${opt.label} Theme`,
+          section: section.appearance,
+          run: () => p.onSetTheme(opt.value),
+        });
+      }
     }
 
     return list;

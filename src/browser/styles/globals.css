@@ -474,6 +474,427 @@
   /* Theme override hook: redeclare tokens inside this block to swap palettes */
 }
 
+/* Solarized Light Theme */
+:root[data-theme="solarized-light"] {
+  color-scheme: light;
+
+  /* Solarized palette:
+     base03  #002b36  base3   #fdf6e3
+     base02  #073642  base2   #eee8d5
+     base01  #586e75  base1   #93a1a1
+     base00  #657b83  base0   #839496
+     yellow  #b58900  orange  #cb4b16
+     red     #dc322f  magenta #d33682
+     violet  #6c71c4  blue    #268bd2
+     cyan    #2aa198  green   #859900
+  */
+
+  --color-plan-mode: hsl(205 69% 49%); /* blue */
+  --color-plan-mode-hover: hsl(205 69% 58%);
+  --color-plan-mode-light: hsl(205 69% 68%);
+  --color-plan-mode-alpha: hsla(205 69% 49% / 0.1);
+
+  --color-exec-mode: hsl(237 43% 60%); /* violet */
+  --color-exec-mode-hover: hsl(237 43% 70%);
+  --color-exec-mode-light: hsl(237 43% 78%);
+
+  --color-edit-mode: hsl(68 100% 30%); /* green */
+  --color-edit-mode-hover: hsl(68 100% 40%);
+  --color-edit-mode-light: hsl(68 100% 52%);
+
+  --color-read: hsl(205 69% 49%);
+  --color-editing-mode: hsl(45 100% 35%); /* yellow */
+  --color-editing-mode-alpha: hsla(45 100% 35% / 0.1);
+  --color-pending: hsl(18 89% 44%); /* orange */
+
+  --color-debug-mode: hsl(205 69% 49%);
+  --color-debug-light: hsl(205 69% 62%);
+  --color-debug-text: hsl(205 69% 35%);
+
+  --color-thinking-mode: hsl(237 43% 60%);
+  --color-thinking-mode-light: hsl(237 43% 70%);
+  --color-thinking-border: hsl(237 43% 60%);
+
+  /* Background & Layout - Solarized base colors */
+  --color-background: #fdf6e3; /* base3 */
+  --color-background-secondary: #eee8d5; /* base2 */
+  --color-border: #93a1a1; /* base1 */
+  --color-foreground: #657b83; /* base00 */
+  --color-text: #657b83;
+  --color-text-light: #586e75; /* base01 */
+  --color-text-secondary: #839496; /* base0 */
+  --color-muted-foreground: #839496;
+  --color-secondary: #93a1a1;
+
+  --color-code-bg: #eee8d5;
+
+  --color-button-bg: #eee8d5;
+  --color-button-text: #586e75;
+  --color-button-hover: #ddd6c3;
+
+  --color-user-surface: #eee8d5;
+  --color-user-border: #93a1a1;
+  --color-user-border-hover: #839496;
+  --color-user-text: #586e75;
+  --color-message-debug-bg: #eee8d5;
+  --color-message-debug-border: #93a1a1;
+  --color-message-debug-text: #586e75;
+  --color-message-hidden-bg: #f5efdc;
+  --color-attachment-border: #93a1a1;
+  --color-line-number-bg: #eee8d5;
+  --color-line-number-text: #839496;
+  --color-line-number-border: #93a1a1;
+  --color-assistant-border: #268bd2; /* blue */
+  --color-hover-foreground: #073642;
+  --color-command-surface: #fdf6e3;
+  --color-command-border: #93a1a1;
+  --color-command-input: #eee8d5;
+  --color-command-input-border: #93a1a1;
+  --color-command-foreground: #586e75;
+  --color-command-subdued: #839496;
+  --color-sidebar-tab-active: #586e75;
+  --color-assistant-border-hover: #1a6aa5;
+  --color-message-header: #586e75;
+
+  --color-token-prompt: #657b83;
+  --color-token-completion: #268bd2;
+  --color-token-variable: #268bd2;
+  --color-token-fixed: #657b83;
+  --color-token-input: #859900;
+  --color-token-output: #268bd2;
+  --color-token-cached: #839496;
+
+  --surface-plan-gradient: linear-gradient(135deg, color-mix(in srgb, var(--color-plan-mode), transparent 94%) 0%, color-mix(in srgb, var(--color-plan-mode), transparent 97%) 100%);
+  --surface-plan-border: color-mix(in srgb, var(--color-plan-mode), transparent 78%);
+  --surface-plan-border-subtle: color-mix(in srgb, var(--color-plan-mode), transparent 85%);
+  --surface-plan-border-strong: color-mix(in srgb, var(--color-plan-mode), transparent 70%);
+  --surface-plan-divider: color-mix(in srgb, var(--color-plan-mode), transparent 86%);
+  --surface-plan-chip-bg: color-mix(in srgb, var(--color-plan-mode), transparent 94%);
+  --surface-plan-chip-hover: color-mix(in srgb, var(--color-plan-mode), transparent 90%);
+  --surface-plan-chip-active: color-mix(in srgb, var(--color-plan-mode), transparent 72%);
+  --surface-plan-chip-border: color-mix(in srgb, var(--color-plan-mode), transparent 78%);
+  --surface-plan-chip-border-strong: color-mix(in srgb, var(--color-plan-mode), transparent 68%);
+  --surface-plan-neutral-border: hsl(186 8% 55% / 0.5);
+
+  --surface-assistant-chip-bg: hsl(from var(--color-assistant-border) h s l / 0.15);
+  --surface-assistant-chip-hover: hsl(from var(--color-assistant-border) h s l / 0.45);
+  --surface-assistant-chip-border: hsl(from var(--color-assistant-border) h s l / 0.45);
+  --surface-assistant-chip-border-strong: hsl(from var(--color-assistant-border) h s l / 0.65);
+
+  --border-warning-dashed: color-mix(in srgb, var(--color-warning), transparent 55%);
+
+  --color-toggle-bg: #eee8d5;
+  --color-toggle-active: #ddd6c3;
+  --color-toggle-hover: #e5dfcc;
+  --color-toggle-text: #839496;
+  --color-toggle-text-active: #586e75;
+  --color-toggle-text-hover: #657b83;
+
+  --color-interrupted: #cb4b16; /* orange */
+  --color-review-accent: #b58900; /* yellow */
+  --color-git-dirty: #cb4b16;
+  --color-error: #dc322f; /* red */
+  --color-error-bg: #fce8e7;
+
+  --color-input-bg: #fdf6e3;
+  --color-input-text: #586e75;
+  --color-input-border: #268bd2;
+  --color-input-border-focus: #2aa198; /* cyan */
+
+  --color-scrollbar-track: #eee8d5;
+  --color-scrollbar-thumb: #93a1a1;
+  --color-scrollbar-thumb-hover: #839496;
+
+  --color-muted: #839496;
+  --color-muted-light: #93a1a1;
+  --color-muted-dark: #657b83;
+  --color-placeholder: #839496;
+  --color-subtle: #93a1a1;
+  --color-dim: #839496;
+  --color-light: #657b83;
+  --color-lighter: #839496;
+  --color-bright: #268bd2;
+  --color-subdued: #839496;
+  --color-label: #657b83;
+  --color-gray: #839496;
+  --color-medium: #93a1a1;
+
+  --color-border-light: #93a1a1;
+  --color-border-medium: #839496;
+  --color-border-darker: #657b83;
+  --color-border-subtle: #93a1a1;
+  --color-border-gray: #93a1a1;
+
+  --color-dark: #fdf6e3;
+  --color-darker: #eee8d5;
+  --color-hover: #e5dfcc;
+  --color-bg-medium: #ddd6c3;
+  --color-bg-light: #d5ceb8;
+  --color-bg-subtle: #eee8d5;
+
+  --color-separator: #eee8d5;
+  --color-separator-light: #f5efdc;
+  --color-modal-bg: #fdf6e3;
+
+  --color-accent: #268bd2; /* blue */
+  --color-accent-hover: #1a7bc2;
+  --color-accent-dark: #1a6aa5;
+  --color-accent-darker: #155988;
+  --color-accent-light: #4ea4dc;
+
+  --color-success: #859900; /* green */
+  --color-success-light: #9db200;
+  --color-on-success: #fdf6e3;
+
+  --color-danger: #dc322f; /* red */
+  --color-danger-light: #e35553;
+  --color-danger-soft: #eb8583;
+  --color-on-danger: #fdf6e3;
+
+  --color-warning: #b58900; /* yellow */
+  --color-warning-light: #cb9a00;
+
+  --color-code-type: #2aa198; /* cyan */
+  --color-code-keyword: #268bd2; /* blue */
+
+  --color-toast-success-bg: hsla(205 69% 49% / 0.18);
+  --color-toast-success-text: #1a6aa5;
+  --color-toast-error-bg: hsla(1 79% 53% / 0.18);
+  --color-toast-error-text: #dc322f;
+  --color-toast-error-border: #dc322f;
+  --color-toast-fatal-bg: #fce8e7;
+  --color-toast-fatal-border: #e8a5a3;
+
+  --color-danger-overlay: hsla(1 79% 53% / 0.12);
+  --color-warning-overlay: hsla(45 100% 35% / 0.12);
+  --color-gray-overlay: hsla(186 8% 46% / 0.08);
+  --color-white-overlay-light: hsla(186 13% 23% / 0.04);
+  --color-white-overlay: hsla(186 13% 23% / 0.08);
+  --color-selection: hsla(205 69% 49% / 0.3);
+  --color-vim-status: hsla(186 8% 46% / 0.6);
+  --color-code-keyword-overlay-light: hsla(205 69% 49% / 0.16);
+  --color-code-keyword-overlay: hsla(205 69% 49% / 0.32);
+
+  --color-info-light: #e35553;
+  --color-info-yellow: #cb9a00;
+
+  --color-review-bg-blue: #d3e8f7;
+  --color-review-bg-info: #c9e4e2;
+  --color-review-bg-warning: #f5e6c0;
+  --color-review-warning: #8a6b00;
+  --color-review-warning-medium: #a07d00;
+  --color-review-warning-light: #faf0d0;
+
+  --color-error-bg-dark: #f5d5d4;
+
+  --radius: 0.5rem;
+}
+
+/* Solarized Dark Theme */
+:root[data-theme="solarized-dark"] {
+  color-scheme: dark;
+
+  --color-plan-mode: hsl(205 69% 49%); /* blue */
+  --color-plan-mode-hover: hsl(205 69% 58%);
+  --color-plan-mode-light: hsl(205 69% 68%);
+  --color-plan-mode-alpha: hsla(205 69% 49% / 0.1);
+
+  --color-exec-mode: hsl(237 43% 60%); /* violet */
+  --color-exec-mode-hover: hsl(237 43% 70%);
+  --color-exec-mode-light: hsl(237 43% 78%);
+
+  --color-edit-mode: hsl(68 100% 30%); /* green */
+  --color-edit-mode-hover: hsl(68 100% 40%);
+  --color-edit-mode-light: hsl(68 100% 52%);
+
+  --color-read: hsl(205 69% 49%);
+  --color-editing-mode: hsl(45 100% 35%); /* yellow */
+  --color-editing-mode-alpha: hsla(45 100% 35% / 0.1);
+  --color-pending: hsl(18 89% 44%); /* orange */
+
+  --color-debug-mode: hsl(205 69% 49%);
+  --color-debug-light: hsl(205 69% 62%);
+  --color-debug-text: hsl(205 69% 70%);
+
+  --color-thinking-mode: hsl(237 43% 60%);
+  --color-thinking-mode-light: hsl(237 43% 70%);
+  --color-thinking-border: hsl(237 43% 60%);
+
+  /* Background & Layout - Solarized dark base colors */
+  --color-background: #002b36; /* base03 */
+  --color-background-secondary: #073642; /* base02 */
+  --color-border: #586e75; /* base01 */
+  --color-foreground: #839496; /* base0 */
+  --color-text: #839496;
+  --color-text-light: #93a1a1; /* base1 */
+  --color-text-secondary: #657b83; /* base00 */
+  --color-muted-foreground: #657b83;
+  --color-secondary: #586e75;
+
+  --color-code-bg: #073642;
+
+  --color-button-bg: #073642;
+  --color-button-text: #93a1a1;
+  --color-button-hover: #0a4555;
+
+  --color-user-surface: hsla(192 100% 11% / 0.6);
+  --color-user-border: hsla(194 14% 40% / 0.4);
+  --color-user-border-hover: hsla(194 14% 40% / 0.6);
+  --color-user-text: #93a1a1;
+  --color-message-debug-bg: rgba(7, 54, 66, 0.6);
+  --color-message-debug-border: rgba(88, 110, 117, 0.4);
+  --color-message-debug-text: #93a1a1;
+  --color-message-hidden-bg: rgba(7, 54, 66, 0.3);
+  --color-attachment-border: rgba(88, 110, 117, 0.4);
+  --color-line-number-bg: rgba(0, 43, 54, 0.5);
+  --color-line-number-text: #586e75;
+  --color-line-number-border: rgba(88, 110, 117, 0.3);
+  --color-assistant-border: #268bd2; /* blue */
+  --color-hover-foreground: #fdf6e3;
+  --color-command-surface: #073642;
+  --color-command-border: #586e75;
+  --color-command-input: #002b36;
+  --color-command-input-border: hsla(194 14% 40% / 0.3);
+  --color-command-foreground: #839496;
+  --color-command-subdued: #657b83;
+  --color-sidebar-tab-active: #fdf6e3;
+  --color-assistant-border-hover: #4ea4dc;
+  --color-message-header: #93a1a1;
+
+  --color-token-prompt: #657b83;
+  --color-token-completion: #268bd2;
+  --color-token-variable: #268bd2;
+  --color-token-fixed: #657b83;
+  --color-token-input: #859900;
+  --color-token-output: #268bd2;
+  --color-token-cached: #586e75;
+
+  --surface-plan-gradient: linear-gradient(135deg, color-mix(in srgb, var(--color-plan-mode), transparent 92%) 0%, color-mix(in srgb, var(--color-plan-mode), transparent 95%) 100%);
+  --surface-plan-border: color-mix(in srgb, var(--color-plan-mode), transparent 70%);
+  --surface-plan-border-subtle: color-mix(in srgb, var(--color-plan-mode), transparent 80%);
+  --surface-plan-border-strong: color-mix(in srgb, var(--color-plan-mode), transparent 60%);
+  --surface-plan-divider: color-mix(in srgb, var(--color-plan-mode), transparent 80%);
+  --surface-plan-chip-bg: color-mix(in srgb, var(--color-plan-mode), transparent 90%);
+  --surface-plan-chip-hover: color-mix(in srgb, var(--color-plan-mode), transparent 85%);
+  --surface-plan-chip-active: color-mix(in srgb, var(--color-plan-mode), transparent 65%);
+  --surface-plan-chip-border: color-mix(in srgb, var(--color-plan-mode), transparent 70%);
+  --surface-plan-chip-border-strong: color-mix(in srgb, var(--color-plan-mode), transparent 60%);
+  --surface-plan-neutral-border: hsl(194 14% 40% / 0.3);
+
+  --surface-assistant-chip-bg: hsl(from var(--color-assistant-border) h s l / 0.1);
+  --surface-assistant-chip-hover: hsl(from var(--color-assistant-border) h s l / 0.4);
+  --surface-assistant-chip-border: hsl(from var(--color-assistant-border) h s l / 0.4);
+  --surface-assistant-chip-border-strong: hsl(from var(--color-assistant-border) h s l / 0.6);
+
+  --border-warning-dashed: color-mix(in srgb, var(--color-warning), transparent 45%);
+
+  --color-toggle-bg: #073642;
+  --color-toggle-active: #0a4555;
+  --color-toggle-hover: #094050;
+  --color-toggle-text: #657b83;
+  --color-toggle-text-active: #fdf6e3;
+  --color-toggle-text-hover: #839496;
+
+  --color-interrupted: #cb4b16; /* orange */
+  --color-review-accent: #b58900; /* yellow */
+  --color-git-dirty: #cb4b16;
+  --color-error: #dc322f; /* red */
+  --color-error-bg: #3c1f1f;
+
+  --color-input-bg: #002b36;
+  --color-input-text: #93a1a1;
+  --color-input-border: #268bd2;
+  --color-input-border-focus: #2aa198; /* cyan */
+
+  --color-scrollbar-track: #073642;
+  --color-scrollbar-thumb: #586e75;
+  --color-scrollbar-thumb-hover: #657b83;
+
+  --color-muted: #657b83;
+  --color-muted-light: #586e75;
+  --color-muted-dark: #586e75;
+  --color-placeholder: #586e75;
+  --color-subtle: #657b83;
+  --color-dim: #586e75;
+  --color-light: #839496;
+  --color-lighter: #93a1a1;
+  --color-bright: #93a1a1;
+  --color-subdued: #657b83;
+  --color-label: #839496;
+  --color-gray: #586e75;
+  --color-medium: #657b83;
+
+  --color-border-light: #586e75;
+  --color-border-medium: #657b83;
+  --color-border-darker: #839496;
+  --color-border-subtle: #586e75;
+  --color-border-gray: #586e75;
+
+  --color-dark: #002b36;
+  --color-darker: #00232d;
+  --color-hover: #0a4555;
+  --color-bg-medium: #0d5566;
+  --color-bg-light: #106577;
+  --color-bg-subtle: #073642;
+
+  --color-separator: #073642;
+  --color-separator-light: #0a4555;
+  --color-modal-bg: #073642;
+
+  --color-accent: #268bd2; /* blue */
+  --color-accent-hover: #4ea4dc;
+  --color-accent-dark: #1a7bc2;
+  --color-accent-darker: #1a6aa5;
+  --color-accent-light: #5ab0e0;
+
+  --color-success: #859900; /* green */
+  --color-success-light: #9db200;
+  --color-on-success: #002b36;
+
+  --color-danger: #dc322f; /* red */
+  --color-danger-light: #e35553;
+  --color-danger-soft: #c55856;
+  --color-on-danger: #002b36;
+
+  --color-warning: #b58900; /* yellow */
+  --color-warning-light: #e35553;
+
+  --color-code-type: #2aa198; /* cyan */
+  --color-code-keyword: #268bd2; /* blue */
+
+  --color-toast-success-bg: hsla(205 69% 49% / 0.13);
+  --color-toast-success-text: #4ea4dc;
+  --color-toast-error-bg: hsla(1 79% 53% / 0.15);
+  --color-toast-error-text: #dc322f;
+  --color-toast-error-border: #dc322f;
+  --color-toast-fatal-bg: #2d1f1f;
+  --color-toast-fatal-border: #5a2c2c;
+
+  --color-danger-overlay: hsla(1 79% 53% / 0.1);
+  --color-warning-overlay: hsla(45 100% 35% / 0.1);
+  --color-gray-overlay: hsla(194 14% 40% / 0.05);
+  --color-white-overlay-light: hsla(44 87% 94% / 0.05);
+  --color-white-overlay: hsla(44 87% 94% / 0.1);
+  --color-selection: hsla(205 69% 49% / 0.5);
+  --color-vim-status: hsla(186 13% 59% / 0.6);
+  --color-code-keyword-overlay-light: hsla(205 69% 49% / 0.05);
+  --color-code-keyword-overlay: hsla(205 69% 49% / 0.2);
+
+  --color-info-light: #e35553;
+  --color-info-yellow: #cb9a00;
+
+  --color-review-bg-blue: #0a3d4f;
+  --color-review-bg-info: #0a4050;
+  --color-review-bg-warning: #3e2a00;
+  --color-review-warning: #806000;
+  --color-review-warning-medium: #a07000;
+  --color-review-warning-light: #4a3200;
+
+  --color-error-bg-dark: #3c1f1f;
+
+  --radius: 0.5rem;
+}
+
 
 h1,
 h2,

@@ -56,7 +56,8 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
 
   useEffect(() => {
     let cancelled = false;
-    const shikiTheme = themeMode === "light" ? SHIKI_LIGHT_THEME : SHIKI_DARK_THEME;
+    const isLight = themeMode === "light" || themeMode === "solarized-light";
+    const shikiTheme = isLight ? SHIKI_LIGHT_THEME : SHIKI_DARK_THEME;
 
     setHighlightedLines(null);
 

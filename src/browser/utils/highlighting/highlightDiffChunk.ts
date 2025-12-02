@@ -26,7 +26,12 @@ export interface HighlightedLine {
   originalIndex: number; // Index in original diff
 }
 
-type ThemeMode = "light" | "dark";
+import type { ThemeMode } from "@/browser/contexts/ThemeContext";
+
+/** Map theme mode to Shiki theme (light/dark only) */
+function isLightTheme(theme: ThemeMode): boolean {
+  return theme === "light" || theme === "solarized-light";
+}
 
 export interface HighlightedChunk {
   type: DiffChunk["type"];
@@ -85,7 +90,7 @@ export async function highlightDiffChunk(
       }
     }
 
-    const shikiTheme = themeMode === "light" ? SHIKI_LIGHT_THEME : SHIKI_DARK_THEME;
+    const shikiTheme = isLightTheme(themeMode) ? SHIKI_LIGHT_THEME : SHIKI_DARK_THEME;
     const html = highlighter.codeToHtml(code, {
       lang: shikiLang,
       theme: shikiTheme,
