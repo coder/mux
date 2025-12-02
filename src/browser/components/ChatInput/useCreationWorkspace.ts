@@ -131,6 +131,19 @@ export function useCreationWorkspace({
             const pendingInputKey = getInputKey(getPendingScopeId(projectPath));
             updatePersistedState(pendingInputKey, "");
           }
+
+          // Show warning toast if name generation had issues (e.g., proxy errors)
+          // Workspace was still created with placeholder name
+          const warning = "warning" in result ? (result.warning as string | undefined) : undefined;
+          if (warning) {
+            setToast({
+              id: Date.now().toString(),
+              type: "warning",
+              title: "Workspace Created",
+              message: warning,
+            });
+          }
+
           // Settings are already persisted via useDraftWorkspaceSettings
           // Notify parent to switch workspace (clears input via parent unmount)
           onWorkspaceCreated(result.metadata);

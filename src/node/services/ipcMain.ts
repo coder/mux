@@ -301,7 +301,7 @@ export class IpcMain {
       trunkBranch?: string;
     }
   ): Promise<
-    | { success: true; workspaceId: string; metadata: FrontendWorkspaceMetadata }
+    | { success: true; workspaceId: string; metadata: FrontendWorkspaceMetadata; warning?: string }
     | Result<void, SendMessageError>
   > {
     // Generate IDs and placeholder upfront for immediate UI feedback
@@ -333,33 +333,26 @@ export class IpcMain {
 
     try {
       // 1. Generate workspace branch name using AI (SLOW - but user sees pending state)
+      //    Falls back to placeholder name if AI fails - don't block workspace creation
       let branchName: string;
+      let nameGenerationWarning: string | undefined;
       {
-        const isErrLike = (v: unknown): v is { type: string } =>
-          typeof v === "object" && v !== null && "type" in v;
         const nameResult = await generateWorkspaceName(message, options.model, this.aiService);
-        if (!nameResult.success) {
-          const err = nameResult.error;
-          // Clear pending state on error
-          session.emitMetadata(null);
-          if (isErrLike(err)) {
-            return Err(err);
-          }
-          const toSafeString = (v: unknown): string => {
-            if (v instanceof Error) return v.message;
-            try {
-              return JSON.stringify(v);
-            } catch {
-              return String(v);
-            }
-          };
-          const msg = toSafeString(err);
-          return Err({ type: "unknown", raw: `Failed to generate workspace name: ${msg}` });
+        if (nameResult.success) {
+          branchName = nameResult.data;
+        } else {
+          // Fall back to placeholder name - don't block workspace creation
+          branchName = generatePlaceholderName(message);
+          const errMsg =
+            nameResult.error.type === "unknown" && "raw" in nameResult.error
+              ? nameResult.error.raw
+              : `Name generation failed: ${nameResult.error.type}`;
+          nameGenerationWarning = errMsg;
+          log.info("Falling back to placeholder name", { branchName, error: nameResult.error });
         }
-        branchName = nameResult.data;
       }
 
-      log.debug("Generated workspace name", { branchName });
+      log.debug("Generated workspace name", { branchName, warning: nameGenerationWarning });
 
       // 2. Get trunk branch (use provided trunkBranch or auto-detect)
       const branches = await listLocalBranches(projectPath);
@@ -478,6 +471,7 @@ export class IpcMain {
         success: true,
         workspaceId,
         metadata: completeMetadata,
+        warning: nameGenerationWarning,
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);

@@ -54,7 +54,17 @@ export async function generateWorkspaceName(
     return Ok(validateBranchName(result.object.name));
   } catch (error) {
     const messageText = error instanceof Error ? error.message : String(error);
+
+    // Log the raw response body if available (helps debug proxy issues)
+    const responseBody =
+      error && typeof error === "object" && "responseBody" in error
+        ? (error as { responseBody?: unknown }).responseBody
+        : undefined;
+    if (responseBody) {
+      log.error("Failed to generate workspace name - raw response:", responseBody);
+    }
     log.error("Failed to generate workspace name with AI", error);
+
     return Err({ type: "unknown", raw: `Failed to generate workspace name: ${messageText}` });
   }
 }

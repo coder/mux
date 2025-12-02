@@ -223,6 +223,9 @@
     --color-toast-error-bg: hsl(5 89% 60% / 0.15); /* #f14836 with 15% opacity */
     --color-toast-error-text: hsl(5 89% 60%); /* #f14836 */
     --color-toast-error-border: hsl(5 89% 60%); /* #f14836 */
+    --color-toast-warning-bg: hsl(45 100% 51% / 0.15); /* warning yellow with 15% opacity */
+    --color-toast-warning-text: hsl(45 100% 51%); /* warning yellow */
+    --color-toast-warning-border: hsl(45 100% 51%); /* warning yellow */
     --color-toast-fatal-bg: hsl(0 33% 18%); /* #2d1f1f - fatal error bg */
     --color-toast-fatal-border: hsl(0 36% 26%); /* #5a2c2c - fatal error border */
 
@@ -442,6 +445,9 @@
   --color-toast-error-bg: hsl(5 80% 55% / 0.18);
   --color-toast-error-text: hsl(5 78% 46%);
   --color-toast-error-border: hsl(5 78% 46%);
+  --color-toast-warning-bg: hsl(45 100% 50% / 0.18);
+  --color-toast-warning-text: hsl(45 100% 35%);
+  --color-toast-warning-border: hsl(45 100% 35%);
   --color-toast-fatal-bg: hsl(0 72% 94%);
   --color-toast-fatal-border: hsl(0 74% 82%);
 
@@ -662,6 +668,9 @@
   --color-toast-error-bg: hsla(1 79% 53% / 0.18);
   --color-toast-error-text: #dc322f;
   --color-toast-error-border: #dc322f;
+  --color-toast-warning-bg: hsla(45 100% 35% / 0.18);
+  --color-toast-warning-text: #b58900;
+  --color-toast-warning-border: #b58900;
   --color-toast-fatal-bg: #fce8e7;
   --color-toast-fatal-border: #e8a5a3;
 
@@ -867,6 +876,9 @@
   --color-toast-error-bg: hsla(1 79% 53% / 0.15);
   --color-toast-error-text: #dc322f;
   --color-toast-error-border: #dc322f;
+  --color-toast-warning-bg: hsla(45 100% 35% / 0.15);
+  --color-toast-warning-text: #b58900;
+  --color-toast-warning-border: #b58900;
   --color-toast-fatal-bg: #2d1f1f;
   --color-toast-fatal-border: #5a2c2c;
 

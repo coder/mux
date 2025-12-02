@@ -2,14 +2,15 @@ import type { ReactNode } from "react";
 import React, { useEffect, useCallback } from "react";
 import { cn } from "@/common/lib/utils";
 
-const toastTypeStyles: Record<"success" | "error", string> = {
+const toastTypeStyles: Record<"success" | "error" | "warning", string> = {
   success: "bg-toast-success-bg border border-accent-dark text-toast-success-text",
   error: "bg-toast-error-bg border border-toast-error-border text-toast-error-text",
+  warning: "bg-toast-warning-bg border border-toast-warning-border text-toast-warning-text",
 };
 
 export interface Toast {
   id: string;
-  type: "success" | "error";
+  type: "success" | "error" | "warning";
   title?: string;
   message: string;
   solution?: ReactNode;
