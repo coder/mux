@@ -979,20 +979,29 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           />
 
           <div className="relative flex items-end" data-component="ChatInputControls">
-            {/* Recording overlay - dramatically replaces textarea when recording */}
-            {voiceInput.isListening ? (
+            {/* Recording/transcribing overlay - dramatically replaces textarea */}
+            {voiceInput.isListening || voiceInput.isTranscribing ? (
               <button
                 type="button"
-                onClick={voiceInput.toggleListening}
-                className="flex min-h-[60px] w-full cursor-pointer items-center justify-center gap-3 rounded-md border-2 border-red-500 bg-red-500/10 px-4 py-4 transition-all"
-                aria-label="Stop recording"
+                onClick={voiceInput.isListening ? voiceInput.toggleListening : undefined}
+                disabled={voiceInput.isTranscribing}
+                className={cn(
+                  "flex min-h-[60px] w-full items-center justify-center gap-3 rounded-md border-2 px-4 py-4 transition-all",
+                  voiceInput.isListening
+                    ? "cursor-pointer border-blue-500 bg-blue-500/10"
+                    : "cursor-wait border-amber-500 bg-amber-500/10"
+                )}
+                aria-label={voiceInput.isListening ? "Stop recording" : "Transcribing..."}
               >
                 {/* Animated waveform bars */}
                 <div className="flex items-center gap-1">
                   {[0, 1, 2, 3, 4].map((i) => (
                     <div
                       key={i}
-                      className="w-1 rounded-full bg-red-500"
+                      className={cn(
+                        "w-1 rounded-full",
+                        voiceInput.isListening ? "bg-blue-500" : "bg-amber-500"
+                      )}
                       style={{
                         height: `${12 + Math.sin(i * 0.8) * 8}px`,
                         animation: `pulse 0.8s ease-in-out ${i * 0.1}s infinite alternate`,
@@ -1000,14 +1009,24 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                     />
                   ))}
                 </div>
-                <span className="text-sm font-medium text-red-500">
-                  Recording... tap to stop ({formatKeybind(KEYBINDS.TOGGLE_VOICE_INPUT)})
+                <span
+                  className={cn(
+                    "text-sm font-medium",
+                    voiceInput.isListening ? "text-blue-500" : "text-amber-500"
+                  )}
+                >
+                  {voiceInput.isListening
+                    ? `Recording... tap to stop (${formatKeybind(KEYBINDS.TOGGLE_VOICE_INPUT)})`
+                    : "Transcribing..."}
                 </span>
                 <div className="flex items-center gap-1">
                   {[0, 1, 2, 3, 4].map((i) => (
                     <div
                       key={i}
-                      className="w-1 rounded-full bg-red-500"
+                      className={cn(
+                        "w-1 rounded-full",
+                        voiceInput.isListening ? "bg-blue-500" : "bg-amber-500"
+                      )}
                       style={{
                         height: `${12 + Math.sin((4 - i) * 0.8) * 8}px`,
                         animation: `pulse 0.8s ease-in-out ${(4 - i) * 0.1}s infinite alternate`,
@@ -1041,7 +1060,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                   aria-expanded={showCommandSuggestions && commandSuggestions.length > 0}
                 />
                 {/* Floating voice input button inside textarea */}
-                <div className="absolute bottom-2 right-2">
+                <div className="absolute right-2 bottom-2">
                   <VoiceInputButton
                     isListening={voiceInput.isListening}
                     isTranscribing={voiceInput.isTranscribing}

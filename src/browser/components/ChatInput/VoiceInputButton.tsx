@@ -4,8 +4,8 @@
  *
  * Visual states:
  * - Idle: Subtle gray mic icon
- * - Recording: Red pulsing mic
- * - Transcribing: Orange spinning loader
+ * - Recording: Blue pulsing mic
+ * - Transcribing: Amber spinning loader
  * - Hidden: When on mobile, unsupported, or no OpenAI key
  */
 
@@ -50,9 +50,9 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
           "inline-flex items-center justify-center rounded p-0.5 transition-colors duration-150",
           "disabled:cursor-not-allowed disabled:opacity-40",
           props.isTranscribing
-            ? "text-orange-500"
+            ? "text-amber-500"
             : props.isListening
-              ? "text-red-500 animate-pulse"
+              ? "text-blue-500 animate-pulse"
               : "text-muted/50 hover:text-muted"
         )}
       >
