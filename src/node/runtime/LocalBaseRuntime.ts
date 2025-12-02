@@ -28,6 +28,7 @@ import {
   createLineBufferedLoggers,
   getInitHookEnv,
 } from "./initHook";
+import { getMuxBashrcSourceSnippet } from "@/common/constants/paths";
 
 /**
  * Abstract base class for local runtimes (both WorktreeRuntime and LocalRuntime).
@@ -67,6 +68,10 @@ export abstract class LocalBaseRuntime implements Runtime {
       );
     }
 
+    // Prepend bashrc sourcing to set up environment (PATH, nix, direnv, etc.)
+    // This is necessary because `bash -c` doesn't source ~/.bashrc
+    const commandWithBashrc = `${getMuxBashrcSourceSnippet()}\n${command}`;
+
     // If niceness is specified on Unix/Linux, spawn nice directly to avoid escaping issues
     // Windows doesn't have nice command, so just spawn bash directly
     const isWindows = process.platform === "win32";
@@ -74,8 +79,8 @@ export abstract class LocalBaseRuntime implements Runtime {
     const spawnCommand = options.niceness !== undefined && !isWindows ? "nice" : bashPath;
     const spawnArgs =
       options.niceness !== undefined && !isWindows
-        ? ["-n", options.niceness.toString(), bashPath, "-c", command]
-        : ["-c", command];
+        ? ["-n", options.niceness.toString(), bashPath, "-c", commandWithBashrc]
+        : ["-c", commandWithBashrc];
 
     const childProcess = spawn(spawnCommand, spawnArgs, {
       cwd,
@@ -366,7 +371,9 @@ export abstract class LocalBaseRuntime implements Runtime {
 
     return new Promise<void>((resolve) => {
       const bashPath = getBashPath();
-      const proc = spawn(bashPath, ["-c", `"${hookPath}"`], {
+      // Source bashrc before running init hook so it has access to user's environment
+      const commandWithBashrc = `${getMuxBashrcSourceSnippet()}\n"${hookPath}"`;
+      const proc = spawn(bashPath, ["-c", commandWithBashrc], {
         cwd: workspacePath,
         stdio: ["ignore", "pipe", "pipe"],
         env: {

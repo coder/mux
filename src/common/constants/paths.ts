@@ -116,3 +116,30 @@ export function getMuxExtensionMetadataPath(rootDir?: string): string {
   const root = rootDir ?? getMuxHome();
   return join(root, "extensionMetadata.json");
 }
+
+/**
+ * Filename for the user's mux bashrc file.
+ * This is sourced before every bash command to set up the shell environment.
+ *
+ * Unlike ~/.bashrc, this file is always sourced (even in non-interactive shells)
+ * because `bash -c` doesn't source ~/.bashrc by default, and most users have
+ * interactivity guards in their bashrc that skip content for non-interactive shells.
+ *
+ * Users can put PATH modifications, nix profile sourcing, direnv hooks, etc. here.
+ */
+export const MUX_BASHRC_FILENAME = "bashrc";
+
+/**
+ * Get the bash snippet to source ~/.mux/bashrc if it exists.
+ * Uses $HOME to work correctly on both local and SSH runtimes.
+ *
+ * @returns Bash snippet to prepend to commands
+ */
+export function getMuxBashrcSourceSnippet(): string {
+  // Use $HOME/.mux/bashrc to work on both local and SSH runtimes
+  // The pattern `[ -f file ] && . file || true` ensures:
+  // 1. If file exists: source it, return its exit status (typically 0)
+  // 2. If file doesn't exist: [ -f ] returns 1, && short-circuits, || true returns 0
+  // This is critical for SSH runtime where commands are joined with &&
+  return `[ -f "$HOME/.mux/bashrc" ] && . "$HOME/.mux/bashrc" || true`;
+}

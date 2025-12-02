@@ -23,6 +23,7 @@
 - [Instruction Files](./instruction-files.md)
 - [Project Secrets](./project-secrets.md)
   - [Agentic Git Identity](./agentic-git-identity.md)
+- [Shell Environment](./bashrc.md)
 
 # Advanced
 
