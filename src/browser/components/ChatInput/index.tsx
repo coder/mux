@@ -1086,7 +1086,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           {/* Image attachments */}
           <ImageAttachments images={imageAttachments} onRemove={handleRemoveImage} />
 
-          <div className="flex flex-col gap-1" data-component="ChatModeToggles">
+          <div className="flex flex-col gap-0.5" data-component="ChatModeToggles">
             {/* Editing indicator - workspace only */}
             {variant === "workspace" && editingMessage && (
               <div className="text-edit-mode text-[11px] font-medium">
@@ -1094,7 +1094,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
               </div>
             )}
 
-            <div className="@container flex flex-wrap items-center gap-x-3 gap-y-2">
+            <div className="@container flex flex-wrap items-center gap-x-3 gap-y-1">
               {/* Model Selector - always visible */}
               <div
                 className="flex items-center"
@@ -1176,7 +1176,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                     disabled={!canSend}
                     aria-label="Send message"
                     className={cn(
-                      "inline-flex items-center gap-1 rounded-sm border border-border-light px-2 py-1 text-[11px] font-medium text-white transition-colors duration-200 disabled:opacity-50",
+                      "inline-flex items-center gap-1 rounded-sm border border-border-light px-1.5 py-0.5 text-[11px] font-medium text-white transition-colors duration-200 disabled:opacity-50",
                       mode === "plan"
                         ? "bg-plan-mode hover:bg-plan-mode-hover disabled:hover:bg-plan-mode"
                         : "bg-exec-mode hover:bg-exec-mode-hover disabled:hover:bg-exec-mode"
