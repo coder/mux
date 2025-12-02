@@ -92,6 +92,10 @@ export class AgentSession {
       return;
     }
     this.disposed = true;
+
+    // Stop any active stream (fire and forget - disposal shouldn't block)
+    void this.aiService.stopStream(this.workspaceId, /* abandonPartial */ true);
+
     for (const { event, handler } of this.aiListeners) {
       this.aiService.off(event, handler as never);
     }
