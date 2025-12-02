@@ -25,15 +25,14 @@ program
 
 program
   .command("api")
-  .description("Interact with the oRPC API via a running server")
+  .description("Interact with the mux API via a running server")
   .helpOption(false)
   .allowUnknownOption()
   .allowExcessArguments()
-  .action(async () => {
+  .action(() => {
     process.argv.splice(2, 1);
-    // eslint-disable-next-line no-restricted-syntax -- dynamic import needed for ESM-only trpc-cli
-    const { runApiCli } = await import("./api");
-    await runApiCli(program);
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require("./api");
   });
 
 program

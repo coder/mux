@@ -8,17 +8,14 @@
 import { createCli } from "trpc-cli";
 import { router } from "@/node/orpc/router";
 import { proxifyOrpc } from "./proxifyOrpc";
-import { Command } from "commander";
+import type { Command } from "commander";
 
-export async function runApiCli(parent: Command): Promise<void> {
-  const baseUrl = process.env.MUX_SERVER_URL ?? "http://localhost:3000";
-  const authToken = process.env.MUX_AUTH_TOKEN;
+const baseUrl = process.env.MUX_SERVER_URL ?? "http://localhost:3000";
+const authToken = process.env.MUX_SERVER_AUTH_TOKEN;
 
-  const proxiedRouter = proxifyOrpc(router(), { baseUrl, authToken });
-  const cli = createCli({ router: proxiedRouter }).buildProgram() as Command;
+const proxiedRouter = proxifyOrpc(router(), { baseUrl, authToken });
+const cli = createCli({ router: proxiedRouter }).buildProgram() as Command;
 
-  cli.name("api");
-  cli.description("Interact with the oRPC API via a running server");
-  cli.parent = parent;
-  cli.parse();
-}
+cli.name("mux api");
+cli.description("Interact with the mux API via a running server");
+cli.parse();
