@@ -29,6 +29,8 @@ export interface UseVoiceInputOptions {
   onTranscript: (text: string, isFinal: boolean) => void;
   /** Called when an error occurs */
   onError?: (error: string) => void;
+  /** Called to send the message (used by stopListeningAndSend) */
+  onSend?: () => void;
   /** Whether OpenAI API key is configured */
   openAIKeySet: boolean;
 }
@@ -46,12 +48,14 @@ export interface UseVoiceInputResult {
   startListening: () => void;
   /** Stop recording and transcribe */
   stopListening: () => void;
+  /** Stop recording, transcribe, and send when done */
+  stopListeningAndSend: () => void;
   /** Toggle recording state */
   toggleListening: () => void;
 }
 
 export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResult {
-  const { onTranscript, onError, openAIKeySet } = options;
+  const { onTranscript, onError, onSend, openAIKeySet } = options;
 
   const [isListening, setIsListening] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -59,6 +63,8 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
+  // Flag to auto-send after transcription completes
+  const sendAfterTranscribeRef = useRef(false);
 
   const isSupported = isMediaRecorderSupported();
   const isMobile = isMobileDevice();
@@ -66,13 +72,18 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
   // Store callbacks in refs to avoid recreating on every render
   const onTranscriptRef = useRef(onTranscript);
   const onErrorRef = useRef(onError);
+  const onSendRef = useRef(onSend);
   useEffect(() => {
     onTranscriptRef.current = onTranscript;
     onErrorRef.current = onError;
-  }, [onTranscript, onError]);
+    onSendRef.current = onSend;
+  }, [onTranscript, onError, onSend]);
 
   const transcribeAudio = useCallback(async (audioBlob: Blob) => {
     setIsTranscribing(true);
+    const shouldSendAfter = sendAfterTranscribeRef.current;
+    sendAfterTranscribeRef.current = false;
+
     try {
       // Convert blob to base64
       const arrayBuffer = await audioBlob.arrayBuffer();
@@ -86,6 +97,10 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
       if (result.success) {
         if (result.data.trim()) {
           onTranscriptRef.current(result.data, true);
+          // Auto-send after transcript is set (use setTimeout to let React update state)
+          if (shouldSendAfter) {
+            setTimeout(() => onSendRef.current?.(), 0);
+          }
         }
       } else {
         onErrorRef.current?.(result.error);
@@ -161,6 +176,11 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
     setIsListening(false);
   }, []);
 
+  const stopListeningAndSend = useCallback(() => {
+    sendAfterTranscribeRef.current = true;
+    stopListening();
+  }, [stopListening]);
+
   const toggleListening = useCallback(() => {
     if (isListening) {
       stopListening();
@@ -188,6 +208,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
     shouldShowUI: isSupported && !isMobile && openAIKeySet,
     startListening: () => void startListening(),
     stopListening,
+    stopListeningAndSend,
     toggleListening,
   };
 }

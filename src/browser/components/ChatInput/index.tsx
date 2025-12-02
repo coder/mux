@@ -192,6 +192,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   const voiceInput = useVoiceInput({
     onTranscript: handleVoiceTranscript,
     onError: handleVoiceError,
+    onSend: () => void handleSend(),
     openAIKeySet,
   });
 
@@ -986,20 +987,10 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 ref={(el) => el?.focus()}
                 onClick={voiceInput.isListening ? voiceInput.toggleListening : undefined}
                 onKeyDown={(e) => {
-                  // Space stops recording and sends immediately
+                  // Space stops recording and sends immediately after transcription
                   if (e.key === " " && voiceInput.isListening) {
                     e.preventDefault();
-                    voiceInput.stopListening();
-                    // Small delay to let transcription complete, then send
-                    // The transcript callback will update input, then we send
-                    const checkAndSend = () => {
-                      if (!voiceInput.isTranscribing) {
-                        void handleSend();
-                      } else {
-                        setTimeout(checkAndSend, 100);
-                      }
-                    };
-                    setTimeout(checkAndSend, 100);
+                    voiceInput.stopListeningAndSend();
                   }
                 }}
                 disabled={voiceInput.isTranscribing}
