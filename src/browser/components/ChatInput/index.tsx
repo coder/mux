@@ -480,11 +480,11 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
       window.removeEventListener(CUSTOM_EVENTS.THINKING_LEVEL_TOAST, handler as EventListener);
   }, [variant, props, setToast]);
 
-  // Listen for voice input toggle from command palette
+  // Voice input: command palette toggle + global recording keybinds
   useEffect(() => {
     if (!voiceInput.shouldShowUI) return;
 
-    const handler = () => {
+    const handleToggle = () => {
       if (!voiceInput.isApiKeySet) {
         setToast({
           id: Date.now().toString(),
@@ -495,16 +495,10 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
       }
       voiceInput.toggle();
     };
-    window.addEventListener(CUSTOM_EVENTS.TOGGLE_VOICE_INPUT, handler as EventListener);
-    return () =>
-      window.removeEventListener(CUSTOM_EVENTS.TOGGLE_VOICE_INPUT, handler as EventListener);
-  }, [voiceInput, setToast]);
 
-  // Global keybinds during recording (work regardless of focus)
-  useEffect(() => {
-    if (voiceInput.state !== "recording") return;
-
-    const handler = (e: KeyboardEvent) => {
+    // Global keybinds only active during recording
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (voiceInput.state !== "recording") return;
       if (e.key === " ") {
         e.preventDefault();
         voiceInput.stop({ send: true });
@@ -513,9 +507,14 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         voiceInput.cancel();
       }
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [voiceInput]);
+
+    window.addEventListener(CUSTOM_EVENTS.TOGGLE_VOICE_INPUT, handleToggle as EventListener);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener(CUSTOM_EVENTS.TOGGLE_VOICE_INPUT, handleToggle as EventListener);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [voiceInput, setToast]);
 
   // Auto-focus chat input when workspace changes (workspace only)
   const workspaceIdForFocus = variant === "workspace" ? props.workspaceId : null;
