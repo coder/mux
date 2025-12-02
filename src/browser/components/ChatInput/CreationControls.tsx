@@ -25,28 +25,7 @@ export function CreationControls(props: CreationControlsProps) {
 
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-      {/* Trunk Branch Selector - hidden for Local runtime */}
-      {showTrunkBranchSelector && (
-        <div
-          className="flex items-center gap-1"
-          data-component="TrunkBranchGroup"
-          data-tutorial="trunk-branch"
-        >
-          <label htmlFor="trunk-branch" className="text-muted text-xs">
-            From:
-          </label>
-          <Select
-            id="trunk-branch"
-            value={props.trunkBranch}
-            options={props.branches}
-            onChange={props.onTrunkBranchChange}
-            disabled={props.disabled}
-            className="max-w-[120px]"
-          />
-        </div>
-      )}
-
-      {/* Runtime Selector */}
+      {/* Runtime Selector - first */}
       <div
         className="flex items-center gap-1"
         data-component="RuntimeSelectorGroup"
@@ -68,16 +47,6 @@ export function CreationControls(props: CreationControlsProps) {
           disabled={props.disabled}
           aria-label="Runtime mode"
         />
-        {props.runtimeMode === RUNTIME_MODE.SSH && (
-          <input
-            type="text"
-            value={props.sshHost}
-            onChange={(e) => props.onRuntimeChange(RUNTIME_MODE.SSH, e.target.value)}
-            placeholder="user@host"
-            disabled={props.disabled}
-            className="bg-separator text-foreground border-border-medium focus:border-accent w-32 rounded border px-1 py-0.5 text-xs focus:outline-none disabled:opacity-50"
-          />
-        )}
         <TooltipWrapper inline>
           <span className="text-muted cursor-help text-xs">?</span>
           <Tooltip className="tooltip" align="center" width="wide">
@@ -90,6 +59,39 @@ export function CreationControls(props: CreationControlsProps) {
           </Tooltip>
         </TooltipWrapper>
       </div>
+
+      {/* Trunk Branch Selector - hidden for Local runtime */}
+      {showTrunkBranchSelector && (
+        <div
+          className="flex items-center gap-1"
+          data-component="TrunkBranchGroup"
+          data-tutorial="trunk-branch"
+        >
+          <label htmlFor="trunk-branch" className="text-muted text-xs">
+            From:
+          </label>
+          <Select
+            id="trunk-branch"
+            value={props.trunkBranch}
+            options={props.branches}
+            onChange={props.onTrunkBranchChange}
+            disabled={props.disabled}
+            className="max-w-[120px]"
+          />
+        </div>
+      )}
+
+      {/* SSH Host Input - after From selector */}
+      {props.runtimeMode === RUNTIME_MODE.SSH && (
+        <input
+          type="text"
+          value={props.sshHost}
+          onChange={(e) => props.onRuntimeChange(RUNTIME_MODE.SSH, e.target.value)}
+          placeholder="user@host"
+          disabled={props.disabled}
+          className="bg-separator text-foreground border-border-medium focus:border-accent w-32 rounded border px-1 py-0.5 text-xs focus:outline-none disabled:opacity-50"
+        />
+      )}
     </div>
   );
 }
