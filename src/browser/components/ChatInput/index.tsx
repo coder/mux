@@ -983,6 +983,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             {voiceInput.isListening || voiceInput.isTranscribing ? (
               <button
                 type="button"
+                ref={(el) => el?.focus()}
                 onClick={voiceInput.isListening ? voiceInput.toggleListening : undefined}
                 onKeyDown={(e) => {
                   // Space stops recording and sends immediately
@@ -1003,7 +1004,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 }}
                 disabled={voiceInput.isTranscribing}
                 className={cn(
-                  "flex min-h-[60px] w-full items-center justify-center gap-3 rounded-md border px-4 py-4 transition-all",
+                  "mb-1 flex min-h-[60px] w-full items-center justify-center gap-3 rounded-md border px-4 py-4 transition-all",
                   voiceInput.isListening
                     ? "cursor-pointer border-blue-500 bg-blue-500/10"
                     : "cursor-wait border-amber-500 bg-amber-500/10"
