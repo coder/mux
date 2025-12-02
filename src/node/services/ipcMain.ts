@@ -661,7 +661,7 @@ export class IpcMain {
           // Call Whisper API
           const transcription = await client.audio.transcriptions.create({
             file: audioFile,
-            model: "whisper-1",
+            model: "gpt-4o-transcribe",
           });
 
           return Ok(transcription.text);
