@@ -55,6 +55,7 @@ export interface SimpleChatSetupOptions {
   projectName?: string;
   messages: MuxMessage[];
   gitStatus?: GitStatusFixture;
+  providersConfig?: Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>;
 }
 
 /**
@@ -82,6 +83,7 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): void {
       workspaces,
       chatHandlers,
       gitStatus,
+      providersConfig: opts.providersConfig,
     })
   );
 

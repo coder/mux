@@ -212,6 +212,32 @@ export const WithAgentStatus: AppStory = {
   ),
 };
 
+/** Voice input button shows user education when OpenAI API key is not set */
+export const VoiceInputNoApiKey: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        setupSimpleChatStory({
+          messages: [],
+          // No OpenAI key configured - voice button should be disabled with tooltip
+          providersConfig: {
+            anthropic: { apiKeySet: true },
+            // openai deliberately missing
+          },
+        });
+      }}
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Shows the voice input button in disabled state when OpenAI API key is not configured. Hover over the mic icon in the chat input to see the user education tooltip.",
+      },
+    },
+  },
+};
+
 /** Streaming/working state with pending tool call */
 export const Streaming: AppStory = {
   render: () => (
