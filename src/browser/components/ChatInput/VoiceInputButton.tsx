@@ -14,6 +14,7 @@ interface VoiceInputButtonProps {
   state: VoiceInputState;
   isApiKeySet: boolean;
   shouldShowUI: boolean;
+  requiresSecureContext: boolean;
   onToggle: () => void;
   disabled?: boolean;
 }
@@ -27,9 +28,17 @@ const STATE_CONFIG: Record<VoiceInputState, { label: string; colorClass: string 
 export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
   if (!props.shouldShowUI) return null;
 
-  const needsApiKey = !props.isApiKeySet;
-  const { label, colorClass } = needsApiKey
-    ? { label: "Voice input (requires OpenAI API key)", colorClass: "text-muted/50" }
+  const needsHttps = props.requiresSecureContext;
+  const needsApiKey = !needsHttps && !props.isApiKeySet;
+  const isDisabledReason = needsHttps || needsApiKey;
+
+  const { label, colorClass } = isDisabledReason
+    ? {
+        label: needsHttps
+          ? "Voice input (requires HTTPS)"
+          : "Voice input (requires OpenAI API key)",
+        colorClass: "text-muted/50",
+      }
     : STATE_CONFIG[props.state];
 
   const Icon = props.state === "transcribing" ? Loader2 : Mic;
@@ -40,7 +49,7 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
       <button
         type="button"
         onClick={props.onToggle}
-        disabled={(props.disabled ?? false) || isTranscribing || needsApiKey}
+        disabled={(props.disabled ?? false) || isTranscribing || isDisabledReason}
         aria-label={label}
         aria-pressed={props.state === "recording"}
         className={cn(
@@ -52,7 +61,13 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
         <Icon className={cn("h-4 w-4", isTranscribing && "animate-spin")} strokeWidth={1.5} />
       </button>
       <Tooltip className="tooltip" align="right">
-        {needsApiKey ? (
+        {needsHttps ? (
+          <>
+            Voice input requires a secure connection.
+            <br />
+            Use HTTPS or access via localhost.
+          </>
+        ) : needsApiKey ? (
           <>
             Voice input requires OpenAI API key.
             <br />

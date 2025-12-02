@@ -1066,6 +1066,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                     state={voiceInput.state}
                     isApiKeySet={voiceInput.isApiKeySet}
                     shouldShowUI={voiceInput.shouldShowUI}
+                    requiresSecureContext={voiceInput.requiresSecureContext}
                     onToggle={voiceInput.toggle}
                     disabled={disabled || isSending}
                   />

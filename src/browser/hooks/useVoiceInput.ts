@@ -24,6 +24,8 @@ export interface UseVoiceInputResult {
   isApiKeySet: boolean;
   /** False on touch devices (they have native keyboard dictation) */
   shouldShowUI: boolean;
+  /** True when running over HTTP (not localhost) - microphone requires secure context */
+  requiresSecureContext: boolean;
   start: () => void;
   stop: (options?: { send?: boolean }) => void;
   cancel: () => void;
@@ -49,6 +51,8 @@ function hasTouchDictation(): boolean {
 
 const HAS_TOUCH_DICTATION = hasTouchDictation();
 const HAS_MEDIA_RECORDER = typeof window !== "undefined" && typeof MediaRecorder !== "undefined";
+const HAS_GET_USER_MEDIA =
+  typeof window !== "undefined" && typeof navigator.mediaDevices?.getUserMedia === "function";
 
 // =============================================================================
 // Hook
@@ -131,6 +135,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
     // Guard: only start from idle state with valid configuration
     const canStart =
       HAS_MEDIA_RECORDER &&
+      HAS_GET_USER_MEDIA &&
       !HAS_TOUCH_DICTATION &&
       state === "idle" &&
       callbacksRef.current.openAIKeySet;
@@ -237,9 +242,10 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
 
   return {
     state,
-    isSupported: HAS_MEDIA_RECORDER,
+    isSupported: HAS_MEDIA_RECORDER && HAS_GET_USER_MEDIA,
     isApiKeySet: callbacksRef.current.openAIKeySet,
     shouldShowUI: HAS_MEDIA_RECORDER && !HAS_TOUCH_DICTATION,
+    requiresSecureContext: HAS_MEDIA_RECORDER && !HAS_GET_USER_MEDIA,
     start: () => void start(),
     stop,
     cancel,
