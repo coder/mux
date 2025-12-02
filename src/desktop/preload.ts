@@ -164,6 +164,16 @@ const api: IPCApi = {
     transcribe: (audioBase64: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.VOICE_TRANSCRIBE, audioBase64),
   },
+  oauth: {
+    anthropic: {
+      start: (mode?: "max" | "console") =>
+        ipcRenderer.invoke(IPC_CHANNELS.OAUTH_ANTHROPIC_START, mode),
+      exchange: (code: string, verifier: string, state: string) =>
+        ipcRenderer.invoke(IPC_CHANNELS.OAUTH_ANTHROPIC_EXCHANGE, code, verifier, state),
+      status: () => ipcRenderer.invoke(IPC_CHANNELS.OAUTH_ANTHROPIC_STATUS),
+      logout: () => ipcRenderer.invoke(IPC_CHANNELS.OAUTH_ANTHROPIC_LOGOUT),
+    },
+  },
   update: {
     check: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_CHECK),
     download: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_DOWNLOAD),

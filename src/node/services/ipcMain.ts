@@ -44,6 +44,11 @@ import { PTYService } from "@/node/services/ptyService";
 import type { TerminalWindowManager } from "@/desktop/terminalWindowManager";
 import type { TerminalCreateParams, TerminalResizeParams } from "@/common/types/terminal";
 import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
+import {
+  startOAuthFlow,
+  exchangeCodeForTokens,
+  type OAuthMode,
+} from "@/node/services/anthropicOAuth";
 import OpenAI from "openai";
 
 /** Maximum number of retry attempts when workspace name collides */
@@ -672,6 +677,9 @@ export class IpcMain {
         }
       }
     );
+
+    // OAuth handlers
+    this.registerOAuthHandlers(ipcMain);
 
     ipcMain.handle(
       IPC_CHANNELS.WORKSPACE_CREATE,
@@ -2342,5 +2350,76 @@ export class IpcMain {
       events.push(message);
     });
     return events;
+  }
+
+  /**
+   * Register OAuth-related IPC handlers
+   */
+  private registerOAuthHandlers(ipcMain: ElectronIpcMain): void {
+    // Start Anthropic OAuth flow
+    ipcMain.handle(
+      IPC_CHANNELS.OAUTH_ANTHROPIC_START,
+      (_event, mode?: OAuthMode): { authUrl: string; verifier: string; state: string } => {
+        log.info("[IpcMain] Starting Anthropic OAuth flow", { mode: mode ?? "max" });
+        const { authUrl, verifier, state } = startOAuthFlow(mode ?? "max");
+        return { authUrl, verifier, state };
+      }
+    );
+
+    // Exchange authorization code for tokens
+    ipcMain.handle(
+      IPC_CHANNELS.OAUTH_ANTHROPIC_EXCHANGE,
+      async (
+        _event,
+        code: string,
+        verifier: string,
+        state: string
+      ): Promise<Result<void, string>> => {
+        try {
+          log.info("[IpcMain] Exchanging OAuth authorization code");
+          const tokens = await exchangeCodeForTokens(code, verifier, state);
+
+          if (!tokens) {
+            return Err("Failed to exchange authorization code. Please try again.");
+          }
+
+          // Save credentials
+          await this.config.saveAnthropicOAuthCredentials({
+            type: "oauth",
+            accessToken: tokens.accessToken,
+            refreshToken: tokens.refreshToken,
+            expiresAt: tokens.expiresAt,
+          });
+
+          log.info("[IpcMain] Successfully authenticated with Anthropic OAuth");
+          return Ok(undefined);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          log.error("[IpcMain] OAuth exchange failed", error);
+          return Err(`OAuth exchange failed: ${message}`);
+        }
+      }
+    );
+
+    // Get OAuth status
+    ipcMain.handle(
+      IPC_CHANNELS.OAUTH_ANTHROPIC_STATUS,
+      (): { authenticated: boolean; expiresAt?: number } => {
+        const credentials = this.config.loadAnthropicOAuthCredentials();
+        if (!credentials) {
+          return { authenticated: false };
+        }
+        return {
+          authenticated: true,
+          expiresAt: credentials.expiresAt,
+        };
+      }
+    );
+
+    // Logout (clear OAuth credentials)
+    ipcMain.handle(IPC_CHANNELS.OAUTH_ANTHROPIC_LOGOUT, async (): Promise<void> => {
+      log.info("[IpcMain] Logging out of Anthropic OAuth");
+      await this.config.clearAnthropicOAuthCredentials();
+    });
   }
 }

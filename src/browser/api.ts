@@ -364,6 +364,15 @@ const webApi: IPCApi = {
   voice: {
     transcribe: (audioBase64) => invokeIPC(IPC_CHANNELS.VOICE_TRANSCRIBE, audioBase64),
   },
+  oauth: {
+    anthropic: {
+      start: (mode) => invokeIPC(IPC_CHANNELS.OAUTH_ANTHROPIC_START, mode),
+      exchange: (code, verifier, state) =>
+        invokeIPC(IPC_CHANNELS.OAUTH_ANTHROPIC_EXCHANGE, code, verifier, state),
+      status: () => invokeIPC(IPC_CHANNELS.OAUTH_ANTHROPIC_STATUS),
+      logout: () => invokeIPC(IPC_CHANNELS.OAUTH_ANTHROPIC_LOGOUT),
+    },
+  },
   update: {
     check: () => invokeIPC(IPC_CHANNELS.UPDATE_CHECK),
     download: () => invokeIPC(IPC_CHANNELS.UPDATE_DOWNLOAD),

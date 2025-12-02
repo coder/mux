@@ -375,6 +375,20 @@ export interface IPCApi {
     /** Transcribe audio using OpenAI Whisper. Audio should be base64-encoded webm/opus. */
     transcribe(audioBase64: string): Promise<Result<string, string>>;
   };
+  oauth: {
+    anthropic: {
+      /** Start OAuth flow, returns URL to open in browser, verifier (secret), and state (CSRF token) */
+      start(
+        mode?: "max" | "console"
+      ): Promise<{ authUrl: string; verifier: string; state: string }>;
+      /** Exchange authorization code for tokens (verifier and state from start()) */
+      exchange(code: string, verifier: string, state: string): Promise<Result<void, string>>;
+      /** Get current OAuth status */
+      status(): Promise<{ authenticated: boolean; expiresAt?: number }>;
+      /** Logout (clear OAuth credentials) */
+      logout(): Promise<void>;
+    };
+  };
   update: {
     check(): Promise<void>;
     download(): Promise<void>;

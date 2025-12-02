@@ -459,6 +459,15 @@ export function createMockAPI(options: MockAPIOptions): IPCApi {
     voice: {
       transcribe: () => Promise.resolve({ success: false, error: "Not implemented in mock" }),
     },
+    oauth: {
+      anthropic: {
+        start: () =>
+          Promise.resolve({ authUrl: "https://claude.ai/oauth", verifier: "mock", state: "mock" }),
+        exchange: () => Promise.resolve({ success: false, error: "Not implemented in mock" }),
+        status: () => Promise.resolve({ authenticated: false }),
+        logout: () => Promise.resolve(),
+      },
+    },
     update: {
       check: () => Promise.resolve(undefined),
       download: () => Promise.resolve(undefined),

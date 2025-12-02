@@ -44,6 +44,7 @@ import type {
 } from "@/common/types/stream";
 import { applyToolPolicy, type ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { MockScenarioPlayer } from "./mock/mockScenarioPlayer";
+import { createOAuthFetch, type AnthropicOAuthCredentials } from "./anthropicOAuth";
 import { Agent } from "undici";
 
 // Export a standalone version of getToolsForModel for use in backend
@@ -383,18 +384,20 @@ export class AIService extends EventEmitter {
 
       // Handle Anthropic provider
       if (providerName === "anthropic") {
-        // Anthropic API key can come from:
-        // 1. providers.jsonc config (providerConfig.apiKey)
-        // 2. ANTHROPIC_API_KEY env var (SDK reads this automatically)
-        // 3. ANTHROPIC_AUTH_TOKEN env var (we pass this explicitly since SDK doesn't check it)
-        // We allow env var passthrough so users don't need explicit config.
+        // Anthropic authentication priority:
+        // 1. OAuth credentials (from ~/.mux/oauth.json) - uses Claude Pro/Max subscription
+        // 2. providers.jsonc config (providerConfig.apiKey)
+        // 3. ANTHROPIC_API_KEY env var (SDK reads this automatically)
+        // 4. ANTHROPIC_AUTH_TOKEN env var (we pass this explicitly since SDK doesn't check it)
 
+        const oauthCredentials = this.config.loadAnthropicOAuthCredentials();
+        const hasOAuth = Boolean(oauthCredentials?.refreshToken);
         const hasApiKeyInConfig = Boolean(providerConfig.apiKey);
         const hasApiKeyEnvVar = Boolean(process.env.ANTHROPIC_API_KEY);
         const hasAuthTokenEnvVar = Boolean(process.env.ANTHROPIC_AUTH_TOKEN);
 
         // Return structured error if no credentials available anywhere
-        if (!hasApiKeyInConfig && !hasApiKeyEnvVar && !hasAuthTokenEnvVar) {
+        if (!hasOAuth && !hasApiKeyInConfig && !hasApiKeyEnvVar && !hasAuthTokenEnvVar) {
           return Err({
             type: "api_key_not_found",
             provider: providerName,
@@ -403,7 +406,7 @@ export class AIService extends EventEmitter {
 
         // If SDK won't find a key (no config, no ANTHROPIC_API_KEY), use ANTHROPIC_AUTH_TOKEN
         let configWithApiKey = providerConfig;
-        if (!hasApiKeyInConfig && !hasApiKeyEnvVar && hasAuthTokenEnvVar) {
+        if (!hasOAuth && !hasApiKeyInConfig && !hasApiKeyEnvVar && hasAuthTokenEnvVar) {
           configWithApiKey = { ...providerConfig, apiKey: process.env.ANTHROPIC_AUTH_TOKEN };
         }
 
@@ -429,15 +432,41 @@ export class AIService extends EventEmitter {
 
         // Lazy-load Anthropic provider to reduce startup time
         const { createAnthropic } = await PROVIDER_REGISTRY.anthropic();
-        // Wrap fetch to inject cache_control on tools and messages
-        // (SDK doesn't translate providerOptions to cache_control for these)
-        // Use getProviderFetch to preserve any user-configured custom fetch (e.g., proxies)
-        const baseFetch = getProviderFetch(providerConfig);
-        const fetchWithCacheControl = wrapFetchWithAnthropicCacheControl(baseFetch);
+
+        // Build the fetch chain:
+        // 1. Start with base fetch (user-configured or default)
+        // 2. Wrap with cache control injection
+        // 3. If OAuth, wrap with OAuth authentication
+        let providerFetch: typeof fetch = getProviderFetch(providerConfig);
+        providerFetch = wrapFetchWithAnthropicCacheControl(providerFetch);
+
+        // Use OAuth if available (takes priority over API key)
+        if (hasOAuth && oauthCredentials) {
+          log.info("Using Anthropic OAuth authentication (Claude Pro/Max subscription)");
+          const oauthFetch = createOAuthFetch(
+            oauthCredentials,
+            async (newCredentials: AnthropicOAuthCredentials) => {
+              await this.config.saveAnthropicOAuthCredentials(newCredentials);
+            },
+            providerFetch
+          );
+          // OAuth doesn't need an API key - use a placeholder since SDK requires one
+          // The OAuth fetch wrapper will replace the auth header anyway
+          const oauthConfig = { ...normalizedConfig, apiKey: "oauth" };
+          const provider = createAnthropic({
+            ...oauthConfig,
+            headers,
+            // Cast is safe: oauthFetch is compatible with SDK's expected fetch signature
+            fetch: oauthFetch as typeof fetch,
+          });
+          return Ok(provider(modelId));
+        }
+
+        // Standard API key authentication
         const provider = createAnthropic({
           ...normalizedConfig,
           headers,
-          fetch: fetchWithCacheControl,
+          fetch: providerFetch,
         });
         return Ok(provider(modelId));
       }

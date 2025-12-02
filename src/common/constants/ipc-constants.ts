@@ -71,6 +71,12 @@ export const IPC_CHANNELS = {
   // Voice channels
   VOICE_TRANSCRIBE: "voice:transcribe",
 
+  // OAuth channels
+  OAUTH_ANTHROPIC_START: "oauth:anthropic:start",
+  OAUTH_ANTHROPIC_EXCHANGE: "oauth:anthropic:exchange",
+  OAUTH_ANTHROPIC_STATUS: "oauth:anthropic:status",
+  OAUTH_ANTHROPIC_LOGOUT: "oauth:anthropic:logout",
+
   // Dynamic channel prefixes
   WORKSPACE_CHAT_PREFIX: "workspace:chat:",
   WORKSPACE_METADATA: "workspace:metadata",

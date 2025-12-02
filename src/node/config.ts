@@ -5,6 +5,7 @@ import * as jsonc from "jsonc-parser";
 import writeFileAtomic from "write-file-atomic";
 import type { WorkspaceMetadata, FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { Secret, SecretsConfig } from "@/common/types/secrets";
+import type { AnthropicOAuthCredentials } from "@/node/services/anthropicOAuth";
 import type { Workspace, ProjectConfig, ProjectsConfig } from "@/common/types/project";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
@@ -37,6 +38,7 @@ export class Config {
   private readonly configFile: string;
   private readonly providersFile: string;
   private readonly secretsFile: string;
+  private readonly oauthFile: string;
 
   constructor(rootDir?: string) {
     this.rootDir = rootDir ?? getMuxHome();
@@ -45,6 +47,7 @@ export class Config {
     this.configFile = path.join(this.rootDir, "config.json");
     this.providersFile = path.join(this.rootDir, "providers.jsonc");
     this.secretsFile = path.join(this.rootDir, "secrets.json");
+    this.oauthFile = path.join(this.rootDir, "oauth.json");
   }
 
   loadConfigOrDefault(): ProjectsConfig {
@@ -542,6 +545,89 @@ ${jsonString}`;
     const config = this.loadSecretsConfig();
     config[projectPath] = secrets;
     await this.saveSecretsConfig(config);
+  }
+
+  // ============================================================================
+  // OAuth Credentials Management
+  // ============================================================================
+
+  /**
+   * Load Anthropic OAuth credentials from file
+   * @returns OAuth credentials or null if not configured
+   */
+  loadAnthropicOAuthCredentials(): AnthropicOAuthCredentials | null {
+    try {
+      if (fs.existsSync(this.oauthFile)) {
+        const data = fs.readFileSync(this.oauthFile, "utf-8");
+        const parsed = JSON.parse(data) as { anthropic?: AnthropicOAuthCredentials };
+        return parsed.anthropic ?? null;
+      }
+    } catch (error) {
+      console.error("Error loading OAuth credentials:", error);
+    }
+    return null;
+  }
+
+  /**
+   * Save Anthropic OAuth credentials to file
+   * @param credentials The OAuth credentials to save
+   */
+  async saveAnthropicOAuthCredentials(credentials: AnthropicOAuthCredentials): Promise<void> {
+    try {
+      if (!fs.existsSync(this.rootDir)) {
+        fs.mkdirSync(this.rootDir, { recursive: true });
+      }
+
+      // Load existing file to preserve other provider credentials
+      let existing: Record<string, unknown> = {};
+      if (fs.existsSync(this.oauthFile)) {
+        try {
+          existing = JSON.parse(fs.readFileSync(this.oauthFile, "utf-8")) as Record<
+            string,
+            unknown
+          >;
+        } catch {
+          // Ignore parse errors, start fresh
+        }
+      }
+
+      existing.anthropic = credentials;
+      await writeFileAtomic(this.oauthFile, JSON.stringify(existing, null, 2), "utf-8");
+    } catch (error) {
+      console.error("Error saving OAuth credentials:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Clear Anthropic OAuth credentials (logout)
+   */
+  async clearAnthropicOAuthCredentials(): Promise<void> {
+    try {
+      if (fs.existsSync(this.oauthFile)) {
+        const data = fs.readFileSync(this.oauthFile, "utf-8");
+        const parsed = JSON.parse(data) as Record<string, unknown>;
+        delete parsed.anthropic;
+        if (Object.keys(parsed).length === 0) {
+          fs.unlinkSync(this.oauthFile);
+        } else {
+          await writeFileAtomic(this.oauthFile, JSON.stringify(parsed, null, 2), "utf-8");
+        }
+      }
+    } catch (error) {
+      console.error("Error clearing OAuth credentials:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check if Anthropic OAuth is configured and valid
+   */
+  hasValidAnthropicOAuth(): boolean {
+    const credentials = this.loadAnthropicOAuthCredentials();
+    if (!credentials) return false;
+    // Check if we have a refresh token (access token may be expired but we can refresh)
+    return Boolean(credentials.refreshToken);
   }
 }
 
