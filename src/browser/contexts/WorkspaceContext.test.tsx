@@ -11,6 +11,7 @@ import type { WorkspaceContext } from "./WorkspaceContext";
 import { WorkspaceProvider, useWorkspaceContext } from "./WorkspaceContext";
 import { ProjectProvider } from "@/browser/contexts/ProjectContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
+import { SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
 
 // Helper to create test workspace metadata with default runtime config
 const createWorkspaceMetadata = (
@@ -649,7 +650,7 @@ describe("WorkspaceContext", () => {
     // Verify it's set and persisted to localStorage
     await waitFor(() => {
       expect(ctx().selectedWorkspace?.workspaceId).toBe("ws-1");
-      const stored = globalThis.localStorage.getItem("selectedWorkspace");
+      const stored = globalThis.localStorage.getItem(SELECTED_WORKSPACE_KEY);
       expect(stored).toBeTruthy();
       const parsed = JSON.parse(stored!) as { workspaceId?: string };
       expect(parsed.workspaceId).toBe("ws-1");

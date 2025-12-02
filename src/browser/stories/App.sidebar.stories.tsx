@@ -16,6 +16,7 @@ import {
   installMockAPI,
   type GitStatusFixture,
 } from "./mockFactory";
+import { expandProjects } from "./storyHelpers";
 
 export default {
   ...appMeta,
@@ -290,6 +291,9 @@ export const RuntimeBadgeVariations: AppStory = {
             chatHandlers,
           })
         );
+
+        // Expand the project so badges are visible
+        expandProjects(["/home/user/projects/runtime-demo"]);
       }}
     />
   ),

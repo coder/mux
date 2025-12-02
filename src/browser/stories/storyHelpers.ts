@@ -9,6 +9,12 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { MuxMessage } from "@/common/types/message";
 import type { WorkspaceChatMessage } from "@/common/types/ipc";
 import {
+  SELECTED_WORKSPACE_KEY,
+  EXPANDED_PROJECTS_KEY,
+  getInputKey,
+  getModelKey,
+} from "@/common/constants/storage";
+import {
   createWorkspace,
   createMockAPI,
   installMockAPI,
@@ -25,7 +31,7 @@ import {
 /** Set localStorage to select a workspace */
 export function selectWorkspace(workspace: FrontendWorkspaceMetadata): void {
   localStorage.setItem(
-    "selectedWorkspace",
+    SELECTED_WORKSPACE_KEY,
     JSON.stringify({
       workspaceId: workspace.id,
       projectPath: workspace.projectPath,
@@ -37,12 +43,17 @@ export function selectWorkspace(workspace: FrontendWorkspaceMetadata): void {
 
 /** Set input text for a workspace */
 export function setWorkspaceInput(workspaceId: string, text: string): void {
-  localStorage.setItem(`input:${workspaceId}`, text);
+  localStorage.setItem(getInputKey(workspaceId), text);
 }
 
 /** Set model for a workspace */
 export function setWorkspaceModel(workspaceId: string, model: string): void {
-  localStorage.setItem(`model:${workspaceId}`, model);
+  localStorage.setItem(getModelKey(workspaceId), model);
+}
+
+/** Expand projects in the sidebar */
+export function expandProjects(projectPaths: string[]): void {
+  localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(projectPaths));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

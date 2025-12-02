@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { cn } from "@/common/lib/utils";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { EXPANDED_PROJECTS_KEY } from "@/common/constants/storage";
 import { DndProvider } from "react-dnd";
 import { HTML5Backend, getEmptyImage } from "react-dnd-html5-backend";
 import { useDrag, useDrop, useDragLayer } from "react-dnd";
@@ -197,7 +198,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   // Store as array in localStorage, convert to Set for usage
   const [expandedProjectsArray, setExpandedProjectsArray] = usePersistedState<string[]>(
-    "expandedProjects",
+    EXPANDED_PROJECTS_KEY,
     []
   );
   // Handle corrupted localStorage data (old Set stored as {})

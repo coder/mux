@@ -79,18 +79,20 @@ function LocalIcon() {
 }
 
 // Runtime-specific color schemes - each type has consistent colors in idle/working states
+// Idle: subtle with visible colored border for discrimination
+// Working: brighter colors with pulse animation
 const RUNTIME_STYLES = {
   ssh: {
-    idle: "bg-blue-500/10 text-blue-400/70 border-blue-500/40",
-    working: "bg-blue-500/20 text-blue-400 border-blue-500/50 animate-pulse",
+    idle: "bg-transparent text-muted border-blue-500/50",
+    working: "bg-blue-500/20 text-blue-400 border-blue-500/60 animate-pulse",
   },
   worktree: {
-    idle: "bg-purple-500/10 text-purple-400/70 border-purple-500/40",
-    working: "bg-purple-500/20 text-purple-400 border-purple-500/50 animate-pulse",
+    idle: "bg-transparent text-muted border-purple-500/50",
+    working: "bg-purple-500/20 text-purple-400 border-purple-500/60 animate-pulse",
   },
   local: {
-    idle: "bg-muted/20 text-muted/70 border-muted/40",
-    working: "bg-muted/30 text-muted border-muted/50 animate-pulse",
+    idle: "bg-transparent text-muted border-muted/50",
+    working: "bg-muted/30 text-muted border-muted/60 animate-pulse",
   },
 } as const;
 

@@ -206,8 +206,9 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   );
 
   // Dynamic color based on working state
-  const statusColor = isWorking ? "text-blue-400 animate-pulse" : "text-muted";
-  const dirtyColor = isWorking ? "text-blue-400" : "text-git-dirty";
+  // Idle: muted/grayscale, Working: original accent colors
+  const statusColor = isWorking ? "text-accent" : "text-muted";
+  const dirtyColor = isWorking ? "text-git-dirty" : "text-muted";
 
   return (
     <>

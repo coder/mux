@@ -37,6 +37,18 @@ export const GLOBAL_SCOPE_ID = "__global__";
 export const UI_THEME_KEY = "uiTheme";
 
 /**
+ * Get the localStorage key for the currently selected workspace (global)
+ * Format: "selectedWorkspace"
+ */
+export const SELECTED_WORKSPACE_KEY = "selectedWorkspace";
+
+/**
+ * Get the localStorage key for expanded projects in sidebar (global)
+ * Format: "expandedProjects"
+ */
+export const EXPANDED_PROJECTS_KEY = "expandedProjects";
+
+/**
  * Helper to create a thinking level storage key for a workspace
  * Format: "thinkingLevel:{workspaceId}"
  */

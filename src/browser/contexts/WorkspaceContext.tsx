@@ -11,7 +11,11 @@ import {
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
 import type { RuntimeConfig } from "@/common/types/runtime";
-import { deleteWorkspaceStorage, migrateWorkspaceStorage } from "@/common/constants/storage";
+import {
+  deleteWorkspaceStorage,
+  migrateWorkspaceStorage,
+  SELECTED_WORKSPACE_KEY,
+} from "@/common/constants/storage";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
@@ -107,7 +111,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
   // Manage selected workspace internally with localStorage persistence
   const [selectedWorkspace, setSelectedWorkspace] = usePersistedState<WorkspaceSelection | null>(
-    "selectedWorkspace",
+    SELECTED_WORKSPACE_KEY,
     null
   );
 
