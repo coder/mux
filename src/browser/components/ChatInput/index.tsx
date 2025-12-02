@@ -67,6 +67,7 @@ import { useCreationWorkspace } from "./useCreationWorkspace";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { useVoiceInput } from "@/browser/hooks/useVoiceInput";
 import { VoiceInputButton } from "./VoiceInputButton";
+import { WaveformBars } from "./WaveformBars";
 
 const LEADING_COMMAND_NOISE = /^(?:\s|\u200B|\u200C|\u200D|\u200E|\u200F|\uFEFF)+/;
 
@@ -173,17 +174,10 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
 
   const handleVoiceError = useCallback(
     (error: string) => {
-      // Map common errors to user-friendly messages
-      const errorMessages: Record<string, string> = {
-        "not-allowed": "Microphone access denied. Please allow microphone access and try again.",
-        "no-speech": "No speech detected. Please try again.",
-        network: "Network error. Please check your connection.",
-        "audio-capture": "No microphone found. Please connect a microphone.",
-      };
       setToast({
         id: Date.now().toString(),
         type: "error",
-        message: errorMessages[error] ?? `Voice input error: ${error}`,
+        message: error,
       });
     },
     [setToast]
@@ -506,12 +500,20 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     if (!voiceInput.shouldShowUI) return;
 
     const handler = () => {
+      if (!voiceInput.isApiKeySet) {
+        setToast({
+          id: Date.now().toString(),
+          type: "error",
+          message: "Voice input requires OpenAI API key. Configure in Settings → Providers.",
+        });
+        return;
+      }
       voiceInput.toggleListening();
     };
     window.addEventListener(CUSTOM_EVENTS.TOGGLE_VOICE_INPUT, handler as EventListener);
     return () =>
       window.removeEventListener(CUSTOM_EVENTS.TOGGLE_VOICE_INPUT, handler as EventListener);
-  }, [voiceInput]);
+  }, [voiceInput, setToast]);
 
   // Auto-focus chat input when workspace changes (workspace only)
   const workspaceIdForFocus = variant === "workspace" ? props.workspaceId : null;
@@ -847,6 +849,14 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     // Handle voice input toggle (Ctrl+D / Cmd+D)
     if (matchesKeybind(e, KEYBINDS.TOGGLE_VOICE_INPUT) && voiceInput.shouldShowUI) {
       e.preventDefault();
+      if (!voiceInput.isApiKeySet) {
+        setToast({
+          id: Date.now().toString(),
+          type: "error",
+          message: "Voice input requires OpenAI API key. Configure in Settings → Providers.",
+        });
+        return;
+      }
       voiceInput.toggleListening();
       return;
     }
@@ -1002,22 +1012,9 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 )}
                 aria-label={voiceInput.isListening ? "Stop recording" : "Transcribing..."}
               >
-                {/* Animated waveform bars */}
-                <div className="flex items-center gap-1">
-                  {[0, 1, 2, 3, 4].map((i) => (
-                    <div
-                      key={i}
-                      className={cn(
-                        "w-1 rounded-full",
-                        voiceInput.isListening ? "bg-blue-500" : "bg-amber-500"
-                      )}
-                      style={{
-                        height: `${12 + Math.sin(i * 0.8) * 8}px`,
-                        animation: `pulse 0.8s ease-in-out ${i * 0.1}s infinite alternate`,
-                      }}
-                    />
-                  ))}
-                </div>
+                <WaveformBars
+                  colorClass={voiceInput.isListening ? "bg-blue-500" : "bg-amber-500"}
+                />
                 <span
                   className={cn(
                     "text-sm font-medium",
@@ -1028,21 +1025,10 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                     ? `Recording... space to send, ${formatKeybind(KEYBINDS.TOGGLE_VOICE_INPUT)} to stop`
                     : "Transcribing..."}
                 </span>
-                <div className="flex items-center gap-1">
-                  {[0, 1, 2, 3, 4].map((i) => (
-                    <div
-                      key={i}
-                      className={cn(
-                        "w-1 rounded-full",
-                        voiceInput.isListening ? "bg-blue-500" : "bg-amber-500"
-                      )}
-                      style={{
-                        height: `${12 + Math.sin((4 - i) * 0.8) * 8}px`,
-                        animation: `pulse 0.8s ease-in-out ${(4 - i) * 0.1}s infinite alternate`,
-                      }}
-                    />
-                  ))}
-                </div>
+                <WaveformBars
+                  colorClass={voiceInput.isListening ? "bg-blue-500" : "bg-amber-500"}
+                  mirrored
+                />
               </button>
             ) : (
               <>
@@ -1074,6 +1060,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                     isListening={voiceInput.isListening}
                     isTranscribing={voiceInput.isTranscribing}
                     isSupported={voiceInput.isSupported}
+                    isApiKeySet={voiceInput.isApiKeySet}
                     shouldShowUI={voiceInput.shouldShowUI}
                     onToggle={voiceInput.toggleListening}
                     disabled={disabled || isSending}

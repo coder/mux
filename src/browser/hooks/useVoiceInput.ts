@@ -42,7 +42,9 @@ export interface UseVoiceInputResult {
   isTranscribing: boolean;
   /** Whether the browser supports MediaRecorder */
   isSupported: boolean;
-  /** Whether we should show voice UI (supported, not mobile, API key set) */
+  /** Whether OpenAI API key is configured */
+  isApiKeySet: boolean;
+  /** Whether we should show voice UI (supported and not mobile) */
   shouldShowUI: boolean;
   /** Start recording for voice input */
   startListening: () => void;
@@ -205,7 +207,9 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
     isListening,
     isTranscribing,
     isSupported,
-    shouldShowUI: isSupported && !isMobile && openAIKeySet,
+    isApiKeySet: openAIKeySet,
+    // Show UI on supported desktop platforms (mobile has native dictation)
+    shouldShowUI: isSupported && !isMobile,
     startListening: () => void startListening(),
     stopListening,
     stopListeningAndSend,

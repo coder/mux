@@ -6,7 +6,8 @@
  * - Idle: Subtle gray mic icon
  * - Recording: Blue pulsing mic
  * - Transcribing: Amber spinning loader
- * - Hidden: When on mobile, unsupported, or no OpenAI key
+ * - Disabled (no API key): Subtle gray with explanatory tooltip
+ * - Hidden: When on mobile or unsupported
  */
 
 import React from "react";
@@ -19,22 +20,26 @@ interface VoiceInputButtonProps {
   isListening: boolean;
   isTranscribing: boolean;
   isSupported: boolean;
+  isApiKeySet: boolean;
   shouldShowUI: boolean;
   onToggle: () => void;
   disabled?: boolean;
 }
 
 export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
-  // Don't render if we shouldn't show UI (mobile, unsupported, or no OpenAI key)
+  // Don't render on mobile or unsupported platforms
   if (!props.shouldShowUI) {
     return null;
   }
 
-  const label = props.isTranscribing
-    ? "Transcribing..."
-    : props.isListening
-      ? "Stop recording"
-      : "Voice input";
+  const needsApiKey = !props.isApiKeySet;
+  const label = needsApiKey
+    ? "Voice input (requires OpenAI API key)"
+    : props.isTranscribing
+      ? "Transcribing..."
+      : props.isListening
+        ? "Stop recording"
+        : "Voice input";
 
   const Icon = props.isTranscribing ? Loader2 : Mic;
 
@@ -43,7 +48,9 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
       <button
         type="button"
         onClick={props.onToggle}
-        disabled={(props.disabled ?? false) || !props.isSupported || props.isTranscribing}
+        disabled={
+          (props.disabled ?? false) || !props.isSupported || props.isTranscribing || needsApiKey
+        }
         aria-label={label}
         aria-pressed={props.isListening}
         className={cn(
@@ -59,7 +66,17 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
         <Icon className={cn("h-4 w-4", props.isTranscribing && "animate-spin")} strokeWidth={1.5} />
       </button>
       <Tooltip className="tooltip" align="right">
-        {label} ({formatKeybind(KEYBINDS.TOGGLE_VOICE_INPUT)})
+        {needsApiKey ? (
+          <>
+            Voice input requires OpenAI API key.
+            <br />
+            Configure in Settings → Providers.
+          </>
+        ) : (
+          <>
+            {label} ({formatKeybind(KEYBINDS.TOGGLE_VOICE_INPUT)})
+          </>
+        )}
       </Tooltip>
     </TooltipWrapper>
   );
