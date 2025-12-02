@@ -557,27 +557,9 @@ if (gotTheLock) {
   });
 
   app.on("activate", () => {
-    // Only create window if app is ready and no window exists
-    // This prevents "Cannot create BrowserWindow before app is ready" error
+    // Skip splash on reactivation - services already loaded, window creation is fast
     if (app.isReady() && mainWindow === null) {
-      void (async () => {
-        try {
-          await showSplashScreen();
-          await loadServices();
-          createWindow();
-        } catch (error) {
-          console.error(`[${timestamp()}] Failed to recreate window:`, error);
-          closeSplashScreen();
-
-          const errorMessage =
-            error instanceof Error ? `${error.message}\n\n${error.stack ?? ""}` : String(error);
-
-          dialog.showErrorBox(
-            "Window Creation Failed",
-            `Failed to recreate the application window:\n\n${errorMessage}`
-          );
-        }
-      })();
+      createWindow();
     }
   });
 }
