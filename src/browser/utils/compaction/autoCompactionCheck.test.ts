@@ -304,7 +304,6 @@ describe("checkAutoCompaction", () => {
   describe("Force Compaction (threshold + 5% buffer)", () => {
     // Force-compact triggers at threshold + 5%
     // With default 70% threshold, force-compact at 75%
-    const SONNET_MAX_TOKENS = 200_000;
 
     test("shouldForceCompact is false when usage below threshold + 5%", () => {
       // 70% usage, threshold 70%, force at 75% - should NOT trigger
