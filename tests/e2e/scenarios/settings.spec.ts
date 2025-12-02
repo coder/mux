@@ -22,7 +22,7 @@ test.describe("Settings Modal", () => {
     await expect(page.getByRole("button", { name: "Models", exact: true })).toBeVisible();
 
     // Verify default section is General (theme toggle visible)
-    await expect(page.getByText("Theme")).toBeVisible();
+    await expect(page.getByText("Theme", { exact: true })).toBeVisible();
   });
 
   test("navigates between settings sections", async ({ ui, page }) => {
@@ -39,7 +39,7 @@ test.describe("Settings Modal", () => {
 
     // Navigate back to General
     await ui.settings.selectSection("General");
-    await expect(page.getByText("Theme")).toBeVisible();
+    await expect(page.getByText("Theme", { exact: true })).toBeVisible();
   });
 
   test("closes settings with Escape key", async ({ ui }) => {
