@@ -173,6 +173,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     },
     onSend: () => void handleSend(),
     openAIKeySet,
+    useRecordingKeybinds: true,
   });
 
   // Start creation tutorial when entering creation mode
@@ -496,23 +497,9 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
       voiceInput.toggle();
     };
 
-    // Global keybinds only active during recording
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (voiceInput.state !== "recording") return;
-      if (e.key === " ") {
-        e.preventDefault();
-        voiceInput.stop({ send: true });
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        voiceInput.cancel();
-      }
-    };
-
     window.addEventListener(CUSTOM_EVENTS.TOGGLE_VOICE_INPUT, handleToggle as EventListener);
-    window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener(CUSTOM_EVENTS.TOGGLE_VOICE_INPUT, handleToggle as EventListener);
-      window.removeEventListener("keydown", handleKeyDown);
     };
   }, [voiceInput, setToast]);
 
@@ -862,9 +849,10 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
       return;
     }
 
-    // Space on empty input starts voice recording
+    // Space on empty input starts voice recording (ignore key repeat from holding)
     if (
       e.key === " " &&
+      !e.repeat &&
       input.trim() === "" &&
       voiceInput.shouldShowUI &&
       voiceInput.isApiKeySet &&
