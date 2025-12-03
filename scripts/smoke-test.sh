@@ -172,5 +172,96 @@ fi
 
 log_info "✅ Root endpoint is accessible"
 
+# Test oRPC functionality - this exercises MockBrowserWindow methods like isDestroyed()
+# Uses Node.js with @orpc/client since oRPC uses its own RPC protocol (not simple REST)
+log_info "Testing oRPC endpoints via HTTP and WebSocket..."
+
+# Create a temporary git repo for the test project
+PROJECT_DIR=$(mktemp -d)
+git init -b main "$PROJECT_DIR" >/dev/null 2>&1
+git -C "$PROJECT_DIR" config user.email "test@example.com"
+git -C "$PROJECT_DIR" config user.name "Test User"
+touch "$PROJECT_DIR/README.md"
+git -C "$PROJECT_DIR" add .
+git -C "$PROJECT_DIR" commit -m "Initial commit" >/dev/null 2>&1
+
+# Run oRPC tests via Node.js using the installed mux package's dependencies
+# The mux package includes @orpc/client which we can use
+node -e "
+const { RPCLink } = require('@orpc/client/fetch');
+const { createORPCClient } = require('@orpc/client');
+const WebSocket = require('ws');
+
+const ORPC_URL = 'http://${SERVER_HOST}:${SERVER_PORT}/orpc';
+const WS_URL = 'ws://${SERVER_HOST}:${SERVER_PORT}/orpc/ws';
+const PROJECT_DIR = '$PROJECT_DIR';
+
+async function runTests() {
+  // Test 1: HTTP oRPC client - create project
+  console.log('Testing oRPC project creation via HTTP...');
+  const httpLink = new RPCLink({ url: ORPC_URL });
+  const client = createORPCClient(httpLink);
+
+  const projectResult = await client.projects.create({ projectPath: PROJECT_DIR });
+  if (!projectResult.success) {
+    throw new Error('Project creation failed: ' + JSON.stringify(projectResult));
+  }
+  console.log('✅ Project created via oRPC HTTP');
+
+  // Test 2: HTTP oRPC client - create workspace
+  console.log('Testing oRPC workspace creation via HTTP...');
+  const workspaceResult = await client.workspace.create({
+    projectPath: PROJECT_DIR,
+    branchName: 'smoke-test-branch',
+    trunkBranch: 'main'
+  });
+  if (!workspaceResult.success) {
+    throw new Error('Workspace creation failed: ' + JSON.stringify(workspaceResult));
+  }
+  console.log('✅ Workspace created via oRPC HTTP (id: ' + workspaceResult.metadata.id + ')');
+
+  // Test 3: WebSocket connection
+  console.log('Testing oRPC WebSocket connection...');
+  await new Promise((resolve, reject) => {
+    const ws = new WebSocket(WS_URL);
+    const timeout = setTimeout(() => {
+      ws.close();
+      reject(new Error('WebSocket connection timed out'));
+    }, 5000);
+
+    ws.on('open', () => {
+      console.log('✅ WebSocket connected successfully');
+      clearTimeout(timeout);
+      ws.close();
+      resolve();
+    });
+
+    ws.on('error', (err) => {
+      clearTimeout(timeout);
+      reject(new Error('WebSocket error: ' + err.message));
+    });
+  });
+
+  console.log('🎉 All oRPC tests passed!');
+}
+
+runTests().catch(err => {
+  console.error('oRPC test failed:', err.message);
+  process.exit(1);
+});
+" 2>&1
+
+ORPC_EXIT_CODE=$?
+if [[ $ORPC_EXIT_CODE -ne 0 ]]; then
+  log_error "oRPC tests failed"
+  rm -rf "$PROJECT_DIR"
+  exit 1
+fi
+
+log_info "✅ oRPC HTTP and WebSocket tests passed"
+
+# Cleanup test project
+rm -rf "$PROJECT_DIR"
+
 # All tests passed
 log_info "🎉 All smoke tests passed!"
