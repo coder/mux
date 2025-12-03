@@ -37,6 +37,8 @@ export interface UseVoiceInputResult {
   shouldShowUI: boolean;
   /** True when running over HTTP (not localhost) - microphone requires secure context */
   requiresSecureContext: boolean;
+  /** The active MediaRecorder instance when recording, for visualization */
+  mediaRecorder: MediaRecorder | null;
   start: () => void;
   stop: (options?: { send?: boolean }) => void;
   cancel: () => void;
@@ -73,7 +75,9 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
   const [state, setState] = useState<VoiceInputState>("idle");
 
   // Refs for MediaRecorder lifecycle
+  // We use both ref (for callbacks) and state (to trigger re-render for visualizer)
   const recorderRef = useRef<MediaRecorder | null>(null);
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
 
@@ -197,6 +201,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
       };
 
       recorderRef.current = recorder;
+      setMediaRecorder(recorder);
       recorder.start();
       setState("recording");
     } catch (err) {
@@ -221,6 +226,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
     if (recorderRef.current?.state !== "inactive") {
       recorderRef.current?.stop();
       recorderRef.current = null;
+      setMediaRecorder(null);
     }
   }, []);
 
@@ -305,6 +311,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
     isApiKeySet: callbacksRef.current.openAIKeySet,
     shouldShowUI: HAS_MEDIA_RECORDER && !HAS_TOUCH_DICTATION,
     requiresSecureContext: HAS_MEDIA_RECORDER && !HAS_GET_USER_MEDIA,
+    mediaRecorder,
     start: () => void start(),
     stop,
     cancel,
