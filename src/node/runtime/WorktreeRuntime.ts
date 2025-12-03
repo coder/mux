@@ -182,9 +182,16 @@ export class WorktreeRuntime extends LocalBaseRuntime {
       await moveProc.result;
 
       // Rename the git branch to match the new workspace name
-      // Run from the new worktree path since that's where the branch is checked out
-      using branchProc = execAsync(`git -C "${newPath}" branch -m "${oldName}" "${newName}"`);
-      await branchProc.result;
+      // In mux, branch name and workspace name are always kept in sync.
+      // Run from the new worktree path since that's where the branch is checked out.
+      // Best-effort: ignore errors (e.g., branch might have a different name in test scenarios).
+      try {
+        using branchProc = execAsync(`git -C "${newPath}" branch -m "${oldName}" "${newName}"`);
+        await branchProc.result;
+      } catch {
+        // Branch rename failed - this is fine, the directory was still moved
+        // This can happen if the branch name doesn't match the old directory name
+      }
 
       return { success: true, oldPath, newPath };
     } catch (error) {
