@@ -972,6 +972,7 @@ export class StreamManager extends EventEmitter {
               usage: finishStepPart.usage, // For context window display
               cumulativeUsage: streamInfo.cumulativeUsage, // For live cost display
               cumulativeProviderMetadata: streamInfo.cumulativeProviderMetadata, // For live cache costs
+              providerMetadata: finishStepPart.providerMetadata, // For context window cache display
             };
             this.emit("usage-delta", usageEvent);
             break;

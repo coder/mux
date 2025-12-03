@@ -493,8 +493,13 @@ export class WorkspaceStore {
       const rawContextUsage = activeStreamId
         ? aggregator.getActiveStreamUsage(activeStreamId)
         : undefined;
+      const rawStepProviderMetadata = activeStreamId
+        ? aggregator.getActiveStreamStepProviderMetadata(activeStreamId)
+        : undefined;
       const liveUsage =
-        rawContextUsage && model ? createDisplayUsage(rawContextUsage, model) : undefined;
+        rawContextUsage && model
+          ? createDisplayUsage(rawContextUsage, model, rawStepProviderMetadata)
+          : undefined;
 
       // Live cost usage (cumulative across all steps, with accumulated cache creation tokens)
       const rawCumulativeUsage = activeStreamId

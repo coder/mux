@@ -148,6 +148,8 @@ export interface UsageDeltaEvent {
   cumulativeUsage: LanguageModelV2Usage;
   // Cumulative provider metadata across all steps (for live cost display with cache tokens)
   cumulativeProviderMetadata?: Record<string, unknown>;
+  // This step's provider metadata (for context window cache display)
+  providerMetadata?: Record<string, unknown>;
 }
 
 export type AIServiceEvent =

@@ -78,6 +78,8 @@ export class StreamingMessageAggregator {
   // Active stream step usage (updated on each stream-step event)
   // Tracks last step's usage for context window display
   private activeStreamStepUsage = new Map<string, LanguageModelV2Usage>();
+  // Tracks step provider metadata for context window cache display
+  private activeStreamStepProviderMetadata = new Map<string, Record<string, unknown>>();
   // Tracks cumulative usage across all steps for live cost display
   private activeStreamCumulativeUsage = new Map<string, LanguageModelV2Usage>();
   // Tracks cumulative provider metadata for live cost display (with cache creation tokens)
@@ -1061,6 +1063,7 @@ export class StreamingMessageAggregator {
   clearTokenState(messageId: string): void {
     this.deltaHistory.delete(messageId);
     this.activeStreamStepUsage.delete(messageId);
+    this.activeStreamStepProviderMetadata.delete(messageId);
     this.activeStreamCumulativeUsage.delete(messageId);
     this.activeStreamCumulativeProviderMetadata.delete(messageId);
   }
@@ -1071,6 +1074,10 @@ export class StreamingMessageAggregator {
   handleUsageDelta(data: UsageDeltaEvent): void {
     // Store last step's usage for context window display
     this.activeStreamStepUsage.set(data.messageId, data.usage);
+    // Store step provider metadata for context window cache display
+    if (data.providerMetadata) {
+      this.activeStreamStepProviderMetadata.set(data.messageId, data.providerMetadata);
+    }
     // Store cumulative usage for cost display
     this.activeStreamCumulativeUsage.set(data.messageId, data.cumulativeUsage);
     // Store cumulative provider metadata for live cost display (with cache creation tokens)
@@ -1103,5 +1110,12 @@ export class StreamingMessageAggregator {
     messageId: string
   ): Record<string, unknown> | undefined {
     return this.activeStreamCumulativeProviderMetadata.get(messageId);
+  }
+
+  /**
+   * Get step provider metadata for context window cache display
+   */
+  getActiveStreamStepProviderMetadata(messageId: string): Record<string, unknown> | undefined {
+    return this.activeStreamStepProviderMetadata.get(messageId);
   }
 }
