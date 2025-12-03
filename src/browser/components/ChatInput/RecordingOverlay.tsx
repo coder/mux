@@ -233,7 +233,7 @@ const SlidingWaveform: React.FC<SlidingWaveformProps> = (props) => {
   if (audioError) {
     return (
       <div className="flex h-full w-full items-center justify-center gap-1">
-        {[...Array(5)].map((_, i) => (
+        {[0, 1, 2, 3, 4].map((i) => (
           <div
             key={i}
             className="animate-pulse rounded-full"
