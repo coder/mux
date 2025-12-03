@@ -38,6 +38,7 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import { parseRuntimeModeAndHost, RUNTIME_MODE } from "@/common/types/runtime";
 import assert from "@/common/utils/assert";
 import parseDuration from "parse-duration";
+import { log, type LogLevel } from "@/node/services/log";
 
 type CLIMode = "plan" | "exec";
 
@@ -163,6 +164,8 @@ program
   .option("--mode <mode>", "agent mode: plan or exec", "exec")
   .option("-t, --thinking <level>", "thinking level: off, low, medium, high", "medium")
   .option("--timeout <duration>", "timeout (e.g., 5m, 300s, 300000)")
+  .option("-v, --verbose", "show info-level logs (default: errors only)")
+  .option("--log-level <level>", "set log level: error, warn, info, debug")
   .option("--json", "output NDJSON for programmatic consumption")
   .option("-q, --quiet", "only output final result")
   .option("--workspace-id <id>", "explicit workspace ID (auto-generated if not provided)")
@@ -189,6 +192,8 @@ interface CLIOptions {
   mode: string;
   thinking: string;
   timeout?: string;
+  verbose?: boolean;
+  logLevel?: string;
   json?: boolean;
   quiet?: boolean;
   workspaceId?: string;
@@ -199,6 +204,20 @@ const opts = program.opts<CLIOptions>();
 const messageArg = program.args[0];
 
 async function main(): Promise<void> {
+  // Configure log level early (before any logging happens)
+  if (opts.logLevel) {
+    const level = opts.logLevel.toLowerCase();
+    if (level === "error" || level === "warn" || level === "info" || level === "debug") {
+      log.setLevel(level as LogLevel);
+    } else {
+      console.error(`Invalid log level "${opts.logLevel}". Expected: error, warn, info, debug`);
+      process.exit(1);
+    }
+  } else if (opts.verbose) {
+    log.setLevel("info");
+  }
+  // Default is already "warn" for CLI mode (set in log.ts)
+
   // Resolve directory
   const projectDir = path.resolve(opts.dir);
   await ensureDirectory(projectDir);
@@ -236,14 +255,13 @@ async function main(): Promise<void> {
     if (emitJson) process.stdout.write(`${JSON.stringify(payload)}\n`);
   };
 
-  if (!suppressHumanOutput) {
-    console.error(`[mux run] Directory: ${projectDir}`);
-    console.error(`[mux run] Model: ${model}`);
-    console.error(
-      `[mux run] Runtime: ${runtimeConfig.type}${runtimeConfig.type === "ssh" ? ` (${runtimeConfig.host})` : ""}`
-    );
-    console.error(`[mux run] Mode: ${initialMode}`);
-  }
+  // Log startup info (shown at info+ level, i.e., with --verbose)
+  log.info(`Directory: ${projectDir}`);
+  log.info(`Model: ${model}`);
+  log.info(
+    `Runtime: ${runtimeConfig.type}${runtimeConfig.type === "ssh" ? ` (${runtimeConfig.host})` : ""}`
+  );
+  log.info(`Mode: ${initialMode}`);
 
   // Initialize services
   const historyService = new HistoryService(config);

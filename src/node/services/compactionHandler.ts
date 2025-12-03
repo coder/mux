@@ -8,6 +8,7 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { collectUsageHistory } from "@/common/utils/tokens/displayUsage";
 import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { log } from "@/node/services/log";
 
 interface CompactionHandlerOptions {
   workspaceId: string;
@@ -71,7 +72,7 @@ export class CompactionHandler {
 
     const result = await this.performCompaction(summary, messages, event.metadata);
     if (!result.success) {
-      console.error("[CompactionHandler] Compaction failed:", result.error);
+      log.error("Compaction failed:", result.error);
       return false;
     }
 

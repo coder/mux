@@ -634,7 +634,7 @@ export class WorkspaceService extends EventEmitter {
     try {
       return await this.config.getAllWorkspaceMetadata();
     } catch (error) {
-      console.error("Failed to list workspaces:", error);
+      log.error("Failed to list workspaces:", error);
       return [];
     }
   }

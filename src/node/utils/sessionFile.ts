@@ -5,6 +5,7 @@ import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { Config } from "@/node/config";
 import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
+import { log } from "@/node/services/log";
 
 /**
  * Shared utility for managing JSON files in workspace session directories.
@@ -41,7 +42,7 @@ export class SessionFileManager<T> {
         return null; // File doesn't exist
       }
       // Log other errors but don't fail
-      console.error(`Error reading ${this.fileName}:`, error);
+      log.error(`Error reading ${this.fileName}:`, error);
       return null;
     }
   }

@@ -8,6 +8,7 @@ import {
   getExtensionMetadataPath,
 } from "@/node/utils/extensionMetadata";
 import type { WorkspaceActivitySnapshot } from "@/common/types/workspace";
+import { log } from "@/node/services/log";
 
 /**
  * Stateless service for managing workspace metadata used by VS Code extension integration.
@@ -74,13 +75,13 @@ export class ExtensionMetadataService {
 
       // Validate structure
       if (typeof parsed !== "object" || parsed.version !== 1) {
-        console.error("[ExtensionMetadataService] Invalid metadata file, resetting");
+        log.error("Invalid metadata file, resetting");
         return { version: 1, workspaces: {} };
       }
 
       return parsed;
     } catch (error) {
-      console.error("[ExtensionMetadataService] Failed to load metadata:", error);
+      log.error("Failed to load metadata:", error);
       return { version: 1, workspaces: {} };
     }
   }
@@ -90,7 +91,7 @@ export class ExtensionMetadataService {
       const content = JSON.stringify(data, null, 2);
       await writeFileAtomic(this.filePath, content, "utf-8");
     } catch (error) {
-      console.error("[ExtensionMetadataService] Failed to save metadata:", error);
+      log.error("Failed to save metadata:", error);
     }
   }
 

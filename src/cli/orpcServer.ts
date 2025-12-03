@@ -17,6 +17,7 @@ import { router } from "@/node/orpc/router";
 import type { ORPCContext } from "@/node/orpc/context";
 import { extractWsHeaders } from "@/node/orpc/authMiddleware";
 import { VERSION } from "@/version";
+import { log } from "@/node/services/log";
 
 // --- Types ---
 
@@ -71,7 +72,7 @@ export async function createOrpcServer({
   context,
   serveStatic = false,
   staticDir = path.join(__dirname, ".."),
-  onOrpcError = (error) => console.error("ORPC Error:", error),
+  onOrpcError = (error) => log.error("ORPC Error:", error),
 }: OrpcServerOptions): Promise<OrpcServer> {
   // Express app setup
   const app = express();

@@ -8,6 +8,7 @@ import type { Config } from "@/node/config";
 import type { HistoryService } from "./historyService";
 import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
+import { log } from "@/node/services/log";
 
 /**
  * PartialService - Manages partial message persistence for interrupted streams
@@ -57,7 +58,7 @@ export class PartialService {
         return null; // No partial exists
       }
       // Log other errors but don't fail
-      console.error("Error reading partial:", error);
+      log.error("Error reading partial:", error);
       return null;
     }
   }

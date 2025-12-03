@@ -7,6 +7,7 @@ import type {
   ProviderConfigInfo,
   ProvidersConfigMap,
 } from "@/common/orpc/types";
+import { log } from "@/node/services/log";
 
 // Re-export types for backward compatibility
 export type { AWSCredentialStatus, ProviderConfigInfo, ProvidersConfigMap };
@@ -33,7 +34,7 @@ export class ProviderService {
     try {
       return [...SUPPORTED_PROVIDERS];
     } catch (error) {
-      console.error("Failed to list providers:", error);
+      log.error("Failed to list providers:", error);
       return [];
     }
   }

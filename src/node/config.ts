@@ -3,6 +3,7 @@ import * as path from "path";
 import * as crypto from "crypto";
 import * as jsonc from "jsonc-parser";
 import writeFileAtomic from "write-file-atomic";
+import { log } from "@/node/services/log";
 import type { WorkspaceMetadata, FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { Secret, SecretsConfig } from "@/common/types/secrets";
 import type { Workspace, ProjectConfig, ProjectsConfig } from "@/common/types/project";
@@ -64,7 +65,7 @@ export class Config {
         }
       }
     } catch (error) {
-      console.error("Error loading config:", error);
+      log.error("Error loading config:", error);
     }
 
     // Return default config
@@ -85,7 +86,7 @@ export class Config {
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
     } catch (error) {
-      console.error("Error saving config:", error);
+      log.error("Error saving config:", error);
     }
   }
 
@@ -344,7 +345,7 @@ export class Config {
             workspaceMetadata.push(this.addPathsToMetadata(metadata, workspace.path, projectPath));
           }
         } catch (error) {
-          console.error(`Failed to load/migrate workspace metadata:`, error);
+          log.error(`Failed to load/migrate workspace metadata:`, error);
           // Fallback to basic metadata if migration fails
           const legacyId = this.generateLegacyId(projectPath, workspace.path);
           const metadata: WorkspaceMetadata = {
@@ -431,7 +432,7 @@ export class Config {
       }
 
       if (!workspaceFound) {
-        console.warn(`Workspace ${workspaceId} not found in config during removal`);
+        log.warn(`Workspace ${workspaceId} not found in config during removal`);
       }
 
       return config;
@@ -469,7 +470,7 @@ export class Config {
         return jsonc.parse(data) as ProvidersConfig;
       }
     } catch (error) {
-      console.error("Error loading providers config:", error);
+      log.error("Error loading providers config:", error);
     }
 
     return null;
@@ -510,7 +511,7 @@ ${jsonString}`;
 
       fs.writeFileSync(this.providersFile, contentWithComments);
     } catch (error) {
-      console.error("Error saving providers config:", error);
+      log.error("Error saving providers config:", error);
       throw error; // Re-throw to let caller handle
     }
   }
@@ -526,7 +527,7 @@ ${jsonString}`;
         return JSON.parse(data) as SecretsConfig;
       }
     } catch (error) {
-      console.error("Error loading secrets config:", error);
+      log.error("Error loading secrets config:", error);
     }
 
     return {};
@@ -544,7 +545,7 @@ ${jsonString}`;
 
       await writeFileAtomic(this.secretsFile, JSON.stringify(config, null, 2), "utf-8");
     } catch (error) {
-      console.error("Error saving secrets config:", error);
+      log.error("Error saving secrets config:", error);
       throw error;
     }
   }
