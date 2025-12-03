@@ -18,30 +18,8 @@ jobs:
 
       - uses: ./.github/actions/setup-mux
 
-      # Skip signing setup for PRs - electron-builder skips signing anyway,
-      # but setting CSC_LINK forces our Makefile to build sequentially.
-      # Without CSC_LINK, x64 and arm64 build in parallel (~90s savings).
-      - name: Setup code signing
-        if: github.event_name != 'pull_request'
-        run: ./scripts/setup-macos-signing.sh
-        env:
-          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
-          AC_APIKEY_P8_BASE64: ${{ secrets.AC_APIKEY_P8_BASE64 }}
-          AC_APIKEY_ID: ${{ secrets.AC_APIKEY_ID }}
-          AC_APIKEY_ISSUER_ID: ${{ secrets.AC_APIKEY_ISSUER_ID }}
-
-      - name: Verify signing setup
-        if: github.event_name != 'pull_request'
-        run: |
-          if [ -n "${CSC_LINK:-}" ]; then
-            echo "✅ Code signing enabled"
-            security list-keychains -d user
-            security find-identity -v -p codesigning
-          else
-            echo "⚠️ Code signing NOT enabled"
-          fi
-
+      # No code signing - releases use release.yml (triggered by tag publish).
+      # Without CSC_LINK, x64 and arm64 builds run in parallel (~12 min faster).
       - name: Package for macOS
         run: make dist-mac
 
