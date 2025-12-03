@@ -17,6 +17,7 @@ import { TokenizerService } from "@/node/services/tokenizerService";
 import { ServerService } from "@/node/services/serverService";
 import { MenuEventService } from "@/node/services/menuEventService";
 import { VoiceService } from "@/node/services/voiceService";
+import { SSHService } from "@/node/services/sshService";
 
 /**
  * ServiceContainer - Central dependency container for all backend services.
@@ -39,6 +40,7 @@ export class ServiceContainer {
   public readonly serverService: ServerService;
   public readonly menuEventService: MenuEventService;
   public readonly voiceService: VoiceService;
+  public readonly sshService: SSHService;
   private readonly initStateManager: InitStateManager;
   private readonly extensionMetadata: ExtensionMetadataService;
   private readonly ptyService: PTYService;
@@ -78,6 +80,7 @@ export class ServiceContainer {
     this.serverService = new ServerService();
     this.menuEventService = new MenuEventService();
     this.voiceService = new VoiceService(config);
+    this.sshService = new SSHService();
   }
 
   async initialize(): Promise<void> {

@@ -98,6 +98,7 @@ export {
   providers,
   ProvidersConfigMapSchema,
   server,
+  ssh,
   terminal,
   tokenizer,
   update,

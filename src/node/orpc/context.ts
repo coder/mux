@@ -9,6 +9,7 @@ import type { TokenizerService } from "@/node/services/tokenizerService";
 import type { ServerService } from "@/node/services/serverService";
 import type { MenuEventService } from "@/node/services/menuEventService";
 import type { VoiceService } from "@/node/services/voiceService";
+import type { SSHService } from "@/node/services/sshService";
 
 export interface ORPCContext {
   projectService: ProjectService;
@@ -21,5 +22,6 @@ export interface ORPCContext {
   serverService: ServerService;
   menuEventService: MenuEventService;
   voiceService: VoiceService;
+  sshService: SSHService;
   headers?: IncomingHttpHeaders;
 }
