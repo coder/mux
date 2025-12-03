@@ -3,8 +3,7 @@
  * Replaces the chat textarea when voice input is active.
  */
 
-import React, { useRef, useState, useLayoutEffect } from "react";
-import { LiveAudioVisualizer } from "react-audio-visualize";
+import React, { useRef, useState, useLayoutEffect, useEffect, useCallback } from "react";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
@@ -17,10 +16,10 @@ const MODE_COLORS = {
   exec: "hsl(268, 94%, 65%)", // Slightly lighter than --color-exec-mode for visibility
 } as const;
 
-// FFT size determines number of frequency bins (fftSize / 2)
-// Higher = more bars but less responsive, lower = fewer bars but more responsive
-const FFT_SIZE = 128; // 64 bars
-const NUM_BARS = FFT_SIZE / 2;
+// Sliding window config
+const WINDOW_DURATION_MS = 10000; // 10 seconds of history
+const SAMPLE_INTERVAL_MS = 50; // Sample every 50ms
+const NUM_SAMPLES = Math.floor(WINDOW_DURATION_MS / SAMPLE_INTERVAL_MS); // 200 samples
 
 interface RecordingOverlayProps {
   state: VoiceInputState;
@@ -32,37 +31,8 @@ interface RecordingOverlayProps {
 export const RecordingOverlay: React.FC<RecordingOverlayProps> = (props) => {
   const isRecording = props.state === "recording";
   const isTranscribing = props.state === "transcribing";
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState(600);
-
-  // Measure container width for the canvas using ResizeObserver
-  useLayoutEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setContainerWidth(entry.contentRect.width);
-      }
-    });
-
-    observer.observe(container);
-    // Initial measurement
-    setContainerWidth(container.offsetWidth);
-
-    return () => observer.disconnect();
-  }, []);
 
   const modeColor = MODE_COLORS[props.mode];
-
-  // Calculate bar dimensions to fill the container width
-  // Total width = numBars * barWidth + (numBars - 1) * gap
-  // We want gap = barWidth / 2 for nice spacing
-  // So: width = numBars * barWidth + (numBars - 1) * barWidth/2
-  //           = barWidth * (numBars + (numBars - 1) / 2)
-  //           = barWidth * (1.5 * numBars - 0.5)
-  const barWidth = Math.max(2, Math.floor(containerWidth / (1.5 * NUM_BARS - 0.5)));
-  const gap = Math.max(1, Math.floor(barWidth / 2));
 
   // Border and background classes based on state
   const containerClasses = cn(
@@ -83,20 +53,9 @@ export const RecordingOverlay: React.FC<RecordingOverlayProps> = (props) => {
       aria-label={isRecording ? "Stop recording" : "Transcribing..."}
     >
       {/* Visualizer / Animation Area */}
-      <div ref={containerRef} className="flex h-8 w-full items-center justify-center">
+      <div className="flex h-8 w-full items-center justify-center">
         {isRecording && props.mediaRecorder ? (
-          <LiveAudioVisualizer
-            mediaRecorder={props.mediaRecorder}
-            width={containerWidth}
-            height={32}
-            barWidth={barWidth}
-            gap={gap}
-            barColor={modeColor}
-            smoothingTimeConstant={0.8}
-            fftSize={FFT_SIZE}
-            minDecibels={-70}
-            maxDecibels={-30}
-          />
+          <SlidingWaveform mediaRecorder={props.mediaRecorder} color={modeColor} height={32} />
         ) : (
           <TranscribingAnimation />
         )}
@@ -124,6 +83,154 @@ export const RecordingOverlay: React.FC<RecordingOverlayProps> = (props) => {
         )}
       </span>
     </button>
+  );
+};
+
+/**
+ * Sliding window waveform - shows amplitude over the last ~10 seconds.
+ * New samples appear on the right and slide left over time.
+ */
+interface SlidingWaveformProps {
+  mediaRecorder: MediaRecorder;
+  color: string;
+  height: number;
+}
+
+const SlidingWaveform: React.FC<SlidingWaveformProps> = (props) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(600);
+
+  // Audio analysis refs (persist across renders)
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const samplesRef = useRef<number[]>(new Array(NUM_SAMPLES).fill(0));
+  const animationFrameRef = useRef<number>(0);
+  const lastSampleTimeRef = useRef<number>(0);
+
+  // Measure container width
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerWidth(entry.contentRect.width);
+      }
+    });
+
+    observer.observe(container);
+    setContainerWidth(container.offsetWidth);
+
+    return () => observer.disconnect();
+  }, []);
+
+  // Set up audio analysis
+  useEffect(() => {
+    const stream = props.mediaRecorder.stream;
+    if (!stream) return;
+
+    const audioContext = new AudioContext();
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.3;
+
+    const source = audioContext.createMediaStreamSource(stream);
+    source.connect(analyser);
+
+    audioContextRef.current = audioContext;
+    analyserRef.current = analyser;
+
+    // Reset samples when starting
+    samplesRef.current = new Array(NUM_SAMPLES).fill(0);
+    lastSampleTimeRef.current = performance.now();
+
+    return () => {
+      audioContext.close();
+      audioContextRef.current = null;
+      analyserRef.current = null;
+    };
+  }, [props.mediaRecorder]);
+
+  // Animation loop - sample audio and render
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current;
+    const analyser = analyserRef.current;
+    if (!canvas || !analyser) return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const now = performance.now();
+    const timeSinceLastSample = now - lastSampleTimeRef.current;
+
+    // Take a new sample if enough time has passed
+    if (timeSinceLastSample >= SAMPLE_INTERVAL_MS) {
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      analyser.getByteTimeDomainData(dataArray);
+
+      // Calculate RMS amplitude (0-1 range)
+      let sum = 0;
+      for (let i = 0; i < dataArray.length; i++) {
+        const normalized = (dataArray[i] - 128) / 128; // -1 to 1
+        sum += normalized * normalized;
+      }
+      const rms = Math.sqrt(sum / dataArray.length);
+
+      // Shift samples left and add new one
+      samplesRef.current.shift();
+      samplesRef.current.push(rms);
+      lastSampleTimeRef.current = now;
+    }
+
+    // Clear canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw waveform bars
+    const samples = samplesRef.current;
+    const barWidth = Math.max(1, Math.floor(canvas.width / samples.length));
+    const gap = Math.max(1, Math.floor(barWidth * 0.3));
+    const effectiveBarWidth = barWidth - gap;
+    const centerY = canvas.height / 2;
+
+    ctx.fillStyle = props.color;
+
+    for (let i = 0; i < samples.length; i++) {
+      const amplitude = samples[i];
+      // Scale amplitude for visibility (boost quiet sounds)
+      const scaledAmplitude = Math.min(1, amplitude * 3);
+      const barHeight = Math.max(2, scaledAmplitude * canvas.height * 0.9);
+
+      const x = i * barWidth;
+      const y = centerY - barHeight / 2;
+
+      ctx.beginPath();
+      ctx.roundRect(x, y, effectiveBarWidth, barHeight, 1);
+      ctx.fill();
+    }
+
+    animationFrameRef.current = requestAnimationFrame(draw);
+  }, [props.color]);
+
+  // Start/stop animation loop
+  useEffect(() => {
+    animationFrameRef.current = requestAnimationFrame(draw);
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [draw]);
+
+  return (
+    <div ref={containerRef} className="h-full w-full">
+      <canvas
+        ref={canvasRef}
+        width={containerWidth}
+        height={props.height}
+        className="h-full w-full"
+      />
+    </div>
   );
 };
 
