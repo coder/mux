@@ -106,9 +106,11 @@ export function checkAutoCompaction(
   const forceCompactThreshold = thresholdPercentage + FORCE_COMPACTION_BUFFER_PERCENT;
   const shouldForceCompact = usagePercentage >= forceCompactThreshold;
 
-  // Warning based on last completed usage (not live) to avoid flickering
+  // Warning uses max of last completed and current (live when streaming)
+  // This ensures warning shows when live usage spikes above threshold mid-stream
   const lastUsagePercentage = lastUsage ? (getTotalTokens(lastUsage) / maxTokens) * 100 : 0;
-  const shouldShowWarning = lastUsagePercentage >= thresholdPercentage - warningAdvancePercent;
+  const shouldShowWarning =
+    Math.max(lastUsagePercentage, usagePercentage) >= thresholdPercentage - warningAdvancePercent;
 
   return {
     shouldShowWarning,

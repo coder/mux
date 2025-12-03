@@ -369,6 +369,30 @@ describe("checkAutoCompaction", () => {
       expect(result.usagePercentage).toBe(75); // usagePercentage reflects live even with empty history
     });
 
+    test("shouldShowWarning uses live usage when no history exists", () => {
+      // No lastUsage, liveUsage at 65% - should show warning (65% >= 60%)
+      const liveUsage = createUsageEntry(130_000); // 65%
+      const usage: WorkspaceUsageState = {
+        usageHistory: [],
+        totalTokens: 0,
+        liveUsage,
+      };
+      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+
+      expect(result.shouldShowWarning).toBe(true);
+      expect(result.shouldForceCompact).toBe(false); // 65% < 75%
+    });
+
+    test("shouldShowWarning uses max of last and live usage", () => {
+      // lastUsage at 50% (below warning), liveUsage at 72% (above warning)
+      const liveUsage = createUsageEntry(144_000); // 72%
+      const usage = createMockUsage(100_000, undefined, KNOWN_MODELS.SONNET.id, liveUsage);
+      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+
+      expect(result.shouldShowWarning).toBe(true); // 72% >= 60%
+      expect(result.shouldForceCompact).toBe(false); // 72% < 75%
+    });
+
     test("shouldForceCompact is false when auto-compaction disabled", () => {
       const usage = createMockUsage(190_000); // 95% - would trigger if enabled
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false, 1.0); // disabled
