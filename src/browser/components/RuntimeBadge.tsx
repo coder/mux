@@ -14,20 +14,24 @@ interface RuntimeBadgeProps {
 }
 
 // Runtime-specific color schemes - each type has consistent colors in idle/working states
+// Colors use CSS variables (--color-runtime-*) so they adapt to theme (e.g., solarized)
 // Idle: subtle with visible colored border for discrimination
 // Working: brighter colors with pulse animation
 const RUNTIME_STYLES = {
   ssh: {
-    idle: "bg-transparent text-muted border-blue-500/50",
-    working: "bg-blue-500/20 text-blue-400 border-blue-500/60 animate-pulse",
+    idle: "bg-transparent text-muted border-[var(--color-runtime-ssh)]/50",
+    working:
+      "bg-[var(--color-runtime-ssh)]/20 text-[var(--color-runtime-ssh)] border-[var(--color-runtime-ssh)]/60 animate-pulse",
   },
   worktree: {
-    idle: "bg-transparent text-muted border-purple-500/50",
-    working: "bg-purple-500/20 text-purple-400 border-purple-500/60 animate-pulse",
+    idle: "bg-transparent text-muted border-[var(--color-runtime-worktree)]/50",
+    working:
+      "bg-[var(--color-runtime-worktree)]/20 text-[var(--color-runtime-worktree)] border-[var(--color-runtime-worktree)]/60 animate-pulse",
   },
   local: {
-    idle: "bg-transparent text-muted border-muted/50",
-    working: "bg-muted/30 text-muted border-muted/60 animate-pulse",
+    idle: "bg-transparent text-muted border-[var(--color-runtime-local)]/50",
+    working:
+      "bg-[var(--color-runtime-local)]/30 text-[var(--color-runtime-local)] border-[var(--color-runtime-local)]/60 animate-pulse",
   },
 } as const;
 

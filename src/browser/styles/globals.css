@@ -62,6 +62,11 @@
     --color-thinking-mode-light: hsl(271 76% 65%);
     --color-thinking-border: hsl(271 76% 53%);
 
+    /* Runtime icon colors */
+    --color-runtime-ssh: hsl(207 82% 51%); /* blue */
+    --color-runtime-worktree: hsl(271 76% 53%); /* purple */
+    --color-runtime-local: hsl(0 0% 60%); /* gray */
+
     /* Background & Layout */
     --color-background: hsl(0 0% 12%);
     --color-background-secondary: hsl(60 1% 15%);
@@ -300,6 +305,11 @@
   --color-thinking-mode-light: hsl(271 70% 62%);
   --color-thinking-border: hsl(271 70% 46%);
 
+  /* Runtime icon colors */
+  --color-runtime-ssh: hsl(207 82% 42%);
+  --color-runtime-worktree: hsl(271 70% 46%);
+  --color-runtime-local: hsl(210 14% 48%);
+
   --color-background: hsl(210 33% 98%);
   --color-background-secondary: hsl(210 36% 95%);
   --color-border: hsl(210 24% 82%);
@@ -519,9 +529,14 @@
   --color-debug-light: hsl(205 69% 62%);
   --color-debug-text: hsl(205 69% 35%);
 
-  --color-thinking-mode: hsl(237 43% 60%);
-  --color-thinking-mode-light: hsl(237 43% 70%);
-  --color-thinking-border: hsl(237 43% 60%);
+  --color-thinking-mode: #6c71c4; /* violet */
+  --color-thinking-mode-light: #8589d0;
+  --color-thinking-border: #6c71c4;
+
+  /* Runtime icon colors - using solarized palette */
+  --color-runtime-ssh: #268bd2; /* blue */
+  --color-runtime-worktree: #6c71c4; /* violet */
+  --color-runtime-local: #839496; /* base0 */
 
   /* Background & Layout - Solarized base colors */
   --color-background: #fdf6e3; /* base3 */
@@ -633,14 +648,15 @@
   --color-border-subtle: #93a1a1;
   --color-border-gray: #93a1a1;
 
-  --color-dark: #fdf6e3;
-  --color-darker: #eee8d5;
+  /* Three-zone backgrounds: sidebar (base2), workspace (base3), input (between) */
+  --color-dark: #fdf6e3; /* base3 - main workspace */
+  --color-darker: #eee8d5; /* base2 */
   --color-hover: #e5dfcc;
   --color-bg-medium: #ddd6c3;
   --color-bg-light: #d5ceb8;
   --color-bg-subtle: #eee8d5;
 
-  --color-separator: #eee8d5;
+  --color-separator: #eee8d5; /* base2 - sidebar background */
   --color-separator-light: #f5efdc;
   --color-modal-bg: #fdf6e3;
 
@@ -724,13 +740,24 @@
   --color-debug-light: hsl(205 69% 62%);
   --color-debug-text: hsl(205 69% 70%);
 
-  --color-thinking-mode: hsl(237 43% 60%);
-  --color-thinking-mode-light: hsl(237 43% 70%);
-  --color-thinking-border: hsl(237 43% 60%);
+  --color-thinking-mode: #6c71c4; /* violet */
+  --color-thinking-mode-light: #8589d0;
+  --color-thinking-border: #6c71c4;
 
-  /* Background & Layout - Solarized dark base colors */
-  --color-background: #002b36; /* base03 */
-  --color-background-secondary: #073642; /* base02 */
+  /* Runtime icon colors - using solarized palette */
+  --color-runtime-ssh: #268bd2; /* blue */
+  --color-runtime-worktree: #6c71c4; /* violet */
+  --color-runtime-local: #839496; /* base0 */
+
+  /* Background & Layout - Solarized dark base colors
+     Palette reference:
+     base03 #002b36 (darkest)  base3  #fdf6e3 (lightest)
+     base02 #073642            base2  #eee8d5
+     base01 #586e75            base1  #93a1a1
+     base00 #657b83            base0  #839496
+  */
+  --color-background: #002b36; /* base03 - main background */
+  --color-background-secondary: #073642; /* base02 - secondary surfaces */
   --color-border: #586e75; /* base01 */
   --color-foreground: #839496; /* base0 */
   --color-text: #839496;
@@ -838,15 +865,16 @@
   --color-border-subtle: #586e75;
   --color-border-gray: #586e75;
 
-  --color-dark: #002b36;
-  --color-darker: #00232d;
+  /* Three-zone backgrounds: sidebar (base02), workspace (base03), input (between) */
+  --color-dark: #001f29; /* slightly darker than base03 for workspace */
+  --color-darker: #001a22;
   --color-hover: #0a4555;
   --color-bg-medium: #0d5566;
   --color-bg-light: #106577;
   --color-bg-subtle: #073642;
 
-  --color-separator: #073642;
-  --color-separator-light: #0a4555;
+  --color-separator: #073642; /* base02 - sidebar background */
+  --color-separator-light: #094555; /* slightly lighter for hover states */
   --color-modal-bg: #073642;
 
   --color-accent: #268bd2; /* blue */

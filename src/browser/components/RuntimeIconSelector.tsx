@@ -16,19 +16,23 @@ interface RuntimeIconSelectorProps {
 }
 
 // Runtime-specific color schemes matching RuntimeBadge
+// Colors use CSS variables (--color-runtime-*) so they adapt to theme (e.g., solarized)
 // Selected (active) uses the "working" styling, unselected uses "idle"
 const RUNTIME_STYLES = {
   ssh: {
-    idle: "bg-transparent text-muted border-blue-500/30 hover:border-blue-500/50",
-    active: "bg-blue-500/20 text-blue-400 border-blue-500/60",
+    idle: "bg-transparent text-muted border-[var(--color-runtime-ssh)]/30 hover:border-[var(--color-runtime-ssh)]/50",
+    active:
+      "bg-[var(--color-runtime-ssh)]/20 text-[var(--color-runtime-ssh)] border-[var(--color-runtime-ssh)]/60",
   },
   worktree: {
-    idle: "bg-transparent text-muted border-purple-500/30 hover:border-purple-500/50",
-    active: "bg-purple-500/20 text-purple-400 border-purple-500/60",
+    idle: "bg-transparent text-muted border-[var(--color-runtime-worktree)]/30 hover:border-[var(--color-runtime-worktree)]/50",
+    active:
+      "bg-[var(--color-runtime-worktree)]/20 text-[var(--color-runtime-worktree)] border-[var(--color-runtime-worktree)]/60",
   },
   local: {
-    idle: "bg-transparent text-muted border-muted/30 hover:border-muted/50",
-    active: "bg-muted/30 text-foreground border-muted/60",
+    idle: "bg-transparent text-muted border-[var(--color-runtime-local)]/30 hover:border-[var(--color-runtime-local)]/50",
+    active:
+      "bg-[var(--color-runtime-local)]/30 text-foreground border-[var(--color-runtime-local)]/60",
   },
 } as const;
 
