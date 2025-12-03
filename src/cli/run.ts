@@ -37,6 +37,7 @@ import type { ThinkingLevel } from "@/common/types/thinking";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { parseRuntimeModeAndHost, RUNTIME_MODE } from "@/common/types/runtime";
 import assert from "@/common/utils/assert";
+import parseDuration from "parse-duration";
 
 type CLIMode = "plan" | "exec";
 
@@ -66,25 +67,23 @@ function parseRuntimeConfig(value: string | undefined, srcBaseDir: string): Runt
 function parseTimeout(value: string | undefined): number | undefined {
   if (!value) return undefined;
 
-  const trimmed = value.trim().toLowerCase();
+  const trimmed = value.trim();
 
-  // Parse human-friendly formats: 5m, 300s, 5min, 5minutes, etc.
-  const regex = /^(\d+(?:\.\d+)?)\s*(s|sec|secs|seconds?|m|min|mins|minutes?|ms)?$/i;
-  const match = regex.exec(trimmed);
-  if (!match) {
+  // Try parsing as plain number (milliseconds)
+  const asNumber = Number(trimmed);
+  if (!Number.isNaN(asNumber) && asNumber > 0) {
+    return Math.round(asNumber);
+  }
+
+  // Use parse-duration for human-friendly formats (5m, 300s, 1h30m, etc.)
+  const ms = parseDuration(trimmed);
+  if (ms === null || ms <= 0) {
     throw new Error(
-      `Invalid timeout format "${value}". Use: 300s, 5m, 5min, or milliseconds (e.g., 300000)`
+      `Invalid timeout format "${value}". Use: 5m, 300s, 1h30m, or milliseconds (e.g., 300000)`
     );
   }
 
-  const num = parseFloat(match[1]);
-  const unit = (match[2] || "ms").toLowerCase();
-
-  if (unit === "ms") return Math.round(num);
-  if (unit.startsWith("s")) return Math.round(num * 1000);
-  if (unit.startsWith("m")) return Math.round(num * 60 * 1000);
-
-  return Math.round(num);
+  return Math.round(ms);
 }
 
 function parseThinkingLevel(value: string | undefined): ThinkingLevel | undefined {
