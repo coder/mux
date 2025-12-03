@@ -186,26 +186,34 @@ const SlidingWaveform: React.FC<SlidingWaveformProps> = (props) => {
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Draw waveform bars
+    // Draw waveform bars - calculate to fill full width
     const samples = samplesRef.current;
-    const barWidth = Math.max(1, Math.floor(canvas.width / samples.length));
-    const gap = Math.max(1, Math.floor(barWidth * 0.3));
-    const effectiveBarWidth = barWidth - gap;
+    const numBars = samples.length;
+
+    // Calculate bar and gap sizes to fill exactly the canvas width
+    // We want: numBars * barWidth + (numBars - 1) * gap = canvasWidth
+    // With gap = barWidth * 0.4, we get:
+    // numBars * barWidth + (numBars - 1) * 0.4 * barWidth = canvasWidth
+    // barWidth * (numBars + 0.4 * numBars - 0.4) = canvasWidth
+    // barWidth = canvasWidth / (1.4 * numBars - 0.4)
+    const totalWidth = canvas.width;
+    const barWidth = totalWidth / (1.4 * numBars - 0.4);
+    const gap = barWidth * 0.4;
     const centerY = canvas.height / 2;
 
     ctx.fillStyle = props.color;
 
-    for (let i = 0; i < samples.length; i++) {
+    for (let i = 0; i < numBars; i++) {
       const amplitude = samples[i];
       // Scale amplitude for visibility (boost quiet sounds)
       const scaledAmplitude = Math.min(1, amplitude * 3);
       const barHeight = Math.max(2, scaledAmplitude * canvas.height * 0.9);
 
-      const x = i * barWidth;
+      const x = i * (barWidth + gap);
       const y = centerY - barHeight / 2;
 
       ctx.beginPath();
-      ctx.roundRect(x, y, effectiveBarWidth, barHeight, 1);
+      ctx.roundRect(x, y, barWidth, barHeight, 1);
       ctx.fill();
     }
 
@@ -223,12 +231,12 @@ const SlidingWaveform: React.FC<SlidingWaveformProps> = (props) => {
   }, [draw]);
 
   return (
-    <div ref={containerRef} className="h-full w-full">
+    <div ref={containerRef} className="flex h-full w-full items-center justify-center">
       <canvas
         ref={canvasRef}
         width={containerWidth}
         height={props.height}
-        className="h-full w-full"
+        style={{ width: containerWidth, height: props.height }}
       />
     </div>
   );
