@@ -403,7 +403,7 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  async createForFirstMessage(
+  createForFirstMessage(
     message: string,
     projectPath: string,
     options: SendMessageOptions & {
@@ -411,31 +411,88 @@ export class WorkspaceService extends EventEmitter {
       runtimeConfig?: RuntimeConfig;
       trunkBranch?: string;
     } = { model: "claude-3-5-sonnet-20241022" }
-  ): Promise<
+  ):
     | { success: true; workspaceId: string; metadata: FrontendWorkspaceMetadata }
-    | { success: false; error: string }
-  > {
+    | { success: false; error: string } {
+    // Generate placeholder name and ID immediately (non-blocking)
+    const placeholderName = generatePlaceholderName(message);
+    const workspaceId = this.config.generateStableId();
+    const projectName = projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "unknown";
+
+    // Use provided runtime config or default to worktree
+    const runtimeConfig: RuntimeConfig = options.runtimeConfig ?? {
+      type: "worktree",
+      srcBaseDir: this.config.srcDir,
+    };
+
+    // Compute preliminary workspace path (may be refined after srcBaseDir resolution)
+    const srcBaseDir = getSrcBaseDir(runtimeConfig) ?? this.config.srcDir;
+    const preliminaryWorkspacePath = path.join(srcBaseDir, projectName, placeholderName);
+
+    // Create preliminary metadata with "creating" status for immediate UI response
+    const preliminaryMetadata: FrontendWorkspaceMetadata = {
+      id: workspaceId,
+      name: placeholderName,
+      projectName,
+      projectPath,
+      createdAt: new Date().toISOString(),
+      namedWorkspacePath: preliminaryWorkspacePath,
+      runtimeConfig,
+      status: "creating",
+    };
+
+    // Create session and emit metadata immediately so frontend can switch
+    const session = this.getOrCreateSession(workspaceId);
+    session.emitMetadata(preliminaryMetadata);
+
+    log.debug("Emitted preliminary workspace metadata", { workspaceId, placeholderName });
+
+    // Kick off background workspace creation (git operations, config save, etc.)
+    void this.completeWorkspaceCreation(
+      workspaceId,
+      message,
+      projectPath,
+      placeholderName,
+      runtimeConfig,
+      options
+    );
+
+    // Return immediately with preliminary metadata
+    return {
+      success: true,
+      workspaceId,
+      metadata: preliminaryMetadata,
+    };
+  }
+
+  /**
+   * Completes workspace creation in the background after preliminary metadata is emitted.
+   * Handles git operations, config persistence, and kicks off message sending.
+   */
+  private async completeWorkspaceCreation(
+    workspaceId: string,
+    message: string,
+    projectPath: string,
+    placeholderName: string,
+    runtimeConfig: RuntimeConfig,
+    options: SendMessageOptions & {
+      imageParts?: Array<{ url: string; mediaType: string }>;
+      runtimeConfig?: RuntimeConfig;
+      trunkBranch?: string;
+    }
+  ): Promise<void> {
+    const session = this.sessions.get(workspaceId);
+    if (!session) {
+      log.error("Session not found for workspace creation", { workspaceId });
+      return;
+    }
+
     try {
-      // Use placeholder name for immediate workspace creation (non-blocking)
-      const placeholderName = generatePlaceholderName(message);
-      log.debug("Using placeholder name for immediate creation", { placeholderName });
-
-      const branches = await listLocalBranches(projectPath);
-      const recommendedTrunk =
-        options.trunkBranch ?? (await detectDefaultTrunkBranch(projectPath, branches)) ?? "main";
-
-      // Default to worktree runtime for backward compatibility
-      let finalRuntimeConfig: RuntimeConfig = options.runtimeConfig ?? {
-        type: "worktree",
-        srcBaseDir: this.config.srcDir,
-      };
-
-      const workspaceId = this.config.generateStableId();
-
+      // Resolve runtime config (may involve path resolution for SSH)
+      let finalRuntimeConfig = runtimeConfig;
       let runtime;
       try {
         runtime = createRuntime(finalRuntimeConfig, { projectPath });
-        // Resolve srcBaseDir path if the config has one
         const srcBaseDir = getSrcBaseDir(finalRuntimeConfig);
         if (srcBaseDir) {
           const resolvedSrcBaseDir = await runtime.resolvePath(srcBaseDir);
@@ -449,10 +506,16 @@ export class WorkspaceService extends EventEmitter {
         }
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
-        return { success: false, error: errorMsg };
+        log.error("Failed to create runtime for workspace", { workspaceId, error: errorMsg });
+        session.emitMetadata(null); // Remove the "creating" workspace
+        return;
       }
 
-      const session = this.getOrCreateSession(workspaceId);
+      // Detect trunk branch (git operation)
+      const branches = await listLocalBranches(projectPath);
+      const recommendedTrunk =
+        options.trunkBranch ?? (await detectDefaultTrunkBranch(projectPath, branches)) ?? "main";
+
       this.initStateManager.startInit(workspaceId, projectPath);
       const initLogger = this.createInitLogger(workspaceId);
 
@@ -471,7 +534,6 @@ export class WorkspaceService extends EventEmitter {
 
         if (createResult.success) break;
 
-        // If collision and not last attempt, retry with suffix
         if (
           isWorkspaceNameCollision(createResult.error) &&
           attempt < MAX_WORKSPACE_NAME_COLLISION_RETRIES
@@ -484,25 +546,20 @@ export class WorkspaceService extends EventEmitter {
       }
 
       if (!createResult!.success || !createResult!.workspacePath) {
-        return { success: false, error: createResult!.error ?? "Failed to create workspace" };
+        log.error("Failed to create workspace", {
+          workspaceId,
+          error: createResult!.error,
+        });
+        session.emitMetadata(null); // Remove the "creating" workspace
+        return;
       }
 
       const projectName =
         projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "unknown";
-
-      // Compute namedWorkspacePath
       const namedWorkspacePath = runtime.getWorkspacePath(projectPath, finalBranchName);
+      const createdAt = new Date().toISOString();
 
-      const metadata: FrontendWorkspaceMetadata = {
-        id: workspaceId,
-        name: finalBranchName,
-        projectName,
-        projectPath,
-        createdAt: new Date().toISOString(),
-        namedWorkspacePath,
-        runtimeConfig: finalRuntimeConfig,
-      };
-
+      // Save to config
       await this.config.editConfig((config) => {
         let projectConfig = config.projects.get(projectPath);
         if (!projectConfig) {
@@ -513,21 +570,27 @@ export class WorkspaceService extends EventEmitter {
           path: createResult!.workspacePath!,
           id: workspaceId,
           name: finalBranchName,
-          createdAt: metadata.createdAt,
+          createdAt,
           runtimeConfig: finalRuntimeConfig,
         });
         return config;
       });
 
-      const allMetadata = await this.config.getAllWorkspaceMetadata();
-      const completeMetadata = allMetadata.find((m) => m.id === workspaceId);
+      // Emit final metadata (without "creating" status)
+      const finalMetadata: FrontendWorkspaceMetadata = {
+        id: workspaceId,
+        name: finalBranchName,
+        projectName,
+        projectPath,
+        createdAt,
+        namedWorkspacePath,
+        runtimeConfig: finalRuntimeConfig,
+      };
+      session.emitMetadata(finalMetadata);
 
-      if (!completeMetadata) {
-        return { success: false, error: "Failed to retrieve workspace metadata" };
-      }
+      log.debug("Workspace creation completed", { workspaceId, finalBranchName });
 
-      session.emitMetadata(completeMetadata);
-
+      // Start workspace initialization in background
       void runtime
         .initWorkspace({
           projectPath,
@@ -543,20 +606,15 @@ export class WorkspaceService extends EventEmitter {
           initLogger.logComplete(-1);
         });
 
+      // Send the first message
       void session.sendMessage(message, options);
 
       // Generate AI name asynchronously and rename if successful
       void this.generateAndApplyAIName(workspaceId, message, finalBranchName, options.model);
-
-      return {
-        success: true,
-        workspaceId,
-        metadata: completeMetadata,
-      };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      log.error("Unexpected error in createWorkspaceForFirstMessage:", error);
-      return { success: false, error: `Failed to create workspace: ${errorMessage}` };
+      log.error("Unexpected error in workspace creation", { workspaceId, error: errorMessage });
+      session.emitMetadata(null); // Remove the "creating" workspace
     }
   }
 
@@ -613,24 +671,38 @@ export class WorkspaceService extends EventEmitter {
       // Wait for the stream to complete before renaming (rename is blocked during streaming)
       await this.waitForStreamComplete(workspaceId);
 
-      // Attempt to rename the workspace
-      const renameResult = await this.rename(workspaceId, aiGeneratedName);
+      // Attempt to rename with collision retry (same logic as workspace creation)
+      let finalName = aiGeneratedName;
+      for (let attempt = 0; attempt <= MAX_WORKSPACE_NAME_COLLISION_RETRIES; attempt++) {
+        const renameResult = await this.rename(workspaceId, finalName);
 
-      if (!renameResult.success) {
-        // Rename failed (e.g., collision) - keep the placeholder name
+        if (renameResult.success) {
+          log.info("Successfully renamed workspace to AI-generated name", {
+            workspaceId,
+            oldName: currentName,
+            newName: finalName,
+          });
+          return;
+        }
+
+        // If collision and not last attempt, retry with suffix
+        if (
+          renameResult.error?.includes("already exists") &&
+          attempt < MAX_WORKSPACE_NAME_COLLISION_RETRIES
+        ) {
+          log.debug(`Workspace name collision for "${finalName}", retrying with suffix`);
+          finalName = appendCollisionSuffix(aiGeneratedName);
+          continue;
+        }
+
+        // Non-collision error or out of retries - keep placeholder name
         log.info("Failed to rename workspace to AI-generated name", {
           workspaceId,
-          aiGeneratedName,
+          aiGeneratedName: finalName,
           error: renameResult.error,
         });
         return;
       }
-
-      log.info("Successfully renamed workspace to AI-generated name", {
-        workspaceId,
-        oldName: currentName,
-        newName: aiGeneratedName,
-      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       log.error("Unexpected error in async AI name generation", {
@@ -1002,7 +1074,7 @@ export class WorkspaceService extends EventEmitter {
         messagePreview: message.substring(0, 50),
       });
 
-      return await this.createForFirstMessage(message, options.projectPath, options);
+      return this.createForFirstMessage(message, options.projectPath, options);
     }
 
     log.debug("sendMessage handler: Received", {
