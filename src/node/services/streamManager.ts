@@ -1177,8 +1177,14 @@ export class StreamManager extends EventEmitter {
         },
         parts: streamInfo.parts,
       };
-      // Write error state to disk (fire-and-forget to not block error emission)
-      void this.partialService.writePartial(workspaceId as string, errorPartialMessage);
+      // Wait for any in-flight partial write to complete before writing error state
+      // This prevents race conditions where the error write and a throttled flush
+      // write at the same time, causing inconsistent partial.json state
+      if (streamInfo.partialWritePromise) {
+        await streamInfo.partialWritePromise;
+      }
+      // Write error state to disk - await to ensure consistent state before any resume
+      await this.partialService.writePartial(workspaceId as string, errorPartialMessage);
 
       // Emit error event
       this.emit("error", {
@@ -1685,9 +1691,10 @@ export class StreamManager extends EventEmitter {
    * This method allows integration tests to simulate stream errors without
    * mocking the AI SDK or network layer. It triggers the same error handling
    * path as genuine stream errors by aborting the stream and manually triggering
-   * the error event (since abort alone doesn't throw, it just sets a flag).
+   * the error event (since abort alone doesn't throw, it just sets a flag that
+   * causes the for-await loop to break cleanly).
    */
-  debugTriggerStreamError(workspaceId: string, errorMessage: string): boolean {
+  async debugTriggerStreamError(workspaceId: string, errorMessage: string): Promise<boolean> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
     const streamInfo = this.workspaceStreams.get(typedWorkspaceId);
 
@@ -1699,8 +1706,11 @@ export class StreamManager extends EventEmitter {
       return false;
     }
 
-    // Abort the stream first
+    // Abort the stream first (causes for-await loop to break cleanly)
     streamInfo.abortController.abort(new Error(errorMessage));
+
+    // Mark as error state (same as catch block does)
+    streamInfo.state = StreamState.ERROR;
 
     // Update streamInfo metadata with error (so subsequent flushes preserve it)
     streamInfo.initialMetadata = {
@@ -1710,6 +1720,10 @@ export class StreamManager extends EventEmitter {
     };
 
     // Write error state to partial.json (same as real error handling)
+    // Wait for any in-flight partial write to complete first
+    if (streamInfo.partialWritePromise) {
+      await streamInfo.partialWritePromise;
+    }
     const errorPartialMessage: MuxMessage = {
       id: streamInfo.messageId,
       role: "assistant",
@@ -1724,7 +1738,7 @@ export class StreamManager extends EventEmitter {
       },
       parts: streamInfo.parts,
     };
-    void this.partialService.writePartial(workspaceId, errorPartialMessage);
+    await this.partialService.writePartial(workspaceId, errorPartialMessage);
 
     // Emit error event (same as real error handling)
     this.emit("error", {
@@ -1734,6 +1748,9 @@ export class StreamManager extends EventEmitter {
       error: errorMessage,
       errorType: "network",
     } as ErrorEvent);
+
+    // Wait for the stream processing to complete (cleanup)
+    await streamInfo.processingPromise;
 
     return true;
   }

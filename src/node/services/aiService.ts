@@ -1270,7 +1270,7 @@ export class AIService extends EventEmitter {
   debugTriggerStreamError(
     workspaceId: string,
     errorMessage = "Test-triggered stream error"
-  ): boolean {
+  ): Promise<boolean> {
     return this.streamManager.debugTriggerStreamError(workspaceId, errorMessage);
   }
 

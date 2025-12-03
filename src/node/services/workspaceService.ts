@@ -108,7 +108,7 @@ export class WorkspaceService extends EventEmitter {
    * This is used by integration tests to simulate network errors mid-stream.
    * @returns true if an active stream was found and error was triggered
    */
-  debugTriggerStreamError(workspaceId: string, errorMessage?: string): boolean {
+  debugTriggerStreamError(workspaceId: string, errorMessage?: string): Promise<boolean> {
     return this.aiService.debugTriggerStreamError(workspaceId, errorMessage);
   }
 
