@@ -14,7 +14,7 @@ import type { InitStateManager } from "@/node/services/initStateManager";
 import type { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
 import { listLocalBranches, detectDefaultTrunkBranch } from "@/node/git";
 import { createRuntime, IncompatibleRuntimeError } from "@/node/runtime/runtimeFactory";
-import { generateWorkspaceName } from "./workspaceTitleGenerator";
+import { generateWorkspaceName, generatePlaceholderName } from "./workspaceTitleGenerator";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 
 import type {
@@ -416,23 +416,9 @@ export class WorkspaceService extends EventEmitter {
     | { success: false; error: string }
   > {
     try {
-      const branchNameResult = await generateWorkspaceName(message, options.model, this.aiService);
-      if (!branchNameResult.success) {
-        const err = branchNameResult.error;
-        const errorMessage =
-          "message" in err
-            ? err.message
-            : err.type === "api_key_not_found"
-              ? `API key not found for ${err.provider}`
-              : err.type === "provider_not_supported"
-                ? `Provider not supported: ${err.provider}`
-                : "raw" in err
-                  ? err.raw
-                  : "Unknown error";
-        return { success: false, error: errorMessage };
-      }
-      const branchName = branchNameResult.data;
-      log.debug("Generated workspace name", { branchName });
+      // Use placeholder name for immediate workspace creation (non-blocking)
+      const placeholderName = generatePlaceholderName(message);
+      log.debug("Using placeholder name for immediate creation", { placeholderName });
 
       const branches = await listLocalBranches(projectPath);
       const recommendedTrunk =
@@ -471,7 +457,7 @@ export class WorkspaceService extends EventEmitter {
       const initLogger = this.createInitLogger(workspaceId);
 
       // Create workspace with automatic collision retry
-      let finalBranchName = branchName;
+      let finalBranchName = placeholderName;
       let createResult: { success: boolean; workspacePath?: string; error?: string };
 
       for (let attempt = 0; attempt <= MAX_WORKSPACE_NAME_COLLISION_RETRIES; attempt++) {
@@ -491,7 +477,7 @@ export class WorkspaceService extends EventEmitter {
           attempt < MAX_WORKSPACE_NAME_COLLISION_RETRIES
         ) {
           log.debug(`Workspace name collision for "${finalBranchName}", retrying with suffix`);
-          finalBranchName = appendCollisionSuffix(branchName);
+          finalBranchName = appendCollisionSuffix(placeholderName);
           continue;
         }
         break;
@@ -559,6 +545,9 @@ export class WorkspaceService extends EventEmitter {
 
       void session.sendMessage(message, options);
 
+      // Generate AI name asynchronously and rename if successful
+      void this.generateAndApplyAIName(workspaceId, message, finalBranchName, options.model);
+
       return {
         success: true,
         workspaceId,
@@ -568,6 +557,78 @@ export class WorkspaceService extends EventEmitter {
       const errorMessage = error instanceof Error ? error.message : String(error);
       log.error("Unexpected error in createWorkspaceForFirstMessage:", error);
       return { success: false, error: `Failed to create workspace: ${errorMessage}` };
+    }
+  }
+
+  /**
+   * Asynchronously generates an AI workspace name and renames the workspace if successful.
+   * This runs in the background after workspace creation to avoid blocking the UX.
+   */
+  private async generateAndApplyAIName(
+    workspaceId: string,
+    message: string,
+    currentName: string,
+    model: string
+  ): Promise<void> {
+    try {
+      log.debug("Starting async AI name generation", { workspaceId, currentName });
+
+      const branchNameResult = await generateWorkspaceName(message, model, this.aiService);
+
+      if (!branchNameResult.success) {
+        // AI name generation failed - keep the placeholder name
+        const err = branchNameResult.error;
+        const errorMessage =
+          "message" in err
+            ? err.message
+            : err.type === "api_key_not_found"
+              ? `API key not found for ${err.provider}`
+              : err.type === "provider_not_supported"
+                ? `Provider not supported: ${err.provider}`
+                : "raw" in err
+                  ? err.raw
+                  : "Unknown error";
+        log.info("AI name generation failed, keeping placeholder name", {
+          workspaceId,
+          currentName,
+          error: errorMessage,
+        });
+        return;
+      }
+
+      const aiGeneratedName = branchNameResult.data;
+      log.debug("AI generated workspace name", { workspaceId, aiGeneratedName, currentName });
+
+      // Only rename if the AI name is different from current name
+      if (aiGeneratedName === currentName) {
+        log.debug("AI name matches placeholder, no rename needed", { workspaceId });
+        return;
+      }
+
+      // Attempt to rename the workspace
+      const renameResult = await this.rename(workspaceId, aiGeneratedName);
+
+      if (!renameResult.success) {
+        // Rename failed (e.g., collision) - keep the placeholder name
+        log.info("Failed to rename workspace to AI-generated name", {
+          workspaceId,
+          aiGeneratedName,
+          error: renameResult.error,
+        });
+        return;
+      }
+
+      log.info("Successfully renamed workspace to AI-generated name", {
+        workspaceId,
+        oldName: currentName,
+        newName: aiGeneratedName,
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log.error("Unexpected error in async AI name generation", {
+        workspaceId,
+        error: errorMessage,
+      });
     }
   }
 
