@@ -31,9 +31,7 @@ function isCompactionMetadata(meta: unknown): meta is CompactionMetadata {
  */
 export class MessageQueue {
   private messages: string[] = [];
-  // muxMetadata from first message (preserved, never overwritten)
   private firstMuxMetadata?: unknown;
-  // Latest options (for model, etc.)
   private latestOptions?: SendMessageOptions;
   private accumulatedImages: ImagePart[] = [];
 
@@ -80,13 +78,10 @@ export class MessageQueue {
     if (options) {
       const { imageParts, ...restOptions } = options;
 
-      // Preserve first muxMetadata (critical for compaction)
-      // This ensures compaction metadata isn't lost when follow-ups are added
+      // Preserve first muxMetadata (see class docblock for rationale)
       if (options.muxMetadata !== undefined && this.firstMuxMetadata === undefined) {
         this.firstMuxMetadata = options.muxMetadata;
       }
-
-      // Always update latest options (for model changes, etc.)
       this.latestOptions = restOptions;
 
       if (imageParts && imageParts.length > 0) {
@@ -125,26 +120,21 @@ export class MessageQueue {
 
   /**
    * Get combined message and options for sending.
-   * Returns joined messages with options (using preserved muxMetadata).
    */
   produceMessage(): {
     message: string;
     options?: SendMessageOptions & { imageParts?: ImagePart[] };
   } {
     const joinedMessages = this.messages.join("\n");
-
-    // Merge latest options with preserved muxMetadata
-    // Use preserved first muxMetadata if available (critical for compaction)
-    // Falls back to latest options' muxMetadata if no first was stored
-    const effectiveMuxMetadata =
+    // First metadata takes precedence (preserves compaction requests)
+    const muxMetadata =
       this.firstMuxMetadata !== undefined
         ? this.firstMuxMetadata
         : (this.latestOptions?.muxMetadata as unknown);
-
     const options = this.latestOptions
       ? {
           ...this.latestOptions,
-          muxMetadata: effectiveMuxMetadata,
+          muxMetadata,
           imageParts: this.accumulatedImages.length > 0 ? this.accumulatedImages : undefined,
         }
       : undefined;
