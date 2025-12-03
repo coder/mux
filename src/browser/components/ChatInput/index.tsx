@@ -907,7 +907,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     }
 
     // Note: ESC handled by VimTextArea (for mode transitions) and CommandSuggestions (for dismissal)
-    // Edit canceling is Esc (non-vim) or Esc twice (vim), stream interruption is Ctrl+C (vim) or Esc (normal)
 
     // Don't handle keys if command suggestions are visible
     if (
@@ -935,7 +934,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     // Workspace variant placeholders
     if (editingMessage) {
       const cancelHint = vimEnabled
-        ? "Esc×2 to cancel"
+        ? `${formatKeybind(KEYBINDS.CANCEL_EDIT)}×2 to cancel`
         : `${formatKeybind(KEYBINDS.CANCEL_EDIT)} to cancel`;
       return `Edit your message... (${cancelHint}, ${formatKeybind(KEYBINDS.SEND_MESSAGE)} to send)`;
     }
@@ -1088,8 +1087,8 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             {/* Editing indicator - workspace only */}
             {variant === "workspace" && editingMessage && (
               <div className="text-edit-mode text-[11px] font-medium">
-                Editing message ({vimEnabled ? "Esc×2" : formatKeybind(KEYBINDS.CANCEL_EDIT)} to
-                cancel)
+                Editing message ({formatKeybind(KEYBINDS.CANCEL_EDIT)}
+                {vimEnabled ? "×2" : ""} to cancel)
               </div>
             )}
 
