@@ -198,7 +198,7 @@ export const KEYBINDS = {
   CANCEL: { key: "Escape" },
 
   /** Cancel editing message (exit edit mode) */
-  CANCEL_EDIT: { key: "q", ctrl: true, macCtrlBehavior: "control" },
+  CANCEL_EDIT: { key: "Escape" },
 
   /** Interrupt active stream (destructive - stops AI generation) */
   // Vim mode: Ctrl+C (familiar from terminal interrupt)

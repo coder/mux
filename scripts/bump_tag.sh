@@ -18,7 +18,7 @@ if [[ -z "$CURRENT_VERSION" || "$CURRENT_VERSION" == "null" ]]; then
 fi
 
 # Parse semver components
-IFS='.' read -r MAJOR MINOR_V PATCH <<< "$CURRENT_VERSION"
+IFS='.' read -r MAJOR MINOR_V PATCH <<<"$CURRENT_VERSION"
 
 # Calculate new version
 if [[ "$MINOR" == "true" ]]; then
@@ -30,7 +30,7 @@ fi
 echo "Bumping version: $CURRENT_VERSION -> $NEW_VERSION"
 
 # Update package.json
-jq --arg v "$NEW_VERSION" '.version = $v' package.json > package.json.tmp
+jq --arg v "$NEW_VERSION" '.version = $v' package.json >package.json.tmp
 mv package.json.tmp package.json
 
 # Commit and tag

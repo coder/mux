@@ -32,12 +32,27 @@ export interface VimTextAreaProps
   isEditing?: boolean;
   suppressKeys?: string[]; // keys for which Vim should not interfere (e.g. ["Tab","ArrowUp","ArrowDown","Escape"]) when popovers are open
   trailingAction?: React.ReactNode;
+  /** Called when Escape is pressed in normal mode (vim) - useful for cancel edit */
+  onEscapeInNormalMode?: () => void;
 }
 
 type VimMode = vim.VimMode;
 
 export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProps>(
-  ({ value, onChange, mode, isEditing, suppressKeys, onKeyDown, trailingAction, ...rest }, ref) => {
+  (
+    {
+      value,
+      onChange,
+      mode,
+      isEditing,
+      suppressKeys,
+      onKeyDown,
+      trailingAction,
+      onEscapeInNormalMode,
+      ...rest
+    },
+    ref
+  ) => {
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
     // Expose DOM ref to parent
     useEffect(() => {
@@ -129,13 +144,17 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
 
       e.preventDefault();
 
-      // Handle side effects (undo/redo)
+      // Handle side effects (undo/redo/escapeInNormalMode)
       if (result.action === "undo") {
         document.execCommand("undo");
         return;
       }
       if (result.action === "redo") {
         document.execCommand("redo");
+        return;
+      }
+      if (result.action === "escapeInNormalMode") {
+        onEscapeInNormalMode?.();
         return;
       }
 
