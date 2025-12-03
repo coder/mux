@@ -23,6 +23,7 @@ import { log } from "@/node/services/log";
 import { parseDebugUpdater } from "@/common/utils/env";
 import assert from "@/common/utils/assert";
 import { loadTokenizerModules } from "@/node/utils/main/tokenizer";
+import windowStateKeeper from "electron-window-state";
 
 // React DevTools for development profiling
 // Using dynamic import() to avoid loading electron-devtools-installer at module init time
@@ -350,18 +351,23 @@ async function loadServices(): Promise<void> {
 function createWindow() {
   assert(ipcMain, "Services must be loaded before creating window");
 
-  // Calculate window size based on screen dimensions (80% of available space)
+  // Calculate default window size (80% of screen)
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width: screenWidth, height: screenHeight } = primaryDisplay.workArea;
 
-  const windowWidth = Math.max(1200, Math.floor(screenWidth * 0.8));
-  const windowHeight = Math.max(800, Math.floor(screenHeight * 0.8));
+  // Load saved window state with fallback to defaults
+  const windowState = windowStateKeeper({
+    defaultWidth: Math.max(1200, Math.floor(screenWidth * 0.8)),
+    defaultHeight: Math.max(800, Math.floor(screenHeight * 0.8)),
+  });
 
   console.log(`[${timestamp()}] [window] Creating BrowserWindow...`);
 
   mainWindow = new BrowserWindow({
-    width: windowWidth,
-    height: windowHeight,
+    x: windowState.x,
+    y: windowState.y,
+    width: windowState.width,
+    height: windowState.height,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -373,6 +379,9 @@ function createWindow() {
     autoHideMenuBar: process.platform === "linux",
     show: false, // Don't show until ready-to-show event
   });
+
+  // Track window state (handles resize, move, maximize, fullscreen)
+  windowState.manage(mainWindow);
 
   // Register IPC handlers with the main window
   console.log(`[${timestamp()}] [window] Registering IPC handlers...`);
