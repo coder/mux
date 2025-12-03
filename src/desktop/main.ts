@@ -172,7 +172,10 @@ function createMenu() {
         { role: "zoomIn" },
         { role: "zoomOut" },
         { type: "separator" },
-        { role: "togglefullscreen" },
+        {
+          role: "togglefullscreen",
+          accelerator: process.platform === "darwin" ? "Ctrl+Command+F" : "F11",
+        },
       ],
     },
     {
