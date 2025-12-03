@@ -8,9 +8,12 @@ interface CreationControlsProps {
   trunkBranch: string;
   onTrunkBranchChange: (branch: string) => void;
   runtimeMode: RuntimeMode;
+  defaultRuntimeMode: RuntimeMode;
   sshHost: string;
-  /** Called when user changes runtime mode via checkbox in tooltip */
+  /** Called when user clicks a runtime icon to select it (does not persist) */
   onRuntimeModeChange: (mode: RuntimeMode) => void;
+  /** Called when user checks "Default for project" checkbox (persists) */
+  onSetDefaultRuntime: (mode: RuntimeMode) => void;
   /** Called when user changes SSH host */
   onSshHostChange: (host: string) => void;
   disabled: boolean;
@@ -32,6 +35,8 @@ export function CreationControls(props: CreationControlsProps) {
       <RuntimeIconSelector
         value={props.runtimeMode}
         onChange={props.onRuntimeModeChange}
+        defaultMode={props.defaultRuntimeMode}
+        onSetDefault={props.onSetDefaultRuntime}
         disabled={props.disabled}
       />
 

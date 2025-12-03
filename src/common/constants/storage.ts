@@ -110,11 +110,11 @@ export function getModeKey(workspaceId: string): string {
 
 /**
  * Get the localStorage key for the default runtime for a project
- * Defaults to worktree if not set; can only be changed via the runtime icon selector.
- * Format: "defaultRuntime:{projectPath}"
+ * Defaults to worktree if not set; can only be changed via the "Default for project" checkbox.
+ * Format: "runtime:{projectPath}"
  */
-export function getDefaultRuntimeKey(projectPath: string): string {
-  return `defaultRuntime:${projectPath}`;
+export function getRuntimeKey(projectPath: string): string {
+  return `runtime:${projectPath}`;
 }
 
 /**

@@ -7,6 +7,10 @@ import { TooltipWrapper, Tooltip } from "./Tooltip";
 interface RuntimeIconSelectorProps {
   value: RuntimeMode;
   onChange: (mode: RuntimeMode) => void;
+  /** The persisted default runtime for this project */
+  defaultMode: RuntimeMode;
+  /** Called when user checks "Default for project" in tooltip */
+  onSetDefault: (mode: RuntimeMode) => void;
   disabled?: boolean;
   className?: string;
 }
@@ -46,7 +50,9 @@ const RUNTIME_INFO: Record<RuntimeMode, { label: string; description: string }> 
 interface RuntimeIconButtonProps {
   mode: RuntimeMode;
   isSelected: boolean;
+  isDefault: boolean;
   onClick: () => void;
+  onSetDefault: () => void;
   disabled?: boolean;
 }
 
@@ -69,7 +75,7 @@ function RuntimeIconButton(props: RuntimeIconButtonProps) {
         onClick={props.onClick}
         disabled={props.disabled}
         className={cn(
-          "inline-flex items-center justify-center rounded border p-1.5 transition-colors",
+          "inline-flex items-center justify-center rounded border p-1 transition-colors",
           "focus:outline-none focus-visible:ring-1 focus-visible:ring-blue-500",
           stateStyle,
           props.disabled && "cursor-not-allowed opacity-50"
@@ -77,11 +83,20 @@ function RuntimeIconButton(props: RuntimeIconButtonProps) {
         aria-label={`${info.label} runtime`}
         aria-pressed={props.isSelected}
       >
-        <Icon size={14} />
+        <Icon />
       </button>
-      <Tooltip align="center" width="wide" position="bottom">
+      <Tooltip align="center" width="wide" position="bottom" interactive>
         <strong>{info.label}</strong>
-        <p className="text-muted mt-0.5">{info.description}</p>
+        <p className="text-muted mt-0.5 text-xs">{info.description}</p>
+        <label className="mt-1.5 flex cursor-pointer items-center gap-1.5 text-xs">
+          <input
+            type="checkbox"
+            checked={props.isDefault}
+            onChange={() => props.onSetDefault()}
+            className="accent-accent h-3 w-3"
+          />
+          <span className="text-muted">Default for project</span>
+        </label>
       </Tooltip>
     </TooltipWrapper>
   );
@@ -91,7 +106,7 @@ function RuntimeIconButton(props: RuntimeIconButtonProps) {
  * Runtime selector using icons with tooltips.
  * Shows Local, Worktree, and SSH options as clickable icons.
  * Selected runtime uses "active" styling (brighter colors).
- * Clicking an icon sets it as the project default.
+ * Each tooltip has a "Default for project" checkbox to persist the preference.
  */
 export function RuntimeIconSelector(props: RuntimeIconSelectorProps) {
   const modes: RuntimeMode[] = [RUNTIME_MODE.LOCAL, RUNTIME_MODE.WORKTREE, RUNTIME_MODE.SSH];
@@ -107,7 +122,9 @@ export function RuntimeIconSelector(props: RuntimeIconSelectorProps) {
           key={mode}
           mode={mode}
           isSelected={props.value === mode}
+          isDefault={props.defaultMode === mode}
           onClick={() => props.onChange(mode)}
+          onSetDefault={() => props.onSetDefault(mode)}
           disabled={props.disabled}
         />
       ))}
