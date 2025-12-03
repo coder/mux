@@ -396,6 +396,11 @@ export interface IPCApi {
 }
 
 // Update status type (matches updater service)
+
+export interface ImagePart {
+  url: string; // Data URL (e.g., "data:image/png;base64,...")
+  mediaType: string; // MIME type (e.g., "image/png", "image/jpeg")
+}
 export type UpdateStatus =
   | { type: "idle" } // Initial state, no check performed yet
   | { type: "checking" }

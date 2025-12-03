@@ -725,15 +725,16 @@ export async function readChatHistory(
 }
 
 /**
- * Test image fixtures (1x1 pixel PNGs)
+ * Test image fixtures (32x32 solid color PNGs)
  */
 export const TEST_IMAGES: Record<string, ImagePart> = {
+  // 32x32 solid color PNGs provide clearer features than the old 1x1 pixels
   RED_PIXEL: {
-    url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
+    url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKElEQVR4nO3NsQ0AAAzCMP5/un0CNkuZ41wybXsHAAAAAAAAAAAAxR4yw/wuPL6QkAAAAABJRU5ErkJggg==",
     mediaType: "image/png",
   },
   BLUE_PIXEL: {
-    url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAEBgIApD5fRAAAAABJRU5ErkJggg==",
+    url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAJklEQVR4nO3NsQkAAAjAsP7/tF7hIASyp5pjAoFAIBAIBAKB4EmwOkv8Lm7+zY4AAAAASUVORK5CYII=",
     mediaType: "image/png",
   },
 };
