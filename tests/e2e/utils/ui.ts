@@ -345,7 +345,10 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
             if (!capture) {
               return false;
             }
-            return capture.events.some((event) => event.type === "stream-end");
+            // Wait for either stream-end or stream-error to complete the capture
+            return capture.events.some(
+              (event) => event.type === "stream-end" || event.type === "stream-error"
+            );
           },
           workspaceId,
           { timeout: timeoutMs }

@@ -148,9 +148,21 @@ jobs:
         run: make test-storybook
 
   e2e-test:
-    name: End-to-End Tests
-    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    name: E2E Tests (${{ matrix.os }})
     if: github.event.inputs.test_filter == ''
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux: comprehensive E2E tests
+          - os: linux
+            runner: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+            test_scope: "all"
+          # macOS: window lifecycle and platform-dependent tests only
+          - os: macos
+            runner: ${{ github.repository_owner == 'coder' && 'depot-macos-latest' || 'macos-latest' }}
+            test_scope: "window-lifecycle"
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -159,17 +171,23 @@ jobs:
 
       - uses: ./.github/actions/setup-mux
 
-      - name: Install xvfb
+      - name: Install xvfb (Linux)
+        if: matrix.os == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb
 
       - uses: ./.github/actions/setup-playwright
 
-      - name: Run e2e tests
+      - name: Run comprehensive e2e tests (Linux)
+        if: matrix.os == 'linux'
         run: xvfb-run -a make test-e2e
         env:
           ELECTRON_DISABLE_SANDBOX: 1
+
+      - name: Run window lifecycle e2e tests (macOS)
+        if: matrix.os == 'macos'
+        run: make test-e2e PLAYWRIGHT_ARGS="tests/e2e/scenarios/windowLifecycle.spec.ts"
 
   docker-smoke-test:
     name: Docker Smoke Test
