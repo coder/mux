@@ -92,7 +92,7 @@ export const GIT_FETCH_SCRIPT = `
 export GIT_TERMINAL_PROMPT=0
 export GIT_ASKPASS=echo
 export SSH_ASKPASS=echo
-export GIT_SSH_COMMAND="ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+export GIT_SSH_COMMAND="\${GIT_SSH_COMMAND:-ssh} -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
 
 # Fast fetch with optimization flags
 git -c protocol.version=2 \\
