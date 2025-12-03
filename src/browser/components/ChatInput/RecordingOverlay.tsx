@@ -3,7 +3,7 @@
  * Replaces the chat textarea when voice input is active.
  */
 
-import React from "react";
+import React, { useRef, useState, useLayoutEffect } from "react";
 import { LiveAudioVisualizer } from "react-audio-visualize";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
@@ -27,12 +27,26 @@ interface RecordingOverlayProps {
 export const RecordingOverlay: React.FC<RecordingOverlayProps> = (props) => {
   const isRecording = props.state === "recording";
   const isTranscribing = props.state === "transcribing";
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(400);
+
+  // Measure container width for the canvas
+  useLayoutEffect(() => {
+    const measure = () => {
+      if (containerRef.current) {
+        setContainerWidth(containerRef.current.offsetWidth);
+      }
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
 
   const modeColor = MODE_COLORS[props.mode];
 
   // Border and background classes based on state
   const containerClasses = cn(
-    "mb-1 flex min-h-[72px] w-full flex-col items-center justify-center gap-2 rounded-md border px-4 py-3 transition-all focus:outline-none",
+    "mb-1 flex w-full flex-col items-center justify-center gap-1 rounded-md border px-3 py-2 transition-all focus:outline-none",
     isRecording
       ? props.mode === "plan"
         ? "cursor-pointer border-plan-mode bg-plan-mode/10"
@@ -49,14 +63,14 @@ export const RecordingOverlay: React.FC<RecordingOverlayProps> = (props) => {
       aria-label={isRecording ? "Stop recording" : "Transcribing..."}
     >
       {/* Visualizer / Animation Area */}
-      <div className="flex h-10 w-full items-center justify-center">
+      <div ref={containerRef} className="flex h-8 w-full items-center justify-center">
         {isRecording && props.mediaRecorder ? (
           <LiveAudioVisualizer
             mediaRecorder={props.mediaRecorder}
-            width="100%"
-            height={40}
-            barWidth={3}
-            gap={2}
+            width={containerWidth}
+            height={32}
+            barWidth={2}
+            gap={1}
             barColor={modeColor}
             smoothingTimeConstant={0.5}
             fftSize={256}
