@@ -576,6 +576,9 @@ function AppInner() {
                   currentMetadata?.name ??
                   selectedWorkspace.namedWorkspacePath?.split("/").pop() ??
                   selectedWorkspace.workspaceId;
+                // Use live metadata path (updates on rename) with fallback to initial path
+                const workspacePath =
+                  currentMetadata?.namedWorkspacePath ?? selectedWorkspace.namedWorkspacePath ?? "";
                 return (
                   <ErrorBoundary
                     workspaceInfo={`${selectedWorkspace.projectName}/${workspaceName}`}
@@ -586,7 +589,7 @@ function AppInner() {
                       projectPath={selectedWorkspace.projectPath}
                       projectName={selectedWorkspace.projectName}
                       branch={workspaceName}
-                      namedWorkspacePath={selectedWorkspace.namedWorkspacePath ?? ""}
+                      namedWorkspacePath={workspacePath}
                       runtimeConfig={currentMetadata?.runtimeConfig}
                       incompatibleRuntime={currentMetadata?.incompatibleRuntime}
                       status={currentMetadata?.status}

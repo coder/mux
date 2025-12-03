@@ -194,7 +194,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
   // Load file tree - when workspace, diffBase, or refreshTrigger changes
   useEffect(() => {
-    if (!api) return;
+    // Skip data loading while workspace is being created
+    if (!api || isCreating) return;
     let cancelled = false;
 
     const loadFileTree = async () => {
@@ -242,11 +243,13 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     filters.diffBase,
     filters.includeUncommitted,
     refreshTrigger,
+    isCreating,
   ]);
 
   // Load diff hunks - when workspace, diffBase, selected path, or refreshTrigger changes
   useEffect(() => {
-    if (!api) return;
+    // Skip data loading while workspace is being created
+    if (!api || isCreating) return;
     let cancelled = false;
 
     const loadDiff = async () => {
@@ -336,6 +339,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     filters.includeUncommitted,
     selectedFilePath,
     refreshTrigger,
+    isCreating,
   ]);
 
   // Persist diffBase when it changes
