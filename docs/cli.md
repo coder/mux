@@ -1,10 +1,10 @@
 # Command Line Interface
 
-Mux provides a CLI for running agent sessions without opening the desktop app.
+Mux provides a CLI for running one-off agent tasks without the desktop app. Unlike the interactive desktop experience, `mux run` executes a single request to completion and exits.
 
 ## `mux run`
 
-Run an agent session in any directory:
+Execute a one-off agent task:
 
 ```bash
 # Basic usage - run in current directory
@@ -15,9 +15,6 @@ mux run --dir /path/to/project "Add authentication"
 
 # Use SSH runtime
 mux run --runtime "ssh user@myserver" "Deploy changes"
-
-# Plan mode (proposes a plan, then auto-executes)
-mux run --mode plan "Refactor the auth module"
 
 # Pipe instructions via stdin
 echo "Add logging to all API endpoints" | mux run
@@ -67,9 +64,6 @@ mux run -r "ssh dev@staging.example.com" -d /app "Update dependencies"
 
 # Scripted usage with timeout
 mux run --json --timeout 5m "Generate API documentation" > output.jsonl
-
-# Plan first, then execute
-mux run --mode plan "Migrate from REST to GraphQL"
 ```
 
 ## `mux server`
@@ -87,11 +81,21 @@ Options:
 - `--auth-token <token>` - Optional bearer token for authentication
 - `--add-project <path>` - Add and open project at the specified path
 
-## `mux version`
+## `mux desktop`
+
+Launch the desktop app. This is automatically invoked when running the packaged app or via `electron .`:
+
+```bash
+mux desktop
+```
+
+Note: Requires Electron. When running `mux` with no arguments under Electron, the desktop app launches automatically.
+
+## `mux --version`
 
 Print the version and git commit:
 
 ```bash
-mux version
-# mux v0.8.4 (abc123)
+mux --version
+# v0.8.4 (abc123)
 ```

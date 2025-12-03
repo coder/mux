@@ -99,26 +99,27 @@ test.describe("slash command flows", () => {
     await expect(transcript).not.toContainText("Directory listing:");
   });
 
-  test("slash command /model opus switches models for subsequent turns", async ({ ui, page }) => {
+  test("slash command /model sonnet switches models for subsequent turns", async ({ ui, page }) => {
     await ui.projects.openFirstWorkspace();
 
     const modeToggles = page.locator('[data-component="ChatModeToggles"]');
+    // Default model is now Opus
+    await expect(modeToggles.getByText("anthropic:claude-opus-4-5", { exact: true })).toBeVisible();
+
+    await ui.chat.sendMessage("/model sonnet");
+    await ui.chat.expectStatusMessageContains("Model changed to anthropic:claude-sonnet-4-5");
     await expect(
       modeToggles.getByText("anthropic:claude-sonnet-4-5", { exact: true })
     ).toBeVisible();
-
-    await ui.chat.sendMessage("/model opus");
-    await ui.chat.expectStatusMessageContains("Model changed to anthropic:claude-opus-4-5");
-    await expect(modeToggles.getByText("anthropic:claude-opus-4-5", { exact: true })).toBeVisible();
 
     const timeline = await ui.chat.captureStreamTimeline(async () => {
       await ui.chat.sendMessage(SLASH_COMMAND_PROMPTS.MODEL_STATUS);
     });
 
     const streamStart = timeline.events.find((event) => event.type === "stream-start");
-    expect(streamStart?.model).toBe("anthropic:claude-opus-4-5");
+    expect(streamStart?.model).toBe("anthropic:claude-sonnet-4-5");
     await ui.chat.expectTranscriptContains(
-      "Claude Opus 4.5 is now responding with enhanced reasoning capacity."
+      "Claude Sonnet 4.5 is now responding with standard reasoning capacity."
     );
   });
 
