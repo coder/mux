@@ -9,6 +9,7 @@ import { TooltipWrapper, Tooltip } from "../Tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";
 import type { VoiceInputState } from "@/browser/hooks/useVoiceInput";
+import type { UIMode } from "@/common/types/mode";
 
 interface VoiceInputButtonProps {
   state: VoiceInputState;
@@ -17,11 +18,18 @@ interface VoiceInputButtonProps {
   requiresSecureContext: boolean;
   onToggle: () => void;
   disabled?: boolean;
+  mode: UIMode;
+}
+
+function getRecordingColorClass(mode: UIMode): string {
+  return mode === "plan"
+    ? "text-plan-mode-light animate-pulse"
+    : "text-exec-mode-light animate-pulse";
 }
 
 const STATE_CONFIG: Record<VoiceInputState, { label: string; colorClass: string }> = {
   idle: { label: "Voice input", colorClass: "text-muted/50 hover:text-muted" },
-  recording: { label: "Stop recording", colorClass: "text-blue-500 animate-pulse" },
+  recording: { label: "Stop recording", colorClass: "" }, // handled dynamically
   transcribing: { label: "Transcribing...", colorClass: "text-amber-500" },
 };
 
@@ -32,6 +40,7 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
   const needsApiKey = !needsHttps && !props.isApiKeySet;
   const isDisabledReason = needsHttps || needsApiKey;
 
+  const stateConfig = STATE_CONFIG[props.state];
   const { label, colorClass } = isDisabledReason
     ? {
         label: needsHttps
@@ -39,7 +48,11 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
           : "Voice input (requires OpenAI API key)",
         colorClass: "text-muted/50",
       }
-    : STATE_CONFIG[props.state];
+    : {
+        label: stateConfig.label,
+        colorClass:
+          props.state === "recording" ? getRecordingColorClass(props.mode) : stateConfig.colorClass,
+      };
 
   const Icon = props.state === "transcribing" ? Loader2 : Mic;
   const isTranscribing = props.state === "transcribing";
