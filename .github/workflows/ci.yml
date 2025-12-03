@@ -238,6 +238,43 @@ jobs:
         if: always()
         run: docker rm -f mux-test || true
 
+  mux-server-smoke-test:
+    name: Mux Server Smoke Test
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    # Tests oRPC/WebSocket flows that catch MockBrowserWindow bugs
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Required for git describe to find tags
+
+      - uses: ./.github/actions/setup-mux
+
+      - name: Build application
+        run: make build
+
+      - name: Pack npm package
+        run: npm pack
+
+      - name: Run smoke test
+        env:
+          SERVER_PORT: 3001
+          SERVER_HOST: localhost
+          STARTUP_TIMEOUT: 30
+        run: |
+          # Find the actual tarball name (version may vary)
+          TARBALL=$(ls mux-*.tgz | head -1)
+          PACKAGE_TARBALL="$TARBALL" ./scripts/smoke-test.sh
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mux-server-smoke-test-logs
+          path: /tmp/tmp.*/server.log
+          if-no-files-found: warn
+          retention-days: 7
+
   check-codex-comments:
     name: Check Codex Comments
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
