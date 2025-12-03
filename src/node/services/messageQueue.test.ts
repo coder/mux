@@ -35,7 +35,7 @@ describe("MessageQueue", () => {
       expect(queue.getDisplayText()).toBe("/compact -t 3000");
     });
 
-    it("should show actual messages when compaction is added after normal message", () => {
+    it("should throw when adding compaction after normal message", () => {
       queue.add("First message");
 
       const metadata: MuxFrontendMetadata = {
@@ -49,11 +49,11 @@ describe("MessageQueue", () => {
         muxMetadata: metadata,
       };
 
-      queue.add("Summarize this conversation...", options);
-
-      // When multiple messages are queued, compaction metadata is lost when sent,
-      // so display shows actual messages (not rawCommand) to match what will be sent
-      expect(queue.getDisplayText()).toBe("First message\nSummarize this conversation...");
+      // Compaction requests cannot be mixed with other messages to prevent
+      // silent failures where compaction metadata would be lost
+      expect(() => queue.add("Summarize this conversation...", options)).toThrow(
+        /Cannot queue compaction request/
+      );
     });
 
     it("should return joined messages when metadata type is not compaction-request", () => {
@@ -117,6 +117,48 @@ describe("MessageQueue", () => {
     });
   });
 
+  describe("hasCompactionRequest", () => {
+    it("should return false for empty queue", () => {
+      expect(queue.hasCompactionRequest()).toBe(false);
+    });
+
+    it("should return false for normal messages", () => {
+      queue.add("Regular message", { model: "gpt-4" });
+      expect(queue.hasCompactionRequest()).toBe(false);
+    });
+
+    it("should return true when compaction request is queued", () => {
+      const metadata: MuxFrontendMetadata = {
+        type: "compaction-request",
+        rawCommand: "/compact",
+        parsed: {},
+      };
+
+      queue.add("Summarize...", {
+        model: "claude-3-5-sonnet-20241022",
+        muxMetadata: metadata,
+      });
+
+      expect(queue.hasCompactionRequest()).toBe(true);
+    });
+
+    it("should return false after clearing", () => {
+      const metadata: MuxFrontendMetadata = {
+        type: "compaction-request",
+        rawCommand: "/compact",
+        parsed: {},
+      };
+
+      queue.add("Summarize...", {
+        model: "claude-3-5-sonnet-20241022",
+        muxMetadata: metadata,
+      });
+      queue.clear();
+
+      expect(queue.hasCompactionRequest()).toBe(false);
+    });
+  });
+
   describe("multi-message batching", () => {
     it("should batch multiple follow-up messages", () => {
       queue.add("First message");
@@ -127,7 +169,7 @@ describe("MessageQueue", () => {
       expect(queue.getDisplayText()).toBe("First message\nSecond message\nThird message");
     });
 
-    it("should batch follow-up message after compaction", () => {
+    it("should preserve compaction metadata when follow-up is added", () => {
       const metadata: MuxFrontendMetadata = {
         type: "compaction-request",
         rawCommand: "/compact",
@@ -140,11 +182,20 @@ describe("MessageQueue", () => {
       });
       queue.add("And then do this follow-up task");
 
-      // When a follow-up is added, compaction metadata is lost (latestOptions overwritten),
-      // so display shows actual messages to match what will be sent
+      // Display shows all messages (multiple messages = not just compaction)
       expect(queue.getDisplayText()).toBe("Summarize...\nAnd then do this follow-up task");
-      // Raw messages have the actual prompt
+
+      // getMessages includes both
       expect(queue.getMessages()).toEqual(["Summarize...", "And then do this follow-up task"]);
+
+      // produceMessage preserves compaction metadata from first message
+      const { message, options } = queue.produceMessage();
+      expect(message).toBe("Summarize...\nAnd then do this follow-up task");
+      const muxMeta = options?.muxMetadata as MuxFrontendMetadata;
+      expect(muxMeta.type).toBe("compaction-request");
+      if (muxMeta.type === "compaction-request") {
+        expect(muxMeta.rawCommand).toBe("/compact");
+      }
     });
 
     it("should produce combined message for API call", () => {

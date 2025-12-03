@@ -476,10 +476,16 @@ export class WorkspaceStore {
 
       // Get last message's context usage for context window display
       // Uses contextUsage (last step) if available, falls back to usage for old messages
+      // Skips compacted messages - their usage reflects pre-compaction context, not current
       const lastContextUsage = (() => {
         for (let i = messages.length - 1; i >= 0; i--) {
           const msg = messages[i];
           if (msg.role === "assistant") {
+            // Skip compacted messages - their usage is from pre-compaction context
+            // and doesn't reflect current context window size
+            if (msg.metadata?.compacted) {
+              continue;
+            }
             const rawUsage = msg.metadata?.contextUsage ?? msg.metadata?.usage;
             const providerMeta =
               msg.metadata?.contextProviderMetadata ?? msg.metadata?.providerMetadata;

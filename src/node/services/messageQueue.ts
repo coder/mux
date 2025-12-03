@@ -17,22 +17,39 @@ function isCompactionMetadata(meta: unknown): meta is CompactionMetadata {
  *
  * Stores:
  * - Message texts (accumulated)
- * - Latest options (model, thinking level, etc. - overwrites on each add)
+ * - First muxMetadata (preserved - never overwritten by subsequent adds)
+ * - Latest options (model, etc. - updated on each add)
  * - Image parts (accumulated across all messages)
+ *
+ * IMPORTANT: muxMetadata from the first message is preserved even when
+ * subsequent messages are added. This prevents compaction requests from
+ * losing their metadata when follow-up messages are queued.
  *
  * Display logic:
  * - Single compaction request → shows rawCommand (/compact)
- * - Multiple messages → shows all actual message texts (since compaction metadata is lost anyway)
+ * - Multiple messages → shows all actual message texts
  */
 export class MessageQueue {
   private messages: string[] = [];
+  // muxMetadata from first message (preserved, never overwritten)
+  private firstMuxMetadata?: unknown;
+  // Latest options (for model, etc.)
   private latestOptions?: SendMessageOptions;
   private accumulatedImages: ImagePart[] = [];
 
   /**
+   * Check if the queue currently contains a compaction request.
+   */
+  hasCompactionRequest(): boolean {
+    return isCompactionMetadata(this.firstMuxMetadata);
+  }
+
+  /**
    * Add a message to the queue.
-   * Updates to latest options, accumulates image parts.
-   * Allows image-only messages (empty text with images).
+   * Preserves muxMetadata from first message, updates other options.
+   * Accumulates image parts.
+   *
+   * @throws Error if trying to add a compaction request when queue already has messages
    */
   add(message: string, options?: SendMessageOptions & { imageParts?: ImagePart[] }): void {
     const trimmedMessage = message.trim();
@@ -43,6 +60,18 @@ export class MessageQueue {
       return;
     }
 
+    const incomingIsCompaction = isCompactionMetadata(options?.muxMetadata);
+    const queueHasMessages = !this.isEmpty();
+
+    // Cannot add compaction to a queue that already has messages
+    // (user should wait for those messages to send first)
+    if (incomingIsCompaction && queueHasMessages) {
+      throw new Error(
+        "Cannot queue compaction request: queue already has messages. " +
+          "Wait for current stream to complete before compacting."
+      );
+    }
+
     // Add text message if non-empty
     if (trimmedMessage.length > 0) {
       this.messages.push(trimmedMessage);
@@ -50,6 +79,14 @@ export class MessageQueue {
 
     if (options) {
       const { imageParts, ...restOptions } = options;
+
+      // Preserve first muxMetadata (critical for compaction)
+      // This ensures compaction metadata isn't lost when follow-ups are added
+      if (options.muxMetadata !== undefined && this.firstMuxMetadata === undefined) {
+        this.firstMuxMetadata = options.muxMetadata;
+      }
+
+      // Always update latest options (for model changes, etc.)
       this.latestOptions = restOptions;
 
       if (imageParts && imageParts.length > 0) {
@@ -68,14 +105,12 @@ export class MessageQueue {
   /**
    * Get display text for queued messages.
    * - Single compaction request shows rawCommand (/compact)
-   * - Multiple messages or non-compaction show actual message texts
+   * - Multiple messages show all actual message texts
    */
   getDisplayText(): string {
     // Only show rawCommand for single compaction request
-    // (compaction metadata is only preserved when no follow-up messages are added)
-    const muxMetadata = this.latestOptions?.muxMetadata as unknown;
-    if (this.messages.length === 1 && isCompactionMetadata(muxMetadata)) {
-      return muxMetadata.rawCommand;
+    if (this.messages.length === 1 && isCompactionMetadata(this.firstMuxMetadata)) {
+      return this.firstMuxMetadata.rawCommand;
     }
 
     return this.messages.join("\n");
@@ -90,7 +125,7 @@ export class MessageQueue {
 
   /**
    * Get combined message and options for sending.
-   * Returns joined messages with latest options + accumulated images.
+   * Returns joined messages with options (using preserved muxMetadata).
    */
   produceMessage(): {
     message: string;
@@ -98,9 +133,18 @@ export class MessageQueue {
   } {
     const joinedMessages = this.messages.join("\n");
 
+    // Merge latest options with preserved muxMetadata
+    // Use preserved first muxMetadata if available (critical for compaction)
+    // Falls back to latest options' muxMetadata if no first was stored
+    const effectiveMuxMetadata =
+      this.firstMuxMetadata !== undefined
+        ? this.firstMuxMetadata
+        : (this.latestOptions?.muxMetadata as unknown);
+
     const options = this.latestOptions
       ? {
           ...this.latestOptions,
+          muxMetadata: effectiveMuxMetadata,
           imageParts: this.accumulatedImages.length > 0 ? this.accumulatedImages : undefined,
         }
       : undefined;
@@ -113,6 +157,7 @@ export class MessageQueue {
    */
   clear(): void {
     this.messages = [];
+    this.firstMuxMetadata = undefined;
     this.latestOptions = undefined;
     this.accumulatedImages = [];
   }
