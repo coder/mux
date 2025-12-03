@@ -563,6 +563,11 @@ export class WorkspaceService extends EventEmitter {
   /**
    * Asynchronously generates an AI workspace name and renames the workspace if successful.
    * This runs in the background after workspace creation to avoid blocking the UX.
+   *
+   * The method:
+   * 1. Generates the AI name (can run while stream is active)
+   * 2. Waits for any active stream to complete (rename is blocked during streaming)
+   * 3. Attempts to rename the workspace
    */
   private async generateAndApplyAIName(
     workspaceId: string,
@@ -605,6 +610,9 @@ export class WorkspaceService extends EventEmitter {
         return;
       }
 
+      // Wait for the stream to complete before renaming (rename is blocked during streaming)
+      await this.waitForStreamComplete(workspaceId);
+
       // Attempt to rename the workspace
       const renameResult = await this.rename(workspaceId, aiGeneratedName);
 
@@ -630,6 +638,42 @@ export class WorkspaceService extends EventEmitter {
         error: errorMessage,
       });
     }
+  }
+
+  /**
+   * Waits for an active stream on the workspace to complete.
+   * Returns immediately if no stream is active.
+   */
+  private waitForStreamComplete(workspaceId: string): Promise<void> {
+    // If not currently streaming, resolve immediately
+    if (!this.aiService.isStreaming(workspaceId)) {
+      return Promise.resolve();
+    }
+
+    log.debug("Waiting for stream to complete before rename", { workspaceId });
+
+    return new Promise((resolve) => {
+      // Create handler that checks for this workspace's stream end
+      const handler = (event: StreamEndEvent | StreamAbortEvent) => {
+        if (event.workspaceId === workspaceId) {
+          this.aiService.off("stream-end", handler);
+          this.aiService.off("stream-abort", handler);
+          log.debug("Stream completed, proceeding with rename", { workspaceId });
+          resolve();
+        }
+      };
+
+      // Listen for both normal completion and abort
+      this.aiService.on("stream-end", handler);
+      this.aiService.on("stream-abort", handler);
+
+      // Safety check: if stream already ended between the isStreaming check and subscribing
+      if (!this.aiService.isStreaming(workspaceId)) {
+        this.aiService.off("stream-end", handler);
+        this.aiService.off("stream-abort", handler);
+        resolve();
+      }
+    });
   }
 
   async remove(workspaceId: string, force = false): Promise<Result<void>> {
