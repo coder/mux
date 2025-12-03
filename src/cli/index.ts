@@ -42,7 +42,10 @@ if (subcommand === "run") {
   process.argv.splice(2, 1);
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   require("./api");
-} else if (subcommand === "desktop" || (isElectron && (subcommand === undefined || isElectronLaunchArg))) {
+} else if (
+  subcommand === "desktop" ||
+  (isElectron && (subcommand === undefined || isElectronLaunchArg))
+) {
   // Explicit `mux desktop`, or Electron runtime with no subcommand / Electron launch args
   launchDesktop();
 } else {
