@@ -18,6 +18,7 @@ export function SSHHostInput(props: SSHHostInputProps) {
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<Array<HTMLDivElement | null>>([]);
 
   // Fetch SSH config hosts on mount
   useEffect(() => {
@@ -101,6 +102,16 @@ export function SSHHostInput(props: SSHHostInputProps) {
     setHighlightedIndex(-1);
   };
 
+  // Scroll highlighted item into view
+  useEffect(() => {
+    if (highlightedIndex >= 0 && itemRefs.current[highlightedIndex]) {
+      itemRefs.current[highlightedIndex]?.scrollIntoView({
+        block: "nearest",
+        behavior: "smooth",
+      });
+    }
+  }, [highlightedIndex]);
+
   // Show dropdown when there are filtered hosts
   const shouldShowDropdown = showDropdown && filteredHosts.length > 0 && !props.disabled;
 
@@ -123,6 +134,7 @@ export function SSHHostInput(props: SSHHostInputProps) {
           {filteredHosts.map((host, index) => (
             <div
               key={host}
+              ref={(el) => (itemRefs.current[index] = el)}
               onClick={() => selectHost(host)}
               onMouseEnter={() => setHighlightedIndex(index)}
               className={`cursor-pointer px-2 py-1 text-xs ${
