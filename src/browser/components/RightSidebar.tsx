@@ -84,6 +84,8 @@ interface RightSidebarProps {
   isResizing?: boolean;
   /** Callback when user adds a review note from Code Review tab */
   onReviewNote?: (note: string) => void;
+  /** Workspace is still being created (git operations in progress) */
+  isCreating?: boolean;
 }
 
 const RightSidebarComponent: React.FC<RightSidebarProps> = ({
@@ -95,6 +97,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   onStartResize,
   isResizing = false,
   onReviewNote,
+  isCreating = false,
 }) => {
   // Global tab preference (not per-workspace)
   const [selectedTab, setSelectedTab] = usePersistedState<TabType>("right-sidebar-tab", "costs");
@@ -298,6 +301,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
                   workspacePath={workspacePath}
                   onReviewNote={onReviewNote}
                   focusTrigger={focusTrigger}
+                  isCreating={isCreating}
                 />
               </div>
             )}

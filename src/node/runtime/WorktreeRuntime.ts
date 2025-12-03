@@ -177,14 +177,18 @@ export class WorktreeRuntime extends LocalBaseRuntime {
     const newPath = this.getWorkspacePath(projectPath, newName);
 
     try {
-      // Use git worktree move to rename the worktree directory
-      // This updates git's internal worktree metadata correctly
-      using proc = execAsync(`git -C "${projectPath}" worktree move "${oldPath}" "${newPath}"`);
-      await proc.result;
+      // Move the worktree directory (updates git's internal worktree metadata)
+      using moveProc = execAsync(`git -C "${projectPath}" worktree move "${oldPath}" "${newPath}"`);
+      await moveProc.result;
+
+      // Rename the git branch to match the new workspace name
+      // Run from the new worktree path since that's where the branch is checked out
+      using branchProc = execAsync(`git -C "${newPath}" branch -m "${oldName}" "${newName}"`);
+      await branchProc.result;
 
       return { success: true, oldPath, newPath };
     } catch (error) {
-      return { success: false, error: `Failed to move worktree: ${getErrorMessage(error)}` };
+      return { success: false, error: `Failed to rename workspace: ${getErrorMessage(error)}` };
     }
   }
 

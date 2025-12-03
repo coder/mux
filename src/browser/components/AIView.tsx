@@ -55,6 +55,8 @@ interface AIViewProps {
   className?: string;
   /** If set, workspace is incompatible (from newer mux version) and this error should be displayed */
   incompatibleRuntime?: string;
+  /** If 'creating', workspace is still being set up (git operations in progress) */
+  status?: "creating";
 }
 
 const AIViewInner: React.FC<AIViewProps> = ({
@@ -65,6 +67,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
   namedWorkspacePath,
   runtimeConfig,
   className,
+  status,
 }) => {
   const { api } = useAPI();
   const chatAreaRef = useRef<HTMLDivElement>(null);
@@ -637,6 +640,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
         onStartResize={isReviewTabActive ? startResize : undefined} // Pass resize handler when Review active
         isResizing={isResizing} // Pass resizing state
         onReviewNote={handleReviewNote} // Pass review note handler to append to chat
+        isCreating={status === "creating"} // Workspace still being set up
       />
     </div>
   );

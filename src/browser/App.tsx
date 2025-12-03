@@ -589,6 +589,7 @@ function AppInner() {
                       namedWorkspacePath={selectedWorkspace.namedWorkspacePath ?? ""}
                       runtimeConfig={currentMetadata?.runtimeConfig}
                       incompatibleRuntime={currentMetadata?.incompatibleRuntime}
+                      status={currentMetadata?.status}
                     />
                   </ErrorBoundary>
                 );
