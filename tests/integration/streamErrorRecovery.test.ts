@@ -87,7 +87,6 @@ function truncateToLastCompleteMarker(text: string, nonce: string): string {
   return text.substring(0, endIndex);
 }
 
-import type { OrpcSource } from "./helpers";
 import type { OrpcTestClient } from "./orpcTestClient";
 
 /**
@@ -95,11 +94,13 @@ import type { OrpcTestClient } from "./orpcTestClient";
  * Uses StreamCollector for ORPC-native event handling
  */
 async function resumeAndWaitForSuccess(
-  source: OrpcSource,
   workspaceId: string,
   client: OrpcTestClient,
   model: string,
-  timeoutMs = 15000
+  timeoutMs = 15000,
+  options?: {
+    toolPolicy?: Array<{ regex_match: string; action: "enable" | "disable" | "require" }>;
+  }
 ): Promise<void> {
   const collector = createStreamCollector(client, workspaceId);
   collector.start();
@@ -107,7 +108,7 @@ async function resumeAndWaitForSuccess(
   try {
     const resumeResult = await client.workspace.resumeStream({
       workspaceId,
-      options: { model },
+      options: { model, toolPolicy: options?.toolPolicy },
     });
 
     if (!resumeResult.success) {
@@ -261,11 +262,19 @@ IMPORTANT: Do not add any other text. Start immediately with ${nonce}-1: one. If
         await new Promise((resolve) => setTimeout(resolve, 500));
 
         // Resume and wait for completion
-        await resumeAndWaitForSuccess(env, workspaceId, client, `${PROVIDER}:${MODEL}`);
+        // Disable all tools (same as original message) so model outputs text, not tool calls
+        await resumeAndWaitForSuccess(workspaceId, client, `${PROVIDER}:${MODEL}`, 15000, {
+          toolPolicy: [{ regex_match: ".*", action: "disable" }],
+        });
+
+        // Small delay to let history update complete after stream-end
+        // stream-end is emitted before updateHistory completes
+        await new Promise((resolve) => setTimeout(resolve, 500));
 
         // Read final assistant message from history
         const history = await readChatHistory(env.tempDir, workspaceId);
         const assistantMessages = history.filter((m) => m.role === "assistant");
+
         const finalText = assistantMessages
           .flatMap((m) => m.parts)
           .filter((p) => p.type === "text")
