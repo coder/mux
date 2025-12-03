@@ -127,6 +127,10 @@ class MockBrowserWindow {
       });
     },
   };
+
+  isDestroyed(): boolean {
+    return false;
+  }
 }
 
 const app = express();
