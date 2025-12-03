@@ -148,6 +148,25 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   }, []);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const modelSelectorRef = useRef<ModelSelectorRef>(null);
+
+  // Draft state combines text input and image attachments
+  // Use these helpers to avoid accidentally losing images when modifying text
+  interface DraftState {
+    text: string;
+    images: ImageAttachment[];
+  }
+  const getDraft = useCallback(
+    (): DraftState => ({ text: input, images: imageAttachments }),
+    [input, imageAttachments]
+  );
+  const setDraft = useCallback(
+    (draft: DraftState) => {
+      setInput(draft.text);
+      setImageAttachments(draft.images);
+    },
+    [setInput]
+  );
+  const preEditDraftRef = useRef<DraftState>({ text: "", images: [] });
   const [mode, setMode] = useMode();
   const { recentModels, addModel, defaultModel, setDefaultModel } = useModelLRU();
   const commandListId = useId();
@@ -346,10 +365,11 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     };
   }, [focusMessageInput]);
 
-  // When entering editing mode, populate input with message content
+  // When entering editing mode, save current draft and populate with message content
   useEffect(() => {
     if (editingMessage) {
-      setInput(editingMessage.content);
+      preEditDraftRef.current = getDraft();
+      setDraft({ text: editingMessage.content, images: [] });
       // Auto-resize textarea and focus
       setTimeout(() => {
         if (inputRef.current) {
@@ -360,7 +380,8 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         }
       }, 0);
     }
-  }, [editingMessage, setInput]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only run when editingMessage changes
+  }, [editingMessage]);
 
   // Watch input for slash commands
   useEffect(() => {
@@ -829,6 +850,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   // Handler for Escape in vim normal mode - cancels edit if editing
   const handleEscapeInNormalMode = () => {
     if (variant === "workspace" && editingMessage && props.onCancelEdit) {
+      setDraft(preEditDraftRef.current);
       props.onCancelEdit();
       inputRef.current?.blur();
     }
@@ -884,6 +906,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     if (matchesKeybind(e, KEYBINDS.CANCEL_EDIT)) {
       if (variant === "workspace" && editingMessage && props.onCancelEdit && !vimEnabled) {
         e.preventDefault();
+        setDraft(preEditDraftRef.current);
         props.onCancelEdit();
         const isFocused = document.activeElement === inputRef.current;
         if (isFocused) {
