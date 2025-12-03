@@ -499,7 +499,7 @@ export async function createNewWorkspace(
     effectiveTrunk = recommendedTrunk ?? "main";
   }
 
-  // Use saved runtime preference if not explicitly provided
+  // Use saved default runtime preference if not explicitly provided
   let effectiveRuntime = options.runtime;
   if (effectiveRuntime === undefined) {
     const runtimeKey = getRuntimeKey(options.projectPath);

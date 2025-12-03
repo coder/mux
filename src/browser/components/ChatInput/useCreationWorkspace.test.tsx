@@ -473,26 +473,22 @@ function createDraftSettingsHarness(
     sshHost: string;
     trunkBranch: string;
     runtimeString?: string | undefined;
+    defaultRuntimeMode?: RuntimeMode;
   }>
 ) {
   const state = {
     runtimeMode: initial?.runtimeMode ?? ("local" as RuntimeMode),
+    defaultRuntimeMode: initial?.defaultRuntimeMode ?? ("worktree" as RuntimeMode),
     sshHost: initial?.sshHost ?? "",
     trunkBranch: initial?.trunkBranch ?? "main",
     runtimeString: initial?.runtimeString,
   } satisfies {
     runtimeMode: RuntimeMode;
+    defaultRuntimeMode: RuntimeMode;
     sshHost: string;
     trunkBranch: string;
     runtimeString: string | undefined;
   };
-
-  const setRuntimeOptions = mock((mode: RuntimeMode, host: string) => {
-    state.runtimeMode = mode;
-    state.sshHost = host;
-    const trimmedHost = host.trim();
-    state.runtimeString = mode === "ssh" ? (trimmedHost ? `ssh ${trimmedHost}` : "ssh") : undefined;
-  });
 
   const setTrunkBranch = mock((branch: string) => {
     state.trunkBranch = branch;
@@ -500,14 +496,35 @@ function createDraftSettingsHarness(
 
   const getRuntimeString = mock(() => state.runtimeString);
 
+  const setRuntimeMode = mock((mode: RuntimeMode) => {
+    state.runtimeMode = mode;
+    const trimmedHost = state.sshHost.trim();
+    state.runtimeString = mode === "ssh" ? (trimmedHost ? `ssh ${trimmedHost}` : "ssh") : undefined;
+  });
+
+  const setDefaultRuntimeMode = mock((mode: RuntimeMode) => {
+    state.defaultRuntimeMode = mode;
+    state.runtimeMode = mode;
+    const trimmedHost = state.sshHost.trim();
+    state.runtimeString = mode === "ssh" ? (trimmedHost ? `ssh ${trimmedHost}` : "ssh") : undefined;
+  });
+
+  const setSshHost = mock((host: string) => {
+    state.sshHost = host;
+  });
+
   return {
     state,
-    setRuntimeOptions,
+    setRuntimeMode,
+    setDefaultRuntimeMode,
+    setSshHost,
     setTrunkBranch,
     getRuntimeString,
     snapshot(): {
       settings: DraftWorkspaceSettings;
-      setRuntimeOptions: typeof setRuntimeOptions;
+      setRuntimeMode: typeof setRuntimeMode;
+      setDefaultRuntimeMode: typeof setDefaultRuntimeMode;
+      setSshHost: typeof setSshHost;
       setTrunkBranch: typeof setTrunkBranch;
       getRuntimeString: typeof getRuntimeString;
     } {
@@ -516,12 +533,15 @@ function createDraftSettingsHarness(
         thinkingLevel: "medium",
         mode: "exec",
         runtimeMode: state.runtimeMode,
+        defaultRuntimeMode: state.defaultRuntimeMode,
         sshHost: state.sshHost,
         trunkBranch: state.trunkBranch,
       };
       return {
         settings,
-        setRuntimeOptions,
+        setRuntimeMode,
+        setDefaultRuntimeMode,
+        setSshHost,
         setTrunkBranch,
         getRuntimeString,
       };
