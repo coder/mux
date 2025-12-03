@@ -17,6 +17,11 @@ const MODE_COLORS = {
   exec: "hsl(268, 94%, 65%)", // Slightly lighter than --color-exec-mode for visibility
 } as const;
 
+// FFT size determines number of frequency bins (fftSize / 2)
+// Higher = more bars but less responsive, lower = fewer bars but more responsive
+const FFT_SIZE = 128; // 64 bars
+const NUM_BARS = FFT_SIZE / 2;
+
 interface RecordingOverlayProps {
   state: VoiceInputState;
   mode: UIMode;
@@ -28,21 +33,36 @@ export const RecordingOverlay: React.FC<RecordingOverlayProps> = (props) => {
   const isRecording = props.state === "recording";
   const isTranscribing = props.state === "transcribing";
   const containerRef = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState(400);
+  const [containerWidth, setContainerWidth] = useState(600);
 
-  // Measure container width for the canvas
+  // Measure container width for the canvas using ResizeObserver
   useLayoutEffect(() => {
-    const measure = () => {
-      if (containerRef.current) {
-        setContainerWidth(containerRef.current.offsetWidth);
+    const container = containerRef.current;
+    if (!container) return;
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerWidth(entry.contentRect.width);
       }
-    };
-    measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
+    });
+
+    observer.observe(container);
+    // Initial measurement
+    setContainerWidth(container.offsetWidth);
+
+    return () => observer.disconnect();
   }, []);
 
   const modeColor = MODE_COLORS[props.mode];
+
+  // Calculate bar dimensions to fill the container width
+  // Total width = numBars * barWidth + (numBars - 1) * gap
+  // We want gap = barWidth / 2 for nice spacing
+  // So: width = numBars * barWidth + (numBars - 1) * barWidth/2
+  //           = barWidth * (numBars + (numBars - 1) / 2)
+  //           = barWidth * (1.5 * numBars - 0.5)
+  const barWidth = Math.max(2, Math.floor(containerWidth / (1.5 * NUM_BARS - 0.5)));
+  const gap = Math.max(1, Math.floor(barWidth / 2));
 
   // Border and background classes based on state
   const containerClasses = cn(
@@ -69,13 +89,13 @@ export const RecordingOverlay: React.FC<RecordingOverlayProps> = (props) => {
             mediaRecorder={props.mediaRecorder}
             width={containerWidth}
             height={32}
-            barWidth={2}
-            gap={1}
+            barWidth={barWidth}
+            gap={gap}
             barColor={modeColor}
-            smoothingTimeConstant={0.5}
-            fftSize={256}
-            minDecibels={-80}
-            maxDecibels={-20}
+            smoothingTimeConstant={0.8}
+            fftSize={FFT_SIZE}
+            minDecibels={-70}
+            maxDecibels={-30}
           />
         ) : (
           <TranscribingAnimation />
