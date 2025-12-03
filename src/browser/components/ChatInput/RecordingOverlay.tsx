@@ -53,13 +53,13 @@ export const RecordingOverlay: React.FC<RecordingOverlayProps> = (props) => {
         {isRecording && props.mediaRecorder ? (
           <LiveAudioVisualizer
             mediaRecorder={props.mediaRecorder}
-            width={280}
+            width="100%"
             height={40}
             barWidth={3}
             gap={2}
             barColor={modeColor}
-            smoothingTimeConstant={0.6}
-            fftSize={512}
+            smoothingTimeConstant={0.5}
+            fftSize={256}
             minDecibels={-80}
             maxDecibels={-20}
           />
@@ -82,7 +82,7 @@ export const RecordingOverlay: React.FC<RecordingOverlayProps> = (props) => {
         {isRecording ? (
           <>
             <span className="opacity-70">space</span> send ·{" "}
-            <span className="opacity-70">{formatKeybind(KEYBINDS.TOGGLE_VOICE_INPUT)}</span> stop ·{" "}
+            <span className="opacity-70">{formatKeybind(KEYBINDS.TOGGLE_VOICE_INPUT)}</span> review ·{" "}
             <span className="opacity-70">esc</span> cancel
           </>
         ) : (
