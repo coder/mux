@@ -82,6 +82,8 @@ export class WorkspaceService extends EventEmitter {
     string,
     { chat: () => void; metadata: () => void }
   >();
+  // Tracks workspaces currently being renamed to prevent streaming during rename
+  private readonly renamingWorkspaces = new Set<string>();
 
   constructor(
     private readonly config: Config,
@@ -689,37 +691,44 @@ export class WorkspaceService extends EventEmitter {
       // Wait for the stream to complete before renaming (rename is blocked during streaming)
       await this.waitForStreamComplete(workspaceId);
 
-      // Attempt to rename with collision retry (same logic as workspace creation)
-      let finalName = aiGeneratedName;
-      for (let attempt = 0; attempt <= MAX_WORKSPACE_NAME_COLLISION_RETRIES; attempt++) {
-        const renameResult = await this.rename(workspaceId, finalName);
+      // Mark workspace as renaming to block new streams during the rename operation
+      this.renamingWorkspaces.add(workspaceId);
+      try {
+        // Attempt to rename with collision retry (same logic as workspace creation)
+        let finalName = aiGeneratedName;
+        for (let attempt = 0; attempt <= MAX_WORKSPACE_NAME_COLLISION_RETRIES; attempt++) {
+          const renameResult = await this.rename(workspaceId, finalName);
 
-        if (renameResult.success) {
-          log.info("Successfully renamed workspace to AI-generated name", {
+          if (renameResult.success) {
+            log.info("Successfully renamed workspace to AI-generated name", {
+              workspaceId,
+              oldName: currentName,
+              newName: finalName,
+            });
+            return;
+          }
+
+          // If collision and not last attempt, retry with suffix
+          if (
+            renameResult.error?.includes("already exists") &&
+            attempt < MAX_WORKSPACE_NAME_COLLISION_RETRIES
+          ) {
+            log.debug(`Workspace name collision for "${finalName}", retrying with suffix`);
+            finalName = appendCollisionSuffix(aiGeneratedName);
+            continue;
+          }
+
+          // Non-collision error or out of retries - keep placeholder name
+          log.info("Failed to rename workspace to AI-generated name", {
             workspaceId,
-            oldName: currentName,
-            newName: finalName,
+            aiGeneratedName: finalName,
+            error: renameResult.error,
           });
           return;
         }
-
-        // If collision and not last attempt, retry with suffix
-        if (
-          renameResult.error?.includes("already exists") &&
-          attempt < MAX_WORKSPACE_NAME_COLLISION_RETRIES
-        ) {
-          log.debug(`Workspace name collision for "${finalName}", retrying with suffix`);
-          finalName = appendCollisionSuffix(aiGeneratedName);
-          continue;
-        }
-
-        // Non-collision error or out of retries - keep placeholder name
-        log.info("Failed to rename workspace to AI-generated name", {
-          workspaceId,
-          aiGeneratedName: finalName,
-          error: renameResult.error,
-        });
-        return;
+      } finally {
+        // Always clear renaming flag, even on error
+        this.renamingWorkspaces.delete(workspaceId);
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -892,6 +901,9 @@ export class WorkspaceService extends EventEmitter {
         return Err(validation.error ?? "Invalid workspace name");
       }
 
+      // Mark workspace as renaming to block new streams during the rename operation
+      this.renamingWorkspaces.add(workspaceId);
+
       const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
       if (!metadataResult.success) {
         return Err(`Failed to get workspace metadata: ${metadataResult.error}`);
@@ -959,6 +971,9 @@ export class WorkspaceService extends EventEmitter {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Err(`Failed to rename workspace: ${message}`);
+    } finally {
+      // Always clear renaming flag, even on error
+      this.renamingWorkspaces.delete(workspaceId);
     }
   }
 
@@ -1103,6 +1118,15 @@ export class WorkspaceService extends EventEmitter {
     });
 
     try {
+      // Block streaming while workspace is being renamed to prevent path conflicts
+      if (this.renamingWorkspaces.has(workspaceId)) {
+        log.debug("sendMessage blocked: workspace is being renamed", { workspaceId });
+        return Err({
+          type: "unknown",
+          raw: "Workspace is being renamed. Please wait and try again.",
+        });
+      }
+
       const session = this.getOrCreateSession(workspaceId);
       void this.updateRecencyTimestamp(workspaceId);
 
@@ -1145,6 +1169,15 @@ export class WorkspaceService extends EventEmitter {
     options: SendMessageOptions | undefined = { model: "claude-3-5-sonnet-latest" }
   ): Promise<Result<void, SendMessageError>> {
     try {
+      // Block streaming while workspace is being renamed to prevent path conflicts
+      if (this.renamingWorkspaces.has(workspaceId)) {
+        log.debug("resumeStream blocked: workspace is being renamed", { workspaceId });
+        return Err({
+          type: "unknown",
+          raw: "Workspace is being renamed. Please wait and try again.",
+        });
+      }
+
       const session = this.getOrCreateSession(workspaceId);
       const result = await session.resumeStream(options);
       if (!result.success) {
