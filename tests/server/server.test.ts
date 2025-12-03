@@ -11,7 +11,7 @@
  * Run with: TEST_INTEGRATION=1 bun x jest tests/server/server.test.ts
  * Requires: make build-main (tests use built server from dist/cli/server.js)
  */
-import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
+import { IPC_CHANNELS } from "@/common/constants/ipc-constants";
 import { shouldRunIntegrationTests } from "../testUtils";
 import {
   type ServerTestContext,
