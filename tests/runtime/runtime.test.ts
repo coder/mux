@@ -948,7 +948,7 @@ describeIntegration("Runtime integration tests", () => {
           if (!result.success) {
             // Error message differs between local (git worktree) and SSH (mv command)
             if (type === "local") {
-              expect(result.error).toContain("Failed to move worktree");
+              expect(result.error).toContain("Failed to rename workspace");
             } else {
               expect(result.error).toContain("Failed to rename directory");
             }
