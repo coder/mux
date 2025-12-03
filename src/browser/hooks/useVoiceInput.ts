@@ -63,6 +63,38 @@ const HAS_GET_USER_MEDIA =
   typeof window !== "undefined" && typeof navigator.mediaDevices?.getUserMedia === "function";
 
 // =============================================================================
+// Global Key State Tracking
+// =============================================================================
+
+/**
+ * Track whether space is currently pressed at the module level.
+ * This runs outside React's render cycle, so it captures key state
+ * accurately even during async operations like microphone access.
+ */
+let isSpaceCurrentlyHeld = false;
+
+if (typeof window !== "undefined") {
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.key === " ") isSpaceCurrentlyHeld = true;
+    },
+    true
+  );
+  window.addEventListener(
+    "keyup",
+    (e) => {
+      if (e.key === " ") isSpaceCurrentlyHeld = false;
+    },
+    true
+  );
+  // Also reset on blur (user switches window while holding space)
+  window.addEventListener("blur", () => {
+    isSpaceCurrentlyHeld = false;
+  });
+}
+
+// =============================================================================
 // Hook
 // =============================================================================
 
@@ -248,24 +280,24 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
   // Recording keybinds (when useRecordingKeybinds is true)
   // ---------------------------------------------------------------------------
 
-  // Track if space is held to prevent start→send when user holds space
-  const spaceHeldRef = useRef(false);
+  // Track if space was held when recording started to prevent immediate send
+  const spaceHeldAtStartRef = useRef(false);
 
   useEffect(() => {
     if (!options.useRecordingKeybinds || state !== "recording") {
-      spaceHeldRef.current = false;
+      spaceHeldAtStartRef.current = false;
       return;
     }
 
-    // Assume space is held when recording starts (conservative default)
-    spaceHeldRef.current = true;
+    // Use global key state instead of assuming - handles async mic access delay
+    spaceHeldAtStartRef.current = isSpaceCurrentlyHeld;
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === " ") spaceHeldRef.current = false;
+      if (e.key === " ") spaceHeldAtStartRef.current = false;
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === " " && !spaceHeldRef.current) {
+      if (e.key === " " && !spaceHeldAtStartRef.current) {
         e.preventDefault();
         stop({ send: true });
       } else if (e.key === "Escape") {
