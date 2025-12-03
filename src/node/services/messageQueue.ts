@@ -19,6 +19,10 @@ function isCompactionMetadata(meta: unknown): meta is CompactionMetadata {
  * - Message texts (accumulated)
  * - Latest options (model, thinking level, etc. - overwrites on each add)
  * - Image parts (accumulated across all messages)
+ *
+ * Display logic:
+ * - Single compaction request → shows rawCommand (/compact)
+ * - Multiple messages → shows all actual message texts (since compaction metadata is lost anyway)
  */
 export class MessageQueue {
   private messages: string[] = [];
@@ -63,17 +67,17 @@ export class MessageQueue {
 
   /**
    * Get display text for queued messages.
-   * Returns rawCommand if this is a compaction request, otherwise joined messages.
-   * Matches StreamingMessageAggregator behavior.
+   * - Single compaction request shows rawCommand (/compact)
+   * - Multiple messages or non-compaction show actual message texts
    */
   getDisplayText(): string {
-    // Check if we have compaction metadata (cast from z.any() schema type)
-    const cmuxMetadata = this.latestOptions?.muxMetadata as unknown;
-    if (isCompactionMetadata(cmuxMetadata)) {
-      return cmuxMetadata.rawCommand;
+    // Only show rawCommand for single compaction request
+    // (compaction metadata is only preserved when no follow-up messages are added)
+    const muxMetadata = this.latestOptions?.muxMetadata as unknown;
+    if (this.messages.length === 1 && isCompactionMetadata(muxMetadata)) {
+      return muxMetadata.rawCommand;
     }
 
-    // Otherwise return joined messages
     return this.messages.join("\n");
   }
 

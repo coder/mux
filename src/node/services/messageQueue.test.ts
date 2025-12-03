@@ -35,7 +35,7 @@ describe("MessageQueue", () => {
       expect(queue.getDisplayText()).toBe("/compact -t 3000");
     });
 
-    it("should return rawCommand even with multiple messages if last has compaction metadata", () => {
+    it("should show actual messages when compaction is added after normal message", () => {
       queue.add("First message");
 
       const metadata: MuxFrontendMetadata = {
@@ -51,8 +51,9 @@ describe("MessageQueue", () => {
 
       queue.add("Summarize this conversation...", options);
 
-      // Should use rawCommand from latest options
-      expect(queue.getDisplayText()).toBe("/compact");
+      // When multiple messages are queued, compaction metadata is lost when sent,
+      // so display shows actual messages (not rawCommand) to match what will be sent
+      expect(queue.getDisplayText()).toBe("First message\nSummarize this conversation...");
     });
 
     it("should return joined messages when metadata type is not compaction-request", () => {
@@ -113,6 +114,68 @@ describe("MessageQueue", () => {
       expect(queue.getMessages()).toEqual(["Summarize this conversation..."]);
       // getDisplayText should return the slash command
       expect(queue.getDisplayText()).toBe("/compact");
+    });
+  });
+
+  describe("multi-message batching", () => {
+    it("should batch multiple follow-up messages", () => {
+      queue.add("First message");
+      queue.add("Second message");
+      queue.add("Third message");
+
+      expect(queue.getMessages()).toEqual(["First message", "Second message", "Third message"]);
+      expect(queue.getDisplayText()).toBe("First message\nSecond message\nThird message");
+    });
+
+    it("should batch follow-up message after compaction", () => {
+      const metadata: MuxFrontendMetadata = {
+        type: "compaction-request",
+        rawCommand: "/compact",
+        parsed: {},
+      };
+
+      queue.add("Summarize...", {
+        model: "claude-3-5-sonnet-20241022",
+        muxMetadata: metadata,
+      });
+      queue.add("And then do this follow-up task");
+
+      // When a follow-up is added, compaction metadata is lost (latestOptions overwritten),
+      // so display shows actual messages to match what will be sent
+      expect(queue.getDisplayText()).toBe("Summarize...\nAnd then do this follow-up task");
+      // Raw messages have the actual prompt
+      expect(queue.getMessages()).toEqual(["Summarize...", "And then do this follow-up task"]);
+    });
+
+    it("should produce combined message for API call", () => {
+      queue.add("First message", { model: "gpt-4" });
+      queue.add("Second message");
+
+      const { message, options } = queue.produceMessage();
+
+      // Messages are joined with newlines
+      expect(message).toBe("First message\nSecond message");
+      // Latest options are used
+      expect(options?.model).toBe("gpt-4");
+    });
+
+    it("should batch messages with mixed images", () => {
+      const image1 = { url: "data:image/png;base64,abc", mediaType: "image/png" };
+      const image2 = { url: "data:image/jpeg;base64,def", mediaType: "image/jpeg" };
+
+      queue.add("Message with image", { model: "gpt-4", imageParts: [image1] });
+      queue.add("Follow-up without image");
+      queue.add("Another with image", { model: "gpt-4", imageParts: [image2] });
+
+      expect(queue.getMessages()).toEqual([
+        "Message with image",
+        "Follow-up without image",
+        "Another with image",
+      ]);
+      expect(queue.getImageParts()).toEqual([image1, image2]);
+      expect(queue.getDisplayText()).toBe(
+        "Message with image\nFollow-up without image\nAnother with image"
+      );
     });
   });
 
