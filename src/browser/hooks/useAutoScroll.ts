@@ -38,10 +38,18 @@ export function useAutoScroll() {
   }, []); // No deps - ref ensures we always check current value
 
   const jumpToBottom = useCallback(() => {
-    if (contentRef.current) {
-      contentRef.current.scrollTop = contentRef.current.scrollHeight;
-      setAutoScroll(true);
-    }
+    if (!contentRef.current) return;
+
+    // Double RAF: First frame for DOM updates (async highlighting, image loads),
+    // second frame to scroll after layout is complete
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (contentRef.current) {
+          contentRef.current.scrollTop = contentRef.current.scrollHeight;
+        }
+      });
+    });
+    setAutoScroll(true);
   }, []);
 
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
