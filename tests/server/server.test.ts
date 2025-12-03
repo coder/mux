@@ -7,9 +7,12 @@
  * - IPC channel routing
  * - WebSocket connections and subscriptions
  * - Project listing/management
+ *
+ * Run with: TEST_INTEGRATION=1 bun x jest tests/server/server.test.ts
+ * Requires: make build-main (tests use built server from dist/cli/server.js)
  */
-// Uses Jest globals injected by test runner (see jest.config.js)
 import { IPC_CHANNELS } from "../../src/common/constants/ipc-constants";
+import { shouldRunIntegrationTests } from "../testUtils";
 import {
   type ServerTestContext,
   startServer,
@@ -22,13 +25,16 @@ import {
   waitForWsOpen,
 } from "./serverTestUtils";
 
+// Skip all tests if TEST_INTEGRATION is not set
+const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
+
 // Each test gets a unique ID to avoid directory conflicts
 let testCounter = 0;
 function getTestId(): string {
   return `server-test-${Date.now()}-${++testCounter}`;
 }
 
-describe("mux-server", () => {
+describeIntegration("mux-server", () => {
   describe("health endpoint", () => {
     let ctx: ServerTestContext;
     let muxRoot: string;
