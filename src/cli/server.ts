@@ -84,6 +84,7 @@ const mockWindow: BrowserWindow = {
     mcpServerManager: serviceContainer.mcpServerManager,
     voiceService: serviceContainer.voiceService,
     telemetryService: serviceContainer.telemetryService,
+    sshService: serviceContainer.sshService,
   };
 
   const server = await createOrpcServer({

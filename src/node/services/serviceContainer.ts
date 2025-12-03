@@ -23,6 +23,7 @@ import { TelemetryService } from "@/node/services/telemetryService";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import { MCPConfigService } from "@/node/services/mcpConfigService";
 import { MCPServerManager } from "@/node/services/mcpServerManager";
+import { SSHService } from "@/node/services/sshService";
 
 /**
  * ServiceContainer - Central dependency container for all backend services.
@@ -49,6 +50,7 @@ export class ServiceContainer {
   public readonly mcpConfigService: MCPConfigService;
   public readonly mcpServerManager: MCPServerManager;
   public readonly telemetryService: TelemetryService;
+  public readonly sshService: SSHService;
   private readonly initStateManager: InitStateManager;
   private readonly extensionMetadata: ExtensionMetadataService;
   private readonly ptyService: PTYService;
@@ -101,6 +103,7 @@ export class ServiceContainer {
     this.menuEventService = new MenuEventService();
     this.voiceService = new VoiceService(config);
     this.telemetryService = new TelemetryService(config.rootDir);
+    this.sshService = new SSHService();
   }
 
   async initialize(): Promise<void> {

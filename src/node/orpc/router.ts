@@ -829,6 +829,14 @@ export const router = (authToken?: string) => {
           return context.voiceService.transcribe(input.audioBase64);
         }),
     },
+    ssh: {
+      getConfigHosts: t
+        .input(schemas.ssh.getConfigHosts.input)
+        .output(schemas.ssh.getConfigHosts.output)
+        .handler(async ({ context }) => {
+          return context.sshService.getConfigHosts();
+        }),
+    },
     debug: {
       triggerStreamError: t
         .input(schemas.debug.triggerStreamError.input)

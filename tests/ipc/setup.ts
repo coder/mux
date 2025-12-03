@@ -85,6 +85,7 @@ export async function createTestEnvironment(): Promise<TestEnvironment> {
     menuEventService: services.menuEventService,
     voiceService: services.voiceService,
     telemetryService: services.telemetryService,
+    sshService: services.sshService,
   };
   const orpc = createOrpcTestClient(orpcContext);
 
