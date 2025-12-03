@@ -21,6 +21,10 @@ export interface MockORPCClientOptions {
     workspaceId: string,
     script: string
   ) => Promise<{ success: true; output: string; exitCode: number; wall_duration_ms: number }>;
+  /** Provider configuration (API keys, base URLs, etc.) */
+  providersConfig?: Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>;
+  /** List of available provider names */
+  providersList?: string[];
 }
 
 /**
@@ -41,7 +45,14 @@ export interface MockORPCClientOptions {
  * ```
  */
 export function createMockORPCClient(options: MockORPCClientOptions = {}): APIClient {
-  const { projects = new Map(), workspaces = [], onChat, executeBash } = options;
+  const {
+    projects = new Map(),
+    workspaces = [],
+    onChat,
+    executeBash,
+    providersConfig = {},
+    providersList = [],
+  } = options;
 
   const workspaceMap = new Map(workspaces.map((w) => [w.id, w]));
 
@@ -65,8 +76,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       getLaunchProject: async () => null,
     },
     providers: {
-      list: async () => [],
-      getConfig: async () => ({}),
+      list: async () => providersList,
+      getConfig: async () => providersConfig,
       setProviderConfig: async () => ({ success: true, data: undefined }),
       setModels: async () => ({ success: true, data: undefined }),
     },

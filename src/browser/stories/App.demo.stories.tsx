@@ -15,18 +15,50 @@ import {
   createFileEditTool,
   createTerminalTool,
   createStatusTool,
-  createMockAPI,
-  installMockAPI,
   createStaticChatHandler,
   createStreamingChatHandler,
+  createGitStatusOutput,
   type GitStatusFixture,
 } from "./mockFactory";
 import { selectWorkspace, setWorkspaceInput, setWorkspaceModel } from "./storyHelpers";
+import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
+import type { WorkspaceChatMessage } from "@/common/orpc/types";
 
 export default {
   ...appMeta,
   title: "App/Demo",
 };
+
+type ChatHandler = (callback: (event: WorkspaceChatMessage) => void) => () => void;
+
+/** Adapts callback-based chat handlers to ORPC onChat format */
+function createOnChatAdapter(chatHandlers: Map<string, ChatHandler>) {
+  return (workspaceId: string, emit: (msg: WorkspaceChatMessage) => void) => {
+    const handler = chatHandlers.get(workspaceId);
+    if (handler) {
+      return handler(emit);
+    }
+    queueMicrotask(() => emit({ type: "caught-up" }));
+    return undefined;
+  };
+}
+
+/** Creates an executeBash function that returns git status output for workspaces */
+function createGitStatusExecutor(gitStatus: Map<string, GitStatusFixture>) {
+  return (workspaceId: string, script: string) => {
+    if (script.includes("git status") || script.includes("git show-branch")) {
+      const status = gitStatus.get(workspaceId) ?? {};
+      const output = createGitStatusOutput(status);
+      return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
+    }
+    return Promise.resolve({
+      success: true as const,
+      output: "",
+      exitCode: 0,
+      wall_duration_ms: 0,
+    });
+  };
+}
 
 /**
  * Comprehensive story showing all sidebar indicators and chat features.
@@ -181,7 +213,7 @@ export const Comprehensive: AppStory = {
           }),
         ];
 
-        const chatHandlers = new Map([
+        const chatHandlers = new Map<string, ChatHandler>([
           [activeWorkspaceId, createStaticChatHandler(activeMessages)],
           [
             streamingWorkspaceId,
@@ -208,19 +240,17 @@ export const Comprehensive: AppStory = {
           ["ws-ssh", { ahead: 1, headCommit: "Production deploy" }],
         ]);
 
-        installMockAPI(
-          createMockAPI({
-            projects: groupWorkspacesByProject(workspaces),
-            workspaces,
-            chatHandlers,
-            gitStatus,
-            providersList: ["anthropic", "openai", "xai"],
-          })
-        );
-
         selectWorkspace(workspaces[0]);
         setWorkspaceInput(activeWorkspaceId, "Add OAuth2 support with Google and GitHub");
         setWorkspaceModel(activeWorkspaceId, "anthropic:claude-sonnet-4-5");
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+          onChat: createOnChatAdapter(chatHandlers),
+          executeBash: createGitStatusExecutor(gitStatus),
+          providersList: ["anthropic", "openai", "xai"],
+        });
       }}
     />
   ),

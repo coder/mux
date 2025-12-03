@@ -23,7 +23,7 @@ export default {
 export const Conversation: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() => {
+      setup={() =>
         setupSimpleChatStory({
           messages: [
             createUserMessage("msg-1", "Add authentication to the user API endpoint", {
@@ -74,8 +74,8 @@ export const Conversation: AppStory = {
               ],
             }),
           ],
-        });
-      }}
+        })
+      }
     />
   ),
 };
@@ -84,7 +84,7 @@ export const Conversation: AppStory = {
 export const WithReasoning: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() => {
+      setup={() =>
         setupSimpleChatStory({
           workspaceId: "ws-reasoning",
           messages: [
@@ -112,8 +112,8 @@ export const WithReasoning: AppStory = {
               }
             ),
           ],
-        });
-      }}
+        })
+      }
     />
   ),
 };
@@ -122,7 +122,7 @@ export const WithReasoning: AppStory = {
 export const WithTerminal: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() => {
+      setup={() =>
         setupSimpleChatStory({
           workspaceId: "ws-terminal",
           messages: [
@@ -171,8 +171,8 @@ export const WithTerminal: AppStory = {
               ],
             }),
           ],
-        });
-      }}
+        })
+      }
     />
   ),
 };
@@ -181,7 +181,7 @@ export const WithTerminal: AppStory = {
 export const WithAgentStatus: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() => {
+      setup={() =>
         setupSimpleChatStory({
           workspaceId: "ws-status",
           messages: [
@@ -206,8 +206,8 @@ export const WithAgentStatus: AppStory = {
               }
             ),
           ],
-        });
-      }}
+        })
+      }
     />
   ),
 };
@@ -216,7 +216,7 @@ export const WithAgentStatus: AppStory = {
 export const VoiceInputNoApiKey: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() => {
+      setup={() =>
         setupSimpleChatStory({
           messages: [],
           // No OpenAI key configured - voice button should be disabled with tooltip
@@ -224,8 +224,8 @@ export const VoiceInputNoApiKey: AppStory = {
             anthropic: { apiKeySet: true },
             // openai deliberately missing
           },
-        });
-      }}
+        })
+      }
     />
   ),
   parameters: {
@@ -242,7 +242,7 @@ export const VoiceInputNoApiKey: AppStory = {
 export const Streaming: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() => {
+      setup={() =>
         setupStreamingChatStory({
           messages: [
             createUserMessage("msg-1", "Refactor the database connection to use pooling", {
@@ -259,8 +259,8 @@ export const Streaming: AppStory = {
             args: { target_file: "src/db/connection.ts" },
           },
           gitStatus: { dirty: 1 },
-        });
-      }}
+        })
+      }
     />
   ),
 };

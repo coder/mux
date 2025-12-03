@@ -19,7 +19,7 @@ const PLACEHOLDER_IMAGE =
 export const MessageWithImages: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() => {
+      setup={() =>
         setupSimpleChatStory({
           workspaceId: "ws-images",
           messages: [
@@ -37,8 +37,8 @@ export const MessageWithImages: AppStory = {
               }
             ),
           ],
-        });
-      }}
+        })
+      }
     />
   ),
 };

@@ -9,6 +9,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import type { FC } from "react";
 import { useRef } from "react";
 import { AppLoader } from "../components/AppLoader";
+import type { APIClient } from "@/browser/contexts/API";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // META CONFIG
@@ -33,15 +34,12 @@ export type AppStory = StoryObj<typeof appMeta>;
 // ═══════════════════════════════════════════════════════════════════════════════
 
 interface AppWithMocksProps {
-  setup: () => void;
+  setup: () => APIClient;
 }
 
-/** Wrapper that runs setup once before rendering */
+/** Wrapper that runs setup once and passes the client to AppLoader */
 export const AppWithMocks: FC<AppWithMocksProps> = ({ setup }) => {
-  const initialized = useRef(false);
-  if (!initialized.current) {
-    setup();
-    initialized.current = true;
-  }
-  return <AppLoader />;
+  const clientRef = useRef<APIClient | null>(null);
+  clientRef.current ??= setup();
+  return <AppLoader client={clientRef.current} />;
 };

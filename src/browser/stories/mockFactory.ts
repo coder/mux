@@ -10,16 +10,12 @@
 import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { WorkspaceChatMessage, ChatMuxMessage } from "@/common/orpc/types";
-import type { ChatStats } from "@/common/types/chatStats";
 import type {
   MuxTextPart,
   MuxReasoningPart,
   MuxImagePart,
   MuxToolPart,
 } from "@/common/types/message";
-
-/** Mock window.api interface - matches the shape expected by components */
-type MockWindowApi = ReturnType<typeof createMockAPI>;
 
 /** Part type for message construction */
 type MuxPart = MuxTextPart | MuxReasoningPart | MuxImagePart | MuxToolPart;
@@ -327,166 +323,6 @@ function randomHash(): string {
 
 /** Chat handler type for onChat callbacks */
 type ChatHandler = (callback: (event: WorkspaceChatMessage) => void) => () => void;
-
-export interface MockAPIOptions {
-  projects: Map<string, ProjectConfig>;
-  workspaces: FrontendWorkspaceMetadata[];
-  /** Chat handlers keyed by workspace ID */
-  chatHandlers?: Map<string, ChatHandler>;
-  /** Git status keyed by workspace ID */
-  gitStatus?: Map<string, GitStatusFixture>;
-  /** Provider config */
-  providersConfig?: Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>;
-  /** Available providers list */
-  providersList?: string[];
-}
-
-export function createMockAPI(options: MockAPIOptions) {
-  const {
-    projects,
-    workspaces,
-    chatHandlers = new Map<string, ChatHandler>(),
-    gitStatus = new Map<string, GitStatusFixture>(),
-    providersConfig = {},
-    providersList = [],
-  } = options;
-
-  const mockStats: ChatStats = {
-    consumers: [],
-    totalTokens: 0,
-    model: "mock-model",
-    tokenizerName: "mock-tokenizer",
-    usageHistory: [],
-  };
-
-  return {
-    tokenizer: {
-      countTokens: () => Promise.resolve(42),
-      countTokensBatch: (_model: string, texts: string[]) => Promise.resolve(texts.map(() => 42)),
-      calculateStats: () => Promise.resolve(mockStats),
-    },
-    providers: {
-      setProviderConfig: () => Promise.resolve({ success: true, data: undefined }),
-      setModels: () => Promise.resolve({ success: true, data: undefined }),
-      getConfig: () => Promise.resolve(providersConfig),
-      list: () => Promise.resolve(providersList),
-    },
-    workspace: {
-      create: (projectPath: string, branchName: string) =>
-        Promise.resolve({
-          success: true,
-          metadata: {
-            id: Math.random().toString(36).substring(2, 12),
-            name: branchName,
-            projectPath,
-            projectName: projectPath.split("/").pop() ?? "project",
-            namedWorkspacePath: `/mock/workspace/${branchName}`,
-            runtimeConfig: DEFAULT_RUNTIME_CONFIG,
-          },
-        }),
-      list: () => Promise.resolve(workspaces),
-      rename: (workspaceId: string) =>
-        Promise.resolve({
-          success: true,
-          data: { newWorkspaceId: workspaceId },
-        }),
-      remove: () => Promise.resolve({ success: true }),
-      fork: () => Promise.resolve({ success: false, error: "Not implemented in mock" }),
-      openTerminal: () => Promise.resolve(undefined),
-      onChat: (wsId: string, callback: (msg: WorkspaceChatMessage) => void) => {
-        const handler = chatHandlers.get(wsId);
-        if (handler) {
-          return handler(callback);
-        }
-        // Default: send caught-up immediately
-        setTimeout(() => callback({ type: "caught-up" }), 50);
-        // eslint-disable-next-line @typescript-eslint/no-empty-function
-        return () => {};
-      },
-      onMetadata: () => () => undefined,
-      sendMessage: () => Promise.resolve({ success: true, data: undefined }),
-      resumeStream: () => Promise.resolve({ success: true, data: undefined }),
-      interruptStream: () => Promise.resolve({ success: true, data: undefined }),
-      clearQueue: () => Promise.resolve({ success: true, data: undefined }),
-      truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
-      replaceChatHistory: () => Promise.resolve({ success: true, data: undefined }),
-      getInfo: () => Promise.resolve(null),
-      activity: {
-        list: () => Promise.resolve({}),
-        subscribe: () => () => undefined,
-      },
-      executeBash: (wsId: string, command: string) => {
-        // Return mock git status if this looks like git status script
-        if (command.includes("git status") || command.includes("git show-branch")) {
-          const emptyStatus: GitStatusFixture = {};
-          const status = gitStatus.get(wsId) ?? emptyStatus;
-          const output = createGitStatusOutput(status);
-          return Promise.resolve({
-            success: true,
-            data: { success: true, output, exitCode: 0, wall_duration_ms: 50 },
-          });
-        }
-        return Promise.resolve({
-          success: true,
-          data: { success: true, output: "", exitCode: 0, wall_duration_ms: 0 },
-        });
-      },
-    },
-    projects: {
-      list: () => Promise.resolve(Array.from(projects.entries())),
-      create: () =>
-        Promise.resolve({
-          success: true,
-          data: { projectConfig: { workspaces: [] }, normalizedPath: "/mock/project/path" },
-        }),
-      remove: () => Promise.resolve({ success: true, data: undefined }),
-      pickDirectory: () => Promise.resolve(null),
-      listBranches: () =>
-        Promise.resolve({
-          branches: ["main", "develop", "feature/new-feature"],
-          recommendedTrunk: "main",
-        }),
-      secrets: {
-        get: () => Promise.resolve([]),
-        update: () => Promise.resolve({ success: true, data: undefined }),
-      },
-    },
-    window: {
-      setTitle: () => Promise.resolve(undefined),
-    },
-    terminal: {
-      create: () =>
-        Promise.resolve({
-          sessionId: "mock-session",
-          workspaceId: "mock-workspace",
-          cols: 80,
-          rows: 24,
-        }),
-      close: () => Promise.resolve(undefined),
-      resize: () => Promise.resolve(undefined),
-      sendInput: () => undefined,
-      onOutput: () => () => undefined,
-      onExit: () => () => undefined,
-      openWindow: () => Promise.resolve(undefined),
-      closeWindow: () => Promise.resolve(undefined),
-    },
-    voice: {
-      transcribe: () => Promise.resolve({ success: false, error: "Not implemented in mock" }),
-    },
-    update: {
-      check: () => Promise.resolve(undefined),
-      download: () => Promise.resolve(undefined),
-      install: () => undefined,
-      onStatus: () => () => undefined,
-    },
-  };
-}
-
-/** Install mock API on window */
-export function installMockAPI(api: MockWindowApi): void {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
-  (window as any).api = api;
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CHAT SCENARIO BUILDERS

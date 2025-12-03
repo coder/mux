@@ -81,7 +81,7 @@ describe('getUser', () => {
 export const Tables: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() => {
+      setup={() =>
         setupSimpleChatStory({
           workspaceId: "ws-tables",
           messages: [
@@ -94,8 +94,8 @@ export const Tables: AppStory = {
               timestamp: STABLE_TIMESTAMP - 90000,
             }),
           ],
-        });
-      }}
+        })
+      }
     />
   ),
 };
@@ -104,7 +104,7 @@ export const Tables: AppStory = {
 export const CodeBlocks: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() => {
+      setup={() =>
         setupSimpleChatStory({
           workspaceId: "ws-code",
           messages: [
@@ -117,8 +117,8 @@ export const CodeBlocks: AppStory = {
               timestamp: STABLE_TIMESTAMP - 90000,
             }),
           ],
-        });
-      }}
+        })
+      }
     />
   ),
 };

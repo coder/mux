@@ -13,10 +13,9 @@ import {
   createAssistantMessage,
   createFileEditTool,
   createStaticChatHandler,
-  createMockAPI,
-  installMockAPI,
 } from "./mockFactory";
 import { selectWorkspace, setupSimpleChatStory, setupCustomChatStory } from "./storyHelpers";
+import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
 
 export default {
   ...appMeta,
@@ -100,7 +99,7 @@ const LARGE_DIFF = [
 export const StreamError: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() => {
+      setup={() =>
         setupCustomChatStory({
           workspaceId: "ws-error",
           chatHandler: (callback: (event: WorkspaceChatMessage) => void) => {
@@ -124,8 +123,8 @@ export const StreamError: AppStory = {
             // eslint-disable-next-line @typescript-eslint/no-empty-function
             return () => {};
           },
-        });
-      }}
+        })
+      }
     />
   ),
 };
@@ -164,7 +163,7 @@ export const HiddenHistory: AppStory = {
           ),
         ];
 
-        setupCustomChatStory({
+        return setupCustomChatStory({
           workspaceId: "ws-history",
           chatHandler: createStaticChatHandler(messages),
         });
@@ -193,15 +192,13 @@ export const IncompatibleWorkspace: AppStory = {
           }),
         ];
 
-        installMockAPI(
-          createMockAPI({
-            projects: groupWorkspacesByProject(workspaces),
-            workspaces,
-          })
-        );
-
         // Select the incompatible workspace
         selectWorkspace(workspaces[1]);
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+        });
       }}
     />
   ),
@@ -211,7 +208,7 @@ export const IncompatibleWorkspace: AppStory = {
 export const LargeDiff: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() => {
+      setup={() =>
         setupSimpleChatStory({
           workspaceId: "ws-diff",
           messages: [
@@ -233,8 +230,8 @@ export const LargeDiff: AppStory = {
               }
             ),
           ],
-        });
-      }}
+        })
+      }
     />
   ),
 };

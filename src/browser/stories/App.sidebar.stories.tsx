@@ -12,16 +12,48 @@ import {
   createUserMessage,
   createStreamingChatHandler,
   groupWorkspacesByProject,
-  createMockAPI,
-  installMockAPI,
+  createGitStatusOutput,
   type GitStatusFixture,
 } from "./mockFactory";
 import { expandProjects } from "./storyHelpers";
+import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
+import type { WorkspaceChatMessage } from "@/common/orpc/types";
 
 export default {
   ...appMeta,
   title: "App/Sidebar",
 };
+
+type ChatHandler = (callback: (event: WorkspaceChatMessage) => void) => () => void;
+
+/** Adapts callback-based chat handlers to ORPC onChat format */
+function createOnChatAdapter(chatHandlers: Map<string, ChatHandler>) {
+  return (workspaceId: string, emit: (msg: WorkspaceChatMessage) => void) => {
+    const handler = chatHandlers.get(workspaceId);
+    if (handler) {
+      return handler(emit);
+    }
+    queueMicrotask(() => emit({ type: "caught-up" }));
+    return undefined;
+  };
+}
+
+/** Creates an executeBash function that returns git status output for workspaces */
+function createGitStatusExecutor(gitStatus?: Map<string, GitStatusFixture>) {
+  return (workspaceId: string, script: string) => {
+    if (script.includes("git status") || script.includes("git show-branch")) {
+      const status = gitStatus?.get(workspaceId) ?? {};
+      const output = createGitStatusOutput(status);
+      return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
+    }
+    return Promise.resolve({
+      success: true as const,
+      output: "",
+      exitCode: 0,
+      wall_duration_ms: 0,
+    });
+  };
+}
 
 /** Single project with multiple workspaces including SSH */
 export const SingleProject: AppStory = {
@@ -39,12 +71,10 @@ export const SingleProject: AppStory = {
           createWorkspace({ id: "ws-3", name: "bugfix/memory-leak", projectName: "my-app" }),
         ];
 
-        installMockAPI(
-          createMockAPI({
-            projects: groupWorkspacesByProject(workspaces),
-            workspaces,
-          })
-        );
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+        });
       }}
     />
   ),
@@ -69,12 +99,10 @@ export const MultipleProjects: AppStory = {
           createWorkspace({ id: "ws-6", name: "main", projectName: "mobile" }),
         ];
 
-        installMockAPI(
-          createMockAPI({
-            projects: groupWorkspacesByProject(workspaces),
-            workspaces,
-          })
-        );
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+        });
       }}
     />
   ),
@@ -104,12 +132,10 @@ export const ManyWorkspaces: AppStory = {
           createWorkspace({ id: `ws-${i}`, name, projectName: "big-app" })
         );
 
-        installMockAPI(
-          createMockAPI({
-            projects: groupWorkspacesByProject(workspaces),
-            workspaces,
-          })
-        );
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+        });
       }}
     />
   ),
@@ -169,13 +195,11 @@ export const GitStatusVariations: AppStory = {
           ["ws-ssh", { ahead: 1 }],
         ]);
 
-        installMockAPI(
-          createMockAPI({
-            projects: groupWorkspacesByProject(workspaces),
-            workspaces,
-            gitStatus,
-          })
-        );
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+          executeBash: createGitStatusExecutor(gitStatus),
+        });
       }}
     />
   ),
@@ -251,7 +275,7 @@ export const RuntimeBadgeVariations: AppStory = {
           timestamp: STABLE_TIMESTAMP,
         });
 
-        const chatHandlers = new Map([
+        const chatHandlers = new Map<string, ChatHandler>([
           [
             "ws-ssh-working",
             createStreamingChatHandler({
@@ -284,16 +308,14 @@ export const RuntimeBadgeVariations: AppStory = {
           ],
         ]);
 
-        installMockAPI(
-          createMockAPI({
-            projects: groupWorkspacesByProject(workspaces),
-            workspaces,
-            chatHandlers,
-          })
-        );
-
         // Expand the project so badges are visible
         expandProjects(["/home/user/projects/runtime-demo"]);
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+          onChat: createOnChatAdapter(chatHandlers),
+        });
       }}
     />
   ),
