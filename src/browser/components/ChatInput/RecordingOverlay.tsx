@@ -102,11 +102,13 @@ interface SlidingWaveformProps {
 /**
  * Renders a sliding window of audio amplitude over time.
  * New samples appear on the right and scroll left as time passes.
+ * Falls back to a simple pulsing indicator if Web Audio API fails.
  */
 const SlidingWaveform: React.FC<SlidingWaveformProps> = (props) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(600);
+  const [audioError, setAudioError] = useState(false);
 
   // Audio analysis state (refs to avoid re-renders)
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -136,24 +138,29 @@ const SlidingWaveform: React.FC<SlidingWaveformProps> = (props) => {
     const stream = props.mediaRecorder.stream;
     if (!stream) return;
 
-    const audioContext = new AudioContext();
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 256;
-    analyser.smoothingTimeConstant = 0.3;
+    try {
+      const audioContext = new AudioContext();
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.3;
 
-    const source = audioContext.createMediaStreamSource(stream);
-    source.connect(analyser);
+      const source = audioContext.createMediaStreamSource(stream);
+      source.connect(analyser);
 
-    audioContextRef.current = audioContext;
-    analyserRef.current = analyser;
-    samplesRef.current = new Array<number>(NUM_SAMPLES).fill(0);
-    lastSampleTimeRef.current = performance.now();
+      audioContextRef.current = audioContext;
+      analyserRef.current = analyser;
+      samplesRef.current = new Array<number>(NUM_SAMPLES).fill(0);
+      lastSampleTimeRef.current = performance.now();
 
-    return () => {
-      void audioContext.close();
-      audioContextRef.current = null;
-      analyserRef.current = null;
-    };
+      return () => {
+        void audioContext.close();
+        audioContextRef.current = null;
+        analyserRef.current = null;
+      };
+    } catch (err) {
+      console.error("Failed to initialize audio visualization:", err);
+      setAudioError(true);
+    }
   }, [props.mediaRecorder]);
 
   // Animation loop: sample audio amplitude and render bars
@@ -217,9 +224,30 @@ const SlidingWaveform: React.FC<SlidingWaveformProps> = (props) => {
 
   // Run animation loop
   useEffect(() => {
+    if (audioError) return;
     animationFrameRef.current = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(animationFrameRef.current);
-  }, [draw]);
+  }, [draw, audioError]);
+
+  // Fallback: simple pulsing indicator if Web Audio API unavailable
+  if (audioError) {
+    return (
+      <div className="flex h-full w-full items-center justify-center gap-1">
+        {[...Array(5)].map((_, i) => (
+          <div
+            key={i}
+            className="animate-pulse rounded-full"
+            style={{
+              width: 4,
+              height: 12 + (i % 3) * 4,
+              backgroundColor: props.color,
+              animationDelay: `${i * 100}ms`,
+            }}
+          />
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div ref={containerRef} className="flex h-full w-full items-center justify-center">
