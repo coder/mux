@@ -75,8 +75,8 @@ export const RecordingOverlay: React.FC<RecordingOverlayProps> = (props) => {
         {isRecording ? (
           <>
             <span className="opacity-70">space</span> send ·{" "}
-            <span className="opacity-70">{formatKeybind(KEYBINDS.TOGGLE_VOICE_INPUT)}</span> review ·{" "}
-            <span className="opacity-70">esc</span> cancel
+            <span className="opacity-70">{formatKeybind(KEYBINDS.TOGGLE_VOICE_INPUT)}</span> review
+            · <span className="opacity-70">esc</span> cancel
           </>
         ) : (
           "Transcribing..."
@@ -104,7 +104,7 @@ const SlidingWaveform: React.FC<SlidingWaveformProps> = (props) => {
   // Audio analysis refs (persist across renders)
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const samplesRef = useRef<number[]>(new Array(NUM_SAMPLES).fill(0));
+  const samplesRef = useRef<number[]>(new Array<number>(NUM_SAMPLES).fill(0));
   const animationFrameRef = useRef<number>(0);
   const lastSampleTimeRef = useRef<number>(0);
 
@@ -142,11 +142,11 @@ const SlidingWaveform: React.FC<SlidingWaveformProps> = (props) => {
     analyserRef.current = analyser;
 
     // Reset samples when starting
-    samplesRef.current = new Array(NUM_SAMPLES).fill(0);
+    samplesRef.current = new Array<number>(NUM_SAMPLES).fill(0);
     lastSampleTimeRef.current = performance.now();
 
     return () => {
-      audioContext.close();
+      void audioContext.close();
       audioContextRef.current = null;
       analyserRef.current = null;
     };
@@ -171,8 +171,8 @@ const SlidingWaveform: React.FC<SlidingWaveformProps> = (props) => {
 
       // Calculate RMS amplitude (0-1 range)
       let sum = 0;
-      for (let i = 0; i < dataArray.length; i++) {
-        const normalized = (dataArray[i] - 128) / 128; // -1 to 1
+      for (const sample of dataArray) {
+        const normalized = (sample - 128) / 128; // -1 to 1
         sum += normalized * normalized;
       }
       const rms = Math.sqrt(sum / dataArray.length);
