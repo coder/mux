@@ -174,15 +174,38 @@ export const ThresholdSlider: React.FC<ThresholdSliderProps> = ({ config, orient
   const color = isEnabled ? "var(--color-plan-mode)" : "var(--color-muted)";
   const tooltipText = getTooltipText(config.threshold, orientation);
 
-  // Container styles
+  // Container styles - covers the full bar area for drag handling
+  // Uses pointer-events: none by default, only the indicator handle has pointer-events: auto
+  // This allows the token meter tooltip to work when hovering elsewhere on the bar
   const containerStyle: React.CSSProperties = {
     position: "absolute",
-    cursor: isHorizontal ? "ew-resize" : "ns-resize",
     top: 0,
     bottom: 0,
     left: 0,
     right: 0,
     zIndex: 50,
+    pointerEvents: "none", // Let events pass through to tooltip beneath
+  };
+
+  // Drag handle around the indicator - this captures mouse events
+  const DRAG_ZONE_SIZE = 16; // pixels on each side of the indicator
+  const handleStyle: React.CSSProperties = {
+    position: "absolute",
+    cursor: isHorizontal ? "ew-resize" : "ns-resize",
+    pointerEvents: "auto", // Only this element captures events
+    ...(isHorizontal
+      ? {
+          left: `calc(${config.threshold}% - ${DRAG_ZONE_SIZE}px)`,
+          width: DRAG_ZONE_SIZE * 2,
+          top: 0,
+          bottom: 0,
+        }
+      : {
+          top: `calc(${config.threshold}% - ${DRAG_ZONE_SIZE}px)`,
+          height: DRAG_ZONE_SIZE * 2,
+          left: 0,
+          right: 0,
+        }),
   };
 
   // Indicator positioning - use transform for centering on both axes
@@ -215,15 +238,17 @@ export const ThresholdSlider: React.FC<ThresholdSliderProps> = ({ config, orient
   const containerRect = containerRef.current?.getBoundingClientRect();
 
   return (
-    <div
-      ref={containerRef}
-      style={containerStyle}
-      onMouseDown={handleMouseDown}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      // Horizontal uses native title (simpler, no clipping issues with wide tooltips)
-      title={isHorizontal ? tooltipText : undefined}
-    >
+    <div ref={containerRef} style={containerStyle}>
+      {/* Drag handle - captures mouse events in a small zone around the indicator */}
+      <div
+        style={handleStyle}
+        onMouseDown={handleMouseDown}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+        // Horizontal uses native title (simpler, no clipping issues with wide tooltips)
+        title={isHorizontal ? tooltipText : undefined}
+      />
+
       {/* Visual indicator - pointer events disabled */}
       <div style={indicatorStyle}>
         <Triangle direction={isHorizontal ? "down" : "right"} color={color} />
