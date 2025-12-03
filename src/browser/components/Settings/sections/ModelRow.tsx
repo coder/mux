@@ -26,12 +26,12 @@ export interface ModelRowProps {
 
 export function ModelRow(props: ModelRowProps) {
   return (
-    <div className="border-border-medium bg-background-secondary flex items-center justify-between rounded-md border px-3 py-1.5">
-      <div className="flex min-w-0 flex-1 items-center gap-2">
+    <div className="border-border-medium bg-background-secondary flex items-center justify-between gap-2 rounded-md border px-2 py-1.5 md:px-3">
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 md:gap-2">
         <ProviderWithIcon
           provider={props.provider}
           displayName
-          className="text-muted w-20 shrink-0 text-xs"
+          className="text-muted w-16 shrink-0 text-xs md:w-20"
         />
         {props.isEditing ? (
           <div className="flex min-w-0 flex-1 items-center gap-1">

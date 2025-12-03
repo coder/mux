@@ -160,11 +160,11 @@ export function ModelsSection() {
 
         {/* Add new model form */}
         <div className="border-border-medium bg-background-secondary rounded-md border p-2">
-          <div className="flex gap-1.5">
+          <div className="flex flex-wrap gap-1.5">
             <select
               value={newModel.provider}
               onChange={(e) => setNewModel((prev) => ({ ...prev, provider: e.target.value }))}
-              className="bg-modal-bg border-border-medium focus:border-accent rounded border px-2 py-1 text-xs focus:outline-none"
+              className="bg-modal-bg border-border-medium focus:border-accent shrink-0 rounded border px-2 py-1 text-xs focus:outline-none"
             >
               <option value="">Provider</option>
               {SUPPORTED_PROVIDERS.map((p) => (
@@ -178,7 +178,7 @@ export function ModelsSection() {
               value={newModel.modelId}
               onChange={(e) => setNewModel((prev) => ({ ...prev, modelId: e.target.value }))}
               placeholder="model-id"
-              className="bg-modal-bg border-border-medium focus:border-accent flex-1 rounded border px-2 py-1 font-mono text-xs focus:outline-none"
+              className="bg-modal-bg border-border-medium focus:border-accent min-w-0 flex-1 rounded border px-2 py-1 font-mono text-xs focus:outline-none"
               onKeyDown={(e) => {
                 if (e.key === "Enter") void handleAddModel();
               }}
@@ -187,7 +187,7 @@ export function ModelsSection() {
               type="button"
               onClick={handleAddModel}
               disabled={!newModel.provider || !newModel.modelId.trim()}
-              className="bg-accent hover:bg-accent-dark disabled:bg-border-medium flex items-center gap-1 rounded px-2 py-1 text-xs text-white transition-colors disabled:cursor-not-allowed"
+              className="bg-accent hover:bg-accent-dark disabled:bg-border-medium flex shrink-0 items-center gap-1 rounded px-2 py-1 text-xs text-white transition-colors disabled:cursor-not-allowed"
             >
               <Plus className="h-3.5 w-3.5" />
               Add
