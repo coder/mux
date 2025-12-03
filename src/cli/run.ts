@@ -1,10 +1,16 @@
 #!/usr/bin/env bun
+/**
+ * `mux run` - First-class CLI for running agent sessions
+ *
+ * Usage:
+ *   mux run "Fix the failing tests"
+ *   mux run --dir /path/to/project "Add authentication"
+ *   mux run --runtime "ssh user@host" "Deploy changes"
+ */
 
-import assert from "@/common/utils/assert";
-import * as fs from "fs/promises";
+import { Command } from "commander";
 import * as path from "path";
-import { PlatformPaths } from "@/common/utils/paths";
-import { parseArgs } from "util";
+import * as fs from "fs/promises";
 import { Config } from "@/node/config";
 import { HistoryService } from "@/node/services/historyService";
 import { PartialService } from "@/node/services/partialService";
@@ -27,23 +33,95 @@ import {
 import { defaultModel } from "@/common/utils/ai/models";
 import { ensureProvidersConfig } from "@/common/utils/providers/ensureProvidersConfig";
 import { modeToToolPolicy, PLAN_MODE_INSTRUCTION } from "@/common/utils/ui/modeUtils";
-import {
-  extractAssistantText,
-  extractReasoning,
-  extractToolCalls,
-} from "@/cli/debug/chatExtractors";
 import type { ThinkingLevel } from "@/common/types/thinking";
+import type { RuntimeConfig } from "@/common/types/runtime";
+import { parseRuntimeModeAndHost, RUNTIME_MODE } from "@/common/types/runtime";
+import assert from "@/common/utils/assert";
 
-interface CliResult {
-  success: boolean;
-  error?: string;
-  data?: Record<string, unknown>;
+type CLIMode = "plan" | "exec";
+
+function parseRuntimeConfig(value: string | undefined, srcBaseDir: string): RuntimeConfig {
+  if (!value) {
+    // Default to local for `mux run` (no worktree isolation needed for one-off)
+    return { type: "local" };
+  }
+
+  const { mode, host } = parseRuntimeModeAndHost(value);
+
+  switch (mode) {
+    case RUNTIME_MODE.LOCAL:
+      return { type: "local" };
+    case RUNTIME_MODE.WORKTREE:
+      return { type: "worktree", srcBaseDir };
+    case RUNTIME_MODE.SSH:
+      if (!host.trim()) {
+        throw new Error("SSH runtime requires a host (e.g., --runtime 'ssh user@host')");
+      }
+      return { type: "ssh", host: host.trim(), srcBaseDir };
+    default:
+      return { type: "local" };
+  }
 }
 
-async function ensureDirectory(pathToCheck: string): Promise<void> {
-  const stats = await fs.stat(pathToCheck);
+function parseTimeout(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+
+  const trimmed = value.trim().toLowerCase();
+
+  // Parse human-friendly formats: 5m, 300s, 5min, 5minutes, etc.
+  const regex = /^(\d+(?:\.\d+)?)\s*(s|sec|secs|seconds?|m|min|mins|minutes?|ms)?$/i;
+  const match = regex.exec(trimmed);
+  if (!match) {
+    throw new Error(
+      `Invalid timeout format "${value}". Use: 300s, 5m, 5min, or milliseconds (e.g., 300000)`
+    );
+  }
+
+  const num = parseFloat(match[1]);
+  const unit = (match[2] || "ms").toLowerCase();
+
+  if (unit === "ms") return Math.round(num);
+  if (unit.startsWith("s")) return Math.round(num * 1000);
+  if (unit.startsWith("m")) return Math.round(num * 60 * 1000);
+
+  return Math.round(num);
+}
+
+function parseThinkingLevel(value: string | undefined): ThinkingLevel | undefined {
+  if (!value) return "medium"; // Default for mux run
+
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === "off" ||
+    normalized === "low" ||
+    normalized === "medium" ||
+    normalized === "high"
+  ) {
+    return normalized;
+  }
+  throw new Error(`Invalid thinking level "${value}". Expected: off, low, medium, high`);
+}
+
+function parseMode(value: string | undefined): CLIMode {
+  if (!value) return "exec";
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "plan") return "plan";
+  if (normalized === "exec" || normalized === "execute") return "exec";
+
+  throw new Error(`Invalid mode "${value}". Expected: plan, exec`);
+}
+
+function generateWorkspaceId(): string {
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).substring(2, 8);
+  return `run-${timestamp}-${random}`;
+}
+
+async function ensureDirectory(dirPath: string): Promise<void> {
+  const stats = await fs.stat(dirPath);
   if (!stats.isDirectory()) {
-    throw new Error(`"${pathToCheck}" is not a directory`);
+    throw new Error(`"${dirPath}" is not a directory`);
   }
 }
 
@@ -56,72 +134,17 @@ async function gatherMessageFromStdin(): Promise<string> {
   for await (const chunk of process.stdin) {
     if (Buffer.isBuffer(chunk)) {
       chunks.push(chunk);
-      continue;
-    }
-    if (typeof chunk === "string") {
+    } else if (typeof chunk === "string") {
       chunks.push(Buffer.from(chunk));
-      continue;
-    }
-    if (chunk instanceof Uint8Array) {
+    } else if (chunk instanceof Uint8Array) {
       chunks.push(chunk);
-      continue;
     }
-    throw new Error(`Unsupported stdin chunk type: ${typeof chunk}`);
   }
   return Buffer.concat(chunks).toString("utf-8");
 }
 
-function parseTimeout(timeoutRaw: string | undefined): number | undefined {
-  if (!timeoutRaw) {
-    return undefined;
-  }
-
-  const parsed = Number.parseInt(timeoutRaw, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(`Invalid timeout value "${timeoutRaw}"`);
-  }
-  return parsed;
-}
-
-function parseThinkingLevel(value: string | undefined): ThinkingLevel | undefined {
-  if (!value) {
-    return undefined;
-  }
-
-  const normalized = value.trim().toLowerCase();
-  if (
-    normalized === "off" ||
-    normalized === "low" ||
-    normalized === "medium" ||
-    normalized === "high"
-  ) {
-    return normalized;
-  }
-  throw new Error(`Invalid thinking level "${value}". Expected one of: off, low, medium, high.`);
-}
-
-type CLIMode = "plan" | "exec";
-
-function parseMode(raw: string | undefined): CLIMode {
-  if (!raw) {
-    return "exec";
-  }
-
-  const normalized = raw.trim().toLowerCase();
-  if (normalized === "plan") {
-    return "plan";
-  }
-  if (normalized === "exec" || normalized === "execute") {
-    return "exec";
-  }
-
-  throw new Error('Invalid mode "' + raw + '". Expected "plan" or "exec" (or "execute").');
-}
-
 function renderUnknown(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
+  if (typeof value === "string") return value;
   try {
     return JSON.stringify(value, null, 2);
   } catch {
@@ -129,94 +152,101 @@ function renderUnknown(value: unknown): string {
   }
 }
 
-function writeJson(result: CliResult): void {
-  process.stdout.write(`${JSON.stringify(result)}\n`);
+const program = new Command();
+
+program
+  .name("mux run")
+  .description("Run an agent session in the current directory")
+  .argument("[message]", "instruction for the agent (can also be piped via stdin)")
+  .option("-d, --dir <path>", "project directory", process.cwd())
+  .option("-m, --model <model>", "model to use", defaultModel)
+  .option("-r, --runtime <runtime>", "runtime type: local, worktree, or 'ssh <host>'", "local")
+  .option("--mode <mode>", "agent mode: plan or exec", "exec")
+  .option("-t, --thinking <level>", "thinking level: off, low, medium, high", "medium")
+  .option("--timeout <duration>", "timeout (e.g., 5m, 300s, 300000)")
+  .option("--json", "output NDJSON for programmatic consumption")
+  .option("-q, --quiet", "only output final result")
+  .option("--workspace-id <id>", "explicit workspace ID (auto-generated if not provided)")
+  .option("--config-root <path>", "mux config directory")
+  .addHelpText(
+    "after",
+    `
+Examples:
+  $ mux run "Fix the failing tests"
+  $ mux run --dir /path/to/project "Add authentication"
+  $ mux run --runtime "ssh user@host" "Deploy changes"
+  $ mux run --mode plan "Refactor the auth module"
+  $ echo "Add logging" | mux run
+  $ mux run --json "List all files" | jq '.type'
+`
+  );
+
+program.parse(process.argv);
+
+interface CLIOptions {
+  dir: string;
+  model: string;
+  runtime: string;
+  mode: string;
+  thinking: string;
+  timeout?: string;
+  json?: boolean;
+  quiet?: boolean;
+  workspaceId?: string;
+  configRoot?: string;
 }
 
+const opts = program.opts<CLIOptions>();
+const messageArg = program.args[0];
+
 async function main(): Promise<void> {
-  const { values } = parseArgs({
-    args: process.argv.slice(2),
-    options: {
-      "workspace-path": { type: "string" },
-      "workspace-id": { type: "string" },
-      "project-path": { type: "string" },
-      "config-root": { type: "string" },
-      message: { type: "string" },
-      model: { type: "string" },
-      "thinking-level": { type: "string" },
-      mode: { type: "string" },
-      timeout: { type: "string" },
-      json: { type: "boolean" },
-      "json-streaming": { type: "boolean" },
-    },
-    allowPositionals: false,
-  });
+  // Resolve directory
+  const projectDir = path.resolve(opts.dir);
+  await ensureDirectory(projectDir);
 
-  const workspacePathRaw = values["workspace-path"];
-  if (typeof workspacePathRaw !== "string" || workspacePathRaw.trim().length === 0) {
-    throw new Error("--workspace-path is required");
-  }
-  const workspacePath = path.resolve(workspacePathRaw.trim());
-  await ensureDirectory(workspacePath);
+  // Get message from arg or stdin
+  const stdinMessage = await gatherMessageFromStdin();
+  const message = messageArg?.trim() ?? stdinMessage.trim();
 
-  const configRootRaw = values["config-root"];
-  const configRoot =
-    configRootRaw && configRootRaw.trim().length > 0 ? configRootRaw.trim() : undefined;
-  const config = new Config(configRoot);
-
-  const workspaceIdRaw = values["workspace-id"];
-  if (typeof workspaceIdRaw !== "string" || workspaceIdRaw.trim().length === 0) {
-    throw new Error("--workspace-id is required");
-  }
-  const workspaceId = workspaceIdRaw.trim();
-
-  const projectPathRaw = values["project-path"];
-  const projectName =
-    typeof projectPathRaw === "string" && projectPathRaw.trim().length > 0
-      ? PlatformPaths.basename(path.resolve(projectPathRaw.trim()))
-      : PlatformPaths.basename(path.dirname(workspacePath)) || "unknown";
-
-  const messageArg =
-    values.message && values.message.trim().length > 0 ? values.message : undefined;
-  const messageText = messageArg ?? (await gatherMessageFromStdin());
-  if (messageText?.trim().length === 0) {
-    throw new Error("Message must be provided via --message or stdin");
+  if (!message) {
+    console.error("Error: No message provided. Pass as argument or pipe via stdin.");
+    console.error('Usage: mux run "Your instruction here"');
+    process.exit(1);
   }
 
-  const model = values.model && values.model.trim().length > 0 ? values.model.trim() : defaultModel;
-  const timeoutMs = parseTimeout(values.timeout);
-  const thinkingLevel = parseThinkingLevel(values["thinking-level"]);
-  const initialMode = parseMode(values.mode);
-  const emitFinalJson = values.json === true;
-  const emitJsonStreaming = values["json-streaming"] === true;
+  // Setup config
+  const config = new Config(opts.configRoot);
+  const workspaceId = opts.workspaceId ?? generateWorkspaceId();
+  const model: string = opts.model;
+  const runtimeConfig = parseRuntimeConfig(opts.runtime, config.srcDir);
+  const thinkingLevel = parseThinkingLevel(opts.thinking);
+  const initialMode = parseMode(opts.mode);
+  const timeoutMs = parseTimeout(opts.timeout);
+  const emitJson = opts.json === true;
+  const quiet = opts.quiet === true;
 
-  const suppressHumanOutput = emitJsonStreaming || emitFinalJson;
+  const suppressHumanOutput = emitJson || quiet;
 
-  // Log model selection for terminal-bench verification
-  if (!suppressHumanOutput) {
-    console.error(`[mux-cli] Using model: ${model}`);
-  }
-
-  const humanStream = process.stdout;
   const writeHuman = (text: string) => {
-    if (suppressHumanOutput) {
-      return;
-    }
-    humanStream.write(text);
+    if (!suppressHumanOutput) process.stdout.write(text);
   };
   const writeHumanLine = (text = "") => {
-    if (suppressHumanOutput) {
-      return;
-    }
-    humanStream.write(`${text}\n`);
+    if (!suppressHumanOutput) process.stdout.write(`${text}\n`);
   };
   const emitJsonLine = (payload: unknown) => {
-    if (!emitJsonStreaming) {
-      return;
-    }
-    process.stdout.write(`${JSON.stringify(payload)}\n`);
+    if (emitJson) process.stdout.write(`${JSON.stringify(payload)}\n`);
   };
 
+  if (!suppressHumanOutput) {
+    console.error(`[mux run] Directory: ${projectDir}`);
+    console.error(`[mux run] Model: ${model}`);
+    console.error(
+      `[mux run] Runtime: ${runtimeConfig.type}${runtimeConfig.type === "ssh" ? ` (${runtimeConfig.host})` : ""}`
+    );
+    console.error(`[mux run] Mode: ${initialMode}`);
+  }
+
+  // Initialize services
   const historyService = new HistoryService(config);
   const partialService = new PartialService(config, historyService);
   const initStateManager = new InitStateManager(config);
@@ -233,15 +263,16 @@ async function main(): Promise<void> {
   });
 
   await session.ensureMetadata({
-    workspacePath,
-    projectName,
+    workspacePath: projectDir,
+    projectName: path.basename(projectDir),
+    runtimeConfig,
   });
 
-  const buildSendOptions = (mode: CLIMode): SendMessageOptions => ({
+  const buildSendOptions = (cliMode: CLIMode): SendMessageOptions => ({
     model,
     thinkingLevel,
-    toolPolicy: modeToToolPolicy(mode),
-    additionalSystemInstructions: mode === "plan" ? PLAN_MODE_INSTRUCTION : undefined,
+    toolPolicy: modeToToolPolicy(cliMode),
+    additionalSystemInstructions: cliMode === "plan" ? PLAN_MODE_INSTRUCTION : undefined,
   });
 
   const liveEvents: WorkspaceChatMessage[] = [];
@@ -277,9 +308,7 @@ async function main(): Promise<void> {
           }),
         ]);
       } finally {
-        if (timeoutHandle) {
-          clearTimeout(timeoutHandle);
-        }
+        if (timeoutHandle) clearTimeout(timeoutHandle);
       }
     } else {
       await completionPromise;
@@ -290,9 +319,9 @@ async function main(): Promise<void> {
     }
   };
 
-  const sendAndAwait = async (message: string, options: SendMessageOptions): Promise<void> => {
+  const sendAndAwait = async (msg: string, options: SendMessageOptions): Promise<void> => {
     completionPromise = createCompletionPromise();
-    const sendResult = await session.sendMessage(message, options);
+    const sendResult = await session.sendMessage(msg, options);
     if (!sendResult.success) {
       const errorValue = sendResult.error;
       let formattedError = "unknown error";
@@ -308,14 +337,11 @@ async function main(): Promise<void> {
       }
       throw new Error(`Failed to send message: ${formattedError}`);
     }
-
     await waitForCompletion();
   };
 
   const handleToolStart = (payload: WorkspaceChatMessage): boolean => {
-    if (!isToolCallStart(payload)) {
-      return false;
-    }
+    if (!isToolCallStart(payload)) return false;
     writeHumanLine("\n========== TOOL CALL START ==========");
     writeHumanLine(`Tool: ${payload.toolName}`);
     writeHumanLine(`Call ID: ${payload.toolCallId}`);
@@ -326,9 +352,7 @@ async function main(): Promise<void> {
   };
 
   const handleToolDelta = (payload: WorkspaceChatMessage): boolean => {
-    if (!isToolCallDelta(payload)) {
-      return false;
-    }
+    if (!isToolCallDelta(payload)) return false;
     writeHumanLine("\n----------- TOOL OUTPUT -------------");
     writeHumanLine(renderUnknown(payload.delta));
     writeHumanLine("-------------------------------------");
@@ -336,9 +360,7 @@ async function main(): Promise<void> {
   };
 
   const handleToolEnd = (payload: WorkspaceChatMessage): boolean => {
-    if (!isToolCallEnd(payload)) {
-      return false;
-    }
+    if (!isToolCallEnd(payload)) return false;
     writeHumanLine("\n=========== TOOL CALL END ===========");
     writeHumanLine(`Tool: ${payload.toolName}`);
     writeHumanLine(`Call ID: ${payload.toolCallId}`);
@@ -441,7 +463,7 @@ async function main(): Promise<void> {
   const unsubscribe = await session.subscribeChat(chatListener);
 
   try {
-    await sendAndAwait(messageText, buildSendOptions(initialMode));
+    await sendAndAwait(message, buildSendOptions(initialMode));
 
     const planWasProposed = planProposed;
     planProposed = false;
@@ -453,38 +475,24 @@ async function main(): Promise<void> {
       await sendAndAwait("Plan approved. Execute it.", buildSendOptions("exec"));
     }
 
-    let finalEvent: WorkspaceChatMessage | undefined;
-    for (let i = liveEvents.length - 1; i >= 0; i -= 1) {
-      const candidate = liveEvents[i];
-      if (isStreamEnd(candidate)) {
-        finalEvent = candidate;
-        break;
+    // Output final result for --quiet mode
+    if (quiet) {
+      let finalEvent: WorkspaceChatMessage | undefined;
+      for (let i = liveEvents.length - 1; i >= 0; i--) {
+        if (isStreamEnd(liveEvents[i])) {
+          finalEvent = liveEvents[i];
+          break;
+        }
       }
-    }
-
-    if (!finalEvent || !isStreamEnd(finalEvent)) {
-      throw new Error("Stream ended without receiving stream-end event");
-    }
-
-    const parts = (finalEvent as unknown as { parts?: unknown }).parts ?? [];
-    const text = extractAssistantText(parts);
-    const reasoning = extractReasoning(parts);
-    const toolCalls = extractToolCalls(parts);
-
-    if (emitFinalJson) {
-      writeJson({
-        success: true,
-        data: {
-          messageId: finalEvent.messageId,
-          model: finalEvent.metadata?.model ?? null,
-          text,
-          reasoning,
-          toolCalls,
-          metadata: finalEvent.metadata ?? null,
-          parts,
-          events: liveEvents,
-        },
-      });
+      if (finalEvent && isStreamEnd(finalEvent)) {
+        const parts = (finalEvent as unknown as { parts?: unknown[] }).parts ?? [];
+        for (const part of parts) {
+          if (part && typeof part === "object" && "type" in part && part.type === "text") {
+            const text = (part as { text?: string }).text;
+            if (text) console.log(text);
+          }
+        }
+      }
     }
   } finally {
     unsubscribe();
@@ -492,31 +500,18 @@ async function main(): Promise<void> {
   }
 }
 
-// Keep process alive explicitly - Bun may exit when stdin closes even if async work is pending
+// Keep process alive - Bun may exit when stdin closes even if async work is pending
 const keepAliveInterval = setInterval(() => {
   // No-op to keep event loop alive
 }, 1000000);
 
-(async () => {
-  try {
-    await main();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const wantsJsonStreaming =
-      process.argv.includes("--json-streaming") || process.argv.includes("--json-streaming=true");
-    const wantsJson = process.argv.includes("--json") || process.argv.includes("--json=true");
-
-    if (wantsJsonStreaming) {
-      process.stdout.write(`${JSON.stringify({ type: "error", error: message })}\n`);
-    }
-
-    if (wantsJson) {
-      writeJson({ success: false, error: message });
-    } else {
-      process.stderr.write(`Error: ${message}\n`);
-    }
-    process.exitCode = 1;
-  } finally {
+main()
+  .then(() => {
     clearInterval(keepAliveInterval);
-  }
-})();
+    process.exit(0);
+  })
+  .catch((error) => {
+    clearInterval(keepAliveInterval);
+    console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  });

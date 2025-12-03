@@ -18,6 +18,7 @@ Optional environment overrides:
 | `MUX_MODEL`           | Preferred model (supports `provider/model` syntax)        | `anthropic/claude-sonnet-4-5`          |
 | `MUX_THINKING_LEVEL`  | Optional reasoning level (`off`, `low`, `medium`, `high`) | `high`                                 |
 | `MUX_MODE`            | Starting mode (`plan` or `exec`)                          | `exec`                                 |
+| `MUX_RUNTIME`         | Runtime type (`local`, `worktree`, or `ssh <host>`)       | `worktree`                             |
 | `MUX_TIMEOUT_MS`      | Optional stream timeout in milliseconds                   | no timeout                             |
 | `MUX_CONFIG_ROOT`     | Location for mux session data inside the container        | `/root/.mux`                           |
 | `MUX_APP_ROOT`        | Path where the mux sources are staged                     | `/opt/mux-app`                         |
@@ -65,7 +66,7 @@ The adapter lives in `benchmarks/terminal_bench/mux_agent.py`. For each task it:
 
 1. Copies the mux repository (package manifests + `src/`) into `/tmp/mux-app` inside the container.
 2. Ensures Bun exists, then runs `bun install --frozen-lockfile`.
-3. Launches `src/cli/debug/agentSessionCli.ts` to prepare workspace metadata and stream the instruction, storing state under `MUX_CONFIG_ROOT` (default `/root/.mux`).
+3. Launches `mux run` (`src/cli/run.ts`) to prepare workspace metadata and stream the instruction, storing state under `MUX_CONFIG_ROOT` (default `/root/.mux`).
 
 `MUX_MODEL` accepts either the mux colon form (`anthropic:claude-sonnet-4-5`) or the Terminal-Bench slash form (`anthropic/claude-sonnet-4-5`); the adapter normalises whichever you provide.
 

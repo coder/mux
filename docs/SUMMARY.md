@@ -4,6 +4,7 @@
 
 - [Introduction](./intro.md)
 - [Install](./install.md)
+- [CLI](./cli.md)
 - [Why Parallelize?](./why-parallelize.md)
 
 # Features

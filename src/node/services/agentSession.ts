@@ -9,6 +9,7 @@ import type { HistoryService } from "@/node/services/historyService";
 import type { PartialService } from "@/node/services/partialService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { RuntimeConfig } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type {
   WorkspaceChatMessage,
@@ -200,10 +201,14 @@ export class AgentSession {
     });
   }
 
-  async ensureMetadata(args: { workspacePath: string; projectName?: string }): Promise<void> {
+  async ensureMetadata(args: {
+    workspacePath: string;
+    projectName?: string;
+    runtimeConfig?: RuntimeConfig;
+  }): Promise<void> {
     this.assertNotDisposed("ensureMetadata");
     assert(args, "ensureMetadata requires arguments");
-    const { workspacePath, projectName } = args;
+    const { workspacePath, projectName, runtimeConfig } = args;
 
     assert(typeof workspacePath === "string", "workspacePath must be a string");
     const trimmedWorkspacePath = workspacePath.trim();
@@ -269,7 +274,7 @@ export class AgentSession {
       projectName: derivedProjectName,
       projectPath: derivedProjectPath,
       namedWorkspacePath: normalizedWorkspacePath,
-      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+      runtimeConfig: runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
     };
 
     // Write metadata directly to config.json (single source of truth)

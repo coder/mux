@@ -29,6 +29,7 @@ MUX_TRUNK="${MUX_TRUNK:-main}"
 MUX_WORKSPACE_ID="${MUX_WORKSPACE_ID:-mux-bench}"
 MUX_THINKING_LEVEL="${MUX_THINKING_LEVEL:-high}"
 MUX_MODE="${MUX_MODE:-exec}"
+MUX_RUNTIME="${MUX_RUNTIME:-}"
 
 resolve_project_path() {
   if [[ -n "${MUX_PROJECT_PATH}" ]]; then
@@ -77,21 +78,21 @@ ensure_git_repo "${project_path}"
 log "starting mux agent session for ${project_path}"
 cd "${MUX_APP_ROOT}"
 
-cmd=(bun src/cli/debug/agentSessionCli.ts
-  --config-root "${MUX_CONFIG_ROOT}"
-  --project-path "${project_path}"
-  --workspace-path "${project_path}"
-  --workspace-id "${MUX_WORKSPACE_ID}"
+cmd=(bun src/cli/run.ts
+  --dir "${project_path}"
   --model "${MUX_MODEL}"
   --mode "${MUX_MODE}"
-  --json-streaming)
+  --thinking "${MUX_THINKING_LEVEL}"
+  --config-root "${MUX_CONFIG_ROOT}"
+  --workspace-id "${MUX_WORKSPACE_ID}"
+  --json)
 
 if [[ -n "${MUX_TIMEOUT_MS}" ]]; then
   cmd+=(--timeout "${MUX_TIMEOUT_MS}")
 fi
 
-if [[ -n "${MUX_THINKING_LEVEL}" ]]; then
-  cmd+=(--thinking-level "${MUX_THINKING_LEVEL}")
+if [[ -n "${MUX_RUNTIME}" ]]; then
+  cmd+=(--runtime "${MUX_RUNTIME}")
 fi
 
 # Terminal-bench enforces timeouts via --global-agent-timeout-sec
