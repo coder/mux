@@ -34,6 +34,7 @@ export async function generateWorkspaceName(
     const result = await generateObject({
       model: modelResult.data,
       schema: workspaceNameSchema,
+      mode: "json",
       prompt: `Generate a git-safe branch/workspace name for this development task:\n\n"${message}"\n\nRequirements:\n- Git-safe identifier (e.g., "automatic-title-generation")\n- Lowercase, hyphens only, no spaces\n- Concise (2-5 words) and descriptive of the task`,
     });
 
