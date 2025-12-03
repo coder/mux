@@ -1383,7 +1383,8 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 onTrunkBranchChange={creationState.setTrunkBranch}
                 runtimeMode={creationState.runtimeMode}
                 sshHost={creationState.sshHost}
-                onRuntimeChange={creationState.setRuntimeOptions}
+                onRuntimeModeChange={creationState.setRuntimeMode}
+                onSshHostChange={creationState.setSshHost}
                 disabled={creationState.isSending || isSending}
               />
             )}

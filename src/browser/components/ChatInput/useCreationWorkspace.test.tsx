@@ -487,27 +487,32 @@ function createDraftSettingsHarness(
     runtimeString: string | undefined;
   };
 
-  const setRuntimeOptions = mock((mode: RuntimeMode, host: string) => {
-    state.runtimeMode = mode;
-    state.sshHost = host;
-    const trimmedHost = host.trim();
-    state.runtimeString = mode === "ssh" ? (trimmedHost ? `ssh ${trimmedHost}` : "ssh") : undefined;
-  });
-
   const setTrunkBranch = mock((branch: string) => {
     state.trunkBranch = branch;
   });
 
   const getRuntimeString = mock(() => state.runtimeString);
 
+  const setRuntimeMode = mock((mode: RuntimeMode) => {
+    state.runtimeMode = mode;
+    const trimmedHost = state.sshHost.trim();
+    state.runtimeString = mode === "ssh" ? (trimmedHost ? `ssh ${trimmedHost}` : "ssh") : undefined;
+  });
+
+  const setSshHost = mock((host: string) => {
+    state.sshHost = host;
+  });
+
   return {
     state,
-    setRuntimeOptions,
+    setRuntimeMode,
+    setSshHost,
     setTrunkBranch,
     getRuntimeString,
     snapshot(): {
       settings: DraftWorkspaceSettings;
-      setRuntimeOptions: typeof setRuntimeOptions;
+      setRuntimeMode: typeof setRuntimeMode;
+      setSshHost: typeof setSshHost;
       setTrunkBranch: typeof setTrunkBranch;
       getRuntimeString: typeof getRuntimeString;
     } {
@@ -521,7 +526,8 @@ function createDraftSettingsHarness(
       };
       return {
         settings,
-        setRuntimeOptions,
+        setRuntimeMode,
+        setSshHost,
         setTrunkBranch,
         getRuntimeString,
       };

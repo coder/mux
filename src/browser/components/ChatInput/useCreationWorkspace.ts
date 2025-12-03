@@ -47,7 +47,10 @@ interface UseCreationWorkspaceReturn {
   setTrunkBranch: (branch: string) => void;
   runtimeMode: RuntimeMode;
   sshHost: string;
-  setRuntimeOptions: (mode: RuntimeMode, host: string) => void;
+  /** Set the default runtime mode for this project (only via checkbox) */
+  setRuntimeMode: (mode: RuntimeMode) => void;
+  /** Set the SSH host (persisted separately from runtime mode) */
+  setSshHost: (host: string) => void;
   toast: Toast | null;
   setToast: (toast: Toast | null) => void;
   isSending: boolean;
@@ -72,7 +75,7 @@ export function useCreationWorkspace({
   const [isSending, setIsSending] = useState(false);
 
   // Centralized draft workspace settings with automatic persistence
-  const { settings, setRuntimeOptions, setTrunkBranch, getRuntimeString } =
+  const { settings, setRuntimeMode, setSshHost, setTrunkBranch, getRuntimeString } =
     useDraftWorkspaceSettings(projectPath, branches, recommendedTrunk);
 
   // Get send options from shared hook (uses project-scoped storage key)
@@ -181,7 +184,8 @@ export function useCreationWorkspace({
     setTrunkBranch,
     runtimeMode: settings.runtimeMode,
     sshHost: settings.sshHost,
-    setRuntimeOptions,
+    setRuntimeMode,
+    setSshHost,
     toast,
     setToast,
     isSending,

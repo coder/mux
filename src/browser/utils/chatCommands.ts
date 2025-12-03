@@ -24,7 +24,7 @@ import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOpt
 import { resolveCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
 import type { ImageAttachment } from "../components/ImageAttachments";
 import { dispatchWorkspaceSwitch } from "./workspaceEvents";
-import { getRuntimeKey, copyWorkspaceStorage } from "@/common/constants/storage";
+import { getDefaultRuntimeKey, copyWorkspaceStorage } from "@/common/constants/storage";
 import { DEFAULT_COMPACTION_WORD_TARGET, WORDS_TO_TOKENS_RATIO } from "@/common/constants/ui";
 
 // ============================================================================
@@ -499,11 +499,11 @@ export async function createNewWorkspace(
     effectiveTrunk = recommendedTrunk ?? "main";
   }
 
-  // Use saved runtime preference if not explicitly provided
+  // Use saved default runtime preference if not explicitly provided
   let effectiveRuntime = options.runtime;
   if (effectiveRuntime === undefined) {
-    const runtimeKey = getRuntimeKey(options.projectPath);
-    const savedRuntime = localStorage.getItem(runtimeKey);
+    const defaultRuntimeKey = getDefaultRuntimeKey(options.projectPath);
+    const savedRuntime = localStorage.getItem(defaultRuntimeKey);
     if (savedRuntime) {
       effectiveRuntime = savedRuntime;
     }

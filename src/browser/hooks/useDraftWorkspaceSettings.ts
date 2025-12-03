@@ -10,7 +10,7 @@ import {
 } from "@/common/types/runtime";
 import {
   getModelKey,
-  getRuntimeKey,
+  getDefaultRuntimeKey,
   getTrunkBranchKey,
   getLastSshHostKey,
   getProjectScopeId,
@@ -49,7 +49,8 @@ export function useDraftWorkspaceSettings(
   recommendedTrunk: string | null
 ): {
   settings: DraftWorkspaceSettings;
-  setRuntimeOptions: (mode: RuntimeMode, host: string) => void;
+  setRuntimeMode: (mode: RuntimeMode) => void;
+  setSshHost: (host: string) => void;
   setTrunkBranch: (branch: string) => void;
   getRuntimeString: () => string | undefined;
 } {
@@ -65,10 +66,10 @@ export function useDraftWorkspaceSettings(
     { listener: true }
   );
 
-  // Project-scoped runtime preference (persisted per project)
-  const [runtimeString, setRuntimeString] = usePersistedState<string | undefined>(
-    getRuntimeKey(projectPath),
-    undefined,
+  // Project-scoped default runtime (worktree by default, only changed via checkbox)
+  const [defaultRuntimeString, setDefaultRuntimeString] = usePersistedState<string | undefined>(
+    getDefaultRuntimeKey(projectPath),
+    undefined, // undefined means worktree (the app default)
     { listener: true }
   );
 
@@ -87,8 +88,9 @@ export function useDraftWorkspaceSettings(
     { listener: true }
   );
 
-  // Parse runtime string into mode (host from runtime string is ignored in favor of lastSshHost)
-  const { mode: runtimeMode } = parseRuntimeModeAndHost(runtimeString);
+  // Parse default runtime string into mode (worktree when undefined)
+  // SSH host is stored separately so it persists across mode switches
+  const { mode: runtimeMode } = parseRuntimeModeAndHost(defaultRuntimeString);
 
   // Initialize trunk branch from backend recommendation or first branch
   useEffect(() => {
@@ -98,14 +100,15 @@ export function useDraftWorkspaceSettings(
     }
   }, [branches, recommendedTrunk, trunkBranch, setTrunkBranch]);
 
-  // Setter for runtime options (updates persisted runtime mode and SSH host separately)
-  const setRuntimeOptions = (newMode: RuntimeMode, newHost: string) => {
-    const newRuntimeString = buildRuntimeString(newMode, newHost);
-    setRuntimeString(newRuntimeString);
-    // Always persist the SSH host separately so it's remembered across mode switches
-    if (newHost) {
-      setLastSshHost(newHost);
-    }
+  // Setter for default runtime mode (only way to change is via checkbox)
+  const setRuntimeMode = (newMode: RuntimeMode) => {
+    const newRuntimeString = buildRuntimeString(newMode, lastSshHost);
+    setDefaultRuntimeString(newRuntimeString);
+  };
+
+  // Setter for SSH host (persisted separately so it's remembered across mode switches)
+  const setSshHost = (newHost: string) => {
+    setLastSshHost(newHost);
   };
 
   // Helper to get runtime string for IPC calls
@@ -122,7 +125,8 @@ export function useDraftWorkspaceSettings(
       sshHost: lastSshHost,
       trunkBranch,
     },
-    setRuntimeOptions,
+    setRuntimeMode,
+    setSshHost,
     setTrunkBranch,
     getRuntimeString,
   };
