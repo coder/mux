@@ -7,6 +7,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { SSHIcon, WorktreeIcon, LocalIcon } from "../icons/RuntimeIcons";
 import { DocsLink } from "../DocsLink";
 import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
+import { SSHHostInput } from "./SSHHostInput";
 
 interface CreationControlsProps {
   branches: string[];
@@ -296,13 +297,10 @@ export function CreationControls(props: CreationControlsProps) {
           {props.runtimeMode === RUNTIME_MODE.SSH && (
             <div className="flex items-center gap-2">
               <label className="text-muted-foreground text-xs">host</label>
-              <input
-                type="text"
+              <SSHHostInput
                 value={props.sshHost}
-                onChange={(e) => props.onSshHostChange(e.target.value)}
-                placeholder="user@host"
+                onChange={props.onSshHostChange}
                 disabled={props.disabled}
-                className="bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-36 rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50"
               />
             </div>
           )}

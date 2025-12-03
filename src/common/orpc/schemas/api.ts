@@ -798,6 +798,18 @@ export const voice = {
   },
 };
 
+// SSH utilities
+export const ssh = {
+  /**
+   * Get list of hosts from user's SSH config file (~/.ssh/config).
+   * Returns hosts sorted alphabetically, excluding wildcards and negation patterns.
+   */
+  getConfigHosts: {
+    input: z.void(),
+    output: z.array(z.string()),
+  },
+};
+
 // Debug endpoints (test-only, not for production use)
 export const debug = {
   /**

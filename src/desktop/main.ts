@@ -347,6 +347,7 @@ async function loadServices(): Promise<void> {
     telemetryService: services.telemetryService,
     experimentsService: services.experimentsService,
     sessionUsageService: services.sessionUsageService,
+    sshService: services.sshService,
   };
 
   electronIpcMain.on("start-orpc-server", (event) => {

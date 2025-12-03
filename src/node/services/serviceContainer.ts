@@ -40,6 +40,7 @@ import { MCPServerManager } from "@/node/services/mcpServerManager";
 import { SessionUsageService } from "@/node/services/sessionUsageService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
 import { TaskService } from "@/node/services/taskService";
+import { SSHService } from "@/node/services/sshService";
 
 /**
  * ServiceContainer - Central dependency container for all backend services.
@@ -72,6 +73,7 @@ export class ServiceContainer {
   public readonly sessionTimingService: SessionTimingService;
   public readonly experimentsService: ExperimentsService;
   public readonly sessionUsageService: SessionUsageService;
+  public readonly sshService: SSHService;
   private readonly initStateManager: InitStateManager;
   private readonly extensionMetadata: ExtensionMetadataService;
   private readonly ptyService: PTYService;
@@ -181,6 +183,7 @@ export class ServiceContainer {
       this.sessionTimingService.handleStreamAbort(data)
     );
     this.workspaceService.setExperimentsService(this.experimentsService);
+    this.sshService = new SSHService();
   }
 
   async initialize(): Promise<void> {

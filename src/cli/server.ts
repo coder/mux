@@ -98,6 +98,7 @@ const mockWindow: BrowserWindow = {
     telemetryService: serviceContainer.telemetryService,
     experimentsService: serviceContainer.experimentsService,
     sessionUsageService: serviceContainer.sessionUsageService,
+    sshService: serviceContainer.sshService,
   };
 
   const server = await createOrpcServer({

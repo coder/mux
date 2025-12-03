@@ -413,5 +413,11 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         await new Promise(() => {});
       },
     },
+    ssh: {
+      getConfigHosts: async () => ["dev-server", "prod-server", "staging"],
+    },
+    voice: {
+      transcribe: async () => ({ success: false, error: "Not implemented in mock" }),
+    },
   } as unknown as APIClient;
 }
