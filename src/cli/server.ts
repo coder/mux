@@ -68,6 +68,7 @@ const mockWindow: BrowserWindow = {
     serverService: serviceContainer.serverService,
     menuEventService: serviceContainer.menuEventService,
     voiceService: serviceContainer.voiceService,
+    sshService: serviceContainer.sshService,
   };
 
   const server = await createOrpcServer({

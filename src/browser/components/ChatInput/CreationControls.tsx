@@ -2,6 +2,7 @@ import React from "react";
 import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
 import { TooltipWrapper, Tooltip } from "../Tooltip";
 import { Select } from "../Select";
+import { SSHHostInput } from "./SSHHostInput";
 
 interface CreationControlsProps {
   branches: string[];
@@ -83,13 +84,10 @@ export function CreationControls(props: CreationControlsProps) {
 
       {/* SSH Host Input - after From selector */}
       {props.runtimeMode === RUNTIME_MODE.SSH && (
-        <input
-          type="text"
+        <SSHHostInput
           value={props.sshHost}
-          onChange={(e) => props.onRuntimeChange(RUNTIME_MODE.SSH, e.target.value)}
-          placeholder="user@host"
+          onChange={(value) => props.onRuntimeChange(RUNTIME_MODE.SSH, value)}
           disabled={props.disabled}
-          className="bg-separator text-foreground border-border-medium focus:border-accent w-32 rounded border px-1 py-0.5 text-xs focus:outline-none disabled:opacity-50"
         />
       )}
     </div>

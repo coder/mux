@@ -326,6 +326,7 @@ async function loadServices(): Promise<void> {
         serverService: services!.serverService,
         menuEventService: services!.menuEventService,
         voiceService: services!.voiceService,
+        sshService: services!.sshService,
       },
     });
     serverPort.start();
