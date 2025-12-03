@@ -26,7 +26,8 @@ COPY package.json bun.lock bunfig.toml ./
 COPY scripts/postinstall.sh scripts/
 
 # Install build tools needed for native modules
-RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
+# bzip2 is required for lzma-native to extract its bundled xz source tarball
+RUN apt-get update && apt-get install -y python3 make g++ bzip2 && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies (postinstall detects server mode and skips Electron rebuild)
 # Note: node-pty is in optionalDependencies and will be built for Node.js
@@ -54,7 +55,8 @@ RUN git init && \
 RUN ./scripts/generate-version.sh
 
 # Build main process (server + backend)
-RUN NODE_ENV=production bun x tsc -p tsconfig.main.json && \
+# Use tsgo (native TypeScript) for consistency with local build
+RUN NODE_ENV=production bun run node_modules/@typescript/native-preview/bin/tsgo.js -p tsconfig.main.json && \
     NODE_ENV=production bun x tsc-alias -p tsconfig.main.json
 
 # Build renderer (frontend)
