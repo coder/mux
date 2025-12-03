@@ -225,8 +225,8 @@ jobs:
             echo "Version check failed: missing mode=server"
             exit 1
           fi
-          if ! echo "$response" | grep -q '"version"'; then
-            echo "Version check failed: missing version field"
+          if ! echo "$response" | grep -q '"git_describe"'; then
+            echo "Version check failed: missing git_describe field"
             exit 1
           fi
 
