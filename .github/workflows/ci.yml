@@ -174,7 +174,8 @@ jobs:
   docker-smoke-test:
     name: Docker Smoke Test
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
-    if: github.event.inputs.test_filter == ''
+    # Only run in merge queue (Docker builds are slow)
+    if: github.event_name == 'merge_group'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
