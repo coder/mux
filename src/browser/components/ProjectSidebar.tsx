@@ -23,7 +23,7 @@ import { TooltipWrapper, Tooltip } from "./Tooltip";
 import SecretsModal from "./SecretsModal";
 import type { Secret } from "@/common/types/secrets";
 import { ForceDeleteModal } from "./ForceDeleteModal";
-import { WorkspaceListItem } from "./WorkspaceListItem";
+import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem";
 import { RenameProvider } from "@/browser/contexts/WorkspaceRenameContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { ChevronRight, KeyRound } from "lucide-react";
@@ -193,6 +193,31 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     getSecrets: onGetSecrets,
     updateSecrets: onUpdateSecrets,
   } = useProjectContext();
+
+  // Mobile breakpoint for auto-closing sidebar
+  const MOBILE_BREAKPOINT = 768;
+
+  // Wrapper to close sidebar on mobile after workspace selection
+  const handleSelectWorkspace = useCallback(
+    (selection: WorkspaceSelection) => {
+      onSelectWorkspace(selection);
+      if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
+        onToggleCollapsed();
+      }
+    },
+    [onSelectWorkspace, collapsed, onToggleCollapsed]
+  );
+
+  // Wrapper to close sidebar on mobile after adding workspace
+  const handleAddWorkspace = useCallback(
+    (projectPath: string) => {
+      onAddWorkspace(projectPath);
+      if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
+        onToggleCollapsed();
+      }
+    },
+    [onAddWorkspace, collapsed, onToggleCollapsed]
+  );
 
   // Workspace-specific subscriptions moved to WorkspaceListItem component
 
@@ -427,13 +452,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       // Create new workspace for the project of the selected workspace
       if (matchesKeybind(e, KEYBINDS.NEW_WORKSPACE) && selectedWorkspace) {
         e.preventDefault();
-        onAddWorkspace(selectedWorkspace.projectPath);
+        handleAddWorkspace(selectedWorkspace.projectPath);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedWorkspace, onAddWorkspace]);
+  }, [selectedWorkspace, handleAddWorkspace]);
 
   return (
     <RenameProvider onRenameWorkspace={onRenameWorkspace}>
@@ -575,7 +600,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                           >
                             <div className="border-hover border-b px-3 py-2">
                               <button
-                                onClick={() => onAddWorkspace(projectPath)}
+                                onClick={() => handleAddWorkspace(projectPath)}
                                 data-project-path={projectPath}
                                 aria-label={`Add workspace to ${projectName}`}
                                 className="text-muted border-border-medium hover:bg-hover hover:border-border-darker hover:text-foreground w-full cursor-pointer rounded border border-dashed bg-transparent px-3 py-1.5 text-left text-[13px] transition-all duration-200"
@@ -602,7 +627,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   isSelected={selectedWorkspace?.workspaceId === metadata.id}
                                   isDeleting={deletingWorkspaceIds.has(metadata.id)}
                                   lastReadTimestamp={lastReadTimestamps[metadata.id] ?? 0}
-                                  onSelectWorkspace={onSelectWorkspace}
+                                  onSelectWorkspace={handleSelectWorkspace}
                                   onRemoveWorkspace={handleRemoveWorkspace}
                                   onToggleUnread={_onToggleUnread}
                                 />
