@@ -16,12 +16,14 @@ import { listLocalBranches, detectDefaultTrunkBranch } from "@/node/git";
 import { createRuntime, IncompatibleRuntimeError } from "@/node/runtime/runtimeFactory";
 import { generateWorkspaceName, generatePlaceholderName } from "./workspaceTitleGenerator";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
+import { formatSendMessageError } from "@/node/services/utils/sendMessageError";
 
 import type {
   SendMessageOptions,
   DeleteMessage,
   ImagePart,
   WorkspaceChatMessage,
+  StreamErrorMessage,
 } from "@/common/orpc/types";
 import type { SendMessageError } from "@/common/types/errors";
 import type {
@@ -606,8 +608,19 @@ export class WorkspaceService extends EventEmitter {
           initLogger.logComplete(-1);
         });
 
-      // Send the first message
-      void session.sendMessage(message, options);
+      // Send the first message, surfacing errors to the chat UI
+      void session.sendMessage(message, options).then((result) => {
+        if (!result.success) {
+          const { message: errorMessage, errorType } = formatSendMessageError(result.error);
+          const streamError: StreamErrorMessage = {
+            type: "stream-error",
+            messageId: `error-${Date.now()}`,
+            error: errorMessage,
+            errorType,
+          };
+          session.emitChatEvent(streamError);
+        }
+      });
 
       // Generate AI name asynchronously and rename if successful
       void this.generateAndApplyAIName(workspaceId, message, finalBranchName, options.model);
