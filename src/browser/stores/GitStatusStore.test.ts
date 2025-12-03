@@ -44,6 +44,12 @@ describe("GitStatusStore", () => {
     } as unknown as Window & typeof globalThis;
 
     store = new GitStatusStore();
+    // Set up mock client for ORPC calls
+    store.setClient({
+      workspace: {
+        executeBash: mockExecuteBash,
+      },
+    } as unknown as Parameters<typeof store.setClient>[0]);
   });
 
   afterEach(() => {

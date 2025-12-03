@@ -4,7 +4,13 @@ import { LoadingScreen } from "./LoadingScreen";
 import { useWorkspaceStoreRaw } from "../stores/WorkspaceStore";
 import { useGitStatusStoreRaw } from "../stores/GitStatusStore";
 import { ProjectProvider } from "../contexts/ProjectContext";
+import { APIProvider, useAPI, type APIClient } from "@/browser/contexts/API";
 import { WorkspaceProvider, useWorkspaceContext } from "../contexts/WorkspaceContext";
+
+interface AppLoaderProps {
+  /** Optional pre-created ORPC api?. If provided, skips internal connection setup. */
+  client?: APIClient;
+}
 
 /**
  * AppLoader handles all initialization before rendering the main App:
@@ -17,13 +23,15 @@ import { WorkspaceProvider, useWorkspaceContext } from "../contexts/WorkspaceCon
  * This ensures App.tsx can assume stores are always synced and removes
  * the need for conditional guards in effects.
  */
-export function AppLoader() {
+export function AppLoader(props: AppLoaderProps) {
   return (
-    <ProjectProvider>
-      <WorkspaceProvider>
-        <AppLoaderInner />
-      </WorkspaceProvider>
-    </ProjectProvider>
+    <APIProvider client={props.client}>
+      <ProjectProvider>
+        <WorkspaceProvider>
+          <AppLoaderInner />
+        </WorkspaceProvider>
+      </ProjectProvider>
+    </APIProvider>
   );
 }
 
@@ -33,6 +41,7 @@ export function AppLoader() {
  */
 function AppLoaderInner() {
   const workspaceContext = useWorkspaceContext();
+  const { api } = useAPI();
 
   // Get store instances
   const workspaceStore = useWorkspaceStoreRaw();
@@ -43,6 +52,11 @@ function AppLoaderInner() {
 
   // Sync stores when metadata finishes loading
   useEffect(() => {
+    if (api) {
+      workspaceStore.setClient(api);
+      gitStatusStore.setClient(api);
+    }
+
     if (!workspaceContext.loading) {
       workspaceStore.syncWorkspaces(workspaceContext.workspaceMetadata);
       gitStatusStore.syncWorkspaces(workspaceContext.workspaceMetadata);
@@ -55,6 +69,7 @@ function AppLoaderInner() {
     workspaceContext.workspaceMetadata,
     workspaceStore,
     gitStatusStore,
+    api,
   ]);
 
   // Show loading screen until stores are synced

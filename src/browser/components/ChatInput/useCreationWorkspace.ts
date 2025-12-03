@@ -16,7 +16,8 @@ import {
 } from "@/common/constants/storage";
 import type { Toast } from "@/browser/components/ChatInputToast";
 import { createErrorToast } from "@/browser/components/ChatInputToasts";
-import type { ImagePart } from "@/common/types/ipc";
+import { useAPI } from "@/browser/contexts/API";
+import type { ImagePart } from "@/common/orpc/types";
 
 interface UseCreationWorkspaceOptions {
   projectPath: string;
@@ -64,6 +65,7 @@ export function useCreationWorkspace({
   projectPath,
   onWorkspaceCreated,
 }: UseCreationWorkspaceOptions): UseCreationWorkspaceReturn {
+  const { api } = useAPI();
   const [branches, setBranches] = useState<string[]>([]);
   const [recommendedTrunk, setRecommendedTrunk] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
@@ -80,12 +82,12 @@ export function useCreationWorkspace({
   useEffect(() => {
     // This can be created with an empty project path when the user is
     // creating a new workspace.
-    if (!projectPath.length) {
+    if (!projectPath.length || !api) {
       return;
     }
     const loadBranches = async () => {
       try {
-        const result = await window.api.projects.listBranches(projectPath);
+        const result = await api.projects.listBranches({ projectPath });
         setBranches(result.branches);
         setRecommendedTrunk(result.recommendedTrunk);
       } catch (err) {
@@ -93,11 +95,11 @@ export function useCreationWorkspace({
       }
     };
     void loadBranches();
-  }, [projectPath]);
+  }, [projectPath, api]);
 
   const handleSend = useCallback(
     async (message: string, imageParts?: ImagePart[]): Promise<boolean> => {
-      if (!message.trim() || isSending) return false;
+      if (!message.trim() || isSending || !api) return false;
 
       setIsSending(true);
       setToast(null);
@@ -110,12 +112,16 @@ export function useCreationWorkspace({
           : undefined;
 
         // Send message with runtime config and creation-specific params
-        const result = await window.api.workspace.sendMessage(null, message, {
-          ...sendMessageOptions,
-          runtimeConfig,
-          projectPath, // Pass projectPath when workspaceId is null
-          trunkBranch: settings.trunkBranch, // Pass selected trunk branch from settings
-          imageParts: imageParts && imageParts.length > 0 ? imageParts : undefined,
+        const result = await api.workspace.sendMessage({
+          workspaceId: null,
+          message,
+          options: {
+            ...sendMessageOptions,
+            runtimeConfig,
+            projectPath, // Pass projectPath when workspaceId is null
+            trunkBranch: settings.trunkBranch, // Pass selected trunk branch from settings
+            imageParts: imageParts && imageParts.length > 0 ? imageParts : undefined,
+          },
         });
 
         if (!result.success) {
@@ -124,16 +130,17 @@ export function useCreationWorkspace({
           return false;
         }
 
-        // Check if this is a workspace creation result (has metadata field)
-        if ("metadata" in result && result.metadata) {
-          syncCreationPreferences(projectPath, result.metadata.id);
+        // Check if this is a workspace creation result (has metadata in data)
+        const { metadata } = result.data;
+        if (metadata) {
+          syncCreationPreferences(projectPath, metadata.id);
           if (projectPath) {
             const pendingInputKey = getInputKey(getPendingScopeId(projectPath));
             updatePersistedState(pendingInputKey, "");
           }
           // Settings are already persisted via useDraftWorkspaceSettings
           // Notify parent to switch workspace (clears input via parent unmount)
-          onWorkspaceCreated(result.metadata);
+          onWorkspaceCreated(metadata);
           setIsSending(false);
           return true;
         } else {
@@ -158,6 +165,7 @@ export function useCreationWorkspace({
       }
     },
     [
+      api,
       isSending,
       projectPath,
       onWorkspaceCreated,

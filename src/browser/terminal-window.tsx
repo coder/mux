@@ -8,10 +8,8 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { TerminalView } from "@/browser/components/TerminalView";
+import { APIProvider } from "@/browser/contexts/API";
 import "./styles/globals.css";
-
-// Shims the `window.api` object with the browser API if not running in Electron
-import "./api";
 
 // Get workspace ID from query parameter
 const params = new URLSearchParams(window.location.search);
@@ -25,30 +23,14 @@ if (!workspaceId) {
     </div>
   `;
 } else {
-  // Set document title for browser tab
-  // Fetch workspace metadata to get a better title
-  if (window.api) {
-    window.api.workspace
-      .list()
-      .then((workspaces: Array<{ id: string; projectName: string; name: string }>) => {
-        const workspace = workspaces.find((ws) => ws.id === workspaceId);
-        if (workspace) {
-          document.title = `Terminal — ${workspace.projectName}/${workspace.name}`;
-        } else {
-          document.title = `Terminal — ${workspaceId}`;
-        }
-      })
-      .catch(() => {
-        document.title = `Terminal — ${workspaceId}`;
-      });
-  } else {
-    document.title = `Terminal — ${workspaceId}`;
-  }
+  document.title = `Terminal — ${workspaceId}`;
 
   // Don't use StrictMode for terminal windows to avoid double-mounting issues
   // StrictMode intentionally double-mounts components in dev, which causes
   // race conditions with WebSocket connections and terminal lifecycle
   ReactDOM.createRoot(document.getElementById("root")!).render(
-    <TerminalView workspaceId={workspaceId} sessionId={sessionId ?? undefined} visible={true} />
+    <APIProvider>
+      <TerminalView workspaceId={workspaceId} sessionId={sessionId ?? undefined} visible={true} />
+    </APIProvider>
   );
 }

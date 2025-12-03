@@ -35,6 +35,7 @@ const preview: Preview = {
     theme: "dark",
   },
   decorators: [
+    // Theme provider
     (Story, context) => {
       // Default to dark if mode not set (e.g., Chromatic headless browser defaults to light)
       const mode = (context.globals.theme as ThemeMode | undefined) ?? "dark";

@@ -511,9 +511,8 @@ details[open] > summary::before {
   background-repeat: no-repeat;
 }
 
-
 /* Page TOC (Table of Contents) overrides */
-@media only screen and (min-width:1440px) {
+@media only screen and (min-width: 1440px) {
   .pagetoc a {
     /* Reduce vertical spacing for more compact TOC */
     padding-top: 2px !important;
@@ -546,10 +545,6 @@ details[open] > summary::before {
     opacity: 0.8;
   }
 }
-
-
-
-
 
 /* Code block wrapper with line numbers and copy button (from mux app) */
 .code-block-wrapper {

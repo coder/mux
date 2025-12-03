@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { defaultConfig } from "@/node/config";
 import type { MuxMessage } from "@/common/types/message";
-import type { SendMessageOptions } from "@/common/types/ipc";
+import type { SendMessageOptions } from "@/common/orpc/types";
 import { defaultModel } from "@/common/utils/ai/models";
 import { getMuxSessionsDir } from "@/common/constants/paths";
 

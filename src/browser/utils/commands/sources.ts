@@ -1,5 +1,6 @@
 import { THEME_OPTIONS, type ThemeMode } from "@/browser/contexts/ThemeContext";
 import type { CommandAction } from "@/browser/contexts/CommandRegistryContext";
+import type { APIClient } from "@/browser/contexts/API";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
@@ -7,9 +8,10 @@ import { CommandIds } from "@/browser/utils/commandIds";
 
 import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { BranchListResult } from "@/common/types/ipc";
+import type { BranchListResult } from "@/common/orpc/types";
 
 export interface BuildSourcesParams {
+  api: APIClient | null;
   projects: Map<string, ProjectConfig>;
   /** Map of workspace ID to workspace metadata (keyed by metadata.id, not path) */
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>;
@@ -350,7 +352,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         title: "Clear History",
         section: section.chat,
         run: async () => {
-          await window.api.workspace.truncateHistory(id, 1.0);
+          await p.api?.workspace.truncateHistory({ workspaceId: id, percentage: 1.0 });
         },
       });
       for (const pct of [0.75, 0.5, 0.25]) {
@@ -359,7 +361,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           title: `Truncate History to ${Math.round((1 - pct) * 100)}%`,
           section: section.chat,
           run: async () => {
-            await window.api.workspace.truncateHistory(id, pct);
+            await p.api?.workspace.truncateHistory({ workspaceId: id, percentage: pct });
           },
         });
       }
@@ -368,7 +370,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         title: "Interrupt Streaming",
         section: section.chat,
         run: async () => {
-          await window.api.workspace.interruptStream(id);
+          await p.api?.workspace.interruptStream({ workspaceId: id });
         },
       });
       list.push({

@@ -28,7 +28,8 @@ describe("LocalRuntime", () => {
   let testDir: string;
 
   beforeAll(async () => {
-    testDir = await fs.mkdtemp(path.join(os.tmpdir(), "localruntime-test-"));
+    // Resolve real path to handle macOS symlinks (/var -> /private/var)
+    testDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "localruntime-test-")));
   });
 
   afterAll(async () => {

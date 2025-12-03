@@ -3,7 +3,7 @@ import { LocalRuntime } from "./LocalRuntime";
 import { WorktreeRuntime } from "./WorktreeRuntime";
 import { SSHRuntime } from "./SSHRuntime";
 import type { RuntimeConfig } from "@/common/types/runtime";
-import { isLocalProjectRuntime } from "@/common/types/runtime";
+import { hasSrcBaseDir, isLocalProjectRuntime } from "@/common/types/runtime";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 
 // Re-export for backward compatibility with existing imports
@@ -53,17 +53,17 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
     case "local":
       // Check if this is legacy "local" with srcBaseDir (= worktree semantics)
       // or new "local" without srcBaseDir (= project-dir semantics)
-      if (isLocalProjectRuntime(config)) {
-        // Project-dir: uses project path directly, no isolation
-        if (!options?.projectPath) {
-          throw new Error(
-            "LocalRuntime requires projectPath in options for project-dir config (type: 'local' without srcBaseDir)"
-          );
-        }
-        return new LocalRuntime(options.projectPath);
+      if (hasSrcBaseDir(config)) {
+        // Legacy: "local" with srcBaseDir is treated as worktree
+        return new WorktreeRuntime(config.srcBaseDir);
       }
-      // Legacy: "local" with srcBaseDir is treated as worktree
-      return new WorktreeRuntime(config.srcBaseDir);
+      // Project-dir: uses project path directly, no isolation
+      if (!options?.projectPath) {
+        throw new Error(
+          "LocalRuntime requires projectPath in options for project-dir config (type: 'local' without srcBaseDir)"
+        );
+      }
+      return new LocalRuntime(options.projectPath);
 
     case "worktree":
       return new WorktreeRuntime(config.srcBaseDir);

@@ -1,4 +1,5 @@
-import type { IPCApi } from "./ipc";
+import type { RouterClient } from "@orpc/server";
+import type { AppRouter } from "@/node/orpc/router";
 
 // Our simplified permission modes for UI
 export type UIPermissionMode = "plan" | "edit";
@@ -7,14 +8,31 @@ export type UIPermissionMode = "plan" | "edit";
 export type SDKPermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan";
 
 declare global {
+  interface WindowApi {
+    platform: NodeJS.Platform;
+    versions: {
+      node?: string;
+      chrome?: string;
+      electron?: string;
+    };
+    // E2E test mode flag - used to adjust UI behavior (e.g., longer toast durations)
+    isE2E?: boolean;
+    // Optional ORPC-backed API surfaces populated in tests/storybook mocks
+    tokenizer?: unknown;
+    providers?: unknown;
+    workspace?: unknown;
+    projects?: unknown;
+    window?: unknown;
+    terminal?: unknown;
+    update?: unknown;
+    server?: unknown;
+  }
+
   interface Window {
-    api: IPCApi & {
-      platform: string;
-      versions: {
-        node: string;
-        chrome: string;
-        electron: string;
-      };
+    api?: WindowApi;
+    __ORPC_CLIENT__?: RouterClient<AppRouter>;
+    process?: {
+      env?: Record<string, string | undefined>;
     };
   }
 }

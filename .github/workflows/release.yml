@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release (e.g., v1.2.3). If provided, will checkout and release this tag regardless of current branch.'
+        description: "Tag to release (e.g., v1.2.3). If provided, will checkout and release this tag regardless of current branch."
         required: false
         type: string
 

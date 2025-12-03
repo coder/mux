@@ -9,14 +9,11 @@
  * Uses play functions to open the settings modal and navigate to sections.
  */
 
+import type { APIClient } from "@/browser/contexts/API";
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import {
-  createWorkspace,
-  groupWorkspacesByProject,
-  createMockAPI,
-  installMockAPI,
-} from "./mockFactory";
+import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
 import { selectWorkspace } from "./storyHelpers";
+import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
 import { within, waitFor, userEvent } from "@storybook/test";
 
 export default {
@@ -32,19 +29,17 @@ export default {
 function setupSettingsStory(options: {
   providersConfig?: Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>;
   providersList?: string[];
-}): void {
+}): APIClient {
   const workspaces = [createWorkspace({ id: "ws-1", name: "main", projectName: "my-app" })];
 
-  installMockAPI(
-    createMockAPI({
-      projects: groupWorkspacesByProject(workspaces),
-      workspaces,
-      providersConfig: options.providersConfig ?? {},
-      providersList: options.providersList ?? ["anthropic", "openai", "xai"],
-    })
-  );
-
   selectWorkspace(workspaces[0]);
+
+  return createMockORPCClient({
+    projects: groupWorkspacesByProject(workspaces),
+    workspaces,
+    providersConfig: options.providersConfig ?? {},
+    providersList: options.providersList ?? ["anthropic", "openai", "xai"],
+  });
 }
 
 /** Open settings modal and optionally navigate to a section */
@@ -86,13 +81,7 @@ async function openSettingsToSection(canvasElement: HTMLElement, section?: strin
 
 /** General settings section with theme toggle */
 export const General: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() => {
-        setupSettingsStory({});
-      }}
-    />
-  ),
+  render: () => <AppWithMocks setup={() => setupSettingsStory({})} />,
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettingsToSection(canvasElement, "general");
   },
@@ -100,13 +89,7 @@ export const General: AppStory = {
 
 /** Providers section - no providers configured */
 export const ProvidersEmpty: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() => {
-        setupSettingsStory({ providersConfig: {} });
-      }}
-    />
-  ),
+  render: () => <AppWithMocks setup={() => setupSettingsStory({ providersConfig: {} })} />,
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettingsToSection(canvasElement, "providers");
   },
@@ -116,15 +99,15 @@ export const ProvidersEmpty: AppStory = {
 export const ProvidersConfigured: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() => {
+      setup={() =>
         setupSettingsStory({
           providersConfig: {
             anthropic: { apiKeySet: true, baseUrl: "" },
             openai: { apiKeySet: true, baseUrl: "https://custom.openai.com/v1" },
             xai: { apiKeySet: false, baseUrl: "" },
           },
-        });
-      }}
+        })
+      }
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
@@ -136,14 +119,14 @@ export const ProvidersConfigured: AppStory = {
 export const ModelsEmpty: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() => {
+      setup={() =>
         setupSettingsStory({
           providersConfig: {
             anthropic: { apiKeySet: true, baseUrl: "", models: [] },
             openai: { apiKeySet: true, baseUrl: "", models: [] },
           },
-        });
-      }}
+        })
+      }
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
@@ -155,7 +138,7 @@ export const ModelsEmpty: AppStory = {
 export const ModelsConfigured: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() => {
+      setup={() =>
         setupSettingsStory({
           providersConfig: {
             anthropic: {
@@ -174,8 +157,8 @@ export const ModelsConfigured: AppStory = {
               models: ["grok-beta"],
             },
           },
-        });
-      }}
+        })
+      }
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {

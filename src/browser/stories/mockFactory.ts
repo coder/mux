@@ -9,10 +9,8 @@
 
 import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { IPCApi, WorkspaceChatMessage } from "@/common/types/ipc";
-import type { ChatStats } from "@/common/types/chatStats";
+import type { WorkspaceChatMessage, ChatMuxMessage } from "@/common/orpc/types";
 import type {
-  MuxMessage,
   MuxTextPart,
   MuxReasoningPart,
   MuxImagePart,
@@ -152,7 +150,7 @@ export function createUserMessage(
   id: string,
   text: string,
   opts: { historySequence: number; timestamp?: number; images?: string[] }
-): MuxMessage {
+): ChatMuxMessage {
   const parts: MuxPart[] = [{ type: "text", text }];
   if (opts.images) {
     for (const url of opts.images) {
@@ -160,6 +158,7 @@ export function createUserMessage(
     }
   }
   return {
+    type: "message",
     id,
     role: "user",
     parts,
@@ -180,7 +179,7 @@ export function createAssistantMessage(
     reasoning?: string;
     toolCalls?: MuxPart[];
   }
-): MuxMessage {
+): ChatMuxMessage {
   const parts: MuxPart[] = [];
   if (opts.reasoning) {
     parts.push({ type: "reasoning", text: opts.reasoning });
@@ -190,6 +189,7 @@ export function createAssistantMessage(
     parts.push(...opts.toolCalls);
   }
   return {
+    type: "message",
     id,
     role: "assistant",
     parts,
@@ -324,172 +324,12 @@ function randomHash(): string {
 /** Chat handler type for onChat callbacks */
 type ChatHandler = (callback: (event: WorkspaceChatMessage) => void) => () => void;
 
-export interface MockAPIOptions {
-  projects: Map<string, ProjectConfig>;
-  workspaces: FrontendWorkspaceMetadata[];
-  /** Chat handlers keyed by workspace ID */
-  chatHandlers?: Map<string, ChatHandler>;
-  /** Git status keyed by workspace ID */
-  gitStatus?: Map<string, GitStatusFixture>;
-  /** Provider config */
-  providersConfig?: Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>;
-  /** Available providers list */
-  providersList?: string[];
-}
-
-export function createMockAPI(options: MockAPIOptions): IPCApi {
-  const {
-    projects,
-    workspaces,
-    chatHandlers = new Map<string, ChatHandler>(),
-    gitStatus = new Map<string, GitStatusFixture>(),
-    providersConfig = {},
-    providersList = [],
-  } = options;
-
-  const mockStats: ChatStats = {
-    consumers: [],
-    totalTokens: 0,
-    model: "mock-model",
-    tokenizerName: "mock-tokenizer",
-    usageHistory: [],
-  };
-
-  return {
-    tokenizer: {
-      countTokens: () => Promise.resolve(42),
-      countTokensBatch: (_model, texts) => Promise.resolve(texts.map(() => 42)),
-      calculateStats: () => Promise.resolve(mockStats),
-    },
-    providers: {
-      setProviderConfig: () => Promise.resolve({ success: true, data: undefined }),
-      setModels: () => Promise.resolve({ success: true, data: undefined }),
-      getConfig: () => Promise.resolve(providersConfig),
-      list: () => Promise.resolve(providersList),
-    },
-    workspace: {
-      create: (projectPath: string, branchName: string) =>
-        Promise.resolve({
-          success: true,
-          metadata: {
-            id: Math.random().toString(36).substring(2, 12),
-            name: branchName,
-            projectPath,
-            projectName: projectPath.split("/").pop() ?? "project",
-            namedWorkspacePath: `/mock/workspace/${branchName}`,
-            runtimeConfig: DEFAULT_RUNTIME_CONFIG,
-          },
-        }),
-      list: () => Promise.resolve(workspaces),
-      rename: (workspaceId: string) =>
-        Promise.resolve({
-          success: true,
-          data: { newWorkspaceId: workspaceId },
-        }),
-      remove: () => Promise.resolve({ success: true }),
-      fork: () => Promise.resolve({ success: false, error: "Not implemented in mock" }),
-      openTerminal: () => Promise.resolve(undefined),
-      onChat: (wsId, callback) => {
-        const handler = chatHandlers.get(wsId);
-        if (handler) {
-          return handler(callback);
-        }
-        // Default: send caught-up immediately
-        setTimeout(() => callback({ type: "caught-up" }), 50);
-        // eslint-disable-next-line @typescript-eslint/no-empty-function
-        return () => {};
-      },
-      onMetadata: () => () => undefined,
-      sendMessage: () => Promise.resolve({ success: true, data: undefined }),
-      resumeStream: () => Promise.resolve({ success: true, data: undefined }),
-      interruptStream: () => Promise.resolve({ success: true, data: undefined }),
-      clearQueue: () => Promise.resolve({ success: true, data: undefined }),
-      truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
-      replaceChatHistory: () => Promise.resolve({ success: true, data: undefined }),
-      getInfo: () => Promise.resolve(null),
-      activity: {
-        list: () => Promise.resolve({}),
-        subscribe: () => () => undefined,
-      },
-      executeBash: (wsId: string, command: string) => {
-        // Return mock git status if this looks like git status script
-        if (command.includes("git status") || command.includes("git show-branch")) {
-          const emptyStatus: GitStatusFixture = {};
-          const status = gitStatus.get(wsId) ?? emptyStatus;
-          const output = createGitStatusOutput(status);
-          return Promise.resolve({
-            success: true,
-            data: { success: true, output, exitCode: 0, wall_duration_ms: 50 },
-          });
-        }
-        return Promise.resolve({
-          success: true,
-          data: { success: true, output: "", exitCode: 0, wall_duration_ms: 0 },
-        });
-      },
-    },
-    projects: {
-      list: () => Promise.resolve(Array.from(projects.entries())),
-      create: () =>
-        Promise.resolve({
-          success: true,
-          data: { projectConfig: { workspaces: [] }, normalizedPath: "/mock/project/path" },
-        }),
-      remove: () => Promise.resolve({ success: true, data: undefined }),
-      pickDirectory: () => Promise.resolve(null),
-      listBranches: () =>
-        Promise.resolve({
-          branches: ["main", "develop", "feature/new-feature"],
-          recommendedTrunk: "main",
-        }),
-      secrets: {
-        get: () => Promise.resolve([]),
-        update: () => Promise.resolve({ success: true, data: undefined }),
-      },
-    },
-    window: {
-      setTitle: () => Promise.resolve(undefined),
-    },
-    terminal: {
-      create: () =>
-        Promise.resolve({
-          sessionId: "mock-session",
-          workspaceId: "mock-workspace",
-          cols: 80,
-          rows: 24,
-        }),
-      close: () => Promise.resolve(undefined),
-      resize: () => Promise.resolve(undefined),
-      sendInput: () => undefined,
-      onOutput: () => () => undefined,
-      onExit: () => () => undefined,
-      openWindow: () => Promise.resolve(undefined),
-      closeWindow: () => Promise.resolve(undefined),
-    },
-    voice: {
-      transcribe: () => Promise.resolve({ success: false, error: "Not implemented in mock" }),
-    },
-    update: {
-      check: () => Promise.resolve(undefined),
-      download: () => Promise.resolve(undefined),
-      install: () => undefined,
-      onStatus: () => () => undefined,
-    },
-  };
-}
-
-/** Install mock API on window */
-export function installMockAPI(api: IPCApi): void {
-  // @ts-expect-error - Assigning mock API to window for Storybook
-  window.api = api;
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // CHAT SCENARIO BUILDERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /** Creates a chat handler that sends messages then caught-up */
-export function createStaticChatHandler(messages: MuxMessage[]): ChatHandler {
+export function createStaticChatHandler(messages: ChatMuxMessage[]): ChatHandler {
   return (callback) => {
     setTimeout(() => {
       for (const msg of messages) {
@@ -504,7 +344,7 @@ export function createStaticChatHandler(messages: MuxMessage[]): ChatHandler {
 
 /** Creates a chat handler with streaming state */
 export function createStreamingChatHandler(opts: {
-  messages: MuxMessage[];
+  messages: ChatMuxMessage[];
   streamingMessageId: string;
   model: string;
   historySequence: number;

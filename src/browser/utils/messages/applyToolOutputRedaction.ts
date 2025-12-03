@@ -3,7 +3,6 @@
  * Produces a cloned array safe for sending to providers without touching persisted history/UI.
  */
 import type { MuxMessage } from "@/common/types/message";
-import type { DynamicToolPart } from "@/common/types/toolParts";
 import { redactToolOutput } from "./toolOutputRedaction";
 
 export function applyToolOutputRedaction(messages: MuxMessage[]): MuxMessage[] {
@@ -12,15 +11,12 @@ export function applyToolOutputRedaction(messages: MuxMessage[]): MuxMessage[] {
 
     const newParts = msg.parts.map((part) => {
       if (part.type !== "dynamic-tool") return part;
+      if (part.state !== "output-available") return part;
 
-      const toolPart = part as DynamicToolPart;
-      if (toolPart.state !== "output-available") return part;
-
-      const redacted: typeof toolPart = {
-        ...toolPart,
-        output: redactToolOutput(toolPart.toolName, toolPart.output),
+      return {
+        ...part,
+        output: redactToolOutput(part.toolName, part.output),
       };
-      return redacted;
     });
 
     return {

@@ -21,8 +21,8 @@ import type {
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { TodoItem, StatusSetToolResult } from "@/common/types/tools";
 
-import type { WorkspaceChatMessage, StreamErrorMessage, DeleteMessage } from "@/common/types/ipc";
-import { isInitStart, isInitOutput, isInitEnd, isMuxMessage } from "@/common/types/ipc";
+import type { WorkspaceChatMessage, StreamErrorMessage, DeleteMessage } from "@/common/orpc/types";
+import { isInitStart, isInitOutput, isInitEnd, isMuxMessage } from "@/common/orpc/types";
 import type {
   DynamicToolPart,
   DynamicToolPartPending,
@@ -65,7 +65,6 @@ function hasFailureResult(result: unknown): boolean {
 export class StreamingMessageAggregator {
   private messages = new Map<string, MuxMessage>();
   private activeStreams = new Map<string, StreamingContext>();
-  private streamSequenceCounter = 0; // For ordering parts within a streaming message
 
   // Simple cache for derived values (invalidated on every mutation)
   private cachedAllMessages: MuxMessage[] | null = null;
@@ -391,7 +390,6 @@ export class StreamingMessageAggregator {
   clear(): void {
     this.messages.clear();
     this.activeStreams.clear();
-    this.streamSequenceCounter = 0;
     this.invalidateCache();
   }
 
@@ -486,12 +484,11 @@ export class StreamingMessageAggregator {
         if (data.parts) {
           // Sync up the tool results from the backend's parts array
           for (const backendPart of data.parts) {
-            if (backendPart.type === "dynamic-tool") {
+            if (backendPart.type === "dynamic-tool" && backendPart.state === "output-available") {
               // Find and update existing tool part
               const toolPart = message.parts.find(
                 (part): part is DynamicToolPart =>
-                  part.type === "dynamic-tool" &&
-                  (part as DynamicToolPart).toolCallId === backendPart.toolCallId
+                  part.type === "dynamic-tool" && part.toolCallId === backendPart.toolCallId
               );
               if (toolPart) {
                 // Update with result from backend
@@ -577,7 +574,7 @@ export class StreamingMessageAggregator {
     // Check if this tool call already exists to prevent duplicates
     const existingToolPart = message.parts.find(
       (part): part is DynamicToolPart =>
-        part.type === "dynamic-tool" && (part as DynamicToolPart).toolCallId === data.toolCallId
+        part.type === "dynamic-tool" && part.toolCallId === data.toolCallId
     );
 
     if (existingToolPart) {

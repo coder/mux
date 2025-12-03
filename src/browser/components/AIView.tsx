@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import React, { useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { cn } from "@/common/lib/utils";
 import { MessageRenderer } from "./Messages/MessageRenderer";
 import { InterruptedBarrier } from "./Messages/ChatBarrier/InterruptedBarrier";
@@ -21,6 +21,7 @@ import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsConte
 
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
+import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useThinking } from "@/browser/contexts/ThinkingContext";
 import {
@@ -42,6 +43,7 @@ import { executeCompaction } from "@/browser/utils/chatCommands";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useAutoCompactionSettings } from "../hooks/useAutoCompactionSettings";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
+import { useAPI } from "@/browser/contexts/API";
 
 interface AIViewProps {
   workspaceId: string;
@@ -64,6 +66,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
   runtimeConfig,
   className,
 }) => {
+  const { api } = useAPI();
   const chatAreaRef = useRef<HTMLDivElement>(null);
 
   // Track active tab to conditionally enable resize functionality
@@ -139,7 +142,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const { messages, canInterrupt, isCompacting, loading, currentModel } = workspaceState;
 
   // Get active stream message ID for token counting
-  const activeStreamMessageId = aggregator.getActiveStreamMessageId();
+  const activeStreamMessageId = aggregator?.getActiveStreamMessageId();
 
   const autoCompactionResult = checkAutoCompaction(
     workspaceUsage,
@@ -163,7 +166,9 @@ const AIViewInner: React.FC<AIViewProps> = ({
     }
 
     forceCompactionTriggeredRef.current = activeStreamMessageId ?? null;
+    if (!api) return;
     void executeCompaction({
+      api,
       workspaceId,
       sendMessageOptions: pendingSendOptions,
       continueMessage: { text: "Continue with the current task" },
@@ -175,6 +180,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
     activeStreamMessageId,
     workspaceId,
     pendingSendOptions,
+    api,
   ]);
 
   // Reset force compaction trigger when stream ends
@@ -236,20 +242,23 @@ const AIViewInner: React.FC<AIViewProps> = ({
     const queuedMessage = workspaceState?.queuedMessage;
     if (!queuedMessage) return;
 
-    await window.api.workspace.clearQueue(workspaceId);
+    await api?.workspace.clearQueue({ workspaceId });
     chatInputAPI.current?.restoreText(queuedMessage.content);
 
     // Restore images if present
     if (queuedMessage.imageParts && queuedMessage.imageParts.length > 0) {
       chatInputAPI.current?.restoreImages(queuedMessage.imageParts);
     }
-  }, [workspaceId, workspaceState?.queuedMessage, chatInputAPI]);
+  }, [api, workspaceId, workspaceState?.queuedMessage, chatInputAPI]);
 
   // Handler for sending queued message immediately (interrupt + send)
   const handleSendQueuedImmediately = useCallback(async () => {
     if (!workspaceState?.queuedMessage || !workspaceState.canInterrupt) return;
-    await window.api.workspace.interruptStream(workspaceId, { sendQueuedImmediately: true });
-  }, [workspaceId, workspaceState?.queuedMessage, workspaceState?.canInterrupt]);
+    await api?.workspace.interruptStream({
+      workspaceId,
+      options: { sendQueuedImmediately: true },
+    });
+  }, [api, workspaceId, workspaceState?.queuedMessage, workspaceState?.canInterrupt]);
 
   const handleEditLastUserMessage = useCallback(async () => {
     if (!workspaceState) return;
@@ -297,24 +306,26 @@ const AIViewInner: React.FC<AIViewProps> = ({
       setAutoScroll(true);
 
       // Truncate history in backend
-      await window.api.workspace.truncateHistory(workspaceId, percentage);
+      await api?.workspace.truncateHistory({ workspaceId, percentage });
     },
-    [workspaceId, setAutoScroll]
+    [workspaceId, setAutoScroll, api]
   );
 
   const handleProviderConfig = useCallback(
     async (provider: string, keyPath: string[], value: string) => {
-      const result = await window.api.providers.setProviderConfig(provider, keyPath, value);
+      if (!api) throw new Error("API not connected");
+      const result = await api.providers.setProviderConfig({ provider, keyPath, value });
       if (!result.success) {
         throw new Error(result.error);
       }
     },
-    []
+    [api]
   );
 
+  const openTerminal = useOpenTerminal();
   const handleOpenTerminal = useCallback(() => {
-    void window.api.terminal.openWindow(workspaceId);
-  }, [workspaceId]);
+    openTerminal(workspaceId);
+  }, [workspaceId, openTerminal]);
 
   // Auto-scroll when messages or todos update (during streaming)
   useEffect(() => {
@@ -330,12 +341,11 @@ const AIViewInner: React.FC<AIViewProps> = ({
   ]);
 
   // Scroll to bottom when workspace loads or changes
-  useEffect(() => {
+  // useLayoutEffect ensures scroll happens synchronously after DOM mutations
+  // but before browser paint - critical for Chromatic snapshot consistency
+  useLayoutEffect(() => {
     if (workspaceState && !workspaceState.loading && workspaceState.messages.length > 0) {
-      // Give React time to render messages before scrolling
-      requestAnimationFrame(() => {
-        jumpToBottom();
-      });
+      jumpToBottom();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, workspaceState?.loading]);
@@ -484,6 +494,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
             aria-busy={canInterrupt}
             aria-label="Conversation transcript"
             tabIndex={0}
+            data-testid="message-window"
             className="h-full overflow-y-auto p-[15px] leading-[1.5] break-words whitespace-pre-wrap"
           >
             <div className={cn("max-w-4xl mx-auto", mergedMessages.length === 0 && "h-full")}>
@@ -513,6 +524,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
                     return (
                       <React.Fragment key={msg.id}>
                         <div
+                          data-testid="chat-message"
                           data-message-id={
                             msg.type !== "history-hidden" && msg.type !== "workspace-init"
                               ? msg.historyId
@@ -554,12 +566,12 @@ const AIViewInner: React.FC<AIViewProps> = ({
                   cancelText={`hit ${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} to cancel`}
                   tokenCount={
                     activeStreamMessageId
-                      ? aggregator.getStreamingTokenCount(activeStreamMessageId)
+                      ? aggregator?.getStreamingTokenCount(activeStreamMessageId)
                       : undefined
                   }
                   tps={
                     activeStreamMessageId
-                      ? aggregator.getStreamingTPS(activeStreamMessageId)
+                      ? aggregator?.getStreamingTPS(activeStreamMessageId)
                       : undefined
                   }
                 />

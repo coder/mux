@@ -3,6 +3,7 @@ import { usePersistedState, readPersistedState, updatePersistedState } from "./u
 import { MODEL_ABBREVIATIONS } from "@/browser/utils/slashCommands/registry";
 import { defaultModel } from "@/common/utils/ai/models";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { useAPI } from "@/browser/contexts/API";
 
 const MAX_LRU_SIZE = 12;
 const LRU_KEY = "model-lru";
@@ -45,6 +46,7 @@ export function getDefaultModel(): string {
  * Also includes custom models configured in Settings.
  */
 export function useModelLRU() {
+  const { api } = useAPI();
   const [recentModels, setRecentModels] = usePersistedState<string[]>(
     LRU_KEY,
     DEFAULT_MODELS.slice(0, MAX_LRU_SIZE),
@@ -74,13 +76,17 @@ export function useModelLRU() {
 
   // Fetch custom models from providers config
   useEffect(() => {
+    const abortController = new AbortController();
+    if (!api) return;
+    const signal = abortController.signal;
+
     const fetchCustomModels = async () => {
       try {
-        const config = await window.api.providers.getConfig();
+        const providerConfig = await api.providers.getConfig();
         const models: string[] = [];
-        for (const [provider, providerConfig] of Object.entries(config)) {
-          if (providerConfig.models) {
-            for (const modelId of providerConfig.models) {
+        for (const [provider, config] of Object.entries(providerConfig)) {
+          if (config.models) {
+            for (const modelId of config.models) {
               // Format as provider:modelId for consistency
               models.push(`${provider}:${modelId}`);
             }
@@ -91,13 +97,25 @@ export function useModelLRU() {
         // Ignore errors fetching custom models
       }
     };
+
+    // Initial fetch
     void fetchCustomModels();
 
-    // Listen for settings changes via custom event
-    const handleSettingsChange = () => void fetchCustomModels();
-    window.addEventListener("providers-config-changed", handleSettingsChange);
-    return () => window.removeEventListener("providers-config-changed", handleSettingsChange);
-  }, []);
+    // Subscribe to provider config changes via oRPC
+    (async () => {
+      try {
+        const iterator = await api.providers.onConfigChanged(undefined, { signal });
+        for await (const _ of iterator) {
+          if (signal.aborted) break;
+          void fetchCustomModels();
+        }
+      } catch {
+        // Subscription cancelled via abort signal - expected on cleanup
+      }
+    })();
+
+    return () => abortController.abort();
+  }, [api]);
 
   // Combine LRU models with custom models (custom models appended, deduplicated)
   const allModels = useMemo(() => {

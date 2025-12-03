@@ -3,7 +3,7 @@
  */
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { createMockAPI, installMockAPI } from "./mockFactory";
+import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
 
 export default {
   ...appMeta,
@@ -14,14 +14,12 @@ export default {
 export const WelcomeScreen: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() => {
-        installMockAPI(
-          createMockAPI({
-            projects: new Map(),
-            workspaces: [],
-          })
-        );
-      }}
+      setup={() =>
+        createMockORPCClient({
+          projects: new Map(),
+          workspaces: [],
+        })
+      }
     />
   ),
 };

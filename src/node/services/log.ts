@@ -30,6 +30,25 @@ function supportsColor(): boolean {
   return process.stdout.isTTY ?? false;
 }
 
+// Chalk can be unexpectedly hoisted or partially mocked in certain test runners.
+// Guard each style helper to avoid runtime TypeErrors (e.g., dim is not a function).
+const chalkDim =
+  typeof (chalk as { dim?: (text: string) => string }).dim === "function"
+    ? (chalk as { dim: (text: string) => string }).dim
+    : (text: string) => text;
+const chalkCyan =
+  typeof (chalk as { cyan?: (text: string) => string }).cyan === "function"
+    ? (chalk as { cyan: (text: string) => string }).cyan
+    : (text: string) => text;
+const chalkGray =
+  typeof (chalk as { gray?: (text: string) => string }).gray === "function"
+    ? (chalk as { gray: (text: string) => string }).gray
+    : (text: string) => text;
+const chalkRed =
+  typeof (chalk as { red?: (text: string) => string }).red === "function"
+    ? (chalk as { red: (text: string) => string }).red
+    : (text: string) => text;
+
 /**
  * Get kitchen time timestamp for logs (12-hour format with milliseconds)
  * Format: 8:23.456PM (hours:minutes.milliseconds)
@@ -96,13 +115,13 @@ function safePipeLog(level: "info" | "error" | "debug", ...args: unknown[]): voi
   // Apply colors based on level (if terminal supports it)
   let prefix: string;
   if (useColor) {
-    const coloredTimestamp = chalk.dim(timestamp);
-    const coloredLocation = chalk.cyan(location);
+    const coloredTimestamp = chalkDim(timestamp);
+    const coloredLocation = chalkCyan(location);
 
     if (level === "error") {
       prefix = `${coloredTimestamp} ${coloredLocation}`;
     } else if (level === "debug") {
-      prefix = `${coloredTimestamp} ${chalk.gray(location)}`;
+      prefix = `${coloredTimestamp} ${chalkGray(location)}`;
     } else {
       // info
       prefix = `${coloredTimestamp} ${coloredLocation}`;
@@ -118,7 +137,7 @@ function safePipeLog(level: "info" | "error" | "debug", ...args: unknown[]): voi
       if (useColor) {
         console.error(
           prefix,
-          ...args.map((arg) => (typeof arg === "string" ? chalk.red(arg) : arg))
+          ...args.map((arg) => (typeof arg === "string" ? chalkRed(arg) : arg))
         );
       } else {
         console.error(prefix, ...args);

@@ -4,14 +4,14 @@ This directory contains SVG icons for AI providers displayed in the UI.
 
 ## Current icons
 
-| File | Provider | Source |
-|------|----------|--------|
-| `anthropic.svg` | Anthropic | [Brand assets](https://www.anthropic.com/brand) |
-| `openai.svg` | OpenAI | [Brand guidelines](https://openai.com/brand) |
-| `google.svg` | Google (Gemini) | [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Google_Gemini_icon_2025.svg) |
-| `xai.svg` | xAI | [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:XAI_Logo.svg) |
-| `aws.svg` | Amazon Bedrock | [AWS Architecture Icons](https://aws.amazon.com/architecture/icons/) |
-| `mux.svg` | Mux Gateway | Internal |
+| File            | Provider        | Source                                                                                   |
+| --------------- | --------------- | ---------------------------------------------------------------------------------------- |
+| `anthropic.svg` | Anthropic       | [Brand assets](https://www.anthropic.com/brand)                                          |
+| `openai.svg`    | OpenAI          | [Brand guidelines](https://openai.com/brand)                                             |
+| `google.svg`    | Google (Gemini) | [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Google_Gemini_icon_2025.svg) |
+| `xai.svg`       | xAI             | [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:XAI_Logo.svg)                |
+| `aws.svg`       | Amazon Bedrock  | [AWS Architecture Icons](https://aws.amazon.com/architecture/icons/)                     |
+| `mux.svg`       | Mux Gateway     | Internal                                                                                 |
 
 ## Adding a new icon
 

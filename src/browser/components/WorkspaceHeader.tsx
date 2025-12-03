@@ -7,6 +7,7 @@ import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
+import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 
 interface WorkspaceHeaderProps {
   workspaceId: string;
@@ -23,12 +24,13 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   namedWorkspacePath,
   runtimeConfig,
 }) => {
+  const openTerminal = useOpenTerminal();
   const gitStatus = useGitStatus(workspaceId);
   const { canInterrupt } = useWorkspaceSidebarState(workspaceId);
-  const handleOpenTerminal = useCallback(() => {
-    void window.api.terminal.openWindow(workspaceId);
-  }, [workspaceId]);
   const { startSequence: startTutorial, isSequenceCompleted } = useTutorial();
+  const handleOpenTerminal = useCallback(() => {
+    openTerminal(workspaceId);
+  }, [workspaceId, openTerminal]);
 
   // Start workspace tutorial on first entry (only if settings tutorial is done)
   useEffect(() => {

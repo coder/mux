@@ -15,16 +15,33 @@ import type {
   StreamErrorMessage,
   SendMessageOptions,
   ImagePart,
-} from "@/common/types/ipc";
+} from "@/common/orpc/types";
 import type { SendMessageError } from "@/common/types/errors";
 import { createUnknownSendMessageError } from "@/node/services/utils/sendMessageError";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
+import type { MuxFrontendMetadata } from "@/common/types/message";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { MessageQueue } from "./messageQueue";
 import type { StreamEndEvent } from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
+
+// Type guard for compaction request metadata
+interface CompactionRequestMetadata {
+  type: "compaction-request";
+  parsed: {
+    continueMessage?: string;
+  };
+}
+
+function isCompactionRequestMetadata(meta: unknown): meta is CompactionRequestMetadata {
+  if (typeof meta !== "object" || meta === null) return false;
+  const obj = meta as Record<string, unknown>;
+  if (obj.type !== "compaction-request") return false;
+  if (typeof obj.parsed !== "object" || obj.parsed === null) return false;
+  return true;
+}
 
 export interface AgentSessionChatEvent {
   workspaceId: string;
@@ -94,7 +111,7 @@ export class AgentSession {
     this.disposed = true;
 
     // Stop any active stream (fire and forget - disposal shouldn't block)
-    void this.aiService.stopStream(this.workspaceId, /* abandonPartial */ true);
+    void this.aiService.stopStream(this.workspaceId, { abandonPartial: true });
 
     for (const { event, handler } of this.aiListeners) {
       this.aiService.off(event, handler as never);
@@ -154,7 +171,8 @@ export class AgentSession {
     const historyResult = await this.historyService.getHistory(this.workspaceId);
     if (historyResult.success) {
       for (const message of historyResult.data) {
-        listener({ workspaceId: this.workspaceId, message });
+        // Add type: "message" for discriminated union (messages from chat.jsonl don't have it)
+        listener({ workspaceId: this.workspaceId, message: { ...message, type: "message" } });
       }
     }
 
@@ -165,7 +183,8 @@ export class AgentSession {
     if (streamInfo) {
       await this.aiService.replayStream(this.workspaceId);
     } else if (partial) {
-      listener({ workspaceId: this.workspaceId, message: partial });
+      // Add type: "message" for discriminated union (partials from disk don't have it)
+      listener({ workspaceId: this.workspaceId, message: { ...partial, type: "message" } });
     }
 
     // Replay init state BEFORE caught-up (treat as historical data)
@@ -281,7 +300,7 @@ export class AgentSession {
       if (this.aiService.isStreaming(this.workspaceId)) {
         // MUST use abandonPartial=true to prevent handleAbort from performing partial compaction
         // with mismatched history (since we're about to truncate it)
-        const stopResult = await this.interruptStream(/* abandonPartial */ true);
+        const stopResult = await this.interruptStream({ abandonPartial: true });
         if (!stopResult.success) {
           return Err(createUnknownSendMessageError(stopResult.error));
         }
@@ -319,14 +338,19 @@ export class AgentSession {
           })
         : undefined;
 
+    // toolPolicy is properly typed via Zod schema inference
+    const typedToolPolicy = options?.toolPolicy;
+    // muxMetadata is z.any() in schema - cast to proper type
+    const typedMuxMetadata = options?.muxMetadata as MuxFrontendMetadata | undefined;
+
     const userMessage = createMuxMessage(
       messageId,
       "user",
       message,
       {
         timestamp: Date.now(),
-        toolPolicy: options?.toolPolicy,
-        muxMetadata: options?.muxMetadata, // Pass through frontend metadata as black-box
+        toolPolicy: typedToolPolicy,
+        muxMetadata: typedMuxMetadata, // Pass through frontend metadata as black-box
       },
       additionalParts
     );
@@ -336,23 +360,34 @@ export class AgentSession {
       return Err(createUnknownSendMessageError(appendResult.error));
     }
 
-    this.emitChatEvent(userMessage);
+    // Add type: "message" for discriminated union (createMuxMessage doesn't add it)
+    this.emitChatEvent({ ...userMessage, type: "message" });
 
     // If this is a compaction request with a continue message, queue it for auto-send after compaction
-    const muxMeta = options?.muxMetadata;
-    if (muxMeta?.type === "compaction-request" && muxMeta.parsed.continueMessage && options) {
+    if (
+      isCompactionRequestMetadata(typedMuxMetadata) &&
+      typedMuxMetadata.parsed.continueMessage &&
+      options
+    ) {
       // Strip out compaction-specific fields so the queued message is a fresh user message
-      const { muxMetadata, mode, editMessageId, imageParts, maxOutputTokens, ...rest } = options;
-      const sanitizedOptions: SendMessageOptions = {
-        ...rest,
-        model: muxMeta.parsed.continueMessage.model ?? rest.model,
+      // Use Omit to avoid unsafe destructuring of any-typed muxMetadata
+      const continueMessage = typedMuxMetadata.parsed.continueMessage;
+      const sanitizedOptions: Omit<
+        SendMessageOptions,
+        "muxMetadata" | "mode" | "editMessageId" | "imageParts" | "maxOutputTokens"
+      > & { imageParts?: typeof continueMessage.imageParts } = {
+        model: continueMessage.model ?? options.model,
+        thinkingLevel: options.thinkingLevel,
+        toolPolicy: options.toolPolicy,
+        additionalSystemInstructions: options.additionalSystemInstructions,
+        providerOptions: options.providerOptions,
       };
-      const continueImageParts = muxMeta.parsed.continueMessage.imageParts;
+      const continueImageParts = continueMessage.imageParts;
       const continuePayload =
         continueImageParts && continueImageParts.length > 0
           ? { ...sanitizedOptions, imageParts: continueImageParts }
           : sanitizedOptions;
-      this.messageQueue.add(muxMeta.parsed.continueMessage.text, continuePayload);
+      this.messageQueue.add(continueMessage.text, continuePayload);
       this.emitQueuedMessageChanged();
     }
 
@@ -379,24 +414,27 @@ export class AgentSession {
     return this.streamWithHistory(model, options);
   }
 
-  async interruptStream(abandonPartial?: boolean): Promise<Result<void>> {
+  async interruptStream(options?: {
+    soft?: boolean;
+    abandonPartial?: boolean;
+  }): Promise<Result<void>> {
     this.assertNotDisposed("interruptStream");
 
     if (!this.aiService.isStreaming(this.workspaceId)) {
       return Ok(undefined);
     }
 
-    // Delete partial BEFORE stopping to prevent abort handler from committing it
-    // The abort handler in aiService.ts runs immediately when stopStream is called,
-    // so we must delete first to ensure it finds no partial to commit
-    if (abandonPartial) {
+    // For hard interrupts, delete partial BEFORE stopping to prevent abort handler
+    // from committing it. For soft interrupts, defer to stream-abort handler since
+    // the stream continues running and would recreate the partial.
+    if (options?.abandonPartial && !options?.soft) {
       const deleteResult = await this.partialService.deletePartial(this.workspaceId);
       if (!deleteResult.success) {
         return Err(deleteResult.error);
       }
     }
 
-    const stopResult = await this.aiService.stopStream(this.workspaceId, abandonPartial);
+    const stopResult = await this.aiService.stopStream(this.workspaceId, options);
     if (!stopResult.success) {
       return Err(stopResult.error);
     }

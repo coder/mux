@@ -44,7 +44,7 @@ import type {
 } from "@/common/types/stream";
 import { applyToolPolicy, type ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { MockScenarioPlayer } from "./mock/mockScenarioPlayer";
-import { EnvHttpProxyAgent } from "undici";
+import { EnvHttpProxyAgent, type Dispatcher } from "undici";
 
 // Export a standalone version of getToolsForModel for use in backend
 
@@ -56,6 +56,9 @@ const unlimitedTimeoutAgent = new EnvHttpProxyAgent({
   bodyTimeout: 0, // No timeout - prevents BodyTimeoutError on long reasoning pauses
   headersTimeout: 0, // No timeout for headers
 });
+
+// Extend RequestInit with undici-specific dispatcher property (Node.js only)
+type RequestInitWithDispatcher = RequestInit & { dispatcher?: Dispatcher };
 
 /**
  * Default fetch function with unlimited timeouts for AI streaming.
@@ -72,7 +75,8 @@ const defaultFetchWithUnlimitedTimeout = (async (
   input: RequestInfo | URL,
   init?: RequestInit
 ): Promise<Response> => {
-  const requestInit: RequestInit = {
+  // dispatcher is a Node.js undici-specific property for custom HTTP agents
+  const requestInit: RequestInitWithDispatcher = {
     ...(init ?? {}),
     dispatcher: unlimitedTimeoutAgent,
   };
@@ -273,17 +277,20 @@ export class AIService extends EventEmitter {
     this.streamManager.on("stream-delta", (data) => this.emit("stream-delta", data));
     this.streamManager.on("stream-end", (data) => this.emit("stream-end", data));
 
-    // Handle stream-abort: commit partial to history before forwarding
-    // Note: If abandonPartial option was used, partial is already deleted by IPC handler
+    // Handle stream-abort: dispose of partial based on abandonPartial flag
     this.streamManager.on("stream-abort", (data: StreamAbortEvent) => {
       void (async () => {
-        // Check if partial still exists (not abandoned)
-        const partial = await this.partialService.readPartial(data.workspaceId);
-        if (partial) {
+        if (data.abandonPartial) {
+          // Caller requested discarding partial - delete without committing
+          await this.partialService.deletePartial(data.workspaceId);
+        } else {
           // Commit interrupted message to history with partial:true metadata
           // This ensures /clear and /truncate can clean up interrupted messages
-          await this.partialService.commitToHistory(data.workspaceId);
-          await this.partialService.deletePartial(data.workspaceId);
+          const partial = await this.partialService.readPartial(data.workspaceId);
+          if (partial) {
+            await this.partialService.commitToHistory(data.workspaceId);
+            await this.partialService.deletePartial(data.workspaceId);
+          }
         }
 
         // Forward abort event to consumers
@@ -1201,12 +1208,15 @@ export class AIService extends EventEmitter {
     }
   }
 
-  async stopStream(workspaceId: string, abandonPartial?: boolean): Promise<Result<void>> {
+  async stopStream(
+    workspaceId: string,
+    options?: { soft?: boolean; abandonPartial?: boolean }
+  ): Promise<Result<void>> {
     if (this.mockModeEnabled && this.mockScenarioPlayer) {
       this.mockScenarioPlayer.stop(workspaceId);
       return Ok(undefined);
     }
-    return this.streamManager.stopStream(workspaceId, abandonPartial);
+    return this.streamManager.stopStream(workspaceId, options);
   }
 
   /**
@@ -1250,6 +1260,18 @@ export class AIService extends EventEmitter {
       return;
     }
     await this.streamManager.replayStream(workspaceId);
+  }
+
+  /**
+   * DEBUG ONLY: Trigger an artificial stream error for testing.
+   * This is used by integration tests to simulate network errors mid-stream.
+   * @returns true if an active stream was found and error was triggered
+   */
+  debugTriggerStreamError(
+    workspaceId: string,
+    errorMessage = "Test-triggered stream error"
+  ): boolean {
+    return this.streamManager.debugTriggerStreamError(workspaceId, errorMessage);
   }
 
   async deleteWorkspace(workspaceId: string): Promise<Result<void>> {

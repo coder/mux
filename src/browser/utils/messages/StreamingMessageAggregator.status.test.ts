@@ -41,6 +41,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId,
       toolName: "status_set",
       result: { success: true, emoji: "🔍", message: "Analyzing code" },
+      timestamp: Date.now(),
     });
 
     const status = aggregator.getAgentStatus();
@@ -81,6 +82,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool1",
       toolName: "status_set",
       result: { success: true, emoji: "🔍", message: "Analyzing" },
+      timestamp: Date.now(),
     });
 
     expect(aggregator.getAgentStatus()?.emoji).toBe("🔍");
@@ -104,6 +106,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool2",
       toolName: "status_set",
       result: { success: true, emoji: "📝", message: "Writing" },
+      timestamp: Date.now(),
     });
 
     expect(aggregator.getAgentStatus()?.emoji).toBe("📝");
@@ -142,6 +145,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool1",
       toolName: "status_set",
       result: { success: true, emoji: "🔍", message: "Working" },
+      timestamp: Date.now(),
     });
 
     expect(aggregator.getAgentStatus()).toBeDefined();
@@ -193,6 +197,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool1",
       toolName: "status_set",
       result: { success: false, error: "Something went wrong" },
+      timestamp: Date.now(),
     });
 
     // Status should remain undefined
@@ -229,6 +234,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool1",
       toolName: "status_set",
       result: { success: true, emoji: "🔍", message: "First task" },
+      timestamp: Date.now(),
     });
 
     expect(aggregator.getAgentStatus()?.message).toBe("First task");
@@ -247,6 +253,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
 
     // User sends a NEW message - status should be cleared
     const newUserMessage = {
+      type: "message" as const,
       id: "msg2",
       role: "user" as const,
       parts: [{ type: "text" as const, text: "What's next?" }],
@@ -291,6 +298,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool1",
       toolName: "status_set",
       result: { success: false, error: "emoji must be a single emoji character" },
+      timestamp: Date.now(),
     });
 
     // End the stream to finalize message
@@ -349,6 +357,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool1",
       toolName: "status_set",
       result: { success: true, emoji: "🔍", message: "Analyzing code" },
+      timestamp: Date.now(),
     });
 
     // End the stream to finalize message
@@ -532,6 +541,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId,
       toolName: "status_set",
       result: { success: true, emoji: "✅", message: truncatedMessage },
+      timestamp: Date.now(),
     });
 
     // Should use truncated message from output, not the original input
@@ -575,6 +585,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId,
       toolName: "status_set",
       result: { success: true, emoji: "🔗", message: "PR submitted", url: testUrl },
+      timestamp: Date.now(),
     });
 
     const status = aggregator.getAgentStatus();
@@ -617,6 +628,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool1",
       toolName: "status_set",
       result: { success: true, emoji: "🔗", message: "PR submitted", url: testUrl },
+      timestamp: Date.now(),
     });
 
     expect(aggregator.getAgentStatus()?.url).toBe(testUrl);
@@ -640,6 +652,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool2",
       toolName: "status_set",
       result: { success: true, emoji: "✅", message: "Done" },
+      timestamp: Date.now(),
     });
 
     const statusAfterUpdate = aggregator.getAgentStatus();
@@ -667,6 +680,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool3",
       toolName: "status_set",
       result: { success: true, emoji: "🔄", message: "New PR", url: newUrl },
+      timestamp: Date.now(),
     });
 
     const finalStatus = aggregator.getAgentStatus();
@@ -708,12 +722,14 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool1",
       toolName: "status_set",
       result: { success: true, emoji: "🔗", message: "PR submitted", url: testUrl },
+      timestamp: Date.now(),
     });
 
     expect(aggregator.getAgentStatus()?.url).toBe(testUrl);
 
     // User sends a new message, which clears the status
     const userMessage = {
+      type: "message" as const,
       id: "user1",
       role: "user" as const,
       parts: [{ type: "text" as const, text: "Continue" }],
@@ -752,6 +768,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool2",
       toolName: "status_set",
       result: { success: true, emoji: "✅", message: "Tests passed" },
+      timestamp: Date.now(),
     });
 
     const finalStatus = aggregator.getAgentStatus();

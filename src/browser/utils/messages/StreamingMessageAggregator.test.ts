@@ -175,6 +175,7 @@ describe("StreamingMessageAggregator", () => {
         toolCallId: "tool1",
         toolName: "todo_write",
         result: { success: true },
+        timestamp: Date.now(),
       });
 
       // Verify todos are set
@@ -230,6 +231,7 @@ describe("StreamingMessageAggregator", () => {
         toolCallId: "tool1",
         toolName: "todo_write",
         result: { success: true },
+        timestamp: Date.now(),
       });
 
       expect(aggregator.getCurrentTodos()).toHaveLength(1);
@@ -291,6 +293,7 @@ describe("StreamingMessageAggregator", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
       const historicalMessage = {
+        type: "message" as const,
         id: "msg1",
         role: "assistant" as const,
         parts: [
@@ -362,6 +365,7 @@ describe("StreamingMessageAggregator", () => {
         toolCallId: "tool1",
         toolName: "todo_write",
         result: { success: true },
+        timestamp: Date.now(),
       });
 
       // TODOs should be set
@@ -369,6 +373,7 @@ describe("StreamingMessageAggregator", () => {
 
       // Add new user message (simulating user sending a new message)
       aggregator.handleMessage({
+        type: "message",
         id: "msg2",
         role: "user",
         parts: [{ type: "text", text: "Hello" }],

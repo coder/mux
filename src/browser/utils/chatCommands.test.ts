@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach } from "bun:test";
-import type { SendMessageOptions } from "@/common/types/ipc";
+import type { SendMessageOptions } from "@/common/orpc/types";
 import { parseRuntimeString, prepareCompactionMessage } from "./chatCommands";
 
 // Simple mock for localStorage to satisfy resolveCompactionModel

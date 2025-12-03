@@ -6,8 +6,8 @@
  */
 
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { MuxMessage } from "@/common/types/message";
-import type { WorkspaceChatMessage } from "@/common/types/ipc";
+import type { WorkspaceChatMessage, ChatMuxMessage } from "@/common/orpc/types";
+import type { APIClient } from "@/browser/contexts/API";
 import {
   SELECTED_WORKSPACE_KEY,
   EXPANDED_PROJECTS_KEY,
@@ -16,13 +16,13 @@ import {
 } from "@/common/constants/storage";
 import {
   createWorkspace,
-  createMockAPI,
-  installMockAPI,
   groupWorkspacesByProject,
   createStaticChatHandler,
   createStreamingChatHandler,
+  createGitStatusOutput,
   type GitStatusFixture,
 } from "./mockFactory";
+import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // WORKSPACE SELECTION
@@ -57,6 +57,46 @@ export function expandProjects(projectPaths: string[]): void {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// GIT STATUS EXECUTOR
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Creates an executeBash function that returns git status output for workspaces */
+function createGitStatusExecutor(gitStatus?: Map<string, GitStatusFixture>) {
+  return (workspaceId: string, script: string) => {
+    if (script.includes("git status") || script.includes("git show-branch")) {
+      const status = gitStatus?.get(workspaceId) ?? {};
+      const output = createGitStatusOutput(status);
+      return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
+    }
+    return Promise.resolve({
+      success: true as const,
+      output: "",
+      exitCode: 0,
+      wall_duration_ms: 0,
+    });
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CHAT HANDLER ADAPTER
+// ═══════════════════════════════════════════════════════════════════════════════
+
+type ChatHandler = (callback: (event: WorkspaceChatMessage) => void) => () => void;
+
+/** Adapts callback-based chat handlers to ORPC onChat format */
+function createOnChatAdapter(chatHandlers: Map<string, ChatHandler>) {
+  return (workspaceId: string, emit: (msg: WorkspaceChatMessage) => void) => {
+    const handler = chatHandlers.get(workspaceId);
+    if (handler) {
+      return handler(emit);
+    }
+    // Default: emit caught-up immediately
+    queueMicrotask(() => emit({ type: "caught-up" }));
+    return undefined;
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // SIMPLE CHAT STORY SETUP
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -64,16 +104,16 @@ export interface SimpleChatSetupOptions {
   workspaceId?: string;
   workspaceName?: string;
   projectName?: string;
-  messages: MuxMessage[];
+  messages: ChatMuxMessage[];
   gitStatus?: GitStatusFixture;
   providersConfig?: Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>;
 }
 
 /**
  * Setup a simple chat story with one workspace and messages.
- * Handles workspace creation, mock API, and workspace selection.
+ * Returns an APIClient configured with the mock data.
  */
-export function setupSimpleChatStory(opts: SimpleChatSetupOptions): void {
+export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
   const workspaceId = opts.workspaceId ?? "ws-chat";
   const workspaces = [
     createWorkspace({
@@ -88,17 +128,17 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): void {
     ? new Map<string, GitStatusFixture>([[workspaceId, opts.gitStatus]])
     : undefined;
 
-  installMockAPI(
-    createMockAPI({
-      projects: groupWorkspacesByProject(workspaces),
-      workspaces,
-      chatHandlers,
-      gitStatus,
-      providersConfig: opts.providersConfig,
-    })
-  );
-
+  // Set localStorage for workspace selection
   selectWorkspace(workspaces[0]);
+
+  // Return ORPC client
+  return createMockORPCClient({
+    projects: groupWorkspacesByProject(workspaces),
+    workspaces,
+    onChat: createOnChatAdapter(chatHandlers),
+    executeBash: createGitStatusExecutor(gitStatus),
+    providersConfig: opts.providersConfig,
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -109,7 +149,7 @@ export interface StreamingChatSetupOptions {
   workspaceId?: string;
   workspaceName?: string;
   projectName?: string;
-  messages: MuxMessage[];
+  messages: ChatMuxMessage[];
   streamingMessageId: string;
   model?: string;
   historySequence: number;
@@ -120,8 +160,9 @@ export interface StreamingChatSetupOptions {
 
 /**
  * Setup a streaming chat story with active streaming state.
+ * Returns an APIClient configured with the mock data.
  */
-export function setupStreamingChatStory(opts: StreamingChatSetupOptions): void {
+export function setupStreamingChatStory(opts: StreamingChatSetupOptions): APIClient {
   const workspaceId = opts.workspaceId ?? "ws-streaming";
   const workspaces = [
     createWorkspace({
@@ -149,23 +190,21 @@ export function setupStreamingChatStory(opts: StreamingChatSetupOptions): void {
     ? new Map<string, GitStatusFixture>([[workspaceId, opts.gitStatus]])
     : undefined;
 
-  installMockAPI(
-    createMockAPI({
-      projects: groupWorkspacesByProject(workspaces),
-      workspaces,
-      chatHandlers,
-      gitStatus,
-    })
-  );
-
+  // Set localStorage for workspace selection
   selectWorkspace(workspaces[0]);
+
+  // Return ORPC client
+  return createMockORPCClient({
+    projects: groupWorkspacesByProject(workspaces),
+    workspaces,
+    onChat: createOnChatAdapter(chatHandlers),
+    executeBash: createGitStatusExecutor(gitStatus),
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CUSTOM CHAT HANDLER SETUP
 // ═══════════════════════════════════════════════════════════════════════════════
-
-type ChatHandler = (callback: (event: WorkspaceChatMessage) => void) => () => void;
 
 export interface CustomChatSetupOptions {
   workspaceId?: string;
@@ -177,8 +216,9 @@ export interface CustomChatSetupOptions {
 /**
  * Setup a chat story with a custom chat handler for special scenarios
  * (e.g., stream errors, custom message sequences).
+ * Returns an APIClient configured with the mock data.
  */
-export function setupCustomChatStory(opts: CustomChatSetupOptions): void {
+export function setupCustomChatStory(opts: CustomChatSetupOptions): APIClient {
   const workspaceId = opts.workspaceId ?? "ws-custom";
   const workspaces = [
     createWorkspace({
@@ -190,13 +230,13 @@ export function setupCustomChatStory(opts: CustomChatSetupOptions): void {
 
   const chatHandlers = new Map([[workspaceId, opts.chatHandler]]);
 
-  installMockAPI(
-    createMockAPI({
-      projects: groupWorkspacesByProject(workspaces),
-      workspaces,
-      chatHandlers,
-    })
-  );
-
+  // Set localStorage for workspace selection
   selectWorkspace(workspaces[0]);
+
+  // Return ORPC client
+  return createMockORPCClient({
+    projects: groupWorkspacesByProject(workspaces),
+    workspaces,
+    onChat: createOnChatAdapter(chatHandlers),
+  });
 }
