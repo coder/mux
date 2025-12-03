@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import { Plus, Loader2 } from "lucide-react";
-import type { ProvidersConfigMap } from "../types";
 import { SUPPORTED_PROVIDERS, PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { useModelLRU } from "@/browser/hooks/useModelLRU";
 import { ModelRow } from "./ModelRow";
 import { useAPI } from "@/browser/contexts/API";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 
 interface NewModelForm {
   provider: string;
@@ -20,21 +20,11 @@ interface EditingState {
 
 export function ModelsSection() {
   const { api } = useAPI();
-  const [config, setConfig] = useState<ProvidersConfigMap | null>(null);
+  const { config, loading, updateModelsOptimistically } = useProvidersConfig();
   const [newModel, setNewModel] = useState<NewModelForm>({ provider: "", modelId: "" });
-  const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { defaultModel, setDefaultModel } = useModelLRU();
-
-  // Load config on mount
-  useEffect(() => {
-    if (!api) return;
-    void (async () => {
-      const cfg = await api.providers.getConfig();
-      setConfig(cfg ?? null);
-    })();
-  }, [api]);
 
   // Check if a model already exists (for duplicate prevention)
   const modelExists = useCallback(
@@ -46,7 +36,7 @@ export function ModelsSection() {
     [config]
   );
 
-  const handleAddModel = useCallback(async () => {
+  const handleAddModel = useCallback(() => {
     if (!config || !newModel.provider || !newModel.modelId.trim()) return;
 
     const trimmedModelId = newModel.modelId.trim();
@@ -59,40 +49,31 @@ export function ModelsSection() {
 
     if (!api) return;
     setError(null);
-    setSaving(true);
-    try {
-      const currentModels = config[newModel.provider]?.models ?? [];
-      const updatedModels = [...currentModels, trimmedModelId];
 
-      await api.providers.setModels({ provider: newModel.provider, models: updatedModels });
+    // Optimistic update - returns new models array for API call
+    const updatedModels = updateModelsOptimistically(newModel.provider, (models) => [
+      ...models,
+      trimmedModelId,
+    ]);
+    setNewModel({ provider: "", modelId: "" });
 
-      // Refresh config
-      const cfg = await api.providers.getConfig();
-      setConfig(cfg ?? null);
-      setNewModel({ provider: "", modelId: "" });
-    } finally {
-      setSaving(false);
-    }
-  }, [api, newModel, config, modelExists]);
+    // Save in background
+    void api.providers.setModels({ provider: newModel.provider, models: updatedModels });
+  }, [api, newModel, config, modelExists, updateModelsOptimistically]);
 
   const handleRemoveModel = useCallback(
-    async (provider: string, modelId: string) => {
+    (provider: string, modelId: string) => {
       if (!config || !api) return;
-      setSaving(true);
-      try {
-        const currentModels = config[provider]?.models ?? [];
-        const updatedModels = currentModels.filter((m) => m !== modelId);
 
-        await api.providers.setModels({ provider, models: updatedModels });
+      // Optimistic update - returns new models array for API call
+      const updatedModels = updateModelsOptimistically(provider, (models) =>
+        models.filter((m) => m !== modelId)
+      );
 
-        // Refresh config
-        const cfg = await api.providers.getConfig();
-        setConfig(cfg ?? null);
-      } finally {
-        setSaving(false);
-      }
+      // Save in background
+      void api.providers.setModels({ provider, models: updatedModels });
     },
-    [api, config]
+    [api, config, updateModelsOptimistically]
   );
 
   const handleStartEdit = useCallback((provider: string, modelId: string) => {
@@ -105,7 +86,7 @@ export function ModelsSection() {
     setError(null);
   }, []);
 
-  const handleSaveEdit = useCallback(async () => {
+  const handleSaveEdit = useCallback(() => {
     if (!config || !editing || !api) return;
 
     const trimmedModelId = editing.newModelId.trim();
@@ -123,26 +104,19 @@ export function ModelsSection() {
     }
 
     setError(null);
-    setSaving(true);
-    try {
-      const currentModels = config[editing.provider]?.models ?? [];
-      const updatedModels = currentModels.map((m) =>
-        m === editing.originalModelId ? trimmedModelId : m
-      );
 
-      await api.providers.setModels({ provider: editing.provider, models: updatedModels });
+    // Optimistic update - returns new models array for API call
+    const updatedModels = updateModelsOptimistically(editing.provider, (models) =>
+      models.map((m) => (m === editing.originalModelId ? trimmedModelId : m))
+    );
+    setEditing(null);
 
-      // Refresh config
-      const cfg = await api.providers.getConfig();
-      setConfig(cfg ?? null);
-      setEditing(null);
-    } finally {
-      setSaving(false);
-    }
-  }, [api, editing, config, modelExists]);
+    // Save in background
+    void api.providers.setModels({ provider: editing.provider, models: updatedModels });
+  }, [api, editing, config, modelExists, updateModelsOptimistically]);
 
   // Show loading state while config is being fetched
-  if (config === null) {
+  if (loading || !config) {
     return (
       <div className="flex items-center justify-center gap-2 py-12">
         <Loader2 className="text-muted h-5 w-5 animate-spin" />
@@ -211,8 +185,8 @@ export function ModelsSection() {
             />
             <button
               type="button"
-              onClick={() => void handleAddModel()}
-              disabled={saving || !newModel.provider || !newModel.modelId.trim()}
+              onClick={handleAddModel}
+              disabled={!newModel.provider || !newModel.modelId.trim()}
               className="bg-accent hover:bg-accent-dark disabled:bg-border-medium flex items-center gap-1 rounded px-2 py-1 text-xs text-white transition-colors disabled:cursor-not-allowed"
             >
               <Plus className="h-3.5 w-3.5" />
@@ -237,16 +211,16 @@ export function ModelsSection() {
               isEditing={isModelEditing}
               editValue={isModelEditing ? editing.newModelId : undefined}
               editError={isModelEditing ? error : undefined}
-              saving={saving}
+              saving={false}
               hasActiveEdit={editing !== null}
               onSetDefault={() => setDefaultModel(model.fullId)}
               onStartEdit={() => handleStartEdit(model.provider, model.modelId)}
-              onSaveEdit={() => void handleSaveEdit()}
+              onSaveEdit={handleSaveEdit}
               onCancelEdit={handleCancelEdit}
               onEditChange={(value) =>
                 setEditing((prev) => (prev ? { ...prev, newModelId: value } : null))
               }
-              onRemove={() => void handleRemoveModel(model.provider, model.modelId)}
+              onRemove={() => handleRemoveModel(model.provider, model.modelId)}
             />
           );
         })}

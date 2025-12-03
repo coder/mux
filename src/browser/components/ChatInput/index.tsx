@@ -413,25 +413,40 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   }, [api]);
 
   // Check if OpenAI API key is configured (for voice input)
+  // Subscribe to config changes so key status updates immediately when set in Settings
   useEffect(() => {
-    let isMounted = true;
+    if (!api) return;
+    const abortController = new AbortController();
+    const signal = abortController.signal;
 
     const checkOpenAIKey = async () => {
       try {
-        const config = await api?.providers.getConfig();
-        if (isMounted) {
+        const config = await api.providers.getConfig();
+        if (!signal.aborted) {
           setOpenAIKeySet(config?.openai?.apiKeySet ?? false);
         }
-      } catch (error) {
-        console.error("Failed to check OpenAI API key:", error);
+      } catch {
+        // Ignore errors fetching config
       }
     };
 
+    // Initial fetch
     void checkOpenAIKey();
 
-    return () => {
-      isMounted = false;
-    };
+    // Subscribe to provider config changes via oRPC
+    (async () => {
+      try {
+        const iterator = await api.providers.onConfigChanged(undefined, { signal });
+        for await (const _ of iterator) {
+          if (signal.aborted) break;
+          void checkOpenAIKey();
+        }
+      } catch {
+        // Subscription cancelled via abort signal - expected on cleanup
+      }
+    })();
+
+    return () => abortController.abort();
   }, [api]);
 
   // Allow external components (e.g., CommandPalette, Queued message edits) to insert text
