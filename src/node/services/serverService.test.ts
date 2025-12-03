@@ -1,5 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import * as fs from "fs/promises";
+import * as path from "path";
+import * as os from "os";
+import * as net from "net";
 import { ServerService } from "./serverService";
+import type { ORPCContext } from "@/node/orpc/context";
+import { ServerLockDataSchema } from "./serverLockfile";
 
 describe("ServerService", () => {
   test("initializes with null path", async () => {
@@ -27,5 +33,149 @@ describe("ServerService", () => {
     expect(await service.getLaunchProject()).toBe("/test/path");
     service.setLaunchProject(null);
     expect(await service.getLaunchProject()).toBeNull();
+  });
+});
+
+describe("ServerService.startServer", () => {
+  let tempDir: string;
+
+  // Minimal context stub - server creation only needs the shape, not real services
+  const stubContext: Partial<ORPCContext> = {};
+
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-server-test-"));
+  });
+
+  afterEach(async () => {
+    // Restore permissions before cleanup
+    try {
+      await fs.chmod(tempDir, 0o755);
+    } catch {
+      // ignore
+    }
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  /** Check if a port is in use by attempting to connect to it */
+  async function isPortListening(port: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const socket = new net.Socket();
+      socket.setTimeout(100);
+      socket.on("connect", () => {
+        socket.destroy();
+        resolve(true);
+      });
+      socket.on("timeout", () => {
+        socket.destroy();
+        resolve(false);
+      });
+      socket.on("error", () => {
+        resolve(false);
+      });
+      socket.connect(port, "127.0.0.1");
+    });
+  }
+
+  test("cleans up server when lockfile acquisition fails", async () => {
+    // Skip on Windows where chmod doesn't work the same way
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const service = new ServerService();
+
+    // Make muxHome read-only so lockfile.acquire() will fail
+    await fs.chmod(tempDir, 0o444);
+
+    let thrownError: Error | null = null;
+
+    try {
+      // Start server - this should fail when trying to write lockfile
+      await service.startServer({
+        muxHome: tempDir,
+        context: stubContext as ORPCContext,
+        authToken: "test-token",
+        port: 0, // random port
+      });
+    } catch (err) {
+      thrownError = err as Error;
+    }
+
+    // Verify that an error was thrown
+    expect(thrownError).not.toBeNull();
+    expect(thrownError!.message).toMatch(/EACCES|permission denied/i);
+
+    // Verify the server is NOT left running
+    expect(service.isServerRunning()).toBe(false);
+    expect(service.getServerInfo()).toBeNull();
+  });
+
+  test("does not delete another process's lockfile when start fails", async () => {
+    const service = new ServerService();
+
+    // Create a lockfile simulating another running server (use our own PID so it appears "alive")
+    const lockPath = path.join(tempDir, "server.lock");
+    const existingLockData = {
+      pid: process.pid,
+      baseUrl: "http://127.0.0.1:9999",
+      token: "other-server-token",
+      startedAt: new Date().toISOString(),
+    };
+    await fs.writeFile(lockPath, JSON.stringify(existingLockData, null, 2));
+
+    // Try to start - should fail due to existing server
+    let thrownError: Error | null = null;
+    try {
+      await service.startServer({
+        muxHome: tempDir,
+        context: stubContext as ORPCContext,
+        authToken: "test-token",
+        port: 0,
+      });
+    } catch (err) {
+      thrownError = err as Error;
+    }
+
+    expect(thrownError).not.toBeNull();
+    expect(thrownError!.message).toMatch(/already running/i);
+
+    // Critical: call stopServer (simulating cleanup in finally block)
+    await service.stopServer();
+
+    // Verify the OTHER process's lockfile was NOT deleted
+    const lockContent = await fs.readFile(lockPath, "utf-8");
+    const lockData = ServerLockDataSchema.parse(JSON.parse(lockContent));
+    expect(lockData.baseUrl).toBe("http://127.0.0.1:9999");
+    expect(lockData.token).toBe("other-server-token");
+  });
+
+  test("successful start creates lockfile and server", async () => {
+    const service = new ServerService();
+
+    const info = await service.startServer({
+      muxHome: tempDir,
+      context: stubContext as ORPCContext,
+      authToken: "test-token",
+      port: 0,
+    });
+
+    try {
+      expect(info.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+      expect(info.token).toBe("test-token");
+      expect(service.isServerRunning()).toBe(true);
+
+      // Verify lockfile was created
+      const lockPath = path.join(tempDir, "server.lock");
+      const lockContent = await fs.readFile(lockPath, "utf-8");
+      const lockData = ServerLockDataSchema.parse(JSON.parse(lockContent));
+      expect(lockData.baseUrl).toBe(info.baseUrl);
+      expect(lockData.token).toBe("test-token");
+
+      // Verify server is actually listening
+      const port = parseInt(info.baseUrl.split(":")[2], 10);
+      expect(await isPortListening(port)).toBe(true);
+    } finally {
+      await service.stopServer();
+    }
   });
 });

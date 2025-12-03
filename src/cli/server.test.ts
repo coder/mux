@@ -24,7 +24,7 @@ import type { ORPCContext } from "@/node/orpc/context";
 import { Config } from "@/node/config";
 import { ServiceContainer } from "@/node/services/serviceContainer";
 import type { RouterClient } from "@orpc/server";
-import { createOrpcServer, type OrpcServer } from "./orpcServer";
+import { createOrpcServer, type OrpcServer } from "@/node/orpc/server";
 
 // --- Test Server Factory ---
 

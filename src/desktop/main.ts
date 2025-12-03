@@ -1,8 +1,10 @@
 // Enable source map support for better error stack traces in production
 import "source-map-support/register";
+import { randomBytes } from "crypto";
 import { RPCHandler } from "@orpc/server/message-port";
 import { onError } from "@orpc/server";
 import { router } from "@/node/orpc/router";
+import { ServerLockfile } from "@/node/services/serverLockfile";
 import "disposablestack/auto";
 
 import type { MenuItemConstructorOptions } from "electron";
@@ -304,7 +306,13 @@ async function loadServices(): Promise<void> {
   services = new ServiceContainerClass(config);
   await services.initialize();
 
-  const orpcHandler = new RPCHandler(router(), {
+  // Generate auth token (use env var or random per-session)
+  const authToken = process.env.MUX_SERVER_AUTH_TOKEN ?? randomBytes(32).toString("hex");
+
+  // Single router instance with auth middleware - used for both MessagePort and HTTP/WS
+  const orpcRouter = router(authToken);
+
+  const orpcHandler = new RPCHandler(orpcRouter, {
     interceptors: [
       onError((error) => {
         console.error("ORPC Error:", error);
@@ -312,24 +320,56 @@ async function loadServices(): Promise<void> {
     ],
   });
 
+  // Build the oRPC context with all services
+  const orpcContext = {
+    projectService: services.projectService,
+    workspaceService: services.workspaceService,
+    providerService: services.providerService,
+    terminalService: services.terminalService,
+    windowService: services.windowService,
+    updateService: services.updateService,
+    tokenizerService: services.tokenizerService,
+    serverService: services.serverService,
+    menuEventService: services.menuEventService,
+    voiceService: services.voiceService,
+  };
+
   electronIpcMain.on("start-orpc-server", (event) => {
     const [serverPort] = event.ports;
     orpcHandler.upgrade(serverPort, {
       context: {
-        projectService: services!.projectService,
-        workspaceService: services!.workspaceService,
-        providerService: services!.providerService,
-        terminalService: services!.terminalService,
-        windowService: services!.windowService,
-        updateService: services!.updateService,
-        tokenizerService: services!.tokenizerService,
-        serverService: services!.serverService,
-        menuEventService: services!.menuEventService,
-        voiceService: services!.voiceService,
+        ...orpcContext,
+        // Inject synthetic auth header so auth middleware passes
+        headers: { authorization: `Bearer ${authToken}` },
       },
     });
     serverPort.start();
   });
+
+  // Start HTTP/WS API server for CLI access (unless explicitly disabled)
+  if (process.env.MUX_NO_API_SERVER !== "1") {
+    const lockfile = new ServerLockfile(config.rootDir);
+    const existing = await lockfile.read();
+
+    if (existing) {
+      console.log(`[${timestamp()}] API server already running at ${existing.baseUrl}, skipping`);
+    } else {
+      try {
+        const port = process.env.MUX_SERVER_PORT ? parseInt(process.env.MUX_SERVER_PORT, 10) : 0;
+        const serverInfo = await services.serverService.startServer({
+          muxHome: config.rootDir,
+          context: orpcContext,
+          router: orpcRouter,
+          authToken,
+          port,
+        });
+        console.log(`[${timestamp()}] API server started at ${serverInfo.baseUrl}`);
+      } catch (error) {
+        console.error(`[${timestamp()}] Failed to start API server:`, error);
+        // Non-fatal - continue without API server
+      }
+    }
+  }
 
   // Set TerminalWindowManager for desktop mode (pop-out terminal windows)
   const terminalWindowManager = new TerminalWindowManagerClass(config);
@@ -524,6 +564,13 @@ if (gotTheLock) {
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") {
       app.quit();
+    }
+  });
+
+  app.on("before-quit", () => {
+    console.log(`[${timestamp()}] App before-quit - cleaning up API server...`);
+    if (services) {
+      void services.serverService.stopServer();
     }
   });
 

@@ -4,11 +4,12 @@
  */
 import { Config } from "@/node/config";
 import { ServiceContainer } from "@/node/services/serviceContainer";
-import { migrateLegacyMuxHome } from "@/common/constants/paths";
+import { ServerLockfile } from "@/node/services/serverLockfile";
+import { getMuxHome, migrateLegacyMuxHome } from "@/common/constants/paths";
 import type { BrowserWindow } from "electron";
 import { Command } from "commander";
 import { validateProjectPath } from "@/node/utils/pathUtils";
-import { createOrpcServer } from "./orpcServer";
+import { createOrpcServer } from "@/node/orpc/server";
 import type { ORPCContext } from "@/node/orpc/context";
 
 const program = new Command();
@@ -44,6 +45,15 @@ const mockWindow: BrowserWindow = {
 (async () => {
   migrateLegacyMuxHome();
 
+  // Check for existing server (Electron or another mux server instance)
+  const lockfile = new ServerLockfile(getMuxHome());
+  const existing = await lockfile.read();
+  if (existing) {
+    console.error(`Error: mux API server is already running at ${existing.baseUrl}`);
+    console.error(`Use 'mux api' commands to interact with the running instance.`);
+    process.exit(1);
+  }
+
   const config = new Config();
   const serviceContainer = new ServiceContainer(config);
   await serviceContainer.initialize();
@@ -78,7 +88,22 @@ const mockWindow: BrowserWindow = {
     serveStatic: true,
   });
 
+  // Acquire lockfile so other instances know we're running
+  await lockfile.acquire(server.baseUrl, AUTH_TOKEN ?? "");
+
   console.log(`Server is running on ${server.baseUrl}`);
+
+  // Cleanup on shutdown
+  const cleanup = () => {
+    console.log("Shutting down server...");
+    void lockfile
+      .release()
+      .then(() => server.close())
+      .then(() => process.exit(0));
+  };
+
+  process.on("SIGINT", cleanup);
+  process.on("SIGTERM", cleanup);
 })().catch((error) => {
   console.error("Failed to initialize server:", error);
   process.exit(1);

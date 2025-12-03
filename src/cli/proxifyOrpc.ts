@@ -75,6 +75,28 @@ function isZod4Like(value: unknown): value is Zod4Like {
 }
 
 /**
+ * Check if a schema is z.void() or z.undefined().
+ * These schemas accept `undefined` but not `{}`.
+ */
+function isVoidOrUndefinedSchema(schema: unknown): boolean {
+  if (!isZod4Like(schema)) return false;
+  const def = getDef(schema);
+  return def?.type === "void" || def?.type === "undefined";
+}
+
+/**
+ * Check if a value is an empty object `{}`.
+ */
+function isEmptyObject(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 0
+  );
+}
+
+/**
  * Get the def from a Zod 4 schema (handles both .def and ._def).
  */
 function getDef(schema: Zod4Like): Zod4Def | undefined {
@@ -572,9 +594,13 @@ function createProcedureProxy(
   path: string[]
 ): OrpcProcedureLike {
   const originalDef = procedure["~orpc"];
+  const originalInputSchema = originalDef.inputSchema;
+
+  // Check if the original schema was void/undefined - trpc-cli sends {} but server expects undefined
+  const isVoidInput = isVoidOrUndefinedSchema(originalInputSchema);
 
   // Enhance input schema to show rich field descriptions in CLI help
-  const enhancedInputSchema = enhanceInputSchema(originalDef.inputSchema);
+  const enhancedInputSchema = enhanceInputSchema(originalInputSchema);
 
   // Navigate to the client method using the path (lazily creates client on call)
   const getClientMethod = (): ((input: unknown) => Promise<unknown>) => {
@@ -604,7 +630,9 @@ function createProcedureProxy(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       handler: async (opts: { input: unknown }): Promise<any> => {
         const clientMethod = getClientMethod();
-        return clientMethod(opts.input);
+        // trpc-cli sends {} for void inputs, but the server expects undefined
+        const input = isVoidInput && isEmptyObject(opts.input) ? undefined : opts.input;
+        return clientMethod(input);
       },
     },
   };

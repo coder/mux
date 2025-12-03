@@ -13,7 +13,7 @@ import { WebSocketServer } from "ws";
 import { RPCHandler } from "@orpc/server/node";
 import { RPCHandler as ORPCWebSocketServerHandler } from "@orpc/server/ws";
 import { onError } from "@orpc/server";
-import { router } from "@/node/orpc/router";
+import { router, type AppRouter } from "@/node/orpc/router";
 import type { ORPCContext } from "@/node/orpc/context";
 import { extractWsHeaders } from "@/node/orpc/authMiddleware";
 import { VERSION } from "@/version";
@@ -30,12 +30,14 @@ export interface OrpcServerOptions {
   context: ORPCContext;
   /** Whether to serve static files and SPA fallback (default: false) */
   serveStatic?: boolean;
-  /** Directory to serve static files from (default: __dirname/..) */
+  /** Directory to serve static files from (default: dist/ relative to dist/node/orpc/) */
   staticDir?: string;
   /** Custom error handler for oRPC errors */
   onOrpcError?: (error: unknown) => void;
-  /** Optional bearer token for HTTP auth */
+  /** Optional bearer token for HTTP auth (used if router not provided) */
   authToken?: string;
+  /** Optional pre-created router (if not provided, creates router(authToken)) */
+  router?: AppRouter;
 }
 
 export interface OrpcServer {
@@ -71,8 +73,10 @@ export async function createOrpcServer({
   authToken,
   context,
   serveStatic = false,
-  staticDir = path.join(__dirname, ".."),
+  // From dist/node/orpc/, go up 2 levels to reach dist/ where index.html lives
+  staticDir = path.join(__dirname, "../.."),
   onOrpcError = (error) => log.error("ORPC Error:", error),
+  router: existingRouter,
 }: OrpcServerOptions): Promise<OrpcServer> {
   // Express app setup
   const app = express();
@@ -94,7 +98,7 @@ export async function createOrpcServer({
     res.json({ ...VERSION, mode: "server" });
   });
 
-  const orpcRouter = router(authToken);
+  const orpcRouter = existingRouter ?? router(authToken);
 
   // oRPC HTTP handler
   const orpcHandler = new RPCHandler(orpcRouter, {
@@ -147,13 +151,16 @@ export async function createOrpcServer({
   }
   const actualPort = address.port;
 
+  // Wildcard addresses (0.0.0.0, ::) are not routable - convert to loopback for lockfile
+  const connectableHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
+
   return {
     httpServer,
     wsServer,
     app,
     port: actualPort,
-    baseUrl: `http://${host}:${actualPort}`,
-    wsUrl: `ws://${host}:${actualPort}/orpc/ws`,
+    baseUrl: `http://${connectableHost}:${actualPort}`,
+    wsUrl: `ws://${connectableHost}:${actualPort}/orpc/ws`,
     close: async () => {
       // Close WebSocket server first
       wsServer.close();

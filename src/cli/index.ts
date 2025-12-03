@@ -40,8 +40,9 @@ if (subcommand === "run") {
   require("./server");
 } else if (subcommand === "api") {
   process.argv.splice(2, 1);
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  require("./api");
+  // Dynamic import required: trpc-cli is ESM-only and can't be require()'d
+  // eslint-disable-next-line no-restricted-syntax
+  void import("./api");
 } else if (
   subcommand === "desktop" ||
   (isElectron && (subcommand === undefined || isElectronLaunchArg))
