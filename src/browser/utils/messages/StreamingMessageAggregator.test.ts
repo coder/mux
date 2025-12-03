@@ -517,6 +517,40 @@ describe("StreamingMessageAggregator", () => {
       expect(aggregator.getActiveStreamCumulativeProviderMetadata("msg-1")).toBeUndefined();
     });
 
+    test("stores and retrieves step providerMetadata for cache creation display", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-1",
+        usage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+        cumulativeUsage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+        providerMetadata: {
+          anthropic: { cacheCreationInputTokens: 800 },
+        },
+      });
+
+      expect(aggregator.getActiveStreamStepProviderMetadata("msg-1")).toEqual({
+        anthropic: { cacheCreationInputTokens: 800 },
+      });
+    });
+
+    test("step providerMetadata is undefined when not provided", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-1",
+        usage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+        cumulativeUsage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+        // No providerMetadata
+      });
+
+      expect(aggregator.getActiveStreamStepProviderMetadata("msg-1")).toBeUndefined();
+    });
+
     test("clearTokenState clears all usage tracking (step, cumulative, metadata)", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
@@ -526,11 +560,13 @@ describe("StreamingMessageAggregator", () => {
         messageId: "msg-1",
         usage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
         cumulativeUsage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+        providerMetadata: { anthropic: { cacheCreationInputTokens: 300 } },
         cumulativeProviderMetadata: { anthropic: { cacheCreationInputTokens: 500 } },
       });
 
       // All should be defined
       expect(aggregator.getActiveStreamUsage("msg-1")).toBeDefined();
+      expect(aggregator.getActiveStreamStepProviderMetadata("msg-1")).toBeDefined();
       expect(aggregator.getActiveStreamCumulativeUsage("msg-1")).toBeDefined();
       expect(aggregator.getActiveStreamCumulativeProviderMetadata("msg-1")).toBeDefined();
 
@@ -538,6 +574,7 @@ describe("StreamingMessageAggregator", () => {
 
       // All should be cleared
       expect(aggregator.getActiveStreamUsage("msg-1")).toBeUndefined();
+      expect(aggregator.getActiveStreamStepProviderMetadata("msg-1")).toBeUndefined();
       expect(aggregator.getActiveStreamCumulativeUsage("msg-1")).toBeUndefined();
       expect(aggregator.getActiveStreamCumulativeProviderMetadata("msg-1")).toBeUndefined();
     });

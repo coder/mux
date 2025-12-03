@@ -969,10 +969,12 @@ export class StreamManager extends EventEmitter {
               type: "usage-delta",
               workspaceId: workspaceId as string,
               messageId: streamInfo.messageId,
-              usage: finishStepPart.usage, // For context window display
-              cumulativeUsage: streamInfo.cumulativeUsage, // For live cost display
-              cumulativeProviderMetadata: streamInfo.cumulativeProviderMetadata, // For live cache costs
-              providerMetadata: finishStepPart.providerMetadata, // For context window cache display
+              // Step-level (for context window display)
+              usage: finishStepPart.usage,
+              providerMetadata: finishStepPart.providerMetadata,
+              // Cumulative (for live cost display)
+              cumulativeUsage: streamInfo.cumulativeUsage,
+              cumulativeProviderMetadata: streamInfo.cumulativeProviderMetadata,
             };
             this.emit("usage-delta", usageEvent);
             break;

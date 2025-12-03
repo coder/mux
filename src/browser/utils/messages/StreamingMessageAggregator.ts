@@ -75,15 +75,17 @@ export class StreamingMessageAggregator {
   // Delta history for token counting and TPS calculation
   private deltaHistory = new Map<string, DeltaRecordStorage>();
 
-  // Active stream step usage (updated on each stream-step event)
-  // Tracks last step's usage for context window display
-  private activeStreamStepUsage = new Map<string, LanguageModelV2Usage>();
-  // Tracks step provider metadata for context window cache display
-  private activeStreamStepProviderMetadata = new Map<string, Record<string, unknown>>();
-  // Tracks cumulative usage across all steps for live cost display
-  private activeStreamCumulativeUsage = new Map<string, LanguageModelV2Usage>();
-  // Tracks cumulative provider metadata for live cost display (with cache creation tokens)
-  private activeStreamCumulativeProviderMetadata = new Map<string, Record<string, unknown>>();
+  // Active stream usage tracking (updated on each usage-delta event)
+  // Consolidates step-level (context window) and cumulative (cost) usage by messageId
+  private activeStreamUsage = new Map<
+    string,
+    {
+      // Step-level: this step only (for context window display)
+      step: { usage: LanguageModelV2Usage; providerMetadata?: Record<string, unknown> };
+      // Cumulative: sum across all steps (for live cost display)
+      cumulative: { usage: LanguageModelV2Usage; providerMetadata?: Record<string, unknown> };
+    }
+  >();
 
   // Current TODO list (updated when todo_write succeeds, cleared on stream end)
   // Stream-scoped: automatically reset when stream completes
@@ -1062,45 +1064,41 @@ export class StreamingMessageAggregator {
    */
   clearTokenState(messageId: string): void {
     this.deltaHistory.delete(messageId);
-    this.activeStreamStepUsage.delete(messageId);
-    this.activeStreamStepProviderMetadata.delete(messageId);
-    this.activeStreamCumulativeUsage.delete(messageId);
-    this.activeStreamCumulativeProviderMetadata.delete(messageId);
+    this.activeStreamUsage.delete(messageId);
   }
 
   /**
    * Handle usage-delta event: update usage tracking for active stream
    */
   handleUsageDelta(data: UsageDeltaEvent): void {
-    // Store last step's usage for context window display
-    this.activeStreamStepUsage.set(data.messageId, data.usage);
-    // Store step provider metadata for context window cache display
-    if (data.providerMetadata) {
-      this.activeStreamStepProviderMetadata.set(data.messageId, data.providerMetadata);
-    }
-    // Store cumulative usage for cost display
-    this.activeStreamCumulativeUsage.set(data.messageId, data.cumulativeUsage);
-    // Store cumulative provider metadata for live cost display (with cache creation tokens)
-    if (data.cumulativeProviderMetadata) {
-      this.activeStreamCumulativeProviderMetadata.set(
-        data.messageId,
-        data.cumulativeProviderMetadata
-      );
-    }
+    this.activeStreamUsage.set(data.messageId, {
+      step: { usage: data.usage, providerMetadata: data.providerMetadata },
+      cumulative: {
+        usage: data.cumulativeUsage,
+        providerMetadata: data.cumulativeProviderMetadata,
+      },
+    });
   }
 
   /**
    * Get active stream usage for context window display (last step's inputTokens = context size)
    */
   getActiveStreamUsage(messageId: string): LanguageModelV2Usage | undefined {
-    return this.activeStreamStepUsage.get(messageId);
+    return this.activeStreamUsage.get(messageId)?.step.usage;
+  }
+
+  /**
+   * Get step provider metadata for context window cache display
+   */
+  getActiveStreamStepProviderMetadata(messageId: string): Record<string, unknown> | undefined {
+    return this.activeStreamUsage.get(messageId)?.step.providerMetadata;
   }
 
   /**
    * Get active stream cumulative usage for cost display (sum of all steps)
    */
   getActiveStreamCumulativeUsage(messageId: string): LanguageModelV2Usage | undefined {
-    return this.activeStreamCumulativeUsage.get(messageId);
+    return this.activeStreamUsage.get(messageId)?.cumulative.usage;
   }
 
   /**
@@ -1109,13 +1107,6 @@ export class StreamingMessageAggregator {
   getActiveStreamCumulativeProviderMetadata(
     messageId: string
   ): Record<string, unknown> | undefined {
-    return this.activeStreamCumulativeProviderMetadata.get(messageId);
-  }
-
-  /**
-   * Get step provider metadata for context window cache display
-   */
-  getActiveStreamStepProviderMetadata(messageId: string): Record<string, unknown> | undefined {
-    return this.activeStreamStepProviderMetadata.get(messageId);
+    return this.activeStreamUsage.get(messageId)?.cumulative.providerMetadata;
   }
 }

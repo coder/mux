@@ -276,4 +276,68 @@ describe("createDisplayUsage", () => {
     expect(result!.input.tokens).toBe(1000);
     expect(result!.cached.tokens).toBe(0);
   });
+
+  describe("Anthropic cache creation tokens from providerMetadata", () => {
+    // Cache creation tokens are Anthropic-specific and only available in
+    // providerMetadata.anthropic.cacheCreationInputTokens, not in LanguageModelV2Usage.
+    // This is critical for liveUsage display during streaming.
+
+    test("extracts cacheCreationInputTokens from providerMetadata", () => {
+      const usage: LanguageModelV2Usage = {
+        inputTokens: 1000,
+        outputTokens: 50,
+        totalTokens: 1050,
+      };
+
+      const result = createDisplayUsage(usage, "anthropic:claude-sonnet-4-20250514", {
+        anthropic: { cacheCreationInputTokens: 800 },
+      });
+
+      expect(result).toBeDefined();
+      expect(result!.cacheCreate.tokens).toBe(800);
+    });
+
+    test("cacheCreate is 0 when providerMetadata is undefined", () => {
+      const usage: LanguageModelV2Usage = {
+        inputTokens: 1000,
+        outputTokens: 50,
+        totalTokens: 1050,
+      };
+
+      const result = createDisplayUsage(usage, "anthropic:claude-sonnet-4-20250514");
+
+      expect(result).toBeDefined();
+      expect(result!.cacheCreate.tokens).toBe(0);
+    });
+
+    test("cacheCreate is 0 when anthropic metadata lacks cacheCreationInputTokens", () => {
+      const usage: LanguageModelV2Usage = {
+        inputTokens: 1000,
+        outputTokens: 50,
+        totalTokens: 1050,
+      };
+
+      const result = createDisplayUsage(usage, "anthropic:claude-sonnet-4-20250514", {
+        anthropic: { someOtherField: 123 },
+      });
+
+      expect(result).toBeDefined();
+      expect(result!.cacheCreate.tokens).toBe(0);
+    });
+
+    test("handles gateway Anthropic model with cache creation", () => {
+      const usage: LanguageModelV2Usage = {
+        inputTokens: 2000,
+        outputTokens: 100,
+        totalTokens: 2100,
+      };
+
+      const result = createDisplayUsage(usage, "mux-gateway:anthropic/claude-sonnet-4-5", {
+        anthropic: { cacheCreationInputTokens: 1500 },
+      });
+
+      expect(result).toBeDefined();
+      expect(result!.cacheCreate.tokens).toBe(1500);
+    });
+  });
 });
