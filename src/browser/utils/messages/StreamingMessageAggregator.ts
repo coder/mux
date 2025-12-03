@@ -564,6 +564,28 @@ export class StreamingMessageAggregator {
       // Clean up stream-scoped state (active stream tracking, TODOs)
       this.cleanupStreamState(data.messageId);
       this.invalidateCache();
+    } else {
+      // Pre-stream error (e.g., API key not configured before streaming starts)
+      // Create a synthetic error message since there's no active stream to attach to
+      // Get the highest historySequence from existing messages so this appears at the end
+      const maxSequence = Math.max(
+        0,
+        ...Array.from(this.messages.values()).map((m) => m.metadata?.historySequence ?? 0)
+      );
+      const errorMessage: MuxMessage = {
+        id: data.messageId,
+        role: "assistant",
+        parts: [],
+        metadata: {
+          partial: true,
+          error: data.error,
+          errorType: data.errorType,
+          timestamp: Date.now(),
+          historySequence: maxSequence + 1,
+        },
+      };
+      this.messages.set(data.messageId, errorMessage);
+      this.invalidateCache();
     }
   }
 

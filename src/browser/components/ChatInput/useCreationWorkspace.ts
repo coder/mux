@@ -9,6 +9,7 @@ import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePer
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import {
   getInputKey,
+  getModelKey,
   getModeKey,
   getPendingScopeId,
   getProjectScopeId,
@@ -26,6 +27,13 @@ interface UseCreationWorkspaceOptions {
 
 function syncCreationPreferences(projectPath: string, workspaceId: string): void {
   const projectScopeId = getProjectScopeId(projectPath);
+
+  // Sync model from project scope to workspace scope
+  // This ensures the model used for creation is persisted for future resumes
+  const projectModel = readPersistedState<string | null>(getModelKey(projectScopeId), null);
+  if (projectModel) {
+    updatePersistedState(getModelKey(workspaceId), projectModel);
+  }
 
   const projectMode = readPersistedState<UIMode | null>(getModeKey(projectScopeId), null);
   if (projectMode) {

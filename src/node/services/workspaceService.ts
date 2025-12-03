@@ -611,6 +611,11 @@ export class WorkspaceService extends EventEmitter {
       // Send the first message, surfacing errors to the chat UI
       void session.sendMessage(message, options).then((result) => {
         if (!result.success) {
+          log.error("sendMessage failed during workspace creation", {
+            workspaceId,
+            errorType: result.error.type,
+            error: result.error,
+          });
           const { message: errorMessage, errorType } = formatSendMessageError(result.error);
           const streamError: StreamErrorMessage = {
             type: "stream-error",
