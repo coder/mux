@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { getRetryStateKey, getAutoRetryKey } from "@/common/constants/storage";
+import { getRetryStateKey, getAutoRetryKey, VIM_ENABLED_KEY } from "@/common/constants/storage";
+import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { cn } from "@/common/lib/utils";
 import type { RetryState } from "@/browser/hooks/useResumeManager";
@@ -31,6 +32,12 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, classNa
     getAutoRetryKey(workspaceId),
     true, // Default to true
     { listener: true }
+  );
+
+  // Read vim mode for displaying correct stop keybind
+  const [vimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, { listener: true });
+  const stopKeybind = formatKeybind(
+    vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL
   );
 
   // Use persisted state for retry tracking (survives workspace switches)
@@ -149,7 +156,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, classNa
             className="border-warning font-primary text-warning hover:bg-warning-overlay cursor-pointer rounded border bg-transparent px-4 py-2 text-xs font-semibold whitespace-nowrap transition-all duration-200 hover:-translate-y-px active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50"
             onClick={handleStopAutoRetry}
           >
-            Stop (Ctrl+C)
+            Stop ({stopKeybind})
           </button>
         </div>
         {lastError && (
