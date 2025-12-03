@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import { ChevronDown, ChevronRight, Check, X } from "lucide-react";
-import type { ProvidersConfigMap } from "../types";
 import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
 import type { ProviderName } from "@/common/constants/providers";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import { useAPI } from "@/browser/contexts/API";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 
 interface FieldConfig {
   key: string;
@@ -66,23 +66,13 @@ function getProviderFields(provider: ProviderName): FieldConfig[] {
 
 export function ProvidersSection() {
   const { api } = useAPI();
-  const [config, setConfig] = useState<ProvidersConfigMap>({});
+  const { config, updateOptimistically } = useProvidersConfig();
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
   const [editingField, setEditingField] = useState<{
     provider: string;
     field: string;
   } | null>(null);
   const [editValue, setEditValue] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  // Load config on mount
-  useEffect(() => {
-    if (!api) return;
-    void (async () => {
-      const cfg = await api.providers.getConfig();
-      setConfig(cfg);
-    })();
-  }, [api]);
 
   const handleToggleProvider = (provider: string) => {
     setExpandedProvider((prev) => (prev === provider ? null : provider));
@@ -102,41 +92,48 @@ export function ProvidersSection() {
     setEditValue("");
   };
 
-  const handleSaveEdit = useCallback(async () => {
+  const handleSaveEdit = useCallback(() => {
     if (!editingField || !api) return;
 
-    setSaving(true);
-    try {
-      const { provider, field } = editingField;
-      await api.providers.setProviderConfig({ provider, keyPath: [field], value: editValue });
+    const { provider, field } = editingField;
 
-      // Refresh config
-      const cfg = await api.providers.getConfig();
-      setConfig(cfg);
-      setEditingField(null);
-      setEditValue("");
-    } finally {
-      setSaving(false);
+    // Optimistic update for instant feedback
+    if (field === "apiKey") {
+      updateOptimistically(provider, { apiKeySet: editValue !== "" });
+    } else if (field === "baseUrl") {
+      updateOptimistically(provider, { baseUrl: editValue || undefined });
+    } else if (field === "voucher") {
+      updateOptimistically(provider, { voucherSet: editValue !== "" });
     }
-  }, [api, editingField, editValue]);
+
+    setEditingField(null);
+    setEditValue("");
+
+    // Save in background
+    void api.providers.setProviderConfig({ provider, keyPath: [field], value: editValue });
+  }, [api, editingField, editValue, updateOptimistically]);
 
   const handleClearField = useCallback(
-    async (provider: string, field: string) => {
+    (provider: string, field: string) => {
       if (!api) return;
-      setSaving(true);
-      try {
-        await api.providers.setProviderConfig({ provider, keyPath: [field], value: "" });
-        const cfg = await api.providers.getConfig();
-        setConfig(cfg);
-      } finally {
-        setSaving(false);
+
+      // Optimistic update for instant feedback
+      if (field === "apiKey") {
+        updateOptimistically(provider, { apiKeySet: false });
+      } else if (field === "baseUrl") {
+        updateOptimistically(provider, { baseUrl: undefined });
+      } else if (field === "voucher") {
+        updateOptimistically(provider, { voucherSet: false });
       }
+
+      // Save in background
+      void api.providers.setProviderConfig({ provider, keyPath: [field], value: "" });
     },
-    [api]
+    [api, updateOptimistically]
   );
 
   const isConfigured = (provider: string): boolean => {
-    const providerConfig = config[provider];
+    const providerConfig = config?.[provider];
     if (!providerConfig) return false;
 
     // For Bedrock, check if any AWS credential field is set
@@ -155,7 +152,7 @@ export function ProvidersSection() {
   };
 
   const getFieldValue = (provider: string, field: string): string | undefined => {
-    const providerConfig = config[provider];
+    const providerConfig = config?.[provider];
     if (!providerConfig) return undefined;
 
     // For bedrock, check aws nested object for region
@@ -169,7 +166,7 @@ export function ProvidersSection() {
   };
 
   const isFieldSet = (provider: string, field: string, fieldConfig: FieldConfig): boolean => {
-    const providerConfig = config[provider];
+    const providerConfig = config?.[provider];
     if (!providerConfig) return false;
 
     if (fieldConfig.type === "secret") {
@@ -261,14 +258,13 @@ export function ProvidersSection() {
                             className="bg-modal-bg border-border-medium focus:border-accent flex-1 rounded border px-2 py-1.5 font-mono text-xs focus:outline-none"
                             autoFocus
                             onKeyDown={(e) => {
-                              if (e.key === "Enter") void handleSaveEdit();
+                              if (e.key === "Enter") handleSaveEdit();
                               if (e.key === "Escape") handleCancelEdit();
                             }}
                           />
                           <button
                             type="button"
-                            onClick={() => void handleSaveEdit()}
-                            disabled={saving}
+                            onClick={handleSaveEdit}
                             className="p-1 text-green-500 hover:text-green-400"
                           >
                             <Check className="h-4 w-4" />
@@ -296,8 +292,7 @@ export function ProvidersSection() {
                               : fieldConfig.type === "secret" && fieldIsSet) && (
                               <button
                                 type="button"
-                                onClick={() => void handleClearField(provider, fieldConfig.key)}
-                                disabled={saving}
+                                onClick={() => handleClearField(provider, fieldConfig.key)}
                                 className="text-muted hover:text-error text-xs"
                               >
                                 Clear
