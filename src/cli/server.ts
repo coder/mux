@@ -13,7 +13,7 @@ import type { ORPCContext } from "@/node/orpc/context";
 
 const program = new Command();
 program
-  .name("mux-server")
+  .name("mux server")
   .description("HTTP/WebSocket ORPC server for mux")
   .option("-h, --host <host>", "bind to specific host", "localhost")
   .option("-p, --port <port>", "bind to specific port", "3000")

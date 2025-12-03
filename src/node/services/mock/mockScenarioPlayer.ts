@@ -251,7 +251,7 @@ export class MockScenarioPlayer {
       try {
         await handler();
       } catch (error) {
-        console.error(`[MockScenarioPlayer] Event handler error for ${workspaceId}:`, error);
+        log.error(`Event handler error for ${workspaceId}:`, error);
       }
     }
 
@@ -326,7 +326,7 @@ export class MockScenarioPlayer {
         try {
           tokens = await tokenizeWithMockModel(event.text, "stream-delta text");
         } catch (error) {
-          console.error("[MockScenarioPlayer] tokenize failed for stream-delta", error);
+          log.error("tokenize failed for stream-delta", error);
           throw error;
         }
         const payload: StreamDeltaEvent = {
@@ -386,7 +386,7 @@ export class MockScenarioPlayer {
             );
 
             if (!updateResult.success) {
-              console.error(`Failed to update history for ${messageId}: ${updateResult.error}`);
+              log.error(`Failed to update history for ${messageId}: ${updateResult.error}`);
             }
           }
         }

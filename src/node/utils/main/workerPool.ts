@@ -1,5 +1,6 @@
 import { Worker } from "node:worker_threads";
 import { join, dirname, sep, extname } from "node:path";
+import { log } from "@/node/services/log";
 
 interface WorkerRequest {
   messageId: number;
@@ -62,7 +63,7 @@ const worker = new Worker(workerPath);
 worker.on("message", (response: WorkerResponse) => {
   const pending = pendingPromises.get(response.messageId);
   if (!pending) {
-    console.error(`[workerPool] No pending promise for messageId ${response.messageId}`);
+    log.error(`No pending promise for messageId ${response.messageId}`);
     return;
   }
 
@@ -79,7 +80,7 @@ worker.on("message", (response: WorkerResponse) => {
 
 // Handle worker errors
 worker.on("error", (error) => {
-  console.error("[workerPool] Worker error:", error);
+  log.error("Worker error:", error);
   // Reject all pending promises
   for (const pending of pendingPromises.values()) {
     pending.reject(error);
@@ -90,7 +91,7 @@ worker.on("error", (error) => {
 // Handle worker exit
 worker.on("exit", (code) => {
   if (code !== 0) {
-    console.error(`[workerPool] Worker stopped with exit code ${code}`);
+    log.error(`Worker stopped with exit code ${code}`);
     const error = new Error(`Worker stopped with exit code ${code}`);
     for (const pending of pendingPromises.values()) {
       pending.reject(error);

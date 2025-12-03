@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { WORKSPACE_DEFAULTS } from "./workspaceDefaults";
+import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 
 type Mutable<T> = { -readonly [P in keyof T]: T[P] };
 
@@ -15,7 +16,7 @@ describe("WORKSPACE_DEFAULTS", () => {
   test("should have correct default values", () => {
     expect(WORKSPACE_DEFAULTS.mode).toBe("exec");
     expect(WORKSPACE_DEFAULTS.thinkingLevel).toBe("off");
-    expect(WORKSPACE_DEFAULTS.model).toBe("anthropic:claude-sonnet-4-5");
+    expect(WORKSPACE_DEFAULTS.model).toBe(DEFAULT_MODEL);
     expect(WORKSPACE_DEFAULTS.autoRetry).toBe(true);
     expect(WORKSPACE_DEFAULTS.input).toBe("");
   });

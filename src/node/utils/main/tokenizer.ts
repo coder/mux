@@ -7,6 +7,7 @@ import { models, type ModelName } from "ai-tokenizer";
 import { run } from "./workerPool";
 import { TOKENIZER_MODEL_OVERRIDES, DEFAULT_WARM_MODELS } from "@/common/constants/knownModels";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import { log } from "@/node/services/log";
 
 /**
  * Public tokenizer interface exposed to callers.
@@ -64,8 +65,8 @@ function resolveModelName(modelString: string): ModelName {
     // Only warn once per unknown model to avoid log spam
     if (!warnedModels.has(modelString)) {
       warnedModels.add(modelString);
-      console.warn(
-        `[tokenizer] Unknown model '${modelString}', using ${fallbackModel} tokenizer for approximate token counting`
+      log.warn(
+        `Unknown model '${modelString}', using ${fallbackModel} tokenizer for approximate token counting`
       );
     }
 

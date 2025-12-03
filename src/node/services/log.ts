@@ -1,26 +1,79 @@
 /**
- * Pipe-safe logging utilities for mux
+ * Unified logging for mux (backend + CLI)
  *
- * These functions wrap console.log/error with EPIPE protection to prevent
- * crashes when stdout/stderr pipes are closed (e.g., when piping to head/tail).
+ * Features:
+ * - Log levels: error, warn, info, debug (hierarchical)
+ * - EPIPE protection for piped output
+ * - Caller file:line prefix for debugging
+ * - Colored output in TTY
  *
- * They also prefix log messages with the caller's file path and line number
- * for easier debugging.
+ * Log level selection (in priority order):
+ * 1. MUX_LOG_LEVEL env var (error|warn|info|debug)
+ * 2. MUX_DEBUG=1 → debug level
+ * 3. CLI mode (no Electron) → error level (quiet by default)
+ * 4. Desktop mode → info level
+ *
+ * Use log.setLevel() to override programmatically (e.g., --verbose flag).
  */
 
 import * as fs from "fs";
 import * as path from "path";
 import chalk from "chalk";
-import { defaultConfig } from "@/node/config";
 import { parseBoolEnv } from "@/common/utils/env";
+import { getMuxHome } from "@/common/constants/paths";
 
-const DEBUG_OBJ_DIR = path.join(defaultConfig.rootDir, "debug_obj");
+// Lazy-initialized to avoid circular dependency with config.ts
+let _debugObjDir: string | null = null;
+function getDebugObjDir(): string {
+  _debugObjDir ??= path.join(getMuxHome(), "debug_obj");
+  return _debugObjDir;
+}
+
+/** Log levels in order of verbosity (lower = less verbose) */
+export type LogLevel = "error" | "warn" | "info" | "debug";
+
+const LOG_LEVEL_PRIORITY: Record<LogLevel, number> = {
+  error: 0,
+  warn: 1,
+  info: 2,
+  debug: 3,
+};
 
 /**
- * Check if debug mode is enabled
+ * Determine the default log level based on environment
+ */
+function getDefaultLogLevel(): LogLevel {
+  // Explicit env var takes priority
+  const envLevel = process.env.MUX_LOG_LEVEL?.toLowerCase();
+  if (envLevel && envLevel in LOG_LEVEL_PRIORITY) {
+    return envLevel as LogLevel;
+  }
+
+  // MUX_DEBUG=1 enables debug level
+  if (parseBoolEnv(process.env.MUX_DEBUG)) {
+    return "debug";
+  }
+
+  // CLI mode (no Electron) defaults to error (quiet)
+  // Desktop mode defaults to info
+  const isElectron = "electron" in process.versions;
+  return isElectron ? "info" : "error";
+}
+
+let currentLogLevel: LogLevel = getDefaultLogLevel();
+
+/**
+ * Check if a message at the given level should be logged
+ */
+function shouldLog(level: LogLevel): boolean {
+  return LOG_LEVEL_PRIORITY[level] <= LOG_LEVEL_PRIORITY[currentLogLevel];
+}
+
+/**
+ * Check if debug mode is enabled (for backwards compatibility)
  */
 function isDebugMode(): boolean {
-  return parseBoolEnv(process.env.MUX_DEBUG);
+  return currentLogLevel === "debug";
 }
 
 /**
@@ -47,6 +100,10 @@ const chalkGray =
 const chalkRed =
   typeof (chalk as { red?: (text: string) => string }).red === "function"
     ? (chalk as { red: (text: string) => string }).red
+    : (text: string) => text;
+const chalkYellow =
+  typeof (chalk as { yellow?: (text: string) => string }).yellow === "function"
+    ? (chalk as { yellow: (text: string) => string }).yellow
     : (text: string) => text;
 
 /**
@@ -104,10 +161,15 @@ function getCallerLocation(): string {
 /**
  * Pipe-safe logging function with styled timestamp and caller location
  * Format: 8:23.456PM src/main.ts:23 <message>
- * @param level - "info", "error", or "debug"
+ * @param level - Log level
  * @param args - Arguments to log
  */
-function safePipeLog(level: "info" | "error" | "debug", ...args: unknown[]): void {
+function safePipeLog(level: LogLevel, ...args: unknown[]): void {
+  // Check if this level should be logged
+  if (!shouldLog(level)) {
+    return;
+  }
+
   const timestamp = getTimestamp();
   const location = getCallerLocation();
   const useColor = supportsColor();
@@ -119,6 +181,8 @@ function safePipeLog(level: "info" | "error" | "debug", ...args: unknown[]): voi
     const coloredLocation = chalkCyan(location);
 
     if (level === "error") {
+      prefix = `${coloredTimestamp} ${coloredLocation}`;
+    } else if (level === "warn") {
       prefix = `${coloredTimestamp} ${coloredLocation}`;
     } else if (level === "debug") {
       prefix = `${coloredTimestamp} ${chalkGray(location)}`;
@@ -142,12 +206,18 @@ function safePipeLog(level: "info" | "error" | "debug", ...args: unknown[]): voi
       } else {
         console.error(prefix, ...args);
       }
-    } else if (level === "debug") {
-      // Only log debug messages if MUX_DEBUG is set
-      if (isDebugMode()) {
-        console.log(prefix, ...args);
+    } else if (level === "warn") {
+      // Color the entire warning message yellow if supported
+      if (useColor) {
+        console.error(
+          prefix,
+          ...args.map((arg) => (typeof arg === "string" ? chalkYellow(arg) : arg))
+        );
+      } else {
+        console.error(prefix, ...args);
       }
     } else {
+      // info and debug go to stdout
       console.log(prefix, ...args);
     }
   } catch (error) {
@@ -161,7 +231,7 @@ function safePipeLog(level: "info" | "error" | "debug", ...args: unknown[]): voi
 
     if (errorCode !== "EPIPE") {
       try {
-        const stream = level === "error" ? process.stderr : process.stdout;
+        const stream = level === "error" || level === "warn" ? process.stderr : process.stdout;
         stream.write(`${timestamp} ${location} Console error: ${errorMessage}\n`);
       } catch {
         // Even the fallback might fail, just ignore
@@ -182,9 +252,10 @@ function debugObject(filename: string, obj: unknown): void {
 
   try {
     // Ensure debug_obj directory exists
-    fs.mkdirSync(DEBUG_OBJ_DIR, { recursive: true });
+    const debugObjDir = getDebugObjDir();
+    fs.mkdirSync(debugObjDir, { recursive: true });
 
-    const filePath = path.join(DEBUG_OBJ_DIR, filename);
+    const filePath = path.join(debugObjDir, filename);
     const dirPath = path.dirname(filePath);
 
     // Ensure subdirectories exist
@@ -202,48 +273,70 @@ function debugObject(filename: string, obj: unknown): void {
 }
 
 /**
- * Logging utilities with EPIPE protection and caller location prefixes
+ * Unified logging interface for mux
+ *
+ * Log levels (hierarchical - each includes all levels above it):
+ * - error: Critical failures only
+ * - warn: Warnings + errors
+ * - info: Informational + warnings + errors
+ * - debug: Everything (verbose)
+ *
+ * Default levels:
+ * - CLI mode: error (quiet by default)
+ * - Desktop mode: info
+ * - MUX_DEBUG=1: debug
+ * - MUX_LOG_LEVEL=<level>: explicit override
  */
 export const log = {
   /**
-   * Log an informational message to stdout
-   * Prefixes output with caller's file path and line number
+   * Log an informational message to stdout (shown at info+ level)
    */
   info: (...args: unknown[]): void => {
     safePipeLog("info", ...args);
   },
 
   /**
-   * Log an error message to stderr
-   * Prefixes output with caller's file path and line number
+   * Log a warning message to stderr (shown at warn+ level)
+   */
+  warn: (...args: unknown[]): void => {
+    safePipeLog("warn", ...args);
+  },
+
+  /**
+   * Log an error message to stderr (always shown)
    */
   error: (...args: unknown[]): void => {
     safePipeLog("error", ...args);
   },
 
   /**
-   * Log a debug message to stdout (only when MUX_DEBUG is set)
-   * Prefixes output with caller's file path and line number
+   * Log a debug message to stdout (shown at debug level only)
    */
   debug: (...args: unknown[]): void => {
     safePipeLog("debug", ...args);
   },
 
   /**
-   * Dump an object to a JSON file for debugging (only when MUX_DEBUG is set)
+   * Dump an object to a JSON file for debugging (only at debug level)
    * Files are written to ~/.mux/debug_obj/
-   *
-   * @param filename - Name of the file (e.g., "model_messages.json" or "workspace/data.json")
-   * @param obj - Object to serialize and dump
-   *
-   * @example
-   * log.debug_obj("transformed_messages.json", messages);
-   * log.debug_obj(`${workspaceId}/model_messages.json`, modelMessages);
    */
   debug_obj: debugObject,
 
   /**
-   * Check if debug mode is enabled
+   * Set the current log level programmatically
+   * @example log.setLevel("info") // Enable verbose output
+   */
+  setLevel: (level: LogLevel): void => {
+    currentLogLevel = level;
+  },
+
+  /**
+   * Get the current log level
+   */
+  getLevel: (): LogLevel => currentLogLevel,
+
+  /**
+   * Check if debug mode is enabled (backwards compatibility)
    */
   isDebugMode,
 };

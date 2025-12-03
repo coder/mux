@@ -530,7 +530,7 @@ export class StreamManager extends EventEmitter {
       // Clean up immediately
       this.workspaceStreams.delete(workspaceId);
     } catch (error) {
-      console.error("Error during stream cancellation:", error);
+      log.error("Error during stream cancellation:", error);
       // Force cleanup even if cancellation fails
       this.workspaceStreams.delete(workspaceId);
     }
@@ -558,7 +558,7 @@ export class StreamManager extends EventEmitter {
         : false;
       void this.cleanupStream(workspaceId, streamInfo, abandonPartial);
     } catch (error) {
-      console.error("Error during stream cancellation:", error);
+      log.error("Error during stream cancellation:", error);
       // Force cleanup even if cancellation fails
       this.workspaceStreams.delete(workspaceId);
     }
@@ -1129,7 +1129,7 @@ export class StreamManager extends EventEmitter {
       streamInfo.state = StreamState.ERROR;
 
       // Log the actual error for debugging
-      console.error("Stream processing error:", error);
+      log.error("Stream processing error:", error);
 
       // Check if this is a lost previousResponseId error and record it
       // Frontend will automatically retry, and buildProviderOptions will filter it out
@@ -1436,7 +1436,7 @@ export class StreamManager extends EventEmitter {
         streamInfo,
         historySequence
       ).catch((error) => {
-        console.error("Unexpected error in stream processing:", error);
+        log.error("Unexpected error in stream processing:", error);
       });
 
       return Ok(streamToken);

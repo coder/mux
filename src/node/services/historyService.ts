@@ -54,8 +54,8 @@ export class HistoryService {
           messages.push(normalizeLegacyMuxMetadata(message));
         } catch (parseError) {
           // Skip malformed lines but log error for debugging
-          console.error(
-            `[HistoryService] Skipping malformed JSON at line ${i + 1} in ${workspaceId}/chat.jsonl:`,
+          log.warn(
+            `Skipping malformed JSON at line ${i + 1} in ${workspaceId}/chat.jsonl:`,
             parseError instanceof Error ? parseError.message : String(parseError),
             "\nLine content:",
             lines[i].substring(0, 100) + (lines[i].length > 100 ? "..." : "")

@@ -5,6 +5,7 @@ import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { InitStateManager } from "@/node/services/initStateManager";
 import { Config } from "@/node/config";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
+import { log } from "@/node/services/log";
 
 /**
  * Disposable test temp directory that auto-cleans when disposed
@@ -24,7 +25,7 @@ export class TestTempDir implements Disposable {
       try {
         fs.rmSync(this.path, { recursive: true, force: true });
       } catch (error) {
-        console.error(`Failed to cleanup test temp dir ${this.path}:`, error);
+        log.warn(`Failed to cleanup test temp dir ${this.path}:`, error);
       }
     }
   }

@@ -15,7 +15,7 @@ if [[ ! -f "$MUX_RUN_SH" ]]; then
 fi
 
 # Extract the agent CLI path from mux-run.sh
-# Looks for line like: cmd=(bun src/cli/debug/agentSessionCli.ts
+# Looks for line like: cmd=(bun src/cli/run.ts
 CLI_PATH_MATCH=$(grep -o "bun src/.*\.ts" "$MUX_RUN_SH" | head -1 | cut -d' ' -f2)
 
 if [[ -z "$CLI_PATH_MATCH" ]]; then

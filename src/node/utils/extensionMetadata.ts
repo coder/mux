@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from "fs";
 import { getMuxExtensionMetadataPath } from "@/common/constants/paths";
+import { log } from "@/node/services/log";
 
 /**
  * Extension metadata for a single workspace.
@@ -45,7 +46,7 @@ export function readExtensionMetadata(): Map<string, ExtensionMetadata> {
 
     // Validate structure
     if (typeof data !== "object" || data.version !== 1) {
-      console.error("[extensionMetadata] Invalid metadata file format");
+      log.error("Invalid metadata file format");
       return new Map();
     }
 
@@ -56,7 +57,7 @@ export function readExtensionMetadata(): Map<string, ExtensionMetadata> {
 
     return map;
   } catch (error) {
-    console.error("[extensionMetadata] Failed to read metadata:", error);
+    log.error("Failed to read metadata:", error);
     return new Map();
   }
 }
