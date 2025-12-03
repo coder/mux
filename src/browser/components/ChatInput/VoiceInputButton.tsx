@@ -21,38 +21,40 @@ interface VoiceInputButtonProps {
   mode: UIMode;
 }
 
-function getRecordingColorClass(mode: UIMode): string {
-  return mode === "plan"
-    ? "text-plan-mode-light animate-pulse"
-    : "text-exec-mode-light animate-pulse";
-}
-
-const STATE_CONFIG: Record<VoiceInputState, { label: string; colorClass: string }> = {
-  idle: { label: "Voice input", colorClass: "text-muted/50 hover:text-muted" },
-  recording: { label: "Stop recording", colorClass: "" }, // handled dynamically
-  transcribing: { label: "Transcribing...", colorClass: "text-amber-500" },
+/** Color classes for each voice input state */
+const STATE_COLORS: Record<VoiceInputState, string> = {
+  idle: "text-muted/50 hover:text-muted",
+  recording: "", // Set dynamically based on mode
+  transcribing: "text-amber-500",
 };
+
+const RECORDING_COLORS: Record<UIMode, string> = {
+  plan: "text-plan-mode-light animate-pulse",
+  exec: "text-exec-mode-light animate-pulse",
+};
+
+function getColorClass(state: VoiceInputState, mode: UIMode): string {
+  return state === "recording" ? RECORDING_COLORS[mode] : STATE_COLORS[state];
+}
 
 export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
   if (!props.shouldShowUI) return null;
 
   const needsHttps = props.requiresSecureContext;
   const needsApiKey = !needsHttps && !props.isApiKeySet;
-  const isDisabledReason = needsHttps || needsApiKey;
+  const isDisabled = needsHttps || needsApiKey;
 
-  const stateConfig = STATE_CONFIG[props.state];
-  const { label, colorClass } = isDisabledReason
-    ? {
-        label: needsHttps
-          ? "Voice input (requires HTTPS)"
-          : "Voice input (requires OpenAI API key)",
-        colorClass: "text-muted/50",
-      }
-    : {
-        label: stateConfig.label,
-        colorClass:
-          props.state === "recording" ? getRecordingColorClass(props.mode) : stateConfig.colorClass,
-      };
+  const label = isDisabled
+    ? needsHttps
+      ? "Voice input (requires HTTPS)"
+      : "Voice input (requires OpenAI API key)"
+    : props.state === "recording"
+      ? "Stop recording"
+      : props.state === "transcribing"
+        ? "Transcribing..."
+        : "Voice input";
+
+  const colorClass = isDisabled ? "text-muted/50" : getColorClass(props.state, props.mode);
 
   const Icon = props.state === "transcribing" ? Loader2 : Mic;
   const isTranscribing = props.state === "transcribing";
@@ -62,7 +64,7 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
       <button
         type="button"
         onClick={props.onToggle}
-        disabled={(props.disabled ?? false) || isTranscribing || isDisabledReason}
+        disabled={(props.disabled ?? false) || isTranscribing || isDisabled}
         aria-label={label}
         aria-pressed={props.state === "recording"}
         className={cn(
