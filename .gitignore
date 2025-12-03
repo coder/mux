@@ -123,3 +123,4 @@ test_hot_reload.sh
 docs/theme/pagetoc.css
 docs/theme/pagetoc.js
 mobile/.expo/
+tests/server/tmp/
