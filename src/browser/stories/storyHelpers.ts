@@ -14,6 +14,7 @@ import {
   getInputKey,
   getModelKey,
 } from "@/common/constants/storage";
+import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 import {
   createWorkspace,
   groupWorkspacesByProject,
@@ -178,7 +179,7 @@ export function setupStreamingChatStory(opts: StreamingChatSetupOptions): APICli
       createStreamingChatHandler({
         messages: opts.messages,
         streamingMessageId: opts.streamingMessageId,
-        model: opts.model ?? "anthropic:claude-sonnet-4-5",
+        model: opts.model ?? DEFAULT_MODEL,
         historySequence: opts.historySequence,
         streamText: opts.streamText,
         pendingTool: opts.pendingTool,

@@ -15,8 +15,6 @@ interface KnownModelDefinition {
   aliases?: string[];
   /** Preload tokenizer encodings at startup */
   warm?: boolean;
-  /** Use as global default model */
-  isDefault?: boolean;
   /** Optional tokenizer override for ai-tokenizer */
   tokenizerOverride?: string;
 }
@@ -29,12 +27,17 @@ interface KnownModel extends KnownModelDefinition {
 // Model definitions. Note we avoid listing legacy models here. These represent the focal models
 // of the community.
 const MODEL_DEFINITIONS = {
+  OPUS: {
+    provider: "anthropic",
+    providerModelId: "claude-opus-4-5",
+    aliases: ["opus"],
+    warm: true,
+  },
   SONNET: {
     provider: "anthropic",
     providerModelId: "claude-sonnet-4-5",
     aliases: ["sonnet"],
     warm: true,
-    isDefault: true,
     tokenizerOverride: "anthropic/claude-sonnet-4.5",
   },
   HAIKU: {
@@ -42,11 +45,6 @@ const MODEL_DEFINITIONS = {
     providerModelId: "claude-haiku-4-5",
     aliases: ["haiku"],
     tokenizerOverride: "anthropic/claude-3.5-haiku",
-  },
-  OPUS: {
-    provider: "anthropic",
-    providerModelId: "claude-opus-4-5",
-    aliases: ["opus"],
   },
   GPT: {
     provider: "openai",
@@ -119,10 +117,10 @@ export function getKnownModel(key: KnownModelKey): KnownModel {
 // Derived collections
 // ------------------------------------------------------------------------------------
 
-const DEFAULT_MODEL_ENTRY =
-  Object.values(KNOWN_MODELS).find((model) => model.isDefault) ?? KNOWN_MODELS.SONNET;
+/** The default model key - change this single line to update the global default */
+export const DEFAULT_MODEL_KEY: KnownModelKey = "OPUS";
 
-export const DEFAULT_MODEL = DEFAULT_MODEL_ENTRY.id;
+export const DEFAULT_MODEL = KNOWN_MODELS[DEFAULT_MODEL_KEY].id;
 
 export const DEFAULT_WARM_MODELS = Object.values(KNOWN_MODELS)
   .filter((model) => model.warm)

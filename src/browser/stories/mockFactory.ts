@@ -16,6 +16,7 @@ import type {
   MuxImagePart,
   MuxToolPart,
 } from "@/common/types/message";
+import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 
 /** Part type for message construction */
 type MuxPart = MuxTextPart | MuxReasoningPart | MuxImagePart | MuxToolPart;
@@ -196,7 +197,7 @@ export function createAssistantMessage(
     metadata: {
       historySequence: opts.historySequence,
       timestamp: opts.timestamp ?? STABLE_TIMESTAMP,
-      model: opts.model ?? "anthropic:claude-sonnet-4-5",
+      model: opts.model ?? DEFAULT_MODEL,
       usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
       duration: 1000,
     },

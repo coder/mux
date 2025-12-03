@@ -22,6 +22,7 @@
 
 import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
+import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 
 /**
  * Hard-coded default values for workspace settings.
@@ -36,9 +37,9 @@ export const WORKSPACE_DEFAULTS = {
 
   /**
    * Default AI model for new workspaces.
-   * This is the TRUE default - not dependent on user's LRU cache.
+   * Uses the centralized default from knownModels.ts.
    */
-  model: "anthropic:claude-sonnet-4-5" as string,
+  model: DEFAULT_MODEL as string,
 
   /** Default auto-retry preference for new workspaces */
   autoRetry: true as boolean,

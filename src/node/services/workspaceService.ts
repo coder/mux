@@ -31,6 +31,7 @@ import type {
 import type { MuxMessage } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { hasSrcBaseDir, getSrcBaseDir } from "@/common/types/runtime";
+import { defaultModel } from "@/common/utils/ai/models";
 import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
 
@@ -660,7 +661,7 @@ export class WorkspaceService extends EventEmitter {
           if (messageText.trim()) {
             const branchNameResult = await generateWorkspaceName(
               messageText,
-              "anthropic:claude-sonnet-4-5",
+              defaultModel,
               this.aiService
             );
 
@@ -880,7 +881,7 @@ export class WorkspaceService extends EventEmitter {
           projectPath?: string;
           trunkBranch?: string;
         })
-      | undefined = { model: "claude-sonnet-4-5-latest" }
+      | undefined = { model: defaultModel }
   ): Promise<
     | Result<void, SendMessageError>
     | { success: true; workspaceId: string; metadata: FrontendWorkspaceMetadata }
