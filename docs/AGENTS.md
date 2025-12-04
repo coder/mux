@@ -36,7 +36,7 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 
 ## Documentation Rules
 
-- No free-floating Markdown. User docs live in `docs/` (read `docs/README.md`, update `docs/SUMMARY.md`, use standard Markdown + mermaid). Developer/test notes belong inline as comments.
+- No free-floating Markdown. User docs live in `docs/` (read `docs/README.md`, add pages to `docs.json` navigation, use standard Markdown + mermaid). Developer/test notes belong inline as comments.
 - For planning artifacts, use the `propose_plan` tool or inline comments instead of ad-hoc docs.
 - Do not add new root-level docs without explicit request; during feature work rely on code + tests + inline comments.
 - Test documentation stays inside the relevant test file as commentary explaining setup/edge cases.
@@ -52,7 +52,7 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 - Package manager: bun only. Use `bun install`, `bun add`, `bun run` (which proxies to Make when relevant). Run `bun install` if modules/types go missing.
 - Makefile is source of truth (new commands land there, not `package.json`).
 - Primary targets: `make dev|start|build|lint|lint-fix|fmt|fmt-check|typecheck|test|test-integration|clean|help`.
-- Full `static-check` includes docs link checking which requires mdbook tools. Use `nix develop` to get them, or the check gracefully skips if unavailable.
+- Full `static-check` includes docs link checking via `mintlify broken-links`.
 
 ## Refactoring & Runtime Etiquette
 

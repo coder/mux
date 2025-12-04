@@ -49,7 +49,7 @@ include fmt.mk
 .PHONY: test test-unit test-integration test-watch test-coverage test-e2e smoke-test
 .PHONY: dist dist-mac dist-win dist-linux
 .PHONY: vscode-ext vscode-ext-install
-.PHONY: docs-server
+.PHONY: docs-server check-docs-links
 .PHONY: storybook storybook-build test-storybook chromatic
 .PHONY: benchmark-terminal
 .PHONY: ensure-deps rebuild-native
@@ -213,7 +213,7 @@ build/icon.png: docs/img/logo.webp scripts/generate-icons.ts
 	@bun scripts/generate-icons.ts png
 
 ## Quality checks (can run in parallel)
-static-check: lint typecheck fmt-check check-eager-imports check-bench-agent ## Run all static checks
+static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links ## Run all static checks
 
 check-bench-agent: ## Verify terminal-bench agent configuration and imports
 	@./scripts/check-bench-agent.sh
@@ -339,6 +339,10 @@ vscode-ext-install: ## Build and install VS Code extension locally
 ## Documentation
 docs-server: node_modules/.installed ## Serve documentation locally (Mintlify dev server)
 	@cd docs && npx mintlify dev
+
+check-docs-links: ## Check documentation for broken links
+	@echo "🔗 Checking documentation links..."
+	@cd docs && npx mintlify broken-links
 
 ## Storybook
 storybook: node_modules/.installed ## Start Storybook development server
