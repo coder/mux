@@ -48,17 +48,38 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
 
   // Track the message that was used for the last successful generation
   const lastGeneratedForRef = useRef<string>("");
-  // Promise that resolves when current generation completes
+  // Debounce timer
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Message pending in debounce timer (captured at schedule time)
+  const pendingMessageRef = useRef<string>("");
+  // Generation request counter for cancellation
+  const requestIdRef = useRef(0);
+  // Current in-flight generation promise and its resolver
   const generationPromiseRef = useRef<{
     promise: Promise<string>;
     resolve: (name: string) => void;
+    requestId: number;
   } | null>(null);
-  // Debounce timer
-  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Generation request counter for cancellation
-  const requestIdRef = useRef(0);
 
   const name = autoGenerate ? generatedName : manualName;
+
+  // Cancel any pending generation and resolve waiters with empty string
+  const cancelPendingGeneration = useCallback(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+      pendingMessageRef.current = "";
+    }
+    // Increment request ID to invalidate any in-flight request
+    const oldRequestId = requestIdRef.current;
+    requestIdRef.current++;
+    // Resolve any waiters so they don't hang forever
+    if (generationPromiseRef.current && generationPromiseRef.current.requestId === oldRequestId) {
+      generationPromiseRef.current.resolve("");
+      generationPromiseRef.current = null;
+      setIsGenerating(false);
+    }
+  }, []);
 
   const generateName = useCallback(
     async (forMessage: string): Promise<string> => {
@@ -77,24 +98,25 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
       });
       // TypeScript doesn't understand the Promise executor runs synchronously
       const safeResolve = resolvePromise!;
-      generationPromiseRef.current = { promise, resolve: safeResolve };
+      generationPromiseRef.current = { promise, resolve: safeResolve, requestId };
 
       try {
         const result = await api.nameGeneration.generate({
           message: forMessage,
         });
 
-        // Check if this request is still current
+        // Check if this request is still current (wasn't cancelled)
         if (requestId !== requestIdRef.current) {
+          // Don't resolve here - cancellation already resolved the promise
           return "";
         }
 
         if (result.success) {
-          const generatedName = result.data.name;
-          setGeneratedName(generatedName);
+          const name = result.data.name;
+          setGeneratedName(name);
           lastGeneratedForRef.current = forMessage;
-          safeResolve(generatedName);
-          return generatedName;
+          safeResolve(name);
+          return name;
         } else {
           const errorMsg =
             result.error.type === "unknown" && "raw" in result.error
@@ -124,35 +146,42 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
 
   // Debounced generation effect
   useEffect(() => {
-    // Clear any pending debounce timer
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
-      debounceTimerRef.current = null;
-    }
-
     // Don't generate if:
     // - Auto-generation is disabled
     // - Message is empty
     // - Already generated for this message
     if (!autoGenerate || !message.trim() || lastGeneratedForRef.current === message) {
+      // Clear any pending timer since conditions changed
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+        pendingMessageRef.current = "";
+      }
       return;
     }
 
-    // Cancel any in-flight request
-    requestIdRef.current++;
+    // Cancel any in-flight request since message changed
+    cancelPendingGeneration();
+
+    // Capture message for the debounced callback (avoid stale closure)
+    pendingMessageRef.current = message;
 
     // Debounce the generation
     debounceTimerRef.current = setTimeout(() => {
-      void generateName(message);
+      const msg = pendingMessageRef.current;
+      debounceTimerRef.current = null;
+      pendingMessageRef.current = "";
+      void generateName(msg);
     }, debounceMs);
 
     return () => {
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
         debounceTimerRef.current = null;
+        pendingMessageRef.current = "";
       }
     };
-  }, [message, autoGenerate, debounceMs, generateName]);
+  }, [message, autoGenerate, debounceMs, generateName, cancelPendingGeneration]);
 
   // When auto-generate is toggled, handle name preservation
   const handleSetAutoGenerate = useCallback(
@@ -187,16 +216,20 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
       return manualName;
     }
 
-    // Always wait for any pending generation to complete on the full message.
-    // This is important because with voice input, the message can go from empty
-    // to complete very quickly - we must ensure the generated name reflects the
-    // total content, not a partial intermediate state.
+    // Always wait for generation to complete on the full message.
+    // With voice input, the message can go from empty to complete very quickly,
+    // so we must ensure the generated name reflects the total content.
 
     // If there's a debounced generation pending, trigger it immediately
+    // Use the captured message from pendingMessageRef to avoid stale closures
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = null;
-      return generateName(message);
+      const msg = pendingMessageRef.current;
+      pendingMessageRef.current = "";
+      if (msg.trim()) {
+        return generateName(msg);
+      }
     }
 
     // If generation is in progress, wait for it to complete
