@@ -1391,7 +1391,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
               </div>
             </div>
 
-            {/* Creation controls - second row for creation variant */}
+            {/* Creation controls - below model controls for creation variant */}
             {variant === "creation" && (
               <CreationControls
                 branches={creationState.branches}
