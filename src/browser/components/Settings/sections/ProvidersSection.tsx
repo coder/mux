@@ -46,9 +46,11 @@ function getProviderFields(provider: ProviderName): FieldConfig[] {
     ];
   }
 
-  // Mux Gateway only needs voucher
+  // Mux Gateway only needs couponCode
   if (provider === "mux-gateway") {
-    return [{ key: "voucher", label: "Voucher", placeholder: "Enter voucher", type: "secret" }];
+    return [
+      { key: "couponCode", label: "Coupon Code", placeholder: "Enter coupon code", type: "secret" },
+    ];
   }
 
   // Default for most providers
@@ -102,8 +104,8 @@ export function ProvidersSection() {
       updateOptimistically(provider, { apiKeySet: editValue !== "" });
     } else if (field === "baseUrl") {
       updateOptimistically(provider, { baseUrl: editValue || undefined });
-    } else if (field === "voucher") {
-      updateOptimistically(provider, { voucherSet: editValue !== "" });
+    } else if (field === "couponCode") {
+      updateOptimistically(provider, { couponCodeSet: editValue !== "" });
     }
 
     setEditingField(null);
@@ -122,8 +124,8 @@ export function ProvidersSection() {
         updateOptimistically(provider, { apiKeySet: false });
       } else if (field === "baseUrl") {
         updateOptimistically(provider, { baseUrl: undefined });
-      } else if (field === "voucher") {
-        updateOptimistically(provider, { voucherSet: false });
+      } else if (field === "couponCode") {
+        updateOptimistically(provider, { couponCodeSet: false });
       }
 
       // Save in background
@@ -142,9 +144,9 @@ export function ProvidersSection() {
       return !!(aws.region ?? aws.bearerTokenSet ?? aws.accessKeyIdSet ?? aws.secretAccessKeySet);
     }
 
-    // For Mux Gateway, check voucherSet
+    // For Mux Gateway, check couponCodeSet
     if (provider === "mux-gateway") {
-      return providerConfig.voucherSet ?? false;
+      return providerConfig.couponCodeSet ?? false;
     }
 
     // For other providers, check apiKeySet
@@ -172,8 +174,8 @@ export function ProvidersSection() {
     if (fieldConfig.type === "secret") {
       // For apiKey, we have apiKeySet from the sanitized config
       if (field === "apiKey") return providerConfig.apiKeySet ?? false;
-      // For voucher (mux-gateway), check voucherSet
-      if (field === "voucher") return providerConfig.voucherSet ?? false;
+      // For couponCode (mux-gateway), check couponCodeSet
+      if (field === "couponCode") return providerConfig.couponCodeSet ?? false;
 
       // For AWS secrets, check the aws nested object
       if (provider === "bedrock" && providerConfig.aws) {

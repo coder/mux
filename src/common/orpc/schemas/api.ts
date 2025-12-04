@@ -49,7 +49,7 @@ export const ProviderConfigInfoSchema = z.object({
   /** AWS-specific fields (only present for bedrock provider) */
   aws: AWSCredentialStatusSchema.optional(),
   /** Mux Gateway-specific fields */
-  voucherSet: z.boolean().optional(),
+  couponCodeSet: z.boolean().optional(),
 });
 
 export const ProvidersConfigMapSchema = z.record(z.string(), ProviderConfigInfoSchema);

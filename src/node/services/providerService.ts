@@ -73,9 +73,10 @@ export class ProviderService {
         };
       }
 
-      // Mux Gateway-specific fields
+      // Mux Gateway-specific fields (check couponCode first, fallback to legacy voucher)
       if (provider === "mux-gateway") {
-        providerInfo.voucherSet = !!(config as { voucher?: string }).voucher;
+        const muxConfig = config as { couponCode?: string; voucher?: string };
+        providerInfo.couponCodeSet = !!(muxConfig.couponCode ?? muxConfig.voucher);
       }
 
       result[provider] = providerInfo;
@@ -111,13 +112,13 @@ export class ProviderService {
       // Load current providers config or create empty
       const providersConfig = this.config.loadProvidersConfig() ?? {};
 
-      // Track if this is first time setting voucher for mux-gateway
-      const isFirstMuxGatewayVoucher =
+      // Track if this is first time setting couponCode for mux-gateway
+      const isFirstMuxGatewayCoupon =
         provider === "mux-gateway" &&
         keyPath.length === 1 &&
-        keyPath[0] === "voucher" &&
+        keyPath[0] === "couponCode" &&
         value !== "" &&
-        !providersConfig[provider]?.voucher;
+        !providersConfig[provider]?.couponCode;
 
       // Ensure provider exists
       if (!providersConfig[provider]) {
@@ -145,7 +146,7 @@ export class ProviderService {
       }
 
       // Add default models when setting up mux-gateway for the first time
-      if (isFirstMuxGatewayVoucher) {
+      if (isFirstMuxGatewayCoupon) {
         const providerConfig = providersConfig[provider] as Record<string, unknown>;
         if (!providerConfig.models || (providerConfig.models as string[]).length === 0) {
           providerConfig.models = [

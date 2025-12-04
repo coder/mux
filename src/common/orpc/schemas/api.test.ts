@@ -65,16 +65,16 @@ describe("ProviderConfigInfoSchema conformance", () => {
     expect(parsed.aws).toEqual(full.aws);
   });
 
-  it("preserves all ProviderConfigInfo fields (with voucherSet)", () => {
+  it("preserves all ProviderConfigInfo fields (with couponCodeSet)", () => {
     const full: ProviderConfigInfo = {
       apiKeySet: true,
-      voucherSet: true,
+      couponCodeSet: true,
     };
 
     const parsed = ProviderConfigInfoSchema.parse(full);
 
     expect(parsed).toEqual(full);
-    expect(parsed.voucherSet).toBe(true);
+    expect(parsed.couponCodeSet).toBe(true);
   });
 
   it("preserves all ProviderConfigInfo fields (full object with all optional fields)", () => {
@@ -89,7 +89,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
         accessKeyIdSet: true,
         secretAccessKeySet: true,
       },
-      voucherSet: true,
+      couponCodeSet: true,
     };
 
     const parsed = ProviderConfigInfoSchema.parse(full);
@@ -102,7 +102,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
     expect(parsed.baseUrl).toBe(full.baseUrl);
     expect(parsed.models).toEqual(full.models);
     expect(parsed.aws).toEqual(full.aws);
-    expect(parsed.voucherSet).toBe(full.voucherSet);
+    expect(parsed.couponCodeSet).toBe(full.couponCodeSet);
   });
 
   it("preserves ProvidersConfigMap with multiple providers", () => {
@@ -122,7 +122,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
       },
       "mux-gateway": {
         apiKeySet: false,
-        voucherSet: true,
+        couponCodeSet: true,
         models: ["anthropic/claude-sonnet-4-5"],
       },
     };

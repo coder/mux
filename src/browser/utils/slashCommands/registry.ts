@@ -60,6 +60,10 @@ const DEFAULT_PROVIDER_NAMES: SuggestionDefinition[] = [
     key: "bedrock",
     description: "Amazon Bedrock provider (AWS)",
   },
+  {
+    key: "mux-gateway",
+    description: "Mux Gateway provider",
+  },
 ];
 
 const DEFAULT_PROVIDER_KEYS: Record<string, SuggestionDefinition[]> = {
@@ -109,6 +113,12 @@ const DEFAULT_PROVIDER_KEYS: Record<string, SuggestionDefinition[]> = {
     {
       key: "secretAccessKey",
       description: "AWS Secret Access Key (use with accessKeyId)",
+    },
+  ],
+  "mux-gateway": [
+    {
+      key: "couponCode",
+      description: "Coupon code for Mux Gateway access",
     },
   ],
   default: [
