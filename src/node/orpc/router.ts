@@ -175,8 +175,7 @@ export const router = (authToken?: string) => {
         .output(schemas.nameGeneration.generate.output)
         .handler(async ({ context, input }) => {
           // Prefer small/fast models, fall back to user's configured model
-          const model =
-            (await getPreferredNameModel(context.aiService)) ?? input.fallbackModel;
+          const model = (await getPreferredNameModel(context.aiService)) ?? input.fallbackModel;
           if (!model) {
             return {
               success: false,
