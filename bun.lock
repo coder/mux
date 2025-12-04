@@ -39,7 +39,7 @@
         "electron-updater": "^6.6.2",
         "electron-window-state": "^5.0.3",
         "express": "^5.1.0",
-        "ghostty-web": "0.2.1",
+        "ghostty-web": "^0.3.0-next.13.g3dd4aef",
         "jsdom": "^27.2.0",
         "jsonc-parser": "^3.3.1",
         "lru-cache": "^11.2.2",
@@ -2203,7 +2203,7 @@
 
     "get-tsconfig": ["get-tsconfig@4.13.0", "", { "dependencies": { "resolve-pkg-maps": "^1.0.0" } }, "sha512-1VKTZJCwBrvbd+Wn3AOgQP/2Av+TfTCOlE4AcRJE72W1ksZXbAx8PPBR9RzgTeSPzlPMHrbANMH3LbltH73wxQ=="],
 
-    "ghostty-web": ["ghostty-web@0.2.1", "", {}, "sha512-wrovbPlHcl+nIkp7S7fY7vOTsmBjwMFihZEe2PJe/M6G4/EwuyJnwaWTTzNfuY7RcM/lVlN+PvGWqJIhKSB5hw=="],
+    "ghostty-web": ["ghostty-web@0.3.0-next.13.g3dd4aef", "", {}, "sha512-TeomyiuaVwv7lzHXhB/L0tvg/6XX4/ByyaCCRUvqTXfpoacgtcd0yWXV8EkXoFqoeguN3K+WR5QSn+XDNypcEg=="],
 
     "glob": ["glob@10.5.0", "", { "dependencies": { "foreground-child": "^3.1.0", "jackspeak": "^3.1.2", "minimatch": "^9.0.4", "minipass": "^7.1.2", "package-json-from-dist": "^1.0.0", "path-scurry": "^1.11.1" }, "bin": { "glob": "dist/esm/bin.mjs" } }, "sha512-DfXN8DfhJ7NH3Oe7cFmu3NCu1wKbkReJ8TorzSAFbSKrlNaQSKfIzqYqVY8zlbs2NLBbWpRiU52GX2PbaBVNkg=="],
 

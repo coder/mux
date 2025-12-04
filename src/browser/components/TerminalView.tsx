@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState } from "react";
-import { Terminal, FitAddon } from "ghostty-web";
+import { init, Terminal, FitAddon } from "ghostty-web";
 import { useTerminalSession } from "@/browser/hooks/useTerminalSession";
 import { useAPI } from "@/browser/contexts/API";
 
@@ -78,6 +78,9 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
 
     const initTerminal = async () => {
       try {
+        // Initialize ghostty-web WASM module (idempotent, safe to call multiple times)
+        await init();
+
         terminal = new Terminal({
           fontSize: 13,
           fontFamily: "Monaco, Menlo, 'Courier New', monospace",
@@ -110,7 +113,7 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
         const fitAddon = new FitAddon();
         terminal.loadAddon(fitAddon);
 
-        await terminal.open(containerRef.current!);
+        terminal.open(containerRef.current!);
         fitAddon.fit();
 
         const { cols, rows } = terminal;
