@@ -9,10 +9,7 @@ import type { SendMessageError } from "@/common/types/errors";
 import { getKnownModel } from "@/common/constants/knownModels";
 
 /** Models to try in order of preference for name generation (small, fast models) */
-const PREFERRED_MODELS = [
-  getKnownModel("HAIKU").id,
-  getKnownModel("GPT_MINI").id,
-] as const;
+const PREFERRED_MODELS = [getKnownModel("HAIKU").id, getKnownModel("GPT_MINI").id] as const;
 
 const workspaceNameSchema = z.object({
   name: z
@@ -91,5 +88,3 @@ function sanitizeBranchName(name: string, maxLength: number): string {
 function validateBranchName(name: string): string {
   return sanitizeBranchName(name, 50);
 }
-
-

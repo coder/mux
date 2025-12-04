@@ -151,17 +151,14 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
   }, [message, autoGenerate, debounceMs, generateName]);
 
   // When auto-generate is toggled on, trigger generation
-  const handleSetAutoGenerate = useCallback(
-    (enabled: boolean) => {
-      setAutoGenerate(enabled);
-      if (enabled) {
-        // Reset so debounced generation will trigger
-        lastGeneratedForRef.current = "";
-        setError(null);
-      }
-    },
-    []
-  );
+  const handleSetAutoGenerate = useCallback((enabled: boolean) => {
+    setAutoGenerate(enabled);
+    if (enabled) {
+      // Reset so debounced generation will trigger
+      lastGeneratedForRef.current = "";
+      setError(null);
+    }
+  }, []);
 
   const setName = useCallback((name: string) => {
     setManualName(name);
