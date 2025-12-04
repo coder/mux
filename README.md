@@ -11,6 +11,8 @@
 
 </div>
 
+> 🎟️ **Have a voucher code?** Redeem it at [gateway.mux.coder.com](https://gateway.mux.coder.com)
+
 ![mux product screenshot](docs/img/product-hero.webp)
 
 A desktop application for parallel agentic development.
