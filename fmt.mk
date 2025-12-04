@@ -3,7 +3,7 @@
 # This file contains all code formatting logic.
 # Included by the main Makefile.
 
-.PHONY: fmt fmt-check fmt-prettier fmt-prettier-check fmt-shell fmt-shell-check fmt-nix fmt-nix-check fmt-python fmt-python-check
+.PHONY: fmt fmt-check fmt-prettier fmt-prettier-check fmt-shell fmt-shell-check fmt-nix fmt-nix-check fmt-python fmt-python-check fmt-sync-docs fmt-sync-docs-check
 
 # Centralized patterns - single source of truth
 PRETTIER_PATTERNS := 'src/**/*.{ts,tsx,json}' 'mobile/**/*.{ts,tsx,json}' 'tests/**/*.ts' 'docs/**/*.md' 'package.json' 'tsconfig*.json' 'README.md'
@@ -18,10 +18,10 @@ SHFMT := $(shell command -v shfmt 2>/dev/null)
 NIX := $(shell command -v nix 2>/dev/null)
 UVX := $(shell command -v uvx 2>/dev/null || (test -x $(HOME)/.local/bin/uvx && echo $(HOME)/.local/bin/uvx))
 
-fmt: fmt-prettier fmt-shell fmt-python fmt-nix
+fmt: fmt-prettier fmt-shell fmt-python fmt-nix fmt-sync-docs
 	@echo "==> All formatting complete!"
 
-fmt-check: fmt-prettier-check fmt-shell-check fmt-python-check fmt-nix-check
+fmt-check: fmt-prettier-check fmt-shell-check fmt-python-check fmt-nix-check fmt-sync-docs-check
 	@echo "==> All formatting checks passed!"
 
 fmt-prettier:
@@ -92,3 +92,9 @@ else
 		exit 1; \
 	fi
 endif
+
+fmt-sync-docs:
+	@./scripts/sync_system_prompt_docs.sh
+
+fmt-sync-docs-check:
+	@./scripts/sync_system_prompt_docs.sh check

@@ -15,10 +15,6 @@ import { getAvailableTools } from "@/common/utils/tools/toolDefinitions";
 
 // NOTE: keep this in sync with the docs/models.md file
 
-// The PRELUDE is intentionally minimal to not conflict with the user's instructions.
-// mux is designed to be model agnostic, and models have shown large inconsistency in how they
-// follow instructions.
-
 function sanitizeSectionTag(value: string | undefined, fallback: string): string {
   const normalized = (value ?? "")
     .toLowerCase()
@@ -36,9 +32,14 @@ function buildTaggedSection(
   const tag = sanitizeSectionTag(rawTagValue, fallback);
   return `\n\n<${tag}>\n${content}\n</${tag}>`;
 }
+
+// #region SYSTEM_PROMPT_DOCS
+// The PRELUDE is intentionally minimal to not conflict with the user's instructions.
+// mux is designed to be model agnostic, and models have shown large inconsistency in how they
+// follow instructions.
 const PRELUDE = ` 
 <prelude>
-You are a coding agent.
+You are a coding agent called Mux. You may find information about yourself here: https://mux.coder.com/.
   
 <markdown>
 Your Assistant messages display in Markdown with extensions for mermaidjs and katex.
@@ -52,6 +53,12 @@ When creating mermaid diagrams:
 
 Use GitHub-style \`<details>/<summary>\` tags to create collapsible sections for lengthy content, error traces, or supplementary information. Toggles help keep responses scannable while preserving detail.
 </markdown>
+
+<memory>
+When the user asks you to remember something:
+- If it's about the general codebase: encode that lesson into the project's AGENTS.md file, matching its existing tone and structure.
+- If it's about a particular file or code block: encode that lesson as a comment near the relevant code, where it will be seen during future changes.
+</memory>
 </prelude>
 `;
 
@@ -70,6 +77,7 @@ You are in a git worktree at ${workspacePath}
 </environment>
 `;
 }
+// #endregion SYSTEM_PROMPT_DOCS
 
 /**
  * Get the system directory where global mux configuration lives.
