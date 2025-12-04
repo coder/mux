@@ -26,10 +26,10 @@ import { TelemetryService } from "@/node/services/telemetryService";
  * Services are accessed via the ORPC context object.
  */
 export class ServiceContainer {
-  private readonly config: Config;
+  public readonly config: Config;
   private readonly historyService: HistoryService;
   private readonly partialService: PartialService;
-  private readonly aiService: AIService;
+  public readonly aiService: AIService;
   public readonly projectService: ProjectService;
   public readonly workspaceService: WorkspaceService;
   public readonly providerService: ProviderService;

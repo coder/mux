@@ -18,8 +18,8 @@ module.exports = {
   transform: {
     "^.+\\.(ts|tsx|js|mjs)$": ["babel-jest"],
   },
-  // Transform ESM modules (like shiki, @orpc) to CommonJS for Jest
-  transformIgnorePatterns: ["node_modules/(?!(@orpc|shiki)/)"],
+  // Transform ESM modules to CommonJS for Jest
+  transformIgnorePatterns: ["node_modules/(?!(@orpc|shiki|json-schema-typed|rou3)/)"],
   // Run tests in parallel (use 50% of available cores, or 4 minimum)
   maxWorkers: "50%",
   // Force exit after tests complete to avoid hanging on lingering handles

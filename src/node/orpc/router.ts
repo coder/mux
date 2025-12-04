@@ -1,6 +1,10 @@
 import { os } from "@orpc/server";
 import * as schemas from "@/common/orpc/schemas";
 import type { ORPCContext } from "./context";
+import {
+  getPreferredNameModel,
+  generateWorkspaceName,
+} from "@/node/services/workspaceTitleGenerator";
 import type {
   UpdateStatus,
   WorkspaceActivitySnapshot,
@@ -165,6 +169,29 @@ export const router = (authToken?: string) => {
           }),
       },
     },
+    nameGeneration: {
+      generate: t
+        .input(schemas.nameGeneration.generate.input)
+        .output(schemas.nameGeneration.generate.output)
+        .handler(async ({ context, input }) => {
+          // Prefer small/fast models, fall back to user's configured model
+          const model = (await getPreferredNameModel(context.aiService)) ?? input.fallbackModel;
+          if (!model) {
+            return {
+              success: false,
+              error: {
+                type: "unknown" as const,
+                raw: "No model available for name generation.",
+              },
+            };
+          }
+          const result = await generateWorkspaceName(input.message, model, context.aiService);
+          if (!result.success) {
+            return result;
+          }
+          return { success: true, data: { name: result.data, modelUsed: model } };
+        }),
+    },
     workspace: {
       list: t
         .input(schemas.workspace.list.input)
@@ -234,25 +261,9 @@ export const router = (authToken?: string) => {
           );
 
           if (!result.success) {
-            const error =
-              typeof result.error === "string"
-                ? { type: "unknown" as const, raw: result.error }
-                : result.error;
-            return { success: false, error };
+            return { success: false, error: result.error };
           }
 
-          // Check if this is a workspace creation result
-          if ("workspaceId" in result) {
-            return {
-              success: true,
-              data: {
-                workspaceId: result.workspaceId,
-                metadata: result.metadata,
-              },
-            };
-          }
-
-          // Regular message send (no workspace creation)
           return { success: true, data: {} };
         }),
       resumeStream: t

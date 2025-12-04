@@ -45,6 +45,22 @@ const TABLE_CONTENT = `Here are various markdown table examples:
 | \`api.timeout\` | 30000 | Timeout ms | \`API_TIMEOUT\` |
 | \`cache.enabled\` | true | Enable cache | \`CACHE_ENABLED\` |`;
 
+// Bug repro: SQL with $__timeFilter causes "__" to appear at end of code block
+const SQL_WITH_DOUBLE_UNDERSCORE = `👍 Glad it's working. For reference, the final query:
+
+\`\`\`sql
+SELECT 
+  TIMESTAMP_TRUNC(timestamp, DAY) as time,
+  COUNT(DISTINCT distinct_id) as dau
+FROM \`mux-telemetry.posthog.events\`
+WHERE 
+  event NOT LIKE "$%"
+  AND $__timeFilter(timestamp)
+GROUP BY time
+ORDER BY time
+\`\`\`
+`;
+
 const CODE_CONTENT = `Here's the implementation:
 
 \`\`\`typescript
@@ -90,6 +106,29 @@ export const Tables: AppStory = {
               timestamp: STABLE_TIMESTAMP - 100000,
             }),
             createAssistantMessage("msg-2", TABLE_CONTENT, {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 90000,
+            }),
+          ],
+        })
+      }
+    />
+  ),
+};
+
+/** SQL with double underscores in code block - tests for bug where __ leaks to end */
+export const SqlWithDoubleUnderscore: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-sql-underscore",
+          messages: [
+            createUserMessage("msg-1", "Show me the SQL query", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 100000,
+            }),
+            createAssistantMessage("msg-2", SQL_WITH_DOUBLE_UNDERSCORE, {
               historySequence: 2,
               timestamp: STABLE_TIMESTAMP - 90000,
             }),

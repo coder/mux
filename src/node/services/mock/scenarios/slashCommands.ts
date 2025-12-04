@@ -1,13 +1,13 @@
 import type { ScenarioTurn } from "@/node/services/mock/scenarioTypes";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { STREAM_BASE_DELAY } from "@/node/services/mock/scenarioTypes";
+import { buildCompactionPrompt } from "@/common/constants/ui";
 
 export const SLASH_COMMAND_PROMPTS = {
   MODEL_STATUS: "Please confirm which model is currently active for this conversation.",
 } as const;
 
-export const COMPACTION_MESSAGE =
-  "Summarize this conversation into a compact form for a new Assistant to continue helping the user. Focus entirely on the summary of what has happened. Do not suggest next steps or future actions. Use approximately 385 words.";
+export const COMPACTION_MESSAGE = buildCompactionPrompt(385);
 
 export const COMPACT_SUMMARY_TEXT =
   "Compact summary: The assistant read project files, listed directory contents, created and inspected test.txt, then confirmed the contents remained 'hello'. Technical details preserved.";

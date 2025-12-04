@@ -13,6 +13,9 @@ import { WebSocketServer } from "ws";
 import { RPCHandler } from "@orpc/server/node";
 import { RPCHandler as ORPCWebSocketServerHandler } from "@orpc/server/ws";
 import { onError } from "@orpc/server";
+import { OpenAPIGenerator } from "@orpc/openapi";
+import { OpenAPIHandler } from "@orpc/openapi/node";
+import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
 import { router, type AppRouter } from "@/node/orpc/router";
 import type { ORPCContext } from "@/node/orpc/context";
 import { extractWsHeaders } from "@/node/orpc/authMiddleware";
@@ -53,6 +56,10 @@ export interface OrpcServer {
   baseUrl: string;
   /** WebSocket URL for WS connections */
   wsUrl: string;
+  /** URL for OpenAPI spec JSON */
+  specUrl: string;
+  /** URL for Scalar API docs */
+  docsUrl: string;
   /** Close the server and cleanup resources */
   close: () => Promise<void>;
 }
@@ -99,6 +106,77 @@ export async function createOrpcServer({
   });
 
   const orpcRouter = existingRouter ?? router(authToken);
+
+  // OpenAPI generator for spec endpoint
+  const openAPIGenerator = new OpenAPIGenerator({
+    schemaConverters: [new ZodToJsonSchemaConverter()],
+  });
+
+  // OpenAPI spec endpoint
+  app.get("/api/spec.json", async (_req, res) => {
+    const spec = await openAPIGenerator.generate(orpcRouter, {
+      info: {
+        title: "Mux API",
+        version: VERSION.git_describe,
+        description: "API for Mux",
+      },
+      servers: [{ url: "/api" }],
+      security: authToken ? [{ bearerAuth: [] }] : undefined,
+      components: authToken
+        ? {
+            securitySchemes: {
+              bearerAuth: {
+                type: "http",
+                scheme: "bearer",
+              },
+            },
+          }
+        : undefined,
+    });
+    res.json(spec);
+  });
+
+  // Scalar API reference UI
+  app.get("/api/docs", (_req, res) => {
+    const html = `<!doctype html>
+<html>
+  <head>
+    <title>mux API Reference</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+    <script>
+      Scalar.createApiReference('#app', {
+        url: '/api/spec.json',
+        ${authToken ? "authentication: { securitySchemes: { bearerAuth: { token: '' } } }," : ""}
+      })
+    </script>
+  </body>
+</html>`;
+    res.setHeader("Content-Type", "text/html");
+    res.send(html);
+  });
+
+  // OpenAPI REST handler (for Scalar/OpenAPI clients)
+  const openAPIHandler = new OpenAPIHandler(orpcRouter, {
+    interceptors: [onError(onOrpcError)],
+  });
+
+  app.use("/api", async (req, res, next) => {
+    // Skip spec.json and docs routes - they're handled above
+    if (req.path === "/spec.json" || req.path === "/docs") {
+      return next();
+    }
+    const { matched } = await openAPIHandler.handle(req, res, {
+      prefix: "/api",
+      context: { ...context, headers: req.headers },
+    });
+    if (matched) return;
+    next();
+  });
 
   // oRPC HTTP handler
   const orpcHandler = new RPCHandler(orpcRouter, {
@@ -161,6 +239,8 @@ export async function createOrpcServer({
     port: actualPort,
     baseUrl: `http://${connectableHost}:${actualPort}`,
     wsUrl: `ws://${connectableHost}:${actualPort}/orpc/ws`,
+    specUrl: `http://${connectableHost}:${actualPort}/api/spec.json`,
+    docsUrl: `http://${connectableHost}:${actualPort}/api/docs`,
     close: async () => {
       // Close WebSocket server first
       wsServer.close();

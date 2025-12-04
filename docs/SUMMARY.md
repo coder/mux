@@ -30,6 +30,7 @@
 - [Prompting Tips](./prompting-tips.md)
 - [System Prompt](./system-prompt.md)
 - [Telemetry](./telemetry.md)
+- [Mux Codes](./mux-codes.md)
 
 # Development
 

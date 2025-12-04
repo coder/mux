@@ -41,6 +41,31 @@ export const DEFAULT_COMPACTION_WORD_TARGET = 2000;
 export const WORDS_TO_TOKENS_RATIO = 1.3;
 
 /**
+ * Build the compaction prompt for a given word target.
+ * Shared across desktop and mobile clients.
+ */
+export function buildCompactionPrompt(targetWords: number): string {
+  return `Summarize this conversation for a new Assistant to continue helping the user.
+
+Your summary must be approximately ${targetWords} words.
+
+Include:
+- The user's overall goal and current task
+- Key decisions made and their rationale
+- Current state of the work (what's done, what's in progress)
+- Important technical details (file paths, function names, configurations)
+- Any errors encountered and how they were resolved
+- Unresolved issues or blockers
+
+Do not include:
+- Suggestions for next steps
+- Conversational filler or pleasantries
+- Redundant information
+
+Write in a factual, dense style. Every sentence should convey essential context.`;
+}
+
+/**
  * Force-compact this many percentage points after threshold.
  * Gives user a buffer zone between warning and force-compaction.
  * E.g., with 70% threshold, force-compact triggers at 75%.

@@ -3,6 +3,7 @@ title: Mux Codes
 description: Redeem free LLM token credits for evaluating Mux
 ---
 
+
 Mux codes are free LLM token credits for evaluating Mux. Coder employees disburse them at events to users we think will enjoy Mux. If you want to get your hands on a code, ask the nearest Coder employee.
 
 A code looks like `ABC-123`.

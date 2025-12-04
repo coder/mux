@@ -25,7 +25,11 @@ import { resolveCompactionModel } from "@/browser/utils/messages/compactionModel
 import type { ImageAttachment } from "../components/ImageAttachments";
 import { dispatchWorkspaceSwitch } from "./workspaceEvents";
 import { getRuntimeKey, copyWorkspaceStorage } from "@/common/constants/storage";
-import { DEFAULT_COMPACTION_WORD_TARGET, WORDS_TO_TOKENS_RATIO } from "@/common/constants/ui";
+import {
+  DEFAULT_COMPACTION_WORD_TARGET,
+  WORDS_TO_TOKENS_RATIO,
+  buildCompactionPrompt,
+} from "@/common/constants/ui";
 
 // ============================================================================
 // Workspace Creation
@@ -593,7 +597,7 @@ export function prepareCompactionMessage(options: CompactionOptions): {
     : DEFAULT_COMPACTION_WORD_TARGET;
 
   // Build compaction message with optional continue context
-  let messageText = `Summarize this conversation into a compact form for a new Assistant to continue helping the user. Focus entirely on the summary of what has happened. Do not suggest next steps or future actions. Use approximately ${targetWords} words.`;
+  let messageText = buildCompactionPrompt(targetWords);
 
   if (options.continueMessage) {
     messageText += `\n\nThe user wants to continue with: ${options.continueMessage.text}`;
