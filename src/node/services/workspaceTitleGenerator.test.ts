@@ -1,59 +1,38 @@
 import { describe, it, expect } from "bun:test";
 import { getPreferredNameModel } from "./workspaceTitleGenerator";
-import type { Config } from "@/node/config";
+import type { AIService } from "./aiService";
+import { getKnownModel } from "@/common/constants/knownModels";
+
+// Helper to create a mock AIService that succeeds for specific models
+function createMockAIService(availableModels: string[]): AIService {
+  return {
+    createModel: async (modelString: string) => {
+      if (availableModels.includes(modelString)) {
+        return { success: true, data: {} as never };
+      }
+      return { success: false, error: { type: "api_key_not_found", provider: "test" } };
+    },
+  } as unknown as AIService;
+}
 
 describe("workspaceTitleGenerator", () => {
-  it("getPreferredNameModel returns null when no providers configured", () => {
-    // Save and clear env vars
-    const savedAnthropicKey = process.env.ANTHROPIC_API_KEY;
-    const savedAnthropicToken = process.env.ANTHROPIC_AUTH_TOKEN;
-    delete process.env.ANTHROPIC_API_KEY;
-    delete process.env.ANTHROPIC_AUTH_TOKEN;
+  const HAIKU_ID = getKnownModel("HAIKU").id;
+  const GPT_MINI_ID = getKnownModel("GPT_MINI").id;
 
-    try {
-      const mockConfig = {
-        loadProvidersConfig: () => null,
-      } as unknown as Config;
-
-      expect(getPreferredNameModel(mockConfig)).toBeNull();
-    } finally {
-      // Restore env vars
-      if (savedAnthropicKey) process.env.ANTHROPIC_API_KEY = savedAnthropicKey;
-      if (savedAnthropicToken) process.env.ANTHROPIC_AUTH_TOKEN = savedAnthropicToken;
-    }
+  it("getPreferredNameModel returns null when no models available", async () => {
+    const aiService = createMockAIService([]);
+    expect(await getPreferredNameModel(aiService)).toBeNull();
   });
 
-  it("getPreferredNameModel prefers anthropic when configured", () => {
-    const mockConfig = {
-      loadProvidersConfig: () => ({
-        anthropic: { apiKey: "test-key" },
-      }),
-    } as unknown as Config;
-
-    const model = getPreferredNameModel(mockConfig);
-    expect(model).toContain("anthropic");
+  it("getPreferredNameModel prefers Haiku when available", async () => {
+    const aiService = createMockAIService([HAIKU_ID, GPT_MINI_ID]);
+    const model = await getPreferredNameModel(aiService);
+    expect(model).toBe(HAIKU_ID);
   });
 
-  it("getPreferredNameModel falls back to openai when anthropic not configured", () => {
-    // Save and clear env vars
-    const savedAnthropicKey = process.env.ANTHROPIC_API_KEY;
-    const savedAnthropicToken = process.env.ANTHROPIC_AUTH_TOKEN;
-    delete process.env.ANTHROPIC_API_KEY;
-    delete process.env.ANTHROPIC_AUTH_TOKEN;
-
-    try {
-      const mockConfig = {
-        loadProvidersConfig: () => ({
-          openai: { apiKey: "test-key" },
-        }),
-      } as unknown as Config;
-
-      const model = getPreferredNameModel(mockConfig);
-      expect(model).toContain("openai");
-    } finally {
-      // Restore env vars
-      if (savedAnthropicKey) process.env.ANTHROPIC_API_KEY = savedAnthropicKey;
-      if (savedAnthropicToken) process.env.ANTHROPIC_AUTH_TOKEN = savedAnthropicToken;
-    }
+  it("getPreferredNameModel falls back to GPT Mini when Haiku unavailable", async () => {
+    const aiService = createMockAIService([GPT_MINI_ID]);
+    const model = await getPreferredNameModel(aiService);
+    expect(model).toBe(GPT_MINI_ID);
   });
 });

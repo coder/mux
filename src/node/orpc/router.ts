@@ -174,7 +174,7 @@ export const router = (authToken?: string) => {
         .input(schemas.nameGeneration.generate.input)
         .output(schemas.nameGeneration.generate.output)
         .handler(async ({ context, input }) => {
-          const model = getPreferredNameModel(context.config);
+          const model = await getPreferredNameModel(context.aiService);
           if (!model) {
             return {
               success: false,

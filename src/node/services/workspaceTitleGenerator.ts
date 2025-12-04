@@ -1,7 +1,6 @@
 import { generateObject } from "ai";
 import { z } from "zod";
 import type { AIService } from "./aiService";
-import type { Config } from "@/node/config";
 import { log } from "./log";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
@@ -21,20 +20,17 @@ const workspaceNameSchema = z.object({
 });
 
 /**
- * Get the preferred model for name generation based on configured providers.
+ * Get the preferred model for name generation by testing which models the AIService
+ * can actually create. This delegates credential checking to AIService, avoiding
+ * duplication of provider-specific API key logic.
  */
-export function getPreferredNameModel(config: Config): string | null {
-  const providersConfig = config.loadProvidersConfig();
+export async function getPreferredNameModel(aiService: AIService): Promise<string | null> {
   for (const modelId of PREFERRED_MODELS) {
-    const provider = modelId.split(":")[0];
-    const providerConfig = providersConfig?.[provider];
-    const hasKey = providerConfig
-      ? !!(providerConfig as { apiKey?: string }).apiKey
-      : provider === "anthropic" &&
-        !!(process.env.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_AUTH_TOKEN);
-    if (hasKey) {
+    const result = await aiService.createModel(modelId);
+    if (result.success) {
       return modelId;
     }
+    // If it's an API key error, try the next model; other errors are also skipped
   }
   return null;
 }
