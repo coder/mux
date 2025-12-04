@@ -87,8 +87,8 @@ export function CreationControls(props: CreationControlsProps) {
               props.nameError && "border-red-500"
             )}
           />
-          {/* Magic wand / loading indicator */}
-          <div className="absolute top-1/2 right-1.5 -translate-y-1/2">
+          {/* Magic wand / loading indicator - vertically centered */}
+          <div className="absolute inset-y-0 right-0 flex items-center pr-1.5">
             {props.isGeneratingName ? (
               <Loader2 className="text-accent h-3.5 w-3.5 animate-spin" />
             ) : (
@@ -97,7 +97,7 @@ export function CreationControls(props: CreationControlsProps) {
                   type="button"
                   onClick={handleWandClick}
                   disabled={props.disabled}
-                  className="flex items-center justify-center disabled:opacity-50"
+                  className="flex h-full items-center disabled:opacity-50"
                   aria-label={props.autoGenerateName ? "Disable auto-naming" : "Enable auto-naming"}
                 >
                   <Wand2

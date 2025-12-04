@@ -150,15 +150,23 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
     };
   }, [message, autoGenerate, debounceMs, generateName]);
 
-  // When auto-generate is toggled on, trigger generation
-  const handleSetAutoGenerate = useCallback((enabled: boolean) => {
-    setAutoGenerate(enabled);
-    if (enabled) {
-      // Reset so debounced generation will trigger
-      lastGeneratedForRef.current = "";
-      setError(null);
-    }
-  }, []);
+  // When auto-generate is toggled, handle name preservation
+  const handleSetAutoGenerate = useCallback(
+    (enabled: boolean) => {
+      if (enabled) {
+        // Switching to auto: reset so debounced generation will trigger
+        lastGeneratedForRef.current = "";
+        setError(null);
+      } else {
+        // Switching to manual: copy generated name as starting point for editing
+        if (generatedName) {
+          setManualName(generatedName);
+        }
+      }
+      setAutoGenerate(enabled);
+    },
+    [generatedName]
+  );
 
   const setName = useCallback((name: string) => {
     setManualName(name);
