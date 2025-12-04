@@ -173,22 +173,13 @@ export const workspace = {
   },
   sendMessage: {
     input: z.object({
-      workspaceId: z.string().nullable(),
+      workspaceId: z.string(),
       message: z.string(),
       options: SendMessageOptionsSchema.extend({
         imageParts: z.array(ImagePartSchema).optional(),
-        runtimeConfig: RuntimeConfigSchema.optional(),
-        projectPath: z.string().optional(),
-        trunkBranch: z.string().optional(),
       }).optional(),
     }),
-    output: ResultSchema(
-      z.object({
-        workspaceId: z.string().optional(),
-        metadata: FrontendWorkspaceMetadataSchema.optional(),
-      }),
-      SendMessageErrorSchema
-    ),
+    output: ResultSchema(z.object({}), SendMessageErrorSchema),
   },
   resumeStream: {
     input: z.object({
@@ -281,6 +272,22 @@ export const workspace = {
 };
 
 export type WorkspaceSendMessageOutput = z.infer<typeof workspace.sendMessage.output>;
+
+// Name generation for new workspaces (decoupled from workspace creation)
+export const nameGeneration = {
+  generate: {
+    input: z.object({
+      message: z.string(),
+    }),
+    output: ResultSchema(
+      z.object({
+        name: z.string(),
+        modelUsed: z.string(),
+      }),
+      SendMessageErrorSchema
+    ),
+  },
+};
 
 // Window
 export const window = {

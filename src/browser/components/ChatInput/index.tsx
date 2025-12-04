@@ -244,12 +244,14 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
       ? {
           projectPath: props.projectPath,
           onWorkspaceCreated: props.onWorkspaceCreated,
+          message: input,
         }
       : {
           // Dummy values for workspace variant (never used)
           projectPath: "",
           // eslint-disable-next-line @typescript-eslint/no-empty-function
           onWorkspaceCreated: () => {},
+          message: "",
         }
   );
 
@@ -1190,7 +1192,9 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         <CreationCenterContent
           projectName={props.projectName}
           isSending={creationState.isSending || isSending}
-          inputPreview={creationState.isSending || isSending ? input : undefined}
+          workspaceName={
+            creationState.isSending || isSending ? creationState.workspaceName : undefined
+          }
         />
       )}
 
@@ -1400,6 +1404,12 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 onSetDefaultRuntime={creationState.setDefaultRuntimeMode}
                 onSshHostChange={creationState.setSshHost}
                 disabled={creationState.isSending || isSending}
+                workspaceName={creationState.workspaceName}
+                isGeneratingName={creationState.isGeneratingName}
+                autoGenerateName={creationState.autoGenerateName}
+                nameError={creationState.nameError}
+                onAutoGenerateChange={creationState.setAutoGenerateName}
+                onNameChange={creationState.setWorkspaceName}
               />
             )}
           </div>

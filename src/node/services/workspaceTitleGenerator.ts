@@ -1,10 +1,18 @@
 import { generateObject } from "ai";
 import { z } from "zod";
 import type { AIService } from "./aiService";
+import type { Config } from "@/node/config";
 import { log } from "./log";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { SendMessageError } from "@/common/types/errors";
+import { getKnownModel } from "@/common/constants/knownModels";
+
+/** Models to try in order of preference for name generation (small, fast models) */
+const PREFERRED_MODELS = [
+  getKnownModel("HAIKU").id,
+  getKnownModel("GPT_MINI").id,
+] as const;
 
 const workspaceNameSchema = z.object({
   name: z
@@ -14,6 +22,25 @@ const workspaceNameSchema = z.object({
     .max(50)
     .describe("Git-safe branch/workspace name: lowercase, hyphens only"),
 });
+
+/**
+ * Get the preferred model for name generation based on configured providers.
+ */
+export function getPreferredNameModel(config: Config): string | null {
+  const providersConfig = config.loadProvidersConfig();
+  for (const modelId of PREFERRED_MODELS) {
+    const provider = modelId.split(":")[0];
+    const providerConfig = providersConfig?.[provider];
+    const hasKey = providerConfig
+      ? !!(providerConfig as { apiKey?: string }).apiKey
+      : provider === "anthropic" &&
+        !!(process.env.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_AUTH_TOKEN);
+    if (hasKey) {
+      return modelId;
+    }
+  }
+  return null;
+}
 
 /**
  * Generate workspace name using AI.
@@ -65,11 +92,4 @@ function validateBranchName(name: string): string {
   return sanitizeBranchName(name, 50);
 }
 
-/**
- * Generate a placeholder name from the user's message for immediate display
- * while the AI generates the real title. This is git-safe and human-readable.
- */
-export function generatePlaceholderName(message: string): string {
-  const truncated = message.slice(0, 40).trim();
-  return sanitizeBranchName(truncated, 30) || "new-workspace";
-}
+

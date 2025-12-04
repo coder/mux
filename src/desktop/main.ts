@@ -322,6 +322,8 @@ async function loadServices(): Promise<void> {
 
   // Build the oRPC context with all services
   const orpcContext = {
+    config: services.config,
+    aiService: services.aiService,
     projectService: services.projectService,
     workspaceService: services.workspaceService,
     providerService: services.providerService,

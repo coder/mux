@@ -19,10 +19,13 @@ import type { Toast } from "@/browser/components/ChatInputToast";
 import { createErrorToast } from "@/browser/components/ChatInputToasts";
 import { useAPI } from "@/browser/contexts/API";
 import type { ImagePart } from "@/common/orpc/types";
+import { useWorkspaceName } from "@/browser/hooks/useWorkspaceName";
 
 interface UseCreationWorkspaceOptions {
   projectPath: string;
   onWorkspaceCreated: (metadata: FrontendWorkspaceMetadata) => void;
+  /** Current message input for name generation */
+  message: string;
 }
 
 function syncCreationPreferences(projectPath: string, workspaceId: string): void {
@@ -66,6 +69,18 @@ interface UseCreationWorkspaceReturn {
   setToast: (toast: Toast | null) => void;
   isSending: boolean;
   handleSend: (message: string, imageParts?: ImagePart[]) => Promise<boolean>;
+  /** Workspace name state */
+  workspaceName: string;
+  /** Whether name is being generated */
+  isGeneratingName: boolean;
+  /** Whether auto-generation is enabled */
+  autoGenerateName: boolean;
+  /** Name generation error */
+  nameError: string | null;
+  /** Set auto-generation enabled */
+  setAutoGenerateName: (enabled: boolean) => void;
+  /** Set workspace name (for manual entry) */
+  setWorkspaceName: (name: string) => void;
 }
 
 /**
@@ -73,11 +88,13 @@ interface UseCreationWorkspaceReturn {
  * Handles:
  * - Branch selection
  * - Runtime configuration (local vs SSH)
+ * - Workspace name generation
  * - Message sending with workspace creation
  */
 export function useCreationWorkspace({
   projectPath,
   onWorkspaceCreated,
+  message,
 }: UseCreationWorkspaceOptions): UseCreationWorkspaceReturn {
   const { api } = useAPI();
   const [branches, setBranches] = useState<string[]>([]);
@@ -94,6 +111,15 @@ export function useCreationWorkspace({
     setTrunkBranch,
     getRuntimeString,
   } = useDraftWorkspaceSettings(projectPath, branches, recommendedTrunk);
+
+  // Workspace name generation with debounce
+  const workspaceNameState = useWorkspaceName({
+    message,
+    debounceMs: 500,
+  });
+
+  // Destructure name state functions for use in callbacks
+  const { waitForGeneration } = workspaceNameState;
 
   // Project scope ID for reading send options at send time
   const projectScopeId = getProjectScopeId(projectPath);
@@ -118,13 +144,25 @@ export function useCreationWorkspace({
   }, [projectPath, api]);
 
   const handleSend = useCallback(
-    async (message: string, imageParts?: ImagePart[]): Promise<boolean> => {
-      if (!message.trim() || isSending || !api) return false;
+    async (messageText: string, imageParts?: ImagePart[]): Promise<boolean> => {
+      if (!messageText.trim() || isSending || !api) return false;
 
       setIsSending(true);
       setToast(null);
 
       try {
+        // Wait for name generation to complete (blocks if still in progress)
+        const workspaceName = await waitForGeneration();
+        if (!workspaceName) {
+          setToast({
+            id: Date.now().toString(),
+            type: "error",
+            message: "Failed to generate workspace name. Please enter a name manually.",
+          });
+          setIsSending(false);
+          return false;
+        }
+
         // Get runtime config from options
         const runtimeString = getRuntimeString();
         const runtimeConfig: RuntimeConfig | undefined = runtimeString
@@ -136,15 +174,32 @@ export function useCreationWorkspace({
         // in usePersistedState can delay state updates after model selection)
         const sendMessageOptions = getSendOptionsFromStorage(projectScopeId);
 
-        // Send message with runtime config and creation-specific params
+        // Create the workspace with the generated/manual name first
+        const createResult = await api.workspace.create({
+          projectPath,
+          branchName: workspaceName,
+          trunkBranch: settings.trunkBranch,
+          runtimeConfig,
+        });
+
+        if (!createResult.success) {
+          setToast({
+            id: Date.now().toString(),
+            type: "error",
+            message: createResult.error,
+          });
+          setIsSending(false);
+          return false;
+        }
+
+        const { metadata } = createResult;
+
+        // Now send the message to the newly created workspace
         const result = await api.workspace.sendMessage({
-          workspaceId: null,
-          message,
+          workspaceId: metadata.id,
+          message: messageText,
           options: {
             ...sendMessageOptions,
-            runtimeConfig,
-            projectPath, // Pass projectPath when workspaceId is null
-            trunkBranch: settings.trunkBranch, // Pass selected trunk branch from settings
             imageParts: imageParts && imageParts.length > 0 ? imageParts : undefined,
           },
         });
@@ -155,29 +210,17 @@ export function useCreationWorkspace({
           return false;
         }
 
-        // Check if this is a workspace creation result (has metadata in data)
-        const { metadata } = result.data;
-        if (metadata) {
-          syncCreationPreferences(projectPath, metadata.id);
-          if (projectPath) {
-            const pendingInputKey = getInputKey(getPendingScopeId(projectPath));
-            updatePersistedState(pendingInputKey, "");
-          }
-          // Settings are already persisted via useDraftWorkspaceSettings
-          // Notify parent to switch workspace (clears input via parent unmount)
-          onWorkspaceCreated(metadata);
-          setIsSending(false);
-          return true;
-        } else {
-          // This shouldn't happen for null workspaceId, but handle gracefully
-          setToast({
-            id: Date.now().toString(),
-            type: "error",
-            message: "Unexpected response from server",
-          });
-          setIsSending(false);
-          return false;
+        // Sync preferences and complete
+        syncCreationPreferences(projectPath, metadata.id);
+        if (projectPath) {
+          const pendingInputKey = getInputKey(getPendingScopeId(projectPath));
+          updatePersistedState(pendingInputKey, "");
         }
+        // Settings are already persisted via useDraftWorkspaceSettings
+        // Notify parent to switch workspace (clears input via parent unmount)
+        onWorkspaceCreated(metadata);
+        setIsSending(false);
+        return true;
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         setToast({
@@ -197,6 +240,7 @@ export function useCreationWorkspace({
       onWorkspaceCreated,
       getRuntimeString,
       settings.trunkBranch,
+      waitForGeneration,
     ]
   );
 
@@ -214,5 +258,12 @@ export function useCreationWorkspace({
     setToast,
     isSending,
     handleSend,
+    // Workspace name state
+    workspaceName: workspaceNameState.name,
+    isGeneratingName: workspaceNameState.isGenerating,
+    autoGenerateName: workspaceNameState.autoGenerate,
+    nameError: workspaceNameState.error,
+    setAutoGenerateName: workspaceNameState.setAutoGenerate,
+    setWorkspaceName: workspaceNameState.setName,
   };
 }

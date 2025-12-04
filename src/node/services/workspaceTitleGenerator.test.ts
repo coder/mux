@@ -1,37 +1,59 @@
 import { describe, it, expect } from "bun:test";
-import { generatePlaceholderName } from "./workspaceTitleGenerator";
+import { getPreferredNameModel } from "./workspaceTitleGenerator";
+import type { Config } from "@/node/config";
 
-describe("generatePlaceholderName", () => {
-  it("should generate a git-safe name from message", () => {
-    const result = generatePlaceholderName("Add user authentication feature");
-    expect(result).toBe("add-user-authentication-featur");
+describe("workspaceTitleGenerator", () => {
+  it("getPreferredNameModel returns null when no providers configured", () => {
+    // Save and clear env vars
+    const savedAnthropicKey = process.env.ANTHROPIC_API_KEY;
+    const savedAnthropicToken = process.env.ANTHROPIC_AUTH_TOKEN;
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_AUTH_TOKEN;
+
+    try {
+      const mockConfig = {
+        loadProvidersConfig: () => null,
+      } as unknown as Config;
+
+      expect(getPreferredNameModel(mockConfig)).toBeNull();
+    } finally {
+      // Restore env vars
+      if (savedAnthropicKey) process.env.ANTHROPIC_API_KEY = savedAnthropicKey;
+      if (savedAnthropicToken) process.env.ANTHROPIC_AUTH_TOKEN = savedAnthropicToken;
+    }
   });
 
-  it("should handle special characters", () => {
-    const result = generatePlaceholderName("Fix bug #123 in user/profile");
-    expect(result).toBe("fix-bug-123-in-user-profile");
+  it("getPreferredNameModel prefers anthropic when configured", () => {
+    const mockConfig = {
+      loadProvidersConfig: () => ({
+        anthropic: { apiKey: "test-key" },
+      }),
+    } as unknown as Config;
+
+    const model = getPreferredNameModel(mockConfig);
+    expect(model).toContain("anthropic");
   });
 
-  it("should truncate long messages", () => {
-    const result = generatePlaceholderName(
-      "This is a very long message that should be truncated to fit within the maximum length"
-    );
-    expect(result.length).toBeLessThanOrEqual(30);
-    expect(result).toBe("this-is-a-very-long-message-th");
-  });
+  it("getPreferredNameModel falls back to openai when anthropic not configured", () => {
+    // Save and clear env vars
+    const savedAnthropicKey = process.env.ANTHROPIC_API_KEY;
+    const savedAnthropicToken = process.env.ANTHROPIC_AUTH_TOKEN;
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_AUTH_TOKEN;
 
-  it("should return default name for empty/whitespace input", () => {
-    expect(generatePlaceholderName("")).toBe("new-workspace");
-    expect(generatePlaceholderName("   ")).toBe("new-workspace");
-  });
+    try {
+      const mockConfig = {
+        loadProvidersConfig: () => ({
+          openai: { apiKey: "test-key" },
+        }),
+      } as unknown as Config;
 
-  it("should handle unicode characters", () => {
-    const result = generatePlaceholderName("Add émojis 🚀 and accénts");
-    expect(result).toBe("add-mojis-and-acc-nts");
-  });
-
-  it("should handle only special characters", () => {
-    const result = generatePlaceholderName("!@#$%^&*()");
-    expect(result).toBe("new-workspace");
+      const model = getPreferredNameModel(mockConfig);
+      expect(model).toContain("openai");
+    } finally {
+      // Restore env vars
+      if (savedAnthropicKey) process.env.ANTHROPIC_API_KEY = savedAnthropicKey;
+      if (savedAnthropicToken) process.env.ANTHROPIC_AUTH_TOKEN = savedAnthropicToken;
+    }
   });
 });

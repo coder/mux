@@ -20,6 +20,7 @@ declare global {
     // Optional ORPC-backed API surfaces populated in tests/storybook mocks
     tokenizer?: unknown;
     providers?: unknown;
+    nameGeneration?: unknown;
     workspace?: unknown;
     projects?: unknown;
     window?: unknown;

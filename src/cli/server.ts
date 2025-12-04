@@ -68,6 +68,8 @@ const mockWindow: BrowserWindow = {
 
   // Build oRPC context from services
   const context: ORPCContext = {
+    config: serviceContainer.config,
+    aiService: serviceContainer.aiService,
     projectService: serviceContainer.projectService,
     workspaceService: serviceContainer.workspaceService,
     providerService: serviceContainer.providerService,
