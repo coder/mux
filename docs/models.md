@@ -5,7 +5,7 @@ description: Configure AI providers including Anthropic, OpenAI, Google, xAI, an
 
 See also:
 
-- [System Prompt](./system-prompt.md)
+- [System Prompt](/system-prompt)
 
 mux supports multiple AI providers through its flexible provider architecture.
 

@@ -44,7 +44,7 @@ Classic tokens are easier to configure than fine-grained tokens for repository a
 
 ## Step 3: Configure Git Identity
 
-Add the Git identity environment variables as [Project Secrets](./project-secrets.md) in mux:
+Add the Git identity environment variables as [Project Secrets](/project-secrets) in mux:
 
 1. Open mux and find your project in the sidebar
 2. Click the 🔑 key icon to open the secrets modal

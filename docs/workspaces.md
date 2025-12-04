@@ -7,13 +7,13 @@ Workspaces in mux provide isolated development environments for parallel agent w
 
 ## Runtimes
 
-mux supports three [runtime types](./runtime.md):
+mux supports three [runtime types](/runtime):
 
-- **[Local](./runtime/local.md)**: Run directly in your project directory. No isolation—best for quick edits to your working copy.
+- **[Local](/runtime/local)**: Run directly in your project directory. No isolation—best for quick edits to your working copy.
 
-- **[Worktree](./runtime/worktree.md)**: Isolated directories using [git worktrees](https://git-scm.com/docs/git-worktree). Worktrees share `.git` with your main repository while maintaining independent working changes.
+- **[Worktree](/runtime/worktree)**: Isolated directories using [git worktrees](https://git-scm.com/docs/git-worktree). Worktrees share `.git` with your main repository while maintaining independent working changes.
 
-- **[SSH](./runtime/ssh.md)**: Remote execution over SSH. Ideal for heavy workloads, security isolation, or leveraging remote infrastructure.
+- **[SSH](/runtime/ssh)**: Remote execution over SSH. Ideal for heavy workloads, security isolation, or leveraging remote infrastructure.
 
 ## Choosing a Runtime
 
@@ -35,7 +35,7 @@ The runtime is selected when you create a workspace:
 Here are a few practical approaches to reviewing changes from workspaces, depending on how much you want your agent to interact with `git`:
 
 - **Agent codes, commits, and pushes**: Ask agent to submit a PR and review changes in your git Web UI (GitHub, GitLab, etc.)
-  - Also see: [Agentic Git Identity](./agentic-git-identity.md)
+  - Also see: [Agentic Git Identity](/agentic-git-identity)
   - This is the preferred approach for `mux` development but requires additional care with repository security.
 - **Agent codes and commits**: Review changes from the main repository via `git diff <workspace-branch>`, push changes when deemed acceptable.
 - **Agent codes**: Enter worktree (click Terminal icon in workspace top bar), run `git add -p` and progressively accept changes into a commit.

@@ -54,4 +54,4 @@ The agent doesn't need to explicitly reference secrets - they're available as re
 
 ## Related
 
-- [Agentic Git Identity](./agentic-git-identity.md) - Configure Git credentials for AI commits using Project Secrets
+- [Agentic Git Identity](/agentic-git-identity) - Configure Git credentials for AI commits using Project Secrets

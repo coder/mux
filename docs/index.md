@@ -18,10 +18,10 @@ mux helps you work with multiple coding assistants more effectively via:
 
 ## Quick Links
 
-- [Install](./install.md) - Download and installation instructions
-- [Why Parallelize?](./why-parallelize.md) - Why parallelize?
-- [Keyboard Shortcuts](./keybinds.md) - Complete keyboard reference
-- [AGENTS](./AGENTS.md) - Developer guide for AI assistants
+- [Install](/install) - Download and installation instructions
+- [Why Parallelize?](/why-parallelize) - Why parallelize?
+- [Keyboard Shortcuts](/keybinds) - Complete keyboard reference
+- [AGENTS](/AGENTS) - Developer guide for AI assistants
 
 ## License
 

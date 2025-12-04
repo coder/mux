@@ -10,7 +10,7 @@ A code looks like `ABC-123`.
 Redemption is straightforward:
 
 1. Go to [gateway.mux.coder.com](https://gateway.mux.coder.com) and follow instructions to enable the code.
-1. Open Mux (see [install](./install.md) for instructions)
+1. Open Mux (see [install](/install) for instructions)
 1. Click the Settings icon in the top left corner (Cmd+, on macOS)
 1. Under Providers, enter the code under Mux Gateway:
    ![Mux Gateway Code](./img/mux-gateway-code.webp)
