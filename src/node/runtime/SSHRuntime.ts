@@ -26,6 +26,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { execAsync, DisposableProcess } from "@/node/utils/disposableExec";
 import { getControlPath } from "./sshConnectionPool";
 import { getBashPath } from "@/node/utils/main/bashPath";
+import { getMuxBashrcSourceSnippet } from "@/common/constants/paths";
 
 /**
  * Shell-escape helper for remote bash.
@@ -106,6 +107,10 @@ export class SSHRuntime implements Runtime {
 
     // Add cd command if cwd is specified
     parts.push(cdCommandForSSH(options.cwd));
+
+    // Source ~/.mux/bashrc if it exists (sets up PATH, nix, direnv, etc.)
+    // This is necessary because `bash -c` doesn't source ~/.bashrc
+    parts.push(getMuxBashrcSourceSnippet());
 
     // Add environment variable exports (user env first, then non-interactive overrides)
     const envVars = { ...options.env, ...NON_INTERACTIVE_ENV_VARS };
