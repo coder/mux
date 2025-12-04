@@ -123,21 +123,22 @@ jobs:
         if: github.event.inputs.test_filter == '' && steps.coverage-map-cache.outputs.cache-hit != ''
         id: select-tests
         run: |
-          # Run selection script and capture output
           set +e
           SELECTED=$(bun scripts/selective-tests/select-affected-tests.ts \
             --map coverage-map.json \
             --base origin/${{ github.base_ref || 'main' }} \
             --head ${{ github.sha }} \
             --output jest \
-            --verbose)
+            --verbose 2>&1)
           EXIT_CODE=$?
           set -e
 
-          echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
+          # Extract just the test list (last line of output)
+          TEST_LIST=$(echo "$SELECTED" | tail -1)
 
+          echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
           if [[ $EXIT_CODE -eq 0 ]]; then
-            echo "selected_tests=$SELECTED" >> $GITHUB_OUTPUT
+            echo "selected_tests=$TEST_LIST" >> $GITHUB_OUTPUT
             echo "run_selective=true" >> $GITHUB_OUTPUT
           else
             echo "run_selective=false" >> $GITHUB_OUTPUT

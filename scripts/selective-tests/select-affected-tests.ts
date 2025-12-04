@@ -39,10 +39,11 @@ const minimatch = require("minimatch") as (
   options?: { matchBase?: boolean }
 ) => boolean;
 
+// Defaults
 const DEFAULT_MAP_PATH = "coverage-map.json";
 const DEFAULT_BASE_REF = "origin/main";
 const DEFAULT_HEAD_REF = "HEAD";
-const DEFAULT_MAX_STALENESS_DAYS = 7;
+const DEFAULT_MAX_STALENESS_DAYS = 7; // Fallback if map older than this
 
 interface Options {
   mapPath: string;
@@ -312,18 +313,27 @@ function selectAffectedTests(
       coverageMap.allTests.includes(f)
   );
 
-  // Non-source changes that we can ignore (docs, configs we don't care about, etc.)
+  // Non-source changes that we can safely ignore
   const ignoredPatterns = [
+    // Documentation
     "docs/**",
     "*.md",
     "*.mdx",
+    // Editor/repo config
     ".gitignore",
     ".editorconfig",
-    "LICENSE",
     ".vscode/**",
+    "LICENSE",
+    // Storybook (has its own tests)
     "storybook/**",
     ".storybook/**",
     "*.stories.tsx",
+    // CI workflows (changes here don't affect test results)
+    ".github/**",
+    // E2E tests (separate from integration tests)
+    "tests/e2e/**",
+    // Build artifacts
+    "electron-builder.yml",
   ];
 
   const ignoredChanges = changedFiles.filter((f) =>

@@ -35,11 +35,11 @@ export interface AffectedTestsResult {
   unmappedFiles: string[];
 }
 
-/** Exit codes for scripts */
+/** Exit codes for scripts (2 = fallback so CI can distinguish from errors) */
 export const EXIT_CODES = {
   SUCCESS: 0,
-  FALLBACK_TRIGGERED: 2,
   ERROR: 1,
+  FALLBACK_TRIGGERED: 2,
 } as const;
 
 /** Infrastructure files that should trigger all tests when changed */
@@ -66,11 +66,6 @@ export const INFRASTRUCTURE_PATTERNS = [
 
   // Build configuration
   "vite.*.ts",
-  "electron-builder.yml",
-
-  // CI configuration
-  ".github/workflows/**",
-  ".github/actions/**",
 
   // This selective test system itself
   "scripts/selective-tests/**",

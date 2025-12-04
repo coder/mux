@@ -20,6 +20,7 @@ import { createHash } from "crypto";
 import type { CoverageMap } from "./types";
 import { INFRASTRUCTURE_PATTERNS } from "./types";
 
+// Directories and defaults
 const TESTS_DIR = "tests/integration";
 const COVERAGE_DIR = "coverage";
 const DEFAULT_OUTPUT = "coverage-map.json";

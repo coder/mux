@@ -21,10 +21,9 @@ This system reduces CI time by running only the integration tests affected by co
 
 ## Files
 
-- `types.ts` - Shared types and constants
+- `types.ts` - Shared types and infrastructure file patterns
 - `generate-coverage-map.ts` - Generates the coverage map by running tests with coverage
 - `select-affected-tests.ts` - Selects tests based on changed files
-- `run-selective-tests.sh` - CI wrapper script with fallback handling
 
 ## Usage
 
@@ -85,14 +84,6 @@ These files trigger a full test run when changed (see `INFRASTRUCTURE_PATTERNS` 
 - Test infrastructure: `tests/setup.ts`, `tests/integration/helpers.ts`
 - Service container: `src/node/services/serviceContainer.ts`
 - Shared types: `src/types/**`, `src/constants/**`
-
-## Shadow Mode
-
-For validation, run with `--shadow-mode` to log what would have been selected while still running all tests:
-
-```bash
-./scripts/selective-tests/run-selective-tests.sh --shadow-mode
-```
 
 ## Debugging
 
