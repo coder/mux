@@ -100,14 +100,66 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Required for git describe to find tags
+          fetch-depth: 0 # Required for git describe to find tags and diff
 
       - uses: ./.github/actions/setup-mux
 
       - name: Build worker files
         run: make build-main
 
-      - name: Run all integration tests with coverage
+      # Try to restore coverage map from cache for selective testing
+      - name: Restore coverage map
+        if: github.event.inputs.test_filter == ''
+        id: coverage-map-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: coverage-map.json
+          key: coverage-map-${{ github.sha }}
+          restore-keys: |
+            coverage-map-latest-
+            coverage-map-
+
+      - name: Select affected tests
+        if: github.event.inputs.test_filter == '' && steps.coverage-map-cache.outputs.cache-hit != ''
+        id: select-tests
+        run: |
+          # Run selection script and capture output
+          set +e
+          SELECTED=$(bun scripts/selective-tests/select-affected-tests.ts \
+            --map coverage-map.json \
+            --base origin/${{ github.base_ref || 'main' }} \
+            --head ${{ github.sha }} \
+            --output jest \
+            --verbose)
+          EXIT_CODE=$?
+          set -e
+
+          echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
+
+          if [[ $EXIT_CODE -eq 0 ]]; then
+            echo "selected_tests=$SELECTED" >> $GITHUB_OUTPUT
+            echo "run_selective=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_selective=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run selective integration tests
+        if: steps.select-tests.outputs.run_selective == 'true' && steps.select-tests.outputs.selected_tests != '--testPathPattern=^$'
+        run: |
+          echo "Running selective tests: ${{ steps.select-tests.outputs.selected_tests }}"
+          TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent ${{ steps.select-tests.outputs.selected_tests }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Skip tests (no affected tests)
+        if: steps.select-tests.outputs.run_selective == 'true' && steps.select-tests.outputs.selected_tests == '--testPathPattern=^$'
+        run: |
+          echo "::notice::No integration tests affected by changes - skipping"
+          echo "No integration tests were affected by the changes in this PR." >> $GITHUB_STEP_SUMMARY
+
+      - name: Run all integration tests (fallback or manual filter)
+        if: steps.select-tests.outputs.run_selective != 'true'
         # --silent suppresses per-test output (17+ test files × workers = overwhelming logs)
         run: TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent ${{ github.event.inputs.test_filter || 'tests' }}
         env:
