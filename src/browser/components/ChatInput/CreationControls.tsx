@@ -2,8 +2,9 @@ import React, { useCallback } from "react";
 import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
 import { Select } from "../Select";
 import { RuntimeIconSelector } from "../RuntimeIconSelector";
-import { Loader2 } from "lucide-react";
+import { Loader2, Wand2 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
+import { Tooltip, TooltipWrapper } from "../Tooltip";
 
 interface CreationControlsProps {
   branches: string[];
@@ -44,7 +45,8 @@ export function CreationControls(props: CreationControlsProps) {
   const showTrunkBranchSelector =
     props.branches.length > 0 && props.runtimeMode !== RUNTIME_MODE.LOCAL;
 
-  const { onNameChange } = props;
+  const { onNameChange, onAutoGenerateChange } = props;
+
   const handleNameChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       onNameChange(e.target.value);
@@ -52,9 +54,21 @@ export function CreationControls(props: CreationControlsProps) {
     [onNameChange]
   );
 
+  // Clicking into the input disables auto-generation so user can edit
+  const handleInputFocus = useCallback(() => {
+    if (props.autoGenerateName) {
+      onAutoGenerateChange(false);
+    }
+  }, [props.autoGenerateName, onAutoGenerateChange]);
+
+  // Toggle auto-generation via wand button
+  const handleWandClick = useCallback(() => {
+    onAutoGenerateChange(!props.autoGenerateName);
+  }, [props.autoGenerateName, onAutoGenerateChange]);
+
   return (
     <div className="flex flex-col gap-2">
-      {/* First row: Workspace name with auto-generate checkbox */}
+      {/* First row: Workspace name with magic wand toggle */}
       <div className="flex items-center gap-2" data-component="WorkspaceNameGroup">
         <label htmlFor="workspace-name" className="text-muted text-xs whitespace-nowrap">
           Name:
@@ -65,31 +79,43 @@ export function CreationControls(props: CreationControlsProps) {
             type="text"
             value={props.workspaceName}
             onChange={handleNameChange}
+            onFocus={handleInputFocus}
             placeholder={props.isGeneratingName ? "Generating..." : "workspace-name"}
-            disabled={props.disabled || props.autoGenerateName}
+            disabled={props.disabled}
             className={cn(
               "bg-separator text-foreground border-border-medium focus:border-accent h-6 w-full rounded border px-2 pr-6 text-xs focus:outline-none disabled:opacity-50",
               props.nameError && "border-red-500"
             )}
           />
-          {/* Loading indicator when generating */}
-          {props.isGeneratingName && (
-            <div className="absolute top-1/2 right-1 -translate-y-1/2">
-              <Loader2 className="text-muted h-3 w-3 animate-spin" />
-            </div>
-          )}
+          {/* Magic wand / loading indicator */}
+          <div className="absolute top-1/2 right-1.5 -translate-y-1/2">
+            {props.isGeneratingName ? (
+              <Loader2 className="text-accent h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <TooltipWrapper inline>
+                <button
+                  type="button"
+                  onClick={handleWandClick}
+                  disabled={props.disabled}
+                  className="flex items-center justify-center disabled:opacity-50"
+                  aria-label={props.autoGenerateName ? "Disable auto-naming" : "Enable auto-naming"}
+                >
+                  <Wand2
+                    className={cn(
+                      "h-3.5 w-3.5 transition-colors",
+                      props.autoGenerateName
+                        ? "text-accent"
+                        : "text-muted-foreground opacity-50 hover:opacity-75"
+                    )}
+                  />
+                </button>
+                <Tooltip className="tooltip" align="center">
+                  {props.autoGenerateName ? "Auto-naming enabled" : "Click to enable auto-naming"}
+                </Tooltip>
+              </TooltipWrapper>
+            )}
+          </div>
         </div>
-        {/* Auto-generate checkbox */}
-        <label className="text-muted flex h-6 items-center gap-1 text-[10px] whitespace-nowrap">
-          <input
-            type="checkbox"
-            checked={props.autoGenerateName}
-            onChange={(e) => props.onAutoGenerateChange(e.target.checked)}
-            disabled={props.disabled}
-            className="h-3 w-3"
-          />
-          auto
-        </label>
         {/* Error display - inline */}
         {props.nameError && <span className="text-xs text-red-500">{props.nameError}</span>}
       </div>
