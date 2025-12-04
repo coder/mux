@@ -76,7 +76,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
     const oldRequestId = requestIdRef.current;
     requestIdRef.current++;
     // Resolve any waiters so they don't hang forever
-    if (generationPromiseRef.current && generationPromiseRef.current.requestId === oldRequestId) {
+    if (generationPromiseRef.current?.requestId === oldRequestId) {
       generationPromiseRef.current.resolve("");
       generationPromiseRef.current = null;
       setIsGenerating(false);

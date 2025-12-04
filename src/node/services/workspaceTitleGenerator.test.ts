@@ -2,17 +2,29 @@ import { describe, it, expect } from "bun:test";
 import { getPreferredNameModel } from "./workspaceTitleGenerator";
 import type { AIService } from "./aiService";
 import { getKnownModel } from "@/common/constants/knownModels";
+import type { LanguageModel } from "ai";
+import type { Result } from "@/common/types/result";
+import type { SendMessageError } from "@/common/types/errors";
+
+type CreateModelResult = Result<LanguageModel, SendMessageError>;
 
 // Helper to create a mock AIService that succeeds for specific models
 function createMockAIService(availableModels: string[]): AIService {
-  return {
-    createModel: async (modelString: string) => {
+  const service: Partial<AIService> = {
+    createModel: (modelString: string): Promise<CreateModelResult> => {
       if (availableModels.includes(modelString)) {
-        return { success: true, data: {} as never };
+        // Return a minimal success result - data is not used by getPreferredNameModel
+        const result: CreateModelResult = { success: true, data: null as never };
+        return Promise.resolve(result);
       }
-      return { success: false, error: { type: "api_key_not_found", provider: "test" } };
+      const err: CreateModelResult = {
+        success: false,
+        error: { type: "api_key_not_found", provider: "test" },
+      };
+      return Promise.resolve(err);
     },
-  } as unknown as AIService;
+  };
+  return service as AIService;
 }
 
 describe("workspaceTitleGenerator", () => {
