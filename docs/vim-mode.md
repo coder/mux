@@ -3,11 +3,8 @@ title: Vim Mode
 description: Vim-style editing in the mux chat input
 ---
 
-{/* Keep this file in sync with:
-     - src/components/VimTextArea.tsx (implementation)
-     - src/utils/vim.ts (core logic)
-     - src/utils/vim.test.ts (test suite)
-*/}
+{/_ Keep this file in sync with: - src/components/VimTextArea.tsx (implementation) - src/utils/vim.ts (core logic) - src/utils/vim.test.ts (test suite)
+_/}
 
 mux includes a built-in Vim mode for the chat input, providing familiar Vim-style editing for power users.
 
