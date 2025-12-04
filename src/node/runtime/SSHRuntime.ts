@@ -185,6 +185,8 @@ export class SSHRuntime implements Runtime {
     // Spawn ssh command
     const sshProcess = spawn("ssh", sshArgs, {
       stdio: ["pipe", "pipe", "pipe"],
+      // Prevent console window from appearing on Windows
+      windowsHide: true,
     });
 
     // Wrap in DisposableProcess for automatic cleanup
@@ -408,7 +410,10 @@ export class SSHRuntime implements Runtime {
     sshArgs.push(this.config.host, command);
 
     return new Promise((resolve, reject) => {
-      const proc = spawn("ssh", sshArgs);
+      const proc = spawn("ssh", sshArgs, {
+        // Prevent console window from appearing on Windows
+        windowsHide: true,
+      });
       let stdout = "";
       let stderr = "";
       let timedOut = false;
@@ -591,7 +596,10 @@ export class SSHRuntime implements Runtime {
 
         log.debug(`Creating bundle: ${command}`);
         const bashPath = getBashPath();
-        const proc = spawn(bashPath, ["-c", command]);
+        const proc = spawn(bashPath, ["-c", command], {
+          // Prevent console window from appearing on Windows
+          windowsHide: true,
+        });
 
         const cleanup = streamProcessToLogger(proc, initLogger, {
           logStdout: false,

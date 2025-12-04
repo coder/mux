@@ -138,6 +138,8 @@ export class BashExecutionService {
       // When bash spawns background processes, detached:true allows killing
       // the entire group via process.kill(-pid)
       detached: config.detached ?? true,
+      // Prevent console window from appearing on Windows (WSL bash spawns steal focus otherwise)
+      windowsHide: true,
     });
 
     log.debug(`BashExecutionService: Spawned process with PID ${child.pid ?? "unknown"}`);

@@ -91,6 +91,8 @@ export abstract class LocalBaseRuntime implements Runtime {
       // NOTE: detached:true does NOT cause bash to wait for background jobs when using 'exit' event
       // instead of 'close' event. The 'exit' event fires when bash exits, ignoring background children.
       detached: true,
+      // Prevent console window from appearing on Windows (WSL bash spawns steal focus otherwise)
+      windowsHide: true,
     });
 
     // Wrap in DisposableProcess for automatic cleanup
@@ -373,6 +375,8 @@ export abstract class LocalBaseRuntime implements Runtime {
           ...process.env,
           ...getInitHookEnv(projectPath, runtimeType),
         },
+        // Prevent console window from appearing on Windows
+        windowsHide: true,
       });
 
       proc.stdout.on("data", (data: Buffer) => {
