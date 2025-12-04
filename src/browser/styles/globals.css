@@ -64,7 +64,9 @@
 
     /* Runtime icon colors (matches Tailwind blue-500/purple-500) */
     --color-runtime-ssh: #3b82f6;
+    --color-runtime-ssh-text: #60a5fa; /* blue-400 */
     --color-runtime-worktree: #a855f7;
+    --color-runtime-worktree-text: #c084fc; /* purple-400 */
     --color-runtime-local: hsl(0 0% 60%); /* matches --color-muted-foreground */
 
     /* Background & Layout */
@@ -307,7 +309,9 @@
 
   /* Runtime icon colors (matches Tailwind blue-500/purple-500) */
   --color-runtime-ssh: #3b82f6;
+  --color-runtime-ssh-text: #60a5fa;
   --color-runtime-worktree: #a855f7;
+  --color-runtime-worktree-text: #c084fc;
   --color-runtime-local: hsl(210 14% 48%); /* matches --color-muted-foreground */
 
   --color-background: hsl(210 33% 98%);
@@ -535,7 +539,9 @@
 
   /* Runtime icon colors - using solarized palette */
   --color-runtime-ssh: #268bd2; /* blue */
+  --color-runtime-ssh-text: #268bd2;
   --color-runtime-worktree: #6c71c4; /* violet */
+  --color-runtime-worktree-text: #6c71c4;
   --color-runtime-local: #839496; /* base0 */
 
   /* Background & Layout - Solarized base colors */
@@ -746,7 +752,9 @@
 
   /* Runtime icon colors - using solarized palette */
   --color-runtime-ssh: #268bd2; /* blue */
+  --color-runtime-ssh-text: #268bd2;
   --color-runtime-worktree: #6c71c4; /* violet */
+  --color-runtime-worktree-text: #6c71c4;
   --color-runtime-local: #839496; /* base0 */
 
   /* Background & Layout - Solarized dark base colors

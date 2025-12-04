@@ -30,7 +30,7 @@ const GLOW_INTENSITIES: Record<number, { track: string; thumb: string }> = {
 const getTextStyle = (n: number): React.CSSProperties => {
   if (n === 0) {
     return {
-      color: "var(--color-muted)",
+      color: "var(--color-text-secondary)",
       fontWeight: 400,
       textShadow: "none",
       fontSize: "10px",
@@ -52,7 +52,7 @@ const getTextStyle = (n: number): React.CSSProperties => {
 const getSliderStyles = (value: number, isHover = false) => {
   const effectiveValue = isHover ? Math.min(value + 1, 3) : value;
   // Use CSS variable for thumb color when active
-  const thumbBg = value === 0 ? "var(--color-muted)" : "var(--color-thinking-mode)";
+  const thumbBg = value === 0 ? "var(--color-text-secondary)" : "var(--color-thinking-mode)";
 
   return {
     trackShadow: GLOW_INTENSITIES[effectiveValue].track,

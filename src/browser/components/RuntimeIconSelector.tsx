@@ -22,12 +22,12 @@ const RUNTIME_STYLES = {
   ssh: {
     idle: "bg-transparent text-muted border-[var(--color-runtime-ssh)]/30 hover:border-[var(--color-runtime-ssh)]/50",
     active:
-      "bg-[var(--color-runtime-ssh)]/20 text-[var(--color-runtime-ssh)] border-[var(--color-runtime-ssh)]/60",
+      "bg-[var(--color-runtime-ssh)]/20 text-[var(--color-runtime-ssh-text)] border-[var(--color-runtime-ssh)]/60",
   },
   worktree: {
     idle: "bg-transparent text-muted border-[var(--color-runtime-worktree)]/30 hover:border-[var(--color-runtime-worktree)]/50",
     active:
-      "bg-[var(--color-runtime-worktree)]/20 text-[var(--color-runtime-worktree)] border-[var(--color-runtime-worktree)]/60",
+      "bg-[var(--color-runtime-worktree)]/20 text-[var(--color-runtime-worktree-text)] border-[var(--color-runtime-worktree)]/60",
   },
   local: {
     idle: "bg-transparent text-muted border-[var(--color-runtime-local)]/30 hover:border-[var(--color-runtime-local)]/50",
