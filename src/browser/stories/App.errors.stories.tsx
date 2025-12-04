@@ -14,6 +14,7 @@ import {
   createFileEditTool,
   createStaticChatHandler,
 } from "./mockFactory";
+import { getAutoRetryKey } from "@/common/constants/storage";
 import { selectWorkspace, setupSimpleChatStory, setupCustomChatStory } from "./storyHelpers";
 import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
 
@@ -99,9 +100,13 @@ const LARGE_DIFF = [
 export const StreamError: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() =>
-        setupCustomChatStory({
-          workspaceId: "ws-error",
+      setup={() => {
+        const workspaceId = "ws-error";
+        // Disable auto-retry to show deterministic "Retry" button instead of countdown timer
+        localStorage.setItem(getAutoRetryKey(workspaceId), JSON.stringify(false));
+
+        return setupCustomChatStory({
+          workspaceId,
           chatHandler: (callback: (event: WorkspaceChatMessage) => void) => {
             setTimeout(() => {
               callback(
@@ -123,8 +128,8 @@ export const StreamError: AppStory = {
             // eslint-disable-next-line @typescript-eslint/no-empty-function
             return () => {};
           },
-        })
-      }
+        });
+      }}
     />
   ),
 };
