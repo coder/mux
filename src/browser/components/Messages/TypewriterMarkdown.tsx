@@ -26,7 +26,7 @@ export const TypewriterMarkdown = React.memo<TypewriterMarkdownProps>(function T
   return (
     <StreamingContext.Provider value={streamingContextValue}>
       <div className={cn("markdown-content", className)}>
-        <MarkdownCore content={content} />
+        <MarkdownCore content={content} parseIncompleteMarkdown={isStreaming} />
       </div>
     </StreamingContext.Provider>
   );

@@ -94,7 +94,7 @@
     "rehype-harden": "^1.1.5",
     "shescape": "^2.1.6",
     "source-map-support": "^0.5.21",
-    "streamdown": "^1.4.0",
+    "streamdown": "1.6.10",
     "trpc-cli": "^0.12.1",
     "turndown": "^7.2.2",
     "undici": "^7.16.0",
