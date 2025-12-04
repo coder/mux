@@ -2,6 +2,7 @@
  * Telemetry ORPC schemas
  *
  * Defines input/output schemas for backend telemetry endpoints.
+ * Telemetry is controlled by MUX_DISABLE_TELEMETRY env var on the backend.
  */
 
 import { z } from "zod";
@@ -67,18 +68,10 @@ export const TelemetryEventSchema = z.discriminatedUnion("event", [
   }),
 ]);
 
-// API schemas
+// API schemas - only track endpoint, enabled state controlled by env var
 export const telemetry = {
   track: {
     input: TelemetryEventSchema,
     output: z.void(),
-  },
-  setEnabled: {
-    input: z.object({ enabled: z.boolean() }),
-    output: z.void(),
-  },
-  isEnabled: {
-    input: z.void(),
-    output: z.boolean(),
   },
 };

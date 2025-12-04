@@ -4,11 +4,10 @@ mux collects anonymous usage telemetry to help us understand how the product is 
 
 ## Privacy Policy
 
-- **Opt-out by default**: You can disable telemetry at any time
 - **No personal information**: We never collect usernames, project names, file paths, or code content
 - **Random IDs only**: Only randomly-generated workspace IDs are sent (impossible to trace back to you)
 - **No hashing**: We don't hash sensitive data because hashing is vulnerable to rainbow table attacks
-- **Transparent data**: See exactly what data structures we send in [`src/telemetry/payload.ts`](https://github.com/coder/mux/blob/main/src/telemetry/payload.ts)
+- **Transparent data**: See exactly what data structures we send in [`src/common/telemetry/payload.ts`](https://github.com/coder/mux/blob/main/src/common/telemetry/payload.ts)
 
 ## What We Track
 
@@ -36,26 +35,19 @@ All telemetry events include basic system information:
 
 ## Disabling Telemetry
 
-You can disable telemetry at any time using the `/telemetry` slash command:
+To disable telemetry, set the `MUX_DISABLE_TELEMETRY` environment variable before starting the app:
 
-```
-/telemetry off
-```
-
-To re-enable it:
-
-```
-/telemetry on
+```bash
+MUX_DISABLE_TELEMETRY=1 mux
 ```
 
-Your preference is saved and persists across app restarts.
+This completely disables all telemetry collection at the backend level.
 
 ## Source Code
 
 For complete transparency, you can review the telemetry implementation:
 
-- **Payload definitions**: [`src/telemetry/payload.ts`](https://github.com/coder/mux/blob/main/src/telemetry/payload.ts) - All data structures we send
-- **Client code**: [`src/telemetry/client.ts`](https://github.com/coder/mux/blob/main/src/telemetry/client.ts) - How telemetry is sent
-- **Privacy utilities**: [`src/telemetry/utils.ts`](https://github.com/coder/mux/blob/main/src/telemetry/utils.ts) - Base-2 rounding and helpers
-
-The telemetry system includes debug logging that you can see in the developer console (View → Toggle Developer Tools).
+- **Payload definitions**: [`src/common/telemetry/payload.ts`](https://github.com/coder/mux/blob/main/src/common/telemetry/payload.ts) - All data structures we send
+- **Backend service**: [`src/node/services/telemetryService.ts`](https://github.com/coder/mux/blob/main/src/node/services/telemetryService.ts) - Server-side telemetry handling
+- **Frontend client**: [`src/common/telemetry/client.ts`](https://github.com/coder/mux/blob/main/src/common/telemetry/client.ts) - Frontend to backend relay
+- **Privacy utilities**: [`src/common/telemetry/utils.ts`](https://github.com/coder/mux/blob/main/src/common/telemetry/utils.ts) - Base-2 rounding helper

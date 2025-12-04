@@ -4,7 +4,7 @@ import { VERSION } from "@/version";
 import { SettingsButton } from "./SettingsButton";
 import { TooltipWrapper, Tooltip } from "./Tooltip";
 import type { UpdateStatus } from "@/common/orpc/types";
-import { isTelemetryEnabled } from "@/common/telemetry";
+
 import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { useAPI } from "@/browser/contexts/API";
 
@@ -80,7 +80,7 @@ export function TitleBar() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
   const [isCheckingOnHover, setIsCheckingOnHover] = useState(false);
   const lastHoverCheckTime = useRef<number>(0);
-  const telemetryEnabled = isTelemetryEnabled();
+
   const { startSequence } = useTutorial();
 
   // Start settings tutorial on first launch
@@ -93,11 +93,6 @@ export function TitleBar() {
   }, [startSequence]);
 
   useEffect(() => {
-    // Skip update checks if telemetry is disabled
-    if (!telemetryEnabled) {
-      return;
-    }
-
     // Skip update checks in browser mode - app updates only apply to Electron
     if (!window.api) {
       return;
@@ -134,11 +129,9 @@ export function TitleBar() {
       controller.abort();
       clearInterval(checkInterval);
     };
-  }, [telemetryEnabled, api]);
+  }, [api]);
 
   const handleIndicatorHover = () => {
-    if (!telemetryEnabled) return;
-
     // Debounce: Only check once per cooldown period on hover
     const now = Date.now();
 
@@ -161,8 +154,6 @@ export function TitleBar() {
   };
 
   const handleUpdateClick = () => {
-    if (!telemetryEnabled) return; // No-op if telemetry disabled
-
     if (updateStatus.type === "available") {
       api?.update.download().catch(console.error);
     } else if (updateStatus.type === "downloaded") {
@@ -174,12 +165,7 @@ export function TitleBar() {
     const currentVersion = gitDescribe ?? "dev";
     const lines: React.ReactNode[] = [`Current: ${currentVersion}`];
 
-    if (!telemetryEnabled) {
-      lines.push(
-        "Update checks disabled (telemetry is off)",
-        "Enable telemetry to receive updates."
-      );
-    } else if (isCheckingOnHover || updateStatus.type === "checking") {
+    if (isCheckingOnHover || updateStatus.type === "checking") {
       lines.push("Checking for updates...");
     } else {
       switch (updateStatus.type) {
@@ -224,8 +210,6 @@ export function TitleBar() {
   };
 
   const getIndicatorStatus = (): "available" | "downloading" | "downloaded" | "disabled" => {
-    if (!telemetryEnabled) return "disabled";
-
     if (isCheckingOnHover || updateStatus.type === "checking") return "disabled";
 
     switch (updateStatus.type) {

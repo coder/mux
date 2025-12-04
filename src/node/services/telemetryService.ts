@@ -4,6 +4,8 @@
  * Sends telemetry events to PostHog from the main process (Node.js).
  * This avoids ad-blocker issues that affect browser-side telemetry.
  *
+ * Telemetry can be disabled by setting the MUX_DISABLE_TELEMETRY=1 env var.
+ *
  * Uses posthog-node which batches events and flushes asynchronously.
  */
 
@@ -23,10 +25,11 @@ const DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com";
 const TELEMETRY_ID_FILE = "telemetry_id";
 
 /**
- * Check if we're running in a test environment
+ * Check if telemetry is disabled via environment variable
  */
-function isTestEnvironment(): boolean {
+function isTelemetryDisabled(): boolean {
   return (
+    process.env.MUX_DISABLE_TELEMETRY === "1" ||
     process.env.NODE_ENV === "test" ||
     process.env.JEST_WORKER_ID !== undefined ||
     process.env.VITEST !== undefined ||
@@ -51,7 +54,6 @@ function getVersionString(): string {
 export class TelemetryService {
   private client: PostHog | null = null;
   private distinctId: string | null = null;
-  private enabled = true;
   private readonly muxHome: string;
 
   constructor(muxHome?: string) {
@@ -63,12 +65,11 @@ export class TelemetryService {
    * Should be called once on app startup.
    */
   async initialize(): Promise<void> {
-    if (isTestEnvironment()) {
+    if (isTelemetryDisabled()) {
       return;
     }
 
     if (this.client) {
-      console.debug("[TelemetryService] Already initialized");
       return;
     }
 
@@ -108,26 +109,11 @@ export class TelemetryService {
       // Ensure directory exists
       await fs.mkdir(this.muxHome, { recursive: true });
       await fs.writeFile(idPath, newId, "utf-8");
-    } catch (err) {
-      console.debug("[TelemetryService] Failed to persist distinct ID:", err);
+    } catch {
+      // Silently ignore persistence failures
     }
 
     return newId;
-  }
-
-  /**
-   * Check if telemetry is enabled
-   */
-  isEnabled(): boolean {
-    return this.enabled && !isTestEnvironment();
-  }
-
-  /**
-   * Set telemetry enabled state
-   */
-  setEnabled(enabled: boolean): void {
-    this.enabled = enabled;
-    console.debug(`[TelemetryService] ${enabled ? "Enabled" : "Disabled"}`);
   }
 
   /**
@@ -143,15 +129,10 @@ export class TelemetryService {
 
   /**
    * Track a telemetry event.
-   * Events are silently ignored when disabled or in test environments.
+   * Events are silently ignored when disabled.
    */
   capture(payload: TelemetryEventPayload): void {
-    if (!this.isEnabled()) {
-      return;
-    }
-
-    if (!this.client || !this.distinctId) {
-      console.debug("[TelemetryService] Not initialized, skipping event:", payload.event);
+    if (isTelemetryDisabled() || !this.client || !this.distinctId) {
       return;
     }
 
@@ -160,11 +141,6 @@ export class TelemetryService {
       ...this.getBaseProperties(),
       ...payload.properties,
     };
-
-    console.debug("[TelemetryService] Capturing event:", {
-      event: payload.event,
-      properties,
-    });
 
     this.client.capture({
       distinctId: this.distinctId,
@@ -184,11 +160,10 @@ export class TelemetryService {
 
     try {
       await this.client.shutdown();
-    } catch (err) {
-      console.debug("[TelemetryService] Error during shutdown:", err);
+    } catch {
+      // Silently ignore shutdown errors
     }
 
     this.client = null;
-    console.debug("[TelemetryService] Shut down");
   }
 }

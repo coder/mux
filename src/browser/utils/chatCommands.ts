@@ -32,7 +32,6 @@ import { DEFAULT_COMPACTION_WORD_TARGET, WORDS_TO_TOKENS_RATIO } from "@/common/
 // ============================================================================
 
 import { createCommandToast } from "@/browser/components/ChatInputToasts";
-import { setTelemetryEnabled } from "@/common/telemetry";
 
 export interface ForkOptions {
   client: RouterClient<AppRouter>;
@@ -225,17 +224,6 @@ export async function processSlashCommand(
     setInput("");
     setVimEnabled((prev) => !prev);
     return { clearInput: true, toastShown: false };
-  }
-
-  if (parsed.type === "telemetry-set") {
-    setInput("");
-    setTelemetryEnabled(parsed.enabled);
-    setToast({
-      id: Date.now().toString(),
-      type: "success",
-      message: `Telemetry ${parsed.enabled ? "enabled" : "disabled"}`,
-    });
-    return { clearInput: true, toastShown: true };
   }
 
   // 2. Workspace Commands

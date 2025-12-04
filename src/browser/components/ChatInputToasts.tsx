@@ -88,26 +88,6 @@ export const createCommandToast = (parsed: ParsedCommand): Toast | null => {
         ),
       };
 
-    case "telemetry-help":
-      return {
-        id: Date.now().toString(),
-        type: "error",
-        title: "Telemetry Command",
-        message: "Enable or disable usage telemetry",
-        solution: (
-          <>
-            <SolutionLabel>Usage:</SolutionLabel>
-            /telemetry &lt;on|off&gt;
-            <br />
-            <br />
-            <SolutionLabel>Examples:</SolutionLabel>
-            /telemetry off
-            <br />
-            /telemetry on
-          </>
-        ),
-      };
-
     case "fork-help":
       return {
         id: Date.now().toString(),

@@ -63,7 +63,7 @@ import type { ThinkingLevel } from "@/common/types/thinking";
 import type { MuxFrontendMetadata } from "@/common/types/message";
 import { MODEL_ABBREVIATION_EXAMPLES } from "@/common/constants/knownModels";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
-import { setTelemetryEnabled } from "@/common/telemetry";
+
 import { getTokenCountPromise } from "@/browser/utils/tokenizer/rendererClient";
 import { CreationCenterContent } from "./CreationCenterContent";
 import { cn } from "@/common/lib/utils";
@@ -723,18 +723,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         if (parsed.type === "vim-toggle") {
           setInput(""); // Clear input immediately
           setVimEnabled((prev) => !prev);
-          return;
-        }
-
-        // Handle /telemetry command
-        if (parsed.type === "telemetry-set") {
-          setInput(""); // Clear input immediately
-          setTelemetryEnabled(parsed.enabled);
-          setToast({
-            id: Date.now().toString(),
-            type: "success",
-            message: `Telemetry ${parsed.enabled ? "enabled" : "disabled"}`,
-          });
           return;
         }
 

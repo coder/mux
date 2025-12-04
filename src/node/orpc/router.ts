@@ -749,18 +749,6 @@ export const router = (authToken?: string) => {
         .handler(({ context, input }) => {
           context.telemetryService.capture(input);
         }),
-      setEnabled: t
-        .input(schemas.telemetry.setEnabled.input)
-        .output(schemas.telemetry.setEnabled.output)
-        .handler(({ context, input }) => {
-          context.telemetryService.setEnabled(input.enabled);
-        }),
-      isEnabled: t
-        .input(schemas.telemetry.isEnabled.input)
-        .output(schemas.telemetry.isEnabled.output)
-        .handler(({ context }) => {
-          return context.telemetryService.isEnabled();
-        }),
     },
   });
 };

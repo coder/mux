@@ -1,37 +1,22 @@
-// Ensure NODE_ENV is set to test for telemetry detection
-// Must be set before importing the client module
-process.env.NODE_ENV = "test";
+import { initTelemetry, trackEvent, shutdownTelemetry } from "./client";
 
-import { initTelemetry, trackEvent, isTelemetryInitialized } from "./client";
+describe("Telemetry client", () => {
+  it("initTelemetry and shutdownTelemetry are no-ops", () => {
+    // These are kept for API compatibility but do nothing
+    expect(() => initTelemetry()).not.toThrow();
+    expect(() => shutdownTelemetry()).not.toThrow();
+  });
 
-describe("Telemetry", () => {
-  describe("in test environment", () => {
-    beforeAll(() => {
-      process.env.NODE_ENV = "test";
-    });
-
-    it("should not initialize", () => {
-      initTelemetry();
-      expect(isTelemetryInitialized()).toBe(false);
-    });
-
-    it("should silently ignore track events", () => {
-      // Should not throw even though not initialized
-      // Base properties (version, platform, electronVersion) are now added by backend
-      expect(() => {
-        trackEvent({
-          event: "workspace_switched",
-          properties: {
-            fromWorkspaceId: "test-from",
-            toWorkspaceId: "test-to",
-          },
-        });
-      }).not.toThrow();
-    });
-
-    it("should correctly detect test environment", () => {
-      // Verify NODE_ENV is set to test (we set it above for telemetry detection)
-      expect(process.env.NODE_ENV).toBe("test");
-    });
+  it("trackEvent silently forwards to backend without throwing", () => {
+    // In test environment, ORPC is not available, but trackEvent should not throw
+    expect(() => {
+      trackEvent({
+        event: "workspace_switched",
+        properties: {
+          fromWorkspaceId: "test-from",
+          toWorkspaceId: "test-to",
+        },
+      });
+    }).not.toThrow();
   });
 });

@@ -456,46 +456,6 @@ const vimCommandDefinition: SlashCommandDefinition = {
   },
 };
 
-const telemetryCommandDefinition: SlashCommandDefinition = {
-  key: "telemetry",
-  description: "Enable or disable telemetry",
-  handler: ({ cleanRemainingTokens }): ParsedCommand => {
-    if (cleanRemainingTokens.length === 0) {
-      return { type: "telemetry-help" };
-    }
-
-    if (cleanRemainingTokens.length === 1) {
-      const arg = cleanRemainingTokens[0].toLowerCase();
-      if (arg === "on" || arg === "off") {
-        return { type: "telemetry-set", enabled: arg === "on" };
-      }
-    }
-
-    return {
-      type: "unknown-command",
-      command: "telemetry",
-      subcommand: cleanRemainingTokens[0],
-    };
-  },
-  suggestions: ({ stage, partialToken }) => {
-    if (stage === 1) {
-      const options = [
-        { key: "on", description: "Enable telemetry" },
-        { key: "off", description: "Disable telemetry" },
-      ];
-
-      return filterAndMapSuggestions(options, partialToken, (definition) => ({
-        id: `command:telemetry:${definition.key}`,
-        display: definition.key,
-        description: definition.description,
-        replacement: `/telemetry ${definition.key}`,
-      }));
-    }
-
-    return null;
-  },
-};
-
 const forkCommandDefinition: SlashCommandDefinition = {
   key: "fork",
   description:
@@ -631,7 +591,7 @@ export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   compactCommandDefinition,
   modelCommandDefinition,
   providersCommandDefinition,
-  telemetryCommandDefinition,
+
   forkCommandDefinition,
   newCommandDefinition,
   vimCommandDefinition,
