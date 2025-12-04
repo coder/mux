@@ -8,7 +8,7 @@ Download pre-built binaries from [the releases page](https://github.com/coder/mu
 
 - **macOS**: Signed and notarized DMG (separate builds for Intel/Apple Silicon)
 - **Linux**: AppImage
-- **Windows**: Installer exe
+- **Windows** _(alpha)_: Installer exe
 
 ### Development Builds
 
@@ -47,12 +47,14 @@ The app is code-signed and notarized by Apple, so it will open without security 
 2. Make it executable: `chmod +x Mux-*.AppImage`
 3. Run it: `./Mux-*.AppImage`
 
-**Windows:**
+**Windows** _(alpha)_:
 
 1. Download the installer exe from [releases](https://github.com/coder/mux/releases) (e.g., `mux-x.x.x-x64.exe`)
 2. Run the installer
 3. Follow the installation prompts
 4. Launch Mux from the Start menu or desktop shortcut
+
+> ⚠️ Windows support is currently in alpha. Please [report any issues](https://github.com/coder/mux/issues) you encounter.
 
 ### Testing Pre-Release Builds
 

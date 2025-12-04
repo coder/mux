@@ -54,7 +54,7 @@ like [opportunistic compaction](https://mux.coder.com/context-management.html) a
 ## Install
 
 > [!WARNING]  
-> mux is in a Preview state. You will encounter bugs and performance issues.
+> mux is in Beta. You may encounter bugs and performance issues.
 > It's still possible to be highly productive. We are using it almost exclusively for our own development.
 
 Download pre-built binaries from [the releases page](https://github.com/coder/mux/releases) for
