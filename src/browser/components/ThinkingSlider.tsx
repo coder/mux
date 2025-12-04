@@ -7,48 +7,59 @@ import { getThinkingPolicyForModel } from "@/browser/utils/thinking/policy";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getLastThinkingByModelKey } from "@/common/constants/storage";
 
-// Subtle consistent glow for active levels
-const GLOW = {
-  track: "0 0 6px 1px hsl(271 76% 53% / 0.3)",
-  thumb: "0 0 4px 1px hsl(271 76% 53% / 0.3)",
-};
-
+// Uses CSS variable --color-thinking-mode for theme compatibility
+// Glow is applied via CSS using color-mix with the theme color
 const GLOW_INTENSITIES: Record<number, { track: string; thumb: string }> = {
   0: { track: "none", thumb: "none" },
-  1: GLOW,
-  2: GLOW,
-  3: GLOW,
+  1: {
+    track: "0 0 6px 1px color-mix(in srgb, var(--color-thinking-mode) 30%, transparent)",
+    thumb: "0 0 4px 1px color-mix(in srgb, var(--color-thinking-mode) 30%, transparent)",
+  },
+  2: {
+    track: "0 0 6px 1px color-mix(in srgb, var(--color-thinking-mode) 30%, transparent)",
+    thumb: "0 0 4px 1px color-mix(in srgb, var(--color-thinking-mode) 30%, transparent)",
+  },
+  3: {
+    track: "0 0 6px 1px color-mix(in srgb, var(--color-thinking-mode) 30%, transparent)",
+    thumb: "0 0 4px 1px color-mix(in srgb, var(--color-thinking-mode) 30%, transparent)",
+  },
 };
 
-// Continuous function for text styling based on level (n: 0-3)
-const getTextStyle = (n: number) => {
+// Text styling based on level (n: 0-3)
+// Uses CSS variables for theme compatibility
+const getTextStyle = (n: number): React.CSSProperties => {
   if (n === 0) {
     return {
-      color: "#606060",
+      color: "var(--color-muted)",
       fontWeight: 400,
       textShadow: "none",
       fontSize: "10px",
     };
   }
 
-  // Continuous interpolation for n = 1-3
-  const hue = 271 + (n - 1) * 7; // 271 → 278 → 285
-  const lightness = 65 - (n - 1) * 5; // 65 → 60 → 55
+  // Active levels use the thinking mode color with increasing intensity
   const fontWeight = 400 + n * 100; // 500 → 600 → 700
-  const shadowBlur = n * 4; // 4 → 8 → 12
-  const shadowOpacity = 0.3 + n * 0.15; // 0.45 → 0.6 → 0.75
+  // Use color-mix to lighten the base color for lower levels
+  const lightnessAdjust = (3 - n) * 10; // high=0%, medium=10%, low=20% lighter
 
   return {
-    color: `hsl(${hue} 76% ${lightness}%)`,
+    color:
+      lightnessAdjust > 0
+        ? `color-mix(in srgb, var(--color-thinking-mode-light) ${lightnessAdjust}%, var(--color-thinking-mode))`
+        : "var(--color-thinking-mode)",
     fontWeight,
-    textShadow: `0 0 ${shadowBlur}px hsl(${hue} 76% ${lightness}% / ${shadowOpacity})`,
+    textShadow:
+      n > 0
+        ? `0 0 ${n * 4}px color-mix(in srgb, var(--color-thinking-mode) ${30 + n * 15}%, transparent)`
+        : "none",
     fontSize: "10px",
   };
 };
 
 const getSliderStyles = (value: number, isHover = false) => {
   const effectiveValue = isHover ? Math.min(value + 1, 3) : value;
-  const thumbBg = value === 0 ? "#606060" : `hsl(271 76% ${53 + value * 5}%)`;
+  // Use CSS variable for thumb color when active
+  const thumbBg = value === 0 ? "var(--color-muted)" : "var(--color-thinking-mode)";
 
   return {
     trackShadow: GLOW_INTENSITIES[effectiveValue].track,

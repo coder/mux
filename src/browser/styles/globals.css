@@ -1622,7 +1622,7 @@ pre code {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: var(--thumb-bg, #606060);
+  background: var(--thumb-bg, var(--color-muted));
   cursor: pointer;
   transition:
     background 0.2s ease,
@@ -1634,7 +1634,7 @@ pre code {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: var(--thumb-bg, #606060);
+  background: var(--thumb-bg, var(--color-muted));
   cursor: pointer;
   border: none;
   transition:
