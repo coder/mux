@@ -1,4 +1,7 @@
-# Agentic Git Identity
+---
+title: Agentic Git Identity
+description: Configure a separate Git identity for AI-generated commits
+---
 
 Configure mux to use a separate Git identity for AI-generated commits, making it easy to distinguish between human and AI contributions. Reasons to use a separate identity include:
 
@@ -23,7 +26,7 @@ Create a separate GitHub account for your agent:
 2. Use a distinctive username (e.g., `yourname-agent`, `yourname-ai`)
 3. Use a separate email (GitHub allows plus-addressing: `yourname+ai@example.com`)
 
-> **Note**: This is optional but recommended. You can also use your main account with a different email/name.
+<Info>This is optional but recommended. You can also use your main account with a different email/name.</Info>
 
 ## Step 2: Generate Classic GitHub Token
 
@@ -54,7 +57,7 @@ Add the Git identity environment variables as [Project Secrets](./project-secret
 
 These environment variables will be automatically injected when the agent runs Git commands in that project.
 
-> **Note**: If you need the agent identity outside of mux, you can alternatively set these as global environment variables in your shell configuration (`~/.zshrc`, `~/.bashrc`, etc.)
+<Info>If you need the agent identity outside of mux, you can alternatively set these as global environment variables in your shell configuration (`~/.zshrc`, `~/.bashrc`, etc.)</Info>
 
 ## Step 4: Configure GitHub Authentication
 
@@ -98,4 +101,4 @@ git config --global credential.helper ""
 git config --global --add credential.helper '!gh auth git-credential'
 ```
 
-⚠️ **Warning**: The "replace all" approach will disable platform keychain helpers and may break Git authentication for non-GitHub remotes (GitLab, Bitbucket, etc.).
+<Warning>The "replace all" approach will disable platform keychain helpers and may break Git authentication for non-GitHub remotes (GitLab, Bitbucket, etc.).</Warning>

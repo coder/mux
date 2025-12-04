@@ -1,0 +1,78 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "maple",
+  "name": "mux",
+  "logo": {
+    "light": "/img/light.svg",
+    "dark": "/img/dark.svg"
+  },
+  "favicon": "/favicon.svg",
+  "colors": {
+    "primary": "#999",
+    "light": "#FFF",
+    "dark": "#000"
+  },
+  "appearance": {
+    "default": "dark"
+  },
+  "interaction": {
+    "drilldown": true
+  },
+  "icons": {
+    "library": "lucide"
+  },
+  "css": ["/custom.css"],
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Introduction",
+            "pages": ["index", "install", "cli", "why-parallelize"]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              {
+                "group": "Workspaces",
+                "pages": [
+                  "workspaces",
+                  {
+                    "group": "Runtimes",
+                    "pages": ["runtime", "runtime/local", "runtime/worktree", "runtime/ssh"]
+                  },
+                  "fork",
+                  "init-hooks"
+                ]
+              },
+              "vscode-extension",
+              "models",
+              {
+                "group": "Keyboard Shortcuts",
+                "pages": ["keybinds", "vim-mode"]
+              },
+              "context-management",
+              "instruction-files",
+              {
+                "group": "Project Secrets",
+                "pages": ["project-secrets", "agentic-git-identity"]
+              }
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": ["prompting-tips", "system-prompt", "telemetry", "mux-codes"]
+          },
+          {
+            "group": "Development",
+            "pages": ["storybook", "benchmarking", "AGENTS"]
+          }
+        ]
+      }
+    ]
+  },
+  "footerSocials": {
+    "github": "https://github.com/coder/mux"
+  }
+}

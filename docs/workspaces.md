@@ -1,4 +1,7 @@
-# Workspaces
+---
+title: Workspaces
+description: Isolated development environments for parallel agent work
+---
 
 Workspaces in mux provide isolated development environments for parallel agent work. Each workspace maintains its own Git state, allowing you to explore different approaches, run multiple tasks simultaneously, or test changes without affecting your main repository.
 

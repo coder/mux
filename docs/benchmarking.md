@@ -1,11 +1,14 @@
-# Terminal Benchmarking
+---
+title: Terminal Benchmarking
+description: Run Terminal-Bench benchmarks with the mux adapter
+---
 
 mux ships with a headless adapter for [Terminal-Bench](https://www.tbench.ai/). The adapter runs the Electron backend without opening a window and exercises it through the same IPC paths we use in integration tests. This page documents how to launch benchmarks from the repository tree.
 
 ## Prerequisites
 
 - Docker must be installed and running. Terminal-Bench executes each task inside a dedicated Docker container.
-- `uv` is available in the nix `devShell` (provided via `flake.nix`), or install it manually from <https://docs.astral.sh/uv/>.
+- `uv` is available in the nix `devShell` (provided via `flake.nix`), or install it manually from [docs.astral.sh/uv](https://docs.astral.sh/uv/).
 - Standard provider API keys (e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) should be exported so mux can stream responses.
 
 Optional environment overrides:

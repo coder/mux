@@ -1,4 +1,7 @@
-# Worktree Runtime
+---
+title: Worktree Runtime
+description: Isolated git worktree environments for parallel agent work
+---
 
 Worktree runtime uses [git worktrees](https://git-scm.com/docs/git-worktree) on your local machine. Worktrees share the `.git` directory with your main repository while maintaining independent working changes and checkout state.
 

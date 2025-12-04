@@ -1,4 +1,7 @@
-# Context Management
+---
+title: Context Management
+description: Commands for managing conversation history and token usage
+---
 
 Commands for managing conversation history length and token usage.
 
@@ -149,7 +152,7 @@ Remove oldest 50% of messages.
 
 ### OpenAI Responses API Limitation
 
-⚠️ **`/truncate` does not work with OpenAI models** due to the Responses API architecture:
+<Warning>`/truncate` does not work with OpenAI models due to the Responses API architecture:</Warning>
 
 - OpenAI's Responses API stores conversation state server-side
 - Manual message deletion via `/truncate` doesn't affect the server-side state

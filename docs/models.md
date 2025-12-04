@@ -1,4 +1,7 @@
-## Models
+---
+title: Models
+description: Configure AI providers including Anthropic, OpenAI, Google, xAI, and more
+---
 
 See also:
 

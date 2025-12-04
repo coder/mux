@@ -1,4 +1,7 @@
-# Storybook
+---
+title: Storybook
+description: Develop and test UI components in isolation
+---
 
 Storybook is a tool for developing and testing UI components in isolation. It provides a sandboxed environment where you can build, view, and test components without running the full Electron application.
 

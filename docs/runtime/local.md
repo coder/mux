@@ -1,4 +1,7 @@
-# Local Runtime
+---
+title: Local Runtime
+description: Run agents directly in your project directory
+---
 
 Local runtime runs the agent directly in your project directory—the same directory you use for development. There's no worktree isolation; the agent works in your actual working copy.
 
@@ -10,9 +13,9 @@ Local runtime runs the agent directly in your project directory—the same direc
 
 ## Caveats
 
-⚠️ **No isolation**: Multiple local workspaces for the same project see and modify the same files. Running them simultaneously can cause conflicts. mux shows a warning when another local workspace is actively streaming.
+<Warning>**No isolation**: Multiple local workspaces for the same project see and modify the same files. Running them simultaneously can cause conflicts. mux shows a warning when another local workspace is actively streaming.</Warning>
 
-⚠️ **Affects your working copy**: Agent changes happen in your actual project directory.
+<Warning>**Affects your working copy**: Agent changes happen in your actual project directory.</Warning>
 
 ## Filesystem
 

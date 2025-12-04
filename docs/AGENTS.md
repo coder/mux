@@ -1,4 +1,7 @@
-# AGENT INSTRUCTIONS
+---
+title: AGENTS.md
+description: Agent instructions for AI assistants working on the mux codebase
+---
 
 **Prime directive:** keep edits minimal and token-efficient—say only what conveys actionable signal.
 
@@ -153,7 +156,7 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 - Prefer fixes that simplify existing code; such simplifications often do not need new tests.
 - When adding complexity, add or extend tests. If coverage requires new infrastructure, propose the harness and then add the tests there.
 
-<!-- IMPORTANT: Do not rename these Mode headings; the parser extracts them verbatim. -->
+{/* IMPORTANT: Do not rename these Mode headings; the parser extracts them verbatim. */}
 
 ## Mode: Exec
 

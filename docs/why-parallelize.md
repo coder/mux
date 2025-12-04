@@ -1,4 +1,7 @@
-# Why Parallelize?
+---
+title: Why Parallelize?
+description: Use cases for running multiple AI agents in parallel
+---
 
 Here are some specific use cases we enable:
 

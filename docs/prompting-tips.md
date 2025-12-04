@@ -1,4 +1,7 @@
-# Prompting Tips
+---
+title: Prompting Tips
+description: Tips and tricks for getting the most out of your AI agents
+---
 
 > Some tips and tricks from the mux developers on getting the most out of your agents.
 
@@ -35,7 +38,7 @@ passes.
 ## Aggressively prune context
 
 Even though Sonnet 4.5 has up to 1M in potential context, we experience a noticeable improvement in
-quality when kept <100k tokens. We suggest running `/compact` with a continue message
+quality when kept under 100k tokens. We suggest running `/compact` with a continue message
 often to keep context small. For example:
 
 ```

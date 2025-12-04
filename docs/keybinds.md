@@ -1,8 +1,11 @@
-# Keyboard Shortcuts
+---
+title: Keyboard Shortcuts
+description: Complete keyboard shortcut reference for mux
+---
 
 mux is designed to be keyboard-driven for maximum efficiency. All major actions have keyboard shortcuts.
 
-> **Note**: This document should be kept in sync with `src/utils/ui/keybinds.ts`, which is the source of truth for keybind definitions.
+<Info>This document should be kept in sync with `src/utils/ui/keybinds.ts`, which is the source of truth for keybind definitions.</Info>
 
 ## Platform Conventions
 

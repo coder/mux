@@ -1,4 +1,7 @@
-# Command Line Interface
+---
+title: Command Line Interface
+description: Run one-off agent tasks from the command line with mux run
+---
 
 Mux provides a CLI for running one-off agent tasks without the desktop app. Unlike the interactive desktop experience, `mux run` executes a single request to completion and exits.
 
