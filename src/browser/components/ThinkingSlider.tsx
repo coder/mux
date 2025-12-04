@@ -37,21 +37,14 @@ const getTextStyle = (n: number): React.CSSProperties => {
     };
   }
 
-  // Active levels use the thinking mode color with increasing intensity
+  // Active levels use the thinking mode color
+  // Low uses lighter variant, medium/high use main color
   const fontWeight = 400 + n * 100; // 500 → 600 → 700
-  // Use color-mix to lighten the base color for lower levels
-  const lightnessAdjust = (3 - n) * 10; // high=0%, medium=10%, low=20% lighter
 
   return {
-    color:
-      lightnessAdjust > 0
-        ? `color-mix(in srgb, var(--color-thinking-mode-light) ${lightnessAdjust}%, var(--color-thinking-mode))`
-        : "var(--color-thinking-mode)",
+    color: n === 1 ? "var(--color-thinking-mode-light)" : "var(--color-thinking-mode)",
     fontWeight,
-    textShadow:
-      n > 0
-        ? `0 0 ${n * 4}px color-mix(in srgb, var(--color-thinking-mode) ${30 + n * 15}%, transparent)`
-        : "none",
+    textShadow: "none",
     fontSize: "10px",
   };
 };
