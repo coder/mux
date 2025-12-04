@@ -290,7 +290,7 @@ export async function sendMessageAndWait(
       },
     });
 
-    if (!result.success && !("workspaceId" in result)) {
+    if (!result.success) {
       throw new Error(`Failed to send message: ${JSON.stringify(result, null, 2)}`);
     }
 

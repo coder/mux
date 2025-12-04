@@ -8,7 +8,7 @@ import {
   getProjectScopeId,
   getThinkingLevelKey,
 } from "@/common/constants/storage";
-import type { SendMessageError } from "@/common/types/errors";
+import type { SendMessageError as _SendMessageError } from "@/common/types/errors";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { RuntimeMode } from "@/common/types/runtime";
 import type {
@@ -82,8 +82,13 @@ type BranchListResult = Awaited<ReturnType<APIClient["projects"]["listBranches"]
 type ListBranchesArgs = Parameters<APIClient["projects"]["listBranches"]>[0];
 type WorkspaceSendMessageArgs = Parameters<APIClient["workspace"]["sendMessage"]>[0];
 type WorkspaceSendMessageResult = Awaited<ReturnType<APIClient["workspace"]["sendMessage"]>>;
+type WorkspaceCreateArgs = Parameters<APIClient["workspace"]["create"]>[0];
+type WorkspaceCreateResult = Awaited<ReturnType<APIClient["workspace"]["create"]>>;
+type NameGenerationArgs = Parameters<APIClient["nameGeneration"]["generate"]>[0];
+type NameGenerationResult = Awaited<ReturnType<APIClient["nameGeneration"]["generate"]>>;
 type MockOrpcProjectsClient = Pick<APIClient["projects"], "listBranches">;
-type MockOrpcWorkspaceClient = Pick<APIClient["workspace"], "sendMessage">;
+type MockOrpcWorkspaceClient = Pick<APIClient["workspace"], "sendMessage" | "create">;
+type MockOrpcNameGenerationClient = Pick<APIClient["nameGeneration"], "generate">;
 type WindowWithApi = Window & typeof globalThis;
 type WindowApi = WindowWithApi["api"];
 
@@ -102,15 +107,25 @@ const noopUnsubscribe = () => () => undefined;
 interface MockOrpcClient {
   projects: MockOrpcProjectsClient;
   workspace: MockOrpcWorkspaceClient;
+  nameGeneration: MockOrpcNameGenerationClient;
 }
 interface SetupWindowOptions {
   listBranches?: ReturnType<typeof mock<(args: ListBranchesArgs) => Promise<BranchListResult>>>;
   sendMessage?: ReturnType<
     typeof mock<(args: WorkspaceSendMessageArgs) => Promise<WorkspaceSendMessageResult>>
   >;
+  create?: ReturnType<typeof mock<(args: WorkspaceCreateArgs) => Promise<WorkspaceCreateResult>>>;
+  nameGeneration?: ReturnType<
+    typeof mock<(args: NameGenerationArgs) => Promise<NameGenerationResult>>
+  >;
 }
 
-const setupWindow = ({ listBranches, sendMessage }: SetupWindowOptions = {}) => {
+const setupWindow = ({
+  listBranches,
+  sendMessage,
+  create,
+  nameGeneration,
+}: SetupWindowOptions = {}) => {
   const listBranchesMock =
     listBranches ??
     mock<(args: ListBranchesArgs) => Promise<BranchListResult>>(({ projectPath }) => {
@@ -125,29 +140,33 @@ const setupWindow = ({ listBranches, sendMessage }: SetupWindowOptions = {}) => 
 
   const sendMessageMock =
     sendMessage ??
-    mock<(args: WorkspaceSendMessageArgs) => Promise<WorkspaceSendMessageResult>>((args) => {
-      if (!args.workspaceId && !args.options?.projectPath) {
-        return Promise.resolve({
-          success: false,
-          error: { type: "unknown", raw: "Missing project path" } satisfies SendMessageError,
-        });
-      }
-
-      if (!args.workspaceId) {
-        return Promise.resolve({
-          success: true,
-          data: {
-            workspaceId: TEST_WORKSPACE_ID,
-            metadata: TEST_METADATA,
-          },
-        } satisfies WorkspaceSendMessageResult);
-      }
-
-      const existingWorkspaceResult: WorkspaceSendMessageResult = {
+    mock<(args: WorkspaceSendMessageArgs) => Promise<WorkspaceSendMessageResult>>(() => {
+      const result: WorkspaceSendMessageResult = {
         success: true,
         data: {},
       };
-      return Promise.resolve(existingWorkspaceResult);
+      return Promise.resolve(result);
+    });
+
+  const createMock =
+    create ??
+    mock<(args: WorkspaceCreateArgs) => Promise<WorkspaceCreateResult>>(() => {
+      return Promise.resolve({
+        success: true,
+        metadata: TEST_METADATA,
+      } as WorkspaceCreateResult);
+    });
+
+  const nameGenerationMock =
+    nameGeneration ??
+    mock<(args: NameGenerationArgs) => Promise<NameGenerationResult>>(() => {
+      return Promise.resolve({
+        success: true,
+        data: {
+          name: "test-workspace",
+          modelUsed: "anthropic:claude-haiku-4-5",
+        },
+      } as NameGenerationResult);
     });
 
   currentORPCClient = {
@@ -156,6 +175,10 @@ const setupWindow = ({ listBranches, sendMessage }: SetupWindowOptions = {}) => 
     },
     workspace: {
       sendMessage: (input: WorkspaceSendMessageArgs) => sendMessageMock(input),
+      create: (input: WorkspaceCreateArgs) => createMock(input),
+    },
+    nameGeneration: {
+      generate: (input: NameGenerationArgs) => nameGenerationMock(input),
     },
   };
 
@@ -184,9 +207,12 @@ const setupWindow = ({ listBranches, sendMessage }: SetupWindowOptions = {}) => 
         update: rejectNotImplemented("projects.secrets.update"),
       },
     },
+    nameGeneration: {
+      generate: (args: NameGenerationArgs) => nameGenerationMock(args),
+    },
     workspace: {
       list: rejectNotImplemented("workspace.list"),
-      create: rejectNotImplemented("workspace.create"),
+      create: (args: WorkspaceCreateArgs) => createMock(args),
       remove: rejectNotImplemented("workspace.remove"),
       rename: rejectNotImplemented("workspace.rename"),
       fork: rejectNotImplemented("workspace.fork"),
@@ -252,7 +278,8 @@ const setupWindow = ({ listBranches, sendMessage }: SetupWindowOptions = {}) => 
 
   return {
     projectsApi: { listBranches: listBranchesMock },
-    workspaceApi: { sendMessage: sendMessageMock },
+    workspaceApi: { sendMessage: sendMessageMock, create: createMock },
+    nameGenerationApi: { generate: nameGenerationMock },
   };
 };
 const TEST_METADATA: FrontendWorkspaceMetadata = {
@@ -340,7 +367,7 @@ describe("useCreationWorkspace", () => {
     expect(getHook().branches).toEqual([]);
   });
 
-  test("handleSend sends message and syncs preferences on success", async () => {
+  test("handleSend creates workspace and sends message on success", async () => {
     const listBranchesMock = mock(
       (): Promise<BranchListResult> =>
         Promise.resolve({
@@ -352,15 +379,28 @@ describe("useCreationWorkspace", () => {
       (_args: WorkspaceSendMessageArgs): Promise<WorkspaceSendMessageResult> =>
         Promise.resolve({
           success: true as const,
-          data: {
-            workspaceId: TEST_WORKSPACE_ID,
-            metadata: TEST_METADATA,
-          },
+          data: {},
         })
     );
-    const { workspaceApi } = setupWindow({
+    const createMock = mock(
+      (_args: WorkspaceCreateArgs): Promise<WorkspaceCreateResult> =>
+        Promise.resolve({
+          success: true,
+          metadata: TEST_METADATA,
+        } as WorkspaceCreateResult)
+    );
+    const nameGenerationMock = mock(
+      (_args: NameGenerationArgs): Promise<NameGenerationResult> =>
+        Promise.resolve({
+          success: true,
+          data: { name: "generated-name", modelUsed: "anthropic:claude-haiku-4-5" },
+        } as NameGenerationResult)
+    );
+    const { workspaceApi, nameGenerationApi } = setupWindow({
       listBranches: listBranchesMock,
       sendMessage: sendMessageMock,
+      create: createMock,
+      nameGeneration: nameGenerationMock,
     });
 
     persistedPreferences[getModeKey(getProjectScopeId(TEST_PROJECT_PATH))] = "plan";
@@ -379,39 +419,42 @@ describe("useCreationWorkspace", () => {
     const getHook = renderUseCreationWorkspace({
       projectPath: TEST_PROJECT_PATH,
       onWorkspaceCreated,
+      message: "launch workspace",
     });
 
     await waitFor(() => expect(getHook().branches).toEqual(["main"]));
+
+    // Wait for name generation to trigger (happens on debounce)
+    await waitFor(() => expect(nameGenerationApi.generate.mock.calls.length).toBe(1));
 
     await act(async () => {
       await getHook().handleSend("launch workspace");
     });
 
-    expect(workspaceApi.sendMessage.mock.calls.length).toBe(1);
-    // ORPC uses a single argument object
-    const firstCall = workspaceApi.sendMessage.mock.calls[0];
-    if (!firstCall) {
-      throw new Error("Expected workspace.sendMessage to be called at least once");
+    // workspace.create should be called with the generated name
+    expect(workspaceApi.create.mock.calls.length).toBe(1);
+    const createCall = workspaceApi.create.mock.calls[0];
+    if (!createCall) {
+      throw new Error("Expected workspace.create to be called at least once");
     }
-    const [request] = firstCall;
-    if (!request) {
-      throw new Error("sendMessage mock was invoked without arguments");
-    }
-    const { workspaceId, message, options } = request;
-    expect(workspaceId).toBeNull();
-    expect(message).toBe("launch workspace");
-    expect(options?.projectPath).toBe(TEST_PROJECT_PATH);
-    expect(options?.trunkBranch).toBe("dev");
-    expect(options?.model).toBe("gpt-4");
-    // Mode was set to "plan" in persistedPreferences, so that's what we expect
-    expect(options?.mode).toBe("plan");
-    // thinkingLevel was set to "high" in persistedPreferences
-    expect(options?.thinkingLevel).toBe("high");
-    expect(options?.runtimeConfig).toEqual({
+    const [createRequest] = createCall;
+    expect(createRequest?.branchName).toBe("generated-name");
+    expect(createRequest?.trunkBranch).toBe("dev");
+    expect(createRequest?.runtimeConfig).toEqual({
       type: "ssh",
       host: "example.com",
       srcBaseDir: "~/mux",
     });
+
+    // workspace.sendMessage should be called with the created workspace ID
+    expect(workspaceApi.sendMessage.mock.calls.length).toBe(1);
+    const sendCall = workspaceApi.sendMessage.mock.calls[0];
+    if (!sendCall) {
+      throw new Error("Expected workspace.sendMessage to be called at least once");
+    }
+    const [sendRequest] = sendCall;
+    expect(sendRequest?.workspaceId).toBe(TEST_WORKSPACE_ID);
+    expect(sendRequest?.message).toBe("launch workspace");
 
     await waitFor(() => expect(onWorkspaceCreated.mock.calls.length).toBe(1));
     expect(onWorkspaceCreated.mock.calls[0][0]).toEqual(TEST_METADATA);
@@ -430,27 +473,41 @@ describe("useCreationWorkspace", () => {
   });
 
   test("handleSend surfaces backend errors and resets state", async () => {
-    const sendMessageMock = mock(
-      (_args: WorkspaceSendMessageArgs): Promise<WorkspaceSendMessageResult> =>
+    const createMock = mock(
+      (_args: WorkspaceCreateArgs): Promise<WorkspaceCreateResult> =>
         Promise.resolve({
-          success: false as const,
-          error: { type: "unknown", raw: "backend exploded" } satisfies SendMessageError,
-        })
+          success: false,
+          error: "backend exploded",
+        } as WorkspaceCreateResult)
     );
-    setupWindow({ sendMessage: sendMessageMock });
+    const nameGenerationMock = mock(
+      (_args: NameGenerationArgs): Promise<NameGenerationResult> =>
+        Promise.resolve({
+          success: true,
+          data: { name: "test-name", modelUsed: "anthropic:claude-haiku-4-5" },
+        } as NameGenerationResult)
+    );
+    const { workspaceApi, nameGenerationApi } = setupWindow({
+      create: createMock,
+      nameGeneration: nameGenerationMock,
+    });
     draftSettingsState = createDraftSettingsHarness({ trunkBranch: "dev" });
     const onWorkspaceCreated = mock((metadata: FrontendWorkspaceMetadata) => metadata);
 
     const getHook = renderUseCreationWorkspace({
       projectPath: TEST_PROJECT_PATH,
       onWorkspaceCreated,
+      message: "make workspace",
     });
+
+    // Wait for name generation to trigger
+    await waitFor(() => expect(nameGenerationApi.generate.mock.calls.length).toBe(1));
 
     await act(async () => {
       await getHook().handleSend("make workspace");
     });
 
-    expect(sendMessageMock.mock.calls.length).toBe(1);
+    expect(workspaceApi.create.mock.calls.length).toBe(1);
     expect(onWorkspaceCreated.mock.calls.length).toBe(0);
     await waitFor(() => expect(getHook().toast?.message).toBe("backend exploded"));
     await waitFor(() => expect(getHook().isSending).toBe(false));
@@ -545,6 +602,7 @@ function createDraftSettingsHarness(
 interface HookOptions {
   projectPath: string;
   onWorkspaceCreated: (metadata: FrontendWorkspaceMetadata) => void;
+  message?: string;
 }
 
 function renderUseCreationWorkspace(options: HookOptions) {
@@ -553,7 +611,10 @@ function renderUseCreationWorkspace(options: HookOptions) {
   } = { current: null };
 
   function Harness(props: HookOptions) {
-    resultRef.current = useCreationWorkspace(props);
+    resultRef.current = useCreationWorkspace({
+      ...props,
+      message: props.message ?? "",
+    });
     return null;
   }
 

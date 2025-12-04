@@ -93,6 +93,7 @@ export {
   debug,
   general,
   menu,
+  nameGeneration,
   projects,
   ProviderConfigInfoSchema,
   providers,
