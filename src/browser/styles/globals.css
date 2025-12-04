@@ -62,10 +62,10 @@
     --color-thinking-mode-light: hsl(271 76% 65%);
     --color-thinking-border: hsl(271 76% 53%);
 
-    /* Runtime icon colors */
-    --color-runtime-ssh: hsl(207 82% 51%); /* blue */
-    --color-runtime-worktree: hsl(271 76% 53%); /* purple */
-    --color-runtime-local: hsl(0 0% 60%); /* gray */
+    /* Runtime icon colors (matches Tailwind blue-500/purple-500) */
+    --color-runtime-ssh: #3b82f6;
+    --color-runtime-worktree: #a855f7;
+    --color-runtime-local: hsl(0 0% 60%); /* matches --color-muted-foreground */
 
     /* Background & Layout */
     --color-background: hsl(0 0% 12%);
@@ -305,10 +305,10 @@
   --color-thinking-mode-light: hsl(271 70% 62%);
   --color-thinking-border: hsl(271 70% 46%);
 
-  /* Runtime icon colors */
-  --color-runtime-ssh: hsl(207 82% 42%);
-  --color-runtime-worktree: hsl(271 70% 46%);
-  --color-runtime-local: hsl(210 14% 48%);
+  /* Runtime icon colors (matches Tailwind blue-500/purple-500) */
+  --color-runtime-ssh: #3b82f6;
+  --color-runtime-worktree: #a855f7;
+  --color-runtime-local: hsl(210 14% 48%); /* matches --color-muted-foreground */
 
   --color-background: hsl(210 33% 98%);
   --color-background-secondary: hsl(210 36% 95%);
