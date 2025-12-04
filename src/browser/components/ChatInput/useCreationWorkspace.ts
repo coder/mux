@@ -152,13 +152,9 @@ export function useCreationWorkspace({
 
       try {
         // Wait for name generation to complete (blocks if still in progress)
+        // Returns empty string if generation failed or manual name is empty (error already set in hook)
         const workspaceName = await waitForGeneration();
         if (!workspaceName) {
-          setToast({
-            id: Date.now().toString(),
-            type: "error",
-            message: "Failed to generate workspace name. Please enter a name manually.",
-          });
           setIsSending(false);
           return false;
         }

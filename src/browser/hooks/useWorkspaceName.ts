@@ -166,8 +166,12 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
   }, []);
 
   const waitForGeneration = useCallback(async (): Promise<string> => {
-    // If auto-generate is off, return the manual name
+    // If auto-generate is off, return the manual name (or set error if empty)
     if (!autoGenerate) {
+      if (!manualName.trim()) {
+        setError("Please enter a workspace name");
+        return "";
+      }
       return manualName;
     }
 
