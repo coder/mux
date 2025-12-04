@@ -1,4 +1,7 @@
-# SSH Runtime
+---
+title: SSH Runtime
+description: Run agents on remote hosts over SSH for security and performance
+---
 
 mux supports using remote hosts over SSH for workspaces. When configured, all tool operations will
 execute over SSH and the agent is securely isolated from your local machine.
@@ -33,7 +36,7 @@ Host ovh-1
 
 ## Authentication
 
-> **Note**: As we delegate to `ssh`, this is really an abbreviated reference of how `ssh` authenticates.
+<Info>As we delegate to `ssh`, this is really an abbreviated reference of how `ssh` authenticates.</Info>
 
 There are a few practical ways to set up authentication.
 

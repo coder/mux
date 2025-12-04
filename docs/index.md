@@ -1,6 +1,9 @@
-# Introduction
+---
+title: Introduction
+description: mux - Coding Agent Multiplexer for AI-assisted development
+---
 
-![mux product screenshot](img/product-hero.webp)
+![mux product screenshot](/img/product-hero.webp)
 
 **mux** (Coding Agent Multiplexer) is a cross-platform desktop application for AI-assisted development with isolated workspace management.
 

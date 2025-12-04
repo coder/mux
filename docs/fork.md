@@ -1,4 +1,7 @@
-# Forking Workspaces
+---
+title: Forking Workspaces
+description: Clone workspaces with conversation history to explore alternatives
+---
 
 Use `/fork` to clone a workspace with its full conversation history and UI state. The forked workspace gets a new workspace on a new branch (using the same backend as the current workspace).
 

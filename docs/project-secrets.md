@@ -1,4 +1,7 @@
-# Project Secrets
+---
+title: Project Secrets
+description: Manage environment variables and API keys for your projects
+---
 
 Securely manage environment variables for your projects in mux. Project secrets are automatically injected when the agent executes bash commands, making it easy to provide API keys, tokens, and other sensitive configuration.
 

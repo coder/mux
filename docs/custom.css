@@ -1,0 +1,82 @@
+/* Override logo height */
+.nav-logo {
+  height: 2.4rem !important;
+}
+
+/* Target logo images specifically */
+img[src*="/img/light.svg"],
+img[src*="/img/dark.svg"] {
+  height: 2.4rem !important;
+}
+
+/* Override Tailwind h-6 class specifically for logo */
+.nav-logo.h-6,
+.h-6[src*="/img/"] {
+  height: 2.4rem !important;
+}
+
+/* More specific targeting for Mintlify logo classes */
+.w-auto.relative.object-contain.hidden.dark\:block.px-1.h-6.max-w-48,
+.w-auto.relative.object-contain.block.dark\:hidden.px-1.h-6.max-w-48 {
+  height: 2.4rem !important;
+}
+
+/* Override link colors to match grayscale theme */
+a,
+.prose a,
+main a,
+[data-testid="main-content"] a {
+  color: #999 !important;
+}
+
+a:hover,
+.prose a:hover,
+main a:hover,
+[data-testid="main-content"] a:hover {
+  color: #FFF !important;
+}
+
+/* Apply styling to all images in docs */
+main img,
+.prose img,
+[data-testid="main-content"] img,
+.content img {
+  margin: 24px 0 !important;
+  border-radius: 8px !important;
+}
+
+/* Apply same styling to videos in docs */
+main video,
+.prose video,
+[data-testid="main-content"] video,
+.content video {
+  margin: 24px 0 !important;
+  border-radius: 8px !important;
+}
+
+/* Make table headers left-aligned */
+main th,
+.prose th,
+[data-testid="main-content"] th,
+.content th {
+  text-align: left !important;
+}
+
+/* Hide only the Powered by Mintlify attribution in footer */
+[data-testid="footer-powered-by"],
+footer a[href*="mintlify.com"],
+footer a[href*="//mintlify.com"],
+footer a[href^="https://mintlify"],
+footer a[href^="http://mintlify"],
+footer a[href*="mintlify.app"],
+footer a[href*="mintcdn.com"][aria-label*="Mintlify"],
+footer [aria-label*="Powered by Mintlify"],
+footer [aria-label="Powered by Mintlify"] {
+  display: none !important;
+}
+
+/* Preserve footer layout even if attribution is removed */
+footer [data-testid="footer-powered-by"] + *,
+footer a[href*="mintlify.com"] + * {
+  margin-left: 0 !important;
+}

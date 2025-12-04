@@ -1,4 +1,7 @@
-# VS Code Extension
+---
+title: VS Code Extension
+description: Pair mux workspaces with VS Code and Cursor editors
+---
 
 The mux VS Code extension allows you to easily pair with mux during development. Our extension works with VS Code and Cursor.
 

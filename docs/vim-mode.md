@@ -1,10 +1,7 @@
-<!-- Keep this file in sync with:
-     - src/components/VimTextArea.tsx (implementation)
-     - src/utils/vim.ts (core logic)
-     - src/utils/vim.test.ts (test suite)
--->
-
-# Vim Mode
+---
+title: Vim Mode
+description: Vim-style editing in the mux chat input
+---
 
 mux includes a built-in Vim mode for the chat input, providing familiar Vim-style editing for power users.
 
@@ -170,8 +167,8 @@ In Vim mode, **Ctrl+C always interrupts streams** (similar to terminal interrupt
 Features that may be added in the future:
 
 - **ge** - Backward end of word motion
-- **f{char}**, **t{char}** - Find character motions
-- **i"**, **i'**, **i(**, **i[**, **i{** - More text objects
+- **f\{char\}**, **t\{char\}** - Find character motions
+- **i"**, **i'**, **i(**, **i[**, **i\{** - More text objects
 - **2w**, **3dd**, **5x** - Count prefixes
 - **Visual mode** - Character, line, and block selection
 - **Macros** - Recording and replaying command sequences

@@ -1,0 +1,2 @@
+# Mintlify docs that use JSX comments which prettier mangles
+docs/system-prompt.md

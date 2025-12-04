@@ -1,3 +1,8 @@
+---
+title: System Prompt
+description: How mux constructs the system prompt for AI models
+---
+
 # System Prompt
 
 `mux` is interested in supporting a variety of models at different levels of performance.
@@ -8,7 +13,8 @@ Even with consistent support at the protocol layer, we have found that different
 
 Here's a snippet from `src/node/services/systemMessage.ts` which is our shared system prompt (minus tools).
 
-<!-- BEGIN SYSTEM_PROMPT_DOCS -->
+
+{/* BEGIN SYSTEM_PROMPT_DOCS */}
 
 ```typescript
 // The PRELUDE is intentionally minimal to not conflict with the user's instructions.
@@ -56,4 +62,5 @@ You are in a git worktree at ${workspacePath}
 }
 ```
 
-<!-- END SYSTEM_PROMPT_DOCS -->
+
+{/* END SYSTEM_PROMPT_DOCS */}

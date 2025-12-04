@@ -1,4 +1,7 @@
-# Init Hooks
+---
+title: Init Hooks
+description: Run setup commands automatically when creating new workspaces
+---
 
 Add a `.mux/init` executable script to your project root to run commands when creating new workspaces.
 
