@@ -183,54 +183,35 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
       return manualName;
     }
 
-    // If we already have a generated name and nothing is pending, return it
-    if (generatedName && !isGenerating && !debounceTimerRef.current) {
+    // Always wait for any pending generation to complete on the full message.
+    // This is important because with voice input, the message can go from empty
+    // to complete very quickly - we must ensure the generated name reflects the
+    // total content, not a partial intermediate state.
+
+    // If there's a debounced generation pending, trigger it immediately
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+      return generateName(message);
+    }
+
+    // If generation is in progress, wait for it to complete
+    if (generationPromiseRef.current) {
+      return generationPromiseRef.current.promise;
+    }
+
+    // If we have a name that was generated for the current message, use it
+    if (generatedName && lastGeneratedForRef.current === message) {
       return generatedName;
     }
 
-    // Helper to wait for pending generation with optional timeout
-    const waitForPending = async (timeoutMs?: number): Promise<string> => {
-      // If there's a debounced generation pending, trigger it now
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current);
-        debounceTimerRef.current = null;
-        return generateName(message);
-      }
-
-      // If generation is in progress, wait for it (with optional timeout)
-      if (generationPromiseRef.current) {
-        if (timeoutMs !== undefined) {
-          const timeout = new Promise<string>((resolve) =>
-            setTimeout(() => resolve(""), timeoutMs)
-          );
-          return Promise.race([generationPromiseRef.current.promise, timeout]);
-        }
-        return generationPromiseRef.current.promise;
-      }
-
-      // Generate if we don't have a name yet
-      if (!generatedName && message.trim()) {
-        return generateName(message);
-      }
-
-      return "";
-    };
-
-    // If we have no name, we must wait fully for generation
-    if (!generatedName) {
-      return waitForPending();
+    // Otherwise generate a fresh name for the current message
+    if (message.trim()) {
+      return generateName(message);
     }
 
-    // We have a name but generation might be pending - wait up to 2s for potential update
-    const pending = isGenerating || debounceTimerRef.current;
-    if (pending) {
-      const result = await waitForPending(2000);
-      // Use result if we got one, otherwise fall back to existing name
-      return result || generatedName;
-    }
-
-    return generatedName;
-  }, [autoGenerate, manualName, generatedName, isGenerating, message, generateName]);
+    return "";
+  }, [autoGenerate, manualName, generatedName, message, generateName]);
 
   return useMemo(
     () => ({
