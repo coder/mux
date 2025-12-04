@@ -49,7 +49,7 @@ include fmt.mk
 .PHONY: test test-unit test-integration test-watch test-coverage test-e2e smoke-test
 .PHONY: dist dist-mac dist-win dist-linux
 .PHONY: vscode-ext vscode-ext-install
-.PHONY: docs docs-server
+.PHONY: docs-server
 .PHONY: storybook storybook-build test-storybook chromatic
 .PHONY: benchmark-terminal
 .PHONY: ensure-deps rebuild-native
@@ -337,10 +337,7 @@ vscode-ext-install: ## Build and install VS Code extension locally
 	@$(MAKE) -C vscode install
 
 ## Documentation
-docs: ## Build documentation (Mintlify)
-	@cd docs && npx mintlify build
-
-docs-server: node_modules/.installed ## Serve documentation locally (opens browser)
+docs-server: node_modules/.installed ## Serve documentation locally (Mintlify dev server)
 	@cd docs && npx mintlify dev
 
 ## Storybook

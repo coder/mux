@@ -23,8 +23,9 @@ generate_section() {
 }
 
 # Extract the current synced section from docs
+# Uses JSX-style comments for Mintlify MDX compatibility
 extract_current_section() {
-  sed -n '/<!-- BEGIN SYSTEM_PROMPT_DOCS -->/,/<!-- END SYSTEM_PROMPT_DOCS -->/p' "$DOCS_FILE" \
+  sed -n '/{\/\* BEGIN SYSTEM_PROMPT_DOCS \*\/}/,/{\/\* END SYSTEM_PROMPT_DOCS \*\/}/p' "$DOCS_FILE" \
     | tail -n +2 | head -n -1 \
     |
     # Remove first and last lines (markers)
@@ -43,14 +44,15 @@ if [[ "${1:-}" == "check" ]]; then
   echo "✅ $DOCS_FILE is in sync"
 else
   # Replace section between markers using temp file approach
+  # Uses JSX-style comments for Mintlify MDX compatibility
   {
     # Print everything up to and including BEGIN marker
-    sed -n '1,/<!-- BEGIN SYSTEM_PROMPT_DOCS -->/p' "$DOCS_FILE"
+    sed -n '1,/{\/\* BEGIN SYSTEM_PROMPT_DOCS \*\/}/p' "$DOCS_FILE"
     echo ""
     generate_section
     echo ""
     # Print END marker and everything after
-    sed -n '/<!-- END SYSTEM_PROMPT_DOCS -->/,$p' "$DOCS_FILE"
+    sed -n '/{\/\* END SYSTEM_PROMPT_DOCS \*\/}/,$p' "$DOCS_FILE"
   } >"$DOCS_FILE.tmp"
   mv "$DOCS_FILE.tmp" "$DOCS_FILE"
   echo "Updated $DOCS_FILE"
