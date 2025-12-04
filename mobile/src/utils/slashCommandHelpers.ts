@@ -2,14 +2,17 @@ import type { MuxFrontendMetadata } from "@/common/types/message";
 import type { ParsedCommand, SlashSuggestion } from "@/browser/utils/slashCommands/types";
 import type { InferClientInputs } from "@orpc/client";
 import type { ORPCClient } from "../orpc/client";
+import {
+  DEFAULT_COMPACTION_WORD_TARGET,
+  WORDS_TO_TOKENS_RATIO,
+  buildCompactionPrompt,
+} from "@/common/constants/ui";
 
 type SendMessageOptions = NonNullable<
   InferClientInputs<ORPCClient>["workspace"]["sendMessage"]["options"]
 >;
 
 export const MOBILE_HIDDEN_COMMANDS = new Set(["telemetry", "vim"]);
-const WORDS_PER_TOKEN = 1.3;
-const DEFAULT_WORD_TARGET = 2000;
 
 export function extractRootCommand(replacement: string): string | null {
   if (typeof replacement !== "string") {
@@ -44,12 +47,10 @@ export function buildMobileCompactionPayload(
   baseOptions: SendMessageOptions
 ): MobileCompactionPayload {
   const targetWords = parsed.maxOutputTokens
-    ? Math.round(parsed.maxOutputTokens / WORDS_PER_TOKEN)
-    : DEFAULT_WORD_TARGET;
+    ? Math.round(parsed.maxOutputTokens / WORDS_TO_TOKENS_RATIO)
+    : DEFAULT_COMPACTION_WORD_TARGET;
 
-  let messageText =
-    `Summarize this conversation into a compact form for a new Assistant to continue helping the user. ` +
-    `Use approximately ${targetWords} words.`;
+  let messageText = buildCompactionPrompt(targetWords);
 
   if (parsed.continueMessage) {
     messageText += `\n\nThe user wants to continue with: ${parsed.continueMessage}`;

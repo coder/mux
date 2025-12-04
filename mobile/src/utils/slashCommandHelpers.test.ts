@@ -54,6 +54,7 @@ describe("buildMobileCompactionPayload", () => {
     const payload = buildMobileCompactionPayload(parsed, baseOptions);
 
     expect(payload.messageText).toContain("approximately 615 words");
+
     expect(payload.messageText).toContain(parsed.continueMessage);
     expect(payload.metadata.type).toBe("compaction-request");
     expect(payload.metadata.rawCommand).toContain("/compact -t 800 -m anthropic:claude-opus-4-1");

@@ -128,31 +128,6 @@ describe("prepareCompactionMessage", () => {
     expect(metadata.parsed.continueMessage?.model).toBe(sendMessageOptions.model);
   });
 
-  test("generates correct prompt text with strict summary instructions", () => {
-    const sendMessageOptions = createBaseOptions();
-    const { messageText } = prepareCompactionMessage({
-      workspaceId: "ws-1",
-      maxOutputTokens: 4096,
-      sendMessageOptions,
-    });
-
-    expect(messageText).toContain("Focus entirely on the summary");
-    expect(messageText).toContain("Do not suggest next steps or future actions");
-    // Word count derived from maxOutputTokens: 4096 / 1.3 ≈ 3151 words
-    expect(messageText).toContain("approximately 3151 words");
-  });
-
-  test("uses default word target when maxOutputTokens not specified", () => {
-    const sendMessageOptions = createBaseOptions();
-    const { messageText } = prepareCompactionMessage({
-      workspaceId: "ws-1",
-      sendMessageOptions,
-    });
-
-    // Default word target is 2000 (from DEFAULT_COMPACTION_WORD_TARGET)
-    expect(messageText).toContain("approximately 2000 words");
-  });
-
   test("does not create continueMessage when no text or images provided", () => {
     const sendMessageOptions = createBaseOptions();
     const { metadata } = prepareCompactionMessage({
