@@ -224,7 +224,7 @@ lint: node_modules/.installed ## Run ESLint (typecheck runs in separate target)
 lint-fix: node_modules/.installed ## Run linter with --fix
 	@./scripts/lint.sh --fix
 
-ifeq ($(OS),Windows_NT) 
+ifeq ($(OS),Windows_NT)
 typecheck: node_modules/.installed src/version.ts ## Run TypeScript type checking (uses tsgo for 10x speedup)
 	@# On Windows, use npm run because bun x doesn't correctly pass arguments
 	@npmx concurrently -g \

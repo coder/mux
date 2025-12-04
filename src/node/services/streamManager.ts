@@ -340,31 +340,23 @@ export class StreamManager extends EventEmitter {
     contextProviderMetadata?: Record<string, unknown>;
     duration: number;
   }> {
-    let totalUsage: LanguageModelV2Usage | undefined;
-    let contextUsage: LanguageModelV2Usage | undefined;
-    let contextProviderMetadata: Record<string, unknown> | undefined;
+    // Helper: wrap promise with independent timeout + error handling
+    // Each promise resolves independently - one failure doesn't mask others
+    const withTimeout = <T>(promise: Promise<T>): Promise<T | undefined> =>
+      Promise.race([
+        promise,
+        new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), timeoutMs)),
+      ]).catch(() => undefined);
 
-    try {
-      // Fetch all metadata in parallel with timeout
-      // - totalUsage: sum of all steps (for cost calculation)
-      // - usage: last step only (for context window display)
-      // - providerMetadata: last step (for context window cache display)
-      const [total, context, contextMeta] = await Promise.race([
-        Promise.all([
-          streamInfo.streamResult.totalUsage,
-          streamInfo.streamResult.usage,
-          streamInfo.streamResult.providerMetadata,
-        ]),
-        new Promise<[undefined, undefined, undefined]>((resolve) =>
-          setTimeout(() => resolve([undefined, undefined, undefined]), timeoutMs)
-        ),
-      ]);
-      totalUsage = total;
-      contextUsage = context;
-      contextProviderMetadata = contextMeta;
-    } catch (error) {
-      log.debug("Could not retrieve stream metadata:", error);
-    }
+    // Fetch all metadata in parallel with independent timeouts
+    // - totalUsage: sum of all steps (for cost calculation)
+    // - contextUsage: last step only (for context window display)
+    // - contextProviderMetadata: last step (for context window cache display)
+    const [totalUsage, contextUsage, contextProviderMetadata] = await Promise.all([
+      withTimeout(streamInfo.streamResult.totalUsage),
+      withTimeout(streamInfo.streamResult.usage),
+      withTimeout(streamInfo.streamResult.providerMetadata),
+    ]);
 
     return {
       totalUsage,
