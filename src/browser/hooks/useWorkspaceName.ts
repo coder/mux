@@ -6,6 +6,8 @@ export interface UseWorkspaceNameOptions {
   message: string;
   /** Debounce delay in milliseconds (default: 500) */
   debounceMs?: number;
+  /** Model to use if preferred small models aren't available */
+  fallbackModel?: string;
 }
 
 /** State and actions for workspace name generation, suitable for passing to components */
@@ -37,7 +39,7 @@ export interface UseWorkspaceNameReturn extends WorkspaceNameState {
  * auto-generation resumes.
  */
 export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspaceNameReturn {
-  const { message, debounceMs = 500 } = options;
+  const { message, debounceMs = 500, fallbackModel } = options;
   const { api } = useAPI();
 
   const [generatedName, setGeneratedName] = useState("");
@@ -103,6 +105,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
       try {
         const result = await api.nameGeneration.generate({
           message: forMessage,
+          fallbackModel,
         });
 
         // Check if this request is still current (wasn't cancelled)
@@ -141,7 +144,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
         }
       }
     },
-    [api]
+    [api, fallbackModel]
   );
 
   // Debounced generation effect

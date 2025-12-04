@@ -174,13 +174,15 @@ export const router = (authToken?: string) => {
         .input(schemas.nameGeneration.generate.input)
         .output(schemas.nameGeneration.generate.output)
         .handler(async ({ context, input }) => {
-          const model = await getPreferredNameModel(context.aiService);
+          // Prefer small/fast models, fall back to user's configured model
+          const model =
+            (await getPreferredNameModel(context.aiService)) ?? input.fallbackModel;
           if (!model) {
             return {
               success: false,
               error: {
                 type: "unknown" as const,
-                raw: "No model available for name generation. Configure an API key for Anthropic or OpenAI.",
+                raw: "No model available for name generation.",
               },
             };
           }

@@ -278,6 +278,8 @@ export const nameGeneration = {
   generate: {
     input: z.object({
       message: z.string(),
+      /** Model to use if preferred small models (Haiku, GPT-Mini) aren't available */
+      fallbackModel: z.string().optional(),
     }),
     output: ResultSchema(
       z.object({
