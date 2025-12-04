@@ -486,7 +486,7 @@ export class WorkspaceStore {
             if (msg.metadata?.compacted) {
               continue;
             }
-            const rawUsage = msg.metadata?.contextUsage ?? msg.metadata?.usage;
+            const rawUsage = msg.metadata?.contextUsage;
             const providerMeta =
               msg.metadata?.contextProviderMetadata ?? msg.metadata?.providerMetadata;
             if (rawUsage) {

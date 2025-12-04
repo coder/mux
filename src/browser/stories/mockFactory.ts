@@ -199,6 +199,7 @@ export function createAssistantMessage(
       timestamp: opts.timestamp ?? STABLE_TIMESTAMP,
       model: opts.model ?? DEFAULT_MODEL,
       usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+      contextUsage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
       duration: 1000,
     },
   };
