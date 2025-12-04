@@ -1193,7 +1193,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           projectName={props.projectName}
           isSending={creationState.isSending || isSending}
           workspaceName={
-            creationState.isSending || isSending ? creationState.workspaceName : undefined
+            creationState.isSending || isSending ? creationState.nameState.name : undefined
           }
         />
       )}
@@ -1404,12 +1404,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 onSetDefaultRuntime={creationState.setDefaultRuntimeMode}
                 onSshHostChange={creationState.setSshHost}
                 disabled={creationState.isSending || isSending}
-                workspaceName={creationState.workspaceName}
-                isGeneratingName={creationState.isGeneratingName}
-                autoGenerateName={creationState.autoGenerateName}
-                nameError={creationState.nameError}
-                onAutoGenerateChange={creationState.setAutoGenerateName}
-                onNameChange={creationState.setWorkspaceName}
+                nameState={creationState.nameState}
               />
             )}
           </div>

@@ -5,6 +5,7 @@ import { RuntimeIconSelector } from "../RuntimeIconSelector";
 import { Loader2, Wand2 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipWrapper } from "../Tooltip";
+import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
 
 interface CreationControlsProps {
   branches: string[];
@@ -13,25 +14,12 @@ interface CreationControlsProps {
   runtimeMode: RuntimeMode;
   defaultRuntimeMode: RuntimeMode;
   sshHost: string;
-  /** Called when user clicks a runtime icon to select it (does not persist) */
   onRuntimeModeChange: (mode: RuntimeMode) => void;
-  /** Called when user checks "Default for project" checkbox (persists) */
   onSetDefaultRuntime: (mode: RuntimeMode) => void;
-  /** Called when user changes SSH host */
   onSshHostChange: (host: string) => void;
   disabled: boolean;
-  /** Workspace name state */
-  workspaceName: string;
-  /** Whether name is being generated */
-  isGeneratingName: boolean;
-  /** Whether auto-generation is enabled */
-  autoGenerateName: boolean;
-  /** Name generation error */
-  nameError: string | null;
-  /** Called when auto-generate checkbox changes */
-  onAutoGenerateChange: (enabled: boolean) => void;
-  /** Called when user types in the name field */
-  onNameChange: (name: string) => void;
+  /** Workspace name generation state and actions */
+  nameState: WorkspaceNameState;
 }
 
 /**
@@ -45,26 +33,26 @@ export function CreationControls(props: CreationControlsProps) {
   const showTrunkBranchSelector =
     props.branches.length > 0 && props.runtimeMode !== RUNTIME_MODE.LOCAL;
 
-  const { onNameChange, onAutoGenerateChange } = props;
+  const { nameState } = props;
 
   const handleNameChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      onNameChange(e.target.value);
+      nameState.setName(e.target.value);
     },
-    [onNameChange]
+    [nameState]
   );
 
   // Clicking into the input disables auto-generation so user can edit
   const handleInputFocus = useCallback(() => {
-    if (props.autoGenerateName) {
-      onAutoGenerateChange(false);
+    if (nameState.autoGenerate) {
+      nameState.setAutoGenerate(false);
     }
-  }, [props.autoGenerateName, onAutoGenerateChange]);
+  }, [nameState]);
 
   // Toggle auto-generation via wand button
   const handleWandClick = useCallback(() => {
-    onAutoGenerateChange(!props.autoGenerateName);
-  }, [props.autoGenerateName, onAutoGenerateChange]);
+    nameState.setAutoGenerate(!nameState.autoGenerate);
+  }, [nameState]);
 
   return (
     <div className="flex flex-col gap-2">
@@ -77,19 +65,19 @@ export function CreationControls(props: CreationControlsProps) {
           <input
             id="workspace-name"
             type="text"
-            value={props.workspaceName}
+            value={nameState.name}
             onChange={handleNameChange}
             onFocus={handleInputFocus}
-            placeholder={props.isGeneratingName ? "Generating..." : "workspace-name"}
+            placeholder={nameState.isGenerating ? "Generating..." : "workspace-name"}
             disabled={props.disabled}
             className={cn(
               "bg-separator text-foreground border-border-medium focus:border-accent h-6 w-full rounded border px-2 pr-6 text-xs focus:outline-none disabled:opacity-50",
-              props.nameError && "border-red-500"
+              nameState.error && "border-red-500"
             )}
           />
           {/* Magic wand / loading indicator - vertically centered */}
           <div className="absolute inset-y-0 right-0 flex items-center pr-1.5">
-            {props.isGeneratingName ? (
+            {nameState.isGenerating ? (
               <Loader2 className="text-accent h-3.5 w-3.5 animate-spin" />
             ) : (
               <TooltipWrapper inline>
@@ -98,26 +86,26 @@ export function CreationControls(props: CreationControlsProps) {
                   onClick={handleWandClick}
                   disabled={props.disabled}
                   className="flex h-full items-center disabled:opacity-50"
-                  aria-label={props.autoGenerateName ? "Disable auto-naming" : "Enable auto-naming"}
+                  aria-label={nameState.autoGenerate ? "Disable auto-naming" : "Enable auto-naming"}
                 >
                   <Wand2
                     className={cn(
                       "h-3.5 w-3.5 transition-colors",
-                      props.autoGenerateName
+                      nameState.autoGenerate
                         ? "text-accent"
                         : "text-muted-foreground opacity-50 hover:opacity-75"
                     )}
                   />
                 </button>
                 <Tooltip className="tooltip" align="center">
-                  {props.autoGenerateName ? "Auto-naming enabled" : "Click to enable auto-naming"}
+                  {nameState.autoGenerate ? "Auto-naming enabled" : "Click to enable auto-naming"}
                 </Tooltip>
               </TooltipWrapper>
             )}
           </div>
         </div>
         {/* Error display - inline */}
-        {props.nameError && <span className="text-xs text-red-500">{props.nameError}</span>}
+        {nameState.error && <span className="text-xs text-red-500">{nameState.error}</span>}
       </div>
 
       {/* Second row: Runtime, Branch, SSH */}

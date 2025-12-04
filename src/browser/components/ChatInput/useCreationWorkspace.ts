@@ -19,7 +19,7 @@ import type { Toast } from "@/browser/components/ChatInputToast";
 import { createErrorToast } from "@/browser/components/ChatInputToasts";
 import { useAPI } from "@/browser/contexts/API";
 import type { ImagePart } from "@/common/orpc/types";
-import { useWorkspaceName } from "@/browser/hooks/useWorkspaceName";
+import { useWorkspaceName, type WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
 
 interface UseCreationWorkspaceOptions {
   projectPath: string;
@@ -69,18 +69,8 @@ interface UseCreationWorkspaceReturn {
   setToast: (toast: Toast | null) => void;
   isSending: boolean;
   handleSend: (message: string, imageParts?: ImagePart[]) => Promise<boolean>;
-  /** Workspace name state */
-  workspaceName: string;
-  /** Whether name is being generated */
-  isGeneratingName: boolean;
-  /** Whether auto-generation is enabled */
-  autoGenerateName: boolean;
-  /** Name generation error */
-  nameError: string | null;
-  /** Set auto-generation enabled */
-  setAutoGenerateName: (enabled: boolean) => void;
-  /** Set workspace name (for manual entry) */
-  setWorkspaceName: (name: string) => void;
+  /** Workspace name generation state and actions (for CreationControls) */
+  nameState: WorkspaceNameState;
 }
 
 /**
@@ -254,12 +244,7 @@ export function useCreationWorkspace({
     setToast,
     isSending,
     handleSend,
-    // Workspace name state
-    workspaceName: workspaceNameState.name,
-    isGeneratingName: workspaceNameState.isGenerating,
-    autoGenerateName: workspaceNameState.autoGenerate,
-    nameError: workspaceNameState.error,
-    setAutoGenerateName: workspaceNameState.setAutoGenerate,
-    setWorkspaceName: workspaceNameState.setName,
+    // Workspace name state (for CreationControls)
+    nameState: workspaceNameState,
   };
 }

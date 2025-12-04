@@ -8,7 +8,8 @@ export interface UseWorkspaceNameOptions {
   debounceMs?: number;
 }
 
-export interface UseWorkspaceNameReturn {
+/** State and actions for workspace name generation, suitable for passing to components */
+export interface WorkspaceNameState {
   /** The generated or manually entered name */
   name: string;
   /** Whether name generation is in progress */
@@ -21,6 +22,9 @@ export interface UseWorkspaceNameReturn {
   setAutoGenerate: (enabled: boolean) => void;
   /** Set manual name (for when auto-generate is off) */
   setName: (name: string) => void;
+}
+
+export interface UseWorkspaceNameReturn extends WorkspaceNameState {
   /** Wait for any pending generation to complete */
   waitForGeneration: () => Promise<string>;
 }
