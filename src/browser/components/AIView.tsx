@@ -209,6 +209,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Use auto-scroll hook for scroll management
   const {
     contentRef,
+    innerRef,
     autoScroll,
     setAutoScroll,
     performAutoScroll,
@@ -500,7 +501,10 @@ const AIViewInner: React.FC<AIViewProps> = ({
             data-testid="message-window"
             className="h-full overflow-y-auto p-[15px] leading-[1.5] break-words whitespace-pre-wrap"
           >
-            <div className={cn("max-w-4xl mx-auto", mergedMessages.length === 0 && "h-full")}>
+            <div
+              ref={innerRef}
+              className={cn("max-w-4xl mx-auto", mergedMessages.length === 0 && "h-full")}
+            >
               {mergedMessages.length === 0 ? (
                 <div className="text-placeholder flex h-full flex-1 flex-col items-center justify-center text-center [&_h3]:m-0 [&_h3]:mb-2.5 [&_h3]:text-base [&_h3]:font-medium [&_p]:m-0 [&_p]:text-[13px]">
                   <h3>No Messages Yet</h3>
