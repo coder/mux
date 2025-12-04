@@ -16,6 +16,9 @@ import {
 import { BashToolResultSchema, FileTreeNodeSchema } from "./tools";
 import { FrontendWorkspaceMetadataSchema, WorkspaceActivitySnapshotSchema } from "./workspace";
 
+// Re-export telemetry schemas
+export { telemetry, TelemetryEventSchema } from "./telemetry";
+
 // --- API Router Schemas ---
 
 // Tokenizer

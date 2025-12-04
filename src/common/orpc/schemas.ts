@@ -98,6 +98,8 @@ export {
   providers,
   ProvidersConfigMapSchema,
   server,
+  telemetry,
+  TelemetryEventSchema,
   terminal,
   tokenizer,
   update,

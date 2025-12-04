@@ -2,27 +2,6 @@
  * Telemetry utility functions
  */
 
-import type { BaseTelemetryProperties } from "./payload";
-import { VERSION } from "@/version";
-
-/**
- * Get base telemetry properties included with all events
- */
-export function getBaseTelemetryProperties(): BaseTelemetryProperties {
-  const gitDescribe =
-    typeof VERSION === "object" &&
-    VERSION !== null &&
-    typeof (VERSION as Record<string, unknown>).git_describe === "string"
-      ? (VERSION as { git_describe: string }).git_describe
-      : "unknown";
-
-  return {
-    version: gitDescribe,
-    platform: window.api?.platform ?? "unknown",
-    electronVersion: window.api?.versions?.electron ?? "unknown",
-  };
-}
-
 /**
  * Round a number to the nearest power of 2 for privacy-preserving metrics
  * E.g., 350 -> 512, 1200 -> 2048

@@ -1,73 +1,30 @@
 /**
- * PostHog Telemetry Client
+ * PostHog Telemetry Client (Frontend)
  *
  * Provides a type-safe interface for sending telemetry events to PostHog.
+ * Events are forwarded to the backend via ORPC, which handles the actual
+ * PostHog communication. This avoids ad-blocker issues.
+ *
  * All payloads are defined in ./payload.ts for transparency.
  */
 
-import posthog from "posthog-js";
 import type { TelemetryEventPayload } from "./payload";
-
-// Default configuration (public keys, safe to commit)
-const DEFAULT_POSTHOG_KEY = "phc_vF1bLfiD5MXEJkxojjsmV5wgpLffp678yhJd3w9Sl4G";
-const DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com";
-
-// Get PostHog configuration from environment variables with fallback to defaults
-// Note: Vite injects import.meta.env at build time, so this is safe in the browser
-// In test environments, we never call this function (see isTestEnvironment check)
-function getPosthogConfig(): { key: string; host: string } {
-  // Use indirect access to avoid Jest parsing issues with import.meta
-  // This works because Vite transforms import.meta.env at build time
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval, @typescript-eslint/no-unsafe-call
-    const meta = new Function("return import.meta")() as
-      | {
-          env?: { VITE_PUBLIC_POSTHOG_KEY?: string; VITE_PUBLIC_POSTHOG_HOST?: string };
-        }
-      | undefined;
-    if (meta?.env) {
-      return {
-        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
-        key: meta.env.VITE_PUBLIC_POSTHOG_KEY || DEFAULT_POSTHOG_KEY,
-        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
-        host: meta.env.VITE_PUBLIC_POSTHOG_HOST || DEFAULT_POSTHOG_HOST,
-      };
-    }
-  } catch {
-    // import.meta not available (e.g., in test environment)
-  }
-  return {
-    key: DEFAULT_POSTHOG_KEY,
-    host: DEFAULT_POSTHOG_HOST,
-  };
-}
 
 let isInitialized = false;
 
 // Storage key for telemetry enabled preference
 const TELEMETRY_ENABLED_KEY = "mux_telemetry_enabled";
-const LEGACY_TELEMETRY_KEY = "mux_telemetry_enabled";
 
 /**
  * Check if telemetry is enabled by user preference
  * Default is true (opt-out model)
- * Checks legacy key for backward compatibility
  */
 export function isTelemetryEnabled(): boolean {
   if (typeof window === "undefined") return true;
 
-  // Try new key first, then legacy key
   const stored = localStorage.getItem(TELEMETRY_ENABLED_KEY);
   if (stored !== null) {
     return stored === "true";
-  }
-
-  // Migrate from legacy key if it exists
-  const legacy = localStorage.getItem(LEGACY_TELEMETRY_KEY);
-  if (legacy !== null) {
-    localStorage.setItem(TELEMETRY_ENABLED_KEY, legacy);
-    localStorage.removeItem(LEGACY_TELEMETRY_KEY);
-    return legacy === "true";
   }
 
   return true; // Default to enabled
@@ -75,11 +32,21 @@ export function isTelemetryEnabled(): boolean {
 
 /**
  * Set telemetry enabled preference
+ * This updates both local preference and notifies the backend
  */
 export function setTelemetryEnabled(enabled: boolean): void {
   if (typeof window === "undefined") return;
+
   localStorage.setItem(TELEMETRY_ENABLED_KEY, enabled.toString());
   console.log(`[Telemetry] ${enabled ? "Enabled" : "Disabled"}`);
+
+  // Notify backend of preference change
+  const client = window.__ORPC_CLIENT__;
+  if (client) {
+    client.telemetry.setEnabled({ enabled }).catch((err: unknown) => {
+      console.warn("[Telemetry] Failed to sync enabled state to backend:", err);
+    });
+  }
 }
 
 /**
@@ -97,7 +64,7 @@ function isTestEnvironment(): boolean {
 }
 
 /**
- * Initialize the PostHog client
+ * Initialize telemetry
  * Should be called once on app startup
  *
  * Note: Telemetry is automatically disabled in test environments or when user has opted out
@@ -117,29 +84,23 @@ export function initTelemetry(): void {
     return;
   }
 
-  const config = getPosthogConfig();
-  posthog.init(config.key, {
-    api_host: config.host,
-    // Disable all automatic tracking - we only send explicit events
-    autocapture: false,
-    capture_pageview: false,
-    capture_pageleave: false,
-    capture_performance: false, // Disables web vitals
-    disable_session_recording: true,
-    // Note: We still want error tracking to work through our explicit error_occurred event
-    loaded: (ph) => {
-      // Identify user with a stable anonymous ID based on machine
-      // This allows us to track usage patterns without PII
-      ph.identify();
-    },
-  });
-
   isInitialized = true;
-  console.debug("[Telemetry] PostHog initialized", { host: config.host });
+  console.debug("[Telemetry] Initialized (backend mode)");
+
+  // Sync enabled state to backend once client is available
+  // Use a small delay to allow ORPC connection to establish
+  setTimeout(() => {
+    const client = window.__ORPC_CLIENT__;
+    if (client) {
+      client.telemetry.setEnabled({ enabled: true }).catch((err: unknown) => {
+        console.warn("[Telemetry] Failed to sync initial enabled state:", err);
+      });
+    }
+  }, 100);
 }
 
 /**
- * Send a telemetry event to PostHog
+ * Send a telemetry event via the backend
  * Events are type-safe and must match definitions in payload.ts
  *
  * Note: Events are silently ignored in test environments or when disabled by user
@@ -155,31 +116,34 @@ export function trackEvent(payload: TelemetryEventPayload): void {
     return;
   }
 
-  if (!isInitialized) {
-    console.debug("[Telemetry] Not initialized, skipping event:", payload.event);
+  const client = window.__ORPC_CLIENT__;
+  if (!client) {
+    console.debug("[Telemetry] ORPC client not available, skipping event:", payload.event);
     return;
   }
 
   // Debug log to verify events are being sent
-  console.debug("[Telemetry] Sending event:", {
+  console.debug("[Telemetry] Sending event via backend:", {
     event: payload.event,
-    properties: payload.properties,
   });
 
-  posthog.capture(payload.event, payload.properties);
+  // Fire and forget - don't block on telemetry
+  client.telemetry.track(payload).catch((err: unknown) => {
+    console.warn("[Telemetry] Failed to track event:", err);
+  });
 }
 
 /**
- * Shutdown telemetry and flush any pending events
- * Should be called on app close
+ * Shutdown telemetry
+ * The backend handles flushing pending events
  */
 export function shutdownTelemetry(): void {
   if (!isInitialized) {
     return;
   }
 
-  posthog.reset();
   isInitialized = false;
+  console.debug("[Telemetry] Shut down");
 }
 
 /**

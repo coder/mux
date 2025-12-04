@@ -14,10 +14,15 @@
  * - For numerical metrics that could leak information (like message lengths), use
  *   base-2 rounding (e.g., 128, 256, 512) to preserve privacy while enabling analysis.
  * - When in doubt, don't send it. Privacy is paramount.
+ *
+ * NOTE: Base properties (version, platform, electronVersion) are automatically
+ * added by the backend TelemetryService. Frontend code only needs to provide
+ * event-specific properties.
  */
 
 /**
  * Base properties included with all telemetry events
+ * These are added by the backend, not the frontend
  */
 export interface BaseTelemetryProperties {
   /** Application version */
@@ -31,7 +36,7 @@ export interface BaseTelemetryProperties {
 /**
  * Application lifecycle events
  */
-export interface AppStartedPayload extends BaseTelemetryProperties {
+export interface AppStartedPayload {
   /** Whether this is the first app launch */
   isFirstLaunch: boolean;
 }
@@ -39,12 +44,12 @@ export interface AppStartedPayload extends BaseTelemetryProperties {
 /**
  * Workspace events
  */
-export interface WorkspaceCreatedPayload extends BaseTelemetryProperties {
+export interface WorkspaceCreatedPayload {
   /** Workspace ID (randomly generated, safe to send) */
   workspaceId: string;
 }
 
-export interface WorkspaceSwitchedPayload extends BaseTelemetryProperties {
+export interface WorkspaceSwitchedPayload {
   /** Previous workspace ID (randomly generated, safe to send) */
   fromWorkspaceId: string;
   /** New workspace ID (randomly generated, safe to send) */
@@ -54,7 +59,7 @@ export interface WorkspaceSwitchedPayload extends BaseTelemetryProperties {
 /**
  * Chat/AI interaction events
  */
-export interface MessageSentPayload extends BaseTelemetryProperties {
+export interface MessageSentPayload {
   /** Full model identifier (e.g., 'anthropic/claude-3-5-sonnet-20241022') */
   model: string;
   /** UI mode (e.g., 'plan', 'exec', 'edit') */
@@ -79,7 +84,7 @@ export type ErrorContext =
 /**
  * Error tracking events
  */
-export interface ErrorOccurredPayload extends BaseTelemetryProperties {
+export interface ErrorOccurredPayload {
   /** Error type/name */
   errorType: string;
   /** Error context - where the error occurred */
@@ -88,6 +93,7 @@ export interface ErrorOccurredPayload extends BaseTelemetryProperties {
 
 /**
  * Union type of all telemetry event payloads
+ * Frontend sends these; backend adds BaseTelemetryProperties before forwarding to PostHog
  */
 export type TelemetryEventPayload =
   | { event: "app_started"; properties: AppStartedPayload }

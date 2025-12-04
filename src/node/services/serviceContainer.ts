@@ -17,6 +17,7 @@ import { TokenizerService } from "@/node/services/tokenizerService";
 import { ServerService } from "@/node/services/serverService";
 import { MenuEventService } from "@/node/services/menuEventService";
 import { VoiceService } from "@/node/services/voiceService";
+import { TelemetryService } from "@/node/services/telemetryService";
 
 /**
  * ServiceContainer - Central dependency container for all backend services.
@@ -39,6 +40,7 @@ export class ServiceContainer {
   public readonly serverService: ServerService;
   public readonly menuEventService: MenuEventService;
   public readonly voiceService: VoiceService;
+  public readonly telemetryService: TelemetryService;
   private readonly initStateManager: InitStateManager;
   private readonly extensionMetadata: ExtensionMetadataService;
   private readonly ptyService: PTYService;
@@ -78,10 +80,20 @@ export class ServiceContainer {
     this.serverService = new ServerService();
     this.menuEventService = new MenuEventService();
     this.voiceService = new VoiceService(config);
+    this.telemetryService = new TelemetryService(config.rootDir);
   }
 
   async initialize(): Promise<void> {
     await this.extensionMetadata.initialize();
+    // Initialize telemetry service
+    await this.telemetryService.initialize();
+  }
+
+  /**
+   * Shutdown services that need cleanup
+   */
+  async shutdown(): Promise<void> {
+    await this.telemetryService.shutdown();
   }
 
   setProjectDirectoryPicker(picker: () => Promise<string | null>): void {

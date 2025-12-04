@@ -1,11 +1,13 @@
 import { useCallback } from "react";
-import { trackEvent, getBaseTelemetryProperties, roundToBase2 } from "@/common/telemetry";
+import { trackEvent, roundToBase2 } from "@/common/telemetry";
 import type { ErrorContext } from "@/common/telemetry/payload";
 
 /**
  * Hook for clean telemetry integration in React components
  *
- * Provides type-safe telemetry tracking with base properties automatically included.
+ * Provides type-safe telemetry tracking. Base properties (version, platform, etc.)
+ * are automatically added by the backend TelemetryService.
+ *
  * Usage:
  *
  * ```tsx
@@ -30,7 +32,6 @@ export function useTelemetry() {
     trackEvent({
       event: "workspace_switched",
       properties: {
-        ...getBaseTelemetryProperties(),
         fromWorkspaceId,
         toWorkspaceId,
       },
@@ -42,7 +43,6 @@ export function useTelemetry() {
     trackEvent({
       event: "workspace_created",
       properties: {
-        ...getBaseTelemetryProperties(),
         workspaceId,
       },
     });
@@ -53,7 +53,6 @@ export function useTelemetry() {
     trackEvent({
       event: "message_sent",
       properties: {
-        ...getBaseTelemetryProperties(),
         model,
         mode,
         message_length_b2: roundToBase2(messageLength),
@@ -66,7 +65,6 @@ export function useTelemetry() {
     trackEvent({
       event: "error_occurred",
       properties: {
-        ...getBaseTelemetryProperties(),
         errorType,
         context,
       },

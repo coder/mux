@@ -332,6 +332,7 @@ async function loadServices(): Promise<void> {
     serverService: services.serverService,
     menuEventService: services.menuEventService,
     voiceService: services.voiceService,
+    telemetryService: services.telemetryService,
   };
 
   electronIpcMain.on("start-orpc-server", (event) => {
@@ -568,9 +569,10 @@ if (gotTheLock) {
   });
 
   app.on("before-quit", () => {
-    console.log(`[${timestamp()}] App before-quit - cleaning up API server...`);
+    console.log(`[${timestamp()}] App before-quit - cleaning up...`);
     if (services) {
       void services.serverService.stopServer();
+      void services.shutdown();
     }
   });
 
