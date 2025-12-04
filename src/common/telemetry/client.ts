@@ -38,13 +38,13 @@ export function setTelemetryEnabled(enabled: boolean): void {
   if (typeof window === "undefined") return;
 
   localStorage.setItem(TELEMETRY_ENABLED_KEY, enabled.toString());
-  console.log(`[Telemetry] ${enabled ? "Enabled" : "Disabled"}`);
+  console.debug(`[Telemetry] ${enabled ? "Enabled" : "Disabled"}`);
 
   // Notify backend of preference change
   const client = window.__ORPC_CLIENT__;
   if (client) {
     client.telemetry.setEnabled({ enabled }).catch((err: unknown) => {
-      console.warn("[Telemetry] Failed to sync enabled state to backend:", err);
+      console.debug("[Telemetry] Failed to sync enabled state to backend:", err);
     });
   }
 }
@@ -80,23 +80,14 @@ export function initTelemetry(): void {
   }
 
   if (isInitialized) {
-    console.warn("Telemetry already initialized");
+    console.debug("[Telemetry] Already initialized");
     return;
   }
 
   isInitialized = true;
   console.debug("[Telemetry] Initialized (backend mode)");
-
-  // Sync enabled state to backend once client is available
-  // Use a small delay to allow ORPC connection to establish
-  setTimeout(() => {
-    const client = window.__ORPC_CLIENT__;
-    if (client) {
-      client.telemetry.setEnabled({ enabled: true }).catch((err: unknown) => {
-        console.warn("[Telemetry] Failed to sync initial enabled state:", err);
-      });
-    }
-  }, 100);
+  // No need to sync enabled state - backend defaults to enabled,
+  // and frontend guards all trackEvent calls with isTelemetryEnabled()
 }
 
 /**
@@ -129,7 +120,7 @@ export function trackEvent(payload: TelemetryEventPayload): void {
 
   // Fire and forget - don't block on telemetry
   client.telemetry.track(payload).catch((err: unknown) => {
-    console.warn("[Telemetry] Failed to track event:", err);
+    console.debug("[Telemetry] Failed to track event:", err);
   });
 }
 

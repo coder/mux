@@ -68,7 +68,7 @@ export class TelemetryService {
     }
 
     if (this.client) {
-      console.warn("[TelemetryService] Already initialized");
+      console.debug("[TelemetryService] Already initialized");
       return;
     }
 
@@ -109,7 +109,7 @@ export class TelemetryService {
       await fs.mkdir(this.muxHome, { recursive: true });
       await fs.writeFile(idPath, newId, "utf-8");
     } catch (err) {
-      console.warn("[TelemetryService] Failed to persist distinct ID:", err);
+      console.debug("[TelemetryService] Failed to persist distinct ID:", err);
     }
 
     return newId;
@@ -127,7 +127,7 @@ export class TelemetryService {
    */
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
-    console.log(`[TelemetryService] ${enabled ? "Enabled" : "Disabled"}`);
+    console.debug(`[TelemetryService] ${enabled ? "Enabled" : "Disabled"}`);
   }
 
   /**
@@ -185,7 +185,7 @@ export class TelemetryService {
     try {
       await this.client.shutdown();
     } catch (err) {
-      console.warn("[TelemetryService] Error during shutdown:", err);
+      console.debug("[TelemetryService] Error during shutdown:", err);
     }
 
     this.client = null;
