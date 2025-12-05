@@ -24,22 +24,21 @@ jobs:
             BODY="${BODY:0:1500}..."
           fi
 
-          # Build JSON payload (simple embed)
-          cat <<EOF > payload.json
-          {
-            "username": "GitHub Releases",
-            "embeds": [
-              {
-                "title": "New release: ${RELEASE_NAME:-$RELEASE_TAG}",
-                "url": "${RELEASE_URL}",
-                "description": "${BODY}",
-                "footer": {
-                  "text": "${REPO_NAME}"
-                }
-              }
-            ]
-          }
-          EOF
+          # Build JSON payload with proper escaping via jq
+          jq -n \
+            --arg title "New release: ${RELEASE_NAME:-$RELEASE_TAG}" \
+            --arg url "$RELEASE_URL" \
+            --arg body "$BODY" \
+            --arg repo "$REPO_NAME" \
+            '{
+              username: "GitHub Releases",
+              embeds: [{
+                title: $title,
+                url: $url,
+                description: $body,
+                footer: { text: $repo }
+              }]
+            }' > payload.json
 
           # Send to Discord
           curl -X POST \
