@@ -288,4 +288,78 @@ describe("backgroundCommands", () => {
       expect(EXIT_CODE_SIGTERM).toBe(143); // 128 + 15
     });
   });
+
+  // Windows/MSYS2 path handling tests
+  // These verify that POSIX-converted paths work correctly in shell commands
+  describe("Windows POSIX path handling", () => {
+    describe("buildWrapperScript with POSIX-converted paths", () => {
+      it("works with POSIX-style paths from toPosixPath", () => {
+        // Simulates paths after toPosixPath conversion on Windows:
+        // C:\Users\test\exit_code → /c/Users/test/exit_code
+        const result = buildWrapperScript({
+          exitCodePath: "/c/Users/test/bg-123/exit_code",
+          cwd: "/c/Projects/myapp",
+          script: "npm start",
+        });
+
+        expect(result).toContain("cd '/c/Projects/myapp'");
+        expect(result).toContain("'/c/Users/test/bg-123/exit_code'");
+      });
+
+      it("handles POSIX paths with spaces (Program Files)", () => {
+        const result = buildWrapperScript({
+          exitCodePath: "/c/Program Files/mux/exit_code",
+          cwd: "/c/Program Files/project",
+          script: "node server.js",
+        });
+
+        expect(result).toContain("cd '/c/Program Files/project'");
+        expect(result).toContain("'/c/Program Files/mux/exit_code'");
+      });
+    });
+
+    describe("buildSpawnCommand with POSIX-converted paths", () => {
+      it("works with POSIX-style paths for redirection", () => {
+        const result = buildSpawnCommand({
+          wrapperScript: "echo test",
+          stdoutPath: "/c/temp/mux-bashes/stdout.log",
+          stderrPath: "/c/temp/mux-bashes/stderr.log",
+        });
+
+        expect(result).toContain("> '/c/temp/mux-bashes/stdout.log'");
+        expect(result).toContain("2> '/c/temp/mux-bashes/stderr.log'");
+      });
+
+      it("handles paths with spaces in POSIX format", () => {
+        const result = buildSpawnCommand({
+          wrapperScript: "echo test",
+          stdoutPath: "/c/Users/John Doe/AppData/Local/Temp/mux-bashes/stdout.log",
+          stderrPath: "/c/Users/John Doe/AppData/Local/Temp/mux-bashes/stderr.log",
+        });
+
+        expect(result).toContain("'/c/Users/John Doe/AppData/Local/Temp/mux-bashes/stdout.log'");
+        expect(result).toContain("'/c/Users/John Doe/AppData/Local/Temp/mux-bashes/stderr.log'");
+      });
+
+      it("handles quoted bash path with spaces (Git Bash default location)", () => {
+        const result = buildSpawnCommand({
+          wrapperScript: "echo test",
+          stdoutPath: "/c/temp/stdout.log",
+          stderrPath: "/c/temp/stderr.log",
+          bashPath: "/c/Program Files/Git/bin/bash.exe",
+        });
+
+        // Bash path should be quoted
+        expect(result).toContain("'/c/Program Files/Git/bin/bash.exe'");
+      });
+    });
+
+    describe("buildTerminateCommand with POSIX paths", () => {
+      it("works with POSIX-style exit code path", () => {
+        const result = buildTerminateCommand(1234, "/c/temp/mux-bashes/bg-abc/exit_code");
+
+        expect(result).toContain("'/c/temp/mux-bashes/bg-abc/exit_code'");
+      });
+    });
+  });
 });

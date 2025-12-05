@@ -288,7 +288,9 @@ export class WorktreeRuntime extends LocalBaseRuntime {
 
           // Force delete the directory (use bash shell for rm -rf on Windows)
           // Convert to POSIX path for Git Bash compatibility on Windows
-          using rmProc = execAsync(`rm -rf "${toPosixPath(deletedPath)}"`, { shell: getBashPath() });
+          using rmProc = execAsync(`rm -rf "${toPosixPath(deletedPath)}"`, {
+            shell: getBashPath(),
+          });
           await rmProc.result;
 
           return { success: true, deletedPath };

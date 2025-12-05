@@ -2,6 +2,7 @@ import type { BackgroundHandle } from "./Runtime";
 import { parseExitCode, EXIT_CODE_SIGKILL, EXIT_CODE_SIGTERM } from "./backgroundCommands";
 import { log } from "@/node/services/log";
 import { execAsync } from "@/node/utils/disposableExec";
+import { getBashPath } from "@/node/utils/main/bashPath";
 import * as fs from "fs/promises";
 import * as path from "path";
 
@@ -53,12 +54,22 @@ export class LocalBackgroundHandle implements BackgroundHandle {
     const exitCodePath = path.join(this.outputDir, "exit_code");
 
     // Windows: convert MSYS2 PID to Windows PID and use taskkill
+    // Must run via bash because /proc/PID/winpid is MSYS2's virtual filesystem,
+    // not visible to Node.js running as a native Windows process
     if (process.platform === "win32") {
       try {
-        const winpidPath = `/proc/${this.pid}/winpid`;
-        const winpid = (await fs.readFile(winpidPath, "utf-8")).trim();
-        log.debug(`LocalBackgroundHandle: Killing Windows PID ${winpid} (MSYS2 PID ${this.pid})`);
-        using proc = execAsync(`taskkill /PID ${winpid} /F /T`);
+        // Script reads winpid from MSYS2's /proc, then uses taskkill
+        // taskkill /F = force, /T = kill child processes
+        // Double slashes needed because bash interprets single slash as path
+        const terminateScript = `
+          if [ -f /proc/${this.pid}/winpid ]; then
+            winpid=$(cat /proc/${this.pid}/winpid)
+            taskkill //PID $winpid //F //T 2>/dev/null
+          fi
+          kill -9 ${this.pid} 2>/dev/null || true
+        `;
+        log.debug(`LocalBackgroundHandle: Terminating MSYS2 PID ${this.pid} via bash`);
+        using proc = execAsync(terminateScript, { shell: getBashPath() });
         await proc.result;
       } catch (error) {
         // Process already dead or winpid unavailable
