@@ -336,12 +336,13 @@ export class SSHRuntime implements Runtime {
     const wrapperScript = wrapperParts.join(" && ");
 
     // Use shared buildSpawnCommand for parity with Local
-    // Pass raw paths - buildSpawnCommand uses shellQuote internally
+    // Use expandTildeForSSH for path quoting to support ~/... paths
     const spawnCommand = buildSpawnCommand({
       wrapperScript,
       stdoutPath,
       stderrPath,
       niceness: options.niceness,
+      quotePath: expandTildeForSSH,
     });
 
     try {
