@@ -34,6 +34,7 @@ import {
 import { LocalBackgroundHandle } from "./LocalBackgroundHandle";
 import { buildWrapperScript, buildSpawnCommand } from "./backgroundCommands";
 import { log } from "@/node/services/log";
+import { toPosixPath } from "@/node/utils/paths";
 
 /**
  * Abstract base class for local runtimes (both WorktreeRuntime and LocalRuntime).
@@ -361,17 +362,18 @@ export abstract class LocalBaseRuntime implements Runtime {
     await fsPromises.writeFile(stderrPath, "");
 
     // Build wrapper script and spawn command using shared builders (same as SSH for parity)
+    // On Windows, convert paths to POSIX format for Git Bash (C:\foo → /c/foo)
     const wrapperScript = buildWrapperScript({
-      exitCodePath,
-      cwd: options.cwd,
+      exitCodePath: toPosixPath(exitCodePath),
+      cwd: toPosixPath(options.cwd),
       env: { ...options.env, ...NON_INTERACTIVE_ENV_VARS },
       script,
     });
 
     const spawnCommand = buildSpawnCommand({
       wrapperScript,
-      stdoutPath,
-      stderrPath,
+      stdoutPath: toPosixPath(stdoutPath),
+      stderrPath: toPosixPath(stderrPath),
       bashPath: getBashPath(),
       niceness: options.niceness,
       useSetsid: process.platform !== "win32",

@@ -17,6 +17,7 @@ import { getProjectName } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 import { expandTilde } from "./tildeExpansion";
 import { LocalBaseRuntime } from "./LocalBaseRuntime";
+import { toPosixPath } from "@/node/utils/paths";
 
 /**
  * Worktree runtime implementation that executes commands and file operations
@@ -286,7 +287,8 @@ export class WorktreeRuntime extends LocalBaseRuntime {
           }
 
           // Force delete the directory (use bash shell for rm -rf on Windows)
-          using rmProc = execAsync(`rm -rf "${deletedPath}"`, { shell: getBashPath() });
+          // Convert to POSIX path for Git Bash compatibility on Windows
+          using rmProc = execAsync(`rm -rf "${toPosixPath(deletedPath)}"`, { shell: getBashPath() });
           await rmProc.result;
 
           return { success: true, deletedPath };
