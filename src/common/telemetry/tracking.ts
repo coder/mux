@@ -65,6 +65,7 @@ export function trackWorkspaceSwitched(fromWorkspaceId: string, toWorkspaceId: s
  * @param messageLength - Raw character count (will be rounded to base-2)
  */
 export function trackMessageSent(
+  workspaceId: string,
   model: string,
   mode: string,
   messageLength: number,
@@ -74,6 +75,7 @@ export function trackMessageSent(
   trackEvent({
     event: "message_sent",
     properties: {
+      workspaceId,
       model,
       mode,
       message_length_b2: roundToBase2(messageLength),
