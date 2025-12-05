@@ -3,9 +3,8 @@ import type {
   BashBackgroundTerminateArgs,
   BashBackgroundTerminateResult,
 } from "@/common/types/tools";
-import { ToolContainer, ToolHeader, StatusIndicator } from "./shared/ToolPrimitives";
+import { ToolContainer, ToolHeader, StatusIndicator, ToolIcon } from "./shared/ToolPrimitives";
 import { getStatusDisplay, type ToolStatus } from "./shared/toolUtils";
-import { TooltipWrapper, Tooltip } from "../Tooltip";
 
 interface BashBackgroundTerminateToolCallProps {
   args: BashBackgroundTerminateArgs;
@@ -23,10 +22,7 @@ export const BashBackgroundTerminateToolCall: React.FC<BashBackgroundTerminateTo
   return (
     <ToolContainer expanded={false}>
       <ToolHeader>
-        <TooltipWrapper inline>
-          <span>⏹️</span>
-          <Tooltip>bash_background_terminate</Tooltip>
-        </TooltipWrapper>
+        <ToolIcon emoji="⏹️" toolName="bash_background_terminate" />
         <span className="text-text font-mono">
           {result?.success === true ? (result.display_name ?? args.process_id) : args.process_id}
         </span>

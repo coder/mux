@@ -64,3 +64,13 @@ export function formatValue(value: unknown): string {
     return "[Complex Object - Cannot Stringify]";
   }
 }
+
+/**
+ * Format duration in human-readable form (ms, s, m, h)
+ */
+export function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60000) return `${Math.round(ms / 1000)}s`;
+  if (ms < 3600000) return `${Math.round(ms / 60000)}m`;
+  return `${Math.round(ms / 3600000)}h`;
+}
