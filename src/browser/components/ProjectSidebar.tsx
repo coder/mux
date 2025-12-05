@@ -471,13 +471,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         >
           {!collapsed && (
             <>
-              <div className="border-dark flex items-center justify-between border-b p-4">
-                <h2 className="text-foreground text-md m-0 font-semibold">Agents</h2>
+              <div className="border-dark flex items-center justify-between border-b py-2 pr-3 pl-4">
+                <h2 className="text-foreground text-md m-0 font-semibold">Projects</h2>
                 <TooltipWrapper inline>
                   <button
                     onClick={onAddProject}
                     aria-label="Add project"
-                    className="text-foreground hover:bg-hover hover:border-border-light flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 text-lg transition-all duration-200"
+                    className="text-muted-dark hover:text-foreground hover:bg-hover flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-lg transition-all duration-200"
                   >
                     +
                   </button>
@@ -565,7 +565,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               }}
                               aria-label={`Manage secrets for ${projectName}`}
                               data-project-path={projectPath}
-                              className="text-muted-dark mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-sm opacity-0 transition-all duration-200 hover:bg-yellow-500/10 hover:text-yellow-500"
+                              className="text-muted-dark flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-sm opacity-0 transition-all duration-200 hover:bg-yellow-500/10 hover:text-yellow-500"
                             >
                               <KeyRound size={12} />
                             </button>
@@ -590,6 +590,24 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               Remove project
                             </Tooltip>
                           </TooltipWrapper>
+                          <TooltipWrapper inline>
+                            <button
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleAddWorkspace(projectPath);
+                              }}
+                              aria-label={`Add workspace to ${projectName}`}
+                              data-project-path={projectPath}
+                              className="text-muted-dark hover:text-foreground hover:bg-hover flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-base transition-all duration-200"
+                            >
+                              +
+                            </button>
+                            <Tooltip className="tooltip" align="right">
+                              New Workspace
+                              {selectedWorkspace?.projectPath === projectPath &&
+                                ` (${formatKeybind(KEYBINDS.NEW_WORKSPACE)})`}
+                            </Tooltip>
+                          </TooltipWrapper>
                         </DraggableProjectItem>
 
                         {isExpanded && (
@@ -598,18 +616,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             role="region"
                             aria-label={`Workspaces for ${projectName}`}
                           >
-                            <div className="border-hover border-b px-3 py-2">
-                              <button
-                                onClick={() => handleAddWorkspace(projectPath)}
-                                data-project-path={projectPath}
-                                aria-label={`Add workspace to ${projectName}`}
-                                className="text-muted border-border-medium hover:bg-hover hover:border-border-darker hover:text-foreground w-full cursor-pointer rounded border border-dashed bg-transparent px-3 py-1.5 text-left text-[13px] transition-all duration-200"
-                              >
-                                + New Workspace
-                                {selectedWorkspace?.projectPath === projectPath &&
-                                  ` (${formatKeybind(KEYBINDS.NEW_WORKSPACE)})`}
-                              </button>
-                            </div>
                             {(() => {
                               const allWorkspaces =
                                 sortedWorkspacesByProject.get(projectPath) ?? [];
