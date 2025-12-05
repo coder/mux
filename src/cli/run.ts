@@ -269,7 +269,13 @@ async function main(): Promise<void> {
   const partialService = new PartialService(config, historyService);
   const initStateManager = new InitStateManager(config);
   const backgroundProcessManager = new BackgroundProcessManager();
-  const aiService = new AIService(config, historyService, partialService, initStateManager, backgroundProcessManager);
+  const aiService = new AIService(
+    config,
+    historyService,
+    partialService,
+    initStateManager,
+    backgroundProcessManager
+  );
   ensureProvidersConfig(config);
 
   const session = new AgentSession({
