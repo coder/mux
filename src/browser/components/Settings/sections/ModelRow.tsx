@@ -4,6 +4,7 @@ import { GatewayIcon } from "@/browser/components/icons/GatewayIcon";
 import { cn } from "@/common/lib/utils";
 import { TooltipWrapper, Tooltip } from "@/browser/components/Tooltip";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
+import { Button } from "@/browser/components/ui/button";
 
 export interface ModelRowProps {
   provider: string;
@@ -74,24 +75,26 @@ export function ModelRow(props: ModelRowProps) {
       <div className="ml-2 flex shrink-0 items-center gap-0.5">
         {props.isEditing ? (
           <>
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={props.onSaveEdit}
               disabled={props.saving}
-              className="text-accent hover:text-accent-dark p-0.5 transition-colors"
+              className="text-accent hover:text-accent-dark h-6 w-6"
               title="Save changes (Enter)"
             >
               <Check className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={props.onCancelEdit}
               disabled={props.saving}
-              className="text-muted hover:text-foreground p-0.5 transition-colors"
+              className="text-muted hover:text-foreground h-6 w-6"
               title="Cancel (Escape)"
             >
               <X className="h-3.5 w-3.5" />
-            </button>
+            </Button>
           </>
         ) : (
           <>
@@ -116,22 +119,23 @@ export function ModelRow(props: ModelRowProps) {
             )}
             {/* Favorite/default button */}
             <TooltipWrapper inline>
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="icon"
                 onClick={() => {
                   if (!props.isDefault) props.onSetDefault();
                 }}
                 className={cn(
-                  "p-0.5 transition-colors",
+                  "h-6 w-6",
                   props.isDefault
-                    ? "cursor-default text-yellow-400"
+                    ? "cursor-default text-yellow-400 hover:text-yellow-400"
                     : "text-muted hover:text-yellow-400"
                 )}
                 disabled={props.isDefault}
                 aria-label={props.isDefault ? "Current default model" : "Set as default model"}
               >
                 <Star className={cn("h-3.5 w-3.5", props.isDefault && "fill-current")} />
-              </button>
+              </Button>
               <Tooltip className="tooltip" align="center">
                 {props.isDefault ? "Default model" : "Set as default"}
               </Tooltip>
@@ -139,24 +143,26 @@ export function ModelRow(props: ModelRowProps) {
             {/* Edit/delete buttons only for custom models */}
             {props.isCustom && (
               <>
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="icon"
                   onClick={props.onStartEdit}
                   disabled={Boolean(props.saving) || Boolean(props.hasActiveEdit)}
-                  className="text-muted hover:text-foreground p-0.5 transition-colors disabled:opacity-50"
+                  className="text-muted hover:text-foreground h-6 w-6"
                   title="Edit model"
                 >
                   <Pencil className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
                   onClick={props.onRemove}
                   disabled={Boolean(props.saving) || Boolean(props.hasActiveEdit)}
-                  className="text-muted hover:text-error p-0.5 transition-colors disabled:opacity-50"
+                  className="text-muted hover:text-error h-6 w-6"
                   title="Remove model"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                </Button>
               </>
             )}
           </>

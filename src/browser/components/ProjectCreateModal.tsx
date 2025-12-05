@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from "react";
 import { Modal, ModalActions, CancelButton, PrimaryButton } from "./Modal";
 import { DirectoryPickerModal } from "./DirectoryPickerModal";
+import { Button } from "@/browser/components/ui/button";
 import type { ProjectConfig } from "@/node/config";
 import { useAPI } from "@/browser/contexts/API";
 
@@ -146,14 +147,14 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
             className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-muted text-foreground min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
           />
           {(isDesktop || hasWebFsPicker) && (
-            <button
-              type="button"
+            <Button
+              variant="outline"
               onClick={handleBrowseClick}
               disabled={isCreating}
-              className="bg-modal-bg border-border-medium text-muted hover:text-foreground hover:border-accent shrink-0 rounded border px-3 py-2 text-sm transition-colors disabled:opacity-50"
+              className="shrink-0"
             >
               Browse…
-            </button>
+            </Button>
           )}
         </div>
         {error && <div className="text-error -mt-3 mb-3 text-xs">{error}</div>}

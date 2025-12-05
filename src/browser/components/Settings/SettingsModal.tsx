@@ -6,6 +6,7 @@ import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { GeneralSection } from "./sections/GeneralSection";
 import { ProvidersSection } from "./sections/ProvidersSection";
 import { ModelsSection } from "./sections/ModelsSection";
+import { Button } from "@/browser/components/ui/button";
 import type { SettingsSection } from "./types";
 
 const SECTIONS: SettingsSection[] = [
@@ -72,30 +73,31 @@ export function SettingsModal() {
               Settings
             </span>
             {/* Close button in header on mobile only */}
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={handleClose}
-              className="text-muted hover:text-foreground rounded p-1 transition-colors md:hidden"
+              className="h-6 w-6 md:hidden"
               aria-label="Close settings"
             >
               <X className="h-4 w-4" />
-            </button>
+            </Button>
           </div>
           <nav className="flex overflow-x-auto p-2 md:flex-1 md:flex-col md:overflow-y-auto">
             {SECTIONS.map((section) => (
-              <button
+              <Button
                 key={section.id}
-                type="button"
+                variant="ghost"
                 onClick={() => setActiveSection(section.id)}
-                className={`flex shrink-0 items-center gap-2 rounded-md px-3 py-2 text-left text-sm whitespace-nowrap transition-colors md:w-full ${
+                className={`flex h-auto shrink-0 items-center justify-start gap-2 rounded-md px-3 py-2 text-left text-sm whitespace-nowrap md:w-full ${
                   activeSection === section.id
-                    ? "bg-accent/20 text-accent"
+                    ? "bg-accent/20 text-accent hover:bg-accent/20 hover:text-accent"
                     : "text-muted hover:bg-hover hover:text-foreground"
                 }`}
               >
                 {section.icon}
                 {section.label}
-              </button>
+              </Button>
             ))}
           </nav>
         </div>
@@ -104,14 +106,15 @@ export function SettingsModal() {
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className="border-border-medium hidden h-12 items-center justify-between border-b px-6 md:flex">
             <span className="text-foreground text-sm font-medium">{currentSection.label}</span>
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={handleClose}
-              className="text-muted hover:text-foreground rounded p-1 transition-colors"
+              className="h-6 w-6"
               aria-label="Close settings"
             >
               <X className="h-4 w-4" />
-            </button>
+            </Button>
           </div>
           <div className="flex-1 overflow-y-auto p-4 md:p-6">
             <SectionComponent />

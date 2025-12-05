@@ -6,6 +6,7 @@ import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import { useAPI } from "@/browser/contexts/API";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useGateway } from "@/browser/hooks/useGatewayModels";
+import { Button } from "@/browser/components/ui/button";
 
 interface FieldConfig {
   key: string;
@@ -214,10 +215,10 @@ export function ProvidersSection() {
             className="border-border-medium bg-background-secondary overflow-hidden rounded-md border"
           >
             {/* Provider header */}
-            <button
-              type="button"
+            <Button
+              variant="ghost"
               onClick={() => handleToggleProvider(provider)}
-              className="hover:bg-hover flex w-full items-center justify-between px-4 py-3 text-left transition-colors"
+              className="flex h-auto w-full items-center justify-between rounded-none px-4 py-3 text-left"
             >
               <div className="flex items-center gap-3">
                 {isExpanded ? (
@@ -235,7 +236,7 @@ export function ProvidersSection() {
                 className={`h-2 w-2 rounded-full ${configured ? "bg-green-500" : "bg-border-medium"}`}
                 title={configured ? "Configured" : "Not configured"}
               />
-            </button>
+            </Button>
 
             {/* Provider settings */}
             {isExpanded && (
@@ -266,20 +267,22 @@ export function ProvidersSection() {
                               if (e.key === "Escape") handleCancelEdit();
                             }}
                           />
-                          <button
-                            type="button"
+                          <Button
+                            variant="ghost"
+                            size="icon"
                             onClick={handleSaveEdit}
-                            className="p-1 text-green-500 hover:text-green-400"
+                            className="h-6 w-6 text-green-500 hover:text-green-400"
                           >
                             <Check className="h-4 w-4" />
-                          </button>
-                          <button
-                            type="button"
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
                             onClick={handleCancelEdit}
-                            className="text-muted hover:text-foreground p-1"
+                            className="text-muted hover:text-foreground h-6 w-6"
                           >
                             <X className="h-4 w-4" />
-                          </button>
+                          </Button>
                         </div>
                       ) : (
                         <div className="flex items-center justify-between">
@@ -294,23 +297,25 @@ export function ProvidersSection() {
                             {(fieldConfig.type === "text"
                               ? !!fieldValue
                               : fieldConfig.type === "secret" && fieldIsSet) && (
-                              <button
-                                type="button"
+                              <Button
+                                variant="ghost"
+                                size="sm"
                                 onClick={() => handleClearField(provider, fieldConfig.key)}
-                                className="text-muted hover:text-error text-xs"
+                                className="text-muted hover:text-error h-auto px-1 py-0 text-xs"
                               >
                                 Clear
-                              </button>
+                              </Button>
                             )}
-                            <button
-                              type="button"
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               onClick={() =>
                                 handleStartEdit(provider, fieldConfig.key, fieldConfig)
                               }
-                              className="text-accent hover:text-accent-light text-xs"
+                              className="text-accent hover:text-accent-light h-auto px-1 py-0 text-xs"
                             >
                               {fieldIsSet || fieldValue ? "Change" : "Set"}
-                            </button>
+                            </Button>
                           </div>
                         </div>
                       )}
