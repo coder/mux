@@ -12,6 +12,7 @@ import type {
 import { listLocalBranches } from "@/node/git";
 import { checkInitHookExists, getMuxEnv } from "./initHook";
 import { execAsync } from "@/node/utils/disposableExec";
+import { getBashPath } from "@/node/utils/main/bashPath";
 import { getProjectName } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 import { expandTilde } from "./tildeExpansion";
@@ -284,8 +285,8 @@ export class WorktreeRuntime extends LocalBaseRuntime {
             // Ignore prune errors - we'll still try rm -rf
           }
 
-          // Force delete the directory
-          using rmProc = execAsync(`rm -rf "${deletedPath}"`);
+          // Force delete the directory (use bash shell for rm -rf on Windows)
+          using rmProc = execAsync(`rm -rf "${deletedPath}"`, { shell: getBashPath() });
           await rmProc.result;
 
           return { success: true, deletedPath };

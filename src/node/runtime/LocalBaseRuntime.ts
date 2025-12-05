@@ -378,7 +378,8 @@ export abstract class LocalBaseRuntime implements Runtime {
     });
 
     try {
-      using proc = execAsync(spawnCommand);
+      // Use bash shell explicitly - spawnCommand uses POSIX commands (nohup, setsid)
+      using proc = execAsync(spawnCommand, { shell: getBashPath() });
       const result = await proc.result;
 
       const pid = parseInt(result.stdout.trim(), 10);
