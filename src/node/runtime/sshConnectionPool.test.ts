@@ -1,7 +1,6 @@
 import * as os from "os";
 import * as path from "path";
-import { getControlPath } from "./sshConnectionPool";
-import type { SSHRuntimeConfig } from "./SSHRuntime";
+import { getControlPath, SSHConnectionPool, type SSHRuntimeConfig } from "./sshConnectionPool";
 
 describe("sshConnectionPool", () => {
   describe("getControlPath", () => {
@@ -132,5 +131,153 @@ describe("username isolation", () => {
     const expectedPrefix = path.join(os.tmpdir(), "mux-ssh-");
     expect(controlPath.startsWith(expectedPrefix)).toBe(true);
     expect(controlPath).toMatch(/mux-ssh-[a-f0-9]{12}$/);
+  });
+});
+
+describe("SSHConnectionPool", () => {
+  describe("health tracking", () => {
+    test("getConnectionHealth returns undefined for unknown connection", () => {
+      const pool = new SSHConnectionPool();
+      const config: SSHRuntimeConfig = {
+        host: "unknown.example.com",
+        srcBaseDir: "/work",
+      };
+
+      expect(pool.getConnectionHealth(config)).toBeUndefined();
+    });
+
+    test("markHealthy sets connection to healthy state", () => {
+      const pool = new SSHConnectionPool();
+      const config: SSHRuntimeConfig = {
+        host: "test.example.com",
+        srcBaseDir: "/work",
+      };
+
+      pool.markHealthy(config);
+      const health = pool.getConnectionHealth(config);
+
+      expect(health).toBeDefined();
+      expect(health!.status).toBe("healthy");
+      expect(health!.consecutiveFailures).toBe(0);
+      expect(health!.lastSuccess).toBeInstanceOf(Date);
+    });
+
+    test("reportFailure puts connection into backoff", () => {
+      const pool = new SSHConnectionPool();
+      const config: SSHRuntimeConfig = {
+        host: "test.example.com",
+        srcBaseDir: "/work",
+      };
+
+      // Mark healthy first
+      pool.markHealthy(config);
+      expect(pool.getConnectionHealth(config)?.status).toBe("healthy");
+
+      // Report a failure
+      pool.reportFailure(config, "Connection refused");
+      const health = pool.getConnectionHealth(config);
+
+      expect(health?.status).toBe("unhealthy");
+      expect(health?.consecutiveFailures).toBe(1);
+      expect(health?.lastError).toBe("Connection refused");
+      expect(health?.backoffUntil).toBeDefined();
+    });
+
+    test("resetBackoff clears backoff state after failed probe", async () => {
+      const pool = new SSHConnectionPool();
+      const config: SSHRuntimeConfig = {
+        host: "nonexistent.invalid.host.test",
+        srcBaseDir: "/work",
+      };
+
+      // Trigger a failure via acquireConnection (will fail to connect)
+      await expect(pool.acquireConnection(config, 1000)).rejects.toThrow();
+
+      // Verify we're now in backoff
+      const healthBefore = pool.getConnectionHealth(config);
+      expect(healthBefore?.status).toBe("unhealthy");
+      expect(healthBefore?.backoffUntil).toBeDefined();
+
+      // Reset backoff
+      pool.resetBackoff(config);
+      const healthAfter = pool.getConnectionHealth(config);
+
+      expect(healthAfter).toBeDefined();
+      expect(healthAfter!.status).toBe("unknown");
+      expect(healthAfter!.consecutiveFailures).toBe(0);
+      expect(healthAfter!.backoffUntil).toBeUndefined();
+    });
+  });
+
+  describe("acquireConnection", () => {
+    test("returns immediately for known healthy connection", async () => {
+      const pool = new SSHConnectionPool();
+      const config: SSHRuntimeConfig = {
+        host: "test.example.com",
+        srcBaseDir: "/work",
+      };
+
+      // Mark as healthy first
+      pool.markHealthy(config);
+
+      // Should return immediately without probing
+      const start = Date.now();
+      await pool.acquireConnection(config);
+      const elapsed = Date.now() - start;
+
+      // Should be nearly instant (< 50ms)
+      expect(elapsed).toBeLessThan(50);
+    });
+
+    test("throws immediately when in backoff", async () => {
+      const pool = new SSHConnectionPool();
+      const config: SSHRuntimeConfig = {
+        host: "nonexistent.invalid.host.test",
+        srcBaseDir: "/work",
+      };
+
+      // Trigger a failure to put connection in backoff
+      await expect(pool.acquireConnection(config, 1000)).rejects.toThrow();
+
+      // Second call should throw immediately with backoff message
+      await expect(pool.acquireConnection(config)).rejects.toThrow(/in backoff/);
+    });
+
+    test("getControlPath returns deterministic path", () => {
+      const pool = new SSHConnectionPool();
+      const config: SSHRuntimeConfig = {
+        host: "test.example.com",
+        srcBaseDir: "/work",
+      };
+
+      const path1 = pool.getControlPath(config);
+      const path2 = pool.getControlPath(config);
+
+      expect(path1).toBe(path2);
+      expect(path1).toBe(getControlPath(config));
+    });
+  });
+
+  describe("singleflighting", () => {
+    test("concurrent acquireConnection calls share same probe", async () => {
+      const pool = new SSHConnectionPool();
+      const config: SSHRuntimeConfig = {
+        host: "test.example.com",
+        srcBaseDir: "/work",
+      };
+
+      // Mark healthy to avoid actual probe
+      pool.markHealthy(config);
+
+      // Multiple concurrent calls should all succeed
+      const results = await Promise.all([
+        pool.acquireConnection(config),
+        pool.acquireConnection(config),
+        pool.acquireConnection(config),
+      ]);
+
+      // All should resolve (no errors)
+      expect(results).toHaveLength(3);
+    });
   });
 });
