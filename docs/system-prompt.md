@@ -62,5 +62,4 @@ You are in a git worktree at ${workspacePath}
 }
 ```
 
-
 {/* END SYSTEM_PROMPT_DOCS */}
