@@ -531,6 +531,14 @@ export class WorkspaceStore {
   }
 
   /**
+   * Bump state for a workspace to trigger React re-renders.
+   * Used by addEphemeralMessage for frontend-only messages.
+   */
+  bumpState(workspaceId: string): void {
+    this.states.bump(workspaceId);
+  }
+
+  /**
    * Get current TODO list for a workspace.
    * Returns empty array if workspace doesn't exist or has no TODOs.
    */
@@ -1125,6 +1133,32 @@ export function useWorkspaceAggregator(
 ): StreamingMessageAggregator | undefined {
   const store = useWorkspaceStoreRaw();
   return store.getAggregator(workspaceId);
+}
+
+/**
+ * Add an ephemeral message to a workspace and trigger a re-render.
+ * Used for displaying frontend-only messages like /plan output.
+ */
+export function addEphemeralMessage(workspaceId: string, message: MuxMessage): void {
+  const store = getStoreInstance();
+  const aggregator = store.getAggregator(workspaceId);
+  if (aggregator) {
+    aggregator.addMessage(message);
+    store.bumpState(workspaceId);
+  }
+}
+
+/**
+ * Remove an ephemeral message from a workspace and trigger a re-render.
+ * Used for dismissing frontend-only messages like /plan output.
+ */
+export function removeEphemeralMessage(workspaceId: string, messageId: string): void {
+  const store = getStoreInstance();
+  const aggregator = store.getAggregator(workspaceId);
+  if (aggregator) {
+    aggregator.removeMessage(messageId);
+    store.bumpState(workspaceId);
+  }
 }
 
 /**

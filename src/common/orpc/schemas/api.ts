@@ -294,6 +294,20 @@ export const workspace = {
       ),
     },
   },
+  /**
+   * Get the current plan file content for a workspace.
+   * Used by UI to refresh plan display when file is edited externally.
+   */
+  getPlanContent: {
+    input: z.object({ workspaceId: z.string() }),
+    output: ResultSchema(
+      z.object({
+        content: z.string(),
+        path: z.string(),
+      }),
+      z.string()
+    ),
+  },
 };
 
 export type WorkspaceSendMessageOutput = z.infer<typeof workspace.sendMessage.output>;
@@ -417,6 +431,55 @@ export const general = {
       intervalMs: z.number().int().min(10).max(5000),
     }),
     output: eventIterator(z.object({ tick: z.number(), timestamp: z.number() })),
+  },
+  /**
+   * Open a file in the user's preferred external editor.
+   * Uses $VISUAL -> $EDITOR -> 'code' fallback chain.
+   *
+   * In desktop mode: Opens native terminal or spawns GUI editor directly.
+   * In server mode: Creates embedded terminal session with the editor command.
+   *
+   * When openedInEmbeddedTerminal is true, the frontend should open/focus
+   * the terminal panel for the specified workspace to show the editor.
+   */
+  openInEditor: {
+    input: z.object({
+      filePath: z.string(),
+      /** Required for server mode to create embedded terminal */
+      workspaceId: z.string().optional(),
+    }),
+    output: ResultSchema(
+      z.object({
+        /** True if opened in embedded terminal (server mode with $EDITOR) */
+        openedInEmbeddedTerminal: z.boolean(),
+        /** Workspace ID if embedded terminal was used */
+        workspaceId: z.string().optional(),
+        /** Terminal session ID if embedded terminal was used */
+        sessionId: z.string().optional(),
+      }),
+      z.string()
+    ),
+  },
+  /**
+   * Check if an external editor is available for opening files.
+   * Used to conditionally show/hide Edit buttons in the UI.
+   *
+   * Discovery priority:
+   * 1. $VISUAL - User's explicit GUI editor preference
+   * 2. $EDITOR - User's explicit editor preference
+   * 3. GUI fallbacks: cursor, code, zed, subl (discovered via `which`)
+   * 4. Terminal fallbacks: nvim, vim, vi, nano, emacs (discovered via `which`)
+   */
+  canOpenInEditor: {
+    input: z.void(),
+    output: z.object({
+      /** How the editor was discovered */
+      method: z.enum(["visual", "editor", "gui-fallback", "terminal-fallback", "none"]),
+      /** The actual editor command that will be used (undefined when method="none") */
+      editor: z.string().optional(),
+      /** True if the editor requires a terminal window (terminal-fallback only) */
+      requiresTerminal: z.boolean().optional(),
+    }),
   },
 };
 

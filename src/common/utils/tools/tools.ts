@@ -15,6 +15,8 @@ import { log } from "@/node/services/log";
 import type { Runtime } from "@/node/runtime/Runtime";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
+import type { UIMode } from "@/common/types/mode";
+import type { FileState } from "@/node/services/agentSession";
 
 /**
  * Configuration for tools that need runtime context
@@ -24,6 +26,8 @@ export interface ToolConfiguration {
   cwd: string;
   /** Runtime environment for executing commands and file operations */
   runtime: Runtime;
+  /** Local runtime for plan file operations (bypasses SSH for plan files which are always local) */
+  localRuntime?: Runtime;
   /** Environment secrets to inject (optional) */
   secrets?: Record<string, string>;
   /** MUX_ environment variables (MUX_PROJECT_PATH, MUX_RUNTIME) - set from init hook env */
@@ -36,8 +40,14 @@ export interface ToolConfiguration {
   overflow_policy?: "truncate" | "tmpfile";
   /** Background process manager for bash tool (optional, AI-only) */
   backgroundProcessManager?: BackgroundProcessManager;
-  /** Workspace ID for tracking background processes (optional for token estimation) */
+  /** Current UI mode (plan or exec) - used for plan file path enforcement */
+  mode?: UIMode;
+  /** Plan file path - only this file can be edited in plan mode */
+  planFilePath?: string;
+  /** Workspace ID for tracking background processes and plan storage */
   workspaceId?: string;
+  /** Callback to record file state for external edit detection (plan files) */
+  recordFileState?: (filePath: string, state: FileState) => void;
 }
 
 /**

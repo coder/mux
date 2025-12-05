@@ -12,7 +12,8 @@ export function shouldShowInterruptedBarrier(msg: DisplayedMessage): boolean {
     msg.type === "user" ||
     msg.type === "stream-error" ||
     msg.type === "history-hidden" ||
-    msg.type === "workspace-init"
+    msg.type === "workspace-init" ||
+    msg.type === "plan-display"
   )
     return false;
 

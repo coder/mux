@@ -8,6 +8,8 @@ import { ReasoningMessage } from "./ReasoningMessage";
 import { StreamErrorMessage } from "./StreamErrorMessage";
 import { HistoryHiddenMessage } from "./HistoryHiddenMessage";
 import { InitMessage } from "./InitMessage";
+import { ProposePlanToolCall } from "../tools/ProposePlanToolCall";
+import { removeEphemeralMessage } from "@/browser/stores/WorkspaceStore";
 
 interface MessageRendererProps {
   message: DisplayedMessage;
@@ -18,11 +20,21 @@ interface MessageRendererProps {
   isCompacting?: boolean;
   /** Handler for adding review notes from inline diffs */
   onReviewNote?: (data: ReviewNoteData) => void;
+  /** Whether this message is the latest propose_plan tool call (for external edit detection) */
+  isLatestProposePlan?: boolean;
 }
 
 // Memoized to prevent unnecessary re-renders when parent (AIView) updates
 export const MessageRenderer = React.memo<MessageRendererProps>(
-  ({ message, className, onEditUserMessage, workspaceId, isCompacting, onReviewNote }) => {
+  ({
+    message,
+    className,
+    onEditUserMessage,
+    workspaceId,
+    isCompacting,
+    onReviewNote,
+    isLatestProposePlan,
+  }) => {
     // Route based on message type
     switch (message.type) {
       case "user":
@@ -50,6 +62,7 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
             className={className}
             workspaceId={workspaceId}
             onReviewNote={onReviewNote}
+            isLatestProposePlan={isLatestProposePlan}
           />
         );
       case "reasoning":
@@ -60,6 +73,22 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
         return <HistoryHiddenMessage message={message} className={className} />;
       case "workspace-init":
         return <InitMessage message={message} className={className} />;
+      case "plan-display":
+        return (
+          <ProposePlanToolCall
+            args={{}}
+            isEphemeralPreview={true}
+            content={message.content}
+            path={message.path}
+            workspaceId={workspaceId}
+            onClose={() => {
+              if (workspaceId) {
+                removeEphemeralMessage(workspaceId, message.historyId);
+              }
+            }}
+            className={className}
+          />
+        );
       default:
         console.error("don't know how to render message", message);
         return null;

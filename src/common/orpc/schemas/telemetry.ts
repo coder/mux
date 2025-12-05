@@ -40,6 +40,7 @@ const TelemetryCommandTypeSchema = z.enum([
   "vim",
   "model",
   "mode",
+  "plan",
   "providers",
 ]);
 

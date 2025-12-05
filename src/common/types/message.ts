@@ -84,6 +84,10 @@ export type MuxFrontendMetadata = MuxFrontendMetadataBase &
         parsed: CompactionRequestData;
       }
     | {
+        type: "plan-display"; // Ephemeral plan display from /plan command
+        path: string;
+      }
+    | {
         type: "normal"; // Regular messages
       }
   );
@@ -237,6 +241,14 @@ export type DisplayedMessage =
       lines: string[]; // Accumulated output lines (stderr prefixed with "ERROR:")
       exitCode: number | null; // Final exit code (null while running)
       timestamp: number;
+    }
+  | {
+      type: "plan-display"; // Ephemeral plan display from /plan command
+      id: string; // Display ID for UI/React keys
+      historyId: string; // Original MuxMessage ID (same as id for ephemeral messages)
+      content: string; // Plan markdown content
+      path: string; // Path to the plan file
+      historySequence: number; // Global ordering across all messages
     };
 
 export interface QueuedMessage {

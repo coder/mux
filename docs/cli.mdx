@@ -102,3 +102,25 @@ Print the version and git commit:
 mux --version
 # v0.8.4 (abc123)
 ```
+
+## Debug Environment Variables
+
+These environment variables help diagnose issues with LLM requests and responses.
+
+| Variable                | Purpose                                                                                                                                                                 |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MUX_DEBUG_LLM_REQUEST` | Set to `1` to log the complete LLM request (system prompt, messages, tools, provider options) as formatted JSON to the debug logs. Useful for diagnosing prompt issues. |
+
+Example usage:
+
+```bash
+MUX_DEBUG_LLM_REQUEST=1 mux run "Hello world"
+```
+
+The output includes:
+
+- `systemMessage`: The full system prompt sent to the model
+- `messages`: All conversation messages in the request
+- `tools`: Tool definitions with descriptions and input schemas
+- `providerOptions`: Provider-specific options (thinking level, etc.)
+- `mode`, `thinkingLevel`, `maxOutputTokens`, `toolPolicy`

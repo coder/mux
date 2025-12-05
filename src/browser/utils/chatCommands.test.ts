@@ -1,6 +1,12 @@
-import { describe, expect, test, beforeEach } from "bun:test";
+import { describe, expect, test, beforeEach, mock } from "bun:test";
 import type { SendMessageOptions } from "@/common/orpc/types";
-import { parseRuntimeString, prepareCompactionMessage } from "./chatCommands";
+import {
+  parseRuntimeString,
+  prepareCompactionMessage,
+  handlePlanShowCommand,
+  handlePlanOpenCommand,
+} from "./chatCommands";
+import type { CommandHandlerContext } from "./chatCommands";
 
 // Simple mock for localStorage to satisfy resolveCompactionModel
 beforeEach(() => {
@@ -177,5 +183,163 @@ describe("prepareCompactionMessage", () => {
 
     expect(metadata.parsed.continueMessage).toBeDefined();
     expect(metadata.parsed.continueMessage?.imageParts).toHaveLength(1);
+  });
+});
+
+describe("handlePlanShowCommand", () => {
+  const createMockContext = (
+    getPlanContentResult:
+      | { success: true; data: { content: string; path: string } }
+      | { success: false; error: string }
+  ): CommandHandlerContext => {
+    const setInput = mock(() => undefined);
+    const setToast = mock(() => undefined);
+
+    return {
+      workspaceId: "test-workspace-id",
+      setInput,
+      setToast,
+      api: {
+        workspace: {
+          getPlanContent: mock(() => Promise.resolve(getPlanContentResult)),
+        },
+        general: {},
+      } as unknown as CommandHandlerContext["api"],
+      // Required fields for CommandHandlerContext
+      sendMessageOptions: {
+        model: "anthropic:claude-3-5-sonnet",
+        thinkingLevel: "off",
+        toolPolicy: [],
+        mode: "exec",
+      },
+      setImageAttachments: mock(() => undefined),
+      setIsSending: mock(() => undefined),
+    };
+  };
+
+  test("shows error toast when no plan exists", async () => {
+    const context = createMockContext({ success: false, error: "No plan found" });
+
+    const result = await handlePlanShowCommand(context);
+
+    expect(result.clearInput).toBe(true);
+    expect(result.toastShown).toBe(true);
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        message: "No plan found for this workspace",
+      })
+    );
+  });
+
+  test("clears input when plan is found", async () => {
+    const context = createMockContext({
+      success: true,
+      data: { content: "# My Plan\n\nStep 1", path: "/path/to/plan.md" },
+    });
+
+    const result = await handlePlanShowCommand(context);
+
+    expect(result.clearInput).toBe(true);
+    expect(result.toastShown).toBe(false);
+    expect(context.setInput).toHaveBeenCalledWith("");
+    expect(context.api.workspace.getPlanContent).toHaveBeenCalledWith({
+      workspaceId: "test-workspace-id",
+    });
+  });
+});
+
+describe("handlePlanOpenCommand", () => {
+  const createMockContext = (
+    getPlanContentResult:
+      | { success: true; data: { content: string; path: string } }
+      | { success: false; error: string },
+    openInEditorResult?:
+      | { success: true; data: { openedInEmbeddedTerminal: boolean } }
+      | { success: false; error: string }
+  ): CommandHandlerContext => {
+    const setInput = mock(() => undefined);
+    const setToast = mock(() => undefined);
+
+    return {
+      workspaceId: "test-workspace-id",
+      setInput,
+      setToast,
+      api: {
+        workspace: {
+          getPlanContent: mock(() => Promise.resolve(getPlanContentResult)),
+        },
+        general: {
+          openInEditor: mock(() =>
+            Promise.resolve(
+              openInEditorResult ?? { success: true, data: { openedInEmbeddedTerminal: false } }
+            )
+          ),
+        },
+      } as unknown as CommandHandlerContext["api"],
+      // Required fields for CommandHandlerContext
+      sendMessageOptions: {
+        model: "anthropic:claude-3-5-sonnet",
+        thinkingLevel: "off",
+        toolPolicy: [],
+        mode: "exec",
+      },
+      setImageAttachments: mock(() => undefined),
+      setIsSending: mock(() => undefined),
+    };
+  };
+
+  test("shows error toast when no plan exists", async () => {
+    const context = createMockContext({ success: false, error: "No plan found" });
+
+    const result = await handlePlanOpenCommand(context);
+
+    expect(result.clearInput).toBe(true);
+    expect(result.toastShown).toBe(true);
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        message: "No plan found for this workspace",
+      })
+    );
+    // Should not attempt to open editor
+    expect(context.api.general.openInEditor).not.toHaveBeenCalled();
+  });
+
+  test("opens plan in editor when plan exists", async () => {
+    const context = createMockContext(
+      { success: true, data: { content: "# My Plan", path: "/path/to/plan.md" } },
+      { success: true, data: { openedInEmbeddedTerminal: false } }
+    );
+
+    const result = await handlePlanOpenCommand(context);
+
+    expect(result.clearInput).toBe(true);
+    expect(context.setInput).toHaveBeenCalledWith("");
+    expect(context.api.workspace.getPlanContent).toHaveBeenCalledWith({
+      workspaceId: "test-workspace-id",
+    });
+    expect(context.api.general.openInEditor).toHaveBeenCalledWith({
+      filePath: "/path/to/plan.md",
+      workspaceId: "test-workspace-id",
+    });
+  });
+
+  test("shows error toast when editor fails to open", async () => {
+    const context = createMockContext(
+      { success: true, data: { content: "# My Plan", path: "/path/to/plan.md" } },
+      { success: false, error: "No editor configured" }
+    );
+
+    const result = await handlePlanOpenCommand(context);
+
+    expect(result.clearInput).toBe(true);
+    expect(result.toastShown).toBe(true);
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        message: "No editor configured",
+      })
+    );
   });
 });

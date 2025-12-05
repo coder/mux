@@ -23,10 +23,12 @@ import type { InitStateManager } from "./initStateManager";
 import type { SendMessageError } from "@/common/types/errors";
 import { getToolsForModel } from "@/common/utils/tools/tools";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
+import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import { secretsToRecord } from "@/common/types/secrets";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
+import type { FileState, EditedFileAttachment } from "@/node/services/agentSession";
 import { log } from "./log";
 import {
   transformModelMessages,
@@ -34,6 +36,7 @@ import {
   addInterruptedSentinel,
   filterEmptyAssistantMessages,
   injectModeTransition,
+  injectFileChangeNotifications,
 } from "@/browser/utils/messages/modelMessageTransform";
 import { applyCacheControl } from "@/common/utils/ai/cacheStrategy";
 import type { HistoryService } from "./historyService";
@@ -52,6 +55,9 @@ import type {
 import { applyToolPolicy, type ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { MockScenarioPlayer } from "./mock/mockScenarioPlayer";
 import { EnvHttpProxyAgent, type Dispatcher } from "undici";
+import { getPlanFilePath, planFileExists } from "@/common/utils/planStorage";
+import { getPlanModeInstruction } from "@/common/utils/ui/modeUtils";
+import type { UIMode } from "@/common/types/mode";
 
 // Export a standalone version of getToolsForModel for use in backend
 
@@ -833,6 +839,8 @@ export class AIService extends EventEmitter {
    * @param maxOutputTokens Optional maximum tokens for model output
    * @param muxProviderOptions Optional provider-specific options
    * @param mode Optional mode name - affects system message via Mode: sections in AGENTS.md
+   * @param recordFileState Optional callback to record file state for external edit detection
+   * @param changedFileAttachments Optional attachments for files that were edited externally
    * @returns Promise that resolves when streaming completes or fails
    */
   async streamMessage(
@@ -845,7 +853,9 @@ export class AIService extends EventEmitter {
     additionalSystemInstructions?: string,
     maxOutputTokens?: number,
     muxProviderOptions?: MuxProviderOptions,
-    mode?: string
+    mode?: string,
+    recordFileState?: (filePath: string, state: FileState) => void,
+    changedFileAttachments?: EditedFileAttachment[]
   ): Promise<Result<void, SendMessageError>> {
     try {
       if (this.mockModeEnabled && this.mockScenarioPlayer) {
@@ -937,9 +947,15 @@ export class AIService extends EventEmitter {
         toolNamesForSentinel
       );
 
+      // Inject file change notifications as user messages (preserves system message cache)
+      const messagesWithFileChanges = injectFileChangeNotifications(
+        messagesWithModeContext,
+        changedFileAttachments
+      );
+
       // Apply centralized tool-output redaction BEFORE converting to provider ModelMessages
       // This keeps the persisted/UI history intact while trimming heavy fields for the request
-      const redactedForProvider = applyToolOutputRedaction(messagesWithModeContext);
+      const redactedForProvider = applyToolOutputRedaction(messagesWithFileChanges);
       log.debug_obj(`${workspaceId}/2a_redacted_messages.json`, redactedForProvider);
 
       // Sanitize tool inputs to ensure they are valid objects (not strings or arrays)
@@ -1007,13 +1023,25 @@ export class AIService extends EventEmitter {
         ? await this.mcpServerManager.listServers(metadata.projectPath)
         : undefined;
 
+      // Construct plan mode instruction if in plan mode
+      // This is done backend-side because we have access to the plan file path
+      let effectiveAdditionalInstructions = additionalSystemInstructions;
+      if (mode === "plan") {
+        const planFilePath = getPlanFilePath(workspaceId);
+        const planExists = planFileExists(workspaceId);
+        const planModeInstruction = getPlanModeInstruction(planFilePath, planExists);
+        effectiveAdditionalInstructions = additionalSystemInstructions
+          ? `${planModeInstruction}\n\n${additionalSystemInstructions}`
+          : planModeInstruction;
+      }
+
       // Build system message from workspace metadata
       const systemMessage = await buildSystemMessage(
         metadata,
         runtime,
         workspacePath,
         mode,
-        additionalSystemInstructions,
+        effectiveAdditionalInstructions,
         modelString,
         mcpServers
       );
@@ -1057,6 +1085,10 @@ export class AIService extends EventEmitter {
         {
           cwd: workspacePath,
           runtime,
+          // Plan files are always local - create a local runtime for plan file I/O
+          // even when the workspace uses SSH runtime
+          localRuntime:
+            mode === "plan" ? new LocalRuntime(workspacePath, runtimeTempDir) : undefined,
           secrets: secretsToRecord(projectSecrets),
           muxEnv: getMuxEnv(
             metadata.projectPath,
@@ -1065,7 +1097,12 @@ export class AIService extends EventEmitter {
           ),
           runtimeTempDir,
           backgroundProcessManager: this.backgroundProcessManager,
+          // Plan mode configuration for path enforcement
+          mode: mode as UIMode | undefined,
+          planFilePath: mode === "plan" ? getPlanFilePath(workspaceId) : undefined,
           workspaceId,
+          // External edit detection callback
+          recordFileState,
         },
         workspaceId,
         this.initStateManager,
@@ -1230,6 +1267,34 @@ export class AIService extends EventEmitter {
         (id) => this.streamManager.isResponseIdLost(id),
         effectiveMuxProviderOptions
       );
+
+      // Debug dump: Log the complete LLM request when MUX_DEBUG_LLM_REQUEST is set
+      // This helps diagnose issues with system prompts, messages, tools, etc.
+      if (process.env.MUX_DEBUG_LLM_REQUEST === "1") {
+        const llmRequest = {
+          workspaceId,
+          model: modelString,
+          systemMessage,
+          messages: finalMessages,
+          tools: Object.fromEntries(
+            Object.entries(tools).map(([name, tool]) => [
+              name,
+              {
+                description: tool.description,
+                inputSchema: tool.inputSchema,
+              },
+            ])
+          ),
+          providerOptions,
+          thinkingLevel,
+          maxOutputTokens,
+          mode,
+          toolPolicy,
+        };
+        log.info(
+          `[MUX_DEBUG_LLM_REQUEST] Full LLM request:\n${JSON.stringify(llmRequest, null, 2)}`
+        );
+      }
 
       // Delegate to StreamManager with model instance, system message, tools, historySequence, and initial metadata
       const streamResult = await this.streamManager.startStream(

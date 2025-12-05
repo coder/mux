@@ -46,6 +46,7 @@
                   "init-hooks"
                 ]
               },
+              "plan-mode",
               "vscode-extension",
               "models",
               {

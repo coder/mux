@@ -3,7 +3,12 @@ import type { FileEditInsertToolArgs, FileEditInsertToolResult } from "@/common/
 import { EDIT_FAILED_NOTE_PREFIX, NOTE_READ_FILE_RETRY } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
-import { generateDiff, validateAndCorrectPath, validatePathInCwd } from "./fileCommon";
+import {
+  generateDiff,
+  validateAndCorrectPath,
+  validatePathInCwd,
+  isPlanFileAccess,
+} from "./fileCommon";
 import { executeFileEditOperation } from "./file_edit_operation";
 import { fileExists } from "@/node/utils/runtime/fileExists";
 import { writeFileString } from "@/node/utils/runtime/helpers";
@@ -59,20 +64,46 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
         );
         file_path = correctedPath;
 
-        const pathValidation = validatePathInCwd(file_path, config.cwd, config.runtime);
-        if (pathValidation) {
-          return {
-            success: false,
-            error: pathValidation.error,
-          };
+        const resolvedPath = config.runtime.normalizePath(file_path, config.cwd);
+
+        // Determine if this is a plan file access - plan files always use local filesystem
+        const isPlanFile = isPlanFileAccess(resolvedPath, config);
+
+        // Select runtime: plan files use localRuntime (always local), others use workspace runtime
+        const effectiveRuntime =
+          isPlanFile && config.localRuntime ? config.localRuntime : config.runtime;
+
+        // For plan files, resolve path using local runtime since plan files are always local
+        const effectiveResolvedPath =
+          isPlanFile && config.localRuntime
+            ? config.localRuntime.normalizePath(file_path, config.cwd)
+            : resolvedPath;
+
+        // Plan mode restriction: only allow editing/creating the plan file
+        if (config.mode === "plan" && config.planFilePath) {
+          if (!isPlanFile) {
+            return {
+              success: false,
+              error: `In plan mode, only the plan file can be edited. Attempted to edit: ${file_path}`,
+            };
+          }
+          // Skip cwd validation for plan file - it's intentionally outside workspace
+        } else {
+          // Standard cwd validation for non-plan-mode edits
+          const pathValidation = validatePathInCwd(file_path, config.cwd, config.runtime);
+          if (pathValidation) {
+            return {
+              success: false,
+              error: pathValidation.error,
+            };
+          }
         }
 
-        const resolvedPath = config.runtime.normalizePath(file_path, config.cwd);
-        const exists = await fileExists(config.runtime, resolvedPath, abortSignal);
+        const exists = await fileExists(effectiveRuntime, effectiveResolvedPath, abortSignal);
 
         if (!exists) {
           try {
-            await writeFileString(config.runtime, resolvedPath, content, abortSignal);
+            await writeFileString(effectiveRuntime, effectiveResolvedPath, content, abortSignal);
           } catch (err) {
             if (err instanceof RuntimeError) {
               return {
@@ -83,7 +114,7 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
             throw err;
           }
 
-          const diff = generateDiff(resolvedPath, "", content);
+          const diff = generateDiff(effectiveResolvedPath, "", content);
           return {
             success: true,
             diff,

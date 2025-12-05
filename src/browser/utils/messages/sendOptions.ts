@@ -1,5 +1,5 @@
 import { getModelKey, getThinkingLevelKey, getModeKey } from "@/common/constants/storage";
-import { modeToToolPolicy, PLAN_MODE_INSTRUCTION } from "@/common/utils/ui/modeUtils";
+import { modeToToolPolicy } from "@/common/utils/ui/modeUtils";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import { getDefaultModel } from "@/browser/hooks/useModelLRU";
 import { toGatewayModel, migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
@@ -57,8 +57,7 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
   // Get provider options
   const providerOptions = getProviderOptions();
 
-  // Plan mode system instructions
-  const additionalSystemInstructions = mode === "plan" ? PLAN_MODE_INSTRUCTION : undefined;
+  // Plan mode instructions are now handled by the backend (has access to plan file path)
 
   // Enforce thinking policy (gpt-5-pro → high only)
   const effectiveThinkingLevel = enforceThinkingPolicy(model, thinkingLevel);
@@ -68,7 +67,6 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
     mode: mode === "exec" || mode === "plan" ? mode : "exec", // Only pass exec/plan to backend
     thinkingLevel: effectiveThinkingLevel,
     toolPolicy: modeToToolPolicy(mode),
-    additionalSystemInstructions,
     providerOptions,
   };
 }

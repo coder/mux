@@ -43,6 +43,8 @@ interface ToolMessageProps {
   workspaceId?: string;
   /** Handler for adding review notes from inline diffs */
   onReviewNote?: (data: ReviewNoteData) => void;
+  /** Whether this is the latest propose_plan in the conversation */
+  isLatestProposePlan?: boolean;
 }
 
 // Type guards using Zod schemas for single source of truth
@@ -116,6 +118,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
   className,
   workspaceId,
   onReviewNote,
+  isLatestProposePlan,
 }) => {
   // Route to specialized components based on tool name
   if (isBashTool(message.toolName, message.args)) {
@@ -193,6 +196,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
           result={message.result as ProposePlanToolResult | undefined}
           status={message.status}
           workspaceId={workspaceId}
+          isLatest={isLatestProposePlan}
         />
       </div>
     );

@@ -161,23 +161,10 @@ export const TOOL_DEFINITIONS = {
   },
   propose_plan: {
     description:
-      "Propose a plan before taking action. The plan should be complete but minimal - cover what needs to be decided or understood, nothing more. Use this tool to get approval before proceeding with implementation.",
-    schema: z.object({
-      title: z
-        .string()
-        .describe("A short, descriptive title for the plan (e.g., 'Add User Authentication')"),
-      plan: z
-        .string()
-        .describe(
-          "Implementation plan in markdown (start at h2 level). " +
-            "Scale the detail to match the task complexity: for straightforward changes, briefly state what and why; " +
-            "for complex changes, explain approach, key decisions, risks/tradeoffs; " +
-            "for uncertain changes, clarify options and what needs user input. " +
-            "When presenting options, always provide your recommendation for the overall best option for the user. " +
-            "For highly complex concepts, use mermaid diagrams where they'd clarify better than text. " +
-            "Cover what's necessary to understand and approve the approach. Omit obvious details or ceremony."
-        ),
-    }),
+      "Signal that your plan is complete and ready for user approval. " +
+      "This tool reads the plan from the plan file you wrote. " +
+      "You must write your plan to the plan file before calling this tool.",
+    schema: z.object({}),
   },
   todo_write: {
     description:

@@ -3,6 +3,9 @@
  * These types are used by both the tool implementations and UI components
  */
 
+import type { z } from "zod";
+import type { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+
 // Bash Tool Types
 export interface BashToolArgs {
   script: string;
@@ -166,12 +169,36 @@ export type FileEditToolArgs =
   | FileEditInsertToolArgs;
 
 // Propose Plan Tool Types
-export interface ProposePlanToolArgs {
+// Args derived from schema
+export type ProposePlanToolArgs = z.infer<typeof TOOL_DEFINITIONS.propose_plan.schema>;
+
+// Result type for new file-based propose_plan tool
+export interface ProposePlanToolResult {
+  success: true;
+  planPath: string;
+  planContent: string;
+  message: string;
+}
+
+// Error result when plan file not found
+export interface ProposePlanToolError {
+  success: false;
+  error: string;
+}
+
+/**
+ * @deprecated Legacy args type for backwards compatibility with old propose_plan tool calls.
+ * Old sessions may have tool calls with title + plan args stored in chat history.
+ */
+export interface LegacyProposePlanToolArgs {
   title: string;
   plan: string;
 }
 
-export interface ProposePlanToolResult {
+/**
+ * @deprecated Legacy result type for backwards compatibility.
+ */
+export interface LegacyProposePlanToolResult {
   success: true;
   title: string;
   plan: string;

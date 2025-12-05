@@ -33,6 +33,8 @@ export type ParsedCommand =
   | { type: "mcp-edit"; name: string; command: string }
   | { type: "mcp-remove"; name: string }
   | { type: "mcp-open" }
+  | { type: "plan-show" }
+  | { type: "plan-open" }
   | { type: "unknown-command"; command: string; subcommand?: string }
   | null;
 

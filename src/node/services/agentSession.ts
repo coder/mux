@@ -1,6 +1,7 @@
 import assert from "@/common/utils/assert";
 import { EventEmitter } from "events";
 import * as path from "path";
+import { stat, readFile } from "fs/promises";
 import { PlatformPaths } from "@/common/utils/paths";
 import { createMuxMessage } from "@/common/types/message";
 import type { Config } from "@/node/config";
@@ -29,6 +30,25 @@ import { MessageQueue } from "./messageQueue";
 import type { StreamEndEvent } from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
+import { computeDiff } from "@/node/utils/diff";
+
+/**
+ * Tracked file state for detecting external edits.
+ * Uses timestamp-based polling with diff injection.
+ */
+export interface FileState {
+  content: string;
+  timestamp: number; // mtime in ms
+}
+
+/**
+ * Attachment for files that were edited externally between messages.
+ */
+export interface EditedFileAttachment {
+  type: "edited_text_file";
+  filename: string;
+  snippet: string; // diff of changes
+}
 
 // Type guard for compaction request metadata
 interface CompactionRequestMetadata {
@@ -82,6 +102,12 @@ export class AgentSession {
   private disposed = false;
   private readonly messageQueue = new MessageQueue();
   private readonly compactionHandler: CompactionHandler;
+
+  /**
+   * Tracked file state for detecting external edits.
+   * Key: absolute file path, Value: last known content and mtime.
+   */
+  private readonly readFileState = new Map<string, FileState>();
 
   constructor(options: AgentSessionOptions) {
     assert(options, "AgentSession requires options");
@@ -492,11 +518,17 @@ export class AgentSession {
       return Err(createUnknownSendMessageError(historyResult.error));
     }
 
+    // Check for external file edits (timestamp-based polling)
+    const changedFileAttachments = await this.getChangedFileAttachments();
+
     // Enforce thinking policy for the specified model (single source of truth)
     // This ensures model-specific requirements are met regardless of where the request originates
     const effectiveThinkingLevel = options?.thinkingLevel
       ? enforceThinkingPolicy(modelString, options.thinkingLevel)
       : undefined;
+
+    // Bind recordFileState to this session for the propose_plan tool
+    const recordFileState = this.recordFileState.bind(this);
 
     return this.aiService.streamMessage(
       historyResult.data,
@@ -508,7 +540,9 @@ export class AgentSession {
       options?.additionalSystemInstructions,
       options?.maxOutputTokens,
       options?.providerOptions,
-      options?.mode
+      options?.mode,
+      recordFileState,
+      changedFileAttachments.length > 0 ? changedFileAttachments : undefined
     );
   }
 
@@ -676,6 +710,49 @@ export class AgentSession {
 
       void this.sendMessage(message, options);
     }
+  }
+
+  /**
+   * Record file state for change detection.
+   * Called by tools (e.g., propose_plan) after reading/writing files.
+   */
+  recordFileState(filePath: string, state: FileState): void {
+    this.readFileState.set(filePath, state);
+  }
+
+  /**
+   * Check tracked files for external modifications.
+   * Returns attachments for files that changed since last recorded state.
+   * Uses timestamp-based polling with diff injection.
+   */
+  async getChangedFileAttachments(): Promise<EditedFileAttachment[]> {
+    const checks = Array.from(this.readFileState.entries()).map(
+      async ([filePath, state]): Promise<EditedFileAttachment | null> => {
+        try {
+          const currentMtime = (await stat(filePath)).mtimeMs;
+          if (currentMtime <= state.timestamp) return null; // No change
+
+          const currentContent = await readFile(filePath, "utf-8");
+          const diff = computeDiff(state.content, currentContent);
+          if (!diff) return null; // Content identical despite mtime change
+
+          // Update stored state
+          this.readFileState.set(filePath, { content: currentContent, timestamp: currentMtime });
+
+          return {
+            type: "edited_text_file",
+            filename: filePath,
+            snippet: diff,
+          };
+        } catch {
+          // File deleted or inaccessible, skip
+          return null;
+        }
+      }
+    );
+
+    const results = await Promise.all(checks);
+    return results.filter((r): r is EditedFileAttachment => r !== null);
   }
 
   private assertNotDisposed(operation: string): void {

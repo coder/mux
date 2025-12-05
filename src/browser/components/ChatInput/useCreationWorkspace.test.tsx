@@ -527,8 +527,8 @@ function createDraftSettingsHarness(
   }>
 ) {
   const state = {
-    runtimeMode: initial?.runtimeMode ?? ("local" as RuntimeMode),
-    defaultRuntimeMode: initial?.defaultRuntimeMode ?? ("worktree" as RuntimeMode),
+    runtimeMode: initial?.runtimeMode ?? "local",
+    defaultRuntimeMode: initial?.defaultRuntimeMode ?? "worktree",
     sshHost: initial?.sshHost ?? "",
     trunkBranch: initial?.trunkBranch ?? "main",
     runtimeString: initial?.runtimeString,

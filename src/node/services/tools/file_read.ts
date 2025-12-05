@@ -2,7 +2,12 @@ import { tool } from "ai";
 import type { FileReadToolResult } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
-import { validatePathInCwd, validateFileSize, validateAndCorrectPath } from "./fileCommon";
+import {
+  validatePathInCwd,
+  validateFileSize,
+  validateAndCorrectPath,
+  isPlanFileAccess,
+} from "./fileCommon";
 import { RuntimeError } from "@/node/runtime/Runtime";
 import { readFileString } from "@/node/utils/runtime/helpers";
 
@@ -30,22 +35,38 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
         );
         filePath = validatedPath;
 
-        // Validate that the path is within the working directory
-        const pathValidation = validatePathInCwd(filePath, config.cwd, config.runtime);
-        if (pathValidation) {
-          return {
-            success: false,
-            error: pathValidation.error,
-          };
-        }
-
         // Use runtime's normalizePath method to resolve paths correctly for both local and SSH runtimes
         const resolvedPath = config.runtime.normalizePath(filePath, config.cwd);
+
+        // Determine if this is a plan file access - plan files always use local filesystem
+        const isPlanFile = isPlanFileAccess(resolvedPath, config);
+
+        // Select runtime: plan files use localRuntime (always local), others use workspace runtime
+        const effectiveRuntime =
+          isPlanFile && config.localRuntime ? config.localRuntime : config.runtime;
+
+        // For plan files, resolve path using local runtime since plan files are always local
+        const effectiveResolvedPath =
+          isPlanFile && config.localRuntime
+            ? config.localRuntime.normalizePath(filePath, config.cwd)
+            : resolvedPath;
+
+        // Validate that the path is within the working directory
+        // Exception: allow reading the plan file in plan mode (it's outside workspace cwd)
+        if (!isPlanFile) {
+          const pathValidation = validatePathInCwd(filePath, config.cwd, config.runtime);
+          if (pathValidation) {
+            return {
+              success: false,
+              error: pathValidation.error,
+            };
+          }
+        }
 
         // Check if file exists using runtime
         let fileStat;
         try {
-          fileStat = await config.runtime.stat(resolvedPath);
+          fileStat = await effectiveRuntime.stat(effectiveResolvedPath);
         } catch (err) {
           if (err instanceof RuntimeError) {
             return {
@@ -59,7 +80,7 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
         if (fileStat.isDirectory) {
           return {
             success: false,
-            error: `Path is a directory, not a file: ${resolvedPath}`,
+            error: `Path is a directory, not a file: ${effectiveResolvedPath}`,
           };
         }
 
@@ -75,7 +96,7 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
         // Read full file content using runtime helper
         let fullContent: string;
         try {
-          fullContent = await readFileString(config.runtime, resolvedPath);
+          fullContent = await readFileString(effectiveRuntime, effectiveResolvedPath);
         } catch (err) {
           if (err instanceof RuntimeError) {
             return {

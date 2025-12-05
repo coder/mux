@@ -445,6 +445,17 @@ const AIViewInner: React.FC<AIViewProps> = ({
       )?.historyId
     : undefined;
 
+  // Find the ID of the latest propose_plan tool call for external edit detection
+  // Only the latest plan should fetch fresh content from disk
+  let latestProposePlanId: string | null = null;
+  for (let i = mergedMessages.length - 1; i >= 0; i--) {
+    const msg = mergedMessages[i];
+    if (msg.type === "tool" && msg.toolName === "propose_plan") {
+      latestProposePlanId = msg.id;
+      break;
+    }
+  }
+
   if (loading) {
     return (
       <div
@@ -557,6 +568,11 @@ const AIViewInner: React.FC<AIViewProps> = ({
                             workspaceId={workspaceId}
                             isCompacting={isCompacting}
                             onReviewNote={handleReviewNote}
+                            isLatestProposePlan={
+                              msg.type === "tool" &&
+                              msg.toolName === "propose_plan" &&
+                              msg.id === latestProposePlanId
+                            }
                           />
                         </div>
                         {isAtCutoff && (

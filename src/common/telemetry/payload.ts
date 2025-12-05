@@ -144,6 +144,7 @@ export type TelemetryCommandType =
   | "vim"
   | "model"
   | "mode"
+  | "plan"
   | "providers";
 
 /**

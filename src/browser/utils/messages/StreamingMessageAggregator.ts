@@ -265,6 +265,16 @@ export class StreamingMessageAggregator {
   }
 
   /**
+   * Remove a message from the aggregator.
+   * Used for dismissing ephemeral messages like /plan output.
+   */
+  removeMessage(messageId: string): void {
+    if (this.messages.delete(messageId)) {
+      this.invalidateCache();
+    }
+  }
+
+  /**
    * Load historical messages in batch, preserving their historySequence numbers.
    * This is more efficient than calling addMessage() repeatedly.
    *
@@ -828,11 +838,35 @@ export class StreamingMessageAggregator {
   getDisplayedMessages(): DisplayedMessage[] {
     if (!this.cachedDisplayedMessages) {
       const displayedMessages: DisplayedMessage[] = [];
+      const allMessages = this.getAllMessages();
 
-      for (const message of this.getAllMessages()) {
+      for (const message of allMessages) {
+        // Skip synthetic messages - they're for model context only, not UI display
+        if (message.metadata?.synthetic) {
+          continue;
+        }
+
         const baseTimestamp = message.metadata?.timestamp;
         // Get historySequence from backend (required field)
         const historySequence = message.metadata?.historySequence ?? 0;
+
+        // Check for plan-display messages (ephemeral /plan output)
+        const muxMeta = message.metadata?.muxMetadata;
+        if (muxMeta?.type === "plan-display") {
+          const content = message.parts
+            .filter((p) => p.type === "text")
+            .map((p) => p.text)
+            .join("");
+          displayedMessages.push({
+            type: "plan-display",
+            id: message.id,
+            historyId: message.id,
+            content,
+            path: muxMeta.path,
+            historySequence,
+          });
+          continue;
+        }
 
         if (message.role === "user") {
           // User messages: combine all text parts into single block, extract images

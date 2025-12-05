@@ -35,7 +35,7 @@ import {
 } from "@/common/orpc/types";
 import { defaultModel } from "@/common/utils/ai/models";
 import { ensureProvidersConfig } from "@/common/utils/providers/ensureProvidersConfig";
-import { modeToToolPolicy, PLAN_MODE_INSTRUCTION } from "@/common/utils/ui/modeUtils";
+import { modeToToolPolicy } from "@/common/utils/ui/modeUtils";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { parseRuntimeModeAndHost, RUNTIME_MODE } from "@/common/types/runtime";
@@ -338,8 +338,9 @@ async function main(): Promise<void> {
   const buildSendOptions = (cliMode: CLIMode): SendMessageOptions => ({
     model,
     thinkingLevel,
+    mode: cliMode,
     toolPolicy: modeToToolPolicy(cliMode),
-    additionalSystemInstructions: cliMode === "plan" ? PLAN_MODE_INSTRUCTION : undefined,
+    // Plan mode instructions are handled by the backend (has access to plan file path)
   });
 
   const liveEvents: WorkspaceChatMessage[] = [];

@@ -456,6 +456,26 @@ const vimCommandDefinition: SlashCommandDefinition = {
   },
 };
 
+const planOpenCommandDefinition: SlashCommandDefinition = {
+  key: "open",
+  description: "Open plan in external editor",
+  appendSpace: false,
+  handler: (): ParsedCommand => ({ type: "plan-open" }),
+};
+
+const planCommandDefinition: SlashCommandDefinition = {
+  key: "plan",
+  description: "Show or edit the current plan",
+  appendSpace: false,
+  handler: ({ cleanRemainingTokens }): ParsedCommand => {
+    if (cleanRemainingTokens.length > 0) {
+      return { type: "unknown-command", command: "plan", subcommand: cleanRemainingTokens[0] };
+    }
+    return { type: "plan-show" };
+  },
+  children: [planOpenCommandDefinition],
+};
+
 const forkCommandDefinition: SlashCommandDefinition = {
   key: "fork",
   description:
@@ -640,6 +660,7 @@ export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   compactCommandDefinition,
   modelCommandDefinition,
   providersCommandDefinition,
+  planCommandDefinition,
 
   forkCommandDefinition,
   newCommandDefinition,

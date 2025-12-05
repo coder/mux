@@ -3,7 +3,7 @@ import { useMode } from "@/browser/contexts/ModeContext";
 import { usePersistedState } from "./usePersistedState";
 import { getDefaultModel } from "./useModelLRU";
 import { migrateGatewayModel, useGateway, isProviderSupported } from "./useGatewayModels";
-import { modeToToolPolicy, PLAN_MODE_INSTRUCTION } from "@/common/utils/ui/modeUtils";
+import { modeToToolPolicy } from "@/common/utils/ui/modeUtils";
 import { getModelKey } from "@/common/constants/storage";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { UIMode } from "@/common/types/mode";
@@ -35,6 +35,8 @@ function applyGatewayTransform(modelId: string, gateway: GatewayState): string {
 /**
  * Construct SendMessageOptions from raw values
  * Shared logic for both hook and non-hook versions
+ *
+ * Note: Plan mode instructions are handled by the backend (has access to plan file path)
  */
 function constructSendMessageOptions(
   mode: UIMode,
@@ -44,8 +46,6 @@ function constructSendMessageOptions(
   fallbackModel: string,
   gateway: GatewayState
 ): SendMessageOptions {
-  const additionalSystemInstructions = mode === "plan" ? PLAN_MODE_INSTRUCTION : undefined;
-
   // Ensure model is always a valid string (defensive against corrupted localStorage)
   const rawModel =
     typeof preferredModel === "string" && preferredModel ? preferredModel : fallbackModel;
@@ -64,7 +64,6 @@ function constructSendMessageOptions(
     model,
     mode: mode === "exec" || mode === "plan" ? mode : "exec", // Only pass exec/plan to backend
     toolPolicy: modeToToolPolicy(mode),
-    additionalSystemInstructions,
     providerOptions,
   };
 }

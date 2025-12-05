@@ -12,4 +12,6 @@ export const WORKSPACE_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   "compact",
   "fork",
   "new",
+  "plan-show",
+  "plan-open",
 ]);

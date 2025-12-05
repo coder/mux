@@ -1,6 +1,5 @@
 import { EventEmitter } from "events";
-import { spawn, spawnSync } from "child_process";
-import * as fs from "fs/promises";
+import { spawn } from "child_process";
 import type { Config } from "@/node/config";
 import type { PTYService } from "@/node/services/ptyService";
 import type { TerminalWindowManager } from "@/desktop/terminalWindowManager";
@@ -13,16 +12,18 @@ import { createRuntime } from "@/node/runtime/runtimeFactory";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { isSSHRuntime } from "@/common/types/runtime";
 import { log } from "@/node/services/log";
+import { isCommandAvailable, findAvailableCommand } from "@/node/utils/commandDiscovery";
 
 /**
  * Configuration for opening a native terminal
  */
 type NativeTerminalConfig =
-  | { type: "local"; workspacePath: string }
+  | { type: "local"; workspacePath: string; command?: string }
   | {
       type: "ssh";
       sshConfig: Extract<RuntimeConfig, { type: "ssh" }>;
       remotePath: string;
+      command?: string;
     };
 
 export class TerminalService {
@@ -46,6 +47,13 @@ export class TerminalService {
 
   setTerminalWindowManager(manager: TerminalWindowManager) {
     this.terminalWindowManager = manager;
+  }
+
+  /**
+   * Check if we're running in desktop mode (Electron) vs server mode (browser).
+   */
+  isDesktopMode(): boolean {
+    return !!this.terminalWindowManager;
   }
 
   async create(params: TerminalCreateParams): Promise<TerminalSession> {
@@ -120,6 +128,11 @@ export class TerminalService {
       // Replay local buffer that arrived during creation
       for (const data of localBuffer) {
         this.emitOutput(session.sessionId, data);
+      }
+
+      // Send initial command if provided
+      if (params.initialCommand) {
+        this.sendInput(session.sessionId, `${params.initialCommand}\n`);
       }
 
       return session;
@@ -237,6 +250,20 @@ export class TerminalService {
   }
 
   /**
+   * Open a native terminal and run a command.
+   * Used for opening $EDITOR in a terminal when editing files.
+   * @param command The command to run
+   * @param workspacePath Optional directory to run the command in (defaults to cwd)
+   */
+  async openNativeWithCommand(command: string, workspacePath?: string): Promise<void> {
+    await this.openNativeTerminal({
+      type: "local",
+      workspacePath: workspacePath ?? process.cwd(),
+      command,
+    });
+  }
+
+  /**
    * Open a native terminal (local or SSH) with platform-specific handling.
    * This spawns the user's native terminal emulator, not a web-based terminal.
    */
@@ -282,9 +309,11 @@ export class TerminalService {
     logPrefix: string
   ): Promise<void> {
     const isSSH = config.type === "ssh";
+    const command = config.command;
+    const workspacePath = config.type === "local" ? config.workspacePath : config.remotePath;
 
     // macOS - try Ghostty first, fallback to Terminal.app
-    const terminal = await this.findAvailableCommand(["ghostty", "terminal"]);
+    const terminal = await findAvailableCommand(["ghostty", "terminal"]);
     if (terminal === "ghostty") {
       const cmd = "open";
       let args: string[];
@@ -293,10 +322,16 @@ export class TerminalService {
         // Build the full SSH command as a single string
         const sshCommand = ["ssh", ...sshArgs].join(" ");
         args = ["-n", "-a", "Ghostty", "--args", `--command=${sshCommand}`];
+      } else if (command) {
+        // Ghostty: Run command in workspace directory
+        // Wrap in sh -c to handle cd and command properly
+        const escapedPath = workspacePath.replace(/'/g, "'\\''");
+        const escapedCmd = command.replace(/'/g, "'\\''");
+        const fullCommand = `sh -c 'cd "${escapedPath}" && ${escapedCmd}'`;
+        args = ["-n", "-a", "Ghostty", "--args", `--command=${fullCommand}`];
       } else {
         // Ghostty: Pass workspacePath to 'open -a Ghostty' to avoid regressions
-        if (config.type !== "local") throw new Error("Expected local config");
-        args = ["-a", "Ghostty", config.workspacePath];
+        args = ["-a", "Ghostty", workspacePath];
       }
       log.info(`Opening ${logPrefix}: ${cmd} ${args.join(" ")}`);
       const child = spawn(cmd, args, {
@@ -306,7 +341,7 @@ export class TerminalService {
       child.unref();
     } else {
       // Terminal.app
-      const cmd = isSSH ? "osascript" : "open";
+      const cmd = isSSH || command ? "osascript" : "open";
       let args: string[];
       if (isSSH && sshArgs) {
         // Terminal.app: Use osascript with proper AppleScript structure
@@ -324,10 +359,15 @@ export class TerminalService {
         const escapedCommand = sshCommand.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
         const script = `tell application "Terminal"\nactivate\ndo script "${escapedCommand}"\nend tell`;
         args = ["-e", script];
+      } else if (command) {
+        // Terminal.app: Run command in workspace directory via AppleScript
+        const fullCommand = `cd "${workspacePath}" && ${command}`;
+        const escapedCommand = fullCommand.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        const script = `tell application "Terminal"\nactivate\ndo script "${escapedCommand}"\nend tell`;
+        args = ["-e", script];
       } else {
         // Terminal.app opens in the directory when passed as argument
-        if (config.type !== "local") throw new Error("Expected local config");
-        args = ["-a", "Terminal", config.workspacePath];
+        args = ["-a", "Terminal", workspacePath];
       }
       log.info(`Opening ${logPrefix}: ${cmd} ${args.join(" ")}`);
       const child = spawn(cmd, args, {
@@ -344,6 +384,8 @@ export class TerminalService {
     logPrefix: string
   ): void {
     const isSSH = config.type === "ssh";
+    const command = config.command;
+    const workspacePath = config.type === "local" ? config.workspacePath : config.remotePath;
 
     // Windows
     const cmd = "cmd";
@@ -351,9 +393,12 @@ export class TerminalService {
     if (isSSH && sshArgs) {
       // Windows - use cmd to start ssh
       args = ["/c", "start", "cmd", "/K", "ssh", ...sshArgs];
+    } else if (command) {
+      // Windows - cd to directory and run command
+      args = ["/c", "start", "cmd", "/K", `cd /D "${workspacePath}" && ${command}`];
     } else {
-      if (config.type !== "local") throw new Error("Expected local config");
-      args = ["/c", "start", "cmd", "/K", "cd", "/D", config.workspacePath];
+      // Windows - just cd to directory
+      args = ["/c", "start", "cmd", "/K", "cd", "/D", workspacePath];
     }
     log.info(`Opening ${logPrefix}: ${cmd} ${args.join(" ")}`);
     const child = spawn(cmd, args, {
@@ -370,6 +415,8 @@ export class TerminalService {
     logPrefix: string
   ): Promise<void> {
     const isSSH = config.type === "ssh";
+    const command = config.command;
+    const workspacePath = config.type === "local" ? config.workspacePath : config.remotePath;
 
     // Linux - try terminal emulators in order of preference
     let terminals: Array<{ cmd: string; args: string[]; cwd?: string }>;
@@ -387,9 +434,22 @@ export class TerminalService {
         { cmd: "xfce4-terminal", args: ["-e", `ssh ${sshArgs.join(" ")}`] },
         { cmd: "xterm", args: ["-e", "ssh", ...sshArgs] },
       ];
+    } else if (command) {
+      // Run command in workspace directory
+      const fullCommand = `cd "${workspacePath}" && ${command}`;
+      terminals = [
+        { cmd: "x-terminal-emulator", args: ["-e", "sh", "-c", fullCommand] },
+        { cmd: "ghostty", args: ["-e", "sh", "-c", fullCommand] },
+        { cmd: "alacritty", args: ["-e", "sh", "-c", fullCommand] },
+        { cmd: "kitty", args: ["sh", "-c", fullCommand] },
+        { cmd: "wezterm", args: ["start", "--", "sh", "-c", fullCommand] },
+        { cmd: "gnome-terminal", args: ["--", "sh", "-c", fullCommand] },
+        { cmd: "konsole", args: ["-e", "sh", "-c", fullCommand] },
+        { cmd: "xfce4-terminal", args: ["-e", `sh -c '${fullCommand.replace(/'/g, "'\\''")}'`] },
+        { cmd: "xterm", args: ["-e", "sh", "-c", fullCommand] },
+      ];
     } else {
-      if (config.type !== "local") throw new Error("Expected local config");
-      const workspacePath = config.workspacePath;
+      // Just open terminal in directory
       terminals = [
         { cmd: "x-terminal-emulator", args: [], cwd: workspacePath },
         { cmd: "ghostty", args: ["--working-directory=" + workspacePath] },
@@ -423,59 +483,13 @@ export class TerminalService {
   }
 
   /**
-   * Check if a command is available in the system PATH or known locations
-   */
-  private async isCommandAvailable(command: string): Promise<boolean> {
-    // Special handling for ghostty on macOS - check common installation paths
-    if (command === "ghostty" && process.platform === "darwin") {
-      const ghosttyPaths = [
-        "/opt/homebrew/bin/ghostty",
-        "/Applications/Ghostty.app/Contents/MacOS/ghostty",
-        "/usr/local/bin/ghostty",
-      ];
-
-      for (const ghosttyPath of ghosttyPaths) {
-        try {
-          const stats = await fs.stat(ghosttyPath);
-          // Check if it's a file and any executable bit is set (owner, group, or other)
-          if (stats.isFile() && (stats.mode & 0o111) !== 0) {
-            return true;
-          }
-        } catch {
-          // Try next path
-        }
-      }
-      // If none of the known paths work, fall through to which check
-    }
-
-    try {
-      const result = spawnSync("which", [command], { encoding: "utf8" });
-      return result.status === 0;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Find the first available command from a list of commands
-   */
-  private async findAvailableCommand(commands: string[]): Promise<string | null> {
-    for (const cmd of commands) {
-      if (await this.isCommandAvailable(cmd)) {
-        return cmd;
-      }
-    }
-    return null;
-  }
-
-  /**
    * Find the first available terminal emulator from a list
    */
   private async findAvailableTerminal(
     terminals: Array<{ cmd: string; args: string[]; cwd?: string }>
   ): Promise<{ cmd: string; args: string[]; cwd?: string } | null> {
     for (const terminal of terminals) {
-      if (await this.isCommandAvailable(terminal.cmd)) {
+      if (await isCommandAvailable(terminal.cmd)) {
         return terminal;
       }
     }

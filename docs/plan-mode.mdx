@@ -1,0 +1,124 @@
+---
+title: Plan Mode
+description: Review and collaborate on plans before execution
+---
+
+Plan mode lets you review and refine the agent's approach before any code changes happen. Instead of diving straight into implementation, the agent writes a plan to a file, proposes it for your review, and waits for approval.
+
+## How It Works
+
+1. **Toggle to Plan Mode**: Press `Cmd+Shift+M` (Mac) or `Ctrl+Shift+M` (Windows/Linux), or use the mode switcher in the UI.
+
+2. **Agent Writes Plan**: In plan mode, all file edit tools (`file_edit_*`) are restricted to only modify the plan file. The agent can still read any file in the workspace to gather context.
+
+3. **Propose for Review**: When ready, the agent calls `propose_plan` to present the plan in the chat UI with rendered markdown.
+
+4. **Edit Externally**: Click the **Edit** button on the latest plan to open it in your preferred editor (nvim, VS Code, etc.). Your changes are automatically detected.
+
+5. **Iterate or Execute**: Provide feedback in chat, or switch to Exec mode (`Cmd+Shift+M`) to implement the plan.
+
+## External Edit Detection
+
+When you edit the plan file externally and send a message, mux automatically detects the changes and informs the agent with a diff. This uses a timestamp-based polling approach:
+
+1. **State Tracking**: When `propose_plan` runs, it records the plan file's content and modification time.
+2. **Change Detection**: Before each LLM query, mux checks if the file's mtime has changed.
+3. **Diff Injection**: If modified, mux computes a diff and injects it into the context so the agent sees exactly what changed.
+
+This means you can make edits in your preferred editor, return to mux, send a message, and the agent will incorporate your changes.
+
+## Plan File Location
+
+Plans are stored in a dedicated directory:
+
+```
+~/.mux/plans/<workspace-id>.md
+```
+
+The file is created when the agent first writes a plan and persists across sessions.
+
+## UI Features
+
+The `propose_plan` tool call in chat includes:
+
+- **Rendered Markdown**: View the plan with proper formatting.
+- **Edit Button**: Opens the plan file in your external editor (latest plan only).
+- **Copy Button**: Copy plan content to clipboard.
+- **Show Text/Markdown Toggle**: Switch between rendered and raw views.
+- **Start Here**: Replace chat history with this plan as context (useful for long sessions).
+
+## Workflow Example
+
+```
+User: "Add user authentication to the app"
+         │
+         ▼
+┌─────────────────────────────────────┐
+│  Agent reads codebase, writes plan  │
+│  to ~/.mux/plans/<id>.md            │
+└─────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────┐
+│  Agent calls propose_plan           │
+│  (plan displayed in chat)           │
+└─────────────────────────────────────┘
+         │
+         ├─────────────────────────────────┐
+         │                                 │
+         ▼                                 ▼
+┌─────────────────────┐       ┌─────────────────────────┐
+│  User provides      │       │  User clicks "Edit"     │
+│  feedback in chat   │       │  → edits in nvim/vscode │
+└─────────────────────┘       └─────────────────────────┘
+         │                                 │
+         │                                 │ (external edits)
+         │                                 ▼
+         │                    ┌─────────────────────────┐
+         │                    │  User sends message     │
+         │                    │  → mux detects changes  │
+         │                    │  → diff injected        │
+         │                    └─────────────────────────┘
+         │                                 │
+         ▼                                 ▼
+┌─────────────────────────────────────────────────────────┐
+│  Agent revises plan based on feedback                   │
+│  (cycles back to propose_plan)                          │
+└─────────────────────────────────────────────────────────┘
+         │
+         │  (when satisfied)
+         ▼
+┌─────────────────────────────────────┐
+│  User switches to Exec mode         │
+│  (Cmd+Shift+M)                      │
+└─────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────┐
+│  Agent implements the plan          │
+└─────────────────────────────────────┘
+```
+
+## Customizing Plan Mode Behavior
+
+Use [scoped instructions](/instruction-files) to customize how the agent behaves in plan mode:
+
+```markdown
+## Mode: Plan
+
+When planning:
+
+- Focus on goals and trade-offs
+- Propose alternatives with pros/cons
+- Attach LoC estimates to each approach
+```
+
+## CLI Usage
+
+Plan mode is also available via the CLI:
+
+```bash
+mux run --mode plan "Design a caching strategy for the API"
+```
+
+See [CLI documentation](/cli) for more options.

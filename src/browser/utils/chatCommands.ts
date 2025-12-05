@@ -38,6 +38,7 @@ import {
 
 import { createCommandToast } from "@/browser/components/ChatInputToasts";
 import { trackCommandUsed, trackProviderConfigured } from "@/common/telemetry";
+import { addEphemeralMessage } from "@/browser/stores/WorkspaceStore";
 
 export interface ForkOptions {
   client: RouterClient<AppRouter>;
@@ -268,6 +269,18 @@ export async function processSlashCommand(
       case "new":
         if (!context.workspaceId) throw new Error("Workspace ID required");
         return handleNewCommand(parsed, {
+          ...context,
+          workspaceId: context.workspaceId,
+        } as CommandHandlerContext);
+      case "plan-show":
+        if (!context.workspaceId) throw new Error("Workspace ID required");
+        return handlePlanShowCommand({
+          ...context,
+          workspaceId: context.workspaceId,
+        } as CommandHandlerContext);
+      case "plan-open":
+        if (!context.workspaceId) throw new Error("Workspace ID required");
+        return handlePlanOpenCommand({
           ...context,
           workspaceId: context.workspaceId,
         } as CommandHandlerContext);
@@ -896,6 +909,104 @@ export async function handleCompactCommand(
   } finally {
     setIsSending(false);
   }
+}
+
+// ============================================================================
+// Plan Command Handlers
+// ============================================================================
+
+export async function handlePlanShowCommand(
+  context: CommandHandlerContext
+): Promise<CommandHandlerResult> {
+  const { api, workspaceId, setInput, setToast } = context;
+
+  setInput("");
+
+  const result = await api.workspace.getPlanContent({ workspaceId });
+  if (!result.success) {
+    setToast({
+      id: Date.now().toString(),
+      type: "error",
+      message: "No plan found for this workspace",
+    });
+    return { clearInput: true, toastShown: true };
+  }
+
+  // Create ephemeral plan-display message (not persisted to history)
+  // Uses addEphemeralMessage to properly trigger React re-render via store bump
+  // Use a very high historySequence so it appears at the end of the chat
+  const planMessage = {
+    id: `plan-display-${Date.now()}`,
+    role: "assistant" as const,
+    parts: [{ type: "text" as const, text: result.data.content }],
+    metadata: {
+      historySequence: Number.MAX_SAFE_INTEGER, // Appear at end of chat
+      muxMetadata: { type: "plan-display" as const, path: result.data.path },
+    },
+  };
+  addEphemeralMessage(workspaceId, planMessage);
+
+  trackCommandUsed("plan");
+  return { clearInput: true, toastShown: false };
+}
+
+export async function handlePlanOpenCommand(
+  context: CommandHandlerContext
+): Promise<CommandHandlerResult> {
+  const { api, workspaceId, setInput, setToast } = context;
+
+  setInput("");
+
+  // First get the plan path
+  const planResult = await api.workspace.getPlanContent({ workspaceId });
+  if (!planResult.success) {
+    setToast({
+      id: Date.now().toString(),
+      type: "error",
+      message: "No plan found for this workspace",
+    });
+    return { clearInput: true, toastShown: true };
+  }
+
+  // Open in editor
+  const openResult = await api.general.openInEditor({
+    filePath: planResult.data.path,
+    workspaceId,
+  });
+
+  if (!openResult.success) {
+    setToast({
+      id: Date.now().toString(),
+      type: "error",
+      message: openResult.error ?? "Failed to open editor",
+    });
+    return { clearInput: true, toastShown: true };
+  }
+
+  // If opened in embedded terminal (server mode), open terminal window
+  if (
+    openResult.data.openedInEmbeddedTerminal &&
+    openResult.data.workspaceId &&
+    openResult.data.sessionId
+  ) {
+    const isBrowser = !window.api;
+    if (isBrowser) {
+      const url = `/terminal.html?workspaceId=${encodeURIComponent(openResult.data.workspaceId)}&sessionId=${encodeURIComponent(openResult.data.sessionId)}`;
+      window.open(
+        url,
+        `terminal-editor-${openResult.data.sessionId}`,
+        "width=1000,height=600,popup=yes"
+      );
+    }
+  }
+
+  trackCommandUsed("plan");
+  setToast({
+    id: Date.now().toString(),
+    type: "success",
+    message: "Opened plan in editor",
+  });
+  return { clearInput: true, toastShown: true };
 }
 
 // ============================================================================

@@ -1,3 +1,4 @@
+import { spawn } from "child_process";
 import { os } from "@orpc/server";
 import * as schemas from "@/common/orpc/schemas";
 import type { ORPCContext } from "./context";
@@ -13,6 +14,8 @@ import type {
 } from "@/common/orpc/types";
 import { createAuthMiddleware } from "./authMiddleware";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
+import { getPlanFilePath, readPlanFile } from "@/common/utils/planStorage";
+import { findAvailableCommand, GUI_EDITORS, TERMINAL_EDITORS } from "@/node/utils/commandDiscovery";
 
 export const router = (authToken?: string) => {
   const t = os.$context<ORPCContext>().use(createAuthMiddleware(authToken));
@@ -121,6 +124,143 @@ export const router = (authToken?: string) => {
               await new Promise((r) => setTimeout(r, input.intervalMs));
             }
           }
+        }),
+      openInEditor: t
+        .input(schemas.general.openInEditor.input)
+        .output(schemas.general.openInEditor.output)
+        .handler(async ({ context, input }) => {
+          try {
+            const visual = process.env.VISUAL;
+            const editor = process.env.EDITOR;
+            const isDesktop = context.terminalService.isDesktopMode();
+
+            if (visual) {
+              // $VISUAL is set - GUI editor, spawn directly (works in both modes)
+              const child = spawn(visual, [input.filePath], {
+                detached: true,
+                stdio: "ignore",
+              });
+              child.unref();
+              return { success: true as const, data: { openedInEmbeddedTerminal: false } };
+            }
+
+            if (editor) {
+              // $EDITOR is set - terminal editor
+              if (isDesktop) {
+                // Desktop mode: open native terminal
+                await context.terminalService.openNativeWithCommand(
+                  `${editor} "${input.filePath}"`
+                );
+                return { success: true as const, data: { openedInEmbeddedTerminal: false } };
+              } else {
+                // Server mode: create embedded terminal with the command
+                if (!input.workspaceId) {
+                  return {
+                    success: false as const,
+                    error: "workspaceId required for opening editor in server mode",
+                  };
+                }
+                const session = await context.terminalService.create({
+                  workspaceId: input.workspaceId,
+                  cols: 120,
+                  rows: 30,
+                  initialCommand: `${editor} "${input.filePath}"`,
+                });
+                return {
+                  success: true as const,
+                  data: {
+                    openedInEmbeddedTerminal: true,
+                    workspaceId: input.workspaceId,
+                    sessionId: session.sessionId,
+                  },
+                };
+              }
+            }
+
+            // Fallback: discover available GUI editors
+            const guiEditor = await findAvailableCommand([...GUI_EDITORS]);
+            if (guiEditor) {
+              const child = spawn(guiEditor, [input.filePath], {
+                detached: true,
+                stdio: "ignore",
+              });
+              child.unref();
+              return { success: true as const, data: { openedInEmbeddedTerminal: false } };
+            }
+
+            // Fallback: discover available terminal editors
+            const terminalEditor = await findAvailableCommand([...TERMINAL_EDITORS]);
+            if (terminalEditor) {
+              if (isDesktop) {
+                // Desktop mode: open native terminal with editor
+                await context.terminalService.openNativeWithCommand(
+                  `${terminalEditor} "${input.filePath}"`
+                );
+                return { success: true as const, data: { openedInEmbeddedTerminal: false } };
+              } else {
+                // Server mode: create embedded terminal with editor
+                if (!input.workspaceId) {
+                  return {
+                    success: false as const,
+                    error: "workspaceId required for opening editor in server mode",
+                  };
+                }
+                const session = await context.terminalService.create({
+                  workspaceId: input.workspaceId,
+                  cols: 120,
+                  rows: 30,
+                  initialCommand: `${terminalEditor} "${input.filePath}"`,
+                });
+                return {
+                  success: true as const,
+                  data: {
+                    openedInEmbeddedTerminal: true,
+                    workspaceId: input.workspaceId,
+                    sessionId: session.sessionId,
+                  },
+                };
+              }
+            }
+
+            return { success: false as const, error: "No editor available" };
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            return { success: false as const, error: `Failed to open editor: ${message}` };
+          }
+        }),
+      canOpenInEditor: t
+        .input(schemas.general.canOpenInEditor.input)
+        .output(schemas.general.canOpenInEditor.output)
+        .handler(async () => {
+          // Check $VISUAL first
+          const visual = process.env.VISUAL;
+          if (visual) {
+            return { method: "visual" as const, editor: visual };
+          }
+
+          // Check $EDITOR
+          const editor = process.env.EDITOR;
+          if (editor) {
+            return { method: "editor" as const, editor };
+          }
+
+          // Discover GUI editors
+          const guiEditor = await findAvailableCommand([...GUI_EDITORS]);
+          if (guiEditor) {
+            return { method: "gui-fallback" as const, editor: guiEditor };
+          }
+
+          // Discover terminal editors
+          const terminalEditor = await findAvailableCommand([...TERMINAL_EDITORS]);
+          if (terminalEditor) {
+            return {
+              method: "terminal-fallback" as const,
+              editor: terminalEditor,
+              requiresTerminal: true,
+            };
+          }
+
+          return { method: "none" as const };
         }),
     },
     projects: {
@@ -534,6 +674,17 @@ export const router = (authToken?: string) => {
             }
           }),
       },
+      getPlanContent: t
+        .input(schemas.workspace.getPlanContent.input)
+        .output(schemas.workspace.getPlanContent.output)
+        .handler(({ input }) => {
+          const planPath = getPlanFilePath(input.workspaceId);
+          const content = readPlanFile(input.workspaceId);
+          if (content === null) {
+            return { success: false as const, error: `Plan file not found at ${planPath}` };
+          }
+          return { success: true as const, data: { content, path: planPath } };
+        }),
     },
     window: {
       setTitle: t

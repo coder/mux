@@ -31,6 +31,8 @@ import {
 import {
   handleNewCommand,
   handleCompactCommand,
+  handlePlanShowCommand,
+  handlePlanOpenCommand,
   forkWorkspace,
   prepareCompactionMessage,
   executeCompaction,
@@ -927,6 +929,35 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           };
 
           const result = await handleNewCommand(parsed, context);
+          if (!result.clearInput) {
+            setInput(messageText); // Restore input on error
+          }
+          return;
+        }
+
+        // Handle /plan command
+        if (parsed.type === "plan-show" || parsed.type === "plan-open") {
+          if (!api) {
+            setToast({
+              id: Date.now().toString(),
+              type: "error",
+              message: "Not connected to server",
+            });
+            return;
+          }
+          const context: CommandHandlerContext = {
+            api: api,
+            workspaceId: props.workspaceId,
+            sendMessageOptions,
+            setInput,
+            setImageAttachments,
+            setIsSending,
+            setToast,
+          };
+
+          const handler =
+            parsed.type === "plan-show" ? handlePlanShowCommand : handlePlanOpenCommand;
+          const result = await handler(context);
           if (!result.clearInput) {
             setInput(messageText); // Restore input on error
           }
