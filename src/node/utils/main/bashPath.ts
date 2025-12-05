@@ -390,15 +390,18 @@ export function getSpawnConfig(runtime: BashRuntime, script: string, cwd?: strin
       const psPath = getPowerShellPath();
       if (psPath) {
         // Base64 encode the script to avoid any PowerShell parsing issues
-        // PowerShell will decode it and pipe to WSL bash
+        // PowerShell will decode it and pass to WSL bash -c
         const base64Script = Buffer.from(fullScript, "utf8").toString("base64");
 
         // Build the PowerShell command that:
-        // 1. Decodes the base64 script
-        // 2. Pipes it to WSL bash via echo
+        // 1. Decodes the base64 script into variable $s
+        // 2. Passes $s to WSL bash -c (not stdin piping - that loses output)
         const wslArgs = runtime.distro ? `-d ${runtime.distro}` : "";
-        const psCommand = `$s=[System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${base64Script}'));` +
-          `echo $s | wsl ${wslArgs} bash`.trim();
+        // Use Invoke-Expression to run the wsl command with the decoded script
+        // This ensures stdout/stderr are properly captured
+        const psCommand =
+          `$s=[System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${base64Script}'));` +
+          `wsl ${wslArgs} bash -c $s`.trim();
 
         return {
           command: psPath,
