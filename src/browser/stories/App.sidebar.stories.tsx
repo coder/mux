@@ -71,6 +71,7 @@ export const SingleProject: AppStory = {
           createWorkspace({ id: "ws-3", name: "bugfix/memory-leak", projectName: "my-app" }),
         ];
 
+        expandProjects(["/home/user/projects/my-app"]);
         return createMockORPCClient({
           projects: groupWorkspacesByProject(workspaces),
           workspaces,
@@ -99,6 +100,11 @@ export const MultipleProjects: AppStory = {
           createWorkspace({ id: "ws-6", name: "main", projectName: "mobile" }),
         ];
 
+        expandProjects([
+          "/home/user/projects/frontend",
+          "/home/user/projects/backend",
+          "/home/user/projects/mobile",
+        ]);
         return createMockORPCClient({
           projects: groupWorkspacesByProject(workspaces),
           workspaces,
@@ -132,6 +138,7 @@ export const ManyWorkspaces: AppStory = {
           createWorkspace({ id: `ws-${i}`, name, projectName: "big-app" })
         );
 
+        expandProjects(["/home/user/projects/big-app"]);
         return createMockORPCClient({
           projects: groupWorkspacesByProject(workspaces),
           workspaces,
@@ -195,6 +202,7 @@ export const GitStatusVariations: AppStory = {
           ["ws-ssh", { ahead: 1 }],
         ]);
 
+        expandProjects(["/home/user/projects/my-app"]);
         return createMockORPCClient({
           projects: groupWorkspacesByProject(workspaces),
           workspaces,
