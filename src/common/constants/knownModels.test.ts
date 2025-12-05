@@ -39,9 +39,7 @@ describe("Known Models Integration", () => {
       const modelId = model.providerModelId;
       // xAI models are prefixed with "xai/" in models.json
       const lookupKey = model.provider === "xai" ? `xai/${modelId}` : modelId;
-      const modelData =
-        (modelsJson[lookupKey as keyof typeof modelsJson] as Record<string, unknown>) ??
-        (modelsExtra[modelId] as Record<string, unknown>);
+      const modelData = modelsJson[lookupKey as keyof typeof modelsJson] ?? modelsExtra[modelId];
 
       expect(modelData).toBeDefined();
       // Check that basic metadata fields exist (not all models have all fields)
