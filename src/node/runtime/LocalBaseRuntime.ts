@@ -22,6 +22,7 @@ import { getPreferredSpawnConfig } from "@/node/utils/main/bashPath";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { DisposableProcess } from "@/node/utils/disposableExec";
 import { expandTilde } from "./tildeExpansion";
+import { log } from "@/node/services/log";
 import {
   checkInitHookExists,
   getInitHookPath,
@@ -75,6 +76,13 @@ export abstract class LocalBaseRuntime implements Runtime {
       args: bashArgs,
       cwd: spawnCwd,
     } = getPreferredSpawnConfig(command, cwd);
+
+    // Debug logging for Windows WSL issues
+    log.info(`[LocalBaseRuntime.exec] Original command: ${command}`);
+    log.info(`[LocalBaseRuntime.exec] Original cwd: ${cwd}`);
+    log.info(`[LocalBaseRuntime.exec] Spawn command: ${bashCommand}`);
+    log.info(`[LocalBaseRuntime.exec] Spawn args: ${JSON.stringify(bashArgs)}`);
+    log.info(`[LocalBaseRuntime.exec] Spawn cwd: ${spawnCwd}`);
 
     // If niceness is specified on Unix/Linux, spawn nice directly to avoid escaping issues
     // Windows doesn't have nice command, so just spawn bash directly
