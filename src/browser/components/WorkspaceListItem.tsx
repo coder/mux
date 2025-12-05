@@ -160,26 +160,31 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                 data-workspace-id={workspaceId}
               />
             ) : (
-              <span
-                className={cn(
-                  "text-foreground -mx-1 min-w-0 flex-1 truncate rounded-sm px-1 text-left text-[14px] transition-colors duration-200",
-                  !isDisabled && "cursor-pointer hover:bg-white/5"
-                )}
-                onDoubleClick={(e) => {
-                  if (isDisabled) return;
-                  e.stopPropagation();
-                  startRenaming();
-                }}
-                title={isDisabled ? undefined : "Double-click to rename"}
-              >
-                {canInterrupt || isCreating ? (
-                  <Shimmer className="w-full truncate" colorClass="var(--color-foreground)">
-                    {displayName}
-                  </Shimmer>
-                ) : (
-                  displayName
-                )}
-              </span>
+              <TooltipWrapper inline>
+                <span
+                  className={cn(
+                    "text-foreground -mx-1 min-w-0 flex-1 truncate rounded-sm px-1 text-left text-[14px] transition-colors duration-200",
+                    !isDisabled && "cursor-pointer"
+                  )}
+                  onDoubleClick={(e) => {
+                    if (isDisabled) return;
+                    e.stopPropagation();
+                    startRenaming();
+                  }}
+                  title={isDisabled ? undefined : "Double-click to rename"}
+                >
+                  {canInterrupt || isCreating ? (
+                    <Shimmer className="w-full truncate" colorClass="var(--color-foreground)">
+                      {displayName}
+                    </Shimmer>
+                  ) : (
+                    displayName
+                  )}
+                </span>
+                <Tooltip className="tooltip" align="left">
+                  Double-click to rename
+                </Tooltip>
+              </TooltipWrapper>
             )}
 
             <div className="ml-auto flex items-center gap-1">

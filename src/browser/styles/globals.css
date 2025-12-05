@@ -72,7 +72,7 @@
     /* Background & Layout */
     --color-background: hsl(0 0% 12%);
     --color-background-secondary: hsl(60 1% 15%);
-    --color-border: hsl(240 2% 25%);
+    --color-border: #262626; /* neutral-800 */
     --color-foreground: hsl(0 0% 83%);
     --color-text: hsl(0 0% 83%);
     --color-text-light: hsl(0 0% 73%);
@@ -189,20 +189,21 @@
     --color-gray: hsl(0 0% 48%); /* #7a7a7a - gray */
     --color-medium: hsl(0 0% 59%); /* #969696 - medium */
 
-    --color-border-light: hsl(240 3% 25%); /* #3e3e42 - lighter borders */
+    --color-border-light: #262626; /* neutral-800 - borders */
     --color-border-medium: hsl(0 0% 27%); /* #444 - medium borders */
     --color-border-darker: hsl(0 0% 33%); /* #555 - darker borders */
     --color-border-subtle: hsl(0 0% 40%); /* #666 - subtle border */
     --color-border-gray: hsl(240 1% 31%); /* #4e4e52 - gray border */
 
-    --color-dark: hsl(0 0% 11.5%); /* #1e1e1e - dark backgrounds */
+    --color-dark: #1D1D1D; /* dark backgrounds */
     --color-darker: hsl(0 0% 8.6%); /* #161616 - darker backgrounds */
     --color-hover: hsl(0 0% 16.5%); /* #2a2a2b - hover states */
     --color-bg-medium: hsl(0 0% 27%); /* #454545 - medium bg */
     --color-bg-light: hsl(0 0% 30%); /* #4c4c4c - light bg */
     --color-bg-subtle: hsl(240 3% 22%); /* #37373d - subtle bg */
 
-    --color-separator: hsl(0 0% 15%); /* #252526 - separators */
+    --color-sidebar: #171717; /* neutral-900 - sidebar background */
+    --color-separator: #262626; /* neutral-800 - dividers/separators */
     --color-separator-light: hsl(0 0% 27%); /* #464647 - lighter separator */
     --color-modal-bg: hsl(0 0% 18%); /* #2d2d30 - modal backgrounds */
 
@@ -434,6 +435,7 @@
   --color-bg-light: hsl(210 24% 84%);
   --color-bg-subtle: hsl(210 32% 92%);
 
+  --color-sidebar: hsl(0 0% 96%); /* light theme sidebar */
   --color-separator: hsl(0 0% 91%);
   --color-separator-light: hsl(0 0% 96%);
   --color-modal-bg: hsl(210 35% 96%);
@@ -662,7 +664,8 @@
   --color-bg-light: #d5ceb8;
   --color-bg-subtle: #eee8d5;
 
-  --color-separator: #eee8d5; /* base2 - sidebar background */
+  --color-sidebar: #eee8d5; /* base2 - sidebar background */
+  --color-separator: #d5ceb8;
   --color-separator-light: #f5efdc;
   --color-modal-bg: #fdf6e3;
 
@@ -881,7 +884,8 @@
   --color-bg-light: #106577;
   --color-bg-subtle: #073642;
 
-  --color-separator: #073642; /* base02 - sidebar background */
+  --color-sidebar: #073642; /* base02 - sidebar background */
+  --color-separator: #0a4555;
   --color-separator-light: #094555; /* slightly lighter for hover states */
   --color-modal-bg: #073642;
 

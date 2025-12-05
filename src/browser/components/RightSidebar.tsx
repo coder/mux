@@ -50,7 +50,7 @@ const SidebarContainer: React.FC<SidebarContainerProps> = ({
   return (
     <div
       className={cn(
-        "bg-separator border-l border-border-light flex flex-col overflow-hidden flex-shrink-0",
+        "bg-sidebar border-l border-border-light flex flex-col overflow-hidden flex-shrink-0",
         customWidth ? "" : "transition-[width] duration-200",
         collapsed && "sticky right-0 z-10 shadow-[-2px_0_4px_rgba(0,0,0,0.2)]",
         // Mobile: Show vertical meter when collapsed (20px), full width when expanded
@@ -215,7 +215,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       <div className={cn("flex-row h-full", !showCollapsed ? "flex" : "hidden")}>
         {/* Render meter when Review tab is active */}
         {selectedTab === "review" && (
-          <div className="bg-separator border-border-light flex w-5 shrink-0 flex-col border-r">
+          <div className="bg-sidebar border-border-light flex w-5 shrink-0 flex-col border-r">
             {verticalMeter}
           </div>
         )}

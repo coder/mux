@@ -25,7 +25,7 @@ const VerticalTokenMeterComponent: React.FC<VerticalTokenMeterProps> = ({
 
   return (
     <div
-      className="bg-separator border-border-light flex h-full w-5 flex-col items-center border-l py-3"
+      className="bg-sidebar border-border-light flex h-full w-5 flex-col items-center border-l py-3"
       data-component="vertical-token-meter"
     >
       {/* Percentage label at top */}

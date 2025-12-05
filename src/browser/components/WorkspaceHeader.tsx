@@ -47,7 +47,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   }, [startTutorial, isSequenceCompleted]);
 
   return (
-    <div className="bg-separator border-border-light flex h-8 items-center justify-between border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:flex-wrap [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:py-2 [@media(max-width:768px)]:pl-[60px]">
+    <div className="bg-sidebar border-border-light flex h-8 items-center justify-between border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:flex-wrap [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:py-2 [@media(max-width:768px)]:pl-[60px]">
       <div className="text-foreground flex min-w-0 items-center gap-2 overflow-hidden font-semibold">
         <RuntimeBadge runtimeConfig={runtimeConfig} isWorking={canInterrupt} />
         <GitStatusIndicator

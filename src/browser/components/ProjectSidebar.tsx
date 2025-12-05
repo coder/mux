@@ -87,11 +87,11 @@ const DraggableProjectItemBase: React.FC<DraggableProjectItemProps> = ({
     <div
       ref={(node) => drag(drop(node))}
       className={cn(
-        "py-2 px-3 flex items-center border-l-transparent transition-all duration-150 bg-separator",
+        "py-2 px-3 flex items-center border-l-transparent transition-all duration-150 bg-sidebar",
         isDragging ? "cursor-grabbing opacity-40 [&_*]:!cursor-grabbing" : "cursor-grab",
         isOver && "bg-accent/[0.08]",
         selected && "bg-hover border-l-accent",
-        "hover:bg-hover hover:[&_button]:opacity-100 hover:[&_[data-drag-handle]]:opacity-100"
+        "hover:[&_button]:opacity-100 hover:[&_[data-drag-handle]]:opacity-100"
       )}
       {...rest}
     >
@@ -465,19 +465,19 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       <DndProvider backend={HTML5Backend}>
         <ProjectDragLayer />
         <div
-          className="font-primary bg-dark border-border-light flex flex-1 flex-col overflow-hidden border-r"
+          className="font-primary bg-sidebar border-border-light flex flex-1 flex-col overflow-hidden border-r"
           role="navigation"
           aria-label="Projects"
         >
           {!collapsed && (
             <>
               <div className="border-dark flex items-center justify-between border-b p-4">
-                <h2 className="text-foreground text-md m-0 font-semibold">Agents</h2>
+                <h2 className="text-foreground text-lg m-0 font-medium">Projects</h2>
                 <TooltipWrapper inline>
                   <button
                     onClick={onAddProject}
                     aria-label="Add project"
-                    className="text-foreground hover:bg-hover hover:border-border-light flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 text-lg transition-all duration-200"
+                    className="text-secondary hover:bg-hover hover:border-border-light flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 text-2xl transition-all duration-200"
                   >
                     +
                   </button>
@@ -513,42 +513,43 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                           projectPath={projectPath}
                           onReorder={handleReorder}
                           selected={false}
-                          onClick={() => toggleProject(projectPath)}
+                          onClick={() => handleAddWorkspace(projectPath)}
                           onKeyDown={(e: React.KeyboardEvent) => {
                             if (e.key === "Enter" || e.key === " ") {
                               e.preventDefault();
-                              toggleProject(projectPath);
+                              handleAddWorkspace(projectPath);
                             }
                           }}
                           role="button"
                           tabIndex={0}
                           aria-expanded={isExpanded}
                           aria-controls={workspaceListId}
-                          aria-label={`${isExpanded ? "Collapse" : "Expand"} project ${projectName}`}
+                          aria-label={`Create workspace in ${projectName}`}
                           data-project-path={projectPath}
                         >
-                          <span
+                          <button
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              toggleProject(projectPath);
+                            }}
+                            aria-label={`${isExpanded ? "Collapse" : "Expand"} project ${projectName}`}
                             data-project-path={projectPath}
-                            aria-hidden="true"
-                            className="text-muted mr-2 shrink-0 text-xs transition-transform duration-200"
-                            style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
+                            className="text-secondary hover:bg-hover hover:border-border-light mr-2 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200"
                           >
-                            <ChevronRight size={12} />
-                          </span>
+                            <ChevronRight
+                              size={12}
+                              className="transition-transform duration-200"
+                              style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
+                            />
+                          </button>
                           <div className="flex min-w-0 flex-1 items-center pr-2">
                             <TooltipWrapper inline>
-                              <div className="text-muted-dark truncate text-sm">
+                              <div className="text-muted-dark truncate text-sm gap-2 flex">
                                 {(() => {
                                   const abbrevPath = PlatformPaths.abbreviate(projectPath);
-                                  const { dirPath, basename } =
-                                    PlatformPaths.splitAbbreviated(abbrevPath);
+                                  const { basename } = PlatformPaths.splitAbbreviated(abbrevPath);
                                   return (
-                                    <>
-                                      <span>{dirPath}</span>
-                                      <span className="text-foreground font-medium">
-                                        {basename}
-                                      </span>
-                                    </>
+                                    <span className="text-foreground font-medium">{basename}</span>
                                   );
                                 })()}
                               </div>
@@ -582,7 +583,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               title="Remove project"
                               aria-label={`Remove project ${projectName}`}
                               data-project-path={projectPath}
-                              className="text-muted-dark hover:text-danger-light hover:bg-danger-light/10 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-base opacity-0 transition-all duration-200"
+                              className="text-muted-dark hover:text-danger-light hover:bg-danger-light/10 mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-base opacity-0 transition-all duration-200"
                             >
                               ×
                             </button>
@@ -590,6 +591,17 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               Remove project
                             </Tooltip>
                           </TooltipWrapper>
+                          <button
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleAddWorkspace(projectPath);
+                            }}
+                            aria-label={`New chat in ${projectName}`}
+                            data-project-path={projectPath}
+                            className="text-secondary hover:bg-hover hover:border-border-light shrink-0 cursor-pointer rounded border border-transparent bg-transparent px-1.5 py-0.5 text-[11px] transition-all duration-200"
+                          >
+                            + New Chat
+                          </button>
                         </DraggableProjectItem>
 
                         {isExpanded && (
@@ -597,19 +609,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             id={workspaceListId}
                             role="region"
                             aria-label={`Workspaces for ${projectName}`}
+                            className="pt-1"
                           >
-                            <div className="border-hover border-b px-3 py-2">
-                              <button
-                                onClick={() => handleAddWorkspace(projectPath)}
-                                data-project-path={projectPath}
-                                aria-label={`Add workspace to ${projectName}`}
-                                className="text-muted border-border-medium hover:bg-hover hover:border-border-darker hover:text-foreground w-full cursor-pointer rounded border border-dashed bg-transparent px-3 py-1.5 text-left text-[13px] transition-all duration-200"
-                              >
-                                + New Workspace
-                                {selectedWorkspace?.projectPath === projectPath &&
-                                  ` (${formatKeybind(KEYBINDS.NEW_WORKSPACE)})`}
-                              </button>
-                            </div>
                             {(() => {
                               const allWorkspaces =
                                 sortedWorkspacesByProject.get(projectPath) ?? [];
