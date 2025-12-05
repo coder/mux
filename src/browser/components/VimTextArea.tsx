@@ -250,7 +250,8 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
               ...(trailingAction ? { scrollbarGutter: "stable both-edges" } : {}),
             }}
             className={cn(
-              "w-full border text-light py-1.5 px-2 rounded font-sans text-[13px] resize-none min-h-8 max-h-[50vh] overflow-y-auto",
+              "w-full border text-light py-1.5 px-2 rounded text-[13px] resize-none min-h-8 max-h-[50vh] overflow-y-auto",
+              vimEnabled ? "font-monospace" : "font-sans",
               "placeholder:text-placeholder",
               "focus:outline-none",
               trailingAction && "pr-10",
