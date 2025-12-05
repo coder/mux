@@ -103,7 +103,7 @@ export function buildSpawnCommand(options: SpawnCommandOptions): string {
   const quotePath = options.quotePath ?? shellQuote;
 
   return (
-    `(${nicePrefix}${setsidPrefix}nohup ${bash} -c ${shellQuote(options.wrapperScript)} ` +
+    `(${nicePrefix}${setsidPrefix}nohup ${shellQuote(bash)} -c ${shellQuote(options.wrapperScript)} ` +
     `> ${quotePath(options.stdoutPath)} ` +
     `2> ${quotePath(options.stderrPath)} ` +
     `< /dev/null & echo $!)`

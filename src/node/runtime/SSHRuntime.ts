@@ -284,6 +284,15 @@ export class SSHRuntime implements Runtime {
   ): Promise<BackgroundSpawnResult> {
     log.debug(`SSHRuntime.spawnBackground: Spawning in ${options.cwd}`);
 
+    // Verify working directory exists on remote (parity with local runtime)
+    const cwdCheck = await execBuffered(this, cdCommandForSSH(options.cwd), {
+      cwd: "/",
+      timeout: 10,
+    });
+    if (cwdCheck.exitCode !== 0) {
+      return { success: false, error: `Working directory does not exist: ${options.cwd}` };
+    }
+
     // Generate unique process ID and compute output directory
     // /tmp is cleaned by OS, so no explicit cleanup needed
     const processId = `bg-${randomBytes(4).toString("hex")}`;
