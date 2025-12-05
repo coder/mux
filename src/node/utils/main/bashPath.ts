@@ -390,19 +390,15 @@ export function getSpawnConfig(runtime: BashRuntime, script: string, cwd?: strin
       const psPath = getPowerShellPath();
       if (psPath) {
         // Base64 encode the script to avoid any PowerShell parsing issues
-        // PowerShell will decode it and pass to WSL bash -c
         const base64Script = Buffer.from(fullScript, "utf8").toString("base64");
 
-        // Build the PowerShell command that:
-        // 1. Decodes the base64 script into variable $s
-        // 2. Passes $s to WSL bash -c with proper quoting
+        // Pass the base64 string directly to bash, which decodes and executes it.
+        // This completely avoids quoting issues because:
+        // 1. Base64 only contains [A-Za-z0-9+/=] - no special chars
+        // 2. The decode happens inside bash, so PowerShell never sees the script
+        // 3. Single quotes in PowerShell pass the string literally to WSL
         const wslArgs = runtime.distro ? `-d ${runtime.distro}` : "";
-        // CRITICAL: Must quote $s with escaped double quotes (`"$s`") so the entire
-        // script is passed as a single argument to bash -c. Without quotes, PowerShell
-        // expands $s and bash only sees the first word as the -c argument.
-        const psCommand =
-          `$s=[System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${base64Script}'));` +
-          `wsl ${wslArgs} bash -c \`"$s\`"`.trim();
+        const psCommand = `wsl ${wslArgs} bash -c 'echo ${base64Script} | base64 -d | bash'`.trim();
 
         return {
           command: psPath,
