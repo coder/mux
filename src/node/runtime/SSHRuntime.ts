@@ -80,6 +80,8 @@ export interface SSHRuntimeConfig {
 export class SSHRuntime implements Runtime {
   private readonly config: SSHRuntimeConfig;
   private readonly controlPath: string;
+  /** Cached resolved bgOutputDir (tilde expanded to absolute path) */
+  private resolvedBgOutputDir: string | null = null;
 
   constructor(config: SSHRuntimeConfig) {
     // Note: srcBaseDir may contain tildes - they will be resolved via resolvePath() before use
@@ -89,6 +91,27 @@ export class SSHRuntime implements Runtime {
     // Multiple SSHRuntime instances with same config share the same controlPath,
     // enabling ControlMaster to multiplex SSH connections across operations
     this.controlPath = getControlPath(config);
+  }
+
+  /**
+   * Get resolved background output directory (tilde expanded), caching the result.
+   * This ensures all background process paths are absolute from the start.
+   */
+  private async getBgOutputDir(): Promise<string> {
+    if (this.resolvedBgOutputDir !== null) {
+      return this.resolvedBgOutputDir;
+    }
+
+    let dir = this.config.bgOutputDir ?? "/tmp/mux-bashes";
+
+    if (dir === "~" || dir.startsWith("~/")) {
+      const result = await execBuffered(this, 'echo "$HOME"', { cwd: "/", timeout: 10 });
+      const home = result.exitCode === 0 && result.stdout.trim() ? result.stdout.trim() : "/tmp";
+      dir = dir === "~" ? home : `${home}/${dir.slice(2)}`;
+    }
+
+    this.resolvedBgOutputDir = dir;
+    return this.resolvedBgOutputDir;
   }
 
   /**
@@ -296,7 +319,7 @@ export class SSHRuntime implements Runtime {
     // Generate unique process ID and compute output directory
     // /tmp is cleaned by OS, so no explicit cleanup needed
     const processId = `bg-${randomBytes(4).toString("hex")}`;
-    const bgOutputDir = this.config.bgOutputDir ?? "/tmp/mux-bashes";
+    const bgOutputDir = await this.getBgOutputDir();
     const outputDir = `${bgOutputDir}/${options.workspaceId}/${processId}`;
     const stdoutPath = `${outputDir}/stdout.log`;
     const stderrPath = `${outputDir}/stderr.log`;
@@ -356,7 +379,8 @@ export class SSHRuntime implements Runtime {
 
     try {
       // No timeout - the spawn command backgrounds the process and returns immediately,
-      // but if wrapped in `timeout`, it would wait for the backgrounded process to exit
+      // but if wrapped in `timeout`, it would wait for the backgrounded process to exit.
+      // SSH connection hangs are protected by ConnectTimeout (see buildSshArgs in this file).
       const result = await execBuffered(this, spawnCommand, {
         cwd: "/", // cwd doesn't matter, we cd in the wrapper
       });
@@ -380,6 +404,7 @@ export class SSHRuntime implements Runtime {
 
       log.debug(`SSHRuntime.spawnBackground: Spawned with PID ${pid}`);
 
+      // outputDir is already absolute (getBgOutputDir resolves tildes upfront)
       const handle = new SSHBackgroundHandle(this, pid, outputDir);
       return { success: true, handle, pid };
     } catch (error) {
