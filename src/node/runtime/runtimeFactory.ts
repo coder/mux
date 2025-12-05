@@ -1,4 +1,3 @@
-import { execSync } from "child_process";
 import * as os from "os";
 
 import type { Runtime } from "./Runtime";
@@ -8,6 +7,7 @@ import { SSHRuntime } from "./SSHRuntime";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { hasSrcBaseDir } from "@/common/types/runtime";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
+import { toPosixPath } from "@/node/utils/paths";
 
 // Re-export for backward compatibility with existing imports
 export { isIncompatibleRuntimeConfig };
@@ -19,17 +19,7 @@ export { isIncompatibleRuntimeConfig };
  */
 function getDefaultBgOutputDir(): string {
   const tempDir = os.tmpdir();
-  if (process.platform === "win32") {
-    try {
-      // cygpath converts Windows paths to POSIX format for Git Bash / MSYS2
-      const posixPath = execSync(`cygpath -u "${tempDir}"`, { encoding: "utf8" }).trim();
-      return `${posixPath}/mux-bashes`;
-    } catch {
-      // Fallback if cygpath unavailable (shouldn't happen with Git Bash)
-      return "/tmp/mux-bashes";
-    }
-  }
-  return `${tempDir}/mux-bashes`;
+  return `${toPosixPath(tempDir)}/mux-bashes`;
 }
 
 /**
