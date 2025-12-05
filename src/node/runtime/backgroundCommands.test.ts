@@ -249,6 +249,23 @@ describe("backgroundCommands", () => {
 
       expect(result).toContain("'/tmp/my dir/exit_code'");
     });
+
+    it("should use custom quotePath function when provided", () => {
+      // Simulate expandTildeForSSH behavior (returns double-quoted string)
+      const customQuote = (p: string) => `"${p}"`;
+      const result = buildTerminateCommand(1234, "/tmp/exit_code", customQuote);
+
+      expect(result).toContain('"/tmp/exit_code"');
+      expect(result).not.toContain("'/tmp/exit_code'");
+    });
+
+    it("should handle tilde paths with custom quotePath", () => {
+      // Simulate expandTildeForSSH("~/mux/exit_code") → "$HOME/mux/exit_code"
+      const expandTilde = (p: string) => (p.startsWith("~/") ? `"$HOME/${p.slice(2)}"` : `"${p}"`);
+      const result = buildTerminateCommand(1234, "~/mux/exit_code", expandTilde);
+
+      expect(result).toContain('"$HOME/mux/exit_code"');
+    });
   });
 
   describe("parseExitCode", () => {

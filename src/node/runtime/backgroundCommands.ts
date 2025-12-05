@@ -116,15 +116,23 @@ export function buildSpawnCommand(options: SpawnCommandOptions): string {
  * Uses negative PID to kill entire process group (setsid makes process a group leader).
  * Sends SIGTERM, waits 2 seconds, then SIGKILL if still running.
  * Writes EXIT_CODE_SIGKILL on force kill.
+ *
+ * @param pid - Process ID to terminate
+ * @param exitCodePath - Path to write exit code (raw, will be quoted by quotePath)
+ * @param quotePath - Function to quote path (default: shellQuote). Use expandTildeForSSH for SSH.
  */
-export function buildTerminateCommand(pid: number, exitCodePath: string): string {
+export function buildTerminateCommand(
+  pid: number,
+  exitCodePath: string,
+  quotePath: (p: string) => string = shellQuote
+): string {
   const pgid = -pid;
   return (
     `kill -TERM ${pgid} 2>/dev/null || true; ` +
     `sleep 2; ` +
     `if kill -0 ${pid} 2>/dev/null; then ` +
     `kill -KILL ${pgid} 2>/dev/null || true; ` +
-    `echo ${EXIT_CODE_SIGKILL} > ${shellQuote(exitCodePath)}; ` +
+    `echo ${EXIT_CODE_SIGKILL} > ${quotePath(exitCodePath)}; ` +
     `fi`
   );
 }
