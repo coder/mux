@@ -86,7 +86,7 @@ export interface WorkspaceSwitchedPayload {
 /**
  * Thinking level for extended thinking feature
  */
-export type TelemetryThinkingLevel = "off" | "low" | "medium" | "high";
+export type TelemetryThinkingLevel = "off" | "low" | "medium" | "high" | "xhigh";
 
 /**
  * Chat/AI interaction events
