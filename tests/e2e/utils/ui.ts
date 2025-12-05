@@ -92,7 +92,9 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
       const workspaceItem = workspaceItems.first();
       const isVisible = await workspaceItem.isVisible().catch(() => false);
       if (!isVisible) {
-        await projectItem.click();
+        // Click the expand/collapse button within the project item
+        const expandButton = projectItem.getByRole("button", { name: /expand project/i });
+        await expandButton.click();
         await workspaceItem.waitFor({ state: "visible" });
       }
 

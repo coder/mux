@@ -515,6 +515,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                           selected={false}
                           onClick={() => handleAddWorkspace(projectPath)}
                           onKeyDown={(e: React.KeyboardEvent) => {
+                            // Ignore key events from child buttons
+                            if (e.target instanceof HTMLElement && e.target !== e.currentTarget) {
+                              return;
+                            }
                             if (e.key === "Enter" || e.key === " ") {
                               e.preventDefault();
                               handleAddWorkspace(projectPath);
