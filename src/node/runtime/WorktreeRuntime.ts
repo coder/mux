@@ -10,7 +10,7 @@ import type {
   InitLogger,
 } from "./Runtime";
 import { listLocalBranches } from "@/node/git";
-import { checkInitHookExists } from "./initHook";
+import { checkInitHookExists, getMuxEnv } from "./initHook";
 import { execAsync } from "@/node/utils/disposableExec";
 import { getProjectName } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -139,14 +139,15 @@ export class WorktreeRuntime extends LocalBaseRuntime {
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, workspacePath, initLogger } = params;
+    const { projectPath, branchName, workspacePath, initLogger } = params;
 
     try {
       // Run .mux/init hook if it exists
       // Note: runInitHook calls logComplete() internally if hook exists
       const hookExists = await checkInitHookExists(projectPath);
       if (hookExists) {
-        await this.runInitHook(projectPath, workspacePath, initLogger, "worktree");
+        const muxEnv = getMuxEnv(projectPath, "worktree", branchName);
+        await this.runInitHook(workspacePath, muxEnv, initLogger);
       } else {
         // No hook - signal completion immediately
         initLogger.logComplete(0);

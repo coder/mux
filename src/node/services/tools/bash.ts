@@ -246,7 +246,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
 ${script}`;
       const execStream = await config.runtime.exec(scriptWithClosedStdin, {
         cwd: config.cwd,
-        env: config.secrets,
+        env: { ...config.muxEnv, ...config.secrets },
         timeout: effectiveTimeout,
         niceness: config.niceness,
         abortSignal,

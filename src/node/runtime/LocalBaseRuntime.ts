@@ -22,12 +22,7 @@ import { getBashPath } from "@/node/utils/main/bashPath";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { DisposableProcess } from "@/node/utils/disposableExec";
 import { expandTilde } from "./tildeExpansion";
-import {
-  checkInitHookExists,
-  getInitHookPath,
-  createLineBufferedLoggers,
-  getInitHookEnv,
-} from "./initHook";
+import { getInitHookPath, createLineBufferedLoggers } from "./initHook";
 
 /**
  * Abstract base class for local runtimes (both WorktreeRuntime and LocalRuntime).
@@ -347,19 +342,17 @@ export abstract class LocalBaseRuntime implements Runtime {
   /**
    * Helper to run .mux/init hook if it exists and is executable.
    * Shared between WorktreeRuntime and LocalRuntime.
+   * @param workspacePath - Path to the workspace directory
+   * @param muxEnv - MUX_ environment variables (from getMuxEnv)
+   * @param initLogger - Logger for streaming output
    */
   protected async runInitHook(
-    projectPath: string,
     workspacePath: string,
-    initLogger: InitLogger,
-    runtimeType: "local" | "worktree"
+    muxEnv: Record<string, string>,
+    initLogger: InitLogger
   ): Promise<void> {
-    // Check if hook exists and is executable
-    const hookExists = await checkInitHookExists(projectPath);
-    if (!hookExists) {
-      return;
-    }
-
+    // Hook path is derived from MUX_PROJECT_PATH in muxEnv
+    const projectPath = muxEnv.MUX_PROJECT_PATH;
     const hookPath = getInitHookPath(projectPath);
     initLogger.logStep(`Running init hook: ${hookPath}`);
 
@@ -373,7 +366,7 @@ export abstract class LocalBaseRuntime implements Runtime {
         stdio: ["ignore", "pipe", "pipe"],
         env: {
           ...process.env,
-          ...getInitHookEnv(projectPath, runtimeType),
+          ...muxEnv,
         },
         // Prevent console window from appearing on Windows
         windowsHide: true,
