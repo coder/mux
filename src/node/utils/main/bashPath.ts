@@ -397,8 +397,13 @@ export function getSpawnConfig(runtime: BashRuntime, script: string, cwd?: strin
         // 1. Base64 only contains [A-Za-z0-9+/=] - no special chars
         // 2. The decode happens inside bash, so PowerShell never sees the script
         // 3. Single quotes in PowerShell pass the string literally to WSL
+        //
+        // IMPORTANT: Use eval "$(echo ... | base64 -d)" instead of "echo ... | base64 -d | bash"
+        // The latter pipes to bash's stdin, which breaks if the script contains "exec </dev/null"
+        // (that redirects stdin to /dev/null, cutting off the script mid-read).
+        // Using eval with command substitution captures the entire decoded script first.
         const wslArgs = runtime.distro ? `-d ${runtime.distro}` : "";
-        const psCommand = `wsl ${wslArgs} bash -c 'echo ${base64Script} | base64 -d | bash'`.trim();
+        const psCommand = `wsl ${wslArgs} bash -c 'eval "$(echo ${base64Script} | base64 -d)"'`.trim();
 
         return {
           command: psPath,
