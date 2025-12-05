@@ -39,6 +39,9 @@ export interface BackgroundProcess {
  * Output is stored in circular buffers for later retrieval.
  */
 export class BackgroundProcessManager {
+  // NOTE: This map is in-memory only. Background processes use nohup/setsid so they
+  // could survive app restarts, but we kill all tracked processes on shutdown via
+  // dispose(). Rehydrating from meta.json on startup is out of scope for now.
   private processes = new Map<string, BackgroundProcess>();
 
   /**
