@@ -254,8 +254,11 @@ export function buildProviderOptions(
       };
 
       if (isGemini3) {
-        // Gemini 3 uses thinkingLevel (low/high)
-        thinkingConfig.thinkingLevel = effectiveThinking === "medium" ? "low" : effectiveThinking;
+        // Gemini 3 uses thinkingLevel (low/high) - map medium/xhigh to supported values
+        thinkingConfig.thinkingLevel =
+          effectiveThinking === "medium" || effectiveThinking === "xhigh"
+            ? "high"
+            : effectiveThinking;
       } else {
         // Gemini 2.5 uses thinkingBudget
         const budget = GEMINI_THINKING_BUDGETS[effectiveThinking];

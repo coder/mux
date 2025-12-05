@@ -50,7 +50,7 @@ export interface BuildSourcesParams {
   onOpenSettings?: (section?: string) => void;
 }
 
-const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high"];
+const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high", "xhigh"];
 
 /**
  * Command palette section names
@@ -431,6 +431,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         low: "Low — add a bit of reasoning",
         medium: "Medium — balanced reasoning",
         high: "High — maximum reasoning depth",
+        xhigh: "Extra High — extended deep thinking",
       };
       const currentLevel = p.getThinkingLevel(workspaceId);
 
