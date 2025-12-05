@@ -82,10 +82,17 @@ export function parseGitStatusScriptOutput(output: string): ParsedGitStatusOutpu
 }
 
 /**
- * Optimized git fetch script with no prompts.
+ * Smart git fetch script that minimizes lock contention.
  *
- * Environment variables disable all interactive prompts (keychain, SSH, credentials).
- * Git flags optimize for speed - only fetch refs, not objects.
+ * Uses ls-remote to check if remote has new commits before fetching.
+ * This avoids locks in the common case where remote SHA is already local
+ * (e.g., IDE or user already fetched).
+ *
+ * Flow:
+ * 1. ls-remote to get remote SHA (no lock, network only)
+ * 2. cat-file to check if SHA exists locally (no lock)
+ * 3. If local: skip fetch (no lock needed)
+ * 4. If not local: fetch to get new commits (lock, but rare)
  */
 export const GIT_FETCH_SCRIPT = `
 # Disable ALL prompts
@@ -94,7 +101,29 @@ export GIT_ASKPASS=echo
 export SSH_ASKPASS=echo
 export GIT_SSH_COMMAND="\${GIT_SSH_COMMAND:-ssh} -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
 
-# Fast fetch with optimization flags
+# Get primary branch name
+PRIMARY_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+if [ -z "$PRIMARY_BRANCH" ]; then
+  PRIMARY_BRANCH=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | cut -d' ' -f5)
+fi
+if [ -z "$PRIMARY_BRANCH" ]; then
+  PRIMARY_BRANCH="main"
+fi
+
+# Check remote SHA via ls-remote (no lock, network only)
+REMOTE_SHA=$(git ls-remote origin "refs/heads/$PRIMARY_BRANCH" 2>/dev/null | cut -f1)
+if [ -z "$REMOTE_SHA" ]; then
+  echo "SKIP: Could not get remote SHA"
+  exit 0
+fi
+
+# Check if SHA exists locally (no lock)
+if git cat-file -e "$REMOTE_SHA" 2>/dev/null; then
+  echo "SKIP: Remote SHA already local"
+  exit 0
+fi
+
+# Remote has new commits we don't have - fetch them
 git -c protocol.version=2 \\
     -c fetch.negotiationAlgorithm=skipping \\
     fetch origin \\
