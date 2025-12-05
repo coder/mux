@@ -168,6 +168,22 @@ jobs:
       - name: Build application
         run: bun run build
 
+      - name: Setup code signing
+        shell: bash
+        run: |
+          if [ -n "$WINDOWS_CERTIFICATE" ]; then
+            echo "Setting up Windows code signing certificate..."
+            echo "$WINDOWS_CERTIFICATE" | base64 -d > /tmp/certificate.pfx
+            echo "CSC_LINK=/tmp/certificate.pfx" >> "$GITHUB_ENV"
+            echo "CSC_KEY_PASSWORD=$WINDOWS_CERTIFICATE_PWD" >> "$GITHUB_ENV"
+            echo "✅ Windows code signing configured"
+          else
+            echo "⚠️ No Windows code signing certificate provided - building unsigned"
+          fi
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PWD: ${{ secrets.WINDOWS_CERTIFICATE_PWD }}
+
       - name: Package and publish for Windows (.exe)
         run: bun x electron-builder --win --publish always
         env:
