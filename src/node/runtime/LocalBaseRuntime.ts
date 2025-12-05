@@ -93,6 +93,11 @@ export abstract class LocalBaseRuntime implements Runtime {
         ? ["-n", options.niceness.toString(), bashCommand, ...bashArgs]
         : bashArgs;
 
+    // On Windows with PowerShell wrapper, detached:true creates a separate console
+    // which interferes with output capture. Only use detached on non-Windows.
+    // On Windows, PowerShell's -WindowStyle Hidden handles console hiding.
+    const useDetached = !isWindows;
+
     const childProcess = spawn(spawnCommand, spawnArgs, {
       cwd: spawnCwd,
       env: {
@@ -106,7 +111,8 @@ export abstract class LocalBaseRuntime implements Runtime {
       // the entire process group (including all backgrounded children) via process.kill(-pid).
       // NOTE: detached:true does NOT cause bash to wait for background jobs when using 'exit' event
       // instead of 'close' event. The 'exit' event fires when bash exits, ignoring background children.
-      detached: true,
+      // WINDOWS NOTE: detached:true causes issues with PowerShell wrapper output capture.
+      detached: useDetached,
       // Prevent console window from appearing on Windows (WSL bash spawns steal focus otherwise)
       windowsHide: true,
     });
