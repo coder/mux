@@ -129,12 +129,19 @@ class DisposableExec implements Disposable {
 export function execAsync(command: string): DisposableExec {
   // Wrap command in bash -c for consistent cross-platform behavior
   // For WSL, this also translates Windows paths to /mnt/... format
-  const { command: bashCmd, args } = getPreferredSpawnConfig(command);
+  const { command: bashCmd, args, stdin } = getPreferredSpawnConfig(command);
   const child = spawn(bashCmd, args, {
-    stdio: ["ignore", "pipe", "pipe"],
+    // Use pipe for stdin if we need to send input (for WSL via PowerShell)
+    stdio: [stdin ? "pipe" : "ignore", "pipe", "pipe"],
     // Prevent console window from appearing on Windows
     windowsHide: true,
   });
+
+  // Write stdin content if provided (used for WSL via PowerShell to avoid escaping issues)
+  if (stdin && child.stdin) {
+    child.stdin.write(stdin);
+    child.stdin.end();
+  }
   const promise = new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
     let stdout = "";
     let stderr = "";

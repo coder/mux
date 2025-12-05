@@ -54,6 +54,8 @@ export interface SpawnConfig {
   args: string[];
   /** Working directory (translated for WSL if needed) */
   cwd?: string;
+  /** Optional stdin to pipe to the process (used for WSL to avoid escaping issues) */
+  stdin?: string;
 }
 
 // ============================================================================
@@ -200,6 +202,83 @@ function findWslDistro(): string | null {
 }
 
 /**
+ * Find PowerShell executable path
+ * We need the full path because Node.js spawn() may not have the same PATH as a user shell
+ */
+function findPowerShell(): string | null {
+  // PowerShell Core (pwsh) locations - preferred as it's cross-platform
+  const pwshPaths = [
+    // PowerShell Core default installation
+    "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+    "C:\\Program Files\\PowerShell\\6\\pwsh.exe",
+    // User-local installation
+    path.join(process.env.LOCALAPPDATA ?? "", "Microsoft", "PowerShell", "pwsh.exe"),
+  ];
+
+  // Windows PowerShell (powershell.exe) - always present on Windows
+  const windowsPowerShellPaths = [
+    // 64-bit PowerShell
+    "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    // 32-bit PowerShell (on 64-bit systems via SysWOW64)
+    "C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe",
+  ];
+
+  // Try PowerShell Core first (better performance)
+  for (const psPath of pwshPaths) {
+    if (existsSync(psPath)) {
+      return psPath;
+    }
+  }
+
+  // Try to find pwsh in PATH
+  try {
+    const result = execSync("where pwsh", { encoding: "utf8", stdio: ["pipe", "pipe", "ignore"] });
+    const firstPath = result.split("\n")[0].trim();
+    if (firstPath && existsSync(firstPath)) {
+      return firstPath;
+    }
+  } catch {
+    // pwsh not in PATH
+  }
+
+  // Fall back to Windows PowerShell
+  for (const psPath of windowsPowerShellPaths) {
+    if (existsSync(psPath)) {
+      return psPath;
+    }
+  }
+
+  // Last resort: try to find powershell in PATH
+  try {
+    const result = execSync("where powershell", {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    const firstPath = result.split("\n")[0].trim();
+    if (firstPath && existsSync(firstPath)) {
+      return firstPath;
+    }
+  } catch {
+    // powershell not in PATH
+  }
+
+  return null;
+}
+
+// Cached PowerShell path (set during runtime detection)
+let cachedPowerShellPath: string | null | undefined = undefined;
+
+/**
+ * Get the PowerShell path, detecting it if not yet cached
+ */
+function getPowerShellPath(): string | null {
+  if (cachedPowerShellPath === undefined) {
+    cachedPowerShellPath = findPowerShell();
+  }
+  return cachedPowerShellPath;
+}
+
+/**
  * Detect all available bash runtimes on the current system
  * Results are cached for performance
  */
@@ -280,14 +359,33 @@ export function getSpawnConfig(runtime: BashRuntime, script: string, cwd?: strin
     case "wsl": {
       // Translate Windows paths in the script for WSL
       const translatedScript = translateWindowsPathsInCommand(script);
-      // Translate cwd for WSL - this goes INSIDE the bash command, not to cmd.exe
+      // Translate cwd for WSL - this goes INSIDE the bash script
       const translatedCwd = cwd ? windowsToWslPath(cwd) : undefined;
 
       // Build the script that cd's to the right directory and runs the command
       const cdPrefix = translatedCwd ? `cd '${translatedCwd}' && ` : "";
       const fullScript = cdPrefix + translatedScript;
 
-      // Build the WSL command args
+      // Try to use PowerShell to hide WSL console window
+      // Pass the script via stdin to avoid PowerShell escaping issues with special chars
+      const psPath = getPowerShellPath();
+      if (psPath) {
+        // Build WSL command to read script from stdin
+        const wslCmd = runtime.distro ? `wsl -d ${runtime.distro} bash` : "wsl bash";
+
+        // PowerShell will receive the script via stdin and pipe it to WSL
+        // -NoProfile: faster startup, avoids profile execution policy issues
+        // -WindowStyle Hidden: hide console window
+        // -Command: execute the piped command
+        return {
+          command: psPath,
+          args: ["-NoProfile", "-WindowStyle", "Hidden", "-Command", `$input | ${wslCmd}`],
+          cwd: undefined, // cwd is embedded in the script
+          stdin: fullScript,
+        };
+      }
+
+      // Fallback: direct WSL invocation (console window may flash)
       const wslArgs: string[] = [];
       if (runtime.distro) {
         wslArgs.push("-d", runtime.distro);

@@ -128,6 +128,7 @@ export class BashExecutionService {
       command: bashCommand,
       args: bashArgs,
       cwd: spawnCwd,
+      stdin: stdinContent,
     } = getPreferredSpawnConfig(script, config.cwd);
 
     // Windows doesn't have nice command, so just spawn bash directly
@@ -141,7 +142,8 @@ export class BashExecutionService {
     const child = spawn(spawnCommand, spawnArgs, {
       cwd: spawnCwd,
       env: this.createBashEnvironment(config.secrets),
-      stdio: ["ignore", "pipe", "pipe"],
+      // Use pipe for stdin if we need to send input (for WSL via PowerShell)
+      stdio: [stdinContent ? "pipe" : "ignore", "pipe", "pipe"],
       // Spawn as detached process group leader to prevent zombie processes
       // When bash spawns background processes, detached:true allows killing
       // the entire group via process.kill(-pid)
@@ -149,6 +151,12 @@ export class BashExecutionService {
       // Prevent console window from appearing on Windows (WSL bash spawns steal focus otherwise)
       windowsHide: true,
     });
+
+    // Write stdin content if provided (used for WSL via PowerShell to avoid escaping issues)
+    if (stdinContent && child.stdin) {
+      child.stdin.write(stdinContent);
+      child.stdin.end();
+    }
 
     log.debug(`BashExecutionService: Spawned process with PID ${child.pid ?? "unknown"}`);
 
