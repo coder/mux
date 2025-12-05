@@ -1,11 +1,10 @@
 import type { Runtime, BackgroundHandle } from "@/node/runtime/Runtime";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "./log";
-import * as fs from "fs/promises";
 import * as path from "path";
 
 /**
- * Metadata persisted to meta.json for recovery across restarts
+ * Metadata written to meta.json for bookkeeping
  */
 export interface BackgroundProcessMeta {
   id: string;
@@ -30,7 +29,7 @@ export interface BackgroundProcess {
   exitCode?: number; // Undefined if still running
   exitTime?: number; // Timestamp when exited (undefined if running)
   status: "running" | "exited" | "killed" | "failed";
-  handle: BackgroundHandle | null; // For process interaction (null after recovery)
+  handle: BackgroundHandle; // For process interaction
 }
 
 /**
@@ -125,13 +124,7 @@ export class BackgroundProcessManager {
     };
     const metaJson = JSON.stringify(meta, null, 2);
 
-    // Use handle if available, otherwise write directly to file
-    if (proc.handle) {
-      await proc.handle.writeMeta(metaJson);
-    } else {
-      const metaPath = path.join(proc.outputDir, "meta.json");
-      await fs.writeFile(metaPath, metaJson);
-    }
+    await proc.handle.writeMeta(metaJson);
   }
 
   /**
@@ -144,7 +137,7 @@ export class BackgroundProcessManager {
     if (!proc) return null;
 
     // Refresh status if still running (exit code null = still running)
-    if (proc.status === "running" && proc.handle) {
+    if (proc.status === "running") {
       const exitCode = await proc.handle.getExitCode();
       if (exitCode !== null) {
         log.debug(`Background process ${proc.id} has exited`);
@@ -179,12 +172,10 @@ export class BackgroundProcessManager {
    */
   private async refreshRunningStatuses(): Promise<void> {
     const runningProcesses = Array.from(this.processes.values()).filter(
-      (p) => p.status === "running" && p.handle
+      (p) => p.status === "running"
     );
 
     for (const proc of runningProcesses) {
-      if (!proc.handle) continue;
-
       const exitCode = await proc.handle.getExitCode();
       if (exitCode !== null) {
         log.debug(`Background process ${proc.id} has exited`);
@@ -220,17 +211,6 @@ export class BackgroundProcessManager {
       return { success: true };
     }
 
-    // Check if we have a valid handle
-    if (!proc.handle) {
-      log.debug(`Process ${processId} has no handle, marking as failed`);
-      proc.status = "failed";
-      proc.exitTime = Date.now();
-      await this.updateMetaFile(proc).catch((err: unknown) => {
-        log.debug(`BackgroundProcessManager: Failed to update meta.json: ${getErrorMessage(err)}`);
-      });
-      return { success: true };
-    }
-
     try {
       await proc.handle.terminate();
 
@@ -260,9 +240,7 @@ export class BackgroundProcessManager {
         log.debug(`BackgroundProcessManager: Failed to update meta.json: ${getErrorMessage(err)}`);
       });
       // Ensure handle is cleaned up even on error
-      if (proc.handle) {
-        await proc.handle.dispose();
-      }
+      await proc.handle.dispose();
       return { success: true };
     }
   }
