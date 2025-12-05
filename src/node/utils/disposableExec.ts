@@ -1,5 +1,6 @@
-import { exec } from "child_process";
+import { spawn } from "child_process";
 import type { ChildProcess } from "child_process";
+import { getPreferredSpawnConfig } from "@/node/utils/main/bashPath";
 
 /**
  * Disposable wrapper for child processes that ensures immediate cleanup.
@@ -117,12 +118,23 @@ class DisposableExec implements Disposable {
  * Execute command with automatic cleanup via `using` declaration.
  * Prevents zombie processes by ensuring child is reaped even on error.
  *
+ * Commands are always wrapped in `bash -c` for consistent behavior across platforms.
+ * On Windows, this uses the detected bash runtime (Git for Windows or WSL).
+ * For WSL, Windows paths in the command are automatically translated.
+ *
  * @example
  * using proc = execAsync("git status");
  * const { stdout } = await proc.result;
  */
 export function execAsync(command: string): DisposableExec {
-  const child = exec(command);
+  // Wrap command in bash -c for consistent cross-platform behavior
+  // For WSL, this also translates Windows paths to /mnt/... format
+  const { command: bashCmd, args } = getPreferredSpawnConfig(command);
+  const child = spawn(bashCmd, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+    // Prevent console window from appearing on Windows
+    windowsHide: true,
+  });
   const promise = new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
     let stdout = "";
     let stderr = "";

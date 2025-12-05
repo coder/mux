@@ -18,7 +18,7 @@ import type {
 } from "./Runtime";
 import { RuntimeError as RuntimeErrorClass } from "./Runtime";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
-import { getBashPath } from "@/node/utils/main/bashPath";
+import { getPreferredSpawnConfig } from "@/node/utils/main/bashPath";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { DisposableProcess } from "@/node/utils/disposableExec";
 import { expandTilde } from "./tildeExpansion";
@@ -67,18 +67,26 @@ export abstract class LocalBaseRuntime implements Runtime {
       );
     }
 
+    // Get spawn config for the preferred bash runtime
+    // This handles Git for Windows, WSL, and Unix/macOS automatically
+    // For WSL, paths in the command and cwd are translated to /mnt/... format
+    const {
+      command: bashCommand,
+      args: bashArgs,
+      cwd: spawnCwd,
+    } = getPreferredSpawnConfig(command, cwd);
+
     // If niceness is specified on Unix/Linux, spawn nice directly to avoid escaping issues
     // Windows doesn't have nice command, so just spawn bash directly
     const isWindows = process.platform === "win32";
-    const bashPath = getBashPath();
-    const spawnCommand = options.niceness !== undefined && !isWindows ? "nice" : bashPath;
+    const spawnCommand = options.niceness !== undefined && !isWindows ? "nice" : bashCommand;
     const spawnArgs =
       options.niceness !== undefined && !isWindows
-        ? ["-n", options.niceness.toString(), bashPath, "-c", command]
-        : ["-c", command];
+        ? ["-n", options.niceness.toString(), bashCommand, ...bashArgs]
+        : bashArgs;
 
     const childProcess = spawn(spawnCommand, spawnArgs, {
-      cwd,
+      cwd: spawnCwd,
       env: {
         ...process.env,
         ...(options.env ?? {}),
@@ -367,9 +375,16 @@ export abstract class LocalBaseRuntime implements Runtime {
     const loggers = createLineBufferedLoggers(initLogger);
 
     return new Promise<void>((resolve) => {
-      const bashPath = getBashPath();
-      const proc = spawn(bashPath, ["-c", `"${hookPath}"`], {
-        cwd: workspacePath,
+      // Get spawn config for the preferred bash runtime
+      // For WSL, the hook path and cwd are translated to /mnt/... format
+      const {
+        command: bashCommand,
+        args: bashArgs,
+        cwd: spawnCwd,
+      } = getPreferredSpawnConfig(`"${hookPath}"`, workspacePath);
+
+      const proc = spawn(bashCommand, bashArgs, {
+        cwd: spawnCwd,
         stdio: ["ignore", "pipe", "pipe"],
         env: {
           ...process.env,
