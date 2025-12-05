@@ -22,9 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       docs-only: ${{ steps.filter.outputs.docs == 'true' && steps.filter.outputs.src == 'false' && steps.filter.outputs.config == 'false' }}
-      config: ${{ steps.filter.outputs.config }}
-      ipc: ${{ steps.filter.outputs.ipc }}
-      runtime: ${{ steps.filter.outputs.runtime }}
+      browser-only: ${{ steps.filter.outputs.browser == 'true' && steps.filter.outputs.backend == 'false' && steps.filter.outputs.config == 'false' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -40,21 +38,18 @@ jobs:
               - 'src/**'
               - 'tests/**'
               - 'vscode/**'
-            # IPC tests: backend services, ORPC, config, common types
-            ipc:
-              - 'src/node/services/**'
-              - 'src/node/orpc/**'
-              - 'src/node/config/**'
-              - 'src/node/git/**'
-              - 'src/node/utils/**'
-              - 'src/common/**'
+            browser:
+              - 'src/browser/**'
+              - 'src/styles/**'
+              - '**/*.stories.tsx'
+              - '.storybook/**'
+            backend:
+              - 'src/node/**'
               - 'src/cli/**'
               - 'src/desktop/**'
-              - 'tests/ipc/**'
-            # Runtime tests: runtime implementations (SSH, worktree)
-            runtime:
-              - 'src/node/runtime/**'
-              - 'tests/runtime/**'
+              - 'src/common/**'
+              - 'tests/**'
+              - '!tests/e2e/**'
             config:
               - '.github/**'
               - 'jest.config.cjs'
@@ -124,47 +119,26 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup-mux
       - run: make build-main
-      - name: Compute test filter
-        id: test-filter
-        run: |
-          # Manual override takes precedence
-          if [[ -n "${{ github.event.inputs.test_filter }}" ]]; then
-            echo "filter=${{ github.event.inputs.test_filter }}" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
-          # Config changes = run everything
-          if [[ "${{ needs.changes.outputs.config }}" == "true" ]]; then
-            echo "filter=tests/ipc tests/runtime" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
-          # Build filter from changed paths
-          paths=""
-          if [[ "${{ needs.changes.outputs.ipc }}" == "true" ]]; then
-            paths="$paths tests/ipc"
-          fi
-          if [[ "${{ needs.changes.outputs.runtime }}" == "true" ]]; then
-            paths="$paths tests/runtime"
-          fi
-          paths=$(echo $paths | xargs)  # trim whitespace
-          
-          if [[ -z "$paths" ]]; then
-            echo "No integration tests needed for changed paths"
-            echo "filter=" >> $GITHUB_OUTPUT
-          else
-            echo "Running: $paths"
-            echo "filter=$paths" >> $GITHUB_OUTPUT
-          fi
       - name: Run integration tests
-        if: ${{ steps.test-filter.outputs.filter != '' }}
-        run: TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent ${{ steps.test-filter.outputs.filter }}
+        run: |
+          # Manual override
+          if [[ -n "${{ github.event.inputs.test_filter }}" ]]; then
+            TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent ${{ github.event.inputs.test_filter }}
+            exit 0
+          fi
+          
+          # Browser-only PRs skip IPC tests but run all other integration tests
+          if [[ "${{ needs.changes.outputs.browser-only }}" == "true" ]]; then
+            echo "Browser-only PR - skipping tests/ipc"
+            TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent --testPathIgnorePatterns='tests/ipc' tests/
+            exit 0
+          fi
+          
+          # Default: run ALL integration tests (future-proof for new test directories)
+          TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent tests/
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      - name: Skip integration tests
-        if: ${{ steps.test-filter.outputs.filter == '' }}
-        run: echo "Skipping integration tests - no relevant paths changed"
       - uses: codecov/codecov-action@v5
         if: ${{ steps.test-filter.outputs.filter != '' }}
         with:
