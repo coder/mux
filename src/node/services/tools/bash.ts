@@ -239,16 +239,6 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
 
       // Handle background execution
       if (run_in_background) {
-        // TODO: Add Windows support for background processes (process groups work differently)
-        if (process.platform === "win32") {
-          return {
-            success: false,
-            error: "Background execution is not yet supported on Windows",
-            exitCode: -1,
-            wall_duration_ms: 0,
-          };
-        }
-
         if (!config.workspaceId || !config.backgroundProcessManager || !config.runtime) {
           return {
             success: false,
