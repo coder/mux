@@ -230,7 +230,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
     description: TOOL_DEFINITIONS.bash.description + "\nRuns in " + config.cwd + " - no cd needed",
     inputSchema: TOOL_DEFINITIONS.bash.schema,
     execute: async (
-      { script, timeout_secs, run_in_background },
+      { script, timeout_secs, run_in_background, display_name },
       { abortSignal }
     ): Promise<BashToolResult> => {
       // Validate script input
@@ -267,6 +267,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
             cwd: config.cwd,
             secrets: config.secrets,
             niceness: config.niceness,
+            displayName: display_name,
           }
         );
 

@@ -39,6 +39,7 @@ export const createBashBackgroundTerminateTool: ToolFactory = (config: ToolConfi
         return {
           success: true,
           message: `Process ${process_id} terminated`,
+          display_name: process.displayName,
         };
       }
 

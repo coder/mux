@@ -38,6 +38,7 @@ export const createBashBackgroundListTool: ToolFactory = (config: ToolConfigurat
           exitCode: p.exitCode,
           stdout_path: `${p.outputDir}/stdout.log`,
           stderr_path: `${p.outputDir}/stderr.log`,
+          display_name: p.displayName,
         })),
       };
     },

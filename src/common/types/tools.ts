@@ -8,6 +8,7 @@ export interface BashToolArgs {
   script: string;
   timeout_secs?: number; // Optional: defaults to 3 seconds for interactivity
   run_in_background?: boolean; // Run without blocking (for long-running processes)
+  display_name?: string; // Human-readable name for background processes
 }
 
 interface CommonBashFields {
@@ -205,7 +206,7 @@ export interface BashBackgroundTerminateArgs {
 }
 
 export type BashBackgroundTerminateResult =
-  | { success: true; message: string }
+  | { success: true; message: string; display_name?: string }
   | { success: false; error: string };
 
 // Bash Background List Tool Types
@@ -219,6 +220,7 @@ export interface BashBackgroundListProcess {
   exitCode?: number;
   stdout_path: string; // Path to stdout log file
   stderr_path: string; // Path to stderr log file
+  display_name?: string; // Human-readable name (e.g., "Dev Server")
 }
 
 export type BashBackgroundListResult =
