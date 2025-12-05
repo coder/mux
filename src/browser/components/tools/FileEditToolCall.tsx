@@ -18,10 +18,11 @@ import {
   DetailSection,
   DetailLabel,
   LoadingDots,
+  ToolIcon,
+  ErrorBox,
 } from "./shared/ToolPrimitives";
 import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./shared/toolUtils";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
-import { TooltipWrapper, Tooltip } from "../Tooltip";
 import { DiffContainer, DiffRenderer, SelectableDiffRenderer } from "../shared/DiffRenderer";
 import { KebabMenu, type KebabMenuItem } from "../KebabMenu";
 
@@ -84,11 +85,7 @@ function renderDiff(
       </React.Fragment>
     ));
   } catch (error) {
-    return (
-      <div className="text-danger bg-danger-overlay border-danger rounded border-l-2 px-2 py-1.5 text-[11px]">
-        Failed to parse diff: {String(error)}
-      </div>
-    );
+    return <ErrorBox>Failed to parse diff: {String(error)}</ErrorBox>;
   }
 }
 
@@ -135,10 +132,7 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
           className="hover:text-text flex flex-1 cursor-pointer items-center gap-2"
         >
           <ExpandIcon expanded={expanded}>▶</ExpandIcon>
-          <TooltipWrapper inline>
-            <span>✏️</span>
-            <Tooltip>{toolName}</Tooltip>
-          </TooltipWrapper>
+          <ToolIcon emoji="✏️" toolName={toolName} />
           <div className="text-text flex max-w-96 min-w-0 items-center gap-1.5">
             <FileIcon filePath={filePath} className="text-[15px] leading-none" />
             <span className="font-monospace truncate">{filePath}</span>
@@ -161,9 +155,7 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
               {result.success === false && result.error && (
                 <DetailSection>
                   <DetailLabel>Error</DetailLabel>
-                  <div className="text-danger bg-danger-overlay border-danger rounded border-l-2 px-2 py-1.5 text-[11px]">
-                    {result.error}
-                  </div>
+                  <ErrorBox>{result.error}</ErrorBox>
                 </DetailSection>
               )}
 

@@ -11,9 +11,10 @@ import {
   DetailLabel,
   DetailContent,
   LoadingDots,
+  ToolIcon,
+  ErrorBox,
 } from "./shared/ToolPrimitives";
 import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./shared/toolUtils";
-import { TooltipWrapper, Tooltip } from "../Tooltip";
 
 interface FileReadToolCallProps {
   args: FileReadToolArgs;
@@ -79,10 +80,7 @@ export const FileReadToolCall: React.FC<FileReadToolCallProps> = ({
     <ToolContainer expanded={expanded} className="@container">
       <ToolHeader onClick={toggleExpanded}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
-        <TooltipWrapper inline>
-          <span>📖</span>
-          <Tooltip>file_read</Tooltip>
-        </TooltipWrapper>
+        <ToolIcon emoji="📖" toolName="file_read" />
         <div className="text-text flex max-w-96 min-w-0 items-center gap-1.5">
           <FileIcon filePath={filePath} className="text-[15px] leading-none" />
           <span className="font-monospace truncate">{filePath}</span>
@@ -125,9 +123,7 @@ export const FileReadToolCall: React.FC<FileReadToolCallProps> = ({
               {result.success === false && result.error && (
                 <DetailSection>
                   <DetailLabel>Error</DetailLabel>
-                  <div className="text-danger bg-danger-overlay border-danger rounded border-l-2 px-2 py-1.5 text-[11px]">
-                    {result.error}
-                  </div>
+                  <ErrorBox>{result.error}</ErrorBox>
                 </DetailSection>
               )}
 

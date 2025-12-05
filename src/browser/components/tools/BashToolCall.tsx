@@ -117,19 +117,11 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
               )}
 
               {"backgroundProcessId" in result ? (
-                // Background process: show process ID and file paths
-                <>
-                  <DetailSection>
-                    <DetailLabel>Process ID</DetailLabel>
-                    <div className="bg-code-bg rounded px-2 py-1.5 font-mono text-[11px]">
-                      {result.backgroundProcessId}
-                    </div>
-                  </DetailSection>
-                  <DetailSection>
-                    <DetailLabel>Output Files</DetailLabel>
-                    <OutputPaths stdout={result.stdout_path} stderr={result.stderr_path} />
-                  </DetailSection>
-                </>
+                // Background process: show file paths
+                <DetailSection>
+                  <DetailLabel>Output Files</DetailLabel>
+                  <OutputPaths stdout={result.stdout_path} stderr={result.stderr_path} />
+                </DetailSection>
               ) : (
                 // Normal process: show output
                 result.output && (
