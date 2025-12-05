@@ -61,7 +61,8 @@ export class SSHBackgroundHandle implements BackgroundHandle {
 
     try {
       // Use shared buildTerminateCommand for parity with Local
-      const exitCodePath = `${this.outputDir}/exit_code`;
+      // Must expand tilde - buildTerminateCommand uses shellQuote which prevents expansion
+      const exitCodePath = expandTildeForSSH(`${this.outputDir}/exit_code`);
       const terminateCmd = buildTerminateCommand(this.pid, exitCodePath);
       await execBuffered(this.sshRuntime, terminateCmd, {
         cwd: "/",
