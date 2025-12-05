@@ -83,6 +83,8 @@ export interface SpawnCommandOptions {
   niceness?: number;
   /** Whether to use setsid (default: true). Set false on Windows local. */
   useSetsid?: boolean;
+  /** Function to quote paths for shell (default: shellQuote). Use expandTildeForSSH for SSH. */
+  quotePath?: (path: string) => string;
 }
 
 /**
@@ -98,11 +100,12 @@ export function buildSpawnCommand(options: SpawnCommandOptions): string {
   const bash = options.bashPath ?? "bash";
   const nicePrefix = options.niceness !== undefined ? `nice -n ${options.niceness} ` : "";
   const setsidPrefix = options.useSetsid === false ? "" : "setsid ";
+  const quotePath = options.quotePath ?? shellQuote;
 
   return (
     `(${nicePrefix}${setsidPrefix}nohup ${bash} -c ${shellQuote(options.wrapperScript)} ` +
-    `> ${shellQuote(options.stdoutPath)} ` +
-    `2> ${shellQuote(options.stderrPath)} ` +
+    `> ${quotePath(options.stdoutPath)} ` +
+    `2> ${quotePath(options.stderrPath)} ` +
     `< /dev/null & echo $!)`
   );
 }
