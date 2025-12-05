@@ -34,12 +34,13 @@ function hasBuildInfo(value: unknown): value is VersionMetadata {
   return typeof candidate.buildTime === "string";
 }
 
-function formatUSDate(isoDate: string): string {
+function formatLocalDate(isoDate: string): string {
   const date = new Date(isoDate);
-  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(date.getUTCDate()).padStart(2, "0");
-  const year = date.getUTCFullYear();
-  return `${month}/${day}/${year}`;
+  return date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
 }
 
 function formatExtendedTimestamp(isoDate: string): string {
@@ -61,7 +62,7 @@ function parseBuildInfo(version: unknown) {
     const gitDescribe = typeof git_describe === "string" ? git_describe : undefined;
 
     return {
-      buildDate: formatUSDate(buildTime),
+      buildDate: formatLocalDate(buildTime),
       extendedTimestamp: formatExtendedTimestamp(buildTime),
       gitDescribe,
     };
