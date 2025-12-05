@@ -1,3 +1,6 @@
+import { execSync } from "child_process";
+import * as os from "os";
+
 import type { Runtime } from "./Runtime";
 import { LocalRuntime } from "./LocalRuntime";
 import { WorktreeRuntime } from "./WorktreeRuntime";
@@ -9,8 +12,25 @@ import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility
 // Re-export for backward compatibility with existing imports
 export { isIncompatibleRuntimeConfig };
 
-// Default output directory for background processes
-const DEFAULT_BG_OUTPUT_DIR = "/tmp/mux-bashes";
+/**
+ * Get the default output directory for background processes.
+ * Uses os.tmpdir() for platform-appropriate temp directory.
+ * On Windows, converts to POSIX path using cygpath for Git Bash compatibility.
+ */
+function getDefaultBgOutputDir(): string {
+  const tempDir = os.tmpdir();
+  if (process.platform === "win32") {
+    try {
+      // cygpath converts Windows paths to POSIX format for Git Bash / MSYS2
+      const posixPath = execSync(`cygpath -u "${tempDir}"`, { encoding: "utf8" }).trim();
+      return `${posixPath}/mux-bashes`;
+    } catch {
+      // Fallback if cygpath unavailable (shouldn't happen with Git Bash)
+      return "/tmp/mux-bashes";
+    }
+  }
+  return `${tempDir}/mux-bashes`;
+}
 
 /**
  * Error thrown when a workspace has an incompatible runtime configuration,
@@ -52,7 +72,7 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
     );
   }
 
-  const bgOutputDir = config.bgOutputDir ?? DEFAULT_BG_OUTPUT_DIR;
+  const bgOutputDir = config.bgOutputDir ?? getDefaultBgOutputDir();
 
   switch (config.type) {
     case "local":
