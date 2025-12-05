@@ -377,9 +377,17 @@ export function getSpawnConfig(runtime: BashRuntime, script: string, cwd?: strin
         // -NoProfile: faster startup, avoids profile execution policy issues
         // -WindowStyle Hidden: hide console window
         // -Command: execute the piped command
+        // Use [Console]::In.ReadToEnd() instead of $input because $input doesn't work
+        // reliably with -Command (it's meant for pipeline input in functions/filters)
         return {
           command: psPath,
-          args: ["-NoProfile", "-WindowStyle", "Hidden", "-Command", `$input | ${wslCmd}`],
+          args: [
+            "-NoProfile",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            `[Console]::In.ReadToEnd() | ${wslCmd}`,
+          ],
           cwd: undefined, // cwd is embedded in the script
           stdin: fullScript,
         };
