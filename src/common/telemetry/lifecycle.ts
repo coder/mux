@@ -4,7 +4,7 @@
  * Handles app startup events
  */
 
-import { trackEvent } from "./index";
+import { trackEvent } from "./client";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
 
 // Storage key for first launch tracking

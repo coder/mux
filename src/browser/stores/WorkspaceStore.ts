@@ -26,7 +26,7 @@ import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import type { TokenConsumer } from "@/common/types/chatStats";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { createFreshRetryState } from "@/browser/utils/messages/retryState";
-import { trackEvent, roundToBase2 } from "@/common/telemetry";
+import { trackStreamCompleted } from "@/common/telemetry";
 
 export interface WorkspaceState {
   name: string; // User-facing workspace name (e.g., "feature-branch")
@@ -162,7 +162,7 @@ export class WorkspaceStore {
       aggregator.clearTokenState(streamEndData.messageId);
 
       // Track stream completion telemetry
-      this.trackStreamCompleted(streamEndData, false);
+      this.trackStreamCompletedTelemetry(streamEndData, false);
 
       // Reset retry state on successful stream completion
       updatePersistedState(getRetryStateKey(workspaceId), createFreshRetryState());
@@ -179,7 +179,7 @@ export class WorkspaceStore {
       // Track stream interruption telemetry (get model from aggregator)
       const model = aggregator.getCurrentModel();
       if (model) {
-        this.trackStreamCompleted(
+        this.trackStreamCompletedTelemetry(
           {
             metadata: {
               model,
@@ -307,7 +307,7 @@ export class WorkspaceStore {
   /**
    * Track stream completion telemetry
    */
-  private trackStreamCompleted(
+  private trackStreamCompletedTelemetry(
     data: {
       metadata: {
         model: string;
@@ -321,15 +321,8 @@ export class WorkspaceStore {
     const durationSecs = metadata.duration ? metadata.duration / 1000 : 0;
     const outputTokens = metadata.usage?.outputTokens ?? 0;
 
-    trackEvent({
-      event: "stream_completed",
-      properties: {
-        model: metadata.model,
-        wasInterrupted,
-        duration_b2: roundToBase2(durationSecs),
-        output_tokens_b2: roundToBase2(outputTokens),
-      },
-    });
+    // trackStreamCompleted handles rounding internally
+    trackStreamCompleted(metadata.model, wasInterrupted, durationSecs, outputTokens);
   }
 
   /**

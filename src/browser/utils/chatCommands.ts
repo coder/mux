@@ -36,28 +36,7 @@ import {
 // ============================================================================
 
 import { createCommandToast } from "@/browser/components/ChatInputToasts";
-import { trackEvent } from "@/common/telemetry";
-import type { TelemetryCommandType } from "@/common/telemetry/payload";
-
-/**
- * Track command usage telemetry (fire and forget)
- */
-function trackCommandUsed(command: TelemetryCommandType): void {
-  trackEvent({
-    event: "command_used",
-    properties: { command },
-  });
-}
-
-/**
- * Track provider configuration telemetry (fire and forget)
- */
-function trackProviderConfigured(provider: string, keyType: string): void {
-  trackEvent({
-    event: "provider_configured",
-    properties: { provider, keyType },
-  });
-}
+import { trackCommandUsed, trackProviderConfigured } from "@/common/telemetry";
 
 export interface ForkOptions {
   client: RouterClient<AppRouter>;
