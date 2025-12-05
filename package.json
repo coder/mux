@@ -257,7 +257,11 @@
     "win": {
       "target": "nsis",
       "icon": "build/icon.png",
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "sign": "scripts/sign-windows.js",
+      "signingHashAlgorithms": [
+        "sha256"
+      ]
     },
     "npmRebuild": false,
     "buildDependenciesFromSource": false

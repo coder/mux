@@ -282,6 +282,33 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
+  build-windows:
+    name: Build / Windows
+    needs: [changes]
+    if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-mux
+      - name: Install GNU Make
+        run: choco install -y make
+      - name: Verify tools
+        shell: bash
+        run: |
+          make --version
+          bun --version
+          magick --version | head -1
+      - run: bun run build
+      - run: make dist-win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-windows
+          path: release/*.exe
+          retention-days: 30
+          if-no-files-found: error
+
   build-vscode:
     name: Build / VS Code
     needs: [changes]
@@ -327,6 +354,7 @@ jobs:
       - smoke-docker
       - build-linux
       - build-macos
+      - build-windows
       - build-vscode
       - codex-comments
     runs-on: ubuntu-latest

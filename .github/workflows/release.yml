@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: write # Required for electron-builder to upload release assets
+  id-token: write # Required for GCP workload identity authentication (Windows code signing)
 
 env:
   RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
@@ -168,10 +169,53 @@ jobs:
       - name: Build application
         run: bun run build
 
+      # Setup Java for jsign (EV code signing with GCP KMS)
+      - name: Setup Java
+        uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12 # v4.7.0
+        with:
+          distribution: "zulu"
+          java-version: "11.0"
+
+      - name: Authenticate to Google Cloud
+        id: gcloud_auth
+        if: ${{ vars.GCP_WORKLOAD_ID_PROVIDER != '' }}
+        uses: google-github-actions/auth@71f986410dfbc7added4569d411d040a91dc6935 # v2.1.8
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_ID_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          token_format: "access_token"
+
+      - name: Setup code signing
+        shell: pwsh
+        run: |
+          if (-not $env:EV_SIGNING_CERT) {
+            Write-Host "⚠️ No Windows code signing certificate provided - building unsigned"
+            exit 0
+          }
+
+          # Save EV certificate to temp file
+          $certPath = Join-Path $env:TEMP "ev_cert.pem"
+          Set-Content -Path $certPath -Value $env:EV_SIGNING_CERT
+          Add-Content -Path $env:GITHUB_ENV -Value "EV_CERTIFICATE_PATH=$certPath"
+
+          # Download jsign
+          $jsignPath = Join-Path $env:TEMP "jsign-6.0.jar"
+          Invoke-WebRequest -Uri "https://github.com/ebourg/jsign/releases/download/6.0/jsign-6.0.jar" -OutFile $jsignPath
+          Add-Content -Path $env:GITHUB_ENV -Value "JSIGN_PATH=$jsignPath"
+
+          Write-Host "✅ Windows EV code signing configured"
+        env:
+          EV_SIGNING_CERT: ${{ secrets.EV_SIGNING_CERT }}
+
       - name: Package and publish for Windows (.exe)
         run: bun x electron-builder --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # EV signing environment variables (used by custom sign script if configured)
+          EV_KEYSTORE: ${{ vars.EV_KEYSTORE }}
+          EV_KEY: ${{ vars.EV_KEY }}
+          EV_TSA_URL: ${{ vars.EV_TSA_URL }}
+          GCLOUD_ACCESS_TOKEN: ${{ steps.gcloud_auth.outputs.access_token }}
 
   notify-discord:
     name: Notify Discord
