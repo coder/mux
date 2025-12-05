@@ -17,7 +17,7 @@ import {
 } from "./ssh-fixture";
 import { createTestRuntime, TestWorkspace, type RuntimeType } from "./test-helpers";
 import { execBuffered, readFileString, writeFileString } from "@/node/utils/runtime/helpers";
-import type { Runtime } from "@/node/runtime/Runtime";
+import type { BackgroundHandle, Runtime } from "@/node/runtime/Runtime";
 import { RuntimeError } from "@/node/runtime/Runtime";
 
 // Skip all tests if TEST_INTEGRATION is not set
@@ -1183,6 +1183,36 @@ describeIntegration("Runtime integration tests", () => {
         // Generate unique IDs for each test to avoid conflicts
         const genId = () => `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+        // Polling helpers to handle SSH latency variability
+        async function waitForOutput(
+          rt: Runtime,
+          filePath: string,
+          opts?: { timeout?: number; interval?: number }
+        ): Promise<string> {
+          const { timeout = 5000, interval = 100 } = opts ?? {};
+          const start = Date.now();
+          while (Date.now() - start < timeout) {
+            const content = await readFileString(rt, filePath);
+            if (content.trim()) return content;
+            await new Promise((r) => setTimeout(r, interval));
+          }
+          return await readFileString(rt, filePath);
+        }
+
+        async function waitForExitCode(
+          handle: BackgroundHandle,
+          opts?: { timeout?: number; interval?: number }
+        ): Promise<number | null> {
+          const { timeout = 5000, interval = 100 } = opts ?? {};
+          const start = Date.now();
+          while (Date.now() - start < timeout) {
+            const code = await handle.getExitCode();
+            if (code !== null) return code;
+            await new Promise((r) => setTimeout(r, interval));
+          }
+          return await handle.getExitCode();
+        }
+
         test.concurrent("spawns process and captures output to file", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
@@ -1200,12 +1230,9 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.handle.outputDir).toContain(workspaceId);
           expect(result.handle.outputDir).toMatch(/bg-[0-9a-f]{8}/);
 
-          // Wait for process to complete and output to be written
-          await new Promise((resolve) => setTimeout(resolve, 500));
-
-          // Read stdout from file
+          // Poll for output (handles SSH latency)
           const stdoutPath = `${result.handle.outputDir}/stdout.log`;
-          const stdout = await readFileString(runtime, stdoutPath);
+          const stdout = await waitForOutput(runtime, stdoutPath);
           expect(stdout.trim()).toBe("hello from background");
 
           await result.handle.dispose();
@@ -1225,11 +1252,8 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.success).toBe(true);
           if (!result.success) return;
 
-          // Wait for process to exit and trap to write exit code
-          await new Promise((resolve) => setTimeout(resolve, 500));
-
-          // Check exit code
-          const exitCode = await result.handle.getExitCode();
+          // Poll for exit code (handles SSH latency)
+          const exitCode = await waitForExitCode(result.handle);
           expect(exitCode).toBe(42);
 
           await result.handle.dispose();
@@ -1255,8 +1279,9 @@ describeIntegration("Runtime integration tests", () => {
           // Terminate it
           await result.handle.terminate();
 
-          // Should have exit code after termination
-          expect(await result.handle.getExitCode()).not.toBe(null);
+          // Poll for exit code after termination
+          const exitCode = await waitForExitCode(result.handle);
+          expect(exitCode).not.toBe(null);
 
           await result.handle.dispose();
         });
@@ -1281,11 +1306,9 @@ describeIntegration("Runtime integration tests", () => {
           // Terminate
           await result.handle.terminate();
 
-          // Give it a moment to die
-          await new Promise((resolve) => setTimeout(resolve, 100));
-
-          // Should have exit code (not running anymore)
-          expect(await result.handle.getExitCode()).not.toBe(null);
+          // Poll for exit code (handles SSH latency)
+          const exitCode = await waitForExitCode(result.handle);
+          expect(exitCode).not.toBe(null);
 
           await result.handle.dispose();
         });
@@ -1303,12 +1326,9 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.success).toBe(true);
           if (!result.success) return;
 
-          // Wait for output
-          await new Promise((resolve) => setTimeout(resolve, 500));
-
-          // Read stderr from file
+          // Poll for output (handles SSH latency)
           const stderrPath = `${result.handle.outputDir}/stderr.log`;
-          const stderr = await readFileString(runtime, stderrPath);
+          const stderr = await waitForOutput(runtime, stderrPath);
           expect(stderr.trim()).toBe("error message");
 
           await result.handle.dispose();
@@ -1327,11 +1347,9 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.success).toBe(true);
           if (!result.success) return;
 
-          // Wait for output
-          await new Promise((resolve) => setTimeout(resolve, 500));
-
+          // Poll for output (handles SSH latency)
           const stdoutPath = `${result.handle.outputDir}/stdout.log`;
-          const stdout = await readFileString(runtime, stdoutPath);
+          const stdout = await waitForOutput(runtime, stdoutPath);
           expect(stdout.trim()).toBe(workspace.path);
 
           await result.handle.dispose();
@@ -1351,11 +1369,9 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.success).toBe(true);
           if (!result.success) return;
 
-          // Wait for output
-          await new Promise((resolve) => setTimeout(resolve, 500));
-
+          // Poll for output (handles SSH latency)
           const stdoutPath = `${result.handle.outputDir}/stdout.log`;
-          const stdout = await readFileString(runtime, stdoutPath);
+          const stdout = await waitForOutput(runtime, stdoutPath);
           expect(stdout.trim()).toBe("secret=hunter2");
 
           await result.handle.dispose();
