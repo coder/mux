@@ -1,5 +1,6 @@
 import type { ImagePart } from "@/common/orpc/types";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { TelemetryRuntimeType } from "@/common/telemetry/payload";
 import type { AutoCompactionCheckResult } from "@/browser/utils/compaction/autoCompactionCheck";
 
 export interface ChatInputAPI {
@@ -14,6 +15,8 @@ export interface ChatInputAPI {
 export interface ChatInputWorkspaceVariant {
   variant: "workspace";
   workspaceId: string;
+  /** Runtime type for the workspace (for telemetry) - no sensitive details like SSH host */
+  runtimeType?: TelemetryRuntimeType;
   onMessageSent?: () => void;
   onTruncateHistory: (percentage?: number) => Promise<void>;
   onProviderConfig?: (provider: string, keyPath: string[], value: string) => Promise<void>;

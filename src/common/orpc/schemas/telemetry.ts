@@ -19,13 +19,40 @@ const ErrorContextSchema = z.enum([
   "git-operation",
 ]);
 
+// Runtime type enum (matches payload.ts TelemetryRuntimeType)
+const TelemetryRuntimeTypeSchema = z.enum(["local", "worktree", "ssh"]);
+
+// Frontend platform info (matches payload.ts FrontendPlatformInfo)
+const FrontendPlatformInfoSchema = z.object({
+  userAgent: z.string(),
+  platform: z.string(),
+});
+
+// Thinking level enum (matches payload.ts TelemetryThinkingLevel)
+const TelemetryThinkingLevelSchema = z.enum(["off", "low", "medium", "high"]);
+
+// Command type enum (matches payload.ts TelemetryCommandType)
+const TelemetryCommandTypeSchema = z.enum([
+  "clear",
+  "compact",
+  "new",
+  "fork",
+  "vim",
+  "model",
+  "mode",
+  "providers",
+]);
+
 // Individual event payload schemas
 const AppStartedPropertiesSchema = z.object({
   isFirstLaunch: z.boolean(),
+  vimModeEnabled: z.boolean(),
 });
 
 const WorkspaceCreatedPropertiesSchema = z.object({
   workspaceId: z.string(),
+  runtimeType: TelemetryRuntimeTypeSchema,
+  frontendPlatform: FrontendPlatformInfoSchema,
 });
 
 const WorkspaceSwitchedPropertiesSchema = z.object({
@@ -37,6 +64,30 @@ const MessageSentPropertiesSchema = z.object({
   model: z.string(),
   mode: z.string(),
   message_length_b2: z.number(),
+  runtimeType: TelemetryRuntimeTypeSchema,
+  frontendPlatform: FrontendPlatformInfoSchema,
+  thinkingLevel: TelemetryThinkingLevelSchema,
+});
+
+const StreamCompletedPropertiesSchema = z.object({
+  model: z.string(),
+  wasInterrupted: z.boolean(),
+  duration_b2: z.number(),
+  output_tokens_b2: z.number(),
+});
+
+const ProviderConfiguredPropertiesSchema = z.object({
+  provider: z.string(),
+  keyType: z.string(),
+});
+
+const CommandUsedPropertiesSchema = z.object({
+  command: TelemetryCommandTypeSchema,
+});
+
+const VoiceTranscriptionPropertiesSchema = z.object({
+  audio_duration_b2: z.number(),
+  success: z.boolean(),
 });
 
 const ErrorOccurredPropertiesSchema = z.object({
@@ -61,6 +112,22 @@ export const TelemetryEventSchema = z.discriminatedUnion("event", [
   z.object({
     event: z.literal("message_sent"),
     properties: MessageSentPropertiesSchema,
+  }),
+  z.object({
+    event: z.literal("stream_completed"),
+    properties: StreamCompletedPropertiesSchema,
+  }),
+  z.object({
+    event: z.literal("provider_configured"),
+    properties: ProviderConfiguredPropertiesSchema,
+  }),
+  z.object({
+    event: z.literal("command_used"),
+    properties: CommandUsedPropertiesSchema,
+  }),
+  z.object({
+    event: z.literal("voice_transcription"),
+    properties: VoiceTranscriptionPropertiesSchema,
   }),
   z.object({
     event: z.literal("error_occurred"),

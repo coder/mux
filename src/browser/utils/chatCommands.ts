@@ -36,6 +36,28 @@ import {
 // ============================================================================
 
 import { createCommandToast } from "@/browser/components/ChatInputToasts";
+import { trackEvent } from "@/common/telemetry";
+import type { TelemetryCommandType } from "@/common/telemetry/payload";
+
+/**
+ * Track command usage telemetry (fire and forget)
+ */
+function trackCommandUsed(command: TelemetryCommandType): void {
+  trackEvent({
+    event: "command_used",
+    properties: { command },
+  });
+}
+
+/**
+ * Track provider configuration telemetry (fire and forget)
+ */
+function trackProviderConfigured(provider: string, keyType: string): void {
+  trackEvent({
+    event: "provider_configured",
+    properties: { provider, keyType },
+  });
+}
 
 export interface ForkOptions {
   client: RouterClient<AppRouter>;
@@ -146,6 +168,9 @@ export async function processSlashCommand(
 
       try {
         await context.onProviderConfig(parsed.provider, parsed.keyPath, parsed.value);
+        // Track successful provider configuration
+        trackCommandUsed("providers");
+        trackProviderConfigured(parsed.provider, parsed.keyPath[0] ?? "unknown");
         setToast({
           id: Date.now().toString(),
           type: "success",
@@ -216,6 +241,7 @@ export async function processSlashCommand(
     setInput("");
     setPreferredModel(modelString);
     onModelChange?.(modelString);
+    trackCommandUsed("model");
     setToast({
       id: Date.now().toString(),
       type: "success",
@@ -227,6 +253,7 @@ export async function processSlashCommand(
   if (parsed.type === "vim-toggle") {
     setInput("");
     setVimEnabled((prev) => !prev);
+    trackCommandUsed("vim");
     return { clearInput: true, toastShown: false };
   }
 
@@ -295,6 +322,7 @@ async function handleClearCommand(
 
   try {
     await onTruncateHistory(1.0);
+    trackCommandUsed("clear");
     setToast({
       id: Date.now().toString(),
       type: "success",
@@ -385,6 +413,7 @@ async function handleForkCommand(
       });
       return { clearInput: false, toastShown: true };
     } else {
+      trackCommandUsed("fork");
       setToast({
         id: Date.now().toString(),
         type: "success",
@@ -786,6 +815,7 @@ export async function handleNewCommand(
       return { clearInput: false, toastShown: true };
     }
 
+    trackCommandUsed("new");
     setToast({
       id: Date.now().toString(),
       type: "success",
@@ -859,6 +889,7 @@ export async function handleCompactCommand(
       return { clearInput: false, toastShown: true };
     }
 
+    trackCommandUsed("compact");
     setToast({
       id: Date.now().toString(),
       type: "success",

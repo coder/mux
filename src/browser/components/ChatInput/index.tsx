@@ -119,6 +119,8 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   const editingMessage = variant === "workspace" ? props.editingMessage : undefined;
   const isCompacting = variant === "workspace" ? (props.isCompacting ?? false) : false;
   const canInterrupt = variant === "workspace" ? (props.canInterrupt ?? false) : false;
+  // runtimeType for telemetry - defaults to "worktree" if not provided
+  const runtimeType = variant === "workspace" ? (props.runtimeType ?? "worktree") : "worktree";
 
   // Storage keys differ by variant
   const storageKeys = (() => {
@@ -1015,7 +1017,13 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           setImageAttachments(previousImageAttachments);
         } else {
           // Track telemetry for successful message send
-          telemetry.messageSent(sendMessageOptions.model, mode, actualMessageText.length);
+          telemetry.messageSent(
+            sendMessageOptions.model,
+            mode,
+            actualMessageText.length,
+            runtimeType,
+            sendMessageOptions.thinkingLevel ?? "off"
+          );
 
           // Exit editing mode if we were editing
           if (editingMessage && props.onCancelEdit) {

@@ -9,5 +9,12 @@
 
 export { initTelemetry, trackEvent, shutdownTelemetry } from "./client";
 export { trackAppStarted } from "./lifecycle";
-export type { TelemetryEventPayload, ErrorContext } from "./payload";
-export { roundToBase2 } from "./utils";
+export type {
+  TelemetryEventPayload,
+  ErrorContext,
+  TelemetryRuntimeType,
+  TelemetryThinkingLevel,
+  TelemetryCommandType,
+  FrontendPlatformInfo,
+} from "./payload";
+export { roundToBase2, getFrontendPlatformInfo, getRuntimeTypeForTelemetry } from "./utils";

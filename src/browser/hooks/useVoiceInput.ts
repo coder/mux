@@ -9,6 +9,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import type { APIClient } from "@/browser/contexts/API";
+import { trackEvent, roundToBase2 } from "@/common/telemetry";
 
 export type VoiceInputState = "idle" | "recording" | "transcribing";
 
@@ -117,6 +118,9 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
   const shouldSendRef = useRef(false);
   const wasCancelledRef = useRef(false);
 
+  // Track recording start time for duration telemetry
+  const recordingStartTimeRef = useRef<number>(0);
+
   // Keep callbacks fresh without recreating functions
   const callbacksRef = useRef(options);
   useEffect(() => {
@@ -134,6 +138,9 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
     const shouldSend = shouldSendRef.current;
     shouldSendRef.current = false;
 
+    // Calculate recording duration for telemetry
+    const audioDurationSecs = (Date.now() - recordingStartTimeRef.current) / 1000;
+
     try {
       // Encode audio as base64 for IPC transport
       const buffer = await audioBlob.arrayBuffer();
@@ -144,6 +151,11 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
       const api = callbacksRef.current.api;
       if (!api) {
         callbacksRef.current.onError?.("Voice API not available");
+        // Track failed transcription
+        trackEvent({
+          event: "voice_transcription",
+          properties: { audio_duration_b2: roundToBase2(audioDurationSecs), success: false },
+        });
         return;
       }
 
@@ -151,11 +163,29 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
 
       if (!result.success) {
         callbacksRef.current.onError?.(result.error);
+        // Track failed transcription
+        trackEvent({
+          event: "voice_transcription",
+          properties: { audio_duration_b2: roundToBase2(audioDurationSecs), success: false },
+        });
         return;
       }
 
       const text = result.data.trim();
-      if (!text) return; // Empty transcription, nothing to do
+      if (!text) {
+        // Track empty transcription as success (API worked, just no speech)
+        trackEvent({
+          event: "voice_transcription",
+          properties: { audio_duration_b2: roundToBase2(audioDurationSecs), success: true },
+        });
+        return;
+      }
+
+      // Track successful transcription
+      trackEvent({
+        event: "voice_transcription",
+        properties: { audio_duration_b2: roundToBase2(audioDurationSecs), success: true },
+      });
 
       callbacksRef.current.onTranscript(text);
 
@@ -166,6 +196,11 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       callbacksRef.current.onError?.(`Transcription failed: ${msg}`);
+      // Track failed transcription
+      trackEvent({
+        event: "voice_transcription",
+        properties: { audio_duration_b2: roundToBase2(audioDurationSecs), success: false },
+      });
     } finally {
       setState("idle");
     }
@@ -235,6 +270,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
       recorderRef.current = recorder;
       setMediaRecorder(recorder);
       recorder.start();
+      recordingStartTimeRef.current = Date.now();
       setState("recording");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

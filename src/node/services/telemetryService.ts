@@ -122,8 +122,10 @@ export class TelemetryService {
   private getBaseProperties(): BaseTelemetryProperties {
     return {
       version: getVersionString(),
-      platform: process.platform,
+      backend_platform: process.platform,
       electronVersion: process.versions.electron ?? "unknown",
+      nodeVersion: process.versions.node ?? "unknown",
+      bunVersion: process.versions.bun ?? "unknown",
     };
   }
 

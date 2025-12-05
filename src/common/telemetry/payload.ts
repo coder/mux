@@ -15,9 +15,9 @@
  *   base-2 rounding (e.g., 128, 256, 512) to preserve privacy while enabling analysis.
  * - When in doubt, don't send it. Privacy is paramount.
  *
- * NOTE: Base properties (version, platform, electronVersion) are automatically
- * added by the backend TelemetryService. Frontend code only needs to provide
- * event-specific properties.
+ * NOTE: Base properties (version, backend_platform, electronVersion, nodeVersion,
+ * bunVersion) are automatically added by the backend TelemetryService. Frontend
+ * code only needs to provide event-specific properties.
  */
 
 /**
@@ -27,10 +27,14 @@
 export interface BaseTelemetryProperties {
   /** Application version */
   version: string;
-  /** Operating system platform (darwin, win32, linux) */
-  platform: NodeJS.Platform | "unknown";
-  /** Electron version */
+  /** Backend operating system platform (darwin, win32, linux) - where Node.js/backend runs */
+  backend_platform: NodeJS.Platform | "unknown";
+  /** Electron version (if running in Electron) */
   electronVersion: string;
+  /** Node.js version */
+  nodeVersion: string;
+  /** Bun version (if running in Bun) */
+  bunVersion: string;
 }
 
 /**
@@ -39,6 +43,25 @@ export interface BaseTelemetryProperties {
 export interface AppStartedPayload {
   /** Whether this is the first app launch */
   isFirstLaunch: boolean;
+  /** Whether vim mode is enabled at startup */
+  vimModeEnabled: boolean;
+}
+
+/**
+ * Runtime type for telemetry - normalized from RuntimeConfig
+ * Values: 'local' (project-dir), 'worktree' (git worktree isolation), 'ssh' (remote execution)
+ */
+export type TelemetryRuntimeType = "local" | "worktree" | "ssh";
+
+/**
+ * Frontend platform info - browser/client environment
+ * Useful when backend runs on different machine (e.g., mux server mode)
+ */
+export interface FrontendPlatformInfo {
+  /** Browser user agent string (safe, widely shared) */
+  userAgent: string;
+  /** Client platform from navigator.platform */
+  platform: string;
 }
 
 /**
@@ -47,6 +70,10 @@ export interface AppStartedPayload {
 export interface WorkspaceCreatedPayload {
   /** Workspace ID (randomly generated, safe to send) */
   workspaceId: string;
+  /** Runtime type for the workspace */
+  runtimeType: TelemetryRuntimeType;
+  /** Frontend platform info */
+  frontendPlatform: FrontendPlatformInfo;
 }
 
 export interface WorkspaceSwitchedPayload {
@@ -55,6 +82,11 @@ export interface WorkspaceSwitchedPayload {
   /** New workspace ID (randomly generated, safe to send) */
   toWorkspaceId: string;
 }
+
+/**
+ * Thinking level for extended thinking feature
+ */
+export type TelemetryThinkingLevel = "off" | "low" | "medium" | "high";
 
 /**
  * Chat/AI interaction events
@@ -66,6 +98,68 @@ export interface MessageSentPayload {
   mode: string;
   /** Message length rounded to nearest power of 2 (e.g., 128, 256, 512, 1024) */
   message_length_b2: number;
+  /** Runtime type for the workspace */
+  runtimeType: TelemetryRuntimeType;
+  /** Frontend platform info */
+  frontendPlatform: FrontendPlatformInfo;
+  /** Extended thinking level */
+  thinkingLevel: TelemetryThinkingLevel;
+}
+
+/**
+ * Stream completion event - tracks when AI responses finish
+ */
+export interface StreamCompletedPayload {
+  /** Model used for generation */
+  model: string;
+  /** Whether the stream was interrupted by user vs natural completion */
+  wasInterrupted: boolean;
+  /** Duration in seconds, rounded to nearest power of 2 */
+  duration_b2: number;
+  /** Output tokens, rounded to nearest power of 2 */
+  output_tokens_b2: number;
+}
+
+/**
+ * Provider configuration event - tracks when users set up providers
+ * Note: Only tracks that a key was set, never the actual value
+ */
+export interface ProviderConfiguredPayload {
+  /** Provider name (e.g., 'anthropic', 'openai', 'mux-gateway') */
+  provider: string;
+  /** Key type that was configured (e.g., 'apiKey', 'couponCode', 'baseUrl') */
+  keyType: string;
+}
+
+/**
+ * Slash command types for telemetry (no arguments/values)
+ */
+export type TelemetryCommandType =
+  | "clear"
+  | "compact"
+  | "new"
+  | "fork"
+  | "vim"
+  | "model"
+  | "mode"
+  | "providers";
+
+/**
+ * Command usage event - tracks slash command usage patterns
+ */
+export interface CommandUsedPayload {
+  /** Command type (without arguments for privacy) */
+  command: TelemetryCommandType;
+}
+
+/**
+ * Voice transcription event - tracks voice input usage
+ */
+export interface VoiceTranscriptionPayload {
+  /** Duration of audio in seconds, rounded to nearest power of 2 */
+  audio_duration_b2: number;
+  /** Whether the transcription succeeded */
+  success: boolean;
 }
 
 /**
@@ -100,4 +194,8 @@ export type TelemetryEventPayload =
   | { event: "workspace_created"; properties: WorkspaceCreatedPayload }
   | { event: "workspace_switched"; properties: WorkspaceSwitchedPayload }
   | { event: "message_sent"; properties: MessageSentPayload }
+  | { event: "stream_completed"; properties: StreamCompletedPayload }
+  | { event: "provider_configured"; properties: ProviderConfiguredPayload }
+  | { event: "command_used"; properties: CommandUsedPayload }
+  | { event: "voice_transcription"; properties: VoiceTranscriptionPayload }
   | { event: "error_occurred"; properties: ErrorOccurredPayload };

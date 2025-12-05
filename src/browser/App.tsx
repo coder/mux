@@ -33,6 +33,7 @@ import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
 import { getThinkingLevelKey } from "@/common/constants/storage";
 import type { BranchListResult } from "@/common/orpc/types";
 import { useTelemetry } from "./hooks/useTelemetry";
+import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
 import { useStartWorkspaceCreation, getFirstProjectPath } from "./hooks/useStartWorkspaceCreation";
 import { useAPI } from "@/browser/contexts/API";
 import { AuthTokenModal } from "@/browser/components/AuthTokenModal";
@@ -640,7 +641,10 @@ function AppInner() {
                             });
 
                             // Track telemetry
-                            telemetry.workspaceCreated(metadata.id);
+                            telemetry.workspaceCreated(
+                              metadata.id,
+                              getRuntimeTypeForTelemetry(metadata.runtimeConfig)
+                            );
 
                             // Clear pending state
                             clearPendingWorkspaceCreation();

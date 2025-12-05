@@ -18,6 +18,7 @@ import {
   isQueuedMessageChanged,
   isRestoreToInput,
 } from "@/common/orpc/types";
+import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import { MapStore } from "./MapStore";
 import { collectUsageHistory, createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";
@@ -25,6 +26,7 @@ import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import type { TokenConsumer } from "@/common/types/chatStats";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { createFreshRetryState } from "@/browser/utils/messages/retryState";
+import { trackEvent, roundToBase2 } from "@/common/telemetry";
 
 export interface WorkspaceState {
   name: string; // User-facing workspace name (e.g., "feature-branch")
@@ -155,23 +157,43 @@ export class WorkspaceStore {
       this.states.bump(workspaceId);
     },
     "stream-end": (workspaceId, aggregator, data) => {
-      aggregator.handleStreamEnd(data as never);
-      aggregator.clearTokenState((data as { messageId: string }).messageId);
+      const streamEndData = data as StreamEndEvent;
+      aggregator.handleStreamEnd(streamEndData as never);
+      aggregator.clearTokenState(streamEndData.messageId);
+
+      // Track stream completion telemetry
+      this.trackStreamCompleted(streamEndData, false);
 
       // Reset retry state on successful stream completion
       updatePersistedState(getRetryStateKey(workspaceId), createFreshRetryState());
 
       this.states.bump(workspaceId);
       this.checkAndBumpRecencyIfChanged();
-      this.finalizeUsageStats(workspaceId, (data as { metadata?: never }).metadata);
+      this.finalizeUsageStats(workspaceId, streamEndData.metadata);
     },
     "stream-abort": (workspaceId, aggregator, data) => {
-      aggregator.clearTokenState((data as { messageId: string }).messageId);
-      aggregator.handleStreamAbort(data as never);
+      const streamAbortData = data as StreamAbortEvent;
+      aggregator.clearTokenState(streamAbortData.messageId);
+      aggregator.handleStreamAbort(streamAbortData as never);
+
+      // Track stream interruption telemetry (get model from aggregator)
+      const model = aggregator.getCurrentModel();
+      if (model) {
+        this.trackStreamCompleted(
+          {
+            metadata: {
+              model,
+              usage: streamAbortData.metadata?.usage,
+              duration: streamAbortData.metadata?.duration,
+            },
+          },
+          true
+        );
+      }
 
       this.states.bump(workspaceId);
       this.dispatchResumeCheck(workspaceId);
-      this.finalizeUsageStats(workspaceId, (data as { metadata?: never }).metadata);
+      this.finalizeUsageStats(workspaceId, streamAbortData.metadata);
     },
     "tool-call-start": (workspaceId, aggregator, data) => {
       aggregator.handleToolCallStart(data as never);
@@ -280,6 +302,34 @@ export class WorkspaceStore {
    */
   private dispatchResumeCheck(workspaceId: string): void {
     window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.RESUME_CHECK_REQUESTED, { workspaceId }));
+  }
+
+  /**
+   * Track stream completion telemetry
+   */
+  private trackStreamCompleted(
+    data: {
+      metadata: {
+        model: string;
+        usage?: { outputTokens?: number };
+        duration?: number;
+      };
+    },
+    wasInterrupted: boolean
+  ): void {
+    const { metadata } = data;
+    const durationSecs = metadata.duration ? metadata.duration / 1000 : 0;
+    const outputTokens = metadata.usage?.outputTokens ?? 0;
+
+    trackEvent({
+      event: "stream_completed",
+      properties: {
+        model: metadata.model,
+        wasInterrupted,
+        duration_b2: roundToBase2(durationSecs),
+        output_tokens_b2: roundToBase2(outputTokens),
+      },
+    });
   }
 
   /**

@@ -33,6 +33,7 @@ import { WorkspaceHeader } from "./WorkspaceHeader";
 import { getModelName } from "@/common/utils/ai/models";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
+import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
 import { useAIViewKeybinds } from "@/browser/hooks/useAIViewKeybinds";
 import { evictModelFromLRU } from "@/browser/hooks/useModelLRU";
 import { QueuedMessage } from "./Messages/QueuedMessage";
@@ -620,6 +621,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
         <ChatInput
           variant="workspace"
           workspaceId={workspaceId}
+          runtimeType={getRuntimeTypeForTelemetry(runtimeConfig)}
           onMessageSent={handleMessageSent}
           onTruncateHistory={handleClearHistory}
           onProviderConfig={handleProviderConfig}
