@@ -11,23 +11,23 @@ import {
   DetailLabel,
   DetailContent,
   LoadingDots,
+  ToolIcon,
+  ErrorBox,
+  OutputPaths,
 } from "./shared/ToolPrimitives";
-import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./shared/toolUtils";
+import {
+  useToolExpansion,
+  getStatusDisplay,
+  formatDuration,
+  type ToolStatus,
+} from "./shared/toolUtils";
 import { cn } from "@/common/lib/utils";
-import { TooltipWrapper, Tooltip } from "../Tooltip";
 
 interface BashToolCallProps {
   args: BashToolArgs;
   result?: BashToolResult;
   status?: ToolStatus;
   startedAt?: number;
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) {
-    return `${Math.round(ms)}ms`;
-  }
-  return `${Math.round(ms / 1000)}s`;
 }
 
 export const BashToolCall: React.FC<BashToolCallProps> = ({
@@ -65,10 +65,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
     <ToolContainer expanded={expanded}>
       <ToolHeader onClick={toggleExpanded}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
-        <TooltipWrapper inline>
-          <span>🔧</span>
-          <Tooltip>bash</Tooltip>
-        </TooltipWrapper>
+        <ToolIcon emoji="🔧" toolName="bash" />
         <span className="text-text font-monospace max-w-96 truncate">{args.script}</span>
         {isBackground ? (
           // Background mode: show background badge and optional display name
@@ -115,27 +112,24 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
               {result.success === false && result.error && (
                 <DetailSection>
                   <DetailLabel>Error</DetailLabel>
-                  <div className="text-danger bg-danger-overlay border-danger rounded border-l-2 px-2 py-1.5 text-[11px]">
-                    {result.error}
-                  </div>
+                  <ErrorBox>{result.error}</ErrorBox>
                 </DetailSection>
               )}
 
               {"backgroundProcessId" in result ? (
-                // Background process: show file paths
-                <DetailSection>
-                  <DetailLabel>Output Files</DetailLabel>
-                  <div className="bg-code-bg space-y-1 rounded px-2 py-1.5 font-mono text-[11px]">
-                    <div>
-                      <span className="text-text-secondary">stdout:</span>{" "}
-                      <span className="text-text">{result.stdout_path}</span>
+                // Background process: show process ID and file paths
+                <>
+                  <DetailSection>
+                    <DetailLabel>Process ID</DetailLabel>
+                    <div className="bg-code-bg rounded px-2 py-1.5 font-mono text-[11px]">
+                      {result.backgroundProcessId}
                     </div>
-                    <div>
-                      <span className="text-text-secondary">stderr:</span>{" "}
-                      <span className="text-text">{result.stderr_path}</span>
-                    </div>
-                  </div>
-                </DetailSection>
+                  </DetailSection>
+                  <DetailSection>
+                    <DetailLabel>Output Files</DetailLabel>
+                    <OutputPaths stdout={result.stdout_path} stderr={result.stderr_path} />
+                  </DetailSection>
+                </>
               ) : (
                 // Normal process: show output
                 result.output && (

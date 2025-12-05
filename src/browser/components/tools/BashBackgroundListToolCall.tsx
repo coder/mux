@@ -12,22 +12,21 @@ import {
   ToolDetails,
   DetailSection,
   LoadingDots,
+  ToolIcon,
+  ErrorBox,
 } from "./shared/ToolPrimitives";
-import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./shared/toolUtils";
+import {
+  useToolExpansion,
+  getStatusDisplay,
+  formatDuration,
+  type ToolStatus,
+} from "./shared/toolUtils";
 import { cn } from "@/common/lib/utils";
-import { TooltipWrapper, Tooltip } from "../Tooltip";
 
 interface BashBackgroundListToolCallProps {
   args: BashBackgroundListArgs;
   result?: BashBackgroundListResult;
   status?: ToolStatus;
-}
-
-function formatUptime(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  if (ms < 60000) return `${Math.round(ms / 1000)}s`;
-  if (ms < 3600000) return `${Math.round(ms / 60000)}m`;
-  return `${Math.round(ms / 3600000)}h`;
 }
 
 function getProcessStatusStyle(status: BashBackgroundListProcess["status"]) {
@@ -56,10 +55,7 @@ export const BashBackgroundListToolCall: React.FC<BashBackgroundListToolCallProp
     <ToolContainer expanded={expanded}>
       <ToolHeader onClick={toggleExpanded}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
-        <TooltipWrapper inline>
-          <span>📋</span>
-          <Tooltip>bash_background_list</Tooltip>
-        </TooltipWrapper>
+        <ToolIcon emoji="📋" toolName="bash_background_list" />
         <span className="text-text-secondary">
           {result?.success
             ? processCount === 0
@@ -74,9 +70,7 @@ export const BashBackgroundListToolCall: React.FC<BashBackgroundListToolCallProp
         <ToolDetails>
           {result?.success === false && (
             <DetailSection>
-              <div className="text-danger bg-danger-overlay border-danger rounded border-l-2 px-2 py-1.5 text-[11px]">
-                {result.error}
-              </div>
+              <ErrorBox>{result.error}</ErrorBox>
             </DetailSection>
           )}
 
@@ -102,7 +96,7 @@ export const BashBackgroundListToolCall: React.FC<BashBackgroundListToolCallProp
                         {proc.exitCode !== undefined && ` (${proc.exitCode})`}
                       </span>
                       <span className="text-text-secondary ml-auto">
-                        {formatUptime(proc.uptime_ms)}
+                        {formatDuration(proc.uptime_ms)}
                       </span>
                     </div>
                     <div className="text-text-secondary truncate font-mono" title={proc.script}>
