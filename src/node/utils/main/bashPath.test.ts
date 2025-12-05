@@ -173,6 +173,24 @@ describe("bashPath", () => {
         translateWindowsPathsInCommand('git -C "C:\\Users\\micha\\source\\mux" worktree list')
       ).toBe('git -C "/mnt/c/Users/micha/source/mux" worktree list');
     });
+
+    it("should handle double-quoted paths with spaces", () => {
+      expect(translateWindowsPathsInCommand('cd "C:\\Users\\John Doe\\My Documents"')).toBe(
+        'cd "/mnt/c/Users/John Doe/My Documents"'
+      );
+    });
+
+    it("should handle single-quoted paths with spaces", () => {
+      expect(translateWindowsPathsInCommand("cd 'D:\\Program Files\\My App'")).toBe(
+        "cd '/mnt/d/Program Files/My App'"
+      );
+    });
+
+    it("should handle mixed quoted paths with and without spaces", () => {
+      expect(
+        translateWindowsPathsInCommand('cp "C:\\Users\\John Doe\\file.txt" C:\\dest')
+      ).toBe('cp "/mnt/c/Users/John Doe/file.txt" /mnt/c/dest');
+    });
   });
 
   describe("getSpawnConfig with WSL path translation", () => {

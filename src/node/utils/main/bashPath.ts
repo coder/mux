@@ -84,13 +84,34 @@ export function windowsToWslPath(windowsPath: string): string {
  * Finds patterns like C:\... or "C:\..." and converts them
  */
 export function translateWindowsPathsInCommand(command: string): string {
-  // Match Windows paths (with or without quotes)
-  // Handles: C:\path, "C:\path", 'C:\path'
+  // Match Windows paths with different quote styles:
+  // 1. Double-quoted: "C:\Users\John Doe\repo" - can contain spaces
+  // 2. Single-quoted: 'C:\Users\John Doe\repo' - can contain spaces
+  // 3. Unquoted: C:\Users\name\repo - no spaces allowed
   return command.replace(
-    /(["']?)([a-zA-Z]):[/\\]([^"'\s]*)\1/g,
-    (_match: string, quote: string, drive: string, rest: string) => {
-      const wslPath = `/mnt/${drive.toLowerCase()}/${rest.replace(/\\/g, "/")}`;
-      return quote ? `${quote}${wslPath}${quote}` : wslPath;
+    /"([a-zA-Z]):[/\\]([^"]*)"|'([a-zA-Z]):[/\\]([^']*)'|([a-zA-Z]):[/\\]([^\s]*)/g,
+    (
+      _match: string,
+      dqDrive: string | undefined,
+      dqRest: string | undefined,
+      sqDrive: string | undefined,
+      sqRest: string | undefined,
+      uqDrive: string | undefined,
+      uqRest: string | undefined
+    ) => {
+      if (dqDrive !== undefined) {
+        // Double-quoted path
+        const wslPath = `/mnt/${dqDrive.toLowerCase()}/${dqRest!.replace(/\\/g, "/")}`;
+        return `"${wslPath}"`;
+      } else if (sqDrive !== undefined) {
+        // Single-quoted path
+        const wslPath = `/mnt/${sqDrive.toLowerCase()}/${sqRest!.replace(/\\/g, "/")}`;
+        return `'${wslPath}'`;
+      } else {
+        // Unquoted path
+        const wslPath = `/mnt/${uqDrive!.toLowerCase()}/${uqRest!.replace(/\\/g, "/")}`;
+        return wslPath;
+      }
     }
   );
 }
