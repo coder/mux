@@ -108,6 +108,15 @@ fi
 
 log_info "✅ mux binary found"
 
+# Test that mux api subcommand works (requires ESM bundle api.mjs)
+log_info "Testing mux api subcommand (ESM bundle)..."
+if ! node_modules/.bin/mux api --help >/dev/null 2>&1; then
+  log_error "mux api --help failed - ESM bundle (api.mjs) may be missing from package"
+  exit 1
+fi
+
+log_info "✅ mux api subcommand works"
+
 # Start the server in background
 log_info "Starting mux server on $SERVER_HOST:$SERVER_PORT..."
 node_modules/.bin/mux server --host "$SERVER_HOST" --port "$SERVER_PORT" >server.log 2>&1 &

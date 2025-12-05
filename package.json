@@ -196,6 +196,7 @@
   },
   "files": [
     "dist/**/*.js",
+    "dist/**/*.mjs",
     "dist/**/*.js.map",
     "dist/**/*.wasm",
     "dist/**/*.html",
