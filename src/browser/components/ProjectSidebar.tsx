@@ -246,6 +246,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     position: { top: number; left: number };
   } | null>(null);
   const removeErrorTimeoutRef = useRef<number | null>(null);
+  const [projectRemoveError, setProjectRemoveError] = useState<{
+    projectPath: string;
+    error: string;
+    position: { top: number; left: number };
+  } | null>(null);
+  const projectRemoveErrorTimeoutRef = useRef<number | null>(null);
   const [secretsModalState, setSecretsModalState] = useState<{
     isOpen: boolean;
     projectPath: string;
@@ -313,6 +319,39 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     return () => {
       if (removeErrorTimeoutRef.current) {
         window.clearTimeout(removeErrorTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const showProjectRemoveError = useCallback(
+    (projectPath: string, error: string, anchor?: { top: number; left: number }) => {
+      if (projectRemoveErrorTimeoutRef.current) {
+        window.clearTimeout(projectRemoveErrorTimeoutRef.current);
+      }
+
+      const position = anchor ?? {
+        top: window.scrollY + 32,
+        left: Math.max(window.innerWidth - 420, 16),
+      };
+
+      setProjectRemoveError({
+        projectPath,
+        error,
+        position,
+      });
+
+      projectRemoveErrorTimeoutRef.current = window.setTimeout(() => {
+        setProjectRemoveError(null);
+        projectRemoveErrorTimeoutRef.current = null;
+      }, 5000);
+    },
+    []
+  );
+
+  useEffect(() => {
+    return () => {
+      if (projectRemoveErrorTimeoutRef.current) {
+        window.clearTimeout(projectRemoveErrorTimeoutRef.current);
       }
     };
   }, []);
@@ -577,7 +616,19 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             <button
                               onClick={(event) => {
                                 event.stopPropagation();
-                                void onRemoveProject(projectPath);
+                                const buttonElement = event.currentTarget;
+                                void (async () => {
+                                  const result = await onRemoveProject(projectPath);
+                                  if (!result.success) {
+                                    const error = result.error ?? "Failed to remove project";
+                                    const rect = buttonElement.getBoundingClientRect();
+                                    const anchor = {
+                                      top: rect.top + window.scrollY,
+                                      left: rect.right + 10,
+                                    };
+                                    showProjectRemoveError(projectPath, error, anchor);
+                                  }
+                                })();
                               }}
                               title="Remove project"
                               aria-label={`Remove project ${projectName}`}
@@ -759,6 +810,19 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                 }}
               >
                 Failed to remove workspace: {removeError.error}
+              </div>,
+              document.body
+            )}
+          {projectRemoveError &&
+            createPortal(
+              <div
+                className="bg-error-bg border-error text-error font-monospace pointer-events-auto fixed z-[10000] max-w-96 rounded-md border p-3 px-4 text-xs leading-[1.4] break-words whitespace-pre-wrap shadow-[0_4px_16px_rgba(0,0,0,0.5)]"
+                style={{
+                  top: `${projectRemoveError.position.top}px`,
+                  left: `${projectRemoveError.position.left}px`,
+                }}
+              >
+                Failed to remove project: {projectRemoveError.error}
               </div>,
               document.body
             )}

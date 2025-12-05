@@ -27,7 +27,7 @@ export interface ProjectContext {
   projects: Map<string, ProjectConfig>;
   refreshProjects: () => Promise<void>;
   addProject: (normalizedPath: string, projectConfig: ProjectConfig) => void;
-  removeProject: (path: string) => Promise<void>;
+  removeProject: (path: string) => Promise<{ success: boolean; error?: string }>;
 
   // Project creation modal
   isProjectCreateModalOpen: boolean;
@@ -94,8 +94,8 @@ export function ProjectProvider(props: { children: ReactNode }) {
   }, []);
 
   const removeProject = useCallback(
-    async (path: string) => {
-      if (!api) return;
+    async (path: string): Promise<{ success: boolean; error?: string }> => {
+      if (!api) return { success: false, error: "API not connected" };
       try {
         const result = await api.projects.remove({ projectPath: path });
         if (result.success) {
@@ -104,11 +104,15 @@ export function ProjectProvider(props: { children: ReactNode }) {
             next.delete(path);
             return next;
           });
+          return { success: true };
         } else {
           console.error("Failed to remove project:", result.error);
+          return { success: false, error: result.error };
         }
       } catch (error) {
-        console.error("Failed to remove project:", error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error("Failed to remove project:", errorMessage);
+        return { success: false, error: errorMessage };
       }
     },
     [api]
