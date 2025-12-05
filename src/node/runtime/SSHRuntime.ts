@@ -325,10 +325,9 @@ export class SSHRuntime implements Runtime {
     wrapperParts.push(cdCommandForSSH(options.cwd));
 
     // Add environment variable exports (use shellQuote for parity with Local)
-    if (options.env) {
-      for (const [key, value] of Object.entries(options.env)) {
-        wrapperParts.push(`export ${key}=${shellQuote(value)}`);
-      }
+    const envVars = { ...options.env, ...NON_INTERACTIVE_ENV_VARS };
+    for (const [key, value] of Object.entries(envVars)) {
+      wrapperParts.push(`export ${key}=${shellQuote(value)}`);
     }
 
     // Add the actual script
@@ -337,12 +336,11 @@ export class SSHRuntime implements Runtime {
     const wrapperScript = wrapperParts.join(" && ");
 
     // Use shared buildSpawnCommand for parity with Local
-    // Note: stdoutPathExpanded/stderrPathExpanded are already quoted by expandTildeForSSH
-    // so we pass them directly without the buildSpawnCommand quoting
+    // Pass expanded paths so tilde is resolved (buildSpawnCommand quotes them)
     const spawnCommand = buildSpawnCommand({
       wrapperScript,
-      stdoutPath: stdoutPath, // Will be quoted by buildSpawnCommand
-      stderrPath: stderrPath, // Will be quoted by buildSpawnCommand
+      stdoutPath: stdoutPathExpanded,
+      stderrPath: stderrPathExpanded,
       niceness: options.niceness,
     });
 
