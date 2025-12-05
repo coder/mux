@@ -59,6 +59,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   }, [status, startedAt]);
 
   const isPending = status === "executing" || status === "pending";
+  const isBackground = args.run_in_background ?? (result && "backgroundProcessId" in result);
 
   return (
     <ToolContainer expanded={expanded}>
@@ -69,25 +70,35 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
           <Tooltip>bash</Tooltip>
         </TooltipWrapper>
         <span className="text-text font-monospace max-w-96 truncate">{args.script}</span>
-        <span
-          className={cn(
-            "ml-2 text-[10px] whitespace-nowrap [@container(max-width:500px)]:hidden",
-            isPending ? "text-pending" : "text-text-secondary"
-          )}
-        >
-          timeout: {args.timeout_secs ?? BASH_DEFAULT_TIMEOUT_SECS}s
-          {result && ` • took ${formatDuration(result.wall_duration_ms)}`}
-          {!result && isPending && elapsedTime > 0 && ` • ${formatDuration(elapsedTime)}`}
-        </span>
-        {result && (
-          <span
-            className={cn(
-              "ml-2 inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
-              result.exitCode === 0 ? "bg-success text-on-success" : "bg-danger text-on-danger"
-            )}
-          >
-            {result.exitCode}
+        {isBackground ? (
+          // Background mode: show background badge and optional display name
+          <span className="text-text-secondary ml-2 text-[10px] whitespace-nowrap">
+            ⚡ background{args.display_name && ` • ${args.display_name}`}
           </span>
+        ) : (
+          // Normal mode: show timeout and duration
+          <>
+            <span
+              className={cn(
+                "ml-2 text-[10px] whitespace-nowrap [@container(max-width:500px)]:hidden",
+                isPending ? "text-pending" : "text-text-secondary"
+              )}
+            >
+              timeout: {args.timeout_secs ?? BASH_DEFAULT_TIMEOUT_SECS}s
+              {result && ` • took ${formatDuration(result.wall_duration_ms)}`}
+              {!result && isPending && elapsedTime > 0 && ` • ${formatDuration(elapsedTime)}`}
+            </span>
+            {result && (
+              <span
+                className={cn(
+                  "ml-2 inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
+                  result.exitCode === 0 ? "bg-success text-on-success" : "bg-danger text-on-danger"
+                )}
+              >
+                {result.exitCode}
+              </span>
+            )}
+          </>
         )}
         <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
       </ToolHeader>
@@ -110,13 +121,31 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
                 </DetailSection>
               )}
 
-              {result.output && (
+              {"backgroundProcessId" in result ? (
+                // Background process: show file paths
                 <DetailSection>
-                  <DetailLabel>Output</DetailLabel>
-                  <pre className="bg-code-bg border-success m-0 max-h-[200px] overflow-y-auto rounded border-l-2 px-2 py-1.5 text-[11px] leading-[1.4] break-words whitespace-pre-wrap">
-                    {result.output}
-                  </pre>
+                  <DetailLabel>Output Files</DetailLabel>
+                  <div className="bg-code-bg space-y-1 rounded px-2 py-1.5 font-mono text-[11px]">
+                    <div>
+                      <span className="text-text-secondary">stdout:</span>{" "}
+                      <span className="text-text">{result.stdout_path}</span>
+                    </div>
+                    <div>
+                      <span className="text-text-secondary">stderr:</span>{" "}
+                      <span className="text-text">{result.stderr_path}</span>
+                    </div>
+                  </div>
                 </DetailSection>
+              ) : (
+                // Normal process: show output
+                result.output && (
+                  <DetailSection>
+                    <DetailLabel>Output</DetailLabel>
+                    <pre className="bg-code-bg border-success m-0 max-h-[200px] overflow-y-auto rounded border-l-2 px-2 py-1.5 text-[11px] leading-[1.4] break-words whitespace-pre-wrap">
+                      {result.output}
+                    </pre>
+                  </DetailSection>
+                )
               )}
             </>
           )}

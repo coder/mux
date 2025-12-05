@@ -9,9 +9,15 @@ import { ProposePlanToolCall } from "../tools/ProposePlanToolCall";
 import { TodoToolCall } from "../tools/TodoToolCall";
 import { StatusSetToolCall } from "../tools/StatusSetToolCall";
 import { WebFetchToolCall } from "../tools/WebFetchToolCall";
+import { BashBackgroundListToolCall } from "../tools/BashBackgroundListToolCall";
+import { BashBackgroundTerminateToolCall } from "../tools/BashBackgroundTerminateToolCall";
 import type {
   BashToolArgs,
   BashToolResult,
+  BashBackgroundListArgs,
+  BashBackgroundListResult,
+  BashBackgroundTerminateArgs,
+  BashBackgroundTerminateResult,
   FileReadToolArgs,
   FileReadToolResult,
   FileEditReplaceStringToolArgs,
@@ -87,6 +93,19 @@ function isStatusSetTool(toolName: string, args: unknown): args is StatusSetTool
 function isWebFetchTool(toolName: string, args: unknown): args is WebFetchToolArgs {
   if (toolName !== "web_fetch") return false;
   return TOOL_DEFINITIONS.web_fetch.schema.safeParse(args).success;
+}
+
+function isBashBackgroundListTool(toolName: string, args: unknown): args is BashBackgroundListArgs {
+  if (toolName !== "bash_background_list") return false;
+  return TOOL_DEFINITIONS.bash_background_list.schema.safeParse(args).success;
+}
+
+function isBashBackgroundTerminateTool(
+  toolName: string,
+  args: unknown
+): args is BashBackgroundTerminateArgs {
+  if (toolName !== "bash_background_terminate") return false;
+  return TOOL_DEFINITIONS.bash_background_terminate.schema.safeParse(args).success;
 }
 
 export const ToolMessage: React.FC<ToolMessageProps> = ({ message, className, workspaceId }) => {
@@ -198,6 +217,30 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({ message, className, wo
         <WebFetchToolCall
           args={message.args}
           result={message.result as WebFetchToolResult | undefined}
+          status={message.status}
+        />
+      </div>
+    );
+  }
+
+  if (isBashBackgroundListTool(message.toolName, message.args)) {
+    return (
+      <div className={className}>
+        <BashBackgroundListToolCall
+          args={message.args}
+          result={message.result as BashBackgroundListResult | undefined}
+          status={message.status}
+        />
+      </div>
+    );
+  }
+
+  if (isBashBackgroundTerminateTool(message.toolName, message.args)) {
+    return (
+      <div className={className}>
+        <BashBackgroundTerminateToolCall
+          args={message.args}
+          result={message.result as BashBackgroundTerminateResult | undefined}
           status={message.status}
         />
       </div>
