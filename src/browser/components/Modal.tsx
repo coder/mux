@@ -125,53 +125,29 @@ export const WarningText: React.FC<{ children: React.ReactNode; className?: stri
   className,
 }) => <div className={cn("text-[13px] text-foreground leading-normal", className)}>{children}</div>;
 
-// Button components
-interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+// Button components - thin wrappers around shadcn Button with semantic variants
+import { Button } from "@/browser/components/ui/button";
+
+export { Button };
+
+interface ModalButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   children: React.ReactNode;
 }
 
-export const Button: React.FC<ButtonProps> = ({ children, className, ...props }) => (
-  <button
-    className={cn(
-      "px-5 py-2 border-none rounded cursor-pointer text-sm font-medium transition-all duration-200",
-      "disabled:opacity-50 disabled:cursor-not-allowed",
-      className
-    )}
-    {...props}
-  >
-    {children}
-  </button>
-);
-
-export const CancelButton: React.FC<ButtonProps> = ({ children, className, ...props }) => (
-  <Button
-    className={cn(
-      "bg-border-medium text-foreground hover:bg-border-darker disabled:hover:bg-border-medium",
-      className
-    )}
-    {...props}
-  >
+export const CancelButton: React.FC<ModalButtonProps> = ({ children, className, ...props }) => (
+  <Button variant="secondary" className={cn("px-5", className)} {...props}>
     {children}
   </Button>
 );
 
-export const PrimaryButton: React.FC<ButtonProps> = ({ children, className, ...props }) => (
-  <Button
-    className={cn("bg-accent text-white hover:bg-accent-dark disabled:hover:bg-accent", className)}
-    {...props}
-  >
+export const PrimaryButton: React.FC<ModalButtonProps> = ({ children, className, ...props }) => (
+  <Button className={cn("px-5", className)} {...props}>
     {children}
   </Button>
 );
 
-export const DangerButton: React.FC<ButtonProps> = ({ children, className, ...props }) => (
-  <Button
-    className={cn(
-      "bg-error text-white hover:brightness-110 disabled:hover:brightness-100",
-      className
-    )}
-    {...props}
-  >
+export const DangerButton: React.FC<ModalButtonProps> = ({ children, className, ...props }) => (
+  <Button variant="destructive" className={cn("px-5", className)} {...props}>
     {children}
   </Button>
 );
