@@ -56,59 +56,7 @@ export function CreationControls(props: CreationControlsProps) {
 
   return (
     <div className="flex flex-col gap-2">
-      {/* First row: Workspace name with magic wand toggle */}
-      <div className="flex items-center gap-2" data-component="WorkspaceNameGroup">
-        <label htmlFor="workspace-name" className="text-muted text-xs whitespace-nowrap">
-          Name:
-        </label>
-        <div className="relative max-w-xs flex-1">
-          <input
-            id="workspace-name"
-            type="text"
-            value={nameState.name}
-            onChange={handleNameChange}
-            onFocus={handleInputFocus}
-            placeholder={nameState.isGenerating ? "Generating..." : "workspace-name"}
-            disabled={props.disabled}
-            className={cn(
-              "bg-separator text-foreground border-border-medium focus:border-accent h-6 w-full rounded border px-2 pr-6 text-xs focus:outline-none disabled:opacity-50",
-              nameState.error && "border-red-500"
-            )}
-          />
-          {/* Magic wand / loading indicator - vertically centered */}
-          <div className="absolute inset-y-0 right-0 flex items-center pr-1.5">
-            {nameState.isGenerating ? (
-              <Loader2 className="text-accent h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <TooltipWrapper inline>
-                <button
-                  type="button"
-                  onClick={handleWandClick}
-                  disabled={props.disabled}
-                  className="flex h-full items-center disabled:opacity-50"
-                  aria-label={nameState.autoGenerate ? "Disable auto-naming" : "Enable auto-naming"}
-                >
-                  <Wand2
-                    className={cn(
-                      "h-3.5 w-3.5 transition-colors",
-                      nameState.autoGenerate
-                        ? "text-accent"
-                        : "text-muted-foreground opacity-50 hover:opacity-75"
-                    )}
-                  />
-                </button>
-                <Tooltip className="tooltip" align="center">
-                  {nameState.autoGenerate ? "Auto-naming enabled" : "Click to enable auto-naming"}
-                </Tooltip>
-              </TooltipWrapper>
-            )}
-          </div>
-        </div>
-        {/* Error display - inline */}
-        {nameState.error && <span className="text-xs text-red-500">{nameState.error}</span>}
-      </div>
-
-      {/* Second row: Runtime, Branch, SSH */}
+      {/* First row: Runtime selector (left) + Workspace name (right), wraps on small screens */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         {/* Runtime Selector - icon-based with tooltips */}
         <RuntimeIconSelector
@@ -119,39 +67,96 @@ export function CreationControls(props: CreationControlsProps) {
           disabled={props.disabled}
         />
 
-        {/* Trunk Branch Selector - hidden for Local runtime */}
-        {showTrunkBranchSelector && (
-          <div
-            className="flex h-6 items-center gap-1"
-            data-component="TrunkBranchGroup"
-            data-tutorial="trunk-branch"
-          >
-            <label htmlFor="trunk-branch" className="text-muted text-xs">
-              From:
-            </label>
-            <Select
-              id="trunk-branch"
-              value={props.trunkBranch}
-              options={props.branches}
-              onChange={props.onTrunkBranchChange}
+        {/* Workspace name with magic wand toggle */}
+        <div className="flex items-center gap-2" data-component="WorkspaceNameGroup">
+          <label htmlFor="workspace-name" className="text-muted text-xs whitespace-nowrap">
+            Name:
+          </label>
+          <div className="relative w-48">
+            <input
+              id="workspace-name"
+              type="text"
+              value={nameState.name}
+              onChange={handleNameChange}
+              onFocus={handleInputFocus}
+              placeholder={nameState.isGenerating ? "Generating..." : "workspace-name"}
               disabled={props.disabled}
-              className="h-6 max-w-[120px]"
+              className={cn(
+                "bg-separator text-foreground border-border-medium focus:border-accent h-6 w-full rounded border px-2 pr-6 text-xs focus:outline-none disabled:opacity-50",
+                nameState.error && "border-red-500"
+              )}
             />
+            {/* Magic wand / loading indicator - vertically centered */}
+            <div className="absolute inset-y-0 right-0 flex items-center pr-1.5">
+              {nameState.isGenerating ? (
+                <Loader2 className="text-accent h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <TooltipWrapper inline>
+                  <button
+                    type="button"
+                    onClick={handleWandClick}
+                    disabled={props.disabled}
+                    className="flex h-full items-center disabled:opacity-50"
+                    aria-label={nameState.autoGenerate ? "Disable auto-naming" : "Enable auto-naming"}
+                  >
+                    <Wand2
+                      className={cn(
+                        "h-3.5 w-3.5 transition-colors",
+                        nameState.autoGenerate
+                          ? "text-accent"
+                          : "text-muted-foreground opacity-50 hover:opacity-75"
+                      )}
+                    />
+                  </button>
+                  <Tooltip className="tooltip" align="center">
+                    {nameState.autoGenerate ? "Auto-naming enabled" : "Click to enable auto-naming"}
+                  </Tooltip>
+                </TooltipWrapper>
+              )}
+            </div>
           </div>
-        )}
-
-        {/* SSH Host Input - after From selector */}
-        {props.runtimeMode === RUNTIME_MODE.SSH && (
-          <input
-            type="text"
-            value={props.sshHost}
-            onChange={(e) => props.onSshHostChange(e.target.value)}
-            placeholder="user@host"
-            disabled={props.disabled}
-            className="bg-separator text-foreground border-border-medium focus:border-accent h-6 w-32 rounded border px-1 text-xs focus:outline-none disabled:opacity-50"
-          />
-        )}
+          {/* Error display - inline */}
+          {nameState.error && <span className="text-xs text-red-500">{nameState.error}</span>}
+        </div>
       </div>
+
+      {/* Second row: Branch, SSH - only shown when there's content */}
+      {(showTrunkBranchSelector || props.runtimeMode === RUNTIME_MODE.SSH) && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          {/* Trunk Branch Selector - hidden for Local runtime */}
+          {showTrunkBranchSelector && (
+            <div
+              className="flex h-6 items-center gap-1"
+              data-component="TrunkBranchGroup"
+              data-tutorial="trunk-branch"
+            >
+              <label htmlFor="trunk-branch" className="text-muted text-xs">
+                From:
+              </label>
+              <Select
+                id="trunk-branch"
+                value={props.trunkBranch}
+                options={props.branches}
+                onChange={props.onTrunkBranchChange}
+                disabled={props.disabled}
+                className="h-6 max-w-[120px]"
+              />
+            </div>
+          )}
+
+          {/* SSH Host Input - after From selector */}
+          {props.runtimeMode === RUNTIME_MODE.SSH && (
+            <input
+              type="text"
+              value={props.sshHost}
+              onChange={(e) => props.onSshHostChange(e.target.value)}
+              placeholder="user@host"
+              disabled={props.disabled}
+              className="bg-separator text-foreground border-border-medium focus:border-accent h-6 w-32 rounded border px-1 text-xs focus:outline-none disabled:opacity-50"
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }
