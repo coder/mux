@@ -336,11 +336,11 @@ export class SSHRuntime implements Runtime {
     const wrapperScript = wrapperParts.join(" && ");
 
     // Use shared buildSpawnCommand for parity with Local
-    // Pass expanded paths so tilde is resolved (buildSpawnCommand quotes them)
+    // Pass raw paths - buildSpawnCommand uses shellQuote internally
     const spawnCommand = buildSpawnCommand({
       wrapperScript,
-      stdoutPath: stdoutPathExpanded,
-      stderrPath: stderrPathExpanded,
+      stdoutPath,
+      stderrPath,
       niceness: options.niceness,
     });
 
