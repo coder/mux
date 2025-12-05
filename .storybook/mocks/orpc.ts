@@ -25,6 +25,8 @@ export interface MockORPCClientOptions {
   providersConfig?: Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>;
   /** List of available provider names */
   providersList?: string[];
+  /** Mock for projects.remove - return error string to simulate failure */
+  onProjectRemove?: (projectPath: string) => { success: true } | { success: false; error: string };
 }
 
 /**
@@ -52,6 +54,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     executeBash,
     providersConfig = {},
     providersList = [],
+    onProjectRemove,
   } = options;
 
   const workspaceMap = new Map(workspaces.map((w) => [w.id, w]));
@@ -99,7 +102,12 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         branches: ["main", "develop", "feature/new-feature"],
         recommendedTrunk: "main",
       }),
-      remove: async () => ({ success: true, data: undefined }),
+      remove: async (input: { projectPath: string }) => {
+        if (onProjectRemove) {
+          return onProjectRemove(input.projectPath);
+        }
+        return { success: true, data: undefined };
+      },
       secrets: {
         get: async () => [],
         update: async () => ({ success: true, data: undefined }),

@@ -1,5 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import { createPortal } from "react-dom";
+import React, { useState, useEffect, useCallback } from "react";
 import { cn } from "@/common/lib/utils";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
@@ -28,6 +27,8 @@ import { RenameProvider } from "@/browser/contexts/WorkspaceRenameContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { ChevronRight, KeyRound } from "lucide-react";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { usePopoverError } from "@/browser/hooks/usePopoverError";
+import { PopoverError } from "./PopoverError";
 
 // Re-export WorkspaceSelection for backwards compatibility
 export type { WorkspaceSelection } from "./WorkspaceListItem";
@@ -240,12 +241,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     Record<string, boolean>
   >("expandedOldWorkspaces", {});
   const [deletingWorkspaceIds, setDeletingWorkspaceIds] = useState<Set<string>>(new Set());
-  const [removeError, setRemoveError] = useState<{
-    workspaceId: string;
-    error: string;
-    position: { top: number; left: number };
-  } | null>(null);
-  const removeErrorTimeoutRef = useRef<number | null>(null);
+  const workspaceRemoveError = usePopoverError();
+  const projectRemoveError = usePopoverError();
   const [secretsModalState, setSecretsModalState] = useState<{
     isOpen: boolean;
     projectPath: string;
@@ -283,39 +280,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       [key]: !prev[key],
     }));
   };
-
-  const showRemoveError = useCallback(
-    (workspaceId: string, error: string, anchor?: { top: number; left: number }) => {
-      if (removeErrorTimeoutRef.current) {
-        window.clearTimeout(removeErrorTimeoutRef.current);
-      }
-
-      const position = anchor ?? {
-        top: window.scrollY + 32,
-        left: Math.max(window.innerWidth - 420, 16),
-      };
-
-      setRemoveError({
-        workspaceId,
-        error,
-        position,
-      });
-
-      removeErrorTimeoutRef.current = window.setTimeout(() => {
-        setRemoveError(null);
-        removeErrorTimeoutRef.current = null;
-      }, 5000);
-    },
-    []
-  );
-
-  useEffect(() => {
-    return () => {
-      if (removeErrorTimeoutRef.current) {
-        window.clearTimeout(removeErrorTimeoutRef.current);
-      }
-    };
-  }, []);
 
   const handleRemoveWorkspace = useCallback(
     async (workspaceId: string, buttonElement: HTMLElement) => {
@@ -378,7 +342,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         const errorMessage = result.error ?? "Failed to remove workspace";
         console.error("Force delete failed:", result.error);
 
-        showRemoveError(workspaceId, errorMessage, modalState?.anchor ?? undefined);
+        workspaceRemoveError.showError(workspaceId, errorMessage, modalState?.anchor ?? undefined);
       }
     } finally {
       // Clear deleting state
@@ -582,9 +546,20 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             <button
                               onClick={(event) => {
                                 event.stopPropagation();
-                                void onRemoveProject(projectPath);
+                                const buttonElement = event.currentTarget;
+                                void (async () => {
+                                  const result = await onRemoveProject(projectPath);
+                                  if (!result.success) {
+                                    const error = result.error ?? "Failed to remove project";
+                                    const rect = buttonElement.getBoundingClientRect();
+                                    const anchor = {
+                                      top: rect.top + window.scrollY,
+                                      left: rect.right + 10,
+                                    };
+                                    projectRemoveError.showError(projectPath, error, anchor);
+                                  }
+                                })();
                               }}
-                              title="Remove project"
                               aria-label={`Remove project ${projectName}`}
                               data-project-path={projectPath}
                               className="text-muted-dark hover:text-danger-light hover:bg-danger-light/10 mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-base opacity-0 transition-all duration-200"
@@ -754,19 +729,16 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
               onForceDelete={handleForceDelete}
             />
           )}
-          {removeError &&
-            createPortal(
-              <div
-                className="bg-error-bg border-error text-error font-monospace pointer-events-auto fixed z-[10000] max-w-96 rounded-md border p-3 px-4 text-xs leading-[1.4] break-words whitespace-pre-wrap shadow-[0_4px_16px_rgba(0,0,0,0.5)]"
-                style={{
-                  top: `${removeError.position.top}px`,
-                  left: `${removeError.position.left}px`,
-                }}
-              >
-                Failed to remove workspace: {removeError.error}
-              </div>,
-              document.body
-            )}
+          <PopoverError
+            error={workspaceRemoveError.error}
+            prefix="Failed to remove workspace"
+            onDismiss={workspaceRemoveError.clearError}
+          />
+          <PopoverError
+            error={projectRemoveError.error}
+            prefix="Failed to remove project"
+            onDismiss={projectRemoveError.clearError}
+          />
         </div>
       </DndProvider>
     </RenameProvider>

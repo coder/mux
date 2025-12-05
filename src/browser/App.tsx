@@ -183,11 +183,11 @@ function AppInner() {
   const openWorkspaceInTerminal = useOpenTerminal();
 
   const handleRemoveProject = useCallback(
-    async (path: string) => {
+    async (path: string): Promise<{ success: boolean; error?: string }> => {
       if (selectedWorkspace?.projectPath === path) {
         setSelectedWorkspace(null);
       }
-      await removeProject(path);
+      return removeProject(path);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [selectedWorkspace, setSelectedWorkspace]

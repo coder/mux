@@ -15,8 +15,14 @@ import {
   createStaticChatHandler,
 } from "./mockFactory";
 import { getAutoRetryKey } from "@/common/constants/storage";
-import { selectWorkspace, setupSimpleChatStory, setupCustomChatStory } from "./storyHelpers";
+import {
+  selectWorkspace,
+  setupSimpleChatStory,
+  setupCustomChatStory,
+  expandProjects,
+} from "./storyHelpers";
 import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
+import { userEvent, waitFor } from "@storybook/test";
 
 export default {
   ...appMeta,
@@ -239,4 +245,68 @@ export const LargeDiff: AppStory = {
       }
     />
   ),
+};
+
+/**
+ * Project removal error popover.
+ *
+ * Shows the error popup when attempting to remove a project that has active workspaces.
+ * The play function hovers the project and clicks the remove button to trigger the error.
+ */
+export const ProjectRemovalError: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaces = [
+          createWorkspace({ id: "ws-1", name: "main", projectName: "my-app" }),
+          createWorkspace({ id: "ws-2", name: "feature/auth", projectName: "my-app" }),
+        ];
+
+        // Expand the project so workspaces are visible
+        expandProjects(["/mock/my-app"]);
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+          onProjectRemove: () => ({
+            success: false,
+            error:
+              "Cannot remove project with active workspaces. Please remove all 2 workspace(s) first.",
+          }),
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    // Wait for the remove button to exist in DOM
+    await waitFor(
+      () => {
+        const removeButton = canvasElement.querySelector(
+          'button[aria-label="Remove project my-app"]'
+        );
+        if (!removeButton) throw new Error("Remove button not found");
+      },
+      { timeout: 5000 }
+    );
+
+    // Get the project row container and hover to reveal the button
+    const removeButton = canvasElement.querySelector('button[aria-label="Remove project my-app"]')!;
+    const projectRow = removeButton.closest("[data-project-path]")!;
+    await userEvent.hover(projectRow);
+
+    // Small delay for hover state to apply
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Click the remove button
+    await userEvent.click(removeButton);
+
+    // Wait for the error popover to appear
+    await waitFor(
+      () => {
+        const errorPopover = document.querySelector('[role="alert"]');
+        if (!errorPopover) throw new Error("Error popover not found");
+      },
+      { timeout: 2000 }
+    );
+  },
 };
