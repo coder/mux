@@ -40,9 +40,11 @@ if (subcommand === "run") {
   require("./server");
 } else if (subcommand === "api") {
   process.argv.splice(2, 1);
-  // Dynamic import required: trpc-cli is ESM-only and can't be require()'d
-  // eslint-disable-next-line no-restricted-syntax
-  void import("./api");
+  // Must use native import() to load ESM module - trpc-cli requires ESM with top-level await.
+  // Using Function constructor prevents TypeScript from converting this to require().
+  // The .mjs extension is critical for Node.js to treat it as ESM.
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval, @typescript-eslint/no-unsafe-call
+  void new Function("return import('./api.mjs')")();
 } else if (
   subcommand === "desktop" ||
   (isElectron && (subcommand === undefined || isElectronLaunchArg))
