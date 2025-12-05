@@ -110,7 +110,8 @@ describe("backgroundCommands", () => {
         stderrPath: "/tmp/stderr.log",
       });
 
-      expect(result).toMatch(/^\(setsid nohup bash -c /);
+      // bash path is quoted to handle paths with spaces (e.g., Windows Git Bash)
+      expect(result).toMatch(/^\(setsid nohup 'bash' -c /);
     });
 
     it("should include niceness prefix when provided", () => {
@@ -142,7 +143,20 @@ describe("backgroundCommands", () => {
         bashPath: "/usr/local/bin/bash",
       });
 
-      expect(result).toContain("/usr/local/bin/bash -c");
+      // bash path is quoted
+      expect(result).toContain("'/usr/local/bin/bash' -c");
+    });
+
+    it("should handle bash path with spaces (Windows Git Bash)", () => {
+      const result = buildSpawnCommand({
+        wrapperScript: "echo hello",
+        stdoutPath: "/tmp/stdout.log",
+        stderrPath: "/tmp/stderr.log",
+        bashPath: "/c/Program Files/Git/bin/bash.exe",
+      });
+
+      // Path with spaces must be quoted to work correctly
+      expect(result).toContain("'/c/Program Files/Git/bin/bash.exe' -c");
     });
 
     it("should redirect stdout and stderr", () => {
