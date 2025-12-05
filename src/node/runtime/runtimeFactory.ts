@@ -1,4 +1,5 @@
 import * as os from "os";
+import * as path from "path";
 
 import type { Runtime } from "./Runtime";
 import { LocalRuntime } from "./LocalRuntime";
@@ -7,7 +8,6 @@ import { SSHRuntime } from "./SSHRuntime";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { hasSrcBaseDir } from "@/common/types/runtime";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
-import { toPosixPath } from "@/node/utils/paths";
 
 // Re-export for backward compatibility with existing imports
 export { isIncompatibleRuntimeConfig };
@@ -15,11 +15,13 @@ export { isIncompatibleRuntimeConfig };
 /**
  * Get the default output directory for background processes.
  * Uses os.tmpdir() for platform-appropriate temp directory.
- * On Windows, converts to POSIX path using cygpath for Git Bash compatibility.
+ *
+ * Returns native path format (Windows or POSIX) since this is used by Node.js
+ * filesystem APIs. Conversion to POSIX for Git Bash shell commands happens
+ * at command construction time via toPosixPath().
  */
 function getDefaultBgOutputDir(): string {
-  const tempDir = os.tmpdir();
-  return `${toPosixPath(tempDir)}/mux-bashes`;
+  return path.join(os.tmpdir(), "mux-bashes");
 }
 
 /**
