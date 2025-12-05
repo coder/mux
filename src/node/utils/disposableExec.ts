@@ -114,15 +114,26 @@ class DisposableExec implements Disposable {
 }
 
 /**
+ * Options for execAsync.
+ */
+export interface ExecAsyncOptions {
+  /** Shell to use for command execution. If not specified, uses system default (cmd.exe on Windows). */
+  shell?: string;
+}
+
+/**
  * Execute command with automatic cleanup via `using` declaration.
  * Prevents zombie processes by ensuring child is reaped even on error.
  *
  * @example
  * using proc = execAsync("git status");
  * const { stdout } = await proc.result;
+ *
+ * // With explicit shell (needed for POSIX commands on Windows)
+ * using proc = execAsync("nohup bash -c ...", { shell: getBashPath() });
  */
-export function execAsync(command: string): DisposableExec {
-  const child = exec(command);
+export function execAsync(command: string, options?: ExecAsyncOptions): DisposableExec {
+  const child = exec(command, { shell: options?.shell });
   const promise = new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
     let stdout = "";
     let stderr = "";
