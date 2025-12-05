@@ -51,7 +51,8 @@ jobs:
               - 'src/cli/**'
               - 'src/desktop/**'
               - 'src/common/**'
-              - 'tests/integration/**'
+              - 'tests/ipc/**'
+              - 'tests/runtime/**'
             config:
               - '.github/**'
               - 'jest.config.cjs'
@@ -122,7 +123,7 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup-mux
       - run: make build-main
-      - run: TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent ${{ github.event.inputs.test_filter || 'tests' }}
+      - run: TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent ${{ github.event.inputs.test_filter || 'tests/ipc tests/runtime' }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

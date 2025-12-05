@@ -28,7 +28,7 @@ if (typeof globalThis.File === "undefined") {
 if (process.env.TEST_INTEGRATION === "1") {
   // Store promise globally to ensure it blocks subsequent test execution
   (globalThis as any).__muxPreloadPromise = (async () => {
-    const { preloadTestModules } = await import("./integration/setup");
+    const { preloadTestModules } = await import("./ipc/setup");
     await preloadTestModules();
   })();
 

@@ -41,7 +41,7 @@ describe("Known Models Integration", () => {
       const lookupKey = model.provider === "xai" ? `xai/${modelId}` : modelId;
       const modelData =
         (modelsJson[lookupKey as keyof typeof modelsJson] as Record<string, unknown>) ??
-        (modelsExtra[modelId as keyof typeof modelsExtra] as unknown as Record<string, unknown>);
+        (modelsExtra[modelId] as Record<string, unknown>);
 
       expect(modelData).toBeDefined();
       // Check that basic metadata fields exist (not all models have all fields)
