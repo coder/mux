@@ -64,6 +64,42 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Required for git describe to find tags
+
+      - uses: ./.github/actions/setup-mux
+
+      - name: Install GNU Make (for build)
+        run: choco install -y make
+
+      - name: Verify tools
+        shell: bash
+        run: |
+          make --version
+          bun --version
+          magick --version | head -1
+
+      - name: Build application
+        run: bun run build
+
+      # No code signing - releases use release.yml (triggered by tag publish).
+      - name: Package for Windows
+        run: make dist-win
+
+      - name: Upload Windows exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: release/*.exe
+          retention-days: 30
+          if-no-files-found: error
+
   build-vscode-extension:
     name: Build VS Code Extension
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
