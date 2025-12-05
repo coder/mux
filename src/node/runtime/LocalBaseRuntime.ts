@@ -74,7 +74,6 @@ export abstract class LocalBaseRuntime implements Runtime {
       command: bashCommand,
       args: bashArgs,
       cwd: spawnCwd,
-      stdin: stdinContent,
     } = getPreferredSpawnConfig(command, cwd);
 
     // If niceness is specified on Unix/Linux, spawn nice directly to avoid escaping issues
@@ -103,12 +102,6 @@ export abstract class LocalBaseRuntime implements Runtime {
       // Prevent console window from appearing on Windows (WSL bash spawns steal focus otherwise)
       windowsHide: true,
     });
-
-    // Write stdin content if provided (used for WSL via PowerShell to avoid escaping issues)
-    if (stdinContent) {
-      childProcess.stdin?.write(stdinContent);
-      childProcess.stdin?.end();
-    }
 
     // Wrap in DisposableProcess for automatic cleanup
     const disposable = new DisposableProcess(childProcess);
@@ -388,13 +381,11 @@ export abstract class LocalBaseRuntime implements Runtime {
         command: bashCommand,
         args: bashArgs,
         cwd: spawnCwd,
-        stdin: stdinContent,
       } = getPreferredSpawnConfig(`"${hookPath}"`, workspacePath);
 
       const proc = spawn(bashCommand, bashArgs, {
         cwd: spawnCwd,
-        // Use pipe for stdin if we need to send input (for WSL via PowerShell)
-        stdio: [stdinContent ? "pipe" : "ignore", "pipe", "pipe"],
+        stdio: ["ignore", "pipe", "pipe"],
         env: {
           ...process.env,
           ...getInitHookEnv(projectPath, runtimeType),
@@ -402,12 +393,6 @@ export abstract class LocalBaseRuntime implements Runtime {
         // Prevent console window from appearing on Windows
         windowsHide: true,
       });
-
-      // Write stdin content if provided (used for WSL via PowerShell to avoid escaping issues)
-      if (stdinContent && proc.stdin) {
-        proc.stdin.write(stdinContent);
-        proc.stdin.end();
-      }
 
       proc.stdout?.on("data", (data: Buffer) => {
         loggers.stdout.append(data.toString());

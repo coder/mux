@@ -54,8 +54,6 @@ export interface SpawnConfig {
   args: string[];
   /** Working directory (translated for WSL if needed) */
   cwd?: string;
-  /** Optional stdin to pipe to the process (used for WSL to avoid escaping issues) */
-  stdin?: string;
 }
 
 // ============================================================================
@@ -388,29 +386,24 @@ export function getSpawnConfig(runtime: BashRuntime, script: string, cwd?: strin
       const fullScript = cdPrefix + translatedScript;
 
       // Try to use PowerShell to hide WSL console window
-      // Pass the script via stdin to avoid PowerShell escaping issues with special chars
+      // Use base64 encoding to completely avoid escaping issues with special chars
       const psPath = getPowerShellPath();
       if (psPath) {
-        // Build WSL command to read script from stdin
-        const wslCmd = runtime.distro ? `wsl -d ${runtime.distro} bash` : "wsl bash";
+        // Base64 encode the script to avoid any PowerShell parsing issues
+        // PowerShell will decode it and pipe to WSL bash
+        const base64Script = Buffer.from(fullScript, "utf8").toString("base64");
 
-        // PowerShell will receive the script via stdin and pipe it to WSL
-        // -NoProfile: faster startup, avoids profile execution policy issues
-        // -WindowStyle Hidden: hide console window
-        // -Command: execute the piped command
-        // Use [Console]::In.ReadToEnd() instead of $input because $input doesn't work
-        // reliably with -Command (it's meant for pipeline input in functions/filters)
+        // Build the PowerShell command that:
+        // 1. Decodes the base64 script
+        // 2. Pipes it to WSL bash via echo
+        const wslArgs = runtime.distro ? `-d ${runtime.distro}` : "";
+        const psCommand = `$s=[System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${base64Script}'));` +
+          `echo $s | wsl ${wslArgs} bash`.trim();
+
         return {
           command: psPath,
-          args: [
-            "-NoProfile",
-            "-WindowStyle",
-            "Hidden",
-            "-Command",
-            `[Console]::In.ReadToEnd() | ${wslCmd}`,
-          ],
+          args: ["-NoProfile", "-WindowStyle", "Hidden", "-Command", psCommand],
           cwd: undefined, // cwd is embedded in the script
-          stdin: fullScript,
         };
       }
 
