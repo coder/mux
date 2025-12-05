@@ -64,6 +64,13 @@ export const TOOL_DEFINITIONS = {
             "Read output via bash (e.g. tail, grep, cat). " +
             "Process persists across tool calls until terminated or workspace is removed."
         ),
+      display_name: z
+        .string()
+        .optional()
+        .describe(
+          "Human-readable name for background processes (e.g., 'Dev Server', 'TypeCheck Watch'). " +
+            "Only used when run_in_background=true."
+        ),
     }),
   },
   file_read: {

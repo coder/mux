@@ -14,6 +14,7 @@ export interface BackgroundProcessMeta {
   status: "running" | "exited" | "killed" | "failed";
   exitCode?: number;
   exitTime?: number;
+  displayName?: string;
 }
 
 /**
@@ -30,6 +31,7 @@ export interface BackgroundProcess {
   exitTime?: number; // Timestamp when exited (undefined if running)
   status: "running" | "exited" | "killed" | "failed";
   handle: BackgroundHandle; // For process interaction
+  displayName?: string; // Human-readable name (e.g., "Dev Server")
 }
 
 /**
@@ -59,6 +61,7 @@ export class BackgroundProcessManager {
       cwd: string;
       secrets?: Record<string, string>;
       niceness?: number;
+      displayName?: string;
     }
   ): Promise<
     { success: true; processId: string; outputDir: string } | { success: false; error: string }
@@ -91,6 +94,7 @@ export class BackgroundProcessManager {
       script,
       startTime,
       status: "running",
+      displayName: config.displayName,
     };
     await handle.writeMeta(JSON.stringify(meta, null, 2));
 
@@ -103,6 +107,7 @@ export class BackgroundProcessManager {
       startTime,
       status: "running",
       handle,
+      displayName: config.displayName,
     };
 
     // Store process in map
