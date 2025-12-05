@@ -77,12 +77,13 @@ export abstract class LocalBaseRuntime implements Runtime {
       cwd: spawnCwd,
     } = getPreferredSpawnConfig(command, cwd);
 
-    // Debug logging for Windows WSL issues
-    log.info(`[LocalBaseRuntime.exec] Original command: ${command}`);
-    log.info(`[LocalBaseRuntime.exec] Original cwd: ${cwd}`);
-    log.info(`[LocalBaseRuntime.exec] Spawn command: ${bashCommand}`);
-    log.info(`[LocalBaseRuntime.exec] Spawn args: ${JSON.stringify(bashArgs)}`);
-    log.info(`[LocalBaseRuntime.exec] Spawn cwd: ${spawnCwd}`);
+    // Debug logging for Windows WSL issues (skip noisy git status commands)
+    const isGitStatusCmd = command.includes("git status") || command.includes("show-branch") || command.includes("PRIMARY_BRANCH");
+    if (!isGitStatusCmd) {
+      log.info(`[LocalBaseRuntime.exec] Original command: ${command.substring(0, 100)}${command.length > 100 ? "..." : ""}`);
+      log.info(`[LocalBaseRuntime.exec] Spawn command: ${bashCommand}`);
+      log.info(`[LocalBaseRuntime.exec] Spawn args: ${JSON.stringify(bashArgs).substring(0, 200)}...`);
+    }
 
     // If niceness is specified on Unix/Linux, spawn nice directly to avoid escaping issues
     // Windows doesn't have nice command, so just spawn bash directly
@@ -132,15 +133,17 @@ export abstract class LocalBaseRuntime implements Runtime {
     let timedOut = false;
     let aborted = false;
 
-    // Debug: log raw stdout/stderr from the child process
+    // Debug: log raw stdout/stderr from the child process (only for non-git-status commands)
     let debugStdout = "";
     let debugStderr = "";
-    childProcess.stdout?.on("data", (chunk: Buffer) => {
-      debugStdout += chunk.toString();
-    });
-    childProcess.stderr?.on("data", (chunk: Buffer) => {
-      debugStderr += chunk.toString();
-    });
+    if (!isGitStatusCmd) {
+      childProcess.stdout?.on("data", (chunk: Buffer) => {
+        debugStdout += chunk.toString();
+      });
+      childProcess.stderr?.on("data", (chunk: Buffer) => {
+        debugStderr += chunk.toString();
+      });
+    }
 
     // Create promises for exit code and duration
     // Uses special exit codes (EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT) for expected error conditions
@@ -150,11 +153,13 @@ export abstract class LocalBaseRuntime implements Runtime {
       // which causes hangs when users spawn background processes like servers.
       // The 'exit' event fires when the main bash process exits, which is what we want.
       childProcess.on("exit", (code) => {
-        log.info(`[LocalBaseRuntime.exec] Process exited with code: ${code}`);
-        log.info(`[LocalBaseRuntime.exec] stdout length: ${debugStdout.length}`);
-        log.info(`[LocalBaseRuntime.exec] stdout: ${debugStdout.substring(0, 500)}${debugStdout.length > 500 ? "..." : ""}`);
-        if (debugStderr) {
-          log.info(`[LocalBaseRuntime.exec] stderr: ${debugStderr.substring(0, 500)}${debugStderr.length > 500 ? "..." : ""}`);
+        if (!isGitStatusCmd) {
+          log.info(`[LocalBaseRuntime.exec] Process exited with code: ${code}`);
+          log.info(`[LocalBaseRuntime.exec] stdout length: ${debugStdout.length}`);
+          log.info(`[LocalBaseRuntime.exec] stdout: ${debugStdout.substring(0, 500)}${debugStdout.length > 500 ? "..." : ""}`);
+          if (debugStderr) {
+            log.info(`[LocalBaseRuntime.exec] stderr: ${debugStderr.substring(0, 500)}${debugStderr.length > 500 ? "..." : ""}`);
+          }
         }
         // Clean up any background processes (process group cleanup)
         // This prevents zombie processes when scripts spawn background tasks
