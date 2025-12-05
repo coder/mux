@@ -62,6 +62,9 @@ export const MarkdownCore = React.memo<MarkdownCoreProps>(
           remarkPlugins={REMARK_PLUGINS}
           rehypePlugins={REHYPE_PLUGINS}
           parseIncompleteMarkdown={parseIncompleteMarkdown}
+          // Use "static" mode for completed content to bypass useTransition() deferral.
+          // After ORPC migration, async event boundaries let React deprioritize transitions indefinitely.
+          mode={parseIncompleteMarkdown ? "streaming" : "static"}
           className="space-y-2" // Reduce from default space-y-4 (16px) to space-y-2 (8px)
           controls={{ table: false, code: true, mermaid: true }} // Disable table copy/download, keep code/mermaid controls
         >
