@@ -370,15 +370,10 @@ export const router = (authToken?: string) => {
             push(message);
           });
 
-          // 2. Replay history
+          // 2. Replay history (sends caught-up at the end)
           await session.replayHistory(({ message }) => {
             push(message);
           });
-
-          // 3. Signal that subscription is established and history replay is complete
-          // This allows clients to know when they can safely send messages without
-          // missing events due to async generator setup timing
-          push({ type: "caught-up" });
 
           try {
             yield* iterate();
