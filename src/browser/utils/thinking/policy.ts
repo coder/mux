@@ -38,10 +38,7 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
   const withoutPrefix = normalized.replace(/^[a-z0-9_-]+:\s*/, "");
 
   // GPT-5.1-Codex-Max supports 5 reasoning levels including xhigh (Extra High)
-  if (
-    withoutPrefix.startsWith("gpt-5.1-codex-max") ||
-    withoutPrefix.startsWith("codex-max")
-  ) {
+  if (withoutPrefix.startsWith("gpt-5.1-codex-max") || withoutPrefix.startsWith("codex-max")) {
     return ["off", "low", "medium", "high", "xhigh"];
   }
 
