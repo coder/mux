@@ -313,7 +313,7 @@ export const ToolPolicySchema = z.array(ToolPolicyFilterSchema).meta({
 // SendMessage options
 export const SendMessageOptionsSchema = z.object({
   editMessageId: z.string().optional(),
-  thinkingLevel: z.enum(["off", "low", "medium", "high"]).optional(),
+  thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh"]).optional(),
   model: z.string("No model specified"),
   toolPolicy: ToolPolicySchema.optional(),
   additionalSystemInstructions: z.string().optional(),

@@ -70,6 +70,13 @@ const MODEL_DEFINITIONS = {
     providerModelId: "gpt-5.1-codex-mini",
     aliases: ["codex-mini"],
   },
+  GPT_CODEX_MAX: {
+    provider: "openai",
+    providerModelId: "gpt-5.1-codex-max",
+    aliases: ["codex-max"],
+    warm: true,
+    tokenizerOverride: "openai/gpt-5",
+  },
   GEMINI_3_PRO: {
     provider: "google",
     providerModelId: "gemini-3-pro-preview",

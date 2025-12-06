@@ -5,7 +5,7 @@
  * different AI providers (Anthropic, OpenAI, etc.)
  */
 
-export type ThinkingLevel = "off" | "low" | "medium" | "high";
+export type ThinkingLevel = "off" | "low" | "medium" | "high" | "xhigh";
 
 /**
  * Active thinking levels (excludes "off")
@@ -30,6 +30,7 @@ export const ANTHROPIC_THINKING_BUDGETS: Record<ThinkingLevel, number> = {
   low: 4000,
   medium: 10000,
   high: 20000,
+  xhigh: 20000, // Same as high - Anthropic doesn't support xhigh
 };
 
 /**
@@ -47,6 +48,7 @@ export const ANTHROPIC_EFFORT: Record<ThinkingLevel, "low" | "medium" | "high"> 
   low: "low",
   medium: "medium",
   high: "high",
+  xhigh: "high", // Fallback to high - Anthropic doesn't support xhigh
 };
 
 /**
@@ -66,6 +68,7 @@ export const OPENAI_REASONING_EFFORT: Record<ThinkingLevel, string | undefined> 
   low: "low",
   medium: "medium",
   high: "high",
+  xhigh: "xhigh", // Extra High - only supported by gpt-5.1-codex-max
 };
 
 /**
@@ -83,6 +86,7 @@ export const GEMINI_THINKING_BUDGETS: Record<ThinkingLevel, number> = {
   low: 2048,
   medium: 8192,
   high: 16384, // Conservative max (some models go to 32k)
+  xhigh: 16384, // Same as high - Gemini doesn't support xhigh
 } as const;
 export const OPENROUTER_REASONING_EFFORT: Record<
   ThinkingLevel,
@@ -92,4 +96,5 @@ export const OPENROUTER_REASONING_EFFORT: Record<
   low: "low",
   medium: "medium",
   high: "high",
+  xhigh: "high", // Fallback to high - OpenRouter doesn't support xhigh
 };
