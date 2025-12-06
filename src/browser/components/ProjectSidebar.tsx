@@ -186,6 +186,23 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   } = useWorkspaceContext();
 
   // Get project state and operations from context
+  const handleSelectWorkspace = useCallback(
+    (selection: WorkspaceSelection) => {
+      onSelectWorkspace(selection);
+      // Auto-close sidebar in PWA mode or on mobile viewports
+      if (!collapsed && typeof window !== "undefined") {
+        const isPWA = window.matchMedia('(display-mode: standalone)').matches || 
+                      (window.navigator as any).standalone; // iOS Safari
+        const isMobileWidth = window.innerWidth <= 768;
+        
+        if (isPWA || isMobileWidth) {
+          onToggleCollapsed();
+        }
+      }
+    },
+    [onSelectWorkspace, collapsed, onToggleCollapsed]
+  );
+
   const {
     projects,
     openProjectCreateModal: onAddProject,
