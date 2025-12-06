@@ -2,11 +2,12 @@
   "name": "mux",
   "displayName": "mux",
   "description": "Open mux workspaces directly from VS Code",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "coder",
   "icon": "icon.png",
   "extensionKind": [
-    "ui"
+    "ui",
+    "workspace"
   ],
   "engines": {
     "vscode": "^1.85.0"
