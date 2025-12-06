@@ -10,88 +10,77 @@ import { formatModelDisplayName } from "../src/common/utils/ai/modelDisplay";
 
 const MODE: "write" | "check" = process.argv[2] === "check" ? "check" : "write";
 
+interface SyncResult {
+  changed: boolean;
+  message: string;
+}
+
+interface SyncConfig {
+  docsFile: string;
+  sourceLabel: string;
+  markerName: string;
+  generateBlock: () => Promise<string> | string;
+}
+
+async function syncDoc(config: SyncConfig): Promise<SyncResult> {
+  const beginMarker = `{/* BEGIN ${config.markerName} */}`;
+  const endMarker = `{/* END ${config.markerName} */}`;
+  const docsPath = path.join(process.cwd(), config.docsFile);
+  const relPath = path.relative(process.cwd(), docsPath);
+
+  const block = await config.generateBlock();
+  const original = await fs.readFile(docsPath, "utf8");
+  const updated = injectBetweenMarkers(original, beginMarker, endMarker, block, docsPath);
+  const changed = original !== updated;
+
+  if (MODE === "check") {
+    return {
+      changed,
+      message: changed
+        ? `❌ ${relPath} is out of sync with ${config.sourceLabel}`
+        : `✅ ${relPath} is in sync`,
+    };
+  }
+
+  if (changed) {
+    await fs.writeFile(docsPath, updated);
+    return { changed: true, message: `Updated ${relPath}` };
+  }
+  return { changed: false, message: `${relPath} already up to date` };
+}
+
 async function main() {
-  const results = await Promise.all([syncSystemPrompt(), syncKnownModels()]);
+  const results = await Promise.all([
+    syncDoc({
+      docsFile: "docs/system-prompt.mdx",
+      sourceLabel: "src/node/services/systemMessage.ts",
+      markerName: "SYSTEM_PROMPT_DOCS",
+      generateBlock: generateSystemPromptBlock,
+    }),
+    syncDoc({
+      docsFile: "docs/models.mdx",
+      sourceLabel: "src/common/constants/knownModels.ts",
+      markerName: "KNOWN_MODELS_TABLE",
+      generateBlock: generateKnownModelsTable,
+    }),
+  ]);
 
-  const hasDiff = results.some((r) => r.changed && MODE === "check");
   results.forEach((r) => console.log(r.message));
-
-  if (hasDiff) {
+  if (MODE === "check" && results.some((r) => r.changed)) {
     process.exit(1);
   }
 }
 
-async function syncSystemPrompt() {
-  const SOURCE_FILE = path.join(process.cwd(), "src/node/services/systemMessage.ts");
-  const DOCS_FILE = path.join(process.cwd(), "docs/system-prompt.mdx");
-  const BEGIN_MARKER = "{/* BEGIN SYSTEM_PROMPT_DOCS */}";
-  const END_MARKER = "{/* END SYSTEM_PROMPT_DOCS */}";
-
-  const source = await fs.readFile(SOURCE_FILE, "utf8");
+async function generateSystemPromptBlock(): Promise<string> {
+  const sourcePath = path.join(process.cwd(), "src/node/services/systemMessage.ts");
+  const source = await fs.readFile(sourcePath, "utf8");
   const regionMatch = source.match(
     /\/\/ #region SYSTEM_PROMPT_DOCS\r?\n([\s\S]*?)\r?\n\/\/ #endregion SYSTEM_PROMPT_DOCS/
   );
   if (!regionMatch) {
     throw new Error("SYSTEM_PROMPT_DOCS markers not found in src/node/services/systemMessage.ts");
   }
-  const region = regionMatch[1].trimEnd();
-  const generatedBlock = ["```typescript", region, "```"].join("\n");
-  const originalDoc = await fs.readFile(DOCS_FILE, "utf8");
-  const updatedDoc = injectBetweenMarkers(
-    originalDoc,
-    BEGIN_MARKER,
-    END_MARKER,
-    generatedBlock,
-    DOCS_FILE
-  );
-
-  if (MODE === "check") {
-    const changed = originalDoc !== updatedDoc;
-    return {
-      changed,
-      message: changed
-        ? `❌ ${path.relative(process.cwd(), DOCS_FILE)} is out of sync with ${path.relative(process.cwd(), SOURCE_FILE)}`
-        : "✅ docs/system-prompt.mdx is in sync",
-    };
-  }
-
-  if (originalDoc !== updatedDoc) {
-    await fs.writeFile(DOCS_FILE, updatedDoc);
-    return { changed: true, message: "Updated docs/system-prompt.mdx" };
-  }
-  return { changed: false, message: "docs/system-prompt.mdx already up to date" };
-}
-
-async function syncKnownModels() {
-  const DOCS_FILE = path.join(process.cwd(), "docs/models.mdx");
-  const BEGIN_MARKER = "{/* BEGIN KNOWN_MODELS_TABLE */}";
-  const END_MARKER = "{/* END KNOWN_MODELS_TABLE */}";
-
-  const tableBlock = generateKnownModelsTable();
-  const originalDoc = await fs.readFile(DOCS_FILE, "utf8");
-  const updatedDoc = injectBetweenMarkers(
-    originalDoc,
-    BEGIN_MARKER,
-    END_MARKER,
-    tableBlock,
-    DOCS_FILE
-  );
-
-  if (MODE === "check") {
-    const changed = originalDoc !== updatedDoc;
-    return {
-      changed,
-      message: changed
-        ? "❌ docs/models.mdx is out of sync with src/common/constants/knownModels.ts"
-        : "✅ docs/models.mdx is in sync with knownModels.ts",
-    };
-  }
-
-  if (originalDoc !== updatedDoc) {
-    await fs.writeFile(DOCS_FILE, updatedDoc);
-    return { changed: true, message: "Updated docs/models.mdx" };
-  }
-  return { changed: false, message: "docs/models.mdx already up to date" };
+  return ["```typescript", regionMatch[1].trimEnd(), "```"].join("\n");
 }
 
 function generateKnownModelsTable(): string {
