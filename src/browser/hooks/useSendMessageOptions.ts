@@ -2,6 +2,7 @@ import { useThinkingLevel } from "./useThinkingLevel";
 import { useMode } from "@/browser/contexts/ModeContext";
 import { usePersistedState } from "./usePersistedState";
 import { getDefaultModel } from "./useModelLRU";
+import { toGatewayModel } from "./useGatewayModels";
 import { modeToToolPolicy, PLAN_MODE_INSTRUCTION } from "@/common/utils/ui/modeUtils";
 import { getModelKey } from "@/common/constants/storage";
 import type { SendMessageOptions } from "@/common/orpc/types";
@@ -26,8 +27,11 @@ function constructSendMessageOptions(
   const additionalSystemInstructions = mode === "plan" ? PLAN_MODE_INSTRUCTION : undefined;
 
   // Ensure model is always a valid string (defensive against corrupted localStorage)
-  const model =
+  const baseModel =
     typeof preferredModel === "string" && preferredModel ? preferredModel : fallbackModel;
+
+  // Transform to gateway format if gateway is enabled for this model
+  const model = toGatewayModel(baseModel);
 
   // Enforce thinking policy at the UI boundary as well (e.g., gpt-5-pro → high only)
   const uiThinking = enforceThinkingPolicy(model, thinkingLevel);

@@ -3,6 +3,7 @@ import { Plus, Loader2 } from "lucide-react";
 import { SUPPORTED_PROVIDERS, PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { useModelLRU } from "@/browser/hooks/useModelLRU";
+import { useGatewayModels } from "@/browser/hooks/useGatewayModels";
 import { ModelRow } from "./ModelRow";
 import { useAPI } from "@/browser/contexts/API";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
@@ -25,6 +26,7 @@ export function ModelsSection() {
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { defaultModel, setDefaultModel } = useModelLRU();
+  const { isEnabled: isGatewayEnabled, toggle: toggleGateway } = useGatewayModels();
 
   // Check if a model already exists (for duplicate prevention)
   const modelExists = useCallback(
@@ -213,6 +215,7 @@ export function ModelsSection() {
               editError={isModelEditing ? error : undefined}
               saving={false}
               hasActiveEdit={editing !== null}
+              isGatewayEnabled={isGatewayEnabled(model.fullId)}
               onSetDefault={() => setDefaultModel(model.fullId)}
               onStartEdit={() => handleStartEdit(model.provider, model.modelId)}
               onSaveEdit={handleSaveEdit}
@@ -221,6 +224,7 @@ export function ModelsSection() {
                 setEditing((prev) => (prev ? { ...prev, newModelId: value } : null))
               }
               onRemove={() => handleRemoveModel(model.provider, model.modelId)}
+              onToggleGateway={() => toggleGateway(model.fullId)}
             />
           );
         })}
@@ -241,7 +245,9 @@ export function ModelsSection() {
             isCustom={false}
             isDefault={defaultModel === model.fullId}
             isEditing={false}
+            isGatewayEnabled={isGatewayEnabled(model.fullId)}
             onSetDefault={() => setDefaultModel(model.fullId)}
+            onToggleGateway={() => toggleGateway(model.fullId)}
           />
         ))}
       </div>

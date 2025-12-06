@@ -1,5 +1,5 @@
 import React from "react";
-import { Check, Pencil, Star, Trash2, X } from "lucide-react";
+import { Check, Cloud, Pencil, Star, Trash2, X } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { TooltipWrapper, Tooltip } from "@/browser/components/Tooltip";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
@@ -16,12 +16,16 @@ export interface ModelRowProps {
   editError?: string | null;
   saving?: boolean;
   hasActiveEdit?: boolean;
+  /** Whether gateway mode is enabled for this model */
+  isGatewayEnabled?: boolean;
   onSetDefault: () => void;
   onStartEdit?: () => void;
   onSaveEdit?: () => void;
   onCancelEdit?: () => void;
   onEditChange?: (value: string) => void;
   onRemove?: () => void;
+  /** Toggle gateway mode for this model */
+  onToggleGateway?: () => void;
 }
 
 export function ModelRow(props: ModelRowProps) {
@@ -90,6 +94,25 @@ export function ModelRow(props: ModelRowProps) {
           </>
         ) : (
           <>
+            {/* Gateway toggle button */}
+            {props.onToggleGateway && (
+              <TooltipWrapper inline>
+                <button
+                  type="button"
+                  onClick={props.onToggleGateway}
+                  className={cn(
+                    "p-0.5 transition-colors",
+                    props.isGatewayEnabled ? "text-accent" : "text-muted hover:text-accent"
+                  )}
+                  aria-label={props.isGatewayEnabled ? "Disable Mux Gateway" : "Enable Mux Gateway"}
+                >
+                  <Cloud className={cn("h-3.5 w-3.5", props.isGatewayEnabled && "fill-current")} />
+                </button>
+                <Tooltip className="tooltip" align="center">
+                  {props.isGatewayEnabled ? "Using Mux Gateway" : "Use Mux Gateway"}
+                </Tooltip>
+              </TooltipWrapper>
+            )}
             {/* Favorite/default button */}
             <TooltipWrapper inline>
               <button

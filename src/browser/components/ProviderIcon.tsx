@@ -67,7 +67,7 @@ export function ProviderWithIcon(props: ProviderWithIconProps) {
     : props.provider;
 
   return (
-    <span className={cn("inline-flex items-center gap-1", props.className)}>
+    <span className={cn("inline-flex items-center gap-1 whitespace-nowrap", props.className)}>
       <ProviderIcon provider={props.provider} className={props.iconClassName} />
       <span>{name}</span>
     </span>
