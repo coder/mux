@@ -1,4 +1,11 @@
 import React from "react";
+import {
+  Select as ShadcnSelect,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/browser/components/ui/select";
 
 interface SelectOption {
   value: string;
@@ -17,7 +24,7 @@ interface SelectProps {
 
 /**
  * Reusable select component with consistent styling
- * Centralizes select styling to avoid duplication and ensure consistent UX
+ * Wraps shadcn Select with a simpler API for common use cases
  */
 export function Select({
   value,
@@ -34,19 +41,17 @@ export function Select({
   );
 
   return (
-    <select
-      id={id}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      disabled={disabled}
-      aria-label={ariaLabel}
-      className={`bg-separator text-foreground border-border-medium focus:border-accent rounded border px-1 py-0.5 text-xs focus:outline-none disabled:opacity-50 ${className}`}
-    >
-      {normalizedOptions.map((opt) => (
-        <option key={opt.value} value={opt.value}>
-          {opt.label}
-        </option>
-      ))}
-    </select>
+    <ShadcnSelect value={value} onValueChange={onChange} disabled={disabled}>
+      <SelectTrigger id={id} className={className} aria-label={ariaLabel}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {normalizedOptions.map((opt) => (
+          <SelectItem key={opt.value} value={opt.value}>
+            {opt.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </ShadcnSelect>
   );
 }
