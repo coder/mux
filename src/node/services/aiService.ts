@@ -19,6 +19,7 @@ import type { InitStateManager } from "./initStateManager";
 import type { SendMessageError } from "@/common/types/errors";
 import { getToolsForModel } from "@/common/utils/tools/tools";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
+import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import { secretsToRecord } from "@/common/types/secrets";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { log } from "./log";
@@ -1005,6 +1006,11 @@ export class AIService extends EventEmitter {
           cwd: workspacePath,
           runtime,
           secrets: secretsToRecord(projectSecrets),
+          muxEnv: getMuxEnv(
+            metadata.projectPath,
+            getRuntimeType(metadata.runtimeConfig),
+            metadata.name
+          ),
           runtimeTempDir,
         },
         workspaceId,

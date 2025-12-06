@@ -1230,6 +1230,63 @@ fi
   });
 });
 
+describe("muxEnv environment variables", () => {
+  it("should inject MUX_ environment variables when muxEnv is provided", async () => {
+    using tempDir = new TestTempDir("test-mux-env");
+    const config = createTestToolConfig(process.cwd());
+    config.runtimeTempDir = tempDir.path;
+    config.muxEnv = {
+      MUX_PROJECT_PATH: "/test/project/path",
+      MUX_RUNTIME: "worktree",
+      MUX_WORKSPACE_NAME: "feature-branch",
+    };
+    const tool = createBashTool(config);
+
+    const args: BashToolArgs = {
+      script: 'echo "PROJECT:$MUX_PROJECT_PATH RUNTIME:$MUX_RUNTIME WORKSPACE:$MUX_WORKSPACE_NAME"',
+      timeout_secs: 5,
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.output).toContain("PROJECT:/test/project/path");
+      expect(result.output).toContain("RUNTIME:worktree");
+      expect(result.output).toContain("WORKSPACE:feature-branch");
+    }
+  });
+
+  it("should allow secrets to override muxEnv", async () => {
+    using tempDir = new TestTempDir("test-mux-env-override");
+    const config = createTestToolConfig(process.cwd());
+    config.runtimeTempDir = tempDir.path;
+    config.muxEnv = {
+      MUX_PROJECT_PATH: "/mux/path",
+      CUSTOM_VAR: "from-mux",
+    };
+    config.secrets = {
+      CUSTOM_VAR: "from-secrets",
+    };
+    const tool = createBashTool(config);
+
+    const args: BashToolArgs = {
+      script: 'echo "MUX:$MUX_PROJECT_PATH CUSTOM:$CUSTOM_VAR"',
+      timeout_secs: 5,
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // MUX_PROJECT_PATH from muxEnv should be present
+      expect(result.output).toContain("MUX:/mux/path");
+      // Secrets should override muxEnv when there's a conflict
+      expect(result.output).toContain("CUSTOM:from-secrets");
+    }
+  });
+});
+
 describe("SSH runtime redundant cd detection", () => {
   // Helper to create bash tool with SSH runtime configuration
   // Note: These tests check redundant cd detection logic only - they don't actually execute via SSH

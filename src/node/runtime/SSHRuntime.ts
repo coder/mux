@@ -17,7 +17,7 @@ import type {
 import { RuntimeError as RuntimeErrorClass } from "./Runtime";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { log } from "@/node/services/log";
-import { checkInitHookExists, createLineBufferedLoggers, getInitHookEnv } from "./initHook";
+import { checkInitHookExists, createLineBufferedLoggers, getMuxEnv } from "./initHook";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { streamProcessToLogger } from "./streamProcess";
 import { expandTildeForSSH, cdCommandForSSH } from "./tildeExpansion";
@@ -732,19 +732,17 @@ export class SSHRuntime implements Runtime {
 
   /**
    * Run .mux/init hook on remote machine if it exists
+   * @param workspacePath - Path to the workspace directory on remote
+   * @param muxEnv - MUX_ environment variables (from getMuxEnv)
+   * @param initLogger - Logger for streaming output
+   * @param abortSignal - Optional abort signal
    */
   private async runInitHook(
-    projectPath: string,
     workspacePath: string,
+    muxEnv: Record<string, string>,
     initLogger: InitLogger,
     abortSignal?: AbortSignal
   ): Promise<void> {
-    // Check if hook exists locally (we synced the project, so local check is sufficient)
-    const hookExists = await checkInitHookExists(projectPath);
-    if (!hookExists) {
-      return;
-    }
-
     // Construct hook path - expand tilde if present
     const remoteHookPath = `${workspacePath}/.mux/init`;
     initLogger.logStep(`Running init hook: ${remoteHookPath}`);
@@ -759,7 +757,7 @@ export class SSHRuntime implements Runtime {
       cwd: workspacePath, // Run in the workspace directory
       timeout: 3600, // 1 hour - generous timeout for init hooks
       abortSignal,
-      env: getInitHookEnv(projectPath, "ssh"),
+      env: muxEnv,
     });
 
     // Create line-buffered loggers
@@ -921,7 +919,8 @@ export class SSHRuntime implements Runtime {
       // Note: runInitHook calls logComplete() internally if hook exists
       const hookExists = await checkInitHookExists(projectPath);
       if (hookExists) {
-        await this.runInitHook(projectPath, workspacePath, initLogger, abortSignal);
+        const muxEnv = getMuxEnv(projectPath, "ssh", branchName);
+        await this.runInitHook(workspacePath, muxEnv, initLogger, abortSignal);
       } else {
         // No hook - signal completion immediately
         initLogger.logComplete(0);
