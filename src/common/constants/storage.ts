@@ -60,17 +60,6 @@ export function getThinkingLevelKey(modelName: string): string {
 }
 
 /**
- * Get the localStorage key for the last *active* thinking level used for a model.
- * Format: "lastActiveThinking:{modelName}"
- *
- * Used by the toggle keybind (Ctrl+Shift+T) to restore the previous non-off level.
- * Stores only active levels ("low" | "medium" | "high"), never "off".
- */
-export function getLastActiveThinkingKey(modelName: string): string {
-  return `lastActiveThinking:${modelName}`;
-}
-
-/**
  * Get the localStorage key for the user's preferred model for a workspace
  */
 export function getModelKey(workspaceId: string): string {
