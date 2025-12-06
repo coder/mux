@@ -1,7 +1,9 @@
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import { usePersistedState, readPersistedState, updatePersistedState } from "./usePersistedState";
+import { useProvidersConfig } from "./useProvidersConfig";
 
 const GATEWAY_MODELS_KEY = "gateway-models";
+const GATEWAY_AVAILABLE_KEY = "gateway-available";
 
 /**
  * Check if a model is gateway-enabled (static read, no reactivity)
@@ -12,11 +14,20 @@ export function isGatewayEnabled(modelId: string): boolean {
 }
 
 /**
- * Transform a model ID to gateway format if gateway is enabled for it.
+ * Check if the gateway provider is available (has coupon code configured)
+ */
+export function isGatewayAvailable(): boolean {
+  return readPersistedState<boolean>(GATEWAY_AVAILABLE_KEY, false);
+}
+
+/**
+ * Transform a model ID to gateway format if gateway is enabled AND available.
+ * Falls back to direct provider if gateway is not configured.
  * Example: "anthropic:claude-opus-4-5" → "mux-gateway:anthropic/claude-opus-4-5"
  */
 export function toGatewayModel(modelId: string): string {
-  if (!isGatewayEnabled(modelId)) {
+  // Only transform if user enabled gateway for this model AND gateway is configured
+  if (!isGatewayEnabled(modelId) || !isGatewayAvailable()) {
     return modelId;
   }
   // Transform provider:model to mux-gateway:provider/model
@@ -47,11 +58,27 @@ export function toggleGatewayModel(modelId: string): void {
 /**
  * Hook to manage which models use the Mux Gateway.
  * Returns reactive state and toggle function.
+ *
+ * Also syncs gateway availability from provider config to localStorage
+ * so that toGatewayModel() can check it synchronously.
  */
 export function useGatewayModels() {
+  const { config } = useProvidersConfig();
   const [gatewayModels, setGatewayModels] = usePersistedState<string[]>(GATEWAY_MODELS_KEY, [], {
     listener: true,
   });
+  const [gatewayAvailable, setGatewayAvailable] = usePersistedState<boolean>(
+    GATEWAY_AVAILABLE_KEY,
+    false,
+    { listener: true }
+  );
+
+  // Sync gateway availability from provider config
+  useEffect(() => {
+    if (!config) return;
+    const available = config["mux-gateway"]?.couponCodeSet ?? false;
+    setGatewayAvailable(available);
+  }, [config, setGatewayAvailable]);
 
   const isEnabled = useCallback(
     (modelId: string) => gatewayModels.includes(modelId),
@@ -70,5 +97,5 @@ export function useGatewayModels() {
     [setGatewayModels]
   );
 
-  return { gatewayModels, isEnabled, toggle };
+  return { gatewayModels, isEnabled, toggle, gatewayAvailable };
 }

@@ -28,7 +28,11 @@ export interface ModelSelectorRef {
 export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
   ({ value, onChange, recentModels, onComplete, defaultModel, onSetDefaultModel }, ref) => {
     const { open: openSettings } = useSettings();
-    const { isEnabled: isGatewayEnabled, toggle: toggleGateway } = useGatewayModels();
+    const {
+      isEnabled: isGatewayEnabled,
+      toggle: toggleGateway,
+      gatewayAvailable,
+    } = useGatewayModels();
     const [isEditing, setIsEditing] = useState(false);
     const [inputValue, setInputValue] = useState(value);
     const [error, setError] = useState<string | null>(null);
@@ -192,7 +196,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     }, [highlightedIndex]);
 
     if (!isEditing) {
-      const gatewayEnabled = isGatewayEnabled(value);
+      const gatewayEnabled = isGatewayEnabled(value) && gatewayAvailable;
       return (
         <div ref={containerRef} className="relative flex items-center gap-1">
           {gatewayEnabled && (
@@ -264,34 +268,36 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                   <div className="grid w-full grid-cols-[1fr_auto] items-center gap-2">
                     <span className="min-w-0 truncate">{model}</span>
                     <div className="flex items-center gap-0.5">
-                      {/* Gateway toggle */}
-                      <TooltipWrapper inline>
-                        <button
-                          type="button"
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            toggleGateway(model);
-                          }}
-                          className={cn(
-                            "flex items-center justify-center rounded-sm border px-1 py-0.5 transition-colors duration-150",
-                            isGatewayEnabled(model)
-                              ? "text-accent border-accent/40"
-                              : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
-                          )}
-                          aria-label={
-                            isGatewayEnabled(model) ? "Disable Mux Gateway" : "Enable Mux Gateway"
-                          }
-                        >
-                          <Cloud
-                            className={cn("h-3 w-3", isGatewayEnabled(model) && "fill-current")}
-                          />
-                        </button>
-                        <Tooltip className="tooltip" align="center">
-                          {isGatewayEnabled(model) ? "Using Mux Gateway" : "Use Mux Gateway"}
-                        </Tooltip>
-                      </TooltipWrapper>
+                      {/* Gateway toggle - only show when gateway is configured */}
+                      {gatewayAvailable && (
+                        <TooltipWrapper inline>
+                          <button
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              toggleGateway(model);
+                            }}
+                            className={cn(
+                              "flex items-center justify-center rounded-sm border px-1 py-0.5 transition-colors duration-150",
+                              isGatewayEnabled(model)
+                                ? "text-accent border-accent/40"
+                                : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
+                            )}
+                            aria-label={
+                              isGatewayEnabled(model) ? "Disable Mux Gateway" : "Enable Mux Gateway"
+                            }
+                          >
+                            <Cloud
+                              className={cn("h-3 w-3", isGatewayEnabled(model) && "fill-current")}
+                            />
+                          </button>
+                          <Tooltip className="tooltip" align="center">
+                            {isGatewayEnabled(model) ? "Using Mux Gateway" : "Use Mux Gateway"}
+                          </Tooltip>
+                        </TooltipWrapper>
+                      )}
                       {/* Default model toggle */}
                       {onSetDefaultModel && (
                         <TooltipWrapper inline>

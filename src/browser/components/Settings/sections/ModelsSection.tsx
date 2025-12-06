@@ -26,7 +26,11 @@ export function ModelsSection() {
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { defaultModel, setDefaultModel } = useModelLRU();
-  const { isEnabled: isGatewayEnabled, toggle: toggleGateway } = useGatewayModels();
+  const {
+    isEnabled: isGatewayEnabled,
+    toggle: toggleGateway,
+    gatewayAvailable,
+  } = useGatewayModels();
 
   // Check if a model already exists (for duplicate prevention)
   const modelExists = useCallback(
@@ -224,7 +228,7 @@ export function ModelsSection() {
                 setEditing((prev) => (prev ? { ...prev, newModelId: value } : null))
               }
               onRemove={() => handleRemoveModel(model.provider, model.modelId)}
-              onToggleGateway={() => toggleGateway(model.fullId)}
+              onToggleGateway={gatewayAvailable ? () => toggleGateway(model.fullId) : undefined}
             />
           );
         })}
@@ -247,7 +251,7 @@ export function ModelsSection() {
             isEditing={false}
             isGatewayEnabled={isGatewayEnabled(model.fullId)}
             onSetDefault={() => setDefaultModel(model.fullId)}
-            onToggleGateway={() => toggleGateway(model.fullId)}
+            onToggleGateway={gatewayAvailable ? () => toggleGateway(model.fullId) : undefined}
           />
         ))}
       </div>
