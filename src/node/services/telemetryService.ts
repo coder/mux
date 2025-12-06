@@ -25,7 +25,47 @@ const DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com";
 const TELEMETRY_ID_FILE = "telemetry_id";
 
 /**
- * Check if telemetry is disabled via environment variable
+ * Check if running in a CI/automation environment.
+ * Covers major CI providers: GitHub Actions, GitLab CI, Jenkins, CircleCI,
+ * Travis, Azure Pipelines, Bitbucket, TeamCity, Buildkite, etc.
+ */
+function isCIEnvironment(): boolean {
+  return (
+    // Generic CI indicator (set by most CI systems)
+    process.env.CI === "true" ||
+    process.env.CI === "1" ||
+    // GitHub Actions
+    process.env.GITHUB_ACTIONS === "true" ||
+    // GitLab CI
+    process.env.GITLAB_CI === "true" ||
+    // Jenkins
+    process.env.JENKINS_URL !== undefined ||
+    // CircleCI
+    process.env.CIRCLECI === "true" ||
+    // Travis CI
+    process.env.TRAVIS === "true" ||
+    // Azure Pipelines
+    process.env.TF_BUILD === "True" ||
+    // Bitbucket Pipelines
+    process.env.BITBUCKET_BUILD_NUMBER !== undefined ||
+    // TeamCity
+    process.env.TEAMCITY_VERSION !== undefined ||
+    // Buildkite
+    process.env.BUILDKITE === "true" ||
+    // AWS CodeBuild
+    process.env.CODEBUILD_BUILD_ID !== undefined ||
+    // Drone CI
+    process.env.DRONE === "true" ||
+    // AppVeyor
+    process.env.APPVEYOR === "True" ||
+    // Vercel / Netlify (build environments)
+    process.env.VERCEL === "1" ||
+    process.env.NETLIFY === "true"
+  );
+}
+
+/**
+ * Check if telemetry is disabled via environment variable or automation context
  */
 function isTelemetryDisabled(): boolean {
   return (
@@ -33,7 +73,8 @@ function isTelemetryDisabled(): boolean {
     process.env.NODE_ENV === "test" ||
     process.env.JEST_WORKER_ID !== undefined ||
     process.env.VITEST !== undefined ||
-    process.env.TEST_INTEGRATION === "1"
+    process.env.TEST_INTEGRATION === "1" ||
+    isCIEnvironment()
   );
 }
 

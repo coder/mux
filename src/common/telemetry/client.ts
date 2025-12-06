@@ -12,15 +12,35 @@
 import type { TelemetryEventPayload } from "./payload";
 
 /**
- * Check if we're running in a test environment
+ * Check if running in a CI/automation environment.
+ * Covers major CI providers. This is a subset of what the backend checks
+ * since the browser process has limited env var access.
+ */
+function isCIEnvironment(): boolean {
+  if (typeof process === "undefined") {
+    return false;
+  }
+  return (
+    process.env.CI === "true" ||
+    process.env.CI === "1" ||
+    process.env.GITHUB_ACTIONS === "true" ||
+    process.env.GITLAB_CI === "true" ||
+    process.env.JENKINS_URL !== undefined ||
+    process.env.CIRCLECI === "true"
+  );
+}
+
+/**
+ * Check if we're running in a test or CI environment
  */
 function isTestEnvironment(): boolean {
   return (
-    typeof process !== "undefined" &&
-    (process.env.NODE_ENV === "test" ||
-      process.env.JEST_WORKER_ID !== undefined ||
-      process.env.VITEST !== undefined ||
-      process.env.TEST_INTEGRATION === "1")
+    (typeof process !== "undefined" &&
+      (process.env.NODE_ENV === "test" ||
+        process.env.JEST_WORKER_ID !== undefined ||
+        process.env.VITEST !== undefined ||
+        process.env.TEST_INTEGRATION === "1")) ||
+    isCIEnvironment()
   );
 }
 
