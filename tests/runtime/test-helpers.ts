@@ -30,7 +30,7 @@ export function createTestRuntime(
       // Resolve symlinks (e.g., /tmp -> /private/tmp on macOS) to match git worktree paths
       // Note: "local" in tests means WorktreeRuntime (isolated git worktrees)
       const resolvedWorkdir = realpathSync(workdir);
-      return new WorktreeRuntime(resolvedWorkdir);
+      return new WorktreeRuntime(resolvedWorkdir, resolvedWorkdir);
     case "ssh":
       if (!sshConfig) {
         throw new Error("SSH config required for SSH runtime");

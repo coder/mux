@@ -17,7 +17,7 @@ import {
 } from "./ssh-fixture";
 import { createTestRuntime, TestWorkspace, type RuntimeType } from "./test-helpers";
 import { execBuffered, readFileString, writeFileString } from "@/node/utils/runtime/helpers";
-import type { Runtime } from "@/node/runtime/Runtime";
+import type { BackgroundHandle, Runtime } from "@/node/runtime/Runtime";
 import { RuntimeError } from "@/node/runtime/Runtime";
 
 // Skip all tests if TEST_INTEGRATION is not set
@@ -1176,6 +1176,205 @@ describeIntegration("Runtime integration tests", () => {
           if (result.success) {
             expect(result.deletedPath).toBeDefined();
           }
+        });
+      });
+
+      describe("spawnBackground() - Background processes", () => {
+        // Generate unique IDs for each test to avoid conflicts
+        const genId = () => `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+        // Polling helpers to handle SSH latency variability
+        async function waitForOutput(
+          rt: Runtime,
+          filePath: string,
+          opts?: { timeout?: number; interval?: number }
+        ): Promise<string> {
+          const { timeout = 5000, interval = 100 } = opts ?? {};
+          const start = Date.now();
+          while (Date.now() - start < timeout) {
+            const content = await readFileString(rt, filePath);
+            if (content.trim()) return content;
+            await new Promise((r) => setTimeout(r, interval));
+          }
+          return await readFileString(rt, filePath);
+        }
+
+        async function waitForExitCode(
+          handle: BackgroundHandle,
+          opts?: { timeout?: number; interval?: number }
+        ): Promise<number | null> {
+          const { timeout = 5000, interval = 100 } = opts ?? {};
+          const start = Date.now();
+          while (Date.now() - start < timeout) {
+            const code = await handle.getExitCode();
+            if (code !== null) return code;
+            await new Promise((r) => setTimeout(r, interval));
+          }
+          return await handle.getExitCode();
+        }
+
+        test.concurrent("spawns process and captures output to file", async () => {
+          const runtime = createRuntime();
+          await using workspace = await TestWorkspace.create(runtime, type);
+          const workspaceId = genId();
+
+          const result = await runtime.spawnBackground('echo "hello from background"', {
+            cwd: workspace.path,
+            workspaceId,
+          });
+
+          expect(result.success).toBe(true);
+          if (!result.success) return;
+
+          expect(result.pid).toBeGreaterThan(0);
+          expect(result.handle.outputDir).toContain(workspaceId);
+          expect(result.handle.outputDir).toMatch(/bg-[0-9a-f]{8}/);
+
+          // Poll for output (handles SSH latency)
+          const stdoutPath = `${result.handle.outputDir}/stdout.log`;
+          const stdout = await waitForOutput(runtime, stdoutPath);
+          expect(stdout.trim()).toBe("hello from background");
+
+          await result.handle.dispose();
+        });
+
+        test.concurrent("captures exit code via trap", async () => {
+          const runtime = createRuntime();
+          await using workspace = await TestWorkspace.create(runtime, type);
+          const workspaceId = genId();
+
+          // Spawn a process that exits with code 42
+          const result = await runtime.spawnBackground("exit 42", {
+            cwd: workspace.path,
+            workspaceId,
+          });
+
+          expect(result.success).toBe(true);
+          if (!result.success) return;
+
+          // Poll for exit code (handles SSH latency)
+          const exitCode = await waitForExitCode(result.handle);
+          expect(exitCode).toBe(42);
+
+          await result.handle.dispose();
+        });
+
+        test.concurrent("getExitCode() returns null while process runs", async () => {
+          const runtime = createRuntime();
+          await using workspace = await TestWorkspace.create(runtime, type);
+          const workspaceId = genId();
+
+          // Spawn a long-running process
+          const result = await runtime.spawnBackground("sleep 30", {
+            cwd: workspace.path,
+            workspaceId,
+          });
+
+          expect(result.success).toBe(true);
+          if (!result.success) return;
+
+          // Should be running (exit code null)
+          expect(await result.handle.getExitCode()).toBe(null);
+
+          // Terminate it
+          await result.handle.terminate();
+
+          // Poll for exit code after termination
+          const exitCode = await waitForExitCode(result.handle);
+          expect(exitCode).not.toBe(null);
+
+          await result.handle.dispose();
+        });
+
+        test.concurrent("terminate() kills running process", async () => {
+          const runtime = createRuntime();
+          await using workspace = await TestWorkspace.create(runtime, type);
+          const workspaceId = genId();
+
+          // Spawn a process that runs indefinitely
+          const result = await runtime.spawnBackground("sleep 60", {
+            cwd: workspace.path,
+            workspaceId,
+          });
+
+          expect(result.success).toBe(true);
+          if (!result.success) return;
+
+          // Verify it's running (exit code null)
+          expect(await result.handle.getExitCode()).toBe(null);
+
+          // Terminate
+          await result.handle.terminate();
+
+          // Poll for exit code (handles SSH latency)
+          const exitCode = await waitForExitCode(result.handle);
+          expect(exitCode).not.toBe(null);
+
+          await result.handle.dispose();
+        });
+
+        test.concurrent("captures stderr to file", async () => {
+          const runtime = createRuntime();
+          await using workspace = await TestWorkspace.create(runtime, type);
+          const workspaceId = genId();
+
+          const result = await runtime.spawnBackground('echo "error message" >&2', {
+            cwd: workspace.path,
+            workspaceId,
+          });
+
+          expect(result.success).toBe(true);
+          if (!result.success) return;
+
+          // Poll for output (handles SSH latency)
+          const stderrPath = `${result.handle.outputDir}/stderr.log`;
+          const stderr = await waitForOutput(runtime, stderrPath);
+          expect(stderr.trim()).toBe("error message");
+
+          await result.handle.dispose();
+        });
+
+        test.concurrent("respects working directory", async () => {
+          const runtime = createRuntime();
+          await using workspace = await TestWorkspace.create(runtime, type);
+          const workspaceId = genId();
+
+          const result = await runtime.spawnBackground("pwd", {
+            cwd: workspace.path,
+            workspaceId,
+          });
+
+          expect(result.success).toBe(true);
+          if (!result.success) return;
+
+          // Poll for output (handles SSH latency)
+          const stdoutPath = `${result.handle.outputDir}/stdout.log`;
+          const stdout = await waitForOutput(runtime, stdoutPath);
+          expect(stdout.trim()).toBe(workspace.path);
+
+          await result.handle.dispose();
+        });
+
+        test.concurrent("passes environment variables", async () => {
+          const runtime = createRuntime();
+          await using workspace = await TestWorkspace.create(runtime, type);
+          const workspaceId = genId();
+
+          const result = await runtime.spawnBackground('echo "secret=$MY_SECRET"', {
+            cwd: workspace.path,
+            workspaceId,
+            env: { MY_SECRET: "hunter2" },
+          });
+
+          expect(result.success).toBe(true);
+          if (!result.success) return;
+
+          // Poll for output (handles SSH latency)
+          const stdoutPath = `${result.handle.outputDir}/stdout.log`;
+          const stdout = await waitForOutput(runtime, stdoutPath);
+          expect(stdout.trim()).toBe("secret=hunter2");
+
+          await result.handle.dispose();
         });
       });
     }

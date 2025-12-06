@@ -43,7 +43,7 @@ describe("buildSystemMessage", () => {
     process.env.MUX_ROOT = globalDir;
 
     // Create a local runtime for tests
-    runtime = new LocalRuntime(tempDir);
+    runtime = new LocalRuntime(tempDir, tempDir);
   });
 
   afterEach(async () => {

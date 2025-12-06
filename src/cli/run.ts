@@ -17,6 +17,7 @@ import { PartialService } from "@/node/services/partialService";
 import { InitStateManager } from "@/node/services/initStateManager";
 import { AIService } from "@/node/services/aiService";
 import { AgentSession, type AgentSessionChatEvent } from "@/node/services/agentSession";
+import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import {
   isCaughtUpMessage,
   isStreamAbort,
@@ -267,7 +268,14 @@ async function main(): Promise<void> {
   const historyService = new HistoryService(config);
   const partialService = new PartialService(config, historyService);
   const initStateManager = new InitStateManager(config);
-  const aiService = new AIService(config, historyService, partialService, initStateManager);
+  const backgroundProcessManager = new BackgroundProcessManager();
+  const aiService = new AIService(
+    config,
+    historyService,
+    partialService,
+    initStateManager,
+    backgroundProcessManager
+  );
   ensureProvidersConfig(config);
 
   const session = new AgentSession({
@@ -277,6 +285,7 @@ async function main(): Promise<void> {
     partialService,
     aiService,
     initStateManager,
+    backgroundProcessManager,
   });
 
   await session.ensureMetadata({

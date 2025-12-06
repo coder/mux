@@ -12,10 +12,12 @@ import type {
 import { listLocalBranches } from "@/node/git";
 import { checkInitHookExists } from "./initHook";
 import { execAsync } from "@/node/utils/disposableExec";
+import { getBashPath } from "@/node/utils/main/bashPath";
 import { getProjectName } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 import { expandTilde } from "./tildeExpansion";
 import { LocalBaseRuntime } from "./LocalBaseRuntime";
+import { toPosixPath } from "@/node/utils/paths";
 
 /**
  * Worktree runtime implementation that executes commands and file operations
@@ -28,8 +30,8 @@ import { LocalBaseRuntime } from "./LocalBaseRuntime";
 export class WorktreeRuntime extends LocalBaseRuntime {
   private readonly srcBaseDir: string;
 
-  constructor(srcBaseDir: string) {
-    super();
+  constructor(srcBaseDir: string, bgOutputDir: string) {
+    super(bgOutputDir);
     // Expand tilde to actual home directory path for local file system operations
     this.srcBaseDir = expandTilde(srcBaseDir);
   }
@@ -283,8 +285,11 @@ export class WorktreeRuntime extends LocalBaseRuntime {
             // Ignore prune errors - we'll still try rm -rf
           }
 
-          // Force delete the directory
-          using rmProc = execAsync(`rm -rf "${deletedPath}"`);
+          // Force delete the directory (use bash shell for rm -rf on Windows)
+          // Convert to POSIX path for Git Bash compatibility on Windows
+          using rmProc = execAsync(`rm -rf "${toPosixPath(deletedPath)}"`, {
+            shell: getBashPath(),
+          });
           await rmProc.result;
 
           return { success: true, deletedPath };
