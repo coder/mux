@@ -1,5 +1,7 @@
-import { exec } from "child_process";
+import { spawn } from "child_process";
 import type { ChildProcess } from "child_process";
+import { getPreferredSpawnConfig } from "@/node/utils/main/bashPath";
+import { log } from "@/node/services/log";
 
 /**
  * Disposable wrapper for child processes that ensures immediate cleanup.
@@ -117,12 +119,32 @@ class DisposableExec implements Disposable {
  * Execute command with automatic cleanup via `using` declaration.
  * Prevents zombie processes by ensuring child is reaped even on error.
  *
+ * Commands are always wrapped in `bash -c` for consistent behavior across platforms.
+ * On Windows, this uses the detected bash runtime (Git for Windows or WSL).
+ * For WSL, Windows paths in the command are automatically translated.
+ *
  * @example
  * using proc = execAsync("git status");
  * const { stdout } = await proc.result;
  */
 export function execAsync(command: string): DisposableExec {
-  const child = exec(command);
+  // Wrap command in bash -c for consistent cross-platform behavior
+  // For WSL, this also translates Windows paths to /mnt/... format
+  const { command: bashCmd, args } = getPreferredSpawnConfig(command);
+
+  // Debug logging for Windows WSL issues
+  log.info(`[execAsync] Original command: ${command}`);
+  log.info(`[execAsync] Spawn command: ${bashCmd}`);
+  log.info(`[execAsync] Spawn args: ${JSON.stringify(args)}`);
+
+  const child = spawn(bashCmd, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+    // Prevent console window from appearing on Windows
+    windowsHide: true,
+  });
+
+  log.info(`[execAsync] Spawned process PID: ${child.pid}`);
+
   const promise = new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
     let stdout = "";
     let stderr = "";
@@ -141,9 +163,16 @@ export function execAsync(command: string): DisposableExec {
     child.on("exit", (code, signal) => {
       exitCode = code;
       exitSignal = signal;
+      log.info(`[execAsync] Process exited with code: ${code}, signal: ${signal}`);
     });
 
     child.on("close", () => {
+      log.info(`[execAsync] Process closed. stdout length: ${stdout.length}, stderr length: ${stderr.length}`);
+      log.info(`[execAsync] stdout: ${stdout.substring(0, 500)}${stdout.length > 500 ? "..." : ""}`);
+      if (stderr) {
+        log.info(`[execAsync] stderr: ${stderr.substring(0, 500)}${stderr.length > 500 ? "..." : ""}`);
+      }
+
       // Only resolve if process exited cleanly (code 0, no signal)
       if (exitCode === 0 && exitSignal === null) {
         resolve({ stdout, stderr });

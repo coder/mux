@@ -1,7 +1,7 @@
 import { spawn } from "child_process";
 import type { ChildProcess } from "child_process";
 import { log } from "./log";
-import { getBashPath } from "@/node/utils/main/bashPath";
+import { getPreferredSpawnConfig } from "@/node/utils/main/bashPath";
 
 /**
  * Configuration for bash execution
@@ -121,17 +121,25 @@ export class BashExecutionService {
       `BashExecutionService: Script: ${script.substring(0, 100)}${script.length > 100 ? "..." : ""}`
     );
 
+    // Get spawn config for the preferred bash runtime
+    // This handles Git for Windows, WSL, and Unix/macOS automatically
+    // For WSL, paths in the script and cwd are translated to /mnt/... format
+    const {
+      command: bashCommand,
+      args: bashArgs,
+      cwd: spawnCwd,
+    } = getPreferredSpawnConfig(script, config.cwd);
+
     // Windows doesn't have nice command, so just spawn bash directly
     const isWindows = process.platform === "win32";
-    const bashPath = getBashPath();
-    const spawnCommand = config.niceness !== undefined && !isWindows ? "nice" : bashPath;
+    const spawnCommand = config.niceness !== undefined && !isWindows ? "nice" : bashCommand;
     const spawnArgs =
       config.niceness !== undefined && !isWindows
-        ? ["-n", config.niceness.toString(), bashPath, "-c", script]
-        : ["-c", script];
+        ? ["-n", config.niceness.toString(), bashCommand, ...bashArgs]
+        : bashArgs;
 
     const child = spawn(spawnCommand, spawnArgs, {
-      cwd: config.cwd,
+      cwd: spawnCwd,
       env: this.createBashEnvironment(config.secrets),
       stdio: ["ignore", "pipe", "pipe"],
       // Spawn as detached process group leader to prevent zombie processes
