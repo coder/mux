@@ -121,14 +121,6 @@ function AppInner() {
     prevWorkspaceRef.current = selectedWorkspace;
   }, [selectedWorkspace, telemetry]);
 
-  // Validate selectedWorkspace when metadata changes
-  // Clear selection if workspace was deleted
-  useEffect(() => {
-    if (selectedWorkspace && !workspaceMetadata.has(selectedWorkspace.workspaceId)) {
-      setSelectedWorkspace(null);
-    }
-  }, [selectedWorkspace, workspaceMetadata, setSelectedWorkspace]);
-
   // Track last-read timestamps for unread indicators
   const { lastReadTimestamps, onToggleUnread } = useUnreadTracking(selectedWorkspace);
 

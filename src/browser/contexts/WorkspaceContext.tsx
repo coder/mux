@@ -118,7 +118,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   );
 
   const loadWorkspaceMetadata = useCallback(async () => {
-    if (!api) return;
+    if (!api) return false; // Return false to indicate metadata wasn't loaded
     try {
       const metadataList = await api.workspace.list(undefined);
       const metadataMap = new Map<string, FrontendWorkspaceMetadata>();
@@ -128,16 +128,22 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         metadataMap.set(metadata.id, metadata);
       }
       setWorkspaceMetadata(metadataMap);
+      return true; // Return true to indicate metadata was loaded
     } catch (error) {
       console.error("Failed to load workspace metadata:", error);
       setWorkspaceMetadata(new Map());
+      return true; // Still return true - we tried to load, just got empty result
     }
   }, [setWorkspaceMetadata, api]);
 
-  // Load metadata once on mount
+  // Load metadata once on mount (and again when api becomes available)
   useEffect(() => {
     void (async () => {
-      await loadWorkspaceMetadata();
+      const loaded = await loadWorkspaceMetadata();
+      if (!loaded) {
+        // api not available yet - effect will run again when api connects
+        return;
+      }
       // After loading metadata (which may trigger migration), reload projects
       // to ensure frontend has the updated config with workspace IDs
       await refreshProjects();
