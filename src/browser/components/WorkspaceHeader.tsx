@@ -29,8 +29,8 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const { canInterrupt } = useWorkspaceSidebarState(workspaceId);
   const { startSequence: startTutorial, isSequenceCompleted } = useTutorial();
   const handleOpenTerminal = useCallback(() => {
-    openTerminal(workspaceId);
-  }, [workspaceId, openTerminal]);
+    openTerminal(workspaceId, runtimeConfig);
+  }, [workspaceId, openTerminal, runtimeConfig]);
 
   // Start workspace tutorial on first entry (only if settings tutorial is done)
   useEffect(() => {

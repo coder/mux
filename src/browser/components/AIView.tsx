@@ -329,8 +329,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
   const openTerminal = useOpenTerminal();
   const handleOpenTerminal = useCallback(() => {
-    openTerminal(workspaceId);
-  }, [workspaceId, openTerminal]);
+    openTerminal(workspaceId, runtimeConfig);
+  }, [workspaceId, openTerminal, runtimeConfig]);
 
   // Auto-scroll when messages or todos update (during streaming)
   useEffect(() => {

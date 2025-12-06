@@ -9,6 +9,7 @@ import { CommandIds } from "@/browser/utils/commandIds";
 import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { BranchListResult } from "@/common/orpc/types";
+import type { RuntimeConfig } from "@/common/types/runtime";
 
 export interface BuildSourcesParams {
   api: APIClient | null;
@@ -44,7 +45,7 @@ export interface BuildSourcesParams {
   onRemoveProject: (path: string) => void;
   onToggleSidebar: () => void;
   onNavigateWorkspace: (dir: "next" | "prev") => void;
-  onOpenWorkspaceInTerminal: (workspaceId: string) => void;
+  onOpenWorkspaceInTerminal: (workspaceId: string, runtimeConfig?: RuntimeConfig) => void;
   onToggleTheme: () => void;
   onSetTheme: (theme: ThemeMode) => void;
   onOpenSettings?: (section?: string) => void;
@@ -130,6 +131,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     // Remove current workspace (rename action intentionally omitted until we add a proper modal)
     if (selected?.namedWorkspacePath) {
       const workspaceDisplayName = `${selected.projectName}/${selected.namedWorkspacePath.split("/").pop() ?? selected.namedWorkspacePath}`;
+      const selectedMeta = p.workspaceMetadata.get(selected.workspaceId);
       list.push({
         id: CommandIds.workspaceOpenTerminalCurrent(),
         title: "Open Current Workspace in Terminal",
@@ -137,7 +139,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         section: section.workspaces,
         shortcutHint: formatKeybind(KEYBINDS.OPEN_TERMINAL),
         run: () => {
-          p.onOpenWorkspaceInTerminal(selected.workspaceId);
+          p.onOpenWorkspaceInTerminal(selected.workspaceId, selectedMeta?.runtimeConfig);
         },
       });
       list.push({
@@ -204,7 +206,8 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
             },
           ],
           onSubmit: (vals) => {
-            p.onOpenWorkspaceInTerminal(vals.workspaceId);
+            const meta = p.workspaceMetadata.get(vals.workspaceId);
+            p.onOpenWorkspaceInTerminal(vals.workspaceId, meta?.runtimeConfig);
           },
         },
       });
