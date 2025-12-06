@@ -126,7 +126,10 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
   // For styling, we still want to map to the "global" intensity 0-3
   // to keep colors consistent (e.g. "high" is always purple, even if it's step 1 of 2)
   const globalLevelIndex = ["off", "low", "medium", "high"].indexOf(thinkingLevel);
-  const visualValue = globalLevelIndex === -1 ? 0 : globalLevelIndex;
+  const visualValue = (() => {
+    if (thinkingLevel === "xhigh") return 3; // reuse HIGH styling/glow for XHIGH
+    return globalLevelIndex === -1 ? 0 : globalLevelIndex;
+  })();
 
   const sliderStyles = getSliderStyles(visualValue, isHovering);
   const textStyle = getTextStyle(visualValue);
