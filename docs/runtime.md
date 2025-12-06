@@ -17,7 +17,7 @@ When creating a workspace, select the runtime from the dropdown in the workspace
 
 ## Init Hooks
 
-[Init hooks](/init-hooks) can detect the runtime type via the `MUX_RUNTIME` environment variable:
+[Init hooks](/init-hooks) and agent bash tool executions can detect the runtime type via the `MUX_RUNTIME` environment variable:
 
 - `local` — Local runtime
 - `worktree` — Worktree runtime
