@@ -92,6 +92,8 @@ export type TelemetryThinkingLevel = "off" | "low" | "medium" | "high";
  * Chat/AI interaction events
  */
 export interface MessageSentPayload {
+  /** Workspace ID (randomly generated, safe to send) */
+  workspaceId: string;
   /** Full model identifier (e.g., 'anthropic/claude-3-5-sonnet-20241022') */
   model: string;
   /** UI mode (e.g., 'plan', 'exec', 'edit') */

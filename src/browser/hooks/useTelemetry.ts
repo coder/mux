@@ -29,7 +29,7 @@ import type {
  *
  * telemetry.workspaceSwitched(fromId, toId);
  * telemetry.workspaceCreated(workspaceId, runtimeType);
- * telemetry.messageSent(model, mode, messageLength, runtimeType, thinkingLevel);
+ * telemetry.messageSent(workspaceId, model, mode, messageLength, runtimeType, thinkingLevel);
  * telemetry.streamCompleted(model, wasInterrupted, durationSecs, outputTokens);
  * telemetry.providerConfigured(provider, keyType);
  * telemetry.commandUsed(commandType);
@@ -48,13 +48,14 @@ export function useTelemetry() {
 
   const messageSent = useCallback(
     (
+      workspaceId: string,
       model: string,
       mode: string,
       messageLength: number,
       runtimeType: TelemetryRuntimeType,
       thinkingLevel: TelemetryThinkingLevel
     ) => {
-      trackMessageSent(model, mode, messageLength, runtimeType, thinkingLevel);
+      trackMessageSent(workspaceId, model, mode, messageLength, runtimeType, thinkingLevel);
     },
     []
   );
