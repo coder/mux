@@ -1,10 +1,9 @@
 import { useEffect } from "react";
 import type { ChatInputAPI } from "@/browser/components/ChatInput";
 import { matchesKeybind, KEYBINDS, isEditableElement } from "@/browser/utils/ui/keybinds";
-import { getModelKey, getLastActiveThinkingKey } from "@/common/constants/storage";
-import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
-import type { ThinkingLevel, ThinkingLevelOn } from "@/common/types/thinking";
-import { DEFAULT_THINKING_LEVEL } from "@/common/types/thinking";
+import { getModelKey } from "@/common/constants/storage";
+import { readPersistedState } from "@/browser/hooks/usePersistedState";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import { getThinkingPolicyForModel } from "@/browser/utils/thinking/policy";
 import { getDefaultModel } from "@/browser/hooks/useModelLRU";
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
@@ -109,23 +108,15 @@ export function useAIViewKeybinds({
         // Special-case: if model has single-option policy (e.g., gpt-5-pro only supports HIGH),
         // the toggle is a no-op to avoid confusing state transitions.
         const allowed = getThinkingPolicyForModel(modelToUse);
-        if (allowed.length === 1) {
+        if (allowed.length <= 1) {
           return; // No toggle for single-option policies
         }
 
-        if (currentWorkspaceThinking !== "off") {
-          // Thinking is currently ON - save the active level and turn it off
-          const activeLevel: ThinkingLevelOn = currentWorkspaceThinking;
-          updatePersistedState(getLastActiveThinkingKey(modelToUse), activeLevel);
-          setThinkingLevel("off");
-        } else {
-          // Thinking is currently OFF - restore last active level for this model
-          const lastActive = readPersistedState<ThinkingLevelOn>(
-            getLastActiveThinkingKey(modelToUse),
-            DEFAULT_THINKING_LEVEL
-          );
-          setThinkingLevel(lastActive);
-        }
+        // Cycle through the allowed levels (same order as the slider cycles)
+        const currentIndex = allowed.indexOf(currentWorkspaceThinking);
+        const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % allowed.length;
+        const nextLevel = allowed[nextIndex];
+        setThinkingLevel(nextLevel);
         return;
       }
 
