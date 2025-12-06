@@ -30,7 +30,8 @@ import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sour
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
-import { getThinkingLevelKey } from "@/common/constants/storage";
+import { getThinkingLevelKey, getModelKey } from "@/common/constants/storage";
+import { getDefaultModel } from "@/browser/hooks/useModelLRU";
 import type { BranchListResult } from "@/common/orpc/types";
 import { useTelemetry } from "./hooks/useTelemetry";
 import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
@@ -272,7 +273,12 @@ function AppInner() {
     }
 
     try {
-      const key = getThinkingLevelKey(workspaceId);
+      // First get the model for this workspace, then get thinking level for that model
+      const modelKey = getModelKey(workspaceId);
+      const modelStored = window.localStorage.getItem(modelKey);
+      const model = modelStored ? (JSON.parse(modelStored) as string) : getDefaultModel();
+
+      const key = getThinkingLevelKey(model);
       const stored = window.localStorage.getItem(key);
       if (!stored || stored === "undefined") {
         return "off";
@@ -290,8 +296,13 @@ function AppInner() {
       return;
     }
 
+    // Get the model for this workspace to set thinking level for it
+    const modelKey = getModelKey(workspaceId);
+    const modelStored = window.localStorage?.getItem(modelKey);
+    const model = modelStored ? (JSON.parse(modelStored) as string) : getDefaultModel();
+
     const normalized = THINKING_LEVELS.includes(level) ? level : "off";
-    const key = getThinkingLevelKey(workspaceId);
+    const key = getThinkingLevelKey(model);
 
     // Use the utility function which handles localStorage and event dispatch
     // ThinkingProvider will pick this up via its listener
