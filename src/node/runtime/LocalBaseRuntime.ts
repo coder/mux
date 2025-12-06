@@ -18,10 +18,11 @@ import type {
 } from "./Runtime";
 import { RuntimeError as RuntimeErrorClass } from "./Runtime";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
-import { getBashPath } from "@/node/utils/main/bashPath";
+import { getPreferredSpawnConfig } from "@/node/utils/main/bashPath";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { DisposableProcess } from "@/node/utils/disposableExec";
 import { expandTilde } from "./tildeExpansion";
+import { log } from "@/node/services/log";
 import {
   checkInitHookExists,
   getInitHookPath,
@@ -67,18 +68,39 @@ export abstract class LocalBaseRuntime implements Runtime {
       );
     }
 
+    // Get spawn config for the preferred bash runtime
+    // This handles Git for Windows, WSL, and Unix/macOS automatically
+    // For WSL, paths in the command and cwd are translated to /mnt/... format
+    const {
+      command: bashCommand,
+      args: bashArgs,
+      cwd: spawnCwd,
+    } = getPreferredSpawnConfig(command, cwd);
+
+    // Debug logging for Windows WSL issues (skip noisy git status commands)
+    const isGitStatusCmd = command.includes("git status") || command.includes("show-branch") || command.includes("PRIMARY_BRANCH");
+    if (!isGitStatusCmd) {
+      log.info(`[LocalBaseRuntime.exec] Original command: ${command.substring(0, 100)}${command.length > 100 ? "..." : ""}`);
+      log.info(`[LocalBaseRuntime.exec] Spawn command: ${bashCommand}`);
+      log.info(`[LocalBaseRuntime.exec] Spawn args: ${JSON.stringify(bashArgs).substring(0, 200)}...`);
+    }
+
     // If niceness is specified on Unix/Linux, spawn nice directly to avoid escaping issues
     // Windows doesn't have nice command, so just spawn bash directly
     const isWindows = process.platform === "win32";
-    const bashPath = getBashPath();
-    const spawnCommand = options.niceness !== undefined && !isWindows ? "nice" : bashPath;
+    const spawnCommand = options.niceness !== undefined && !isWindows ? "nice" : bashCommand;
     const spawnArgs =
       options.niceness !== undefined && !isWindows
-        ? ["-n", options.niceness.toString(), bashPath, "-c", command]
-        : ["-c", command];
+        ? ["-n", options.niceness.toString(), bashCommand, ...bashArgs]
+        : bashArgs;
+
+    // On Windows with PowerShell wrapper, detached:true creates a separate console
+    // which interferes with output capture. Only use detached on non-Windows.
+    // On Windows, PowerShell's -WindowStyle Hidden handles console hiding.
+    const useDetached = !isWindows;
 
     const childProcess = spawn(spawnCommand, spawnArgs, {
-      cwd,
+      cwd: spawnCwd,
       env: {
         ...process.env,
         ...(options.env ?? {}),
@@ -90,7 +112,8 @@ export abstract class LocalBaseRuntime implements Runtime {
       // the entire process group (including all backgrounded children) via process.kill(-pid).
       // NOTE: detached:true does NOT cause bash to wait for background jobs when using 'exit' event
       // instead of 'close' event. The 'exit' event fires when bash exits, ignoring background children.
-      detached: true,
+      // WINDOWS NOTE: detached:true causes issues with PowerShell wrapper output capture.
+      detached: useDetached,
       // Prevent console window from appearing on Windows (WSL bash spawns steal focus otherwise)
       windowsHide: true,
     });
@@ -110,6 +133,18 @@ export abstract class LocalBaseRuntime implements Runtime {
     let timedOut = false;
     let aborted = false;
 
+    // Debug: log raw stdout/stderr from the child process (only for non-git-status commands)
+    let debugStdout = "";
+    let debugStderr = "";
+    if (!isGitStatusCmd) {
+      childProcess.stdout?.on("data", (chunk: Buffer) => {
+        debugStdout += chunk.toString();
+      });
+      childProcess.stderr?.on("data", (chunk: Buffer) => {
+        debugStderr += chunk.toString();
+      });
+    }
+
     // Create promises for exit code and duration
     // Uses special exit codes (EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT) for expected error conditions
     const exitCode = new Promise<number>((resolve, reject) => {
@@ -118,6 +153,14 @@ export abstract class LocalBaseRuntime implements Runtime {
       // which causes hangs when users spawn background processes like servers.
       // The 'exit' event fires when the main bash process exits, which is what we want.
       childProcess.on("exit", (code) => {
+        if (!isGitStatusCmd) {
+          log.info(`[LocalBaseRuntime.exec] Process exited with code: ${code}`);
+          log.info(`[LocalBaseRuntime.exec] stdout length: ${debugStdout.length}`);
+          log.info(`[LocalBaseRuntime.exec] stdout: ${debugStdout.substring(0, 500)}${debugStdout.length > 500 ? "..." : ""}`);
+          if (debugStderr) {
+            log.info(`[LocalBaseRuntime.exec] stderr: ${debugStderr.substring(0, 500)}${debugStderr.length > 500 ? "..." : ""}`);
+          }
+        }
         // Clean up any background processes (process group cleanup)
         // This prevents zombie processes when scripts spawn background tasks
         if (childProcess.pid !== undefined) {
@@ -367,9 +410,16 @@ export abstract class LocalBaseRuntime implements Runtime {
     const loggers = createLineBufferedLoggers(initLogger);
 
     return new Promise<void>((resolve) => {
-      const bashPath = getBashPath();
-      const proc = spawn(bashPath, ["-c", `"${hookPath}"`], {
-        cwd: workspacePath,
+      // Get spawn config for the preferred bash runtime
+      // For WSL, the hook path and cwd are translated to /mnt/... format
+      const {
+        command: bashCommand,
+        args: bashArgs,
+        cwd: spawnCwd,
+      } = getPreferredSpawnConfig(`"${hookPath}"`, workspacePath);
+
+      const proc = spawn(bashCommand, bashArgs, {
+        cwd: spawnCwd,
         stdio: ["ignore", "pipe", "pipe"],
         env: {
           ...process.env,
@@ -379,11 +429,11 @@ export abstract class LocalBaseRuntime implements Runtime {
         windowsHide: true,
       });
 
-      proc.stdout.on("data", (data: Buffer) => {
+      proc.stdout?.on("data", (data: Buffer) => {
         loggers.stdout.append(data.toString());
       });
 
-      proc.stderr.on("data", (data: Buffer) => {
+      proc.stderr?.on("data", (data: Buffer) => {
         loggers.stderr.append(data.toString());
       });
 
