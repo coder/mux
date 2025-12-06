@@ -6,7 +6,7 @@
 .PHONY: fmt fmt-check fmt-prettier fmt-prettier-check fmt-shell fmt-shell-check fmt-nix fmt-nix-check fmt-python fmt-python-check fmt-sync-docs fmt-sync-docs-check
 
 # Centralized patterns - single source of truth
-PRETTIER_PATTERNS := 'src/**/*.{ts,tsx,json}' 'mobile/**/*.{ts,tsx,json}' 'tests/**/*.ts' 'docs/**/*.md' 'package.json' 'tsconfig*.json' 'README.md'
+PRETTIER_PATTERNS := 'src/**/*.{ts,tsx,json}' 'mobile/**/*.{ts,tsx,json}' 'tests/**/*.ts' 'docs/**/*.mdx' 'package.json' 'tsconfig*.json' 'README.md'
 SHELL_SCRIPTS := scripts
 PYTHON_DIRS := benchmarks
 
@@ -94,7 +94,7 @@ else
 endif
 
 fmt-sync-docs:
-	@./scripts/sync_system_prompt_docs.sh
+	@bun scripts/gen_docs.ts
 
 fmt-sync-docs-check:
-	@./scripts/sync_system_prompt_docs.sh check
+	@bun scripts/gen_docs.ts check

@@ -36,7 +36,7 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 
 ## Documentation Rules
 
-- No free-floating Markdown. User docs live in `docs/` (read `docs/README.md`, add pages to `docs.json` navigation, use standard Markdown + mermaid). Developer/test notes belong inline as comments.
+- No free-floating Markdown. User docs live in `docs/` (read `docs/README.mdx`, add pages to `docs.json` navigation, use standard Markdown + mermaid). Developer/test notes belong inline as comments.
 - For planning artifacts, use the `propose_plan` tool or inline comments instead of ad-hoc docs.
 - Do not add new root-level docs without explicit request; during feature work rely on code + tests + inline comments.
 - Test documentation stays inside the relevant test file as commentary explaining setup/edge cases.
@@ -167,6 +167,10 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 
 - When Plan Mode is requested, assume the user wants the actual completed plan; do not merely describe how you would devise one.
 - Attach a net LoC estimate (product code only) to each recommended approach.
+
+## Model: openai.\*
+
+- Use the `gh` CLI for GitHub operations (e.g., opening/submitting PRs).
 
 ## Tool: status_set
 

@@ -152,7 +152,9 @@ Remove oldest 50% of messages.
 
 ### OpenAI Responses API Limitation
 
-<Warning>`/truncate` does not work with OpenAI models due to the Responses API architecture:</Warning>
+<Warning>
+  `/truncate` does not work with OpenAI models due to the Responses API architecture:
+</Warning>
 
 - OpenAI's Responses API stores conversation state server-side
 - Manual message deletion via `/truncate` doesn't affect the server-side state

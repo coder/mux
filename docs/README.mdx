@@ -24,12 +24,12 @@ docs/
 ├── docs.json        # Mintlify configuration (navigation, theme, etc.)
 ├── custom.css       # Custom styling
 ├── img/             # Images and logos
-└── *.md             # Documentation pages
+└── *.mdx            # Documentation pages
 ```
 
 ## Adding Content
 
-1. Create a new `.md` file in `docs/`
+1. Create a new `.mdx` file in `docs/`
 2. Add frontmatter with title and description
 3. Add the page to `docs.json` navigation
 4. Use standard markdown + mermaid diagrams
@@ -45,7 +45,7 @@ description: Brief description for SEO
 
 ## Writing Guidelines
 
-See [STYLE.md](./STYLE.md) for documentation writing guidelines.
+See [STYLE.mdx](./STYLE.mdx) for documentation writing guidelines.
 
 ## CI/CD
 
