@@ -156,8 +156,6 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 - Prefer fixes that simplify existing code; such simplifications often do not need new tests.
 - When adding complexity, add or extend tests. If coverage requires new infrastructure, propose the harness and then add the tests there.
 
-{/_ IMPORTANT: Do not rename these Mode headings; the parser extracts them verbatim. _/}
-
 ## Mode: Exec
 
 - Treat as a standing order: keep running checks and addressing failures until they pass or a blocker outside your control arises.
