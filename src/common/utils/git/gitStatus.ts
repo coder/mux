@@ -117,13 +117,16 @@ if [ -z "$REMOTE_SHA" ]; then
   exit 0
 fi
 
-# Check if SHA exists locally (no lock)
-if git cat-file -e "$REMOTE_SHA" 2>/dev/null; then
-  echo "SKIP: Remote SHA already local"
+# Check current local remote-tracking ref (no lock)
+LOCAL_SHA=$(git rev-parse --verify "refs/remotes/origin/$PRIMARY_BRANCH" 2>/dev/null || echo "")
+
+# If local tracking ref already matches remote, skip fetch
+if [ "$LOCAL_SHA" = "$REMOTE_SHA" ]; then
+  echo "SKIP: Remote SHA already fetched"
   exit 0
 fi
 
-# Remote has new commits we don't have - fetch them
+# Remote has new commits or ref moved - fetch updates
 git -c protocol.version=2 \\
     -c fetch.negotiationAlgorithm=skipping \\
     fetch origin \\
