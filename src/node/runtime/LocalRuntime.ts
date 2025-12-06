@@ -6,7 +6,7 @@ import type {
   WorkspaceForkParams,
   WorkspaceForkResult,
 } from "./Runtime";
-import { checkInitHookExists } from "./initHook";
+import { checkInitHookExists, getMuxEnv } from "./initHook";
 import { getErrorMessage } from "@/common/utils/errors";
 import { LocalBaseRuntime } from "./LocalBaseRuntime";
 
@@ -70,13 +70,14 @@ export class LocalRuntime extends LocalBaseRuntime {
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, workspacePath, initLogger } = params;
+    const { projectPath, branchName, workspacePath, initLogger } = params;
 
     try {
       // Run .mux/init hook if it exists
       const hookExists = await checkInitHookExists(projectPath);
       if (hookExists) {
-        await this.runInitHook(projectPath, workspacePath, initLogger, "local");
+        const muxEnv = getMuxEnv(projectPath, "local", branchName);
+        await this.runInitHook(workspacePath, muxEnv, initLogger);
       } else {
         // No hook - signal completion immediately
         initLogger.logComplete(0);
