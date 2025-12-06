@@ -84,37 +84,24 @@ async function generateSystemPromptBlock(): Promise<string> {
 }
 
 function generateKnownModelsTable(): string {
-  // Build row data first to calculate column widths for prettier-compatible output
   const rows = Object.values(KNOWN_MODELS).map((model) => ({
-    model: `${formatModelDisplayName(model.providerModelId)} (\`${model.id}\`)`,
-    provider: PROVIDER_LABELS[model.provider] ?? model.provider,
+    name: formatModelDisplayName(model.providerModelId),
+    id: `\`${model.id}\``,
     aliases: model.aliases?.length ? model.aliases.map((a) => `\`${a}\``).join(", ") : "—",
     isDefault: model.id === DEFAULT_MODEL ? "Yes" : "—",
   }));
 
-  const headers = ["Model", "Provider", "Aliases", "Default"];
-  const colWidths = headers.map((h, i) => {
-    const key = ["model", "provider", "aliases", "isDefault"][i] as keyof (typeof rows)[0];
-    return Math.max(h.length, ...rows.map((r) => r[key].length));
-  });
+  const headers = ["Model", "ID", "Aliases", "Default"];
+  const keys: (keyof (typeof rows)[0])[] = ["name", "id", "aliases", "isDefault"];
+  const colWidths = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => r[keys[i]].length)));
 
   const pad = (s: string, w: number) => s + " ".repeat(w - s.length);
   const headerRow = `| ${headers.map((h, i) => pad(h, colWidths[i])).join(" | ")} |`;
   const sepRow = `| ${colWidths.map((w) => "-".repeat(w)).join(" | ")} |`;
-  const dataRows = rows.map(
-    (r) =>
-      `| ${pad(r.model, colWidths[0])} | ${pad(r.provider, colWidths[1])} | ${pad(r.aliases, colWidths[2])} | ${pad(r.isDefault, colWidths[3])} |`
-  );
+  const dataRows = rows.map((r) => `| ${keys.map((k, i) => pad(r[k], colWidths[i])).join(" | ")} |`);
 
   return [headerRow, sepRow, ...dataRows].join("\n");
 }
-
-const PROVIDER_LABELS = {
-  anthropic: "Anthropic",
-  openai: "OpenAI",
-  google: "Google",
-  xai: "xAI",
-} as const;
 
 function injectBetweenMarkers(
   doc: string,
