@@ -176,6 +176,82 @@ function wrapFetchWithAnthropicCacheControl(baseFetch: typeof fetch): typeof fet
 }
 
 /**
+ * Wrap fetch to fix Anthropic API responses from proxies that incorrectly
+ * return `citations: null` instead of omitting the field or returning an array.
+ *
+ * The Vercel AI SDK's Anthropic provider has strict validation that expects
+ * `citations` to be an array when present. Some API proxies normalize the response
+ * and set `citations: null` on all content blocks, which causes validation errors:
+ *   "Invalid input: expected array, received null"
+ *
+ * This wrapper intercepts the response, parses the JSON, removes null citations
+ * fields from content blocks, and returns a fixed response.
+ */
+function wrapFetchWithCitationsNullFix(baseFetch: typeof fetch): typeof fetch {
+  const fixingFetch = async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1]
+  ): Promise<Response> => {
+    const response = await baseFetch(input, init);
+
+    // Only fix successful JSON responses
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!response.ok || !contentType.includes("application/json")) {
+      return response;
+    }
+
+    try {
+      const json = (await response.json()) as {
+        content?: Array<{ citations?: unknown }>;
+      };
+
+      // Fix citations: null in content blocks
+      if (Array.isArray(json.content)) {
+        let modified = false;
+        for (const block of json.content) {
+          if (
+            block &&
+            typeof block === "object" &&
+            "citations" in block &&
+            block.citations === null
+          ) {
+            delete block.citations;
+            modified = true;
+          }
+        }
+
+        if (modified) {
+          const fixedBody = JSON.stringify(json);
+          const fixedHeaders = new Headers(response.headers);
+          fixedHeaders.set("content-length", String(fixedBody.length));
+          return new Response(fixedBody, {
+            status: response.status,
+            statusText: response.statusText,
+            headers: fixedHeaders,
+          });
+        }
+      }
+
+      // No fix needed, but we already consumed the body - reconstruct
+      return new Response(JSON.stringify(json), {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    } catch {
+      // Can't fix - response body was consumed but failed to parse
+      // This shouldn't happen for valid JSON, but return a failed response
+      return new Response(null, {
+        status: 500,
+        statusText: "Failed to parse response JSON",
+      });
+    }
+  };
+
+  return Object.assign(fixingFetch, baseFetch) as typeof fetch;
+}
+
+/**
  * Get fetch function for provider - use custom if provided, otherwise unlimited timeout default
  */
 function getProviderFetch(providerConfig: ProviderConfig): typeof fetch {
@@ -438,11 +514,13 @@ export class AIService extends EventEmitter {
 
         // Lazy-load Anthropic provider to reduce startup time
         const { createAnthropic } = await PROVIDER_REGISTRY.anthropic();
-        // Wrap fetch to inject cache_control on tools and messages
-        // (SDK doesn't translate providerOptions to cache_control for these)
         // Use getProviderFetch to preserve any user-configured custom fetch (e.g., proxies)
+        // Then chain wrappers:
+        // 1. citationsFix: removes `citations: null` from proxy responses (breaks SDK validation)
+        // 2. cacheControl: injects cache_control on tools/messages (SDK doesn't translate providerOptions)
         const baseFetch = getProviderFetch(providerConfig);
-        const fetchWithCacheControl = wrapFetchWithAnthropicCacheControl(baseFetch);
+        const fetchWithCitationsFix = wrapFetchWithCitationsNullFix(baseFetch);
+        const fetchWithCacheControl = wrapFetchWithAnthropicCacheControl(fetchWithCitationsFix);
         const provider = createAnthropic({
           ...normalizedConfig,
           headers,
