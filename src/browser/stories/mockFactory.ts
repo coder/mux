@@ -58,7 +58,8 @@ export function createWorkspace(
     projectName: opts.projectName,
     namedWorkspacePath: `/home/user/.mux/src/${opts.projectName}/${safeName}`,
     runtimeConfig: opts.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
-    createdAt: opts.createdAt,
+    // Default to current time so workspaces aren't filtered as "old" by age-based UI
+    createdAt: opts.createdAt ?? new Date().toISOString(),
   };
 }
 
