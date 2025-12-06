@@ -117,6 +117,8 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 
 - Parent components own localStorage interactions; children announce intent only.
 - Use `usePersistedState`/`readPersistedState`/`updatePersistedState` helpers—never call `localStorage` directly.
+- When a component needs to read persisted state it doesn't own (to avoid layout flash), use `readPersistedState` in `useState` initializer: `useState(() => readPersistedState(key, default))`.
+- When multiple components need the same persisted value, use `usePersistedState` with identical keys and `{ listener: true }` for automatic cross-component sync.
 - Avoid destructuring props in function signatures; access via `props.field` to keep rename-friendly code.
 
 ## Module Imports

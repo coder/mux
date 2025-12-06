@@ -22,7 +22,7 @@ import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsConte
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { readPersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useThinking } from "@/browser/contexts/ThinkingContext";
 import {
   useWorkspaceState,
@@ -75,8 +75,11 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const chatAreaRef = useRef<HTMLDivElement>(null);
 
   // Track active tab to conditionally enable resize functionality
-  // RightSidebar notifies us of tab changes via onTabChange callback
-  const [activeTab, setActiveTab] = useState<TabType>("costs");
+  // Initialize from persisted value to avoid layout flash; RightSidebar owns the state
+  // and notifies us of changes via onTabChange callback
+  const [activeTab, setActiveTab] = useState<TabType>(() =>
+    readPersistedState<TabType>("right-sidebar-tab", "costs")
+  );
 
   const isReviewTabActive = activeTab === "review";
 

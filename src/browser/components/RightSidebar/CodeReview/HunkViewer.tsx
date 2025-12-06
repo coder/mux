@@ -46,8 +46,9 @@ export const HunkViewer = React.memo<HunkViewerProps>(
 
     // Track if hunk is visible in viewport for lazy syntax highlighting
     // Use ref for visibility to avoid re-renders when visibility changes
-    const isVisibleRef = React.useRef(true); // Start visible to avoid flash
-    const [isVisible, setIsVisible] = React.useState(true);
+    // Start as not visible to avoid eagerly highlighting off-screen hunks
+    const isVisibleRef = React.useRef(false);
+    const [isVisible, setIsVisible] = React.useState(false);
 
     // Use IntersectionObserver to track visibility
     React.useEffect(() => {

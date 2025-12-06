@@ -28,7 +28,7 @@ import { ReviewControls } from "./ReviewControls";
 import { FileTree } from "./FileTree";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useReviewState } from "@/browser/hooks/useReviewState";
-import { parseDiff, extractAllHunks } from "@/common/utils/git/diffParser";
+import { parseDiff, extractAllHunks, buildGitDiffCommand } from "@/common/utils/git/diffParser";
 import { getReviewSearchStateKey } from "@/common/constants/storage";
 import { Tooltip, TooltipWrapper } from "@/browser/components/Tooltip";
 import { parseNumstat, buildFileTree, extractNewPath } from "@/common/utils/git/numstatParser";
@@ -62,61 +62,6 @@ interface DiagnosticInfo {
   hunkCount: number;
 }
 
-/**
- * Build git diff command based on diffBase and includeUncommitted flag
- * Shared logic between numstat (file tree) and diff (hunks) commands
- * Exported for testing
- *
- * Git diff semantics:
- * - `git diff A...HEAD` (three-dot): Shows commits on current branch since branching from A
- *   → Uses merge-base(A, HEAD) as comparison point, so changes to A after branching don't appear
- * - `git diff $(git merge-base A HEAD)`: Shows all changes from branch point to working directory
- *   → Includes both committed changes on the branch AND uncommitted working directory changes
- *   → Single unified diff (no duplicate hunks from concatenation)
- * - `git diff HEAD`: Shows only uncommitted changes (working directory vs HEAD)
- * - `git diff --staged`: Shows only staged changes (index vs HEAD)
- *
- * The key insight: When includeUncommitted is true, we compare from the merge-base directly
- * to the working directory. This gives a stable comparison point (doesn't change when base
- * ref moves forward) while including both committed and uncommitted work in a single diff.
- *
- * @param diffBase - Base reference ("main", "HEAD", "--staged")
- * @param includeUncommitted - Include uncommitted working directory changes
- * @param pathFilter - Optional path filter (e.g., ' -- "src/foo.ts"')
- * @param command - "diff" (unified) or "numstat" (file stats)
- */
-export function buildGitDiffCommand(
-  diffBase: string,
-  includeUncommitted: boolean,
-  pathFilter: string,
-  command: "diff" | "numstat"
-): string {
-  const flags = command === "numstat" ? " -M --numstat" : " -M";
-
-  if (diffBase === "--staged") {
-    // Staged changes, optionally with unstaged appended as separate diff
-    const base = `git diff --staged${flags}${pathFilter}`;
-    return includeUncommitted ? `${base} && git diff HEAD${flags}${pathFilter}` : base;
-  }
-
-  if (diffBase === "HEAD") {
-    // Uncommitted changes only (working vs HEAD)
-    return `git diff HEAD${flags}${pathFilter}`;
-  }
-
-  // Branch diff: use three-dot for committed only, or merge-base for committed+uncommitted
-  if (includeUncommitted) {
-    // Use merge-base to get a unified diff from branch point to working directory
-    // This includes both committed changes on the branch AND uncommitted working changes
-    // Single command avoids duplicate hunks from concatenation
-    // Stable comparison point: merge-base doesn't change when diffBase ref moves forward
-    return `git diff $(git merge-base ${diffBase} HEAD)${flags}${pathFilter}`;
-  } else {
-    // Three-dot: committed changes only (merge-base to HEAD)
-    return `git diff ${diffBase}...HEAD${flags}${pathFilter}`;
-  }
-}
-
 export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   workspaceId,
   workspacePath,
@@ -130,6 +75,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   const [hunks, setHunks] = useState<DiffHunk[]>([]);
   const [selectedHunkId, setSelectedHunkId] = useState<string | null>(null);
   const [isLoadingHunks, setIsLoadingHunks] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [isLoadingTree, setIsLoadingTree] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [diagnosticInfo, setDiagnosticInfo] = useState<DiagnosticInfo | null>(null);
@@ -322,6 +268,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         setError(errorMsg);
       } finally {
         setIsLoadingHunks(false);
+        setHasLoadedOnce(true);
       }
     };
 
@@ -660,7 +607,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         <div className="text-danger-soft bg-danger-soft/10 border-danger-soft/30 font-monospace m-3 rounded border p-6 text-xs leading-[1.5] break-words whitespace-pre-wrap">
           {error}
         </div>
-      ) : isLoadingHunks && hunks.length === 0 && !fileTree ? (
+      ) : !hasLoadedOnce ? (
         <div className="text-muted flex h-full items-center justify-center text-sm">
           Loading diff...
         </div>
