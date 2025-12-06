@@ -404,10 +404,8 @@ describe("useCreationWorkspace", () => {
     });
 
     persistedPreferences[getModeKey(getProjectScopeId(TEST_PROJECT_PATH))] = "plan";
-    // Set model preference for the project scope (read by getSendOptionsFromStorage)
     persistedPreferences[getModelKey(getProjectScopeId(TEST_PROJECT_PATH))] = "gpt-4";
-    // Thinking level is now stored per-model, not per-workspace/project
-    persistedPreferences[getThinkingLevelKey("gpt-4")] = "high";
+    persistedPreferences[getThinkingLevelKey(getProjectScopeId(TEST_PROJECT_PATH))] = "high";
 
     draftSettingsState = createDraftSettingsHarness({
       runtimeMode: "ssh",
@@ -461,14 +459,15 @@ describe("useCreationWorkspace", () => {
     expect(onWorkspaceCreated.mock.calls[0][0]).toEqual(TEST_METADATA);
 
     const projectModeKey = getModeKey(getProjectScopeId(TEST_PROJECT_PATH));
+    const projectThinkingKey = getThinkingLevelKey(getProjectScopeId(TEST_PROJECT_PATH));
     expect(readPersistedStateCalls).toContainEqual([projectModeKey, null]);
-    // Thinking level is now read per-model (gpt-4), not per-project
-    expect(readPersistedStateCalls).toContainEqual([getThinkingLevelKey("gpt-4"), "off"]);
+    expect(readPersistedStateCalls).toContainEqual([projectThinkingKey, null]);
 
     const modeKey = getModeKey(TEST_WORKSPACE_ID);
+    const thinkingKey = getThinkingLevelKey(TEST_WORKSPACE_ID);
     const pendingInputKey = getInputKey(getPendingScopeId(TEST_PROJECT_PATH));
     expect(updatePersistedStateCalls).toContainEqual([modeKey, "plan"]);
-    // Note: Thinking level is now per-model, not per-workspace, so no sync to workspace
+    expect(updatePersistedStateCalls).toContainEqual([thinkingKey, "high"]);
     expect(updatePersistedStateCalls).toContainEqual([pendingInputKey, ""]);
   });
 

@@ -49,15 +49,10 @@ export const SELECTED_WORKSPACE_KEY = "selectedWorkspace";
 export const EXPANDED_PROJECTS_KEY = "expandedProjects";
 
 /**
- * Helper to create a thinking level storage key for a model.
- * Format: "thinkingLevel:{modelName}"
- *
- * Thinking level is now persisted per-model so users can set different
- * levels for different models and have them remembered when switching.
+ * Helper to create a thinking level storage key for a scope (workspace or project).
+ * Format: "thinkingLevel:{scopeId}"
  */
-export function getThinkingLevelKey(modelName: string): string {
-  return `thinkingLevel:${modelName}`;
-}
+export const getThinkingLevelKey = (scopeId: string): string => `thinkingLevel:${scopeId}`;
 
 /**
  * Get the localStorage key for the user's preferred model for a workspace
@@ -222,6 +217,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getModelKey,
   getInputKey,
   getModeKey,
+  getThinkingLevelKey,
   getAutoRetryKey,
   getRetryStateKey,
   getReviewExpandStateKey,
@@ -229,7 +225,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getReviewSearchStateKey,
   getAutoCompactionEnabledKey,
   getStatusUrlKey,
-  // Note: getAutoCompactionThresholdKey and getThinkingLevelKey are per-model, not per-workspace
+  // Note: getAutoCompactionThresholdKey is per-model, not per-workspace
 ];
 
 /**

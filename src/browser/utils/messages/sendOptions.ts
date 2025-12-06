@@ -40,9 +40,9 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
   // Read model preference (workspace-specific), fallback to LRU default
   const model = readPersistedState<string>(getModelKey(workspaceId), getDefaultModel());
 
-  // Read thinking level (per-model)
+  // Read thinking level (workspace-specific)
   const thinkingLevel = readPersistedState<ThinkingLevel>(
-    getThinkingLevelKey(model),
+    getThinkingLevelKey(workspaceId),
     WORKSPACE_DEFAULTS.thinkingLevel
   );
 

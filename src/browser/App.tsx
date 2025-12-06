@@ -34,8 +34,7 @@ import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sour
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
-import { getThinkingLevelKey, getModelKey } from "@/common/constants/storage";
-import { getDefaultModel } from "@/browser/hooks/useModelLRU";
+import { getThinkingLevelKey } from "@/common/constants/storage";
 import type { BranchListResult } from "@/common/orpc/types";
 import { useTelemetry } from "./hooks/useTelemetry";
 import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
@@ -267,63 +266,41 @@ function AppInner() {
     close: closeCommandPalette,
   } = useCommandRegistry();
 
-  const getCurrentModelForWorkspace = useCallback(
-    (workspaceId: string): string => {
-      if (!workspaceId) return getDefaultModel();
-      // Prefer live workspace state; fall back to persisted preference
-      const modelFromStore = workspaceStore.getWorkspaceState(workspaceId)?.currentModel;
-      return (
-        modelFromStore ??
-        readPersistedState<string | null>(getModelKey(workspaceId), null) ??
-        getDefaultModel()
+  const getThinkingLevelForWorkspace = useCallback((workspaceId: string): ThinkingLevel => {
+    if (!workspaceId) {
+      return "off";
+    }
+
+    try {
+      const storedLevel = readPersistedState<ThinkingLevel>(
+        getThinkingLevelKey(workspaceId),
+        "off"
       );
-    },
-    [workspaceStore]
-  );
+      return THINKING_LEVELS.includes(storedLevel) ? storedLevel : "off";
+    } catch (error) {
+      console.warn("Failed to read thinking level", error);
+      return "off";
+    }
+  }, []);
 
-  const getThinkingLevelForWorkspace = useCallback(
-    (workspaceId: string): ThinkingLevel => {
-      if (!workspaceId) {
-        return "off";
-      }
+  const setThinkingLevelFromPalette = useCallback((workspaceId: string, level: ThinkingLevel) => {
+    if (!workspaceId) {
+      return;
+    }
 
-      try {
-        const model = getCurrentModelForWorkspace(workspaceId);
-        const storedLevel = readPersistedState<ThinkingLevel>(getThinkingLevelKey(model), "off");
-        return THINKING_LEVELS.includes(storedLevel) ? storedLevel : "off";
-      } catch (error) {
-        console.warn("Failed to read thinking level", error);
-        return "off";
-      }
-    },
-    [getCurrentModelForWorkspace]
-  );
+    const normalized = THINKING_LEVELS.includes(level) ? level : "off";
+    const key = getThinkingLevelKey(workspaceId);
 
-  const setThinkingLevelFromPalette = useCallback(
-    (workspaceId: string, level: ThinkingLevel) => {
-      if (!workspaceId) {
-        return;
-      }
+    updatePersistedState(key, normalized);
 
-      const model = getCurrentModelForWorkspace(workspaceId);
-      const normalized = THINKING_LEVELS.includes(level) ? level : "off";
-      const key = getThinkingLevelKey(model);
-
-      // Use the utility function which handles localStorage and event dispatch
-      // ThinkingProvider will pick this up via its listener
-      updatePersistedState(key, normalized);
-
-      // Dispatch toast notification event for UI feedback
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(
-          new CustomEvent(CUSTOM_EVENTS.THINKING_LEVEL_TOAST, {
-            detail: { workspaceId, level: normalized },
-          })
-        );
-      }
-    },
-    [getCurrentModelForWorkspace]
-  );
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent(CUSTOM_EVENTS.THINKING_LEVEL_TOAST, {
+          detail: { workspaceId, level: normalized },
+        })
+      );
+    }
+  }, []);
 
   const registerParamsRef = useRef<BuildSourcesParams | null>(null);
 

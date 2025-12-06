@@ -12,12 +12,14 @@ import {
   getModeKey,
   getPendingScopeId,
   getProjectScopeId,
+  getThinkingLevelKey,
 } from "@/common/constants/storage";
 import type { Toast } from "@/browser/components/ChatInputToast";
 import { createErrorToast } from "@/browser/components/ChatInputToasts";
 import { useAPI } from "@/browser/contexts/API";
 import type { ImagePart } from "@/common/orpc/types";
 import { useWorkspaceName, type WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
+import type { ThinkingLevel } from "@/common/types/thinking";
 
 interface UseCreationWorkspaceOptions {
   projectPath: string;
@@ -30,7 +32,6 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
   const projectScopeId = getProjectScopeId(projectPath);
 
   // Sync model from project scope to workspace scope
-  // This ensures the model used for creation is persisted for future resumes
   const projectModel = readPersistedState<string | null>(getModelKey(projectScopeId), null);
   if (projectModel) {
     updatePersistedState(getModelKey(workspaceId), projectModel);
@@ -41,8 +42,14 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
     updatePersistedState(getModeKey(workspaceId), projectMode);
   }
 
-  // Note: Thinking level is now stored per-model, not per-workspace,
-  // so no syncing needed here
+  // Use the project's last thinking level to seed the new workspace
+  const projectThinking = readPersistedState<ThinkingLevel | null>(
+    getThinkingLevelKey(projectScopeId),
+    null
+  );
+  if (projectThinking) {
+    updatePersistedState(getThinkingLevelKey(workspaceId), projectThinking);
+  }
 }
 
 interface UseCreationWorkspaceReturn {
