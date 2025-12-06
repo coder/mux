@@ -2,7 +2,7 @@ import { getModelKey, getThinkingLevelKey, getModeKey } from "@/common/constants
 import { modeToToolPolicy, PLAN_MODE_INSTRUCTION } from "@/common/utils/ui/modeUtils";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import { getDefaultModel } from "@/browser/hooks/useModelLRU";
-import { toGatewayModel } from "@/browser/hooks/useGatewayModels";
+import { toGatewayModel, migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
@@ -39,7 +39,9 @@ function getProviderOptions(): MuxProviderOptions {
  */
 export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptions {
   // Read model preference (workspace-specific), fallback to LRU default
-  const baseModel = readPersistedState<string>(getModelKey(workspaceId), getDefaultModel());
+  const rawModel = readPersistedState<string>(getModelKey(workspaceId), getDefaultModel());
+  // Migrate any legacy mux-gateway:provider/model format to canonical form
+  const baseModel = migrateGatewayModel(rawModel);
   // Transform to gateway format if gateway is enabled for this model
   const model = toGatewayModel(baseModel);
 

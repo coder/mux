@@ -31,6 +31,50 @@ export function isGatewayEnabled(modelId: string): boolean {
 }
 
 /**
+ * Check if a model string is in mux-gateway format.
+ * @param modelId Model string to check
+ * @returns true if model is "mux-gateway:provider/model" format
+ */
+export function isGatewayFormat(modelId: string): boolean {
+  return modelId.startsWith("mux-gateway:");
+}
+
+/**
+ * Migrate a mux-gateway model to canonical format and enable gateway toggle.
+ * Converts "mux-gateway:provider/model" to "provider:model" and marks it for gateway routing.
+ *
+ * This provides forward compatibility for users who have directly specified
+ * mux-gateway models in their config.
+ *
+ * @param modelId Model string that may be in gateway format
+ * @returns Canonical model ID (e.g., "anthropic:claude-opus-4-5")
+ */
+export function migrateGatewayModel(modelId: string): string {
+  if (!isGatewayFormat(modelId)) {
+    return modelId;
+  }
+
+  // mux-gateway:anthropic/claude-opus-4-5 → anthropic:claude-opus-4-5
+  const inner = modelId.slice("mux-gateway:".length);
+  const slashIndex = inner.indexOf("/");
+  if (slashIndex === -1) {
+    return modelId; // Malformed, return as-is
+  }
+
+  const provider = inner.slice(0, slashIndex);
+  const model = inner.slice(slashIndex + 1);
+  const canonicalId = `${provider}:${model}`;
+
+  // Auto-enable gateway for this model (one-time migration)
+  const gatewayModels = readPersistedState<string[]>(GATEWAY_MODELS_KEY, []);
+  if (!gatewayModels.includes(canonicalId)) {
+    updatePersistedState(GATEWAY_MODELS_KEY, [...gatewayModels, canonicalId]);
+  }
+
+  return canonicalId;
+}
+
+/**
  * Check if the gateway provider is available (has coupon code configured)
  */
 export function isGatewayAvailable(): boolean {

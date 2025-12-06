@@ -4,6 +4,7 @@ import { MODEL_ABBREVIATIONS } from "@/browser/utils/slashCommands/registry";
 import { defaultModel } from "@/common/utils/ai/models";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useAPI } from "@/browser/contexts/API";
+import { migrateGatewayModel, isGatewayFormat } from "./useGatewayModels";
 
 const MAX_LRU_SIZE = 12;
 const LRU_KEY = "model-lru";
@@ -36,7 +37,9 @@ export function evictModelFromLRU(model: string): void {
 
 export function getDefaultModel(): string {
   const persisted = readPersistedState<string | null>(DEFAULT_MODEL_KEY, null);
-  return persisted ?? FALLBACK_MODEL;
+  if (!persisted) return FALLBACK_MODEL;
+  // Migrate legacy mux-gateway format to canonical form
+  return migrateGatewayModel(persisted);
 }
 
 /**
@@ -60,10 +63,18 @@ export function useModelLRU() {
     { listener: true }
   );
 
-  // Merge any new defaults from MODEL_ABBREVIATIONS (only once on mount)
+  // Merge any new defaults from MODEL_ABBREVIATIONS and migrate legacy gateway models (only once on mount)
   useEffect(() => {
     setRecentModels((prev) => {
-      const merged = [...prev];
+      // Migrate any mux-gateway:provider/model entries to canonical form
+      const migrated = prev.map((m) => migrateGatewayModel(m));
+      // Remove any remaining mux-gateway entries that couldn't be migrated
+      const filtered = migrated.filter((m) => !isGatewayFormat(m));
+      // Deduplicate (migration might create duplicates)
+      const deduped = [...new Set(filtered)];
+
+      // Merge defaults
+      const merged = [...deduped];
       for (const defaultModel of DEFAULT_MODELS) {
         if (!merged.includes(defaultModel)) {
           merged.push(defaultModel);
