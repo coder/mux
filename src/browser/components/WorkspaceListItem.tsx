@@ -145,11 +145,11 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
         data-workspace-id={workspaceId}
       >
         <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <div className="flex min-w-0 items-center gap-1.5">
+          <div className="grid min-w-0 grid-cols-[auto_1fr_auto] items-center gap-1.5">
             <RuntimeBadge runtimeConfig={metadata.runtimeConfig} isWorking={canInterrupt} />
             {isEditing ? (
               <input
-                className="bg-input-bg text-input-text border-input-border font-inherit focus:border-input-border-focus -mx-1 min-w-0 flex-1 rounded-sm border px-1 text-left text-[13px] outline-none"
+                className="bg-input-bg text-input-text border-input-border font-inherit focus:border-input-border-focus min-w-0 rounded-sm border px-1 text-left text-[13px] outline-none"
                 value={editingName}
                 onChange={(e) => setEditingName(e.target.value)}
                 onKeyDown={handleRenameKeyDown}
@@ -163,7 +163,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
               <TooltipWrapper inline>
                 <span
                   className={cn(
-                    "text-foreground -mx-1 min-w-0 flex-1 truncate rounded-sm px-1 text-left text-[14px] transition-colors duration-200",
+                    "text-foreground block truncate text-left text-[14px] transition-colors duration-200",
                     !isDisabled && "cursor-pointer"
                   )}
                   onDoubleClick={(e) => {
@@ -187,7 +187,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
               </TooltipWrapper>
             )}
 
-            <div className="ml-auto flex items-center gap-1">
+            <div className="flex items-center gap-1">
               {!isCreating && (
                 <>
                   <GitStatusIndicator
@@ -199,7 +199,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
 
                   <TooltipWrapper inline>
                     <button
-                      className="text-muted hover:text-foreground col-start-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center border-none bg-transparent p-0 text-base opacity-0 transition-all duration-200 hover:rounded-sm hover:bg-white/10"
+                      className="text-muted hover:text-foreground flex h-5 w-5 cursor-pointer items-center justify-center border-none bg-transparent p-0 text-base opacity-0 transition-all duration-200 hover:rounded-sm hover:bg-white/10"
                       onClick={(e) => {
                         e.stopPropagation();
                         void onRemoveWorkspace(workspaceId, e.currentTarget);

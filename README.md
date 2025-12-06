@@ -4,10 +4,9 @@
 
 # mux - coding agent multiplexer
 
-[![CI](https://github.com/coder/mux/actions/workflows/ci.yml/badge.svg)](https://github.com/coder/mux/actions/workflows/ci.yml)
-[![Build](https://github.com/coder/mux/actions/workflows/build.yml/badge.svg?event=merge_group)](https://github.com/coder/mux/actions/workflows/build.yml?query=event:merge_group)
 [![Download](https://img.shields.io/badge/Download-Releases-purple)](https://github.com/coder/mux/releases)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL%203.0-blue.svg)](LICENSE)
+[![Discord](https://img.shields.io/discord/1446553342699507907?logo=discord&label=Discord)](https://discord.gg/thkEdtwm8c)
 
 </div>
 

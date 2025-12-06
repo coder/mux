@@ -141,6 +141,61 @@ export const ManyWorkspaces: AppStory = {
   ),
 };
 
+/** Long workspace names - tests truncation and prevents horizontal scroll regression */
+export const LongWorkspaceNames: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaces = [
+          createWorkspace({
+            id: "ws-short",
+            name: "main",
+            projectName: "my-app",
+          }),
+          createWorkspace({
+            id: "ws-medium",
+            name: "feature/user-authentication",
+            projectName: "my-app",
+          }),
+          createWorkspace({
+            id: "ws-long",
+            name: "feature/implement-oauth2-authentication-with-google-provider",
+            projectName: "my-app",
+          }),
+          createWorkspace({
+            id: "ws-very-long",
+            name: "bugfix/fix-critical-memory-leak-in-websocket-connection-handler-that-causes-oom",
+            projectName: "my-app",
+          }),
+          createSSHWorkspace({
+            id: "ws-ssh-long",
+            name: "deploy/production-kubernetes-cluster-rolling-update-with-zero-downtime",
+            projectName: "my-app",
+            host: "very-long-hostname.internal.company-infrastructure.example.com",
+          }),
+        ];
+
+        // Set up git status to verify GitStatusIndicator remains visible
+        const gitStatus = new Map<string, GitStatusFixture>([
+          ["ws-short", { ahead: 1 }],
+          ["ws-medium", { dirty: 3 }],
+          ["ws-long", { ahead: 2, behind: 1 }],
+          ["ws-very-long", { dirty: 5, ahead: 3 }],
+          ["ws-ssh-long", { behind: 2 }],
+        ]);
+
+        expandProjects(["/home/user/projects/my-app"]);
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+          executeBash: createGitStatusExecutor(gitStatus),
+        });
+      }}
+    />
+  ),
+};
+
 /** All git status indicator variations */
 export const GitStatusVariations: AppStory = {
   render: () => (

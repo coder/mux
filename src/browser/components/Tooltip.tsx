@@ -46,7 +46,7 @@ export const TooltipWrapper: React.FC<TooltipWrapperProps> = ({ inline = false, 
     <TooltipContext.Provider value={{ isHovered, setIsHovered, triggerRef }}>
       <span
         ref={triggerRef}
-        className={cn("relative", inline ? "inline-flex items-center" : "block")}
+        className={cn("relative", inline ? "inline-flex min-w-0 items-center" : "block")}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >
