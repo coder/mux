@@ -22,7 +22,10 @@ Download pre-built binaries of `main` from [GitHub Actions](https://github.com/c
   - `macos-dmg-arm64` (Apple Silicon)
 - **Linux**: AppImage (portable, works on most distros)
 
-<Info>Windows builds are only available from [releases](https://github.com/coder/mux/releases), not from development builds.</Info>
+<Info>
+  Windows builds are only available from [releases](https://github.com/coder/mux/releases), not from
+  development builds.
+</Info>
 
 To download:
 
@@ -57,11 +60,17 @@ The app is code-signed and notarized by Apple, so it will open without security 
 3. Follow the installation prompts
 4. Launch Mux from the Start menu or desktop shortcut
 
-<Warning>Windows support is currently in alpha. Please [report any issues](https://github.com/coder/mux/issues) you encounter.</Warning>
+<Warning>
+  Windows support is currently in alpha. Please [report any
+  issues](https://github.com/coder/mux/issues) you encounter.
+</Warning>
 
 ### Testing Pre-Release Builds
 
-<Warning>Only builds from the `main` branch are signed and notarized. If you're testing a build from a pull request or other branch, you'll need to bypass macOS Gatekeeper:</Warning>
+<Warning>
+  Only builds from the `main` branch are signed and notarized. If you're testing a build from a pull
+  request or other branch, you'll need to bypass macOS Gatekeeper:
+</Warning>
 
 1. After installing, open Terminal
 2. Run: `xattr -cr /Applications/Mux.app`

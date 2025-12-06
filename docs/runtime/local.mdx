@@ -13,9 +13,15 @@ Local runtime runs the agent directly in your project directory—the same direc
 
 ## Caveats
 
-<Warning>**No isolation**: Multiple local workspaces for the same project see and modify the same files. Running them simultaneously can cause conflicts. mux shows a warning when another local workspace is actively streaming.</Warning>
+<Warning>
+  **No isolation**: Multiple local workspaces for the same project see and modify the same files.
+  Running them simultaneously can cause conflicts. mux shows a warning when another local workspace
+  is actively streaming.
+</Warning>
 
-<Warning>**Affects your working copy**: Agent changes happen in your actual project directory.</Warning>
+<Warning>
+  **Affects your working copy**: Agent changes happen in your actual project directory.
+</Warning>
 
 ## Filesystem
 
