@@ -22,6 +22,26 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
+  test("returns 5 levels for bare gpt-5.1-codex-max without prefix", () => {
+    expect(getThinkingPolicyForModel("gpt-5.1-codex-max")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+  });
+
+  test("returns 5 levels for codex-max alias", () => {
+    expect(getThinkingPolicyForModel("codex-max")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+  });
+
   test("returns 5 levels for gpt-5.1-codex-max with whitespace after colon", () => {
     expect(getThinkingPolicyForModel("openai: gpt-5.1-codex-max")).toEqual([
       "off",
