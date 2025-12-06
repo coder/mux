@@ -47,6 +47,7 @@ GPT-5 family of models:
 - `openai:gpt-5.1`
 - `openai:gpt-5-pro`
 - `openai:gpt-5.1-codex`
+- `openai:gpt-5.1-codex-max` — supports the XHIGH (extra high) thinking level; aliases: `gpt-5.1-codex-max`, `codex-max`
 - `openai:gpt-5.1-codex-mini`
 
 #### Google (Cloud)
