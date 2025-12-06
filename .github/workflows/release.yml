@@ -172,3 +172,47 @@ jobs:
         run: bun x electron-builder --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  notify-discord:
+    name: Notify Discord
+    runs-on: ubuntu-latest
+    needs: [build-macos, build-linux, build-windows, build-vscode-extension]
+    # Only notify on actual releases, not manual workflow runs
+    if: github.event_name == 'release'
+    steps:
+      - name: Send release notification to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_NAME: ${{ github.event.release.name }}
+          RELEASE_URL: ${{ github.event.release.html_url }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+          REPO_NAME: ${{ github.repository }}
+        run: |
+          # Truncate body so we don't blow up Discord
+          BODY="${RELEASE_BODY}"
+          if [ ${#BODY} -gt 1500 ]; then
+            BODY="${BODY:0:1500}..."
+          fi
+
+          # Build JSON payload with proper escaping via jq
+          jq -n \
+            --arg title "New release: ${RELEASE_NAME:-$RELEASE_TAG}" \
+            --arg url "$RELEASE_URL" \
+            --arg body "$BODY" \
+            --arg repo "$REPO_NAME" \
+            '{
+              username: "GitHub Releases",
+              embeds: [{
+                title: $title,
+                url: $url,
+                description: $body,
+                footer: { text: $repo }
+              }]
+            }' > payload.json
+
+          # Send to Discord
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -d @payload.json \
+            "$DISCORD_WEBHOOK_URL"
