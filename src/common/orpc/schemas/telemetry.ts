@@ -61,6 +61,7 @@ const WorkspaceSwitchedPropertiesSchema = z.object({
 });
 
 const MessageSentPropertiesSchema = z.object({
+  workspaceId: z.string(),
   model: z.string(),
   mode: z.string(),
   message_length_b2: z.number(),

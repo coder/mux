@@ -1018,6 +1018,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         } else {
           // Track telemetry for successful message send
           telemetry.messageSent(
+            props.workspaceId,
             sendMessageOptions.model,
             mode,
             actualMessageText.length,
