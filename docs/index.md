@@ -28,3 +28,4 @@ mux helps you work with multiple coding assistants more effectively via:
 mux is licensed under the [GNU Affero General Public License v3.0 (AGPL-3.0)](https://github.com/coder/mux/blob/main/LICENSE).
 
 Copyright (C) 2025 Coder Technologies, Inc.
+
