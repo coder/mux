@@ -85,6 +85,8 @@ export function useModelLRU() {
         const providerConfig = await api.providers.getConfig();
         const models: string[] = [];
         for (const [provider, config] of Object.entries(providerConfig)) {
+          // Skip mux-gateway - those models are accessed via the cloud toggle, not listed separately
+          if (provider === "mux-gateway") continue;
           if (config.models) {
             for (const modelId of config.models) {
               // Format as provider:modelId for consistency

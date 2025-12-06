@@ -6,6 +6,23 @@ const GATEWAY_MODELS_KEY = "gateway-models";
 const GATEWAY_AVAILABLE_KEY = "gateway-available";
 
 /**
+ * Providers that Mux Gateway supports routing to.
+ * Only models from these providers can use the gateway toggle.
+ */
+const GATEWAY_SUPPORTED_PROVIDERS = new Set(["anthropic", "openai", "google"]);
+
+/**
+ * Check if a model's provider is supported by Mux Gateway.
+ * @param modelId Full model ID (e.g., "anthropic:claude-opus-4-5")
+ */
+export function isGatewaySupported(modelId: string): boolean {
+  const colonIndex = modelId.indexOf(":");
+  if (colonIndex === -1) return false;
+  const provider = modelId.slice(0, colonIndex);
+  return GATEWAY_SUPPORTED_PROVIDERS.has(provider);
+}
+
+/**
  * Check if a model is gateway-enabled (static read, no reactivity)
  */
 export function isGatewayEnabled(modelId: string): boolean {
@@ -21,13 +38,17 @@ export function isGatewayAvailable(): boolean {
 }
 
 /**
- * Transform a model ID to gateway format if gateway is enabled AND available.
- * Falls back to direct provider if gateway is not configured.
+ * Transform a model ID to gateway format if gateway is enabled AND available AND supported.
+ * Falls back to direct provider if:
+ * - Gateway is not configured (no coupon code)
+ * - User hasn't enabled gateway for this model
+ * - Provider is not supported by gateway
+ *
  * Example: "anthropic:claude-opus-4-5" → "mux-gateway:anthropic/claude-opus-4-5"
  */
 export function toGatewayModel(modelId: string): string {
-  // Only transform if user enabled gateway for this model AND gateway is configured
-  if (!isGatewayEnabled(modelId) || !isGatewayAvailable()) {
+  // Only transform if user enabled gateway for this model, gateway is configured, and provider is supported
+  if (!isGatewayEnabled(modelId) || !isGatewayAvailable() || !isGatewaySupported(modelId)) {
     return modelId;
   }
   // Transform provider:model to mux-gateway:provider/model

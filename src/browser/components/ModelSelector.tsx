@@ -10,7 +10,7 @@ import { cn } from "@/common/lib/utils";
 import { Cloud, Settings, Star } from "lucide-react";
 import { TooltipWrapper, Tooltip } from "./Tooltip";
 import { useSettings } from "@/browser/contexts/SettingsContext";
-import { useGatewayModels } from "@/browser/hooks/useGatewayModels";
+import { useGatewayModels, isGatewaySupported } from "@/browser/hooks/useGatewayModels";
 
 interface ModelSelectorProps {
   value: string;
@@ -196,7 +196,8 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     }, [highlightedIndex]);
 
     if (!isEditing) {
-      const gatewayEnabled = isGatewayEnabled(value) && gatewayAvailable;
+      const gatewayEnabled =
+        isGatewayEnabled(value) && gatewayAvailable && isGatewaySupported(value);
       return (
         <div ref={containerRef} className="relative flex items-center gap-1">
           {gatewayEnabled && (
@@ -268,8 +269,8 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                   <div className="grid w-full grid-cols-[1fr_auto] items-center gap-2">
                     <span className="min-w-0 truncate">{model}</span>
                     <div className="flex items-center gap-0.5">
-                      {/* Gateway toggle - only show when gateway is configured */}
-                      {gatewayAvailable && (
+                      {/* Gateway toggle - only show when gateway is configured and model's provider is supported */}
+                      {gatewayAvailable && isGatewaySupported(model) && (
                         <TooltipWrapper inline>
                           <button
                             type="button"
