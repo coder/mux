@@ -17,6 +17,9 @@ const PROVIDER_ICONS: Partial<Record<ProviderName, React.FC>> = {
   "mux-gateway": MuxIcon,
 };
 
+// Providers with bitmap logos that need CSS filters for consistent appearance
+const BITMAP_ICON_PROVIDERS = new Set<string>(["mux-gateway"]);
+
 export interface ProviderIconProps {
   provider: string;
   className?: string;
@@ -30,10 +33,14 @@ export function ProviderIcon(props: ProviderIconProps) {
   const IconComponent = PROVIDER_ICONS[props.provider as keyof typeof PROVIDER_ICONS];
   if (!IconComponent) return null;
 
+  const isBitmap = BITMAP_ICON_PROVIDERS.has(props.provider);
+
   return (
     <span
       className={cn(
         "inline-block h-[1em] w-[1em] align-[-0.125em] [&_svg]:block [&_svg]:h-full [&_svg]:w-full [&_svg]:fill-current [&_svg_.st0]:fill-current",
+        // Bitmap icons (embedded PNGs) need CSS filters to match the monochrome style
+        isBitmap && "grayscale brightness-[2] dark:brightness-[10] dark:contrast-[0.5]",
         props.className
       )}
     >
