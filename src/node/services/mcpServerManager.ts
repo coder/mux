@@ -7,7 +7,7 @@ import type { Runtime } from "@/node/runtime/Runtime";
 import type { MCPConfigService } from "@/node/services/mcpConfigService";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 
-const TEST_TIMEOUT_MS = 30_000;
+const TEST_TIMEOUT_MS = 10_000;
 
 export type MCPTestResult = { success: true; tools: string[] } | { success: false; error: string };
 
