@@ -6,7 +6,7 @@ interface GatewayIconProps extends React.SVGProps<SVGSVGElement> {
 
 /**
  * Gateway icon - represents routing through Mux Gateway.
- * A simplified relay symbol: arrow passing through a central node.
+ * A portal symbol: circle with an arrow passing through.
  */
 export function GatewayIcon(props: GatewayIconProps) {
   return (
@@ -20,13 +20,11 @@ export function GatewayIcon(props: GatewayIconProps) {
       strokeLinejoin="round"
       {...props}
     >
-      {/* Central diamond/node */}
-      <path d="M12 8l4 4-4 4-4-4z" />
-      {/* Input line */}
-      <path d="M4 12h4" />
-      {/* Output arrow */}
-      <path d="M16 12h4" />
-      <path d="M18 10l2 2-2 2" />
+      {/* Portal circle */}
+      <circle cx="12" cy="12" r="7" />
+      {/* Arrow passing through */}
+      <path d="M5 12h14" />
+      <path d="M15 8l4 4-4 4" />
     </svg>
   );
 }
