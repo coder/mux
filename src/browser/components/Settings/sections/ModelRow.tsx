@@ -47,7 +47,10 @@ export function ModelRow(props: ModelRowProps) {
               onChange={(e) => props.onEditChange?.(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") props.onSaveEdit?.();
-                if (e.key === "Escape") props.onCancelEdit?.();
+                if (e.key === "Escape") {
+                  e.stopPropagation();
+                  props.onCancelEdit?.();
+                }
               }}
               className="bg-modal-bg border-border-medium focus:border-accent min-w-0 flex-1 rounded border px-2 py-0.5 font-mono text-xs focus:outline-none"
               autoFocus

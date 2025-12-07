@@ -295,10 +295,12 @@ export const ProjectSettingsSection: React.FC = () => {
                         onChange={(e) => setEditCommand(e.target.value)}
                         className="border-border-medium bg-secondary/30 text-foreground placeholder:text-muted-foreground focus:ring-accent mt-1 w-full rounded-md border px-2 py-1 text-xs focus:ring-1 focus:outline-none"
                         autoFocus
+                        spellCheck={false}
                         onKeyDown={(e) => {
                           if (e.key === "Enter") {
                             void handleSaveEdit();
                           } else if (e.key === "Escape") {
+                            e.stopPropagation();
                             handleCancelEdit();
                           }
                         }}

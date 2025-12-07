@@ -264,7 +264,10 @@ export function ProvidersSection() {
                             autoFocus
                             onKeyDown={(e) => {
                               if (e.key === "Enter") handleSaveEdit();
-                              if (e.key === "Escape") handleCancelEdit();
+                              if (e.key === "Escape") {
+                                e.stopPropagation();
+                                handleCancelEdit();
+                              }
                             }}
                           />
                           <Button
