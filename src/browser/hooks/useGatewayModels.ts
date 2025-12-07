@@ -7,9 +7,15 @@ const GATEWAY_AVAILABLE_KEY = "gateway-available";
 
 /**
  * Providers that Mux Gateway supports routing to.
+ * Based on Vercel AI Gateway supported providers.
  * Only models from these providers can use the gateway toggle.
+ *
+ * Excluded:
+ * - ollama: Local-only provider, not routable through cloud gateway
+ * - openrouter: Already a gateway/aggregator, routing through another gateway is redundant
+ * - mux-gateway: Already gateway format
  */
-const GATEWAY_SUPPORTED_PROVIDERS = new Set(["anthropic", "openai", "google"]);
+const GATEWAY_SUPPORTED_PROVIDERS = new Set(["anthropic", "openai", "google", "xai", "bedrock"]);
 
 /**
  * Check if a model's provider is supported by Mux Gateway.
