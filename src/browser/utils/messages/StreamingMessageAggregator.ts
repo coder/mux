@@ -29,12 +29,20 @@ import type {
   DynamicToolPartAvailable,
 } from "@/common/types/toolParts";
 import { isDynamicToolPart } from "@/common/types/toolParts";
+import { z } from "zod";
 import { createDeltaStorage, type DeltaRecordStorage } from "./StreamingTPSCalculator";
 import { computeRecencyTimestamp } from "./recency";
-import { getStatusUrlKey } from "@/common/constants/storage";
+import { getStatusStateKey } from "@/common/constants/storage";
 
 // Maximum number of messages to display in the DOM for performance
 // Full history is still maintained internally for token counting and stats
+const AgentStatusSchema = z.object({
+  emoji: z.string(),
+  message: z.string(),
+  url: z.string().optional(),
+});
+
+type AgentStatus = z.infer<typeof AgentStatusSchema>;
 const MAX_DISPLAYED_MESSAGES = 128;
 
 interface StreamingContext {
@@ -97,11 +105,9 @@ export class StreamingMessageAggregator {
 
   // Current agent status (updated when status_set is called)
   // Unlike todos, this persists after stream completion to show last activity
-  private agentStatus: { emoji: string; message: string; url?: string } | undefined = undefined;
+  private agentStatus: AgentStatus | undefined = undefined;
 
-  // Last URL set via status_set - persists even when agentStatus is cleared
-  // This ensures URL stays available across stream boundaries and through compaction
-  // Persisted to localStorage keyed by workspaceId
+  // Last URL set via status_set - kept in memory to reuse when later calls omit url
   private lastStatusUrl: string | undefined = undefined;
 
   // Workspace ID for localStorage persistence
@@ -130,32 +136,48 @@ export class StreamingMessageAggregator {
   constructor(createdAt: string, workspaceId?: string) {
     this.createdAt = createdAt;
     this.workspaceId = workspaceId;
-    // Load persisted lastStatusUrl from localStorage
+    // Load persisted agent status from localStorage
     if (workspaceId) {
-      this.lastStatusUrl = this.loadLastStatusUrl();
+      const persistedStatus = this.loadPersistedAgentStatus();
+      if (persistedStatus) {
+        this.agentStatus = persistedStatus;
+        this.lastStatusUrl = persistedStatus.url;
+      }
     }
     this.updateRecency();
   }
 
-  /** Load lastStatusUrl from localStorage */
-  private loadLastStatusUrl(): string | undefined {
+  /** Load persisted agent status from localStorage */
+  private loadPersistedAgentStatus(): AgentStatus | undefined {
     if (!this.workspaceId) return undefined;
     try {
-      const stored = localStorage.getItem(getStatusUrlKey(this.workspaceId));
-      return stored ?? undefined;
+      const stored = localStorage.getItem(getStatusStateKey(this.workspaceId));
+      if (!stored) return undefined;
+      const parsed = AgentStatusSchema.safeParse(JSON.parse(stored));
+      return parsed.success ? parsed.data : undefined;
     } catch {
-      return undefined;
+      // Ignore localStorage errors or JSON parse failures
+    }
+    return undefined;
+  }
+
+  /** Persist agent status to localStorage */
+  private savePersistedAgentStatus(status: AgentStatus): void {
+    if (!this.workspaceId) return;
+    const parsed = AgentStatusSchema.safeParse(status);
+    if (!parsed.success) return;
+    try {
+      localStorage.setItem(getStatusStateKey(this.workspaceId), JSON.stringify(parsed.data));
+    } catch {
+      // Ignore localStorage errors
     }
   }
 
-  /**
-   * Persist lastStatusUrl to localStorage.
-   * Once set, the URL can only be replaced with a new URL, never deleted.
-   */
-  private saveLastStatusUrl(url: string): void {
+  /** Remove persisted agent status from localStorage */
+  private clearPersistedAgentStatus(): void {
     if (!this.workspaceId) return;
     try {
-      localStorage.setItem(getStatusUrlKey(this.workspaceId), url);
+      localStorage.removeItem(getStatusStateKey(this.workspaceId));
     } catch {
       // Ignore localStorage errors
     }
@@ -208,7 +230,7 @@ export class StreamingMessageAggregator {
    * Updated whenever status_set is called.
    * Persists after stream completion (unlike todos).
    */
-  getAgentStatus(): { emoji: string; message: string; url?: string } | undefined {
+  getAgentStatus(): AgentStatus | undefined {
     return this.agentStatus;
   }
 
@@ -295,39 +317,31 @@ export class StreamingMessageAggregator {
       (a, b) => (a.metadata?.historySequence ?? 0) - (b.metadata?.historySequence ?? 0)
     );
 
-    // First pass: scan all messages to build up lastStatusUrl from tool calls
-    // This ensures URL persistence works even if the URL was set in an earlier message
-    // Also persists to localStorage for future loads (survives compaction)
+    // Replay historical messages in order to reconstruct derived state
     for (const message of chronologicalMessages) {
+      if (message.role === "user") {
+        // Mirror live behavior: clear stream-scoped state on new user turn
+        // but keep persisted status for fallback on reload.
+        this.currentTodos = [];
+        this.agentStatus = undefined;
+        continue;
+      }
+
       if (message.role === "assistant") {
         for (const part of message.parts) {
-          if (
-            isDynamicToolPart(part) &&
-            part.state === "output-available" &&
-            part.toolName === "status_set" &&
-            hasSuccessResult(part.output)
-          ) {
-            const result = part.output as Extract<StatusSetToolResult, { success: true }>;
-            if (result.url) {
-              this.lastStatusUrl = result.url;
-              this.saveLastStatusUrl(result.url);
-            }
+          if (isDynamicToolPart(part) && part.state === "output-available") {
+            this.processToolResult(part.toolName, part.input, part.output, context);
           }
         }
       }
     }
 
-    // Second pass: reconstruct derived state from the most recent assistant message only
-    // (TODOs and agentStatus should reflect only the latest state)
-    const lastAssistantMessage = chronologicalMessages.findLast((msg) => msg.role === "assistant");
-
-    if (lastAssistantMessage) {
-      // Process all tool results from the most recent assistant message
-      // processToolResult will decide what to do based on tool type and context
-      for (const part of lastAssistantMessage.parts) {
-        if (isDynamicToolPart(part) && part.state === "output-available") {
-          this.processToolResult(part.toolName, part.input, part.output, context);
-        }
+    // If history was compacted away from the last status_set, fall back to persisted status
+    if (!this.agentStatus) {
+      const persistedStatus = this.loadPersistedAgentStatus();
+      if (persistedStatus) {
+        this.agentStatus = persistedStatus;
+        this.lastStatusUrl = persistedStatus.url;
       }
     }
 
@@ -675,18 +689,18 @@ export class StreamingMessageAggregator {
     if (toolName === "status_set" && hasSuccessResult(output)) {
       const result = output as Extract<StatusSetToolResult, { success: true }>;
 
-      // Update lastStatusUrl if a new URL is provided, and persist to localStorage
-      if (result.url) {
-        this.lastStatusUrl = result.url;
-        this.saveLastStatusUrl(result.url);
+      // Use the provided URL, or fall back to the last URL ever set
+      const url = result.url ?? this.lastStatusUrl;
+      if (url) {
+        this.lastStatusUrl = url;
       }
 
-      // Use the provided URL, or fall back to the last URL ever set
       this.agentStatus = {
         emoji: result.emoji,
         message: result.message,
-        url: result.url ?? this.lastStatusUrl,
+        url,
       };
+      this.savePersistedAgentStatus(this.agentStatus);
     }
   }
 
@@ -821,6 +835,7 @@ export class StreamingMessageAggregator {
         // since stream-start/stream-end events are not persisted in chat.jsonl
         this.currentTodos = [];
         this.agentStatus = undefined;
+        this.clearPersistedAgentStatus();
 
         this.setPendingStreamStartTime(Date.now());
       }

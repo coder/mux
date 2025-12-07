@@ -1,5 +1,50 @@
-import { describe, it, expect } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { getStatusStateKey } from "@/common/constants/storage";
 import { StreamingMessageAggregator } from "./StreamingMessageAggregator";
+
+const originalLocalStorage: Storage | undefined = (globalThis as { localStorage?: Storage })
+  .localStorage;
+
+const createMockLocalStorage = () => {
+  const store = new Map<string, string>();
+  return {
+    get length() {
+      return store.size;
+    },
+    key: (index: number) => Array.from(store.keys())[index] ?? null,
+    getItem: (key: string) => (store.has(key) ? store.get(key)! : null),
+    setItem: (key: string, value: string) => {
+      store.set(key, value);
+    },
+    removeItem: (key: string) => {
+      store.delete(key);
+    },
+    clear: () => {
+      store.clear();
+    },
+  } satisfies Storage;
+};
+
+beforeEach(() => {
+  const mock = createMockLocalStorage();
+  Object.defineProperty(globalThis, "localStorage", {
+    value: mock,
+    configurable: true,
+  });
+});
+
+afterEach(() => {
+  const ls = (globalThis as { localStorage?: Storage }).localStorage;
+  ls?.clear?.();
+});
+
+afterAll(() => {
+  if (originalLocalStorage !== undefined) {
+    Object.defineProperty(globalThis, "localStorage", { value: originalLocalStorage });
+  } else {
+    delete (globalThis as { localStorage?: Storage }).localStorage;
+  }
+});
 
 describe("StreamingMessageAggregator - Agent Status", () => {
   it("should start with undefined agent status", () => {
@@ -502,6 +547,67 @@ describe("StreamingMessageAggregator - Agent Status", () => {
 
     // Status should remain undefined (failed validation)
     expect(aggregator.getAgentStatus()).toBeUndefined();
+  });
+
+  it("should retain last status_set even if later assistant messages omit it", () => {
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+
+    const historicalMessages = [
+      {
+        id: "assistant1",
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "tool1",
+            toolName: "status_set",
+            state: "output-available" as const,
+            input: { emoji: "🧪", message: "Running tests" },
+            output: { success: true, emoji: "🧪", message: "Running tests" },
+            timestamp: 1000,
+          },
+        ],
+        metadata: { timestamp: 1000, historySequence: 1 },
+      },
+      {
+        id: "assistant2",
+        role: "assistant" as const,
+        parts: [{ type: "text" as const, text: "[compaction summary]" }],
+        metadata: { timestamp: 2000, historySequence: 2 },
+      },
+    ];
+
+    aggregator.loadHistoricalMessages(historicalMessages);
+
+    const status = aggregator.getAgentStatus();
+    expect(status?.emoji).toBe("🧪");
+    expect(status?.message).toBe("Running tests");
+  });
+
+  it("should restore persisted status when history is compacted away", () => {
+    const workspaceId = "workspace1";
+    const persistedStatus = {
+      emoji: "🔗",
+      message: "PR open",
+      url: "https://example.com/pr/123",
+    } as const;
+    localStorage.setItem(getStatusStateKey(workspaceId), JSON.stringify(persistedStatus));
+
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z", workspaceId);
+
+    // History with no status_set (e.g., after compaction removes older tool calls)
+    const historicalMessages = [
+      {
+        id: "assistant2",
+        role: "assistant" as const,
+        parts: [{ type: "text" as const, text: "[compacted history]" }],
+        metadata: { timestamp: 3000, historySequence: 1 },
+      },
+    ];
+
+    aggregator.loadHistoricalMessages(historicalMessages);
+
+    expect(aggregator.getAgentStatus()).toEqual(persistedStatus);
   });
 
   it("should use truncated message from output, not original input", () => {

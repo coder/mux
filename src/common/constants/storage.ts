@@ -213,12 +213,12 @@ export function getFileTreeExpandStateKey(workspaceId: string): string {
 }
 
 /**
- * Get the localStorage key for persisted status URL for a workspace
- * Stores the last URL set via status_set tool (survives compaction)
- * Format: "statusUrl:{workspaceId}"
+ * Get the localStorage key for persisted agent status for a workspace
+ * Stores the most recent successful status_set payload (emoji, message, url)
+ * Format: "statusState:{workspaceId}"
  */
-export function getStatusUrlKey(workspaceId: string): string {
-  return `statusUrl:${workspaceId}`;
+export function getStatusStateKey(workspaceId: string): string {
+  return `statusState:${workspaceId}`;
 }
 
 /**
@@ -283,7 +283,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getReviewSearchStateKey,
   getReviewsKey,
   getAutoCompactionEnabledKey,
-  getStatusUrlKey,
+  getStatusStateKey,
   // Note: getAutoCompactionThresholdKey is per-model, not per-workspace
 ];
 
