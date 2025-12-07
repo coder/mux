@@ -296,3 +296,21 @@ export const KEYBINDS = {
   // "D" for Dictate - intuitive and available
   TOGGLE_VOICE_INPUT: { key: "d", ctrl: true },
 } as const;
+
+/**
+ * Create a keyboard event handler for inline edit inputs.
+ * Handles Enter to save and Escape to cancel (with stopPropagation to prevent modal close).
+ */
+export function createEditKeyHandler(options: {
+  onSave: () => void;
+  onCancel: () => void;
+}): (e: React.KeyboardEvent) => void {
+  return (e) => {
+    if (e.key === "Enter") {
+      options.onSave();
+    } else if (e.key === "Escape") {
+      e.stopPropagation();
+      options.onCancel();
+    }
+  };
+}

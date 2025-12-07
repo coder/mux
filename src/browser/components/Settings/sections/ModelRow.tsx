@@ -1,5 +1,6 @@
 import React from "react";
 import { Check, Pencil, Star, Trash2, X } from "lucide-react";
+import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { GatewayIcon } from "@/browser/components/icons/GatewayIcon";
 import { cn } from "@/common/lib/utils";
 import { TooltipWrapper, Tooltip } from "@/browser/components/Tooltip";
@@ -45,13 +46,10 @@ export function ModelRow(props: ModelRowProps) {
               type="text"
               value={props.editValue ?? props.modelId}
               onChange={(e) => props.onEditChange?.(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") props.onSaveEdit?.();
-                if (e.key === "Escape") {
-                  e.stopPropagation();
-                  props.onCancelEdit?.();
-                }
-              }}
+              onKeyDown={createEditKeyHandler({
+                onSave: () => props.onSaveEdit?.(),
+                onCancel: () => props.onCancelEdit?.(),
+              })}
               className="bg-modal-bg border-border-medium focus:border-accent min-w-0 flex-1 rounded border px-2 py-0.5 font-mono text-xs focus:outline-none"
               autoFocus
             />

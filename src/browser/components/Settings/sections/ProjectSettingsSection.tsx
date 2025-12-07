@@ -14,6 +14,7 @@ import {
   Check,
   X,
 } from "lucide-react";
+import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 
 type TestResult = { success: true; tools: string[] } | { success: false; error: string };
 
@@ -296,14 +297,10 @@ export const ProjectSettingsSection: React.FC = () => {
                         className="border-border-medium bg-secondary/30 text-foreground placeholder:text-muted-foreground focus:ring-accent mt-1 w-full rounded-md border px-2 py-1 text-xs focus:ring-1 focus:outline-none"
                         autoFocus
                         spellCheck={false}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            void handleSaveEdit();
-                          } else if (e.key === "Escape") {
-                            e.stopPropagation();
-                            handleCancelEdit();
-                          }
-                        }}
+                        onKeyDown={createEditKeyHandler({
+                          onSave: () => void handleSaveEdit(),
+                          onCancel: handleCancelEdit,
+                        })}
                       />
                     ) : (
                       <p className="text-muted-foreground mt-0.5 text-xs break-all">{command}</p>

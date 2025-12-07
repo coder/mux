@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from "react";
 import { ChevronDown, ChevronRight, Check, X } from "lucide-react";
+import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
 import type { ProviderName } from "@/common/constants/providers";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
@@ -262,13 +263,10 @@ export function ProvidersSection() {
                             placeholder={fieldConfig.placeholder}
                             className="bg-modal-bg border-border-medium focus:border-accent flex-1 rounded border px-2 py-1.5 font-mono text-xs focus:outline-none"
                             autoFocus
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") handleSaveEdit();
-                              if (e.key === "Escape") {
-                                e.stopPropagation();
-                                handleCancelEdit();
-                              }
-                            }}
+                            onKeyDown={createEditKeyHandler({
+                              onSave: handleSaveEdit,
+                              onCancel: handleCancelEdit,
+                            })}
                           />
                           <Button
                             variant="ghost"
