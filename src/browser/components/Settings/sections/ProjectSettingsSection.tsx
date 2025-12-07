@@ -1,26 +1,39 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
-import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
-import { Trash2, Play, Loader2, CheckCircle, XCircle } from "lucide-react";
+import { useProjectContext } from "@/browser/contexts/ProjectContext";
+import { Trash2, Play, Loader2, CheckCircle, XCircle, Plus, ChevronDown } from "lucide-react";
 
 type TestResult = { success: true; tools: string[] } | { success: false; error: string };
 
 export const ProjectSettingsSection: React.FC = () => {
   const { api } = useAPI();
-  const { selectedWorkspace } = useWorkspaceContext();
-  const projectPath = selectedWorkspace?.projectPath;
+  const { projects } = useProjectContext();
+  const projectList = Array.from(projects.keys());
 
+  const [selectedProject, setSelectedProject] = useState<string>("");
   const [servers, setServers] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [testingServer, setTestingServer] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Map<string, TestResult>>(new Map());
 
+  // Add server form state
+  const [newServerName, setNewServerName] = useState("");
+  const [newServerCommand, setNewServerCommand] = useState("");
+  const [addingServer, setAddingServer] = useState(false);
+
+  // Set default project when projects load
+  useEffect(() => {
+    if (projectList.length > 0 && !selectedProject) {
+      setSelectedProject(projectList[0]);
+    }
+  }, [projectList, selectedProject]);
+
   const refresh = useCallback(async () => {
-    if (!api || !projectPath) return;
+    if (!api || !selectedProject) return;
     setLoading(true);
     try {
-      const result = await api.projects.mcp.list({ projectPath });
+      const result = await api.projects.mcp.list({ projectPath: selectedProject });
       setServers(result ?? {});
       setError(null);
     } catch (err) {
@@ -28,18 +41,20 @@ export const ProjectSettingsSection: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [api, projectPath]);
+  }, [api, selectedProject]);
 
   useEffect(() => {
     void refresh();
+    // Clear test results when project changes
+    setTestResults(new Map());
   }, [refresh]);
 
   const handleRemove = useCallback(
     async (name: string) => {
-      if (!api || !projectPath) return;
+      if (!api || !selectedProject) return;
       setLoading(true);
       try {
-        const result = await api.projects.mcp.remove({ projectPath, name });
+        const result = await api.projects.mcp.remove({ projectPath: selectedProject, name });
         if (!result.success) {
           setError(result.error ?? "Failed to remove MCP server");
         } else {
@@ -51,12 +66,12 @@ export const ProjectSettingsSection: React.FC = () => {
         setLoading(false);
       }
     },
-    [api, projectPath, refresh]
+    [api, selectedProject, refresh]
   );
 
   const handleTest = useCallback(
     async (name: string) => {
-      if (!api || !projectPath) return;
+      if (!api || !selectedProject) return;
       setTestingServer(name);
       // Clear previous result for this server
       setTestResults((prev) => {
@@ -65,7 +80,7 @@ export const ProjectSettingsSection: React.FC = () => {
         return next;
       });
       try {
-        const result = await api.projects.mcp.test({ projectPath, name });
+        const result = await api.projects.mcp.test({ projectPath: selectedProject, name });
         setTestResults((prev) => new Map(prev).set(name, result));
       } catch (err) {
         setTestResults((prev) =>
@@ -78,24 +93,73 @@ export const ProjectSettingsSection: React.FC = () => {
         setTestingServer(null);
       }
     },
-    [api, projectPath]
+    [api, selectedProject]
   );
 
-  if (!projectPath) {
+  const handleAddServer = useCallback(async () => {
+    if (!api || !selectedProject || !newServerName.trim() || !newServerCommand.trim()) return;
+    setAddingServer(true);
+    setError(null);
+    try {
+      const result = await api.projects.mcp.add({
+        projectPath: selectedProject,
+        name: newServerName.trim(),
+        command: newServerCommand.trim(),
+      });
+      if (!result.success) {
+        setError(result.error ?? "Failed to add MCP server");
+      } else {
+        setNewServerName("");
+        setNewServerCommand("");
+        await refresh();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to add MCP server");
+    } finally {
+      setAddingServer(false);
+    }
+  }, [api, selectedProject, newServerName, newServerCommand, refresh]);
+
+  if (projectList.length === 0) {
     return (
       <p className="text-muted-foreground text-sm">
-        Select a workspace to manage project settings.
+        No projects configured. Add a project first to manage its settings.
       </p>
     );
   }
 
+  const projectName = (path: string) => path.split(/[\\/]/).pop() ?? path;
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
+      {/* Project selector */}
       <div>
-        <h3 className="text-lg font-semibold">MCP Servers</h3>
+        <label htmlFor="project-select" className="mb-1.5 block text-sm font-medium">
+          Project
+        </label>
+        <div className="relative">
+          <select
+            id="project-select"
+            value={selectedProject}
+            onChange={(e) => setSelectedProject(e.target.value)}
+            className="border-border-medium bg-secondary/30 text-foreground focus:ring-accent w-full appearance-none rounded-md border py-2 pr-8 pl-3 text-sm focus:ring-1 focus:outline-none"
+          >
+            {projectList.map((path) => (
+              <option key={path} value={path}>
+                {projectName(path)}
+              </option>
+            ))}
+          </select>
+          <ChevronDown className="text-muted-foreground pointer-events-none absolute top-1/2 right-2 h-4 w-4 -translate-y-1/2" />
+        </div>
+        <p className="text-muted-foreground mt-1 text-xs">{selectedProject}</p>
+      </div>
+
+      {/* MCP Servers section */}
+      <div>
+        <h3 className="text-base font-semibold">MCP Servers</h3>
         <p className="text-muted-foreground text-sm">
-          Servers are stored in <code>.mux/mcp.jsonc</code> in this project. Use{" "}
-          <code>/mcp add</code> to add new entries.
+          Servers are stored in <code className="bg-secondary/50 rounded px-1">.mux/mcp.jsonc</code>
         </p>
       </div>
 
@@ -172,6 +236,45 @@ export const ProjectSettingsSection: React.FC = () => {
           );
         })}
       </ul>
+
+      {/* Add server form */}
+      <div className="border-border-medium/60 space-y-3 rounded-md border p-3">
+        <h4 className="text-sm font-medium">Add MCP Server</h4>
+        <div className="space-y-2">
+          <input
+            type="text"
+            placeholder="Server name (e.g., memory)"
+            value={newServerName}
+            onChange={(e) => setNewServerName(e.target.value)}
+            className="border-border-medium bg-secondary/30 text-foreground placeholder:text-muted-foreground focus:ring-accent w-full rounded-md border px-3 py-1.5 text-sm focus:ring-1 focus:outline-none"
+          />
+          <input
+            type="text"
+            placeholder="Command (e.g., npx -y @modelcontextprotocol/server-memory)"
+            value={newServerCommand}
+            onChange={(e) => setNewServerCommand(e.target.value)}
+            className="border-border-medium bg-secondary/30 text-foreground placeholder:text-muted-foreground focus:ring-accent w-full rounded-md border px-3 py-1.5 text-sm focus:ring-1 focus:outline-none"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && newServerName.trim() && newServerCommand.trim()) {
+                void handleAddServer();
+              }
+            }}
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => void handleAddServer()}
+          disabled={addingServer || !newServerName.trim() || !newServerCommand.trim()}
+          className="bg-accent hover:bg-accent/90 flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-white disabled:opacity-50"
+        >
+          {addingServer ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Plus className="h-4 w-4" />
+          )}
+          {addingServer ? "Adding…" : "Add Server"}
+        </button>
+      </div>
     </div>
   );
 };

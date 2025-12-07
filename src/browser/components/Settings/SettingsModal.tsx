@@ -23,8 +23,8 @@ const SECTIONS: SettingsSection[] = [
     component: ProvidersSection,
   },
   {
-    id: "project",
-    label: "Project",
+    id: "projects",
+    label: "Projects",
     icon: <Briefcase className="h-4 w-4" />,
     component: ProjectSettingsSection,
   },
