@@ -1,5 +1,0 @@
-{
-  "servers": {
-    "chrome": "npx -y chrome-devtools-mcp@latest --headless --chromeArg='--no-sandbox'"
-  }
-}
