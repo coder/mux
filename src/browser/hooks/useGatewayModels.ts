@@ -1,15 +1,15 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { usePersistedState, readPersistedState, updatePersistedState } from "./usePersistedState";
 import { useProvidersConfig } from "./useProvidersConfig";
 
-const GATEWAY_MODELS_KEY = "gateway-models";
-const GATEWAY_AVAILABLE_KEY = "gateway-available";
-const GATEWAY_ENABLED_KEY = "gateway-enabled";
+// localStorage keys
+const GATEWAY_MODELS_KEY = "gateway-models"; // Models user has enabled for gateway routing
+const GATEWAY_CONFIGURED_KEY = "gateway-available"; // Synced from provider config (coupon set)
+const GATEWAY_ENABLED_KEY = "gateway-enabled"; // Global on/off toggle
 
 /**
  * Providers that Mux Gateway supports routing to.
  * Based on Vercel AI Gateway supported providers.
- * Only models from these providers can use the gateway toggle.
  *
  * Excluded:
  * - ollama: Local-only provider, not routable through cloud gateway
@@ -19,29 +19,28 @@ const GATEWAY_ENABLED_KEY = "gateway-enabled";
  */
 const GATEWAY_SUPPORTED_PROVIDERS = new Set(["anthropic", "openai", "google", "xai"]);
 
+// ============================================================================
+// Pure utility functions (no side effects, used for message sending)
+// ============================================================================
+
 /**
- * Check if a model's provider is supported by Mux Gateway.
- * @param modelId Full model ID (e.g., "anthropic:claude-opus-4-5")
+ * Extract provider from a model ID.
  */
-export function isGatewaySupported(modelId: string): boolean {
+function getProvider(modelId: string): string | null {
   const colonIndex = modelId.indexOf(":");
-  if (colonIndex === -1) return false;
-  const provider = modelId.slice(0, colonIndex);
-  return GATEWAY_SUPPORTED_PROVIDERS.has(provider);
+  return colonIndex === -1 ? null : modelId.slice(0, colonIndex);
 }
 
 /**
- * Check if a model is gateway-enabled (static read, no reactivity)
+ * Check if a model's provider can route through Mux Gateway.
  */
-export function isGatewayEnabled(modelId: string): boolean {
-  const gatewayModels = readPersistedState<string[]>(GATEWAY_MODELS_KEY, []);
-  return gatewayModels.includes(modelId);
+export function isProviderSupported(modelId: string): boolean {
+  const provider = getProvider(modelId);
+  return provider !== null && GATEWAY_SUPPORTED_PROVIDERS.has(provider);
 }
 
 /**
  * Check if a model string is in mux-gateway format.
- * @param modelId Model string to check
- * @returns true if model is "mux-gateway:provider/model" format
  */
 export function isGatewayFormat(modelId: string): boolean {
   return modelId.startsWith("mux-gateway:");
@@ -53,9 +52,6 @@ export function isGatewayFormat(modelId: string): boolean {
  *
  * This provides forward compatibility for users who have directly specified
  * mux-gateway models in their config.
- *
- * @param modelId Model string that may be in gateway format
- * @returns Canonical model ID (e.g., "anthropic:claude-opus-4-5")
  */
 export function migrateGatewayModel(modelId: string): string {
   if (!isGatewayFormat(modelId)) {
@@ -83,131 +79,140 @@ export function migrateGatewayModel(modelId: string): string {
 }
 
 /**
- * Check if the gateway provider is available (has coupon code configured)
- */
-export function isGatewayAvailable(): boolean {
-  return readPersistedState<boolean>(GATEWAY_AVAILABLE_KEY, false);
-}
-
-/**
- * Check if the gateway is globally enabled (user toggle, defaults to true when available)
- */
-export function isGatewayGloballyEnabled(): boolean {
-  return readPersistedState<boolean>(GATEWAY_ENABLED_KEY, true);
-}
-
-/**
- * Set the global gateway enabled state
- */
-export function setGatewayGloballyEnabled(enabled: boolean): void {
-  updatePersistedState(GATEWAY_ENABLED_KEY, enabled);
-}
-
-/**
- * Transform a model ID to gateway format if gateway is enabled AND available AND supported.
- * Falls back to direct provider if:
- * - Gateway is not configured (no coupon code)
- * - User hasn't enabled gateway for this model
- * - Provider is not supported by gateway
+ * Transform a model ID to gateway format for API calls.
+ * Returns original modelId if gateway routing shouldn't be used.
+ *
+ * Checks (all must pass):
+ * 1. Gateway is globally enabled (user hasn't disabled it)
+ * 2. Gateway is configured (coupon code set)
+ * 3. Provider is supported by gateway
+ * 4. User enabled gateway for this specific model
  *
  * Example: "anthropic:claude-opus-4-5" → "mux-gateway:anthropic/claude-opus-4-5"
  */
 export function toGatewayModel(modelId: string): string {
-  // Only transform if:
-  // 1. Gateway is globally enabled (user hasn't disabled it)
-  // 2. User enabled gateway for this specific model
-  // 3. Gateway is configured (coupon code set)
-  // 4. Provider is supported by gateway
-  if (
-    !isGatewayGloballyEnabled() ||
-    !isGatewayEnabled(modelId) ||
-    !isGatewayAvailable() ||
-    !isGatewaySupported(modelId)
-  ) {
+  const globallyEnabled = readPersistedState<boolean>(GATEWAY_ENABLED_KEY, true);
+  const configured = readPersistedState<boolean>(GATEWAY_CONFIGURED_KEY, false);
+  const enabledModels = readPersistedState<string[]>(GATEWAY_MODELS_KEY, []);
+
+  if (!globallyEnabled || !configured || !isProviderSupported(modelId)) {
     return modelId;
   }
+
+  if (!enabledModels.includes(modelId)) {
+    return modelId;
+  }
+
   // Transform provider:model to mux-gateway:provider/model
-  const colonIndex = modelId.indexOf(":");
-  if (colonIndex === -1) {
-    return modelId;
-  }
-  const provider = modelId.slice(0, colonIndex);
-  const model = modelId.slice(colonIndex + 1);
+  const provider = getProvider(modelId);
+  if (!provider) return modelId;
+
+  const model = modelId.slice(provider.length + 1);
   return `mux-gateway:${provider}/${model}`;
 }
 
-/**
- * Toggle gateway mode for a model (static update, no reactivity)
- */
-export function toggleGatewayModel(modelId: string): void {
-  const gatewayModels = readPersistedState<string[]>(GATEWAY_MODELS_KEY, []);
-  if (gatewayModels.includes(modelId)) {
-    updatePersistedState(
-      GATEWAY_MODELS_KEY,
-      gatewayModels.filter((m) => m !== modelId)
-    );
-  } else {
-    updatePersistedState(GATEWAY_MODELS_KEY, [...gatewayModels, modelId]);
-  }
+// ============================================================================
+// Gateway state interface (returned by hook)
+// ============================================================================
+
+export interface GatewayState {
+  /** Gateway is configured (coupon code set) and globally enabled */
+  isActive: boolean;
+  /** Gateway has coupon code configured */
+  isConfigured: boolean;
+  /** Gateway is globally enabled (master switch) */
+  isEnabled: boolean;
+  /** Toggle the global enabled state */
+  toggleEnabled: () => void;
+  /** Check if a specific model uses gateway routing */
+  modelUsesGateway: (modelId: string) => boolean;
+  /** Toggle gateway routing for a specific model */
+  toggleModelGateway: (modelId: string) => void;
+  /** Check if gateway toggle should be shown for a model (active + provider supported) */
+  canToggleModel: (modelId: string) => boolean;
+  /** Check if model is actively routing through gateway (for display) */
+  isModelRoutingThroughGateway: (modelId: string) => boolean;
 }
 
 /**
- * Hook to manage which models use the Mux Gateway.
- * Returns reactive state and toggle function.
+ * Hook for gateway state management.
  *
- * Also syncs gateway availability from provider config to localStorage
- * so that toGatewayModel() can check it synchronously.
+ * Syncs gateway configuration from provider config to localStorage
+ * so that toGatewayModel() can check it synchronously during message sending.
  */
-export function useGatewayModels() {
+export function useGateway(): GatewayState {
   const { config } = useProvidersConfig();
-  const [gatewayModels, setGatewayModels] = usePersistedState<string[]>(GATEWAY_MODELS_KEY, [], {
+
+  const [enabledModels, setEnabledModels] = usePersistedState<string[]>(GATEWAY_MODELS_KEY, [], {
     listener: true,
   });
-  const [gatewayAvailable, setGatewayAvailable] = usePersistedState<boolean>(
-    GATEWAY_AVAILABLE_KEY,
+  const [isConfigured, setIsConfigured] = usePersistedState<boolean>(
+    GATEWAY_CONFIGURED_KEY,
     false,
     { listener: true }
   );
-  const [gatewayGloballyEnabled, setGatewayGloballyEnabled] = usePersistedState<boolean>(
-    GATEWAY_ENABLED_KEY,
-    true,
-    { listener: true }
-  );
+  const [isEnabled, setIsEnabled] = usePersistedState<boolean>(GATEWAY_ENABLED_KEY, true, {
+    listener: true,
+  });
 
-  // Sync gateway availability from provider config
+  // Sync gateway configuration from provider config
   useEffect(() => {
     if (!config) return;
-    const available = config["mux-gateway"]?.couponCodeSet ?? false;
-    setGatewayAvailable(available);
-  }, [config, setGatewayAvailable]);
+    const configured = config["mux-gateway"]?.couponCodeSet ?? false;
+    setIsConfigured(configured);
+  }, [config, setIsConfigured]);
 
-  const toggleGloballyEnabled = useCallback(() => {
-    setGatewayGloballyEnabled((prev) => !prev);
-  }, [setGatewayGloballyEnabled]);
+  const isActive = isConfigured && isEnabled;
 
-  const isEnabled = useCallback(
-    (modelId: string) => gatewayModels.includes(modelId),
-    [gatewayModels]
+  const toggleEnabled = useCallback(() => {
+    setIsEnabled((prev) => !prev);
+  }, [setIsEnabled]);
+
+  const modelUsesGateway = useCallback(
+    (modelId: string) => enabledModels.includes(modelId),
+    [enabledModels]
   );
 
-  const toggle = useCallback(
+  const toggleModelGateway = useCallback(
     (modelId: string) => {
-      setGatewayModels((prev) => {
-        if (prev.includes(modelId)) {
-          return prev.filter((m) => m !== modelId);
-        }
-        return [...prev, modelId];
-      });
+      setEnabledModels((prev) =>
+        prev.includes(modelId) ? prev.filter((m) => m !== modelId) : [...prev, modelId]
+      );
     },
-    [setGatewayModels]
+    [setEnabledModels]
   );
 
-  return {
-    gatewayModels,
-    isEnabled,
-    toggle,
-    gatewayAvailable,
-    gatewayGloballyEnabled,
-    toggleGloballyEnabled,
-  };
+  const canToggleModel = useCallback(
+    (modelId: string) => isActive && isProviderSupported(modelId),
+    [isActive]
+  );
+
+  const isModelRoutingThroughGateway = useCallback(
+    (modelId: string) =>
+      isActive && isProviderSupported(modelId) && enabledModels.includes(modelId),
+    [isActive, enabledModels]
+  );
+
+  return useMemo(
+    () => ({
+      isActive,
+      isConfigured,
+      isEnabled,
+      toggleEnabled,
+      modelUsesGateway,
+      toggleModelGateway,
+      canToggleModel,
+      isModelRoutingThroughGateway,
+    }),
+    [
+      isActive,
+      isConfigured,
+      isEnabled,
+      toggleEnabled,
+      modelUsesGateway,
+      toggleModelGateway,
+      canToggleModel,
+      isModelRoutingThroughGateway,
+    ]
+  );
 }

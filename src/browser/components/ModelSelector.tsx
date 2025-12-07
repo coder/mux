@@ -11,7 +11,7 @@ import { Settings, Star } from "lucide-react";
 import { GatewayIcon } from "./icons/GatewayIcon";
 import { TooltipWrapper, Tooltip } from "./Tooltip";
 import { useSettings } from "@/browser/contexts/SettingsContext";
-import { useGatewayModels, isGatewaySupported } from "@/browser/hooks/useGatewayModels";
+import { useGateway } from "@/browser/hooks/useGatewayModels";
 
 interface ModelSelectorProps {
   value: string;
@@ -29,12 +29,7 @@ export interface ModelSelectorRef {
 export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
   ({ value, onChange, recentModels, onComplete, defaultModel, onSetDefaultModel }, ref) => {
     const { open: openSettings } = useSettings();
-    const {
-      isEnabled: isGatewayEnabled,
-      toggle: toggleGateway,
-      gatewayAvailable,
-      gatewayGloballyEnabled,
-    } = useGatewayModels();
+    const gateway = useGateway();
     const [isEditing, setIsEditing] = useState(false);
     const [inputValue, setInputValue] = useState(value);
     const [error, setError] = useState<string | null>(null);
@@ -198,14 +193,10 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     }, [highlightedIndex]);
 
     if (!isEditing) {
-      const gatewayEnabled =
-        gatewayGloballyEnabled &&
-        isGatewayEnabled(value) &&
-        gatewayAvailable &&
-        isGatewaySupported(value);
+      const gatewayActive = gateway.isModelRoutingThroughGateway(value);
       return (
         <div ref={containerRef} className="relative flex items-center gap-1">
-          {gatewayEnabled && (
+          {gatewayActive && (
             <TooltipWrapper inline>
               <GatewayIcon className="text-accent h-3 w-3 shrink-0 fill-current" />
               <Tooltip className="tooltip" align="center">
@@ -274,8 +265,8 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                   <div className="grid w-full grid-cols-[1fr_auto] items-center gap-2">
                     <span className="min-w-0 truncate">{model}</span>
                     <div className="flex items-center gap-0.5">
-                      {/* Gateway toggle - only show when gateway is globally enabled, configured, and model's provider is supported */}
-                      {gatewayGloballyEnabled && gatewayAvailable && isGatewaySupported(model) && (
+                      {/* Gateway toggle */}
+                      {gateway.canToggleModel(model) && (
                         <TooltipWrapper inline>
                           <button
                             type="button"
@@ -283,24 +274,31 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                             onClick={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
-                              toggleGateway(model);
+                              gateway.toggleModelGateway(model);
                             }}
                             className={cn(
                               "flex items-center justify-center rounded-sm border px-1 py-0.5 transition-colors duration-150",
-                              isGatewayEnabled(model)
+                              gateway.modelUsesGateway(model)
                                 ? "text-accent border-accent/40"
                                 : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
                             )}
                             aria-label={
-                              isGatewayEnabled(model) ? "Disable Mux Gateway" : "Enable Mux Gateway"
+                              gateway.modelUsesGateway(model)
+                                ? "Disable Mux Gateway"
+                                : "Enable Mux Gateway"
                             }
                           >
                             <GatewayIcon
-                              className={cn("h-3 w-3", isGatewayEnabled(model) && "fill-current")}
+                              className={cn(
+                                "h-3 w-3",
+                                gateway.modelUsesGateway(model) && "fill-current"
+                              )}
                             />
                           </button>
                           <Tooltip className="tooltip" align="center">
-                            {isGatewayEnabled(model) ? "Using Mux Gateway" : "Use Mux Gateway"}
+                            {gateway.modelUsesGateway(model)
+                              ? "Using Mux Gateway"
+                              : "Use Mux Gateway"}
                           </Tooltip>
                         </TooltipWrapper>
                       )}

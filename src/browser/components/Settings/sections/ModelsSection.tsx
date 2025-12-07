@@ -3,7 +3,7 @@ import { Plus, Loader2 } from "lucide-react";
 import { SUPPORTED_PROVIDERS, PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { useModelLRU } from "@/browser/hooks/useModelLRU";
-import { useGatewayModels, isGatewaySupported } from "@/browser/hooks/useGatewayModels";
+import { useGateway } from "@/browser/hooks/useGatewayModels";
 import { ModelRow } from "./ModelRow";
 import { useAPI } from "@/browser/contexts/API";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
@@ -29,12 +29,7 @@ export function ModelsSection() {
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { defaultModel, setDefaultModel } = useModelLRU();
-  const {
-    isEnabled: isGatewayEnabled,
-    toggle: toggleGateway,
-    gatewayAvailable,
-    gatewayGloballyEnabled,
-  } = useGatewayModels();
+  const gateway = useGateway();
 
   // Check if a model already exists (for duplicate prevention)
   const modelExists = useCallback(
@@ -225,7 +220,7 @@ export function ModelsSection() {
               editError={isModelEditing ? error : undefined}
               saving={false}
               hasActiveEdit={editing !== null}
-              isGatewayEnabled={isGatewayEnabled(model.fullId)}
+              isGatewayEnabled={gateway.modelUsesGateway(model.fullId)}
               onSetDefault={() => setDefaultModel(model.fullId)}
               onStartEdit={() => handleStartEdit(model.provider, model.modelId)}
               onSaveEdit={handleSaveEdit}
@@ -235,8 +230,8 @@ export function ModelsSection() {
               }
               onRemove={() => handleRemoveModel(model.provider, model.modelId)}
               onToggleGateway={
-                gatewayGloballyEnabled && gatewayAvailable && isGatewaySupported(model.fullId)
-                  ? () => toggleGateway(model.fullId)
+                gateway.canToggleModel(model.fullId)
+                  ? () => gateway.toggleModelGateway(model.fullId)
                   : undefined
               }
             />
@@ -259,11 +254,11 @@ export function ModelsSection() {
             isCustom={false}
             isDefault={defaultModel === model.fullId}
             isEditing={false}
-            isGatewayEnabled={isGatewayEnabled(model.fullId)}
+            isGatewayEnabled={gateway.modelUsesGateway(model.fullId)}
             onSetDefault={() => setDefaultModel(model.fullId)}
             onToggleGateway={
-              gatewayGloballyEnabled && gatewayAvailable && isGatewaySupported(model.fullId)
-                ? () => toggleGateway(model.fullId)
+              gateway.canToggleModel(model.fullId)
+                ? () => gateway.toggleModelGateway(model.fullId)
                 : undefined
             }
           />
