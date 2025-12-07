@@ -44,6 +44,7 @@ import { executeCompaction } from "@/browser/utils/chatCommands";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useAutoCompactionSettings } from "../hooks/useAutoCompactionSettings";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
+import { useForceCompaction } from "@/browser/hooks/useForceCompaction";
 import { useAPI } from "@/browser/contexts/API";
 
 interface AIViewProps {
@@ -139,9 +140,6 @@ const AIViewInner: React.FC<AIViewProps> = ({
     undefined
   );
 
-  // Track if we've already triggered force compaction for this stream
-  const forceCompactionTriggeredRef = useRef<string | null>(null);
-
   // Extract state from workspace state
   const { messages, canInterrupt, isCompacting, loading, currentModel } = workspaceState;
 
@@ -158,18 +156,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Show warning when: shouldShowWarning flag is true AND not currently compacting
   const shouldShowCompactionWarning = !isCompacting && autoCompactionResult.shouldShowWarning;
 
-  // Force compaction when live usage shows we're about to hit context limit
-  useEffect(() => {
-    if (
-      !autoCompactionResult.shouldForceCompact ||
-      !canInterrupt ||
-      isCompacting ||
-      forceCompactionTriggeredRef.current === activeStreamMessageId
-    ) {
-      return;
-    }
-
-    forceCompactionTriggeredRef.current = activeStreamMessageId ?? null;
+  // Handle force compaction callback - memoized to avoid effect re-runs
+  const handleForceCompaction = useCallback(() => {
     if (!api) return;
     void executeCompaction({
       api,
@@ -177,22 +165,15 @@ const AIViewInner: React.FC<AIViewProps> = ({
       sendMessageOptions: pendingSendOptions,
       continueMessage: { text: "Continue with the current task" },
     });
-  }, [
-    autoCompactionResult.shouldForceCompact,
+  }, [api, workspaceId, pendingSendOptions]);
+
+  // Force compaction when live usage shows we're about to hit context limit
+  useForceCompaction({
+    shouldForceCompact: autoCompactionResult.shouldForceCompact,
     canInterrupt,
     isCompacting,
-    activeStreamMessageId,
-    workspaceId,
-    pendingSendOptions,
-    api,
-  ]);
-
-  // Reset force compaction trigger when stream ends
-  useEffect(() => {
-    if (!canInterrupt) {
-      forceCompactionTriggeredRef.current = null;
-    }
-  }, [canInterrupt]);
+    onTrigger: handleForceCompaction,
+  });
 
   // Auto-retry state - minimal setter for keybinds and message sent handler
   // RetryBarrier manages its own state, but we need this for interrupt keybind
