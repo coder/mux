@@ -982,6 +982,11 @@ export class AIService extends EventEmitter {
         ? metadata.projectPath
         : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
 
+      // Fetch MCP server config for system prompt (before building message)
+      const mcpServers = this.mcpServerManager
+        ? await this.mcpServerManager.listServers(metadata.projectPath)
+        : undefined;
+
       // Build system message from workspace metadata
       const systemMessage = await buildSystemMessage(
         metadata,
@@ -989,7 +994,8 @@ export class AIService extends EventEmitter {
         workspacePath,
         mode,
         additionalSystemInstructions,
-        modelString
+        modelString,
+        mcpServers
       );
 
       // Count system message tokens for cost tracking

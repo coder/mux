@@ -28,6 +28,14 @@ export class MCPServerManager {
 
   constructor(private readonly configService: MCPConfigService) {}
 
+  /**
+   * List configured MCP servers for a project (name -> command).
+   * Used to show server info in the system prompt.
+   */
+  async listServers(projectPath: string): Promise<MCPServerMap> {
+    return this.configService.listServers(projectPath);
+  }
+
   async getToolsForWorkspace(options: {
     workspaceId: string;
     projectPath: string;

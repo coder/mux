@@ -59,6 +59,27 @@ You are in a git worktree at ${workspacePath}
 </environment>
 `;
 }
+
+/**
+ * Build MCP servers context XML block.
+ * Only included when at least one MCP server is configured.
+ */
+function buildMCPContext(mcpServers: MCPServerMap): string {
+  const entries = Object.entries(mcpServers);
+  if (entries.length === 0) return "";
+
+  const serverList = entries.map(([name, command]) => `- ${name}: \`${command}\``).join("\n");
+
+  return `
+<mcp>
+MCP (Model Context Protocol) servers provide additional tools. Configured in user's local project's .mux/mcp.jsonc:
+
+${serverList}
+
+Use /mcp add|edit|remove or Settings → Projects to manage servers.
+</mcp>
+`;
+}
 ```
 
 {/* END SYSTEM_PROMPT_DOCS */}

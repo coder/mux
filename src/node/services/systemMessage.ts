@@ -1,4 +1,5 @@
 import type { WorkspaceMetadata } from "@/common/types/workspace";
+import type { MCPServerMap } from "@/common/types/mcp";
 import {
   readInstructionSet,
   readInstructionSetFromRuntime,
@@ -75,6 +76,27 @@ You are in a git worktree at ${workspacePath}
 - Do not modify or visit other worktrees (especially the main project) without explicit user intent
 - You are meant to do your work isolated from the user and other agents
 </environment>
+`;
+}
+
+/**
+ * Build MCP servers context XML block.
+ * Only included when at least one MCP server is configured.
+ */
+function buildMCPContext(mcpServers: MCPServerMap): string {
+  const entries = Object.entries(mcpServers);
+  if (entries.length === 0) return "";
+
+  const serverList = entries.map(([name, command]) => `- ${name}: \`${command}\``).join("\n");
+
+  return `
+<mcp>
+MCP (Model Context Protocol) servers provide additional tools. Configured in user's local project's .mux/mcp.jsonc:
+
+${serverList}
+
+Use /mcp add|edit|remove or Settings → Projects to manage servers.
+</mcp>
 `;
 }
 // #endregion SYSTEM_PROMPT_DOCS
@@ -183,6 +205,7 @@ async function readInstructionSources(
  * @param mode - Optional mode name (e.g., "plan", "exec")
  * @param additionalSystemInstructions - Optional instructions appended last
  * @param modelString - Active model identifier used for Model-specific sections
+ * @param mcpServers - Optional MCP server configuration (name -> command)
  * @throws Error if metadata or workspacePath invalid
  */
 export async function buildSystemMessage(
@@ -191,7 +214,8 @@ export async function buildSystemMessage(
   workspacePath: string,
   mode?: string,
   additionalSystemInstructions?: string,
-  modelString?: string
+  modelString?: string,
+  mcpServers?: MCPServerMap
 ): Promise<string> {
   if (!metadata) throw new Error("Invalid workspace metadata: metadata is required");
   if (!workspacePath) throw new Error("Invalid workspace path: workspacePath is required");
@@ -236,6 +260,11 @@ export async function buildSystemMessage(
 
   // Build system message
   let systemMessage = `${PRELUDE.trim()}\n\n${buildEnvironmentContext(workspacePath)}`;
+
+  // Add MCP context if servers are configured
+  if (mcpServers && Object.keys(mcpServers).length > 0) {
+    systemMessage += buildMCPContext(mcpServers);
+  }
 
   if (customInstructions) {
     systemMessage += `\n<custom-instructions>\n${customInstructions}\n</custom-instructions>`;
