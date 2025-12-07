@@ -39,7 +39,6 @@ export interface ChatInputCreationVariant {
   onWorkspaceCreated: (metadata: FrontendWorkspaceMetadata) => void;
   onProviderConfig?: (provider: string, keyPath: string[], value: string) => Promise<void>;
   onModelChange?: (model: string) => void;
-  onCancel?: () => void;
   disabled?: boolean;
   onReady?: (api: ChatInputAPI) => void;
 }

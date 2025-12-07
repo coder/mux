@@ -648,14 +648,6 @@ function AppInner() {
                             // Clear pending state
                             clearPendingWorkspaceCreation();
                           }}
-                          onCancel={
-                            pendingNewWorkspaceProject
-                              ? () => {
-                                  // User cancelled workspace creation - clear pending state
-                                  clearPendingWorkspaceCreation();
-                                }
-                              : undefined
-                          }
                         />
                       </ThinkingProvider>
                     </ProviderOptionsProvider>

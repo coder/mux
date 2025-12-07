@@ -1065,13 +1065,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Handle cancel for creation variant
-    if (variant === "creation" && matchesKeybind(e, KEYBINDS.CANCEL) && props.onCancel) {
-      e.preventDefault();
-      props.onCancel();
-      return;
-    }
-
     // Handle voice input toggle (Ctrl+D / Cmd+D)
     if (matchesKeybind(e, KEYBINDS.TOGGLE_VOICE_INPUT) && voiceInput.shouldShowUI) {
       e.preventDefault();
