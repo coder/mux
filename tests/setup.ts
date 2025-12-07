@@ -7,6 +7,12 @@ import assert from "assert";
 import "disposablestack/auto";
 
 assert.equal(typeof Symbol.dispose, "symbol");
+// Use fast approximate token counting in Jest to avoid 10s WASM cold starts
+// Individual tests can override with MUX_FORCE_REAL_TOKENIZER=1
+if (process.env.MUX_FORCE_REAL_TOKENIZER !== "1") {
+  process.env.MUX_APPROX_TOKENIZER ??= "1";
+}
+
 assert.equal(typeof Symbol.asyncDispose, "symbol");
 
 // Polyfill File for undici in jest environment
