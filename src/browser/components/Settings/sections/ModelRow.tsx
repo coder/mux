@@ -1,5 +1,6 @@
 import React from "react";
-import { Check, Cloud, Pencil, Star, Trash2, X } from "lucide-react";
+import { Check, Pencil, Star, Trash2, X } from "lucide-react";
+import { GatewayIcon } from "@/browser/components/icons/GatewayIcon";
 import { cn } from "@/common/lib/utils";
 import { TooltipWrapper, Tooltip } from "@/browser/components/Tooltip";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
@@ -106,7 +107,9 @@ export function ModelRow(props: ModelRowProps) {
                   )}
                   aria-label={props.isGatewayEnabled ? "Disable Mux Gateway" : "Enable Mux Gateway"}
                 >
-                  <Cloud className={cn("h-3.5 w-3.5", props.isGatewayEnabled && "fill-current")} />
+                  <GatewayIcon
+                    className={cn("h-3.5 w-3.5", props.isGatewayEnabled && "fill-current")}
+                  />
                 </button>
                 <Tooltip className="tooltip" align="center">
                   {props.isGatewayEnabled ? "Using Mux Gateway" : "Use Mux Gateway"}

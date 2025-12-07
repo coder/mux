@@ -7,7 +7,8 @@ import React, {
   forwardRef,
 } from "react";
 import { cn } from "@/common/lib/utils";
-import { Cloud, Settings, Star } from "lucide-react";
+import { Settings, Star } from "lucide-react";
+import { GatewayIcon } from "./icons/GatewayIcon";
 import { TooltipWrapper, Tooltip } from "./Tooltip";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useGatewayModels, isGatewaySupported } from "@/browser/hooks/useGatewayModels";
@@ -202,7 +203,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
         <div ref={containerRef} className="relative flex items-center gap-1">
           {gatewayEnabled && (
             <TooltipWrapper inline>
-              <Cloud className="text-accent h-3 w-3 shrink-0 fill-current" />
+              <GatewayIcon className="text-accent h-3 w-3 shrink-0 fill-current" />
               <Tooltip className="tooltip" align="center">
                 Using Mux Gateway
               </Tooltip>
@@ -290,7 +291,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                               isGatewayEnabled(model) ? "Disable Mux Gateway" : "Enable Mux Gateway"
                             }
                           >
-                            <Cloud
+                            <GatewayIcon
                               className={cn("h-3 w-3", isGatewayEnabled(model) && "fill-current")}
                             />
                           </button>
