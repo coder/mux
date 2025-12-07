@@ -75,7 +75,6 @@ describeIntegration("MCP project configuration", () => {
 });
 
 describeIntegration("MCP server integration with model", () => {
-
   test.concurrent(
     "MCP tools are available to the model",
     async () => {

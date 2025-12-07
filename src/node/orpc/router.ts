@@ -185,6 +185,12 @@ export const router = (authToken?: string) => {
           .handler(({ context, input }) =>
             context.mcpConfigService.removeServer(input.projectPath, input.name)
           ),
+        test: t
+          .input(schemas.projects.mcp.test.input)
+          .output(schemas.projects.mcp.test.output)
+          .handler(({ context, input }) =>
+            context.mcpServerManager.testServer(input.projectPath, input.name)
+          ),
       },
     },
     nameGeneration: {

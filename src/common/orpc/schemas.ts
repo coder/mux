@@ -39,7 +39,13 @@ export { SecretSchema } from "./schemas/secrets";
 export { MuxProviderOptionsSchema } from "./schemas/providerOptions";
 
 // MCP schemas
-export { MCPServerMapSchema, MCPAddParamsSchema, MCPRemoveParamsSchema } from "./schemas/mcp";
+export {
+  MCPServerMapSchema,
+  MCPAddParamsSchema,
+  MCPRemoveParamsSchema,
+  MCPTestParamsSchema,
+  MCPTestResultSchema,
+} from "./schemas/mcp";
 
 // Terminal schemas
 export {

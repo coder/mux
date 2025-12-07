@@ -15,7 +15,13 @@ import {
 } from "./terminal";
 import { BashToolResultSchema, FileTreeNodeSchema } from "./tools";
 import { FrontendWorkspaceMetadataSchema, WorkspaceActivitySnapshotSchema } from "./workspace";
-import { MCPAddParamsSchema, MCPRemoveParamsSchema, MCPServerMapSchema } from "./mcp";
+import {
+  MCPAddParamsSchema,
+  MCPRemoveParamsSchema,
+  MCPServerMapSchema,
+  MCPTestParamsSchema,
+  MCPTestResultSchema,
+} from "./mcp";
 
 // Re-export telemetry schemas
 export { telemetry, TelemetryEventSchema } from "./telemetry";
@@ -129,6 +135,10 @@ export const projects = {
     remove: {
       input: MCPRemoveParamsSchema,
       output: ResultSchema(z.void(), z.string()),
+    },
+    test: {
+      input: MCPTestParamsSchema,
+      output: MCPTestResultSchema,
     },
   },
   secrets: {
