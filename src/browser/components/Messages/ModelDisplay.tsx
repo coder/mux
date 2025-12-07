@@ -55,9 +55,6 @@ export const ModelDisplay: React.FC<ModelDisplayProps> = ({ modelString, showToo
 
   const content = (
     <span className="inline normal-case" data-model-display>
-      {isMuxGateway && (
-        <ProviderIcon provider="mux-gateway" className={iconClass} data-model-icon="mux" />
-      )}
       <ProviderIcon provider={iconProvider} className={iconClass} data-model-icon />
       <span className="inline">
         {displayName}

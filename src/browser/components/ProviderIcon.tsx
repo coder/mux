@@ -4,7 +4,7 @@ import OpenAIIcon from "@/browser/assets/icons/openai.svg?react";
 import GoogleIcon from "@/browser/assets/icons/google.svg?react";
 import XAIIcon from "@/browser/assets/icons/xai.svg?react";
 import AWSIcon from "@/browser/assets/icons/aws.svg?react";
-import MuxIcon from "@/browser/assets/icons/mux.svg?react";
+import { GatewayIcon } from "@/browser/components/icons/GatewayIcon";
 import { PROVIDER_DISPLAY_NAMES, type ProviderName } from "@/common/constants/providers";
 import { cn } from "@/common/lib/utils";
 
@@ -14,11 +14,11 @@ const PROVIDER_ICONS: Partial<Record<ProviderName, React.FC>> = {
   google: GoogleIcon,
   xai: XAIIcon,
   bedrock: AWSIcon,
-  "mux-gateway": MuxIcon,
+  "mux-gateway": GatewayIcon,
 };
 
-// Providers with bitmap logos that need CSS filters for consistent appearance
-const BITMAP_ICON_PROVIDERS = new Set<string>(["mux-gateway"]);
+// Icons that use stroke instead of fill for their styling
+const STROKE_BASED_ICONS = new Set<string>(["mux-gateway"]);
 
 export interface ProviderIconProps {
   provider: string;
@@ -33,14 +33,16 @@ export function ProviderIcon(props: ProviderIconProps) {
   const IconComponent = PROVIDER_ICONS[props.provider as keyof typeof PROVIDER_ICONS];
   if (!IconComponent) return null;
 
-  const isBitmap = BITMAP_ICON_PROVIDERS.has(props.provider);
+  const isStrokeBased = STROKE_BASED_ICONS.has(props.provider);
 
   return (
     <span
       className={cn(
-        "inline-block h-[1em] w-[1em] align-[-0.125em] [&_svg]:block [&_svg]:h-full [&_svg]:w-full [&_svg]:fill-current [&_svg_.st0]:fill-current",
-        // Bitmap icons (embedded PNGs) need CSS filters to match the monochrome style
-        isBitmap && "grayscale brightness-[2] dark:brightness-[10] dark:contrast-[0.5]",
+        "inline-block h-[1em] w-[1em] align-[-0.125em] [&_svg]:block [&_svg]:h-full [&_svg]:w-full",
+        // Stroke-based icons (like GatewayIcon) use stroke for color, others use fill
+        isStrokeBased
+          ? "[&_svg]:stroke-current [&_svg]:fill-none"
+          : "[&_svg]:fill-current [&_svg_.st0]:fill-current",
         props.className
       )}
     >
