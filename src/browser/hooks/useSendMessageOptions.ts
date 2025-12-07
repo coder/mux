@@ -53,11 +53,11 @@ function constructSendMessageOptions(
   // Migrate any legacy mux-gateway:provider/model format to canonical form
   const baseModel = migrateGatewayModel(rawModel);
 
+  // Enforce thinking policy BEFORE gateway transform (policy checks canonical model name)
+  const uiThinking = enforceThinkingPolicy(baseModel, thinkingLevel);
+
   // Transform to gateway format if gateway is enabled for this model (reactive)
   const model = applyGatewayTransform(baseModel, gateway);
-
-  // Enforce thinking policy at the UI boundary as well (e.g., gpt-5-pro → high only)
-  const uiThinking = enforceThinkingPolicy(model, thinkingLevel);
 
   return {
     thinkingLevel: uiThinking,
