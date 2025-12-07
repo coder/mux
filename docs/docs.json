@@ -54,6 +54,7 @@
               },
               "context-management",
               "instruction-files",
+              "mcp-servers",
               {
                 "group": "Project Secrets",
                 "pages": ["project-secrets", "agentic-git-identity"]

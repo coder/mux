@@ -1,0 +1,50 @@
+---
+title: MCP Servers
+description: Extend agent capabilities with Model Context Protocol servers
+---
+
+MCP (Model Context Protocol) servers provide additional tools to agents. Configure them per-project in `.mux/mcp.jsonc`.
+
+## Configuration
+
+Create `.mux/mcp.jsonc` in your project root:
+
+```jsonc
+{
+  "servers": {
+    // Knowledge graph for persistent memory
+    "memory": "npx -y @anthropic-ai/mcp-server-memory",
+    // Access external APIs
+    "github": "npx -y @modelcontextprotocol/server-github",
+  },
+}
+```
+
+Each entry maps a server name to its shell command. The command must start a process that speaks MCP over stdio (NDJSON format).
+
+## Settings UI
+
+Configure servers in **Settings → Projects**:
+
+1. Select a project from the dropdown
+2. Add servers with name and command
+3. Use **Test** to verify before adding
+4. View available tools after successful test
+
+## Behavior
+
+- **Hot reload** — Config changes apply on your next message (no restart needed)
+- **Per-workspace** — Each workspace maintains its own server instances
+- **Isolated** — Server processes run in the workspace directory with its environment
+
+## Finding MCP Servers
+
+Browse available servers at [mcp.so](https://mcp.so/) or the [MCP servers repository](https://github.com/modelcontextprotocol/servers).
+
+## Troubleshooting
+
+If a server fails to start:
+
+1. **Test the command manually** — Run the command in your terminal to verify it works
+2. **Check dependencies** — Ensure required packages are installed (`npx -y` downloads on first run)
+3. **Review logs** — Server errors appear in mux logs (`~/.mux/logs/`)
