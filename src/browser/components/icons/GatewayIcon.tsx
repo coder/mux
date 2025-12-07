@@ -2,13 +2,17 @@ import React from "react";
 
 interface GatewayIconProps extends React.SVGProps<SVGSVGElement> {
   className?: string;
+  /** When true, shows the active/enabled state with double ring */
+  active?: boolean;
 }
 
 /**
  * Gateway icon - represents routing through Mux Gateway.
- * A mystic portal: concentric rings with a sparkle at center.
+ * Circle with M logo. Active state adds outer ring.
  */
 export function GatewayIcon(props: GatewayIconProps) {
+  const { active, ...svgProps } = props;
+
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -18,15 +22,14 @@ export function GatewayIcon(props: GatewayIconProps) {
       strokeWidth="2"
       strokeLinecap="round"
       strokeLinejoin="round"
-      {...props}
+      {...svgProps}
     >
-      {/* Outer ring */}
-      <circle cx="12" cy="12" r="9" />
-      {/* Inner ring */}
-      <circle cx="12" cy="12" r="5" />
-      {/* Center sparkle */}
-      <path d="M12 10v4" />
-      <path d="M10 12h4" />
+      {/* Outer glow ring when active */}
+      {active && <circle cx="12" cy="12" r="11" strokeWidth="1" opacity="0.5" />}
+      {/* Main circle */}
+      <circle cx="12" cy="12" r="8" />
+      {/* M letter */}
+      <path d="M8 16V8l4 5 4-5v8" />
     </svg>
   );
 }

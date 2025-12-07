@@ -107,9 +107,7 @@ export function ModelRow(props: ModelRowProps) {
                   )}
                   aria-label={props.isGatewayEnabled ? "Disable Mux Gateway" : "Enable Mux Gateway"}
                 >
-                  <GatewayIcon
-                    className={cn("h-3.5 w-3.5", props.isGatewayEnabled && "fill-current")}
-                  />
+                  <GatewayIcon className="h-3.5 w-3.5" active={props.isGatewayEnabled} />
                 </button>
                 <Tooltip className="tooltip" align="center">
                   {props.isGatewayEnabled ? "Using Mux Gateway" : "Use Mux Gateway"}

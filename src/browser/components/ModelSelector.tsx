@@ -198,7 +198,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
         <div ref={containerRef} className="relative flex items-center gap-1">
           {gatewayActive && (
             <TooltipWrapper inline>
-              <GatewayIcon className="text-accent h-3 w-3 shrink-0 fill-current" />
+              <GatewayIcon className="text-accent h-3 w-3 shrink-0" active />
               <Tooltip className="tooltip" align="center">
                 Using Mux Gateway
               </Tooltip>
@@ -289,10 +289,8 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                             }
                           >
                             <GatewayIcon
-                              className={cn(
-                                "h-3 w-3",
-                                gateway.modelUsesGateway(model) && "fill-current"
-                              )}
+                              className="h-3 w-3"
+                              active={gateway.modelUsesGateway(model)}
                             />
                           </button>
                           <Tooltip className="tooltip" align="center">
