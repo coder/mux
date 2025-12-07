@@ -1,7 +1,16 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
-import { Trash2, Play, Loader2, CheckCircle, XCircle, Plus, ChevronDown } from "lucide-react";
+import {
+  Trash2,
+  Play,
+  Loader2,
+  CheckCircle,
+  XCircle,
+  Plus,
+  ChevronDown,
+  Server,
+} from "lucide-react";
 
 type TestResult = { success: true; tools: string[] } | { success: false; error: string };
 
@@ -21,6 +30,8 @@ export const ProjectSettingsSection: React.FC = () => {
   const [newServerName, setNewServerName] = useState("");
   const [newServerCommand, setNewServerCommand] = useState("");
   const [addingServer, setAddingServer] = useState(false);
+  const [testingNewCommand, setTestingNewCommand] = useState(false);
+  const [newCommandTestResult, setNewCommandTestResult] = useState<TestResult | null>(null);
 
   // Set default project when projects load
   useEffect(() => {
@@ -45,9 +56,13 @@ export const ProjectSettingsSection: React.FC = () => {
 
   useEffect(() => {
     void refresh();
-    // Clear test results when project changes
     setTestResults(new Map());
   }, [refresh]);
+
+  // Clear new command test result when command changes
+  useEffect(() => {
+    setNewCommandTestResult(null);
+  }, [newServerCommand]);
 
   const handleRemove = useCallback(
     async (name: string) => {
@@ -73,7 +88,6 @@ export const ProjectSettingsSection: React.FC = () => {
     async (name: string) => {
       if (!api || !selectedProject) return;
       setTestingServer(name);
-      // Clear previous result for this server
       setTestResults((prev) => {
         const next = new Map(prev);
         next.delete(name);
@@ -96,6 +110,26 @@ export const ProjectSettingsSection: React.FC = () => {
     [api, selectedProject]
   );
 
+  const handleTestNewCommand = useCallback(async () => {
+    if (!api || !selectedProject || !newServerCommand.trim()) return;
+    setTestingNewCommand(true);
+    setNewCommandTestResult(null);
+    try {
+      const result = await api.projects.mcp.testCommand({
+        projectPath: selectedProject,
+        command: newServerCommand.trim(),
+      });
+      setNewCommandTestResult(result);
+    } catch (err) {
+      setNewCommandTestResult({
+        success: false,
+        error: err instanceof Error ? err.message : "Test failed",
+      });
+    } finally {
+      setTestingNewCommand(false);
+    }
+  }, [api, selectedProject, newServerCommand]);
+
   const handleAddServer = useCallback(async () => {
     if (!api || !selectedProject || !newServerName.trim() || !newServerCommand.trim()) return;
     setAddingServer(true);
@@ -111,6 +145,7 @@ export const ProjectSettingsSection: React.FC = () => {
       } else {
         setNewServerName("");
         setNewServerCommand("");
+        setNewCommandTestResult(null);
         await refresh();
       }
     } catch (err) {
@@ -122,19 +157,24 @@ export const ProjectSettingsSection: React.FC = () => {
 
   if (projectList.length === 0) {
     return (
-      <p className="text-muted-foreground text-sm">
-        No projects configured. Add a project first to manage its settings.
-      </p>
+      <div className="flex flex-col items-center justify-center py-12 text-center">
+        <Server className="text-muted-foreground mb-3 h-10 w-10" />
+        <p className="text-muted-foreground text-sm">
+          No projects configured. Add a project first to manage MCP servers.
+        </p>
+      </div>
     );
   }
 
   const projectName = (path: string) => path.split(/[\\/]/).pop() ?? path;
+  const canAdd = newServerName.trim() && newServerCommand.trim();
+  const canTest = newServerCommand.trim();
 
   return (
     <div className="space-y-6">
       {/* Project selector */}
-      <div>
-        <label htmlFor="project-select" className="mb-1.5 block text-sm font-medium">
+      <div className="space-y-1.5">
+        <label htmlFor="project-select" className="text-sm font-medium">
           Project
         </label>
         <div className="relative">
@@ -150,130 +190,191 @@ export const ProjectSettingsSection: React.FC = () => {
               </option>
             ))}
           </select>
-          <ChevronDown className="text-muted-foreground pointer-events-none absolute top-1/2 right-2 h-4 w-4 -translate-y-1/2" />
+          <ChevronDown className="text-muted-foreground pointer-events-none absolute top-1/2 right-2.5 h-4 w-4 -translate-y-1/2" />
         </div>
-        <p className="text-muted-foreground mt-1 text-xs">{selectedProject}</p>
-      </div>
-
-      {/* MCP Servers section */}
-      <div>
-        <h3 className="text-base font-semibold">MCP Servers</h3>
-        <p className="text-muted-foreground text-sm">
-          Servers are stored in <code className="bg-secondary/50 rounded px-1">.mux/mcp.jsonc</code>
+        <p className="text-muted-foreground truncate text-xs" title={selectedProject}>
+          {selectedProject}
         </p>
       </div>
 
-      {error && <p className="text-destructive text-sm">{error}</p>}
+      {/* MCP Servers header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="font-medium">MCP Servers</h3>
+          <p className="text-muted-foreground text-xs">
+            Stored in <code className="bg-secondary/50 rounded px-1">.mux/mcp.jsonc</code>
+          </p>
+        </div>
+      </div>
 
-      {loading && <p className="text-muted-foreground text-sm">Loading…</p>}
-
-      {!loading && Object.keys(servers).length === 0 && (
-        <p className="text-muted-foreground text-sm">No MCP servers configured.</p>
+      {error && (
+        <div className="bg-destructive/10 text-destructive flex items-center gap-2 rounded-md px-3 py-2 text-sm">
+          <XCircle className="h-4 w-4 shrink-0" />
+          {error}
+        </div>
       )}
 
-      <ul className="space-y-2">
-        {Object.entries(servers).map(([name, command]) => {
-          const isTesting = testingServer === name;
-          const testResult = testResults.get(name);
-          return (
-            <li
-              key={name}
-              className="border-border-medium/60 bg-secondary/30 rounded-md border px-3 py-2"
-            >
-              <div className="flex items-start justify-between">
-                <div className="min-w-0 flex-1 space-y-1">
-                  <div className="font-medium">{name}</div>
-                  <div className="text-muted-foreground text-xs break-all">{command}</div>
+      {/* Server list */}
+      {loading ? (
+        <div className="text-muted-foreground flex items-center gap-2 py-4 text-sm">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading servers…
+        </div>
+      ) : Object.keys(servers).length === 0 ? (
+        <p className="text-muted-foreground py-4 text-sm">No MCP servers configured yet.</p>
+      ) : (
+        <ul className="space-y-2">
+          {Object.entries(servers).map(([name, command]) => {
+            const isTesting = testingServer === name;
+            const testResult = testResults.get(name);
+            return (
+              <li key={name} className="border-border-medium bg-secondary/20 rounded-lg border p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{name}</span>
+                      {testResult?.success && (
+                        <span className="rounded bg-green-500/10 px-1.5 py-0.5 text-xs text-green-500">
+                          {testResult.tools.length} tools
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-muted-foreground mt-0.5 text-xs break-all">{command}</p>
+                  </div>
+                  <div className="flex shrink-0 gap-1">
+                    <button
+                      type="button"
+                      onClick={() => void handleTest(name)}
+                      disabled={isTesting}
+                      className="text-muted-foreground hover:bg-secondary hover:text-accent rounded p-1.5 transition-colors disabled:opacity-50"
+                      title="Test connection"
+                    >
+                      {isTesting ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Play className="h-4 w-4" />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleRemove(name)}
+                      disabled={loading}
+                      className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive rounded p-1.5 transition-colors"
+                      title="Remove server"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
-                <div className="ml-2 flex shrink-0 items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void handleTest(name)}
-                    className="text-muted-foreground hover:text-accent flex items-center gap-1 text-xs disabled:opacity-50"
-                    aria-label={`Test MCP server ${name}`}
-                    disabled={loading || isTesting}
-                  >
-                    {isTesting ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Play className="h-4 w-4" />
-                    )}
-                    {isTesting ? "Testing…" : "Test"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleRemove(name)}
-                    className="text-muted-foreground hover:text-destructive flex items-center gap-1 text-xs"
-                    aria-label={`Remove MCP server ${name}`}
-                    disabled={loading}
-                  >
-                    <Trash2 className="h-4 w-4" /> Remove
-                  </button>
-                </div>
-              </div>
-              {/* Test result display */}
-              {testResult && (
-                <div
-                  className={`mt-2 flex items-start gap-1.5 text-xs ${testResult.success ? "text-green-500" : "text-destructive"}`}
-                >
-                  {testResult.success ? (
-                    <>
-                      <CheckCircle className="mt-0.5 h-3 w-3 shrink-0" />
-                      <span>
-                        {testResult.tools.length} tools: {testResult.tools.slice(0, 5).join(", ")}
-                        {testResult.tools.length > 5 && ` (+${testResult.tools.length - 5} more)`}
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <XCircle className="mt-0.5 h-3 w-3 shrink-0" />
-                      <span>{testResult.error}</span>
-                    </>
-                  )}
-                </div>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+                {testResult && !testResult.success && (
+                  <div className="text-destructive mt-2 flex items-start gap-1.5 text-xs">
+                    <XCircle className="mt-0.5 h-3 w-3 shrink-0" />
+                    <span>{testResult.error}</span>
+                  </div>
+                )}
+                {testResult?.success && testResult.tools.length > 0 && (
+                  <p className="text-muted-foreground mt-2 text-xs">
+                    Tools: {testResult.tools.join(", ")}
+                  </p>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
 
       {/* Add server form */}
-      <div className="border-border-medium/60 space-y-3 rounded-md border p-3">
-        <h4 className="text-sm font-medium">Add MCP Server</h4>
-        <div className="space-y-2">
-          <input
-            type="text"
-            placeholder="Server name (e.g., memory)"
-            value={newServerName}
-            onChange={(e) => setNewServerName(e.target.value)}
-            className="border-border-medium bg-secondary/30 text-foreground placeholder:text-muted-foreground focus:ring-accent w-full rounded-md border px-3 py-1.5 text-sm focus:ring-1 focus:outline-none"
-          />
-          <input
-            type="text"
-            placeholder="Command (e.g., npx -y @modelcontextprotocol/server-memory)"
-            value={newServerCommand}
-            onChange={(e) => setNewServerCommand(e.target.value)}
-            className="border-border-medium bg-secondary/30 text-foreground placeholder:text-muted-foreground focus:ring-accent w-full rounded-md border px-3 py-1.5 text-sm focus:ring-1 focus:outline-none"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && newServerName.trim() && newServerCommand.trim()) {
-                void handleAddServer();
-              }
-            }}
-          />
-        </div>
-        <button
-          type="button"
-          onClick={() => void handleAddServer()}
-          disabled={addingServer || !newServerName.trim() || !newServerCommand.trim()}
-          className="bg-accent hover:bg-accent/90 flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-white disabled:opacity-50"
-        >
-          {addingServer ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Plus className="h-4 w-4" />
+      <div className="border-border-medium bg-secondary/10 space-y-3 rounded-lg border p-4">
+        <h4 className="font-medium">Add Server</h4>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <label htmlFor="server-name" className="text-muted-foreground text-xs">
+              Name
+            </label>
+            <input
+              id="server-name"
+              type="text"
+              placeholder="e.g., memory"
+              value={newServerName}
+              onChange={(e) => setNewServerName(e.target.value)}
+              className="border-border-medium bg-secondary/30 text-foreground placeholder:text-muted-foreground focus:ring-accent w-full rounded-md border px-3 py-2 text-sm focus:ring-1 focus:outline-none"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="server-command" className="text-muted-foreground text-xs">
+              Command
+            </label>
+            <input
+              id="server-command"
+              type="text"
+              placeholder="e.g., npx -y @modelcontextprotocol/server-memory"
+              value={newServerCommand}
+              onChange={(e) => setNewServerCommand(e.target.value)}
+              className="border-border-medium bg-secondary/30 text-foreground placeholder:text-muted-foreground focus:ring-accent w-full rounded-md border px-3 py-2 text-sm focus:ring-1 focus:outline-none"
+            />
+          </div>
+
+          {/* Test result for new command */}
+          {newCommandTestResult && (
+            <div
+              className={`flex items-start gap-2 rounded-md px-3 py-2 text-sm ${
+                newCommandTestResult.success
+                  ? "bg-green-500/10 text-green-500"
+                  : "bg-destructive/10 text-destructive"
+              }`}
+            >
+              {newCommandTestResult.success ? (
+                <>
+                  <CheckCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div>
+                    <span className="font-medium">
+                      Connection successful — {newCommandTestResult.tools.length} tools available
+                    </span>
+                    {newCommandTestResult.tools.length > 0 && (
+                      <p className="mt-0.5 text-xs opacity-80">
+                        {newCommandTestResult.tools.join(", ")}
+                      </p>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{newCommandTestResult.error}</span>
+                </>
+              )}
+            </div>
           )}
-          {addingServer ? "Adding…" : "Add Server"}
-        </button>
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => void handleTestNewCommand()}
+              disabled={!canTest || testingNewCommand}
+              className="border-border-medium hover:bg-secondary flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm transition-colors disabled:opacity-50"
+            >
+              {testingNewCommand ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Play className="h-4 w-4" />
+              )}
+              {testingNewCommand ? "Testing…" : "Test"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleAddServer()}
+              disabled={!canAdd || addingServer}
+              className="bg-accent hover:bg-accent/90 flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-white transition-colors disabled:opacity-50"
+            >
+              {addingServer ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Plus className="h-4 w-4" />
+              )}
+              {addingServer ? "Adding…" : "Add"}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

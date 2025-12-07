@@ -127,6 +127,55 @@ export class MCPServerManager {
     return Promise.race([testPromise, timeoutPromise]);
   }
 
+  /**
+   * Test an MCP command directly without requiring it to be in config.
+   * Used by Settings UI to validate before adding.
+   */
+  async testCommand(projectPath: string, command: string): Promise<MCPTestResult> {
+    if (!command.trim()) {
+      return { success: false, error: "Command is required" };
+    }
+
+    const runtime = createRuntime({ type: "local", srcBaseDir: projectPath });
+    const timeoutPromise = new Promise<MCPTestResult>((resolve) =>
+      setTimeout(() => resolve({ success: false, error: "Connection timed out" }), TEST_TIMEOUT_MS)
+    );
+
+    const testPromise = (async (): Promise<MCPTestResult> => {
+      let transport: MCPStdioTransport | null = null;
+      try {
+        log.debug("[MCP] Testing command", { command });
+        const execStream = await runtime.exec(command, {
+          cwd: projectPath,
+          timeout: TEST_TIMEOUT_MS / 1000,
+        });
+
+        transport = new MCPStdioTransport(execStream);
+        await transport.start();
+        const client = await experimental_createMCPClient({ transport });
+        const tools = await client.tools();
+        const toolNames = Object.keys(tools);
+        await client.close();
+        await transport.close();
+        log.info("[MCP] Command test successful", { command, tools: toolNames });
+        return { success: true, tools: toolNames };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log.warn("[MCP] Command test failed", { command, error: message });
+        if (transport) {
+          try {
+            await transport.close();
+          } catch {
+            // ignore cleanup errors
+          }
+        }
+        return { success: false, error: message };
+      }
+    })();
+
+    return Promise.race([testPromise, timeoutPromise]);
+  }
+
   private collectTools(instances: Map<string, MCPServerInstance>): Record<string, Tool> {
     const aggregated: Record<string, Tool> = {};
     for (const instance of instances.values()) {

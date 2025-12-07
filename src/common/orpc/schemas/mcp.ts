@@ -18,6 +18,11 @@ export const MCPTestParamsSchema = z.object({
   name: z.string(),
 });
 
+export const MCPTestCommandParamsSchema = z.object({
+  projectPath: z.string(),
+  command: z.string(),
+});
+
 export const MCPTestResultSchema = z.discriminatedUnion("success", [
   z.object({ success: z.literal(true), tools: z.array(z.string()) }),
   z.object({ success: z.literal(false), error: z.string() }),
