@@ -33,6 +33,7 @@ export function ModelsSection() {
     isEnabled: isGatewayEnabled,
     toggle: toggleGateway,
     gatewayAvailable,
+    gatewayGloballyEnabled,
   } = useGatewayModels();
 
   // Check if a model already exists (for duplicate prevention)
@@ -234,7 +235,7 @@ export function ModelsSection() {
               }
               onRemove={() => handleRemoveModel(model.provider, model.modelId)}
               onToggleGateway={
-                gatewayAvailable && isGatewaySupported(model.fullId)
+                gatewayGloballyEnabled && gatewayAvailable && isGatewaySupported(model.fullId)
                   ? () => toggleGateway(model.fullId)
                   : undefined
               }
@@ -261,7 +262,7 @@ export function ModelsSection() {
             isGatewayEnabled={isGatewayEnabled(model.fullId)}
             onSetDefault={() => setDefaultModel(model.fullId)}
             onToggleGateway={
-              gatewayAvailable && isGatewaySupported(model.fullId)
+              gatewayGloballyEnabled && gatewayAvailable && isGatewaySupported(model.fullId)
                 ? () => toggleGateway(model.fullId)
                 : undefined
             }

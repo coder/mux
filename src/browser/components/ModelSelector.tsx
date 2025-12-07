@@ -33,6 +33,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       isEnabled: isGatewayEnabled,
       toggle: toggleGateway,
       gatewayAvailable,
+      gatewayGloballyEnabled,
     } = useGatewayModels();
     const [isEditing, setIsEditing] = useState(false);
     const [inputValue, setInputValue] = useState(value);
@@ -198,7 +199,10 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
 
     if (!isEditing) {
       const gatewayEnabled =
-        isGatewayEnabled(value) && gatewayAvailable && isGatewaySupported(value);
+        gatewayGloballyEnabled &&
+        isGatewayEnabled(value) &&
+        gatewayAvailable &&
+        isGatewaySupported(value);
       return (
         <div ref={containerRef} className="relative flex items-center gap-1">
           {gatewayEnabled && (
@@ -270,8 +274,8 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                   <div className="grid w-full grid-cols-[1fr_auto] items-center gap-2">
                     <span className="min-w-0 truncate">{model}</span>
                     <div className="flex items-center gap-0.5">
-                      {/* Gateway toggle - only show when gateway is configured and model's provider is supported */}
-                      {gatewayAvailable && isGatewaySupported(model) && (
+                      {/* Gateway toggle - only show when gateway is globally enabled, configured, and model's provider is supported */}
+                      {gatewayGloballyEnabled && gatewayAvailable && isGatewaySupported(model) && (
                         <TooltipWrapper inline>
                           <button
                             type="button"

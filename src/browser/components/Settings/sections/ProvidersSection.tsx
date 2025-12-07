@@ -5,6 +5,7 @@ import type { ProviderName } from "@/common/constants/providers";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import { useAPI } from "@/browser/contexts/API";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
+import { useGatewayModels } from "@/browser/hooks/useGatewayModels";
 
 interface FieldConfig {
   key: string;
@@ -69,6 +70,7 @@ function getProviderFields(provider: ProviderName): FieldConfig[] {
 export function ProvidersSection() {
   const { api } = useAPI();
   const { config, updateOptimistically } = useProvidersConfig();
+  const { gatewayAvailable, gatewayGloballyEnabled, toggleGloballyEnabled } = useGatewayModels();
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
   const [editingField, setEditingField] = useState<{
     provider: string;
@@ -315,6 +317,31 @@ export function ProvidersSection() {
                     </div>
                   );
                 })}
+
+                {/* Gateway enabled toggle - only for mux-gateway when configured */}
+                {provider === "mux-gateway" && gatewayAvailable && (
+                  <div className="border-border-light flex items-center justify-between border-t pt-3">
+                    <div>
+                      <label className="text-foreground block text-xs font-medium">Enabled</label>
+                      <span className="text-muted text-xs">Route requests through Mux Gateway</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={toggleGloballyEnabled}
+                      className={`relative h-5 w-9 rounded-full transition-colors ${
+                        gatewayGloballyEnabled ? "bg-accent" : "bg-border-medium"
+                      }`}
+                      role="switch"
+                      aria-checked={gatewayGloballyEnabled}
+                    >
+                      <span
+                        className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
+                          gatewayGloballyEnabled ? "translate-x-4" : "translate-x-0"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>

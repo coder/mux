@@ -4,6 +4,7 @@ import { useProvidersConfig } from "./useProvidersConfig";
 
 const GATEWAY_MODELS_KEY = "gateway-models";
 const GATEWAY_AVAILABLE_KEY = "gateway-available";
+const GATEWAY_ENABLED_KEY = "gateway-enabled";
 
 /**
  * Providers that Mux Gateway supports routing to.
@@ -89,6 +90,20 @@ export function isGatewayAvailable(): boolean {
 }
 
 /**
+ * Check if the gateway is globally enabled (user toggle, defaults to true when available)
+ */
+export function isGatewayGloballyEnabled(): boolean {
+  return readPersistedState<boolean>(GATEWAY_ENABLED_KEY, true);
+}
+
+/**
+ * Set the global gateway enabled state
+ */
+export function setGatewayGloballyEnabled(enabled: boolean): void {
+  updatePersistedState(GATEWAY_ENABLED_KEY, enabled);
+}
+
+/**
  * Transform a model ID to gateway format if gateway is enabled AND available AND supported.
  * Falls back to direct provider if:
  * - Gateway is not configured (no coupon code)
@@ -98,8 +113,17 @@ export function isGatewayAvailable(): boolean {
  * Example: "anthropic:claude-opus-4-5" → "mux-gateway:anthropic/claude-opus-4-5"
  */
 export function toGatewayModel(modelId: string): string {
-  // Only transform if user enabled gateway for this model, gateway is configured, and provider is supported
-  if (!isGatewayEnabled(modelId) || !isGatewayAvailable() || !isGatewaySupported(modelId)) {
+  // Only transform if:
+  // 1. Gateway is globally enabled (user hasn't disabled it)
+  // 2. User enabled gateway for this specific model
+  // 3. Gateway is configured (coupon code set)
+  // 4. Provider is supported by gateway
+  if (
+    !isGatewayGloballyEnabled() ||
+    !isGatewayEnabled(modelId) ||
+    !isGatewayAvailable() ||
+    !isGatewaySupported(modelId)
+  ) {
     return modelId;
   }
   // Transform provider:model to mux-gateway:provider/model
@@ -144,6 +168,11 @@ export function useGatewayModels() {
     false,
     { listener: true }
   );
+  const [gatewayGloballyEnabled, setGatewayGloballyEnabled] = usePersistedState<boolean>(
+    GATEWAY_ENABLED_KEY,
+    true,
+    { listener: true }
+  );
 
   // Sync gateway availability from provider config
   useEffect(() => {
@@ -151,6 +180,10 @@ export function useGatewayModels() {
     const available = config["mux-gateway"]?.couponCodeSet ?? false;
     setGatewayAvailable(available);
   }, [config, setGatewayAvailable]);
+
+  const toggleGloballyEnabled = useCallback(() => {
+    setGatewayGloballyEnabled((prev) => !prev);
+  }, [setGatewayGloballyEnabled]);
 
   const isEnabled = useCallback(
     (modelId: string) => gatewayModels.includes(modelId),
@@ -169,5 +202,12 @@ export function useGatewayModels() {
     [setGatewayModels]
   );
 
-  return { gatewayModels, isEnabled, toggle, gatewayAvailable };
+  return {
+    gatewayModels,
+    isEnabled,
+    toggle,
+    gatewayAvailable,
+    gatewayGloballyEnabled,
+    toggleGloballyEnabled,
+  };
 }
