@@ -81,15 +81,25 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
     const yankBufferRef = useRef<string>("");
 
     // Auto-resize when value changes
-    // Uses useLayoutEffect to measure and set height synchronously before paint,
-    // preventing flash of wrong size on initial render
+    // Uses useLayoutEffect to measure and set height synchronously before paint.
+    // Key insight: when value is empty or whitespace-only, skip measurement entirely
+    // and use the CSS min-height. This avoids race conditions where scrollHeight
+    // returns incorrect values before flexbox layout settles.
     useLayoutEffect(() => {
       const el = textareaRef.current;
       if (!el) return;
-      // Reset to auto to get accurate scrollHeight measurement
+
+      // For empty/whitespace content, let CSS min-height handle sizing.
+      // This is deterministic and avoids measuring scrollHeight when the
+      // flex container may not have settled.
+      if (!value.trim()) {
+        el.style.height = "";
+        return;
+      }
+
+      // For non-empty content, measure and set height
       el.style.height = "auto";
       const max = window.innerHeight * 0.5; // 50vh
-      // scrollHeight gives the full content height; clamp to max
       el.style.height = Math.min(el.scrollHeight, max) + "px";
     }, [value]);
 

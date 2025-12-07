@@ -641,8 +641,10 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
       if (ok) {
         setInput("");
         setImageAttachments([]);
+        // Height is managed by VimTextArea's useLayoutEffect - clear inline style
+        // to let CSS min-height take over
         if (inputRef.current) {
-          inputRef.current.style.height = "36px";
+          inputRef.current.style.height = "";
         }
       }
       setIsSending(false);
@@ -661,7 +663,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         if (parsed.type === "clear") {
           setInput("");
           if (inputRef.current) {
-            inputRef.current.style.height = "36px";
+            inputRef.current.style.height = "";
           }
           await props.onTruncateHistory(1.0);
           setToast({
@@ -676,7 +678,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         if (parsed.type === "truncate") {
           setInput("");
           if (inputRef.current) {
-            inputRef.current.style.height = "36px";
+            inputRef.current.style.height = "";
           }
           await props.onTruncateHistory(parsed.percentage);
           setToast({
@@ -994,9 +996,9 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         // These will be restored if the send operation fails
         setInput("");
         setImageAttachments([]);
-        // Reset textarea height
+        // Clear inline height style - VimTextArea's useLayoutEffect will handle sizing
         if (inputRef.current) {
-          inputRef.current.style.height = "36px";
+          inputRef.current.style.height = "";
         }
 
         const result = await api.workspace.sendMessage({
