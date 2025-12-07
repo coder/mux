@@ -25,6 +25,8 @@ interface WorkspaceModalState {
 
 export interface ProjectContext {
   projects: Map<string, ProjectConfig>;
+  /** True while initial project list is loading */
+  loading: boolean;
   refreshProjects: () => Promise<void>;
   addProject: (normalizedPath: string, projectConfig: ProjectConfig) => void;
   removeProject: (path: string) => Promise<{ success: boolean; error?: string }>;
@@ -58,6 +60,7 @@ function deriveProjectName(projectPath: string): string {
 export function ProjectProvider(props: { children: ReactNode }) {
   const { api } = useAPI();
   const [projects, setProjects] = useState<Map<string, ProjectConfig>>(new Map());
+  const [loading, setLoading] = useState(true);
   const [isProjectCreateModalOpen, setProjectCreateModalOpen] = useState(false);
   const [workspaceModalState, setWorkspaceModalState] = useState<WorkspaceModalState>({
     isOpen: false,
@@ -82,7 +85,10 @@ export function ProjectProvider(props: { children: ReactNode }) {
   }, [api]);
 
   useEffect(() => {
-    void refreshProjects();
+    void (async () => {
+      await refreshProjects();
+      setLoading(false);
+    })();
   }, [refreshProjects]);
 
   const addProject = useCallback((normalizedPath: string, projectConfig: ProjectConfig) => {
@@ -224,6 +230,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
   const value = useMemo<ProjectContext>(
     () => ({
       projects,
+      loading,
       refreshProjects,
       addProject,
       removeProject,
@@ -239,6 +246,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
     }),
     [
       projects,
+      loading,
       refreshProjects,
       addProject,
       removeProject,

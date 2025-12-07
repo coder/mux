@@ -3,7 +3,7 @@ import App from "../App";
 import { LoadingScreen } from "./LoadingScreen";
 import { useWorkspaceStoreRaw } from "../stores/WorkspaceStore";
 import { useGitStatusStoreRaw } from "../stores/GitStatusStore";
-import { ProjectProvider } from "../contexts/ProjectContext";
+import { ProjectProvider, useProjectContext } from "../contexts/ProjectContext";
 import { APIProvider, useAPI, type APIClient } from "@/browser/contexts/API";
 import { WorkspaceProvider, useWorkspaceContext } from "../contexts/WorkspaceContext";
 
@@ -41,6 +41,7 @@ export function AppLoader(props: AppLoaderProps) {
  */
 function AppLoaderInner() {
   const workspaceContext = useWorkspaceContext();
+  const projectContext = useProjectContext();
   const { api } = useAPI();
 
   // Get store instances
@@ -72,8 +73,8 @@ function AppLoaderInner() {
     api,
   ]);
 
-  // Show loading screen until stores are synced
-  if (workspaceContext.loading || !storesSynced) {
+  // Show loading screen until both projects and workspaces are loaded and stores synced
+  if (projectContext.loading || workspaceContext.loading || !storesSynced) {
     return <LoadingScreen />;
   }
 
