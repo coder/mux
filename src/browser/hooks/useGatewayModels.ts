@@ -166,6 +166,8 @@ export function useGateway(): GatewayState {
 
   const toggleEnabled = useCallback(() => {
     setIsEnabled((prev) => !prev);
+    // Also update localStorage synchronously
+    updatePersistedState<boolean>(GATEWAY_ENABLED_KEY, (prev) => !prev);
   }, [setIsEnabled]);
 
   const modelUsesGateway = useCallback(
@@ -175,7 +177,13 @@ export function useGateway(): GatewayState {
 
   const toggleModelGateway = useCallback(
     (modelId: string) => {
+      // Update React state for UI
       setEnabledModels((prev) =>
+        prev.includes(modelId) ? prev.filter((m) => m !== modelId) : [...prev, modelId]
+      );
+      // Also update localStorage synchronously so toGatewayModel() sees it immediately
+      // (usePersistedState batches writes in microtask, which can cause race conditions)
+      updatePersistedState<string[]>(GATEWAY_MODELS_KEY, (prev) =>
         prev.includes(modelId) ? prev.filter((m) => m !== modelId) : [...prev, modelId]
       );
     },
