@@ -3,7 +3,7 @@ import * as os from "os";
 import { EventEmitter } from "events";
 import type { XaiProviderOptions } from "@ai-sdk/xai";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
-import { convertToModelMessages, type LanguageModel } from "ai";
+import { convertToModelMessages, type LanguageModel, type Tool } from "ai";
 import { applyToolOutputRedaction } from "@/browser/utils/messages/applyToolOutputRedaction";
 import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
 import type { Result } from "@/common/types/result";
@@ -36,6 +36,7 @@ import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
 import { buildSystemMessage, readToolInstructions } from "./systemMessage";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
+import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type {
@@ -240,6 +241,7 @@ export class AIService extends EventEmitter {
   private readonly historyService: HistoryService;
   private readonly partialService: PartialService;
   private readonly config: Config;
+  private mcpServerManager?: MCPServerManager;
   private readonly initStateManager: InitStateManager;
   private readonly mockModeEnabled: boolean;
   private readonly mockScenarioPlayer?: MockScenarioPlayer;
@@ -272,6 +274,10 @@ export class AIService extends EventEmitter {
         historyService,
       });
     }
+  }
+
+  setMCPServerManager(manager: MCPServerManager): void {
+    this.mcpServerManager = manager;
   }
 
   /**
@@ -879,7 +885,9 @@ export class AIService extends EventEmitter {
           secrets: {},
         },
         "", // Empty workspace ID for early stub config
-        this.initStateManager
+        this.initStateManager,
+        undefined,
+        undefined
       );
       const earlyTools = applyToolPolicy(earlyAllTools, toolPolicy);
       const toolNamesForSentinel = Object.keys(earlyTools);
@@ -993,6 +1001,20 @@ export class AIService extends EventEmitter {
 
       // Generate stream token and create temp directory for tools
       const streamToken = this.streamManager.generateStreamToken();
+      let mcpTools: Record<string, Tool> | undefined;
+      if (this.mcpServerManager) {
+        try {
+          mcpTools = await this.mcpServerManager.getToolsForWorkspace({
+            workspaceId,
+            projectPath: metadata.projectPath,
+            runtime,
+            workspacePath,
+          });
+        } catch (error) {
+          log.error("Failed to start MCP servers", { workspaceId, error });
+        }
+      }
+
       const runtimeTempDir = await this.streamManager.createTempDirForStream(streamToken, runtime);
 
       // Extract tool-specific instructions from AGENTS.md files
@@ -1021,7 +1043,8 @@ export class AIService extends EventEmitter {
         },
         workspaceId,
         this.initStateManager,
-        toolInstructions
+        toolInstructions,
+        mcpTools
       );
 
       // Apply tool policy to filter tools (if policy provided)

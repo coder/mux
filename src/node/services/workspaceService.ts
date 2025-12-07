@@ -12,6 +12,7 @@ import type { PartialService } from "@/node/services/partialService";
 import type { AIService } from "@/node/services/aiService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
+import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import { createRuntime, IncompatibleRuntimeError } from "@/node/runtime/runtimeFactory";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 
@@ -95,6 +96,7 @@ export class WorkspaceService extends EventEmitter {
     this.setupMetadataListeners();
   }
 
+  private mcpServerManager?: MCPServerManager;
   // Optional terminal service for cleanup on workspace removal
   private terminalService?: TerminalService;
 
@@ -102,6 +104,10 @@ export class WorkspaceService extends EventEmitter {
    * Set the terminal service for cleanup on workspace removal.
    * Called after construction due to circular dependency.
    */
+  setMCPServerManager(manager: MCPServerManager): void {
+    this.mcpServerManager = manager;
+  }
+
   setTerminalService(terminalService: TerminalService): void {
     this.terminalService = terminalService;
   }
@@ -445,6 +451,11 @@ export class WorkspaceService extends EventEmitter {
         await fsPromises.rm(sessionDir, { recursive: true, force: true });
       } catch (error) {
         log.error(`Failed to remove session directory for ${workspaceId}:`, error);
+      }
+
+      // Stop MCP servers for this workspace
+      if (this.mcpServerManager) {
+        await this.mcpServerManager.stopServers(workspaceId);
       }
 
       // Dispose session

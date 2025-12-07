@@ -14,6 +14,8 @@ import { ChatInputToast } from "../ChatInputToast";
 import { createCommandToast, createErrorToast } from "../ChatInputToasts";
 import { parseCommand } from "@/browser/utils/slashCommands/parser";
 import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { useSettings } from "@/browser/contexts/SettingsContext";
+import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useMode } from "@/browser/contexts/ModeContext";
 import { ThinkingSliderComponent } from "../ThinkingSlider";
 import { ModelSettings } from "../ModelSettings";
@@ -167,6 +169,8 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     [setInput]
   );
   const preEditDraftRef = useRef<DraftState>({ text: "", images: [] });
+  const { open } = useSettings();
+  const { selectedWorkspace } = useWorkspaceContext();
   const [mode, setMode] = useMode();
   const { recentModels, addModel, defaultModel, setDefaultModel } = useModelLRU();
   const commandListId = useId();
@@ -730,6 +734,75 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         }
 
         // Handle /vim command
+        if (parsed.type === "mcp-open") {
+          setInput("");
+          open("project");
+          return;
+        }
+
+        if (parsed.type === "mcp-add" || parsed.type === "mcp-remove") {
+          if (!api) {
+            setToast({
+              id: Date.now().toString(),
+              type: "error",
+              message: "Not connected to server",
+            });
+            return;
+          }
+          if (!selectedWorkspace?.projectPath) {
+            setToast({
+              id: Date.now().toString(),
+              type: "error",
+              message: "Select a workspace to manage MCP servers",
+            });
+            return;
+          }
+
+          setIsSending(true);
+          setInput("");
+          try {
+            const projectPath = selectedWorkspace.projectPath;
+            const result =
+              parsed.type === "mcp-add"
+                ? await api.projects.mcp.add({
+                    projectPath,
+                    name: parsed.name,
+                    command: parsed.command,
+                  })
+                : await api.projects.mcp.remove({ projectPath, name: parsed.name });
+
+            if (!result.success) {
+              setToast({
+                id: Date.now().toString(),
+                type: "error",
+                message: result.error ?? "Failed to update MCP servers",
+              });
+              setInput(messageText);
+            } else {
+              setToast({
+                id: Date.now().toString(),
+                type: "success",
+                message:
+                  parsed.type === "mcp-add"
+                    ? `Added MCP server ${parsed.name}`
+                    : `Removed MCP server ${parsed.name}`,
+              });
+            }
+          } catch (error) {
+            console.error("Failed to update MCP servers", error);
+            setToast({
+              id: Date.now().toString(),
+              type: "error",
+              message: error instanceof Error ? error.message : "Failed to update MCP servers",
+            });
+            setInput(messageText);
+          } finally {
+            setIsSending(false);
+          }
+
+          return;
+        }
+
         if (parsed.type === "vim-toggle") {
           setInput(""); // Clear input immediately
           setVimEnabled((prev) => !prev);

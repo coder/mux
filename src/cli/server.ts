@@ -79,6 +79,8 @@ const mockWindow: BrowserWindow = {
     tokenizerService: serviceContainer.tokenizerService,
     serverService: serviceContainer.serverService,
     menuEventService: serviceContainer.menuEventService,
+    mcpConfigService: serviceContainer.mcpConfigService,
+    mcpServerManager: serviceContainer.mcpServerManager,
     voiceService: serviceContainer.voiceService,
     telemetryService: serviceContainer.telemetryService,
   };

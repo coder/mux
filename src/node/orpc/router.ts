@@ -168,6 +168,24 @@ export const router = (authToken?: string) => {
             return context.projectService.updateSecrets(input.projectPath, input.secrets);
           }),
       },
+      mcp: {
+        list: t
+          .input(schemas.projects.mcp.list.input)
+          .output(schemas.projects.mcp.list.output)
+          .handler(({ context, input }) => context.mcpConfigService.listServers(input.projectPath)),
+        add: t
+          .input(schemas.projects.mcp.add.input)
+          .output(schemas.projects.mcp.add.output)
+          .handler(({ context, input }) =>
+            context.mcpConfigService.addServer(input.projectPath, input.name, input.command)
+          ),
+        remove: t
+          .input(schemas.projects.mcp.remove.input)
+          .output(schemas.projects.mcp.remove.output)
+          .handler(({ context, input }) =>
+            context.mcpConfigService.removeServer(input.projectPath, input.name)
+          ),
+      },
     },
     nameGeneration: {
       generate: t

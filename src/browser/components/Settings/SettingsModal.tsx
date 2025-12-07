@@ -1,11 +1,12 @@
 import React from "react";
-import { Settings, Key, Cpu, X } from "lucide-react";
+import { Settings, Key, Cpu, X, Briefcase } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { Dialog, DialogContent, DialogTitle, VisuallyHidden } from "@/browser/components/ui/dialog";
 import { GeneralSection } from "./sections/GeneralSection";
 import { ProvidersSection } from "./sections/ProvidersSection";
 import { ModelsSection } from "./sections/ModelsSection";
 import { Button } from "@/browser/components/ui/button";
+import { ProjectSettingsSection } from "./sections/ProjectSettingsSection";
 import type { SettingsSection } from "./types";
 
 const SECTIONS: SettingsSection[] = [
@@ -20,6 +21,12 @@ const SECTIONS: SettingsSection[] = [
     label: "Providers",
     icon: <Key className="h-4 w-4" />,
     component: ProvidersSection,
+  },
+  {
+    id: "project",
+    label: "Project",
+    icon: <Briefcase className="h-4 w-4" />,
+    component: ProjectSettingsSection,
   },
   {
     id: "models",

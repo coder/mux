@@ -585,6 +585,39 @@ const newCommandDefinition: SlashCommandDefinition = {
   },
 };
 
+const mcpCommandDefinition: SlashCommandDefinition = {
+  key: "mcp",
+  description: "Manage MCP servers for this project",
+  handler: ({ cleanRemainingTokens, rawInput }) => {
+    if (cleanRemainingTokens.length === 0) {
+      return { type: "mcp-open" };
+    }
+
+    const sub = cleanRemainingTokens[0];
+    if (sub === "add") {
+      const name = cleanRemainingTokens[1];
+      const commandText = rawInput
+        .trim()
+        .replace(/^add\s+[^\s]+\s*/i, "")
+        .trim();
+      if (!name || !commandText) {
+        return { type: "unknown-command", command: "mcp", subcommand: "add" };
+      }
+      return { type: "mcp-add", name, command: commandText };
+    }
+
+    if (sub === "remove") {
+      const name = cleanRemainingTokens[1];
+      if (!name) {
+        return { type: "unknown-command", command: "mcp", subcommand: "remove" };
+      }
+      return { type: "mcp-remove", name };
+    }
+
+    return { type: "unknown-command", command: "mcp", subcommand: sub };
+  },
+};
+
 export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   clearCommandDefinition,
   truncateCommandDefinition,
@@ -595,6 +628,7 @@ export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   forkCommandDefinition,
   newCommandDefinition,
   vimCommandDefinition,
+  mcpCommandDefinition,
 ];
 
 export const SLASH_COMMAND_DEFINITION_MAP = new Map(

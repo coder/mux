@@ -332,6 +332,8 @@ async function loadServices(): Promise<void> {
     updateService: services.updateService,
     tokenizerService: services.tokenizerService,
     serverService: services.serverService,
+    mcpConfigService: services.mcpConfigService,
+    mcpServerManager: services.mcpServerManager,
     menuEventService: services.menuEventService,
     voiceService: services.voiceService,
     telemetryService: services.telemetryService,

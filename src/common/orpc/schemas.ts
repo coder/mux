@@ -38,6 +38,9 @@ export { SecretSchema } from "./schemas/secrets";
 // Provider options schemas
 export { MuxProviderOptionsSchema } from "./schemas/providerOptions";
 
+// MCP schemas
+export { MCPServerMapSchema, MCPAddParamsSchema, MCPRemoveParamsSchema } from "./schemas/mcp";
+
 // Terminal schemas
 export {
   TerminalCreateParamsSchema,

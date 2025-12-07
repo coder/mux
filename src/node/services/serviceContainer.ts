@@ -19,6 +19,8 @@ import { MenuEventService } from "@/node/services/menuEventService";
 import { VoiceService } from "@/node/services/voiceService";
 import { TelemetryService } from "@/node/services/telemetryService";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
+import { MCPConfigService } from "@/node/services/mcpConfigService";
+import { MCPServerManager } from "@/node/services/mcpServerManager";
 
 /**
  * ServiceContainer - Central dependency container for all backend services.
@@ -41,6 +43,8 @@ export class ServiceContainer {
   public readonly serverService: ServerService;
   public readonly menuEventService: MenuEventService;
   public readonly voiceService: VoiceService;
+  public readonly mcpConfigService: MCPConfigService;
+  public readonly mcpServerManager: MCPServerManager;
   public readonly telemetryService: TelemetryService;
   private readonly initStateManager: InitStateManager;
   private readonly extensionMetadata: ExtensionMetadataService;
@@ -53,10 +57,12 @@ export class ServiceContainer {
     this.partialService = new PartialService(config, this.historyService);
     this.projectService = new ProjectService(config);
     this.initStateManager = new InitStateManager(config);
+    this.mcpConfigService = new MCPConfigService();
     this.extensionMetadata = new ExtensionMetadataService(
       path.join(config.rootDir, "extensionMetadata.json")
     );
     this.backgroundProcessManager = new BackgroundProcessManager();
+    this.mcpServerManager = new MCPServerManager(this.mcpConfigService);
     this.aiService = new AIService(
       config,
       this.historyService,
@@ -64,6 +70,7 @@ export class ServiceContainer {
       this.initStateManager,
       this.backgroundProcessManager
     );
+    this.aiService.setMCPServerManager(this.mcpServerManager);
     this.workspaceService = new WorkspaceService(
       config,
       this.historyService,
@@ -73,6 +80,7 @@ export class ServiceContainer {
       this.extensionMetadata,
       this.backgroundProcessManager
     );
+    this.workspaceService.setMCPServerManager(this.mcpServerManager);
     this.providerService = new ProviderService(config);
     // Terminal services - PTYService is cross-platform
     this.ptyService = new PTYService();

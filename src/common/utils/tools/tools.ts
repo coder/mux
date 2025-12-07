@@ -85,7 +85,8 @@ export async function getToolsForModel(
   config: ToolConfiguration,
   workspaceId: string,
   initStateManager: InitStateManager,
-  toolInstructions?: Record<string, string>
+  toolInstructions?: Record<string, string>,
+  mcpTools?: Record<string, Tool>
 ): Promise<Record<string, Tool>> {
   const [provider, modelId] = modelString.split(":");
 
@@ -129,13 +130,14 @@ export async function getToolsForModel(
 
   // Try to add provider-specific web search tools if available
   // Lazy-load providers to avoid loading all AI SDKs at startup
-  let allTools = baseTools;
+  let allTools = { ...baseTools, ...(mcpTools ?? {}) };
   try {
     switch (provider) {
       case "anthropic": {
         const { anthropic } = await import("@ai-sdk/anthropic");
         allTools = {
           ...baseTools,
+          ...(mcpTools ?? {}),
           // Provider-specific tool types are compatible with Tool at runtime
           web_search: anthropic.tools.webSearch_20250305({ maxUses: 1000 }) as Tool,
         };
@@ -148,6 +150,7 @@ export async function getToolsForModel(
           const { openai } = await import("@ai-sdk/openai");
           allTools = {
             ...baseTools,
+            ...(mcpTools ?? {}),
             // Provider-specific tool types are compatible with Tool at runtime
             web_search: openai.tools.webSearch({
               searchContextSize: "high",

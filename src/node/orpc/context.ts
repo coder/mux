@@ -11,6 +11,8 @@ import type { TokenizerService } from "@/node/services/tokenizerService";
 import type { ServerService } from "@/node/services/serverService";
 import type { MenuEventService } from "@/node/services/menuEventService";
 import type { VoiceService } from "@/node/services/voiceService";
+import type { MCPConfigService } from "@/node/services/mcpConfigService";
+import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import type { TelemetryService } from "@/node/services/telemetryService";
 
 export interface ORPCContext {
@@ -26,6 +28,8 @@ export interface ORPCContext {
   serverService: ServerService;
   menuEventService: MenuEventService;
   voiceService: VoiceService;
+  mcpConfigService: MCPConfigService;
+  mcpServerManager: MCPServerManager;
   telemetryService: TelemetryService;
   headers?: IncomingHttpHeaders;
 }
