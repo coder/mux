@@ -606,6 +606,18 @@ const mcpCommandDefinition: SlashCommandDefinition = {
       return { type: "mcp-add", name, command: commandText };
     }
 
+    if (sub === "edit") {
+      const name = cleanRemainingTokens[1];
+      const commandText = rawInput
+        .trim()
+        .replace(/^edit\s+[^\s]+\s*/i, "")
+        .trim();
+      if (!name || !commandText) {
+        return { type: "unknown-command", command: "mcp", subcommand: "edit" };
+      }
+      return { type: "mcp-edit", name, command: commandText };
+    }
+
     if (sub === "remove") {
       const name = cleanRemainingTokens[1];
       if (!name) {

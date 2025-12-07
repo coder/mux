@@ -740,7 +740,11 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           return;
         }
 
-        if (parsed.type === "mcp-add" || parsed.type === "mcp-remove") {
+        if (
+          parsed.type === "mcp-add" ||
+          parsed.type === "mcp-edit" ||
+          parsed.type === "mcp-remove"
+        ) {
           if (!api) {
             setToast({
               id: Date.now().toString(),
@@ -763,7 +767,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           try {
             const projectPath = selectedWorkspace.projectPath;
             const result =
-              parsed.type === "mcp-add"
+              parsed.type === "mcp-add" || parsed.type === "mcp-edit"
                 ? await api.projects.mcp.add({
                     projectPath,
                     name: parsed.name,
@@ -779,13 +783,16 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
               });
               setInput(messageText);
             } else {
+              const successMessage =
+                parsed.type === "mcp-add"
+                  ? `Added MCP server ${parsed.name}`
+                  : parsed.type === "mcp-edit"
+                    ? `Updated MCP server ${parsed.name}`
+                    : `Removed MCP server ${parsed.name}`;
               setToast({
                 id: Date.now().toString(),
                 type: "success",
-                message:
-                  parsed.type === "mcp-add"
-                    ? `Added MCP server ${parsed.name}`
-                    : `Removed MCP server ${parsed.name}`,
+                message: successMessage,
               });
             }
           } catch (error) {
