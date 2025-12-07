@@ -9,6 +9,105 @@ import { createRuntime } from "@/node/runtime/runtimeFactory";
 
 const TEST_TIMEOUT_MS = 10_000;
 
+/**
+ * MCP CallToolResult content types (from @ai-sdk/mcp)
+ */
+interface MCPTextContent {
+  type: "text";
+  text: string;
+}
+
+interface MCPImageContent {
+  type: "image";
+  data: string; // base64
+  mimeType: string;
+}
+
+interface MCPResourceContent {
+  type: "resource";
+  resource: { uri: string; text?: string; blob?: string; mimeType?: string };
+}
+
+type MCPContent = MCPTextContent | MCPImageContent | MCPResourceContent;
+
+interface MCPCallToolResult {
+  content?: MCPContent[];
+  isError?: boolean;
+  toolResult?: unknown;
+}
+
+/**
+ * AI SDK LanguageModelV2ToolResultOutput content types
+ */
+type AISDKContentPart =
+  | { type: "text"; text: string }
+  | { type: "media"; data: string; mediaType: string };
+
+/**
+ * Transform MCP tool result to AI SDK format.
+ * Converts MCP's "image" content type to AI SDK's "media" type.
+ */
+function transformMCPResult(result: MCPCallToolResult): unknown {
+  // If it's an error or has toolResult, pass through as-is
+  if (result.isError || result.toolResult !== undefined) {
+    return result;
+  }
+
+  // If no content array, pass through
+  if (!result.content || !Array.isArray(result.content)) {
+    return result;
+  }
+
+  // Check if any content is an image
+  const hasImage = result.content.some((c) => c.type === "image");
+  if (!hasImage) {
+    return result;
+  }
+
+  // Transform to AI SDK content format
+  const transformedContent: AISDKContentPart[] = result.content.map((item) => {
+    if (item.type === "text") {
+      return { type: "text" as const, text: item.text };
+    }
+    if (item.type === "image") {
+      return { type: "media" as const, data: item.data, mediaType: item.mimeType };
+    }
+    // For resource type, convert to text representation
+    if (item.type === "resource") {
+      const text = item.resource.text ?? item.resource.uri;
+      return { type: "text" as const, text };
+    }
+    // Fallback: stringify unknown content
+    return { type: "text" as const, text: JSON.stringify(item) };
+  });
+
+  return { type: "content", value: transformedContent };
+}
+
+/**
+ * Wrap MCP tools to transform their results to AI SDK format.
+ * This ensures image content is properly converted to media type.
+ */
+function wrapMCPTools(tools: Record<string, Tool>): Record<string, Tool> {
+  const wrapped: Record<string, Tool> = {};
+  for (const [name, tool] of Object.entries(tools)) {
+    // Only wrap tools that have an execute function
+    if (!tool.execute) {
+      wrapped[name] = tool;
+      continue;
+    }
+    const originalExecute = tool.execute;
+    wrapped[name] = {
+      ...tool,
+      execute: async (args: Parameters<typeof originalExecute>[0], options) => {
+        const result: unknown = await originalExecute(args, options);
+        return transformMCPResult(result as MCPCallToolResult);
+      },
+    };
+  }
+  return wrapped;
+}
+
 export type MCPTestResult = { success: true; tools: string[] } | { success: false; error: string };
 
 interface MCPServerInstance {
@@ -231,7 +330,8 @@ export class MCPServerManager {
 
     await transport.start();
     const client = await experimental_createMCPClient({ transport });
-    const tools = await client.tools();
+    const rawTools = await client.tools();
+    const tools = wrapMCPTools(rawTools);
     const toolNames = Object.keys(tools);
     log.info("[MCP] Server ready", { name, tools: toolNames });
 
