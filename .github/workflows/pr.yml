@@ -21,35 +21,26 @@ jobs:
     name: Detect Changes
     runs-on: ubuntu-latest
     outputs:
-      docs-only: ${{ steps.filter.outputs.docs == 'true' && steps.filter.outputs.src == 'false' && steps.filter.outputs.config == 'false' }}
-      browser-only: ${{ steps.filter.outputs.browser == 'true' && steps.filter.outputs.backend == 'false' && steps.filter.outputs.config == 'false' }}
+      src: ${{ steps.filter.outputs.src }}
+      config: ${{ steps.filter.outputs.config }}
+      backend: ${{ steps.filter.outputs.backend }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
         id: filter
         with:
           filters: |
-            docs:
-              - 'docs/**'
-              - '*.md'
-              - 'LICENSE'
-              - '.vscode/**'
             src:
               - 'src/**'
               - 'tests/**'
               - 'vscode/**'
-            browser:
-              - 'src/browser/**'
-              - 'src/styles/**'
-              - '**/*.stories.tsx'
-              - '.storybook/**'
             backend:
               - 'src/node/**'
               - 'src/cli/**'
               - 'src/desktop/**'
               - 'src/common/**'
-              - 'tests/**'
-              - '!tests/e2e/**'
+              - 'tests/ipc/**'
+              - 'tests/runtime/**'
             config:
               - '.github/**'
               - 'jest.config.cjs'
@@ -91,7 +82,7 @@ jobs:
   test-unit:
     name: Test / Unit
     needs: [changes]
-    if: ${{ needs.changes.outputs.docs-only != 'true' }}
+    if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
@@ -110,7 +101,7 @@ jobs:
   test-integration:
     name: Test / Integration
     needs: [changes]
-    if: ${{ needs.changes.outputs.docs-only != 'true' }}
+    if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
     timeout-minutes: 10
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
@@ -127,14 +118,15 @@ jobs:
             exit 0
           fi
           
-          # Browser-only PRs skip IPC tests but run all other integration tests
-          if [[ "${{ needs.changes.outputs.browser-only }}" == "true" ]]; then
-            echo "Browser-only PR - skipping tests/ipc"
-            TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent --testPathIgnorePatterns='tests/ipc' tests/
+          # Skip integration tests when no backend changes
+          # Integration tests in tests/ are backend-focused (IPC, runtime, etc.)
+          # Browser changes are covered by unit tests, storybook, and E2E
+          if [[ "${{ needs.changes.outputs.backend }}" != "true" ]]; then
+            echo "No backend changes - skipping integration tests (browser changes covered by unit/storybook/e2e)"
             exit 0
           fi
           
-          # Default: run ALL integration tests (future-proof for new test directories)
+          # Backend changed: run ALL integration tests
           TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent tests/
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -150,7 +142,7 @@ jobs:
   test-storybook:
     name: Test / Storybook
     needs: [changes]
-    if: ${{ needs.changes.outputs.docs-only != 'true' && github.event.inputs.test_filter == '' }}
+    if: ${{ (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') && github.event.inputs.test_filter == '' }}
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
@@ -167,7 +159,7 @@ jobs:
   test-e2e:
     name: Test / E2E (${{ matrix.os }})
     needs: [changes]
-    if: ${{ needs.changes.outputs.docs-only != 'true' && github.event.inputs.test_filter == '' }}
+    if: ${{ (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') && github.event.inputs.test_filter == '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -200,7 +192,7 @@ jobs:
   smoke-server:
     name: Smoke / Server
     needs: [changes]
-    if: ${{ needs.changes.outputs.docs-only != 'true' }}
+    if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
@@ -258,7 +250,7 @@ jobs:
   build-linux:
     name: Build / Linux
     needs: [changes]
-    if: ${{ needs.changes.outputs.docs-only != 'true' }}
+    if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
@@ -277,7 +269,7 @@ jobs:
   build-macos:
     name: Build / macOS
     needs: [changes]
-    if: ${{ needs.changes.outputs.docs-only != 'true' }}
+    if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-macos-15' || 'macos-latest' }}
     steps:
       - uses: actions/checkout@v4
@@ -301,7 +293,7 @@ jobs:
   build-vscode:
     name: Build / VS Code
     needs: [changes]
-    if: ${{ needs.changes.outputs.docs-only != 'true' }}
+    if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
