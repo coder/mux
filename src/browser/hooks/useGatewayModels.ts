@@ -13,9 +13,10 @@ const GATEWAY_AVAILABLE_KEY = "gateway-available";
  * Excluded:
  * - ollama: Local-only provider, not routable through cloud gateway
  * - openrouter: Already a gateway/aggregator, routing through another gateway is redundant
+ * - bedrock: Complex auth (AWS credentials), not simple API key routing
  * - mux-gateway: Already gateway format
  */
-const GATEWAY_SUPPORTED_PROVIDERS = new Set(["anthropic", "openai", "google", "xai", "bedrock"]);
+const GATEWAY_SUPPORTED_PROVIDERS = new Set(["anthropic", "openai", "google", "xai"]);
 
 /**
  * Check if a model's provider is supported by Mux Gateway.
