@@ -294,7 +294,7 @@ export const ProjectSettingsSection: React.FC = () => {
                         type="text"
                         value={editCommand}
                         onChange={(e) => setEditCommand(e.target.value)}
-                        className="border-border-medium bg-secondary/30 text-foreground placeholder:text-muted-foreground focus:ring-accent mt-1 w-full rounded-md border px-2 py-1 text-xs focus:ring-1 focus:outline-none"
+                        className="border-border-medium bg-secondary/30 text-foreground placeholder:text-muted-foreground focus:ring-accent mt-1 w-full rounded-md border px-2 py-1 font-mono text-xs focus:ring-1 focus:outline-none"
                         autoFocus
                         spellCheck={false}
                         onKeyDown={createEditKeyHandler({
@@ -303,7 +303,9 @@ export const ProjectSettingsSection: React.FC = () => {
                         })}
                       />
                     ) : (
-                      <p className="text-muted-foreground mt-0.5 text-xs break-all">{command}</p>
+                      <p className="text-muted-foreground mt-0.5 font-mono text-xs break-all">
+                        {command}
+                      </p>
                     )}
                   </div>
                   <div className="flex shrink-0 gap-1">
@@ -412,7 +414,8 @@ export const ProjectSettingsSection: React.FC = () => {
               placeholder="e.g., npx -y @modelcontextprotocol/server-memory"
               value={newServerCommand}
               onChange={(e) => setNewServerCommand(e.target.value)}
-              className="border-border-medium bg-secondary/30 text-foreground placeholder:text-muted-foreground focus:ring-accent w-full rounded-md border px-3 py-2 text-sm focus:ring-1 focus:outline-none"
+              spellCheck={false}
+              className="border-border-medium bg-secondary/30 text-foreground placeholder:text-muted-foreground focus:ring-accent w-full rounded-md border px-3 py-2 font-mono text-sm focus:ring-1 focus:outline-none"
             />
           </div>
 
