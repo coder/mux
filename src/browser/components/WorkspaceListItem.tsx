@@ -91,7 +91,9 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
       e.preventDefault();
       void handleConfirmRename();
     } else if (e.key === "Escape") {
+      // Stop propagation to prevent global Escape handler from interrupting stream
       e.preventDefault();
+      e.stopPropagation();
       handleCancelRename();
     }
   };
@@ -188,7 +190,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
             )}
 
             <div className="flex items-center gap-1">
-              {!isCreating && (
+              {!isCreating && !isEditing && (
                 <>
                   <GitStatusIndicator
                     gitStatus={gitStatus}
