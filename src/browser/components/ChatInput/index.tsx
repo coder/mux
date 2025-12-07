@@ -212,8 +212,11 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   const sendMessageOptions = useSendMessageOptions(
     variant === "workspace" ? props.workspaceId : getProjectScopeId(props.projectPath)
   );
-  // Extract model for convenience (don't create separate state - use hook as single source of truth)
+  // Extract models for convenience (don't create separate state - use hook as single source of truth)
+  // - preferredModel: gateway-transformed model for API calls
+  // - baseModel: canonical format for UI display and policy checks (e.g., ThinkingSlider)
   const preferredModel = sendMessageOptions.model;
+  const baseModel = sendMessageOptions.baseModel;
   const deferredModel = useDeferredValue(preferredModel);
   const deferredInput = useDeferredValue(input);
   const tokenCountPromise = useMemo(() => {
@@ -1349,7 +1352,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 className="flex items-center [&_.thinking-slider]:[@container(max-width:550px)]:hidden"
                 data-component="ThinkingSliderGroup"
               >
-                <ThinkingSliderComponent modelString={preferredModel} />
+                <ThinkingSliderComponent modelString={baseModel} />
               </div>
 
               <div className="ml-4 flex items-center" data-component="ModelSettingsGroup">

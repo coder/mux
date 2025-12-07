@@ -70,6 +70,15 @@ function constructSendMessageOptions(
 }
 
 /**
+ * Extended send options that includes both the gateway-transformed model
+ * and the base model (for UI components that need canonical model names).
+ */
+export interface SendMessageOptionsWithBase extends SendMessageOptions {
+  /** Base model in canonical format (e.g., "openai:gpt-5.1-codex-max") for UI/policy checks */
+  baseModel: string;
+}
+
+/**
  * Build SendMessageOptions from current user preferences
  * This ensures all message sends (new, retry, resume) use consistent options
  *
@@ -78,8 +87,11 @@ function constructSendMessageOptions(
  *
  * Uses usePersistedState which has listener mode, so changes to preferences
  * propagate automatically to all components using this hook.
+ *
+ * Returns both `model` (possibly gateway-transformed for API calls) and
+ * `baseModel` (canonical format for UI display and policy checks).
  */
-export function useSendMessageOptions(workspaceId: string): SendMessageOptions {
+export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWithBase {
   const [thinkingLevel] = useThinkingLevel();
   const [mode] = useMode();
   const { options: providerOptions } = useProviderOptions();
@@ -93,7 +105,12 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptions {
   // Subscribe to gateway state so we re-render when user toggles gateway
   const gateway = useGateway();
 
-  return constructSendMessageOptions(
+  // Compute base model (canonical format) for UI components
+  const rawModel =
+    typeof preferredModel === "string" && preferredModel ? preferredModel : defaultModel;
+  const baseModel = migrateGatewayModel(rawModel);
+
+  const options = constructSendMessageOptions(
     mode,
     thinkingLevel,
     preferredModel,
@@ -101,6 +118,8 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptions {
     defaultModel,
     gateway
   );
+
+  return { ...options, baseModel };
 }
 
 /**
