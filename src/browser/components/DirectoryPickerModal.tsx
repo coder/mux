@@ -1,5 +1,13 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Modal, ModalActions, CancelButton, PrimaryButton } from "./Modal";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/browser/components/ui/dialog";
+import { Button } from "@/browser/components/ui/button";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import { DirectoryTree } from "./DirectoryTree";
 import { useAPI } from "@/browser/contexts/API";
@@ -79,38 +87,48 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
     onClose();
   }, [onClose, onSelectPath, root]);
 
-  if (!isOpen) return null;
+  const handleOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open && !isLoading) {
+        onClose();
+      }
+    },
+    [isLoading, onClose]
+  );
+
   const entries =
     root?.children
       .filter((child) => child.isDirectory)
       .map((child) => ({ name: child.name, path: child.path })) ?? [];
 
   return (
-    <Modal
-      isOpen={isOpen}
-      title="Select Project Directory"
-      subtitle={root ? root.path : "Select a directory to use as your project root"}
-      onClose={onClose}
-      isLoading={isLoading}
-    >
-      {error && <div className="text-error mb-3 text-xs">{error}</div>}
-      <div className="bg-modal-bg border-border-medium mb-4 h-64 overflow-hidden rounded border">
-        <DirectoryTree
-          currentPath={root ? root.path : null}
-          entries={entries}
-          isLoading={isLoading}
-          onNavigateTo={handleNavigateTo}
-          onNavigateParent={handleNavigateParent}
-        />
-      </div>
-      <ModalActions>
-        <CancelButton onClick={onClose} disabled={isLoading}>
-          Cancel
-        </CancelButton>
-        <PrimaryButton onClick={() => void handleConfirm()} disabled={isLoading || !root}>
-          Select
-        </PrimaryButton>
-      </ModalActions>
-    </Modal>
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+      <DialogContent showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>Select Project Directory</DialogTitle>
+          <DialogDescription>
+            {root ? root.path : "Select a directory to use as your project root"}
+          </DialogDescription>
+        </DialogHeader>
+        {error && <div className="text-error mb-3 text-xs">{error}</div>}
+        <div className="bg-modal-bg border-border-medium mb-4 h-64 overflow-hidden rounded border">
+          <DirectoryTree
+            currentPath={root ? root.path : null}
+            entries={entries}
+            isLoading={isLoading}
+            onNavigateTo={handleNavigateTo}
+            onNavigateParent={handleNavigateParent}
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="secondary" onClick={onClose} disabled={isLoading}>
+            Cancel
+          </Button>
+          <Button onClick={() => void handleConfirm()} disabled={isLoading || !root}>
+            Select
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };

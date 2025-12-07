@@ -1,8 +1,15 @@
 import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
+import * as VisuallyHiddenPrimitive from "@radix-ui/react-visually-hidden";
 import { X } from "lucide-react";
 
 import { cn } from "@/common/lib/utils";
+
+/**
+ * VisuallyHidden component for accessibility - hides content visually but keeps it available to screen readers.
+ * Use this to wrap DialogTitle when you want a custom visible title but still need accessibility.
+ */
+const VisuallyHidden = VisuallyHiddenPrimitive.Root;
 
 const Dialog = DialogPrimitive.Root;
 
@@ -32,16 +39,23 @@ const DialogContent = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
     /** Whether to show the close button (default: true) */
     showCloseButton?: boolean;
+    /** Maximum width of the dialog (default: max-w-lg) */
+    maxWidth?: string;
+    /** Maximum height of the dialog */
+    maxHeight?: string;
   }
->(({ className, children, showCloseButton = true, ...props }, ref) => (
+>(({ className, children, showCloseButton = true, maxWidth, maxHeight, style, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "bg-dark border-border fixed top-[50%] left-[50%] z-50 grid w-[90%] max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]",
+        "bg-dark border-border fixed top-[50%] left-[50%] z-50 grid w-[90%] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]",
+        !maxWidth && "max-w-lg",
+        maxHeight && "overflow-y-auto",
         className
       )}
+      style={{ ...(maxWidth && { maxWidth }), ...(maxHeight && { maxHeight }), ...style }}
       {...props}
     >
       {children}
@@ -90,6 +104,94 @@ const DialogDescription = React.forwardRef<
 ));
 DialogDescription.displayName = DialogPrimitive.Description.displayName;
 
+// Utility components for modal content
+const DialogInfo = ({
+  children,
+  className,
+  id,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  id?: string;
+}) => (
+  <div
+    id={id}
+    className={cn(
+      "bg-modal-bg border border-border-medium rounded p-3 mb-5 text-[13px]",
+      "[&_p]:m-0 [&_p]:mb-2 [&_p]:text-muted [&_p:last-child]:mb-0",
+      "[&_code]:text-accent [&_code]:font-mono",
+      className
+    )}
+  >
+    {children}
+  </div>
+);
+DialogInfo.displayName = "DialogInfo";
+
+// Error/Warning display components
+const ErrorSection = ({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) => <div className={cn("my-4", className)}>{children}</div>;
+ErrorSection.displayName = "ErrorSection";
+
+const ErrorLabel = ({ children, className }: { children: React.ReactNode; className?: string }) => (
+  <div
+    className={cn("text-[11px] text-foreground-secondary uppercase tracking-wide mb-2", className)}
+  >
+    {children}
+  </div>
+);
+ErrorLabel.displayName = "ErrorLabel";
+
+const ErrorCodeBlock = ({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) => (
+  <pre
+    className={cn(
+      "bg-background-secondary border border-border rounded p-3",
+      "text-xs font-mono text-foreground overflow-auto whitespace-pre-wrap break-words leading-relaxed",
+      "max-h-[400px]",
+      className
+    )}
+  >
+    {children}
+  </pre>
+);
+ErrorCodeBlock.displayName = "ErrorCodeBlock";
+
+const WarningBox = ({ children, className }: { children: React.ReactNode; className?: string }) => (
+  <div className={cn("bg-error-bg border-l-[3px] border-error rounded p-3 px-4 my-4", className)}>
+    {children}
+  </div>
+);
+WarningBox.displayName = "WarningBox";
+
+const WarningTitle = ({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) => <div className={cn("font-semibold text-[13px] text-error mb-1", className)}>{children}</div>;
+WarningTitle.displayName = "WarningTitle";
+
+const WarningText = ({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) => <div className={cn("text-[13px] text-foreground leading-normal", className)}>{children}</div>;
+WarningText.displayName = "WarningText";
+
 export {
   Dialog,
   DialogPortal,
@@ -101,4 +203,12 @@ export {
   DialogFooter,
   DialogTitle,
   DialogDescription,
+  DialogInfo,
+  ErrorSection,
+  ErrorLabel,
+  ErrorCodeBlock,
+  WarningBox,
+  WarningTitle,
+  WarningText,
+  VisuallyHidden,
 };

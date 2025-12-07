@@ -1,5 +1,13 @@
 import React, { useState, useCallback } from "react";
-import { Modal, ModalActions, CancelButton, PrimaryButton } from "./Modal";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/browser/components/ui/dialog";
+import { Button } from "@/browser/components/ui/button";
 
 interface StartHereModalProps {
   isOpen: boolean;
@@ -28,22 +36,33 @@ export const StartHereModal: React.FC<StartHereModalProps> = ({ isOpen, onClose,
     }
   }, [isExecuting, onConfirm, onClose]);
 
+  const handleOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open && !isExecuting) {
+        handleCancel();
+      }
+    },
+    [isExecuting, handleCancel]
+  );
+
   return (
-    <Modal
-      isOpen={isOpen}
-      title="Start Here"
-      subtitle="This will replace all chat history with this message"
-      onClose={handleCancel}
-      isLoading={isExecuting}
-    >
-      <ModalActions className="justify-center">
-        <CancelButton onClick={handleCancel} disabled={isExecuting}>
-          Cancel
-        </CancelButton>
-        <PrimaryButton onClick={() => void handleConfirm()} disabled={isExecuting}>
-          {isExecuting ? "Starting..." : "OK"}
-        </PrimaryButton>
-      </ModalActions>
-    </Modal>
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+      <DialogContent showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>Start Here</DialogTitle>
+          <DialogDescription>
+            This will replace all chat history with this message
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="justify-center">
+          <Button variant="secondary" onClick={handleCancel} disabled={isExecuting}>
+            Cancel
+          </Button>
+          <Button onClick={() => void handleConfirm()} disabled={isExecuting}>
+            {isExecuting ? "Starting..." : "OK"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };

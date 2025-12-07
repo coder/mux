@@ -69,9 +69,9 @@ test.describe("Settings Modal", () => {
     await ui.projects.openFirstWorkspace();
     await ui.settings.open();
 
-    // Click overlay (outside modal content)
-    const overlay = page.locator('[role="presentation"]');
-    await overlay.click({ position: { x: 10, y: 10 } });
+    // Click overlay (outside modal content) - Radix Dialog uses data-state attribute
+    const overlay = page.locator('[data-state="open"].fixed.inset-0');
+    await overlay.click({ position: { x: 10, y: 10 }, force: true });
 
     // Verify closed
     await ui.settings.expectClosed();
