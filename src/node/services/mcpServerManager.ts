@@ -32,13 +32,21 @@ export class MCPServerManager {
     const { workspaceId, projectPath, runtime, workspacePath } = options;
     const servers = await this.configService.listServers(projectPath);
     const signature = JSON.stringify(servers ?? {});
+    const serverCount = Object.keys(servers ?? {}).length;
 
     const existing = this.workspaceServers.get(workspaceId);
     if (existing?.configSignature === signature) {
+      log.debug("[MCP] Using cached servers", { workspaceId, serverCount });
       return this.collectTools(existing.instances);
     }
 
     // Config changed or not started yet -> restart
+    if (serverCount > 0) {
+      log.info("[MCP] Starting servers", {
+        workspaceId,
+        servers: Object.keys(servers ?? {}),
+      });
+    }
     await this.stopServers(workspaceId);
     const instances = await this.startServers(servers, runtime, workspacePath);
     this.workspaceServers.set(workspaceId, {
@@ -97,6 +105,7 @@ export class MCPServerManager {
     runtime: Runtime,
     workspacePath: string
   ): Promise<MCPServerInstance | null> {
+    log.debug("[MCP] Spawning server", { name, command });
     const execStream = await runtime.exec(command, {
       cwd: workspacePath,
       timeout: 60 * 60 * 24, // 24 hours
@@ -104,23 +113,25 @@ export class MCPServerManager {
 
     const transport = new MCPStdioTransport(execStream);
     transport.onerror = (error) => {
-      log.error("MCP transport error", { name, error });
+      log.error("[MCP] Transport error", { name, error });
     };
 
     await transport.start();
     const client = await experimental_createMCPClient({ transport });
     const tools = await client.tools();
+    const toolNames = Object.keys(tools);
+    log.info("[MCP] Server ready", { name, tools: toolNames });
 
     const close = async () => {
       try {
         await client.close();
       } catch (error) {
-        log.debug("Error closing MCP client", { name, error });
+        log.debug("[MCP] Error closing client", { name, error });
       }
       try {
         await transport.close();
       } catch (error) {
-        log.debug("Error closing MCP transport", { name, error });
+        log.debug("[MCP] Error closing transport", { name, error });
       }
     };
 

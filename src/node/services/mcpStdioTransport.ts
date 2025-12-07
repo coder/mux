@@ -3,31 +3,17 @@ import type { MCPTransport, JSONRPCMessage } from "@ai-sdk/mcp";
 import type { ExecStream } from "@/node/runtime/Runtime";
 import { log } from "@/node/services/log";
 
-function findHeaderEnd(buffer: Uint8Array): number {
-  for (let i = 0; i < buffer.length - 3; i++) {
-    if (buffer[i] === 13 && buffer[i + 1] === 10 && buffer[i + 2] === 13 && buffer[i + 3] === 10) {
-      return i;
-    }
-  }
-  return -1;
-}
-
-function concatBuffers(a: Uint8Array, b: Uint8Array): Uint8Array {
-  const result = new Uint8Array(a.length + b.length);
-  result.set(a, 0);
-  result.set(b, a.length);
-  return result;
-}
-
 /**
- * Minimal stdio transport for MCP servers using JSON-RPC over Content-Length framed messages.
+ * Minimal stdio transport for MCP servers using newline-delimited JSON (NDJSON).
+ * Each message is a single line of JSON followed by \n.
+ * This matches the protocol used by @ai-sdk/mcp's StdioMCPTransport.
  */
 export class MCPStdioTransport implements MCPTransport {
   private readonly decoder = new TextDecoder();
   private readonly encoder = new TextEncoder();
   private readonly stdoutReader: ReadableStreamDefaultReader<Uint8Array>;
   private readonly stdinWriter: WritableStreamDefaultWriter<Uint8Array>;
-  private buffer: Uint8Array = new Uint8Array(0);
+  private buffer = "";
   private running = false;
   private readonly exitPromise: Promise<number>;
 
@@ -53,11 +39,10 @@ export class MCPStdioTransport implements MCPTransport {
   }
 
   async send(message: JSONRPCMessage): Promise<void> {
-    const payload = JSON.stringify(message);
-    const body = this.encoder.encode(payload);
-    const header = this.encoder.encode(`Content-Length: ${body.length}\r\n\r\n`);
-    const framed = concatBuffers(header, body);
-    await this.stdinWriter.write(framed);
+    // NDJSON: serialize as JSON followed by newline
+    const line = JSON.stringify(message) + "\n";
+    const bytes = this.encoder.encode(line);
+    await this.stdinWriter.write(bytes);
   }
 
   async close(): Promise<void> {
@@ -79,8 +64,7 @@ export class MCPStdioTransport implements MCPTransport {
         const { value, done } = await this.stdoutReader.read();
         if (done) break;
         if (value) {
-          const chunk = value;
-          this.buffer = concatBuffers(this.buffer, chunk);
+          this.buffer += this.decoder.decode(value, { stream: true });
           this.processBuffer();
         }
       }
@@ -96,39 +80,16 @@ export class MCPStdioTransport implements MCPTransport {
   }
 
   private processBuffer(): void {
-    while (true) {
-      const headerEnd = findHeaderEnd(this.buffer);
-      if (headerEnd === -1) return; // Need more data
+    // Process complete lines (NDJSON format)
+    let newlineIndex: number;
+    while ((newlineIndex = this.buffer.indexOf("\n")) !== -1) {
+      const line = this.buffer.slice(0, newlineIndex);
+      this.buffer = this.buffer.slice(newlineIndex + 1);
 
-      const headerBytes = this.buffer.slice(0, headerEnd);
-      const headerText = this.decoder.decode(headerBytes);
-      const contentLengthMatch = headerText
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .find((line) => line.toLowerCase().startsWith("content-length"));
+      if (line.trim().length === 0) continue; // Skip empty lines
 
-      if (!contentLengthMatch) {
-        throw new Error("Content-Length header missing in MCP response");
-      }
-
-      const [, lengthStr] = contentLengthMatch.split(":");
-      const contentLength = parseInt(lengthStr?.trim() ?? "", 10);
-      if (!Number.isFinite(contentLength)) {
-        throw new Error("Invalid Content-Length header in MCP response");
-      }
-
-      const messageStart = headerEnd + 4; // \r\n\r\n
-      if (this.buffer.length < messageStart + contentLength) {
-        return; // Wait for more data
-      }
-
-      const messageBytes = this.buffer.slice(messageStart, messageStart + contentLength);
-      const remaining = this.buffer.slice(messageStart + contentLength);
-      this.buffer = remaining;
-
-      const messageText = this.decoder.decode(messageBytes);
       try {
-        const message = JSON.parse(messageText) as JSONRPCMessage;
+        const message = JSON.parse(line) as JSONRPCMessage;
         if (this.onmessage) {
           this.onmessage(message);
         }
@@ -136,7 +97,7 @@ export class MCPStdioTransport implements MCPTransport {
         if (this.onerror) {
           this.onerror(error as Error);
         } else {
-          log.error("Failed to parse MCP message", { error, messageText });
+          log.error("Failed to parse MCP message", { error, line });
         }
       }
     }

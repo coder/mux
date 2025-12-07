@@ -29,6 +29,9 @@ const pendingPromises = new Map<
   { resolve: (value: unknown) => void; reject: (error: Error) => void }
 >();
 
+// Track if worker is alive - reject immediately if dead
+let workerError: Error | null = null;
+
 // Resolve worker path
 // In production: both workerPool.js and tokenizer.worker.js are in dist/utils/main/
 // During tests: workerPool.ts is in src/utils/main/ but worker is in dist/utils/main/
@@ -81,6 +84,7 @@ worker.on("message", (response: WorkerResponse) => {
 // Handle worker errors
 worker.on("error", (error) => {
   log.error("Worker error:", error);
+  workerError = error;
   // Reject all pending promises
   for (const pending of pendingPromises.values()) {
     pending.reject(error);
@@ -93,6 +97,7 @@ worker.on("exit", (code) => {
   if (code !== 0) {
     log.error(`Worker stopped with exit code ${code}`);
     const error = new Error(`Worker stopped with exit code ${code}`);
+    workerError = error;
     for (const pending of pendingPromises.values()) {
       pending.reject(error);
     }
@@ -110,6 +115,12 @@ worker.unref();
  * @returns A promise that resolves with the task result
  */
 export function run<T>(taskName: string, data: unknown): Promise<T> {
+  // If worker already died (e.g., failed to load), reject immediately
+  // This prevents hanging promises when the worker is not available
+  if (workerError) {
+    return Promise.reject(workerError);
+  }
+
   const messageId = messageIdCounter++;
   const request: WorkerRequest = { messageId, taskName, data };
 
