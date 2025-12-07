@@ -77,7 +77,7 @@ jobs:
             experimental-features = nix-command flakes
       - run: curl -LsSf https://astral.sh/uv/install.sh | sh
       - run: echo "$HOME/.local/bin" >> $GITHUB_PATH
-      - run: make -j3 static-check
+      - run: make -j static-check
 
   test-unit:
     name: Test / Unit
@@ -86,8 +86,6 @@ jobs:
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: ./.github/actions/setup-mux
       - run: make build-main
       - run: bun test --coverage --coverage-reporter=lcov ${{ github.event.inputs.test_filter || 'src' }}
@@ -106,8 +104,6 @@ jobs:
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: ./.github/actions/setup-mux
       - run: make build-main
       - name: Run integration tests
@@ -146,8 +142,6 @@ jobs:
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: ./.github/actions/setup-mux
       - uses: ./.github/actions/setup-playwright
       - run: make storybook-build
@@ -171,8 +165,6 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: ./.github/actions/setup-mux
       - name: Install xvfb
         if: matrix.os == 'linux'

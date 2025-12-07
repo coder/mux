@@ -102,8 +102,8 @@ describe("mux CLI", () => {
     test("--version shows version info", async () => {
       const result = await runCli(["--version"]);
       expect(result.exitCode).toBe(0);
-      // Version format: vX.Y.Z-N-gHASH (HASH)
-      expect(result.stdout).toMatch(/v\d+\.\d+\.\d+/);
+      // Version format: vX.Y.Z-N-gHASH (HASH) or just HASH (HASH) in shallow clones
+      expect(result.stdout).toMatch(/v\d+\.\d+\.\d+|^[0-9a-f]{7,}/);
     });
 
     test("unknown command shows error", async () => {
