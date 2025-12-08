@@ -120,7 +120,7 @@ describeIntegration("Background Bash Execution", () => {
           const startEvents = await sendMessageAndWait(
             env,
             workspaceId,
-            "Use the bash tool with run_in_background=true to run: sleep 30",
+            "Use the bash tool with run_in_background=true to run: true && sleep 30",
             HAIKU_MODEL,
             BACKGROUND_TOOLS,
             30000
@@ -197,7 +197,7 @@ describeIntegration("Background Bash Execution", () => {
           const startEvents = await sendMessageAndWait(
             env,
             workspaceId,
-            "Use bash with run_in_background=true to run: sleep 300",
+            "Use bash with run_in_background=true to run: true && sleep 300",
             HAIKU_MODEL,
             BACKGROUND_TOOLS,
             30000
