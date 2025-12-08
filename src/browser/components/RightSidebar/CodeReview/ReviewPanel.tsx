@@ -198,6 +198,10 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     if (!api || isCreating) return;
     let cancelled = false;
 
+    // Reset state when workspace changes to prevent showing stale data
+    setHasLoadedOnce(false);
+    setHunks([]);
+
     const loadDiff = async () => {
       setIsLoadingHunks(true);
       setError(null);
