@@ -1273,6 +1273,53 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   const Wrapper = variant === "creation" ? "div" : React.Fragment;
   const wrapperProps = variant === "creation" ? { className: "flex h-full flex-1 flex-col" } : {};
 
+  // Shared textarea component to avoid duplication
+  const textareaElement =
+    voiceInput.state !== "idle" ? (
+      <RecordingOverlay
+        state={voiceInput.state}
+        mode={mode}
+        mediaRecorder={voiceInput.mediaRecorder}
+        onStop={voiceInput.toggle}
+      />
+    ) : (
+      <div className="relative flex-1">
+        <VimTextArea
+          ref={inputRef}
+          value={input}
+          isEditing={!!editingMessage}
+          mode={mode}
+          onChange={setInput}
+          onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+          onEscapeInNormalMode={handleEscapeInNormalMode}
+          suppressKeys={showCommandSuggestions ? COMMAND_SUGGESTION_KEYS : undefined}
+          placeholder={placeholder}
+          disabled={!editingMessage && (disabled || isSending)}
+          aria-label={editingMessage ? "Edit your last message" : "Message Claude"}
+          aria-autocomplete="list"
+          aria-controls={
+            showCommandSuggestions && commandSuggestions.length > 0 ? commandListId : undefined
+          }
+          aria-expanded={showCommandSuggestions && commandSuggestions.length > 0}
+        />
+        {/* Floating voice input button inside textarea */}
+        <div className="absolute right-2 bottom-2">
+          <VoiceInputButton
+            state={voiceInput.state}
+            isApiKeySet={voiceInput.isApiKeySet}
+            shouldShowUI={voiceInput.shouldShowUI}
+            requiresSecureContext={voiceInput.requiresSecureContext}
+            onToggle={voiceInput.toggle}
+            disabled={disabled || isSending}
+            mode={mode}
+          />
+        </div>
+      </div>
+    );
+
   return (
     <Wrapper {...wrapperProps}>
       {/* Creation center content (shows while loading or idle) */}
@@ -1283,7 +1330,18 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           workspaceName={
             creationState.isSending || isSending ? creationState.creatingWithName : undefined
           }
-        />
+          runtimeMode={creationState.runtimeMode}
+          onRuntimeModeChange={creationState.setRuntimeMode}
+          disabled={creationState.isSending || isSending}
+        >
+          {/* Textarea and image attachments in main content area for creation */}
+          <ChatInputToast
+            toast={creationState.toast}
+            onDismiss={() => creationState.setToast(null)}
+          />
+          {textareaElement}
+          <ImageAttachments images={imageAttachments} onRemove={handleRemoveImage} />
+        </CreationCenterContent>
       )}
 
       {/* Input section - dim when creating workspace */}
@@ -1295,14 +1353,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         data-component="ChatInputSection"
       >
         <div className="mx-auto w-full max-w-4xl">
-          {/* Creation toast */}
-          {variant === "creation" && (
-            <ChatInputToast
-              toast={creationState.toast}
-              onDismiss={() => creationState.setToast(null)}
-            />
-          )}
-
           {/* Workspace toast */}
           {variant === "workspace" && (
             <ChatInputToast toast={toast} onDismiss={handleToastDismiss} />
@@ -1320,58 +1370,15 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             />
           )}
 
-          <div className="relative flex items-end" data-component="ChatInputControls">
-            {/* Recording/transcribing overlay - replaces textarea when active */}
-            {voiceInput.state !== "idle" ? (
-              <RecordingOverlay
-                state={voiceInput.state}
-                mode={mode}
-                mediaRecorder={voiceInput.mediaRecorder}
-                onStop={voiceInput.toggle}
-              />
-            ) : (
-              <>
-                <VimTextArea
-                  ref={inputRef}
-                  value={input}
-                  isEditing={!!editingMessage}
-                  mode={mode}
-                  onChange={setInput}
-                  onKeyDown={handleKeyDown}
-                  onPaste={handlePaste}
-                  onDragOver={handleDragOver}
-                  onDrop={handleDrop}
-                  onEscapeInNormalMode={handleEscapeInNormalMode}
-                  suppressKeys={showCommandSuggestions ? COMMAND_SUGGESTION_KEYS : undefined}
-                  placeholder={placeholder}
-                  disabled={!editingMessage && (disabled || isSending)}
-                  aria-label={editingMessage ? "Edit your last message" : "Message Claude"}
-                  aria-autocomplete="list"
-                  aria-controls={
-                    showCommandSuggestions && commandSuggestions.length > 0
-                      ? commandListId
-                      : undefined
-                  }
-                  aria-expanded={showCommandSuggestions && commandSuggestions.length > 0}
-                />
-                {/* Floating voice input button inside textarea */}
-                <div className="absolute right-2 bottom-2">
-                  <VoiceInputButton
-                    state={voiceInput.state}
-                    isApiKeySet={voiceInput.isApiKeySet}
-                    shouldShowUI={voiceInput.shouldShowUI}
-                    requiresSecureContext={voiceInput.requiresSecureContext}
-                    onToggle={voiceInput.toggle}
-                    disabled={disabled || isSending}
-                    mode={mode}
-                  />
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Image attachments */}
-          <ImageAttachments images={imageAttachments} onRemove={handleRemoveImage} />
+          {/* Textarea in bottom section only for workspace variant */}
+          {variant === "workspace" && (
+            <>
+              <div className="relative flex items-end" data-component="ChatInputControls">
+                {textareaElement}
+              </div>
+              <ImageAttachments images={imageAttachments} onRemove={handleRemoveImage} />
+            </>
+          )}
 
           <div className="flex flex-col gap-0.5" data-component="ChatModeToggles">
             {/* Editing indicator - workspace only */}
@@ -1490,10 +1497,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 trunkBranch={creationState.trunkBranch}
                 onTrunkBranchChange={creationState.setTrunkBranch}
                 runtimeMode={creationState.runtimeMode}
-                defaultRuntimeMode={creationState.defaultRuntimeMode}
                 sshHost={creationState.sshHost}
-                onRuntimeModeChange={creationState.setRuntimeMode}
-                onSetDefaultRuntime={creationState.setDefaultRuntimeMode}
                 onSshHostChange={creationState.setSshHost}
                 disabled={creationState.isSending || isSending}
                 nameState={creationState.nameState}

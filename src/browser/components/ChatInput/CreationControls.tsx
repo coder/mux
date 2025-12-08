@@ -1,7 +1,6 @@
 import React, { useCallback } from "react";
 import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
 import { Select } from "../Select";
-import { RuntimeIconSelector } from "../RuntimeIconSelector";
 import { Loader2, Wand2 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
@@ -12,10 +11,7 @@ interface CreationControlsProps {
   trunkBranch: string;
   onTrunkBranchChange: (branch: string) => void;
   runtimeMode: RuntimeMode;
-  defaultRuntimeMode: RuntimeMode;
   sshHost: string;
-  onRuntimeModeChange: (mode: RuntimeMode) => void;
-  onSetDefaultRuntime: (mode: RuntimeMode) => void;
   onSshHostChange: (host: string) => void;
   disabled: boolean;
   /** Workspace name generation state and actions */
@@ -25,8 +21,9 @@ interface CreationControlsProps {
 /**
  * Additional controls shown only during workspace creation
  * - Trunk branch selector (which branch to fork from) - hidden for Local runtime
- * - Runtime mode (Local, Worktree, SSH)
+ * - SSH host input (only shown for SSH runtime)
  * - Workspace name (auto-generated with manual override)
+ * Note: Runtime mode selector is now in the header via CreationCenterContent
  */
 export function CreationControls(props: CreationControlsProps) {
   // Local runtime doesn't need a trunk branch selector (uses project dir as-is)
@@ -112,17 +109,8 @@ export function CreationControls(props: CreationControlsProps) {
         {nameState.error && <span className="text-xs text-red-500">{nameState.error}</span>}
       </div>
 
-      {/* Second row: Runtime, Branch, SSH */}
+      {/* Second row: Branch, SSH */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        {/* Runtime Selector - icon-based with tooltips */}
-        <RuntimeIconSelector
-          value={props.runtimeMode}
-          onChange={props.onRuntimeModeChange}
-          defaultMode={props.defaultRuntimeMode}
-          onSetDefault={props.onSetDefaultRuntime}
-          disabled={props.disabled}
-        />
-
         {/* Trunk Branch Selector - hidden for Local runtime */}
         {showTrunkBranchSelector && (
           <div
