@@ -205,6 +205,9 @@ export const KEYBINDS = {
   /** Cancel editing message (exit edit mode) */
   CANCEL_EDIT: { key: "Escape" },
 
+  /** Save edit (Cmd/Ctrl+Enter) */
+  SAVE_EDIT: { key: "Enter", ctrl: true },
+
   /** Interrupt active stream (destructive - stops AI generation) */
   // Vim mode: Ctrl+C (familiar from terminal interrupt)
   // Non-Vim mode: Esc (intuitive cancel/stop key)

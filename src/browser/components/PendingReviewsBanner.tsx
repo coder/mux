@@ -30,6 +30,7 @@ import { usePendingReviews } from "@/browser/hooks/usePendingReviews";
 import type { ChatInputAPI } from "./ChatInput";
 import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
 import { DiffRenderer } from "./shared/DiffRenderer";
+import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ERROR BOUNDARY
@@ -126,10 +127,10 @@ const ReviewItem: React.FC<ReviewItemProps> = ({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      if (matchesKeybind(e, KEYBINDS.SAVE_EDIT)) {
         e.preventDefault();
         handleSaveEdit();
-      } else if (e.key === "Escape") {
+      } else if (matchesKeybind(e, KEYBINDS.CANCEL_EDIT)) {
         e.preventDefault();
         handleCancelEdit();
       }
