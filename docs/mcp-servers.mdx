@@ -50,11 +50,20 @@ Configure servers in **Settings → Projects**:
 3. Use **Test** (play button) to verify before adding
 4. Use **Edit** (pencil) or **Remove** (trash) to manage existing servers
 
+## Scope
+
+MCP servers have two scopes:
+
+- **Configuration** is per-project — The `.mux/mcp.jsonc` file lives in your project root and applies to all workspaces created from that project
+- **Runtime instances** are per-workspace — Each workspace runs its own server processes, so state in one workspace doesn't affect another
+
+This means you configure servers once per project, but each workspace (branch) gets isolated server instances with independent state.
+
 ## Behavior
 
 - **Hot reload** — Config changes apply on your next message (no restart needed)
-- **Per-workspace** — Each workspace maintains its own server instances
 - **Isolated** — Server processes run in the workspace directory with its environment
+- **Automatic lifecycle** — Servers start when first needed and stop when the workspace closes
 
 ## Finding MCP Servers
 
