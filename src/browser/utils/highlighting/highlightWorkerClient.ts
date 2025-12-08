@@ -9,34 +9,32 @@
  */
 
 import { LRUCache } from "lru-cache";
-import CRC32 from "crc-32";
 import { createHighlighter, type Highlighter } from "shiki";
 import type { HighlightRequest, HighlightResponse } from "@/browser/workers/highlightWorker";
 import { mapToShikiLang, SHIKI_DARK_THEME, SHIKI_LIGHT_THEME } from "./shiki-shared";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LRU Cache with 64-bit hashing
+// LRU Cache with SHA-256 hashing
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Cache for highlighted HTML results
- * Key: 64-bit hash of (language:theme:code) as bigint
+ * Key: First 64 bits of SHA-256 hash (hex string)
  * Value: Shiki HTML output
- *
- * Uses two CRC32 hashes (with different seeds) combined into a 64-bit key
- * to reduce collision probability vs a single 32-bit hash.
  */
-const highlightCache = new LRUCache<bigint, string>({
+const highlightCache = new LRUCache<string, string>({
   max: 10000, // High limit — rely on maxSize for eviction
   maxSize: 8 * 1024 * 1024, // 8MB total
   sizeCalculation: (html) => html.length * 2, // Rough bytes for JS strings
 });
 
-function getCacheKey(code: string, language: string, theme: string): bigint {
-  const input = `${language}:${theme}:${code}`;
-  const lo = CRC32.str(input) >>> 0; // unsigned 32-bit
-  const hi = CRC32.str(input, 0x9e3779b9) >>> 0; // different seed
-  return (BigInt(hi) << 32n) | BigInt(lo);
+async function getCacheKey(code: string, language: string, theme: string): Promise<string> {
+  const data = new TextEncoder().encode(`${language}:${theme}:${code}`);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  // Take first 8 bytes (64 bits) as hex
+  return Array.from(new Uint8Array(hash).slice(0, 8))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -178,7 +176,7 @@ export async function highlightCode(
   theme: "dark" | "light"
 ): Promise<string> {
   // Check cache first
-  const cacheKey = getCacheKey(code, language, theme);
+  const cacheKey = await getCacheKey(code, language, theme);
   const cached = highlightCache.get(cacheKey);
   if (cached) return cached;
 
