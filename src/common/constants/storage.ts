@@ -193,7 +193,6 @@ export function getStatusUrlKey(workspaceId: string): string {
   return `statusUrl:${workspaceId}`;
 }
 
-
 /**
  * Right sidebar tab selection (global)
  * Format: "right-sidebar-tab"

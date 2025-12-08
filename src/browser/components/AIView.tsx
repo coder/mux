@@ -5,7 +5,11 @@ import { InterruptedBarrier } from "./Messages/ChatBarrier/InterruptedBarrier";
 import { StreamingBarrier } from "./Messages/ChatBarrier/StreamingBarrier";
 import { RetryBarrier } from "./Messages/ChatBarrier/RetryBarrier";
 import { PinnedTodoList } from "./PinnedTodoList";
-import { getAutoRetryKey, VIM_ENABLED_KEY, RIGHT_SIDEBAR_TAB_KEY } from "@/common/constants/storage";
+import {
+  getAutoRetryKey,
+  VIM_ENABLED_KEY,
+  RIGHT_SIDEBAR_TAB_KEY,
+} from "@/common/constants/storage";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { ChatInput, type ChatInputAPI } from "./ChatInput/index";
 import { RightSidebar, type TabType } from "./RightSidebar";

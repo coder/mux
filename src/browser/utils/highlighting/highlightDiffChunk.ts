@@ -1,4 +1,3 @@
-import { MAX_DIFF_SIZE_BYTES } from "./shikiHighlighter";
 import { highlightCode } from "./highlightWorkerClient";
 import type { DiffChunk } from "./diffChunking";
 
@@ -16,6 +15,10 @@ import type { DiffChunk } from "./diffChunking";
  * .line spans instead of extracting per-line HTML. Would simplify parsing
  * and reduce dangerouslySetInnerHTML usage.
  */
+
+// Maximum diff size to highlight (in bytes)
+// Diffs larger than this fall back to plain text for performance
+const MAX_DIFF_SIZE_BYTES = 32768; // 32kb
 
 export interface HighlightedLine {
   html: string; // HTML content (already escaped and tokenized)

@@ -10,13 +10,9 @@
 
 import { LRUCache } from "lru-cache";
 import CRC32 from "crc-32";
+import { createHighlighter, type Highlighter } from "shiki";
 import type { HighlightRequest, HighlightResponse } from "@/browser/workers/highlightWorker";
-import {
-  getShikiHighlighter,
-  mapToShikiLang,
-  SHIKI_DARK_THEME,
-  SHIKI_LIGHT_THEME,
-} from "./shikiHighlighter";
+import { mapToShikiLang, SHIKI_DARK_THEME, SHIKI_LIGHT_THEME } from "./shiki-shared";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LRU Cache
@@ -38,12 +34,34 @@ function getCacheKey(code: string, language: string, theme: string): number {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Main-thread Shiki (fallback only)
+// ─────────────────────────────────────────────────────────────────────────────
+
+let highlighterPromise: Promise<Highlighter> | null = null;
+
+/**
+ * Get or create main-thread Shiki highlighter (for fallback when worker unavailable)
+ */
+function getShikiHighlighter(): Promise<Highlighter> {
+  // Must use if-check instead of ??= to prevent race condition
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+  if (!highlighterPromise) {
+    highlighterPromise = createHighlighter({
+      themes: [SHIKI_DARK_THEME, SHIKI_LIGHT_THEME],
+      langs: [],
+    });
+  }
+  return highlighterPromise;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Worker Management
 // ─────────────────────────────────────────────────────────────────────────────
 
 let worker: Worker | null = null;
 let workerFailed = false;
 let requestId = 0;
+
 const pendingRequests = new Map<
   number,
   {

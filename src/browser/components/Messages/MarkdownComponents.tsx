@@ -1,14 +1,9 @@
 import type { ReactNode } from "react";
 import React, { useState, useEffect } from "react";
 import { Mermaid } from "./Mermaid";
-import {
-  getShikiHighlighter,
-  mapToShikiLang,
-  SHIKI_DARK_THEME,
-  SHIKI_LIGHT_THEME,
-} from "@/browser/utils/highlighting/shikiHighlighter";
-import { useTheme } from "@/browser/contexts/ThemeContext";
+import { highlightCode } from "@/browser/utils/highlighting/highlightWorkerClient";
 import { extractShikiLines } from "@/browser/utils/highlighting/shiki-shared";
+import { useTheme } from "@/browser/contexts/ThemeContext";
 import { CopyButton } from "@/browser/components/ui/CopyButton";
 
 interface CodeProps {
@@ -57,37 +52,13 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
   useEffect(() => {
     let cancelled = false;
     const isLight = themeMode === "light" || themeMode === "solarized-light";
-    const shikiTheme = isLight ? SHIKI_LIGHT_THEME : SHIKI_DARK_THEME;
+    const theme = isLight ? "light" : "dark";
 
     setHighlightedLines(null);
 
     async function highlight() {
       try {
-        const highlighter = await getShikiHighlighter();
-        const shikiLang = mapToShikiLang(language);
-
-        // Load language on-demand if not already loaded
-        // This is race-safe: concurrent loads of the same language are idempotent
-        const loadedLangs = highlighter.getLoadedLanguages();
-        if (!loadedLangs.includes(shikiLang)) {
-          try {
-            // TypeScript doesn't know shikiLang is valid, but we handle errors gracefully
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
-            await highlighter.loadLanguage(shikiLang as any);
-          } catch {
-            // Language not available in Shiki bundle - fall back to plain text
-            console.warn(`Language '${shikiLang}' not available in Shiki, using plain text`);
-            if (!cancelled) {
-              setHighlightedLines(null);
-            }
-            return;
-          }
-        }
-
-        const html = highlighter.codeToHtml(code, {
-          lang: shikiLang,
-          theme: shikiTheme,
-        });
+        const html = await highlightCode(code, language, theme);
 
         if (!cancelled) {
           const lines = extractShikiLines(html);
