@@ -47,6 +47,7 @@
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^3.0.61",
     "@ai-sdk/anthropic": "^2.0.47",
+    "@ai-sdk/deepseek": "^1.0.31",
     "@ai-sdk/google": "^2.0.43",
     "@ai-sdk/mcp": "^0.0.11",
     "@ai-sdk/openai": "^2.0.72",

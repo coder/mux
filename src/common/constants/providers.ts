@@ -49,6 +49,13 @@ export function importXAI() {
 }
 
 /**
+ * Dynamically import the DeepSeek provider package
+ */
+export function importDeepSeek() {
+  return import("@ai-sdk/deepseek");
+}
+
+/**
  * Dynamically import the Amazon Bedrock provider package
  */
 export function importBedrock() {
@@ -80,6 +87,7 @@ export const PROVIDER_REGISTRY = {
   openai: importOpenAI,
   google: importGoogle,
   xai: importXAI,
+  deepseek: importDeepSeek,
   ollama: importOllama,
   openrouter: importOpenRouter,
   bedrock: importBedrock,
@@ -104,6 +112,7 @@ export const PROVIDER_DISPLAY_NAMES: Record<ProviderName, string> = {
   openai: "OpenAI",
   google: "Google",
   xai: "xAI",
+  deepseek: "DeepSeek",
   ollama: "Ollama",
   openrouter: "OpenRouter",
   bedrock: "Amazon Bedrock",

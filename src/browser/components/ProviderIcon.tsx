@@ -3,6 +3,7 @@ import AnthropicIcon from "@/browser/assets/icons/anthropic.svg?react";
 import OpenAIIcon from "@/browser/assets/icons/openai.svg?react";
 import GoogleIcon from "@/browser/assets/icons/google.svg?react";
 import XAIIcon from "@/browser/assets/icons/xai.svg?react";
+import DeepSeekIcon from "@/browser/assets/icons/deepseek.svg?react";
 import AWSIcon from "@/browser/assets/icons/aws.svg?react";
 import { GatewayIcon } from "@/browser/components/icons/GatewayIcon";
 import { PROVIDER_DISPLAY_NAMES, type ProviderName } from "@/common/constants/providers";
@@ -13,6 +14,7 @@ const PROVIDER_ICONS: Partial<Record<ProviderName, React.FC>> = {
   openai: OpenAIIcon,
   google: GoogleIcon,
   xai: XAIIcon,
+  deepseek: DeepSeekIcon,
   bedrock: AWSIcon,
   "mux-gateway": GatewayIcon,
 };

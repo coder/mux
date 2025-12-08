@@ -613,6 +613,25 @@ export class AIService extends EventEmitter {
         return Ok(provider(modelId));
       }
 
+      // Handle DeepSeek provider
+      if (providerName === "deepseek") {
+        if (!providerConfig.apiKey) {
+          return Err({
+            type: "api_key_not_found",
+            provider: providerName,
+          });
+        }
+        const baseFetch = getProviderFetch(providerConfig);
+
+        // Lazy-load DeepSeek provider to reduce startup time
+        const { createDeepSeek } = await PROVIDER_REGISTRY.deepseek();
+        const provider = createDeepSeek({
+          ...providerConfig,
+          fetch: baseFetch,
+        });
+        return Ok(provider(modelId));
+      }
+
       // Handle Ollama provider
       if (providerName === "ollama") {
         // Ollama doesn't require API key - it's a local service
