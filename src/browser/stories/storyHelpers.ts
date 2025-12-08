@@ -13,7 +13,9 @@ import {
   EXPANDED_PROJECTS_KEY,
   getInputKey,
   getModelKey,
+  getPendingReviewsKey,
 } from "@/common/constants/storage";
+import type { PendingReview, PendingReviewsState } from "@/common/types/review";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 import {
   createWorkspace,
@@ -55,6 +57,35 @@ export function setWorkspaceModel(workspaceId: string, model: string): void {
 /** Expand projects in the sidebar */
 export function expandProjects(projectPaths: string[]): void {
   localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(projectPaths));
+}
+
+/** Set pending reviews for a workspace */
+export function setPendingReviews(workspaceId: string, reviews: PendingReview[]): void {
+  const state: PendingReviewsState = {
+    workspaceId,
+    reviews: Object.fromEntries(reviews.map((r) => [r.id, r])),
+    lastUpdated: Date.now(),
+  };
+  localStorage.setItem(getPendingReviewsKey(workspaceId), JSON.stringify(state));
+}
+
+/** Create a sample pending review for stories */
+export function createPendingReview(
+  id: string,
+  filePath: string,
+  lineRange: string,
+  note: string,
+  status: "pending" | "checked" = "pending"
+): PendingReview {
+  return {
+    id,
+    content: `<review>\nRe ${filePath}:${lineRange}\n\`\`\`\n// sample code\n\`\`\`\n> ${note}\n</review>`,
+    filePath,
+    lineRange,
+    status,
+    createdAt: Date.now() - Math.random() * 3600000, // Random time in last hour
+    statusChangedAt: status === "checked" ? Date.now() : undefined,
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

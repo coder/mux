@@ -93,3 +93,41 @@ export interface ReviewStats {
   /** Number of unread hunks */
   unread: number;
 }
+
+/**
+ * Status of a pending review
+ */
+export type PendingReviewStatus = "pending" | "checked";
+
+/**
+ * A single pending review note
+ * Created when user adds a review note from the diff viewer
+ */
+export interface PendingReview {
+  /** Unique identifier */
+  id: string;
+  /** The review note content (includes <review> tags and context) */
+  content: string;
+  /** File path referenced in the review */
+  filePath: string;
+  /** Line range referenced (e.g., "42-45") */
+  lineRange: string;
+  /** Current status */
+  status: PendingReviewStatus;
+  /** Timestamp when created */
+  createdAt: number;
+  /** Timestamp when status changed (checked/unchecked) */
+  statusChangedAt?: number;
+}
+
+/**
+ * Persisted state for pending reviews (per workspace)
+ */
+export interface PendingReviewsState {
+  /** Workspace ID */
+  workspaceId: string;
+  /** All reviews keyed by ID */
+  reviews: Record<string, PendingReview>;
+  /** Last update timestamp */
+  lastUpdated: number;
+}
