@@ -298,6 +298,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
                 className="h-full"
               >
                 <ReviewPanel
+                  key={workspaceId}
                   workspaceId={workspaceId}
                   workspacePath={workspacePath}
                   onReviewNote={onReviewNote}

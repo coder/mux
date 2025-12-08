@@ -66,13 +66,13 @@ interface DiagnosticInfo {
  * Discriminated union for diff loading state.
  * Makes it impossible to show "No changes" while loading.
  *
- * The workspaceId in loaded/refreshing states prevents showing stale data
- * from a different workspace during transitions.
+ * Note: Parent uses key={workspaceId} so component remounts on workspace change,
+ * guaranteeing fresh state. No need to track workspaceId in state.
  */
 type DiffState =
   | { status: "loading" }
-  | { status: "refreshing"; workspaceId: string; hunks: DiffHunk[]; truncationWarning: string | null }
-  | { status: "loaded"; workspaceId: string; hunks: DiffHunk[]; truncationWarning: string | null }
+  | { status: "refreshing"; hunks: DiffHunk[]; truncationWarning: string | null }
+  | { status: "loaded"; hunks: DiffHunk[]; truncationWarning: string | null }
   | { status: "error"; message: string };
 
 export const ReviewPanel: React.FC<ReviewPanelProps> = ({
@@ -87,6 +87,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Unified diff state - discriminated union makes invalid states unrepresentable
+  // Note: Parent renders with key={workspaceId}, so component remounts on workspace change
   const [diffState, setDiffState] = useState<DiffState>({ status: "loading" });
 
   const [selectedHunkId, setSelectedHunkId] = useState<string | null>(null);
@@ -130,14 +131,12 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   const { isRead, toggleRead, markAsRead, markAsUnread } = useReviewState(workspaceId);
 
   // Derive hunks from diffState for use in filters and rendering
-  // Only show hunks if they belong to the current workspace
   const hunks = useMemo(
     () =>
-      (diffState.status === "loaded" || diffState.status === "refreshing") &&
-      diffState.workspaceId === workspaceId
+      diffState.status === "loaded" || diffState.status === "refreshing"
         ? diffState.hunks
         : [],
-    [diffState, workspaceId]
+    [diffState]
   );
 
   const [filters, setFilters] = useState<ReviewFiltersType>({
@@ -222,16 +221,12 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     let cancelled = false;
 
     // Transition to appropriate loading state:
-    // - "refreshing" if we have data for THIS workspace (keeps UI stable)
-    // - "loading" if no data or different workspace (shows loading indicator)
+    // - "refreshing" if we have data (keeps UI stable during refresh)
+    // - "loading" if no data yet
     setDiffState((prev) => {
-      const hasDataForWorkspace =
-        (prev.status === "loaded" || prev.status === "refreshing") &&
-        prev.workspaceId === workspaceId;
-      if (hasDataForWorkspace) {
+      if (prev.status === "loaded" || prev.status === "refreshing") {
         return {
           status: "refreshing",
-          workspaceId,
           hunks: prev.hunks,
           truncationWarning: prev.truncationWarning,
         };
@@ -293,7 +288,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
             : null;
 
         // Single atomic state update with all data
-        setDiffState({ status: "loaded", workspaceId, hunks: allHunks, truncationWarning });
+        setDiffState({ status: "loaded", hunks: allHunks, truncationWarning });
 
         // Auto-select first hunk if none selected
         if (allHunks.length > 0 && !selectedHunkId) {
@@ -642,9 +637,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         <div className="text-danger-soft bg-danger-soft/10 border-danger-soft/30 font-monospace m-3 rounded border p-6 text-xs leading-[1.5] break-words whitespace-pre-wrap">
           {diffState.message}
         </div>
-      ) : diffState.status === "loading" ||
-        ((diffState.status === "loaded" || diffState.status === "refreshing") &&
-          diffState.workspaceId !== workspaceId) ? (
+      ) : diffState.status === "loading" ? (
         <div className="text-muted flex h-full items-center justify-center text-sm">
           Loading diff...
         </div>
