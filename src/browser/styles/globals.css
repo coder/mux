@@ -1,4 +1,12 @@
 @import "tailwindcss";
+
+/* Disable the default browser focus outline (the blue ring).
+   Components can still use intentional focus styles like border-color changes. */
+*:focus,
+*:focus-visible {
+  outline: none;
+}
+
 @source "../node_modules/streamdown/dist/index.js";
 
 /* Geist Font Declarations */
