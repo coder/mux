@@ -1333,6 +1333,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           runtimeMode={creationState.runtimeMode}
           onRuntimeModeChange={creationState.setRuntimeMode}
           disabled={creationState.isSending || isSending}
+          nameState={creationState.nameState}
         >
           {/* Textarea and image attachments in main content area for creation */}
           <ChatInputToast
@@ -1500,7 +1501,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 sshHost={creationState.sshHost}
                 onSshHostChange={creationState.setSshHost}
                 disabled={creationState.isSending || isSending}
-                nameState={creationState.nameState}
               />
             )}
           </div>

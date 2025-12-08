@@ -1,10 +1,6 @@
-import React, { useCallback } from "react";
+import React from "react";
 import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
 import { Select } from "../Select";
-import { Loader2, Wand2 } from "lucide-react";
-import { cn } from "@/common/lib/utils";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
-import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
 
 interface CreationControlsProps {
   branches: string[];
@@ -14,136 +10,58 @@ interface CreationControlsProps {
   sshHost: string;
   onSshHostChange: (host: string) => void;
   disabled: boolean;
-  /** Workspace name generation state and actions */
-  nameState: WorkspaceNameState;
 }
 
 /**
  * Additional controls shown only during workspace creation
  * - Trunk branch selector (which branch to fork from) - hidden for Local runtime
  * - SSH host input (only shown for SSH runtime)
- * - Workspace name (auto-generated with manual override)
- * Note: Runtime mode selector is now in the header via CreationCenterContent
+ * Note: Runtime mode and workspace name are now in the header via CreationCenterContent
  */
 export function CreationControls(props: CreationControlsProps) {
   // Local runtime doesn't need a trunk branch selector (uses project dir as-is)
   const showTrunkBranchSelector =
     props.branches.length > 0 && props.runtimeMode !== RUNTIME_MODE.LOCAL;
 
-  const { nameState } = props;
-
-  const handleNameChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      nameState.setName(e.target.value);
-    },
-    [nameState]
-  );
-
-  // Clicking into the input disables auto-generation so user can edit
-  const handleInputFocus = useCallback(() => {
-    if (nameState.autoGenerate) {
-      nameState.setAutoGenerate(false);
-    }
-  }, [nameState]);
-
-  // Toggle auto-generation via wand button
-  const handleWandClick = useCallback(() => {
-    nameState.setAutoGenerate(!nameState.autoGenerate);
-  }, [nameState]);
+  // Don't render anything if there's nothing to show
+  if (!showTrunkBranchSelector && props.runtimeMode !== RUNTIME_MODE.SSH) {
+    return null;
+  }
 
   return (
-    <div className="flex flex-col gap-2">
-      {/* First row: Workspace name with magic wand toggle */}
-      <div className="flex items-center gap-2" data-component="WorkspaceNameGroup">
-        <label htmlFor="workspace-name" className="text-muted text-xs whitespace-nowrap">
-          Name:
-        </label>
-        <div className="relative max-w-xs flex-1">
-          <input
-            id="workspace-name"
-            type="text"
-            value={nameState.name}
-            onChange={handleNameChange}
-            onFocus={handleInputFocus}
-            placeholder={nameState.isGenerating ? "Generating..." : "workspace-name"}
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      {/* Trunk Branch Selector - hidden for Local runtime */}
+      {showTrunkBranchSelector && (
+        <div
+          className="flex h-6 items-center gap-1"
+          data-component="TrunkBranchGroup"
+          data-tutorial="trunk-branch"
+        >
+          <label htmlFor="trunk-branch" className="text-muted text-xs">
+            From:
+          </label>
+          <Select
+            id="trunk-branch"
+            value={props.trunkBranch}
+            options={props.branches}
+            onChange={props.onTrunkBranchChange}
             disabled={props.disabled}
-            className={cn(
-              "bg-separator text-foreground border-border-medium focus:border-accent h-6 w-full rounded border px-2 pr-6 text-xs focus:outline-none disabled:opacity-50",
-              nameState.error && "border-red-500"
-            )}
+            className="h-6 max-w-[120px]"
           />
-          {/* Magic wand / loading indicator - vertically centered */}
-          <div className="absolute inset-y-0 right-0 flex items-center pr-1.5">
-            {nameState.isGenerating ? (
-              <Loader2 className="text-accent h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={handleWandClick}
-                    disabled={props.disabled}
-                    className="flex h-full items-center disabled:opacity-50"
-                    aria-label={
-                      nameState.autoGenerate ? "Disable auto-naming" : "Enable auto-naming"
-                    }
-                  >
-                    <Wand2
-                      className={cn(
-                        "h-3.5 w-3.5 transition-colors",
-                        nameState.autoGenerate
-                          ? "text-accent"
-                          : "text-muted-foreground opacity-50 hover:opacity-75"
-                      )}
-                    />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent align="center">
-                  {nameState.autoGenerate ? "Auto-naming enabled" : "Click to enable auto-naming"}
-                </TooltipContent>
-              </Tooltip>
-            )}
-          </div>
         </div>
-        {/* Error display - inline */}
-        {nameState.error && <span className="text-xs text-red-500">{nameState.error}</span>}
-      </div>
+      )}
 
-      {/* Second row: Branch, SSH */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        {/* Trunk Branch Selector - hidden for Local runtime */}
-        {showTrunkBranchSelector && (
-          <div
-            className="flex h-6 items-center gap-1"
-            data-component="TrunkBranchGroup"
-            data-tutorial="trunk-branch"
-          >
-            <label htmlFor="trunk-branch" className="text-muted text-xs">
-              From:
-            </label>
-            <Select
-              id="trunk-branch"
-              value={props.trunkBranch}
-              options={props.branches}
-              onChange={props.onTrunkBranchChange}
-              disabled={props.disabled}
-              className="h-6 max-w-[120px]"
-            />
-          </div>
-        )}
-
-        {/* SSH Host Input - after From selector */}
-        {props.runtimeMode === RUNTIME_MODE.SSH && (
-          <input
-            type="text"
-            value={props.sshHost}
-            onChange={(e) => props.onSshHostChange(e.target.value)}
-            placeholder="user@host"
-            disabled={props.disabled}
-            className="bg-separator text-foreground border-border-medium focus:border-accent h-6 w-32 rounded border px-1 text-xs focus:outline-none disabled:opacity-50"
-          />
-        )}
-      </div>
+      {/* SSH Host Input - after From selector */}
+      {props.runtimeMode === RUNTIME_MODE.SSH && (
+        <input
+          type="text"
+          value={props.sshHost}
+          onChange={(e) => props.onSshHostChange(e.target.value)}
+          placeholder="user@host"
+          disabled={props.disabled}
+          className="bg-separator text-foreground border-border-medium focus:border-accent h-6 w-32 rounded border px-1 text-xs focus:outline-none disabled:opacity-50"
+        />
+      )}
     </div>
   );
 }
