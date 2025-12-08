@@ -79,5 +79,8 @@
     "ga4": {
       "measurementId": "G-D1HL4PBRSY"
     }
+  },
+  "contextual": {
+    "options": ["copy", "view", "chatgpt", "claude", "cursor", "vscode"]
   }
 }
