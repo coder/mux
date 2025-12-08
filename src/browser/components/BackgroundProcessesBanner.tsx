@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Terminal, X, ChevronDown, ChevronUp } from "lucide-react";
+import { Tooltip, TooltipWrapper } from "./Tooltip";
 import type { BackgroundProcessInfo } from "@/common/orpc/schemas/api";
 import { cn } from "@/common/lib/utils";
 import { formatDuration } from "./tools/shared/toolUtils";
@@ -95,7 +96,7 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
         <div
           className={cn(
             "absolute bottom-full left-0 right-0 mb-1 overflow-hidden rounded-md",
-            "bg-[var(--color-bg-secondary)] shadow-lg",
+            "bg-modal-bg shadow-lg",
             "border border-[var(--color-border)]"
           )}
         >
@@ -110,31 +111,33 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
                 )}
               >
                 <div className="min-w-0 flex-1">
-                  <div className="font-mono text-xs text-[var(--color-text-tertiary)]">
-                    pid {proc.pid}
-                  </div>
                   <div
-                    className="truncate font-mono text-xs text-[var(--color-text-secondary)]"
+                    className="truncate font-mono text-xs text-foreground"
                     title={proc.script}
                   >
                     {proc.displayName ?? truncateScript(proc.script)}
                   </div>
+                  <div className="font-mono text-[10px] text-muted">
+                    pid {proc.pid}
+                  </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <span className="text-[10px] text-[var(--color-text-tertiary)]">
+                  <span className="text-[10px] text-muted">
                     {formatDuration(Date.now() - proc.startTime)}
                   </span>
-                  <button
-                    type="button"
-                    onClick={(e) => handleTerminate(proc.id, e)}
-                    className={cn(
-                      "rounded p-1 transition-colors",
-                      "text-[var(--color-text-tertiary)] hover:bg-[var(--color-bg-quaternary)] hover:text-[var(--color-error)]"
-                    )}
-                    title="Terminate process"
-                  >
-                    <X size={14} />
-                  </button>
+                  <TooltipWrapper>
+                    <button
+                      type="button"
+                      onClick={(e) => handleTerminate(proc.id, e)}
+                      className={cn(
+                        "rounded p-1 transition-colors",
+                        "text-muted hover:bg-[var(--color-bg-quaternary)] hover:text-[var(--color-error)]"
+                      )}
+                    >
+                      <X size={14} />
+                    </button>
+                    <Tooltip>Terminate process</Tooltip>
+                  </TooltipWrapper>
                 </div>
               </div>
             ))}
