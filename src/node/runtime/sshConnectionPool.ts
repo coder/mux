@@ -62,7 +62,7 @@ const BACKOFF_SCHEDULE = [1, 5, 10, 20, 40, 60];
  * Time after which a "healthy" connection should be re-probed.
  * Prevents stale health state when network silently degrades.
  */
-const HEALTHY_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const HEALTHY_TTL_MS = 15 * 1000; // 15 seconds
 
 /**
  * SSH Connection Pool
