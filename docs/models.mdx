@@ -1,6 +1,6 @@
 ---
 title: Models
-description: Configure AI providers including Anthropic, OpenAI, Google, xAI, and more
+description: Configure AI providers including Anthropic, OpenAI, Google, xAI, DeepSeek, and more
 ---
 
 See also:
@@ -120,6 +120,26 @@ Frontier reasoning models from xAI with built-in search orchestration:
 **Search orchestration:**
 
 Mux enables Grok's live search by default using `mode: "auto"` with citations. Add [`searchParameters`](https://docs.x.ai/docs/resources/search) to `providers.jsonc` if you want to customize the defaults (e.g., regional focus, time filters, or disabling search entirely per workspace).
+
+#### DeepSeek (Cloud)
+
+Access DeepSeek's reasoning and chat models:
+
+- `deepseek:deepseek-chat` — Fast, cost-effective chat model
+- `deepseek:deepseek-reasoner` — Advanced reasoning model with extended thinking
+
+**Setup:**
+
+1. Get your API key from [platform.deepseek.com](https://platform.deepseek.com/)
+2. Add to `~/.mux/providers.jsonc`:
+
+```jsonc
+{
+  "deepseek": {
+    "apiKey": "sk-...",
+  },
+}
+```
 
 #### OpenRouter (Cloud)
 
@@ -321,6 +341,10 @@ All providers are configured in `~/.mux/providers.jsonc`. Example configurations
   // Required for Grok models
   "xai": {
     "apiKey": "sk-xai-...",
+  },
+  // Required for DeepSeek models
+  "deepseek": {
+    "apiKey": "sk-...",
   },
   // Required for OpenRouter models
   "openrouter": {
