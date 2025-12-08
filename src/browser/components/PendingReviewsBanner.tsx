@@ -207,15 +207,20 @@ const ReviewItem: React.FC<ReviewItemProps> = ({
           </Tooltip>
         )}
 
-        {/* File path and age */}
+        {/* File path, comment preview, and age */}
         <button
           type="button"
           onClick={handleToggleExpand}
-          className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
         >
-          <span className="truncate font-mono text-[var(--color-review-accent)]">
+          <span className="shrink-0 truncate font-mono text-[var(--color-review-accent)]">
             {review.data.filePath}:{review.data.lineRange}
           </span>
+          {review.data.userNote && (
+            <span className="text-secondary min-w-0 flex-1 truncate italic">
+              {review.data.userNote.split("\n")[0]}
+            </span>
+          )}
           <span className="text-muted shrink-0 text-[10px]">{age}</span>
         </button>
 
