@@ -53,7 +53,7 @@ export class SSHBackgroundHandle implements BackgroundHandle {
    * Terminate the process group via SSH.
    * Sends SIGTERM to process group, waits briefly, then SIGKILL if still running.
    *
-   * Uses negative PGID to kill entire process group.
+   * Uses negative PID to kill entire process group (PID === PGID due to set -m).
    * Same pattern as Local for parity.
    */
   async terminate(): Promise<void> {
