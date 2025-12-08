@@ -60,9 +60,10 @@ export const TOOL_DEFINITIONS = {
             "Use for processes running >5s (dev servers, builds, file watchers). " +
             "Do NOT use for quick commands (<5s), interactive processes (no stdin support), " +
             "or processes requiring real-time output (use foreground with larger timeout instead). " +
-            "Returns immediately with process ID and output file paths (stdout_path, stderr_path). " +
-            "Read output via bash (e.g. tail, grep, cat). " +
-            "Process persists across tool calls until terminated or workspace is removed."
+            "Returns immediately with process_id (e.g., bg-a1b2c3d4), stdout_path, and stderr_path. " +
+            "Read output with bash (e.g., tail -50 <stdout_path>). " +
+            "Terminate with bash_background_terminate using the process_id. " +
+            "Process persists until terminated or workspace is removed."
         ),
       display_name: z
         .string()
@@ -250,15 +251,17 @@ export const TOOL_DEFINITIONS = {
   },
   bash_background_list: {
     description:
-      "List all background processes for the current workspace. " +
-      "Useful for discovering running processes after context loss or resuming a conversation.",
+      "List all background processes started with bash(run_in_background=true). " +
+      "Returns process_id, status, script, stdout_path, stderr_path for each process. " +
+      "Use to find process_id for termination or check output file paths.",
     schema: z.object({}),
   },
   bash_background_terminate: {
     description:
-      "Terminate a background bash process. " +
-      "Sends SIGTERM, waits briefly, then sends SIGKILL if needed. " +
-      "Process output remains available for inspection after termination.",
+      "Terminate a background process started with bash(run_in_background=true). " +
+      "Use process_id from the original bash response or from bash_background_list. " +
+      "Sends SIGTERM, waits briefly, then SIGKILL if needed. " +
+      "Output files remain available after termination.",
     schema: z.object({
       process_id: z
         .string()
