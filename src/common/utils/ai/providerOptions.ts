@@ -77,11 +77,6 @@ export function buildProviderOptions(
     thinkingLevel,
   });
 
-  if (!provider) {
-    log.debug("buildProviderOptions: No provider found, returning empty");
-    return {};
-  }
-
   // Convert mux-gateway provider to the actual provider and model name.
   if (provider === "mux-gateway") {
     const [innerProvider, innerModelName] = modelName.split("/", 2);
@@ -91,6 +86,11 @@ export function buildProviderOptions(
     });
     provider = innerProvider;
     modelName = innerModelName;
+  }
+
+  if (!provider || !modelName) {
+    log.debug("buildProviderOptions: No provider or model name found, returning empty");
+    return {};
   }
 
   // Build Anthropic-specific options
