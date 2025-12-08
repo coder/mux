@@ -70,7 +70,7 @@ export function buildProviderOptions(
   // Always clamp to the model's supported thinking policy (e.g., gpt-5-pro = HIGH only)
   const effectiveThinking = enforceThinkingPolicy(modelString, thinkingLevel);
   // Parse provider from normalized model string
-  let [provider, modelName] = normalizeGatewayModel(modelString).split(":", 2);
+  const [provider, modelName] = normalizeGatewayModel(modelString).split(":", 2);
 
   log.debug("buildProviderOptions", {
     modelString,
