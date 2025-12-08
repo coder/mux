@@ -255,6 +255,24 @@ export function createFileEditTool(toolCallId: string, filePath: string, diff: s
   };
 }
 
+export function createBashTool(
+  toolCallId: string,
+  script: string,
+  output: string,
+  exitCode = 0,
+  timeoutSecs = 3,
+  durationMs = 50
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "bash",
+    state: "output-available",
+    input: { script, run_in_background: false, timeout_secs: timeoutSecs },
+    output: { success: exitCode === 0, output, exitCode, wall_duration_ms: durationMs },
+  };
+}
+
 export function createTerminalTool(
   toolCallId: string,
   command: string,

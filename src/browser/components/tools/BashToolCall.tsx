@@ -104,7 +104,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
         <ToolDetails>
           <DetailSection>
             <DetailLabel>Script</DetailLabel>
-            <DetailContent>{args.script}</DetailContent>
+            <DetailContent className="px-2 py-1.5">{args.script}</DetailContent>
           </DetailSection>
 
           {result && (
