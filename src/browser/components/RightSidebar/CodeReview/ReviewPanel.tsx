@@ -65,10 +65,14 @@ interface DiagnosticInfo {
 /**
  * Discriminated union for diff loading state.
  * Makes it impossible to show "No changes" while loading.
+ *
+ * The workspaceId in loaded/refreshing states prevents showing stale data
+ * from a different workspace during transitions.
  */
 type DiffState =
   | { status: "loading" }
-  | { status: "loaded"; hunks: DiffHunk[]; truncationWarning: string | null }
+  | { status: "refreshing"; workspaceId: string; hunks: DiffHunk[]; truncationWarning: string | null }
+  | { status: "loaded"; workspaceId: string; hunks: DiffHunk[]; truncationWarning: string | null }
   | { status: "error"; message: string };
 
 export const ReviewPanel: React.FC<ReviewPanelProps> = ({
@@ -126,7 +130,12 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   const { isRead, toggleRead, markAsRead, markAsUnread } = useReviewState(workspaceId);
 
   // Derive hunks from diffState for use in filters and rendering
-  const hunks = diffState.status === "loaded" ? diffState.hunks : [];
+  // Only show hunks if they belong to the current workspace
+  const hunks =
+    (diffState.status === "loaded" || diffState.status === "refreshing") &&
+    diffState.workspaceId === workspaceId
+      ? diffState.hunks
+      : [];
 
   const [filters, setFilters] = useState<ReviewFiltersType>({
     showReadHunks: showReadHunks,
@@ -209,8 +218,23 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     if (!api || isCreating) return;
     let cancelled = false;
 
-    // Immediately transition to loading state - atomic, no flash possible
-    setDiffState({ status: "loading" });
+    // Transition to appropriate loading state:
+    // - "refreshing" if we have data for THIS workspace (keeps UI stable)
+    // - "loading" if no data or different workspace (shows loading indicator)
+    setDiffState((prev) => {
+      const hasDataForWorkspace =
+        (prev.status === "loaded" || prev.status === "refreshing") &&
+        prev.workspaceId === workspaceId;
+      if (hasDataForWorkspace) {
+        return {
+          status: "refreshing",
+          workspaceId,
+          hunks: prev.hunks,
+          truncationWarning: prev.truncationWarning,
+        };
+      }
+      return { status: "loading" };
+    });
 
     const loadDiff = async () => {
       try {
@@ -266,7 +290,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
             : null;
 
         // Single atomic state update with all data
-        setDiffState({ status: "loaded", hunks: allHunks, truncationWarning });
+        setDiffState({ status: "loaded", workspaceId, hunks: allHunks, truncationWarning });
 
         // Auto-select first hunk if none selected
         if (allHunks.length > 0 && !selectedHunkId) {
@@ -605,7 +629,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         stats={stats}
         onFiltersChange={setFilters}
         onRefresh={() => setRefreshTrigger((prev) => prev + 1)}
-        isLoading={diffState.status === "loading" || isLoadingTree}
+        isLoading={diffState.status === "loading" || diffState.status === "refreshing" || isLoadingTree}
         workspaceId={workspaceId}
         workspacePath={workspacePath}
         refreshTrigger={refreshTrigger}
@@ -615,7 +639,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         <div className="text-danger-soft bg-danger-soft/10 border-danger-soft/30 font-monospace m-3 rounded border p-6 text-xs leading-[1.5] break-words whitespace-pre-wrap">
           {diffState.message}
         </div>
-      ) : diffState.status === "loading" ? (
+      ) : diffState.status === "loading" ||
+        ((diffState.status === "loaded" || diffState.status === "refreshing") &&
+          diffState.workspaceId !== workspaceId) ? (
         <div className="text-muted flex h-full items-center justify-center text-sm">
           Loading diff...
         </div>
