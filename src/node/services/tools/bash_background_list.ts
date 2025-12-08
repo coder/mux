@@ -36,8 +36,6 @@ export const createBashBackgroundListTool: ToolFactory = (config: ToolConfigurat
           script: p.script,
           uptime_ms: p.exitTime !== undefined ? p.exitTime - p.startTime : now - p.startTime,
           exitCode: p.exitCode,
-          stdout_path: `${p.outputDir}/stdout.log`,
-          stderr_path: `${p.outputDir}/stderr.log`,
           display_name: p.displayName,
         })),
       };

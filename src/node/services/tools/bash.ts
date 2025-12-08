@@ -295,17 +295,12 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
           };
         }
 
-        const stdoutPath = `${spawnResult.outputDir}/stdout.log`;
-        const stderrPath = `${spawnResult.outputDir}/stderr.log`;
-
         return {
           success: true,
           output: `Background process started with ID: ${spawnResult.processId}`,
           exitCode: 0,
           wall_duration_ms: Math.round(performance.now() - startTime),
           backgroundProcessId: spawnResult.processId,
-          stdout_path: stdoutPath,
-          stderr_path: stderrPath,
         };
       }
 

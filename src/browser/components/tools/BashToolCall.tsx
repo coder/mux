@@ -13,7 +13,6 @@ import {
   LoadingDots,
   ToolIcon,
   ErrorBox,
-  OutputPaths,
 } from "./shared/ToolPrimitives";
 import {
   useToolExpansion,
@@ -117,10 +116,12 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
               )}
 
               {"backgroundProcessId" in result ? (
-                // Background process: show file paths
+                // Background process: show process ID
                 <DetailSection>
-                  <DetailLabel>Output Files</DetailLabel>
-                  <OutputPaths stdout={result.stdout_path} stderr={result.stderr_path} />
+                  <DetailContent>
+                    Running in background as{" "}
+                    <code className="font-mono">{result.backgroundProcessId}</code>
+                  </DetailContent>
                 </DetailSection>
               ) : (
                 // Normal process: show output

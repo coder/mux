@@ -100,8 +100,6 @@ describe("bash_background_list tool", () => {
       expect(proc.script).toBe("sleep 10");
       expect(proc.uptime_ms).toBeGreaterThanOrEqual(0);
       expect(proc.exitCode).toBeUndefined();
-      expect(proc.stdout_path).toContain("stdout.log");
-      expect(proc.stderr_path).toContain("stderr.log");
     }
 
     // Cleanup

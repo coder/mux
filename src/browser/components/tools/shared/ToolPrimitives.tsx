@@ -191,36 +191,3 @@ export const ErrorBox: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
     {...props}
   />
 );
-
-/**
- * Output file paths display (stdout/stderr)
- * @param compact - Use smaller text without background (for inline use in cards)
- */
-interface OutputPathsProps {
-  stdout: string;
-  stderr: string;
-  compact?: boolean;
-}
-
-export const OutputPaths: React.FC<OutputPathsProps> = ({ stdout, stderr, compact }) =>
-  compact ? (
-    <div className="text-text-secondary mt-1 space-y-0.5 text-[10px]">
-      <div>
-        <span className="opacity-60">stdout:</span> {stdout}
-      </div>
-      <div>
-        <span className="opacity-60">stderr:</span> {stderr}
-      </div>
-    </div>
-  ) : (
-    <div className="bg-code-bg space-y-1 rounded px-2 py-1.5 font-mono text-[11px]">
-      <div>
-        <span className="text-text-secondary">stdout:</span>{" "}
-        <span className="text-text">{stdout}</span>
-      </div>
-      <div>
-        <span className="text-text-secondary">stderr:</span>{" "}
-        <span className="text-text">{stderr}</span>
-      </div>
-    </div>
-  );

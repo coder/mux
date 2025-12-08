@@ -60,8 +60,8 @@ export const TOOL_DEFINITIONS = {
             "Use for processes running >5s (dev servers, builds, file watchers). " +
             "Do NOT use for quick commands (<5s), interactive processes (no stdin support), " +
             "or processes requiring real-time output (use foreground with larger timeout instead). " +
-            "Returns immediately with process_id (e.g., bg-a1b2c3d4). " +
-            "Use bash_output to retrieve output (returns only new output since last check). " +
+            "Returns immediately with process_id (e.g., bash_1). " +
+            "Read output with bash_output (returns only new output since last check). " +
             "Terminate with bash_background_terminate using the process_id. " +
             "Process persists until terminated or workspace is removed."
         ),
@@ -260,8 +260,8 @@ export const TOOL_DEFINITIONS = {
   bash_background_list: {
     description:
       "List all background processes started with bash(run_in_background=true). " +
-      "Returns process_id, status, script, stdout_path, stderr_path for each process. " +
-      "Use to find process_id for termination or to check process status.",
+      "Returns process_id, status, script for each process. " +
+      "Use to find process_id for termination or check output with bash_output.",
     schema: z.object({}),
   },
   bash_background_terminate: {
@@ -269,7 +269,7 @@ export const TOOL_DEFINITIONS = {
       "Terminate a background process started with bash(run_in_background=true). " +
       "Use process_id from the original bash response or from bash_background_list. " +
       "Sends SIGTERM, waits briefly, then SIGKILL if needed. " +
-      "Output files remain available after termination.",
+      "Output remains available via bash_output after termination.",
     schema: z.object({
       process_id: z
         .string()

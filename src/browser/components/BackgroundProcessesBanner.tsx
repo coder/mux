@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Terminal, X, ChevronDown, ChevronUp } from "lucide-react";
-import { Tooltip, TooltipWrapper } from "./Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import type { BackgroundProcessInfo } from "@/common/orpc/schemas/api";
 import { cn } from "@/common/lib/utils";
 import { formatDuration } from "./tools/shared/toolUtils";
@@ -120,19 +120,21 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
                   <span className="text-muted text-[10px]">
                     {formatDuration(Date.now() - proc.startTime)}
                   </span>
-                  <TooltipWrapper>
-                    <button
-                      type="button"
-                      onClick={(e) => handleTerminate(proc.id, e)}
-                      className={cn(
-                        "rounded p-1 transition-colors",
-                        "text-muted hover:bg-[var(--color-bg-quaternary)] hover:text-[var(--color-error)]"
-                      )}
-                    >
-                      <X size={14} />
-                    </button>
-                    <Tooltip>Terminate process</Tooltip>
-                  </TooltipWrapper>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={(e) => handleTerminate(proc.id, e)}
+                        className={cn(
+                          "rounded p-1 transition-colors",
+                          "text-muted hover:bg-[var(--color-bg-quaternary)] hover:text-[var(--color-error)]"
+                        )}
+                      >
+                        <X size={14} />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>Terminate process</TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
             ))}

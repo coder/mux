@@ -36,8 +36,6 @@ export type BashToolResult =
       output: string;
       exitCode: 0;
       backgroundProcessId: string; // Background spawn succeeded
-      stdout_path: string; // Path to stdout log file
-      stderr_path: string; // Path to stderr log file
     })
   | (CommonBashFields & {
       success: false;
@@ -261,8 +259,6 @@ export interface BashBackgroundListProcess {
   script: string;
   uptime_ms: number;
   exitCode?: number;
-  stdout_path: string; // Path to stdout log file
-  stderr_path: string; // Path to stderr log file
   display_name?: string; // Human-readable name (e.g., "Dev Server")
 }
 
