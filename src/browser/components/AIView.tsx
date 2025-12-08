@@ -674,13 +674,13 @@ const AIViewInner: React.FC<AIViewProps> = ({
             onCompactClick={handleCompactClick}
           />
         )}
-        <ReviewsBanner workspaceId={workspaceId} />
         <BackgroundProcessesBanner
           processes={backgroundBashes}
           onTerminate={handleTerminateBackgroundBash}
           hasForegroundBash={hasForegroundBash}
           onSendToBackground={handleSendBashToBackground}
         />
+        <ReviewsBanner workspaceId={workspaceId} />
         <ChatInput
           variant="workspace"
           workspaceId={workspaceId}

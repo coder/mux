@@ -86,7 +86,7 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
   const summaryText = parts.join(", ");
 
   return (
-    <div className="relative mx-4 mt-2 mb-1" ref={panelRef}>
+    <div className="relative mt-2 mb-1 px-[15px]" ref={panelRef}>
       {/* Collapsed banner - click to expand */}
       <button
         type="button"
