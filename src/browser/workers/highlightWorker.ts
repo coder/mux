@@ -3,22 +3,9 @@
  * Moves expensive highlighting work off the main thread
  */
 
+import * as Comlink from "comlink";
 import { createHighlighter, type Highlighter } from "shiki";
 import { SHIKI_DARK_THEME, SHIKI_LIGHT_THEME } from "../utils/highlighting/shiki-shared";
-
-// Message types for worker communication
-export interface HighlightRequest {
-  id: number;
-  code: string;
-  language: string;
-  theme: "dark" | "light";
-}
-
-export interface HighlightResponse {
-  id: number;
-  html?: string;
-  error?: string;
-}
 
 // Singleton highlighter instance within worker
 let highlighter: Highlighter | null = null;
@@ -47,40 +34,26 @@ function mapToShikiLang(detectedLang: string): string {
   return mapping[detectedLang] || detectedLang;
 }
 
-self.onmessage = async (event: MessageEvent<HighlightRequest>) => {
-  const { id, code, language, theme } = event.data;
-
-  try {
+const api = {
+  async highlight(code: string, language: string, theme: "dark" | "light"): Promise<string> {
     const hl = await getHighlighter();
     const shikiLang = mapToShikiLang(language);
 
     // Load language on-demand
     const loadedLangs = hl.getLoadedLanguages();
     if (!loadedLangs.includes(shikiLang)) {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
-        await hl.loadLanguage(shikiLang as any);
-      } catch {
-        // Language not available - signal error so caller can fallback
-        self.postMessage({
-          id,
-          error: `Language '${shikiLang}' not available`,
-        } satisfies HighlightResponse);
-        return;
-      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
+      await hl.loadLanguage(shikiLang as any);
     }
 
     const shikiTheme = theme === "light" ? SHIKI_LIGHT_THEME : SHIKI_DARK_THEME;
-    const html = hl.codeToHtml(code, {
+    return hl.codeToHtml(code, {
       lang: shikiLang,
       theme: shikiTheme,
     });
-
-    self.postMessage({ id, html } satisfies HighlightResponse);
-  } catch (err) {
-    self.postMessage({
-      id,
-      error: err instanceof Error ? err.message : String(err),
-    } satisfies HighlightResponse);
-  }
+  },
 };
+
+export type HighlightWorkerAPI = typeof api;
+
+Comlink.expose(api);

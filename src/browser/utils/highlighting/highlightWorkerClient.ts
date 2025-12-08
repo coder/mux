@@ -9,8 +9,9 @@
  */
 
 import { LRUCache } from "lru-cache";
+import * as Comlink from "comlink";
 import { createHighlighter, type Highlighter } from "shiki";
-import type { HighlightRequest, HighlightResponse } from "@/browser/workers/highlightWorker";
+import type { HighlightWorkerAPI } from "@/browser/workers/highlightWorker";
 import { mapToShikiLang, SHIKI_DARK_THEME, SHIKI_LIGHT_THEME } from "./shiki-shared";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -59,59 +60,29 @@ function getShikiHighlighter(): Promise<Highlighter> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Worker Management
+// Worker Management (via Comlink)
 // ─────────────────────────────────────────────────────────────────────────────
 
-let worker: Worker | null = null;
+let workerAPI: Comlink.Remote<HighlightWorkerAPI> | null = null;
 let workerFailed = false;
-let requestId = 0;
 
-const pendingRequests = new Map<
-  number,
-  {
-    resolve: (html: string) => void;
-    reject: (error: Error) => void;
-  }
->();
-
-function getWorker(): Worker | null {
+function getWorkerAPI(): Comlink.Remote<HighlightWorkerAPI> | null {
   if (workerFailed) return null;
-  if (worker) return worker;
+  if (workerAPI) return workerAPI;
 
   try {
     // Use relative path - @/ alias doesn't work in worker context
-    worker = new Worker(new URL("../../workers/highlightWorker.ts", import.meta.url), {
+    const worker = new Worker(new URL("../../workers/highlightWorker.ts", import.meta.url), {
       type: "module",
     });
 
-    worker.onmessage = (event: MessageEvent<HighlightResponse>) => {
-      const { id, html, error } = event.data;
-      const pending = pendingRequests.get(id);
-      if (!pending) return;
-
-      pendingRequests.delete(id);
-      if (error) {
-        pending.reject(new Error(error));
-      } else if (html !== undefined) {
-        pending.resolve(html);
-      } else {
-        pending.reject(new Error("No HTML returned from worker"));
-      }
-    };
-
-    worker.onerror = (error) => {
-      console.error("Highlight worker error:", error);
-      // Mark worker as failed so subsequent calls use main-thread fallback
+    worker.onerror = () => {
       workerFailed = true;
-      worker = null;
-      // Reject all pending requests on worker error
-      for (const [id, pending] of pendingRequests) {
-        pending.reject(new Error("Worker error"));
-        pendingRequests.delete(id);
-      }
+      workerAPI = null;
     };
 
-    return worker;
+    workerAPI = Comlink.wrap<HighlightWorkerAPI>(worker);
+    return workerAPI;
   } catch {
     // Workers not available (e.g., test environment)
     workerFailed = true;
@@ -181,17 +152,13 @@ export async function highlightCode(
   if (cached) return cached;
 
   // Dispatch to worker or main-thread fallback
-  const w = getWorker();
+  const api = getWorkerAPI();
   let html: string;
 
-  if (!w) {
+  if (!api) {
     html = await highlightMainThread(code, language, theme);
   } else {
-    const id = requestId++;
-    html = await new Promise<string>((resolve, reject) => {
-      pendingRequests.set(id, { resolve, reject });
-      w.postMessage({ id, code, language, theme } satisfies HighlightRequest);
-    });
+    html = await api.highlight(code, language, theme);
   }
 
   // Cache result
