@@ -2,25 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Terminal, X, ChevronDown, ChevronUp } from "lucide-react";
 import type { BackgroundProcessInfo } from "@/common/orpc/schemas/api";
 import { cn } from "@/common/lib/utils";
-
-/**
- * Format duration from startTime to now in human-readable form.
- * Shows "Xs" for seconds, "Xm Ys" for minutes, "Xh Ym" for hours.
- */
-function formatDuration(startTime: number): string {
-  const elapsed = Math.floor((Date.now() - startTime) / 1000);
-  if (elapsed < 60) {
-    return `${elapsed}s`;
-  }
-  if (elapsed < 3600) {
-    const minutes = Math.floor(elapsed / 60);
-    const seconds = elapsed % 60;
-    return `${minutes}m ${seconds}s`;
-  }
-  const hours = Math.floor(elapsed / 3600);
-  const minutes = Math.floor((elapsed % 3600) / 60);
-  return `${hours}h ${minutes}m`;
-}
+import { formatDuration } from "./tools/shared/toolUtils";
 
 /**
  * Truncate script to reasonable display length.
@@ -140,7 +122,7 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <span className="text-[10px] text-[var(--color-text-tertiary)]">
-                    {formatDuration(proc.startTime)}
+                    {formatDuration(Date.now() - proc.startTime)}
                   </span>
                   <button
                     type="button"
