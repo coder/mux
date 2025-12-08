@@ -97,16 +97,41 @@ const mockWindow: BrowserWindow = {
   console.log(`Server is running on ${server.baseUrl}`);
 
   // Cleanup on shutdown
-  const cleanup = () => {
+  let cleanupInProgress = false;
+  const cleanup = async () => {
+    if (cleanupInProgress) return;
+    cleanupInProgress = true;
+
     console.log("Shutting down server...");
-    void lockfile
-      .release()
-      .then(() => server.close())
-      .then(() => process.exit(0));
+
+    // Force exit after timeout if cleanup hangs
+    const forceExitTimer = setTimeout(() => {
+      console.log("Cleanup timed out, forcing exit...");
+      process.exit(1);
+    }, 5000);
+
+    try {
+      // Close all PTY sessions first (these are the "sub-processes" nodemon sees)
+      serviceContainer.terminalService.closeAllSessions();
+
+      // Dispose background processes
+      await serviceContainer.dispose();
+
+      // Release lockfile and close server
+      await lockfile.release();
+      await server.close();
+
+      clearTimeout(forceExitTimer);
+      process.exit(0);
+    } catch (err) {
+      console.error("Cleanup error:", err);
+      clearTimeout(forceExitTimer);
+      process.exit(1);
+    }
   };
 
-  process.on("SIGINT", cleanup);
-  process.on("SIGTERM", cleanup);
+  process.on("SIGINT", () => void cleanup());
+  process.on("SIGTERM", () => void cleanup());
 })().catch((error) => {
   console.error("Failed to initialize server:", error);
   process.exit(1);

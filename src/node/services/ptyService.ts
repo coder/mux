@@ -382,6 +382,16 @@ export class PTYService {
   }
 
   /**
+   * Close all terminal sessions.
+   * Called during server shutdown to prevent orphan PTY processes.
+   */
+  closeAllSessions(): void {
+    const sessionIds = Array.from(this.sessions.keys());
+    log.info(`Closing all ${sessionIds.length} terminal session(s)`);
+    sessionIds.forEach((id) => this.closeSession(id));
+  }
+
+  /**
    * Get all sessions for debugging
    */
   getSessions(): Map<string, SessionData> {

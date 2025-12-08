@@ -545,6 +545,14 @@ export class TerminalService {
     this.ptyService.closeWorkspaceSessions(workspaceId);
   }
 
+  /**
+   * Close all terminal sessions.
+   * Called during server shutdown to prevent orphan PTY processes.
+   */
+  closeAllSessions(): void {
+    this.ptyService.closeAllSessions();
+  }
+
   private cleanup(sessionId: string) {
     this.outputEmitters.delete(sessionId);
     this.exitEmitters.delete(sessionId);
