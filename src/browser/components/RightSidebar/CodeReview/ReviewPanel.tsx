@@ -131,11 +131,14 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
   // Derive hunks from diffState for use in filters and rendering
   // Only show hunks if they belong to the current workspace
-  const hunks =
-    (diffState.status === "loaded" || diffState.status === "refreshing") &&
-    diffState.workspaceId === workspaceId
-      ? diffState.hunks
-      : [];
+  const hunks = useMemo(
+    () =>
+      (diffState.status === "loaded" || diffState.status === "refreshing") &&
+      diffState.workspaceId === workspaceId
+        ? diffState.hunks
+        : [],
+    [diffState, workspaceId]
+  );
 
   const [filters, setFilters] = useState<ReviewFiltersType>({
     showReadHunks: showReadHunks,
