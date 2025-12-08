@@ -128,7 +128,7 @@ export class WorkspaceStore {
   // Debounce timers for high-frequency delta events to reduce re-renders during streaming
   // Data is always updated immediately in the aggregator; only UI notification is debounced
   private deltaDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private static readonly DELTA_DEBOUNCE_MS = 16; // ~60fps cap for smooth streaming
+  private static readonly DELTA_DEBOUNCE_MS = 32; // ~30fps cap - balances smoothness with render perf
 
   /**
    * Map of event types to their handlers. This is the single source of truth for:
