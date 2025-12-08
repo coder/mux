@@ -1,12 +1,12 @@
 /**
- * Hook for managing pending reviews per workspace
+ * Hook for managing reviews per workspace
  * Provides interface for adding, checking, and removing reviews
  */
 
 import { useCallback, useMemo } from "react";
 import { usePersistedState } from "./usePersistedState";
 import { getReviewsKey } from "@/common/constants/storage";
-import type { PendingReview, ReviewsState, ReviewNoteData } from "@/common/types/review";
+import type { Review, ReviewsState, ReviewNoteData } from "@/common/types/review";
 
 /**
  * Generate a unique ID for a review
@@ -15,9 +15,9 @@ function generateReviewId(): string {
   return `review-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-export interface UsePendingReviewsReturn {
+export interface UseReviewsReturn {
   /** All reviews (pending, attached, and checked) */
-  reviews: PendingReview[];
+  reviews: Review[];
   /** Count of pending reviews (not attached, not checked) */
   pendingCount: number;
   /** Count of attached reviews (in chat input draft) */
@@ -25,9 +25,9 @@ export interface UsePendingReviewsReturn {
   /** Count of checked reviews */
   checkedCount: number;
   /** Reviews currently attached to chat input */
-  attachedReviews: PendingReview[];
+  attachedReviews: Review[];
   /** Add a new review from structured data (starts as attached) */
-  addReview: (data: ReviewNoteData) => PendingReview;
+  addReview: (data: ReviewNoteData) => Review;
   /** Mark a review as attached to chat input */
   attachReview: (reviewId: string) => void;
   /** Detach a review from chat input (back to pending) */
@@ -45,14 +45,14 @@ export interface UsePendingReviewsReturn {
   /** Clear all reviews (for error recovery) */
   clearAll: () => void;
   /** Get a review by ID */
-  getReview: (reviewId: string) => PendingReview | undefined;
+  getReview: (reviewId: string) => Review | undefined;
 }
 
 /**
- * Hook for managing pending reviews for a workspace
+ * Hook for managing reviews for a workspace
  * Persists reviews to localStorage
  */
-export function usePendingReviews(workspaceId: string): UsePendingReviewsReturn {
+export function useReviews(workspaceId: string): UseReviewsReturn {
   const [state, setState] = usePersistedState<ReviewsState>(
     getReviewsKey(workspaceId),
     {
@@ -85,8 +85,8 @@ export function usePendingReviews(workspaceId: string): UsePendingReviewsReturn 
   }, [reviews]);
 
   const addReview = useCallback(
-    (data: ReviewNoteData): PendingReview => {
-      const review: PendingReview = {
+    (data: ReviewNoteData): Review => {
+      const review: Review = {
         id: generateReviewId(),
         data,
         status: "attached", // New reviews start attached to chat input
@@ -260,7 +260,7 @@ export function usePendingReviews(workspaceId: string): UsePendingReviewsReturn 
   }, [setState]);
 
   const getReview = useCallback(
-    (reviewId: string): PendingReview | undefined => {
+    (reviewId: string): Review | undefined => {
       return state.reviews[reviewId];
     },
     [state.reviews]

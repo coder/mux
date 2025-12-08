@@ -1,9 +1,9 @@
 /**
- * Stories for pending reviews feature
+ * Stories for reviews feature
  */
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { setupSimpleChatStory, setPendingReviews, createPendingReview } from "./storyHelpers";
+import { setupSimpleChatStory, setReviews, createReview } from "./storyHelpers";
 import { createUserMessage, createAssistantMessage } from "./mockFactory";
 
 export default {
@@ -12,32 +12,32 @@ export default {
 };
 
 /**
- * Shows pending reviews banner with multiple reviews in different states.
+ * Shows reviews banner with multiple reviews in different states.
  * Banner appears above chat input as a thin collapsible stripe.
  */
-export const PendingReviewsBanner: AppStory = {
+export const ReviewsBanner: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
         const workspaceId = "ws-reviews";
 
-        // Set up pending reviews
-        setPendingReviews(workspaceId, [
-          createPendingReview(
+        // Set up reviews
+        setReviews(workspaceId, [
+          createReview(
             "review-1",
             "src/api/auth.ts",
             "42-48",
             "Consider using a constant for the token expiry",
             "pending"
           ),
-          createPendingReview(
+          createReview(
             "review-2",
             "src/utils/helpers.ts",
             "15",
             "This function could be simplified",
             "pending"
           ),
-          createPendingReview(
+          createReview(
             "review-3",
             "src/components/Button.tsx",
             "23-25",
@@ -63,9 +63,9 @@ export const PendingReviewsBanner: AppStory = {
 };
 
 /**
- * Shows empty state - no pending reviews banner when there are no reviews.
+ * Shows empty state - no reviews banner when there are no reviews.
  */
-export const NoPendingReviews: AppStory = {
+export const NoReviews: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
@@ -94,21 +94,9 @@ export const AllReviewsChecked: AppStory = {
       setup={() => {
         const workspaceId = "ws-all-checked";
 
-        setPendingReviews(workspaceId, [
-          createPendingReview(
-            "review-1",
-            "src/api/users.ts",
-            "10-15",
-            "Fixed the null check",
-            "checked"
-          ),
-          createPendingReview(
-            "review-2",
-            "src/utils/format.ts",
-            "42",
-            "Added error handling",
-            "checked"
-          ),
+        setReviews(workspaceId, [
+          createReview("review-1", "src/api/users.ts", "10-15", "Fixed the null check", "checked"),
+          createReview("review-2", "src/utils/format.ts", "42", "Added error handling", "checked"),
         ]);
 
         return setupSimpleChatStory({
@@ -128,17 +116,17 @@ export const AllReviewsChecked: AppStory = {
 };
 
 /**
- * Shows banner with many pending reviews to test scrolling.
+ * Shows banner with many reviews to test scrolling.
  */
-export const ManyPendingReviews: AppStory = {
+export const ManyReviews: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
         const workspaceId = "ws-many-reviews";
 
         // Create many reviews to test scroll behavior
-        const reviews = Array.from({ length: 10 }, (_, i) =>
-          createPendingReview(
+        const reviewItems = Array.from({ length: 10 }, (_, i) =>
+          createReview(
             `review-${i + 1}`,
             `src/components/Feature${i + 1}.tsx`,
             `${10 + i * 5}-${15 + i * 5}`,
@@ -147,7 +135,7 @@ export const ManyPendingReviews: AppStory = {
           )
         );
 
-        setPendingReviews(workspaceId, reviews);
+        setReviews(workspaceId, reviewItems);
 
         return setupSimpleChatStory({
           workspaceId,

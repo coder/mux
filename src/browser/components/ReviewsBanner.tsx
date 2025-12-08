@@ -1,5 +1,5 @@
 /**
- * PendingReviewsBanner - Self-contained pending reviews UI
+ * ReviewsBanner - Self-contained reviews UI
  *
  * Features:
  * - Collapsible banner above chat input
@@ -25,8 +25,8 @@ import {
 import { cn } from "@/common/lib/utils";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
-import type { PendingReview } from "@/common/types/review";
-import { usePendingReviews } from "@/browser/hooks/usePendingReviews";
+import type { Review } from "@/common/types/review";
+import { useReviews } from "@/browser/hooks/useReviews";
 import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
 import { DiffRenderer } from "./shared/DiffRenderer";
 import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
@@ -79,7 +79,7 @@ class BannerErrorBoundary extends Component<
 // ═══════════════════════════════════════════════════════════════════════════════
 
 interface ReviewItemProps {
-  review: PendingReview;
+  review: Review;
   onCheck: () => void;
   onUncheck: () => void;
   onSendToChat: () => void;
@@ -309,12 +309,12 @@ const ReviewItem: React.FC<ReviewItemProps> = ({
 // MAIN BANNER COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════════
 
-interface PendingReviewsBannerInnerProps {
+interface ReviewsBannerInnerProps {
   workspaceId: string;
 }
 
-const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({ workspaceId }) => {
-  const pendingReviews = usePendingReviews(workspaceId);
+const ReviewsBannerInner: React.FC<ReviewsBannerInnerProps> = ({ workspaceId }) => {
+  const reviewsHook = useReviews(workspaceId);
   const [isExpanded, setIsExpanded] = useState(false);
   const [showAllCompleted, setShowAllCompleted] = useState(false);
 
@@ -323,10 +323,10 @@ const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({ w
   // Separate pending and completed reviews
   // "attached" reviews are shown in ChatInput, so we only show "pending" and "checked" here
   const { pendingList, completedList } = useMemo(() => {
-    const pending = pendingReviews.reviews.filter((r) => r.status === "pending");
-    const completed = pendingReviews.reviews.filter((r) => r.status === "checked");
+    const pending = reviewsHook.reviews.filter((r) => r.status === "pending");
+    const completed = reviewsHook.reviews.filter((r) => r.status === "checked");
     return { pendingList: pending, completedList: completed };
-  }, [pendingReviews.reviews]);
+  }, [reviewsHook.reviews]);
 
   // Completed reviews to display (limited unless expanded)
   const displayedCompleted = useMemo(() => {
@@ -342,20 +342,20 @@ const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({ w
 
   const handleSendToChat = useCallback(
     (reviewId: string) => {
-      pendingReviews.attachReview(reviewId);
+      reviewsHook.attachReview(reviewId);
     },
-    [pendingReviews]
+    [reviewsHook]
   );
 
   const handleUpdateNote = useCallback(
     (reviewId: string, newNote: string) => {
-      pendingReviews.updateReviewNote(reviewId, newNote);
+      reviewsHook.updateReviewNote(reviewId, newNote);
     },
-    [pendingReviews]
+    [reviewsHook]
   );
 
   // Don't show anything if no reviews
-  if (pendingReviews.reviews.length === 0) {
+  if (reviewsHook.reviews.length === 0) {
     return null;
   }
 
@@ -370,23 +370,23 @@ const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({ w
         <MessageSquare
           className={cn(
             "size-3.5",
-            pendingReviews.pendingCount > 0 ? "text-[var(--color-review-accent)]" : "text-muted"
+            reviewsHook.pendingCount > 0 ? "text-[var(--color-review-accent)]" : "text-muted"
           )}
         />
         <span className="text-secondary">
-          {pendingReviews.pendingCount > 0 ? (
+          {reviewsHook.pendingCount > 0 ? (
             <>
               <span className="font-medium text-[var(--color-review-accent)]">
-                {pendingReviews.pendingCount}
+                {reviewsHook.pendingCount}
               </span>
               {" pending review"}
-              {pendingReviews.pendingCount !== 1 && "s"}
+              {reviewsHook.pendingCount !== 1 && "s"}
             </>
           ) : (
             <span className="text-muted">No pending reviews</span>
           )}
-          {pendingReviews.checkedCount > 0 && (
-            <span className="text-muted"> · {pendingReviews.checkedCount} completed</span>
+          {reviewsHook.checkedCount > 0 && (
+            <span className="text-muted"> · {reviewsHook.checkedCount} completed</span>
           )}
         </span>
         <div className="ml-auto">
@@ -411,10 +411,10 @@ const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({ w
                 <ReviewItem
                   key={review.id}
                   review={review}
-                  onCheck={() => pendingReviews.checkReview(review.id)}
-                  onUncheck={() => pendingReviews.uncheckReview(review.id)}
+                  onCheck={() => reviewsHook.checkReview(review.id)}
+                  onUncheck={() => reviewsHook.uncheckReview(review.id)}
                   onSendToChat={() => handleSendToChat(review.id)}
-                  onRemove={() => pendingReviews.removeReview(review.id)}
+                  onRemove={() => reviewsHook.removeReview(review.id)}
                   onUpdateNote={(note) => handleUpdateNote(review.id, note)}
                 />
               ))}
@@ -431,7 +431,7 @@ const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({ w
                 {completedList.length > 0 && (
                   <button
                     type="button"
-                    onClick={pendingReviews.clearChecked}
+                    onClick={reviewsHook.clearChecked}
                     className="text-muted hover:text-error text-[10px] transition-colors"
                   >
                     Clear
@@ -442,10 +442,10 @@ const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({ w
                 <ReviewItem
                   key={review.id}
                   review={review}
-                  onCheck={() => pendingReviews.checkReview(review.id)}
-                  onUncheck={() => pendingReviews.uncheckReview(review.id)}
+                  onCheck={() => reviewsHook.checkReview(review.id)}
+                  onUncheck={() => reviewsHook.uncheckReview(review.id)}
                   onSendToChat={() => handleSendToChat(review.id)}
-                  onRemove={() => pendingReviews.removeReview(review.id)}
+                  onRemove={() => reviewsHook.removeReview(review.id)}
                   onUpdateNote={(note) => handleUpdateNote(review.id, note)}
                 />
               ))}
@@ -476,21 +476,21 @@ const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({ w
 // EXPORTED COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════════
 
-interface PendingReviewsBannerProps {
+interface ReviewsBannerProps {
   workspaceId: string;
 }
 
 /**
- * Self-contained pending reviews banner.
- * Uses usePendingReviews hook internally - only needs workspaceId.
+ * Self-contained reviews banner.
+ * Uses useReviews hook internally - only needs workspaceId.
  * Shows only "pending" and "checked" reviews (not "attached" which are in ChatInput).
  */
-export const PendingReviewsBanner: React.FC<PendingReviewsBannerProps> = ({ workspaceId }) => {
-  const pendingReviews = usePendingReviews(workspaceId);
+export const ReviewsBanner: React.FC<ReviewsBannerProps> = ({ workspaceId }) => {
+  const reviewsHook = useReviews(workspaceId);
 
   return (
-    <BannerErrorBoundary onClear={pendingReviews.clearAll}>
-      <PendingReviewsBannerInner workspaceId={workspaceId} />
+    <BannerErrorBoundary onClear={reviewsHook.clearAll}>
+      <ReviewsBannerInner workspaceId={workspaceId} />
     </BannerErrorBoundary>
   );
 };

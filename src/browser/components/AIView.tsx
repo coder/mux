@@ -50,8 +50,8 @@ import { useAutoCompactionSettings } from "../hooks/useAutoCompactionSettings";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { useForceCompaction } from "@/browser/hooks/useForceCompaction";
 import { useAPI } from "@/browser/contexts/API";
-import { usePendingReviews } from "@/browser/hooks/usePendingReviews";
-import { PendingReviewsBanner } from "./PendingReviewsBanner";
+import { useReviews } from "@/browser/hooks/useReviews";
+import { ReviewsBanner } from "./ReviewsBanner";
 import type { ReviewNoteData } from "@/common/types/review";
 
 interface AIViewProps {
@@ -109,8 +109,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const aggregator = useWorkspaceAggregator(workspaceId);
   const workspaceUsage = useWorkspaceUsage(workspaceId);
 
-  // Pending reviews state
-  const pendingReviews = usePendingReviews(workspaceId);
+  // Reviews state
+  const reviews = useReviews(workspaceId);
   const { options } = useProviderOptions();
   const use1M = options.anthropic?.use1MContext ?? false;
   // Get pending model for auto-compaction settings (threshold is per-model)
@@ -219,13 +219,13 @@ const AIViewInner: React.FC<AIViewProps> = ({
     chatInputAPI.current = api;
   }, []);
 
-  // Handler for review notes from Code Review tab - adds to pending reviews (starts attached)
+  // Handler for review notes from Code Review tab - adds review (starts attached)
   const handleReviewNote = useCallback(
     (data: ReviewNoteData) => {
-      pendingReviews.addReview(data);
+      reviews.addReview(data);
       // New reviews start with status "attached" so they appear in chat input immediately
     },
-    [pendingReviews]
+    [reviews]
   );
 
   // Handler for manual compaction from CompactionWarning click
@@ -617,7 +617,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
             onCompactClick={handleCompactClick}
           />
         )}
-        <PendingReviewsBanner workspaceId={workspaceId} />
+        <ReviewsBanner workspaceId={workspaceId} />
         <ChatInput
           variant="workspace"
           workspaceId={workspaceId}
@@ -633,10 +633,10 @@ const AIViewInner: React.FC<AIViewProps> = ({
           canInterrupt={canInterrupt}
           onReady={handleChatInputReady}
           autoCompactionCheck={autoCompactionResult}
-          attachedReviews={pendingReviews.attachedReviews}
-          onDetachReview={pendingReviews.detachReview}
-          onCheckReviews={(ids) => ids.forEach((id) => pendingReviews.checkReview(id))}
-          onUpdateReviewNote={pendingReviews.updateReviewNote}
+          attachedReviews={reviews.attachedReviews}
+          onDetachReview={reviews.detachReview}
+          onCheckReviews={(ids) => ids.forEach((id) => reviews.checkReview(id))}
+          onUpdateReviewNote={reviews.updateReviewNote}
         />
       </div>
 

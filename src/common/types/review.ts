@@ -95,12 +95,12 @@ export interface ReviewStats {
 }
 
 /**
- * Status of a pending review
+ * Status of a review
  * - pending: In banner, not attached to chat input
  * - attached: Currently attached to chat input draft
  * - checked: Marked as done (after being sent)
  */
-export type PendingReviewStatus = "pending" | "attached" | "checked";
+export type ReviewStatus = "pending" | "attached" | "checked";
 
 /**
  * Structured data for a review note.
@@ -119,16 +119,16 @@ export interface ReviewNoteData {
 }
 
 /**
- * A single pending review note
+ * A single review note
  * Created when user adds a review note from the diff viewer
  */
-export interface PendingReview {
+export interface Review {
   /** Unique identifier */
   id: string;
   /** Structured review data for rich UI display */
   data: ReviewNoteData;
   /** Current status */
-  status: PendingReviewStatus;
+  status: ReviewStatus;
   /** Timestamp when created */
   createdAt: number;
   /** Timestamp when status changed (checked/unchecked) */
@@ -143,7 +143,7 @@ export interface ReviewsState {
   /** Workspace ID */
   workspaceId: string;
   /** All reviews keyed by ID */
-  reviews: Record<string, PendingReview>;
+  reviews: Record<string, Review>;
   /** Last update timestamp */
   lastUpdated: number;
 }
