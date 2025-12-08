@@ -128,13 +128,8 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
                 )}
               >
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-xs text-[var(--color-text-tertiary)]">
-                      {proc.id}
-                    </span>
-                    <span className="text-[10px] text-[var(--color-text-quaternary)]">
-                      pid:{proc.pid}
-                    </span>
+                  <div className="font-mono text-xs text-[var(--color-text-tertiary)]">
+                    pid {proc.pid}
                   </div>
                   <div
                     className="truncate font-mono text-xs text-[var(--color-text-secondary)]"
