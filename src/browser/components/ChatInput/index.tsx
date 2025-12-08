@@ -142,6 +142,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
 
   const [input, setInput] = usePersistedState(storageKeys.inputKey, "", { listener: true });
   const [isSending, setIsSending] = useState(false);
+  const [hideReviewsDuringSend, setHideReviewsDuringSend] = useState(false);
   const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
   const [commandSuggestions, setCommandSuggestions] = useState<SlashSuggestion[]>([]);
   const [providerNames, setProviderNames] = useState<string[]>([]);
@@ -1099,10 +1100,12 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         // Capture review IDs before clearing (for marking as checked on success)
         const sentReviewIds = attachedReviews.map((r) => r.id);
 
-        // Clear input and images immediately for responsive UI
-        // These will be restored if the send operation fails
+        // Clear input, images, and hide reviews immediately for responsive UI
+        // Text/images are restored if send fails; reviews remain "attached" in state
+        // so they'll reappear naturally on failure (we only call onCheckReviews on success)
         setInput("");
         setImageAttachments([]);
+        setHideReviewsDuringSend(true);
         // Clear inline height style - VimTextArea's useLayoutEffect will handle sizing
         if (inputRef.current) {
           inputRef.current.style.height = "";
@@ -1162,6 +1165,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         setDraft(preSendDraft);
       } finally {
         setIsSending(false);
+        setHideReviewsDuringSend(false);
       }
     } finally {
       // Always restore focus at the end
@@ -1340,7 +1344,8 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           )}
 
           {/* Attached reviews preview - show styled blocks with remove/edit buttons */}
-          {variant === "workspace" && attachedReviews.length > 0 && (
+          {/* Hide during send to avoid duplicate display with the sent message */}
+          {variant === "workspace" && attachedReviews.length > 0 && !hideReviewsDuringSend && (
             <div className="border-border max-h-[50vh] space-y-2 overflow-y-auto border-b px-1.5 py-1.5">
               {attachedReviews.map((review) => (
                 <ReviewBlockFromData
