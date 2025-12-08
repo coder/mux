@@ -50,7 +50,7 @@ export const BashBackgroundListToolCall: React.FC<BashBackgroundListToolCallProp
   const { expanded, toggleExpanded } = useToolExpansion(false);
 
   const processes = result?.success ? result.processes : [];
-  const processCount = processes.length;
+  const runningCount = processes.filter((p) => p.status === "running").length;
 
   return (
     <ToolContainer expanded={expanded}>
@@ -59,9 +59,9 @@ export const BashBackgroundListToolCall: React.FC<BashBackgroundListToolCallProp
         <ToolIcon emoji="📋" toolName="bash_background_list" />
         <span className="text-text-secondary">
           {result?.success
-            ? processCount === 0
+            ? runningCount === 0
               ? "No background processes"
-              : `${processCount} background process${processCount !== 1 ? "es" : ""}`
+              : `${runningCount} background process${runningCount !== 1 ? "es" : ""}`
             : "Listing background processes"}
         </span>
         <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
