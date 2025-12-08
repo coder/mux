@@ -139,7 +139,7 @@ export function buildTerminateCommand(
   return (
     `kill -15 ${negPid} 2>/dev/null || true; ` +
     `sleep 2; ` +
-    `if kill -0 ${pid} 2>/dev/null; then ` +
+    `if kill -0 ${negPid} 2>/dev/null; then ` +
     `kill -9 ${negPid} 2>/dev/null || true; ` +
     `echo ${EXIT_CODE_SIGKILL} > ${quotePath(exitCodePath)}; ` +
     `else ` +
