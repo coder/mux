@@ -109,7 +109,7 @@ export function buildSpawnCommand(options: SpawnCommandOptions): string {
   // Without setsid (Windows MSYS2): must read PGID from /proc (MSYS2 provides this)
   // CRITICAL: We can't run this on macOS, since it doesn't have /proc
   const pgidExpr =
-    options.useSetsid === false ? '$(cat /proc/$!/pgid 2>/dev/null || echo $!)' : '$!';
+    options.useSetsid === false ? "$(cat /proc/$!/pgid 2>/dev/null || echo $!)" : "$!";
 
   return (
     `(${nicePrefix}${setsidPrefix}nohup ${shellQuote(bash)} -c ${shellQuote(options.wrapperScript)} ` +

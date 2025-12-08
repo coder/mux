@@ -25,11 +25,7 @@ import { getBashPath } from "@/node/utils/main/bashPath";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { DisposableProcess, execAsync } from "@/node/utils/disposableExec";
 import { expandTilde } from "./tildeExpansion";
-import {
-  checkInitHookExists,
-  getInitHookPath,
-  createLineBufferedLoggers,
-} from "./initHook";
+import { getInitHookPath, createLineBufferedLoggers } from "./initHook";
 import { LocalBackgroundHandle } from "./LocalBackgroundHandle";
 import { buildWrapperScript, buildSpawnCommand } from "./backgroundCommands";
 import { log } from "@/node/services/log";

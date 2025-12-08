@@ -106,7 +106,9 @@ export class LocalBackgroundHandle implements BackgroundHandle {
       }
 
       if (stillRunning) {
-        log.debug(`LocalBackgroundHandle: Process still running, sending SIGKILL to group ${negativePgid}`);
+        log.debug(
+          `LocalBackgroundHandle: Process still running, sending SIGKILL to group ${negativePgid}`
+        );
         process.kill(negativePgid, "SIGKILL");
 
         // Write exit code for SIGKILL since we had to force kill

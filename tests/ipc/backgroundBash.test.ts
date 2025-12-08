@@ -120,7 +120,7 @@ describeIntegration("Background Bash Execution", () => {
           const startEvents = await sendMessageAndWait(
             env,
             workspaceId,
-            'Use the bash tool with run_in_background=true to run: sleep 30',
+            "Use the bash tool with run_in_background=true to run: sleep 30",
             HAIKU_MODEL,
             BACKGROUND_TOOLS,
             30000
@@ -144,7 +144,8 @@ describeIntegration("Background Bash Execution", () => {
           // Verify the process appears in the list
           const responseText = extractTextFromEvents(listEvents);
           expect(
-            responseText.includes(processId!) || toolOutputContains(listEvents, "bash_background_list", processId!)
+            responseText.includes(processId!) ||
+              toolOutputContains(listEvents, "bash_background_list", processId!)
           ).toBe(true);
 
           // Clean up: terminate the background process
@@ -196,7 +197,7 @@ describeIntegration("Background Bash Execution", () => {
           const startEvents = await sendMessageAndWait(
             env,
             workspaceId,
-            'Use bash with run_in_background=true to run: sleep 300',
+            "Use bash with run_in_background=true to run: sleep 300",
             HAIKU_MODEL,
             BACKGROUND_TOOLS,
             30000
@@ -236,8 +237,8 @@ describeIntegration("Background Bash Execution", () => {
           const listResponse = extractTextFromEvents(listEvents);
           expect(
             listResponse.toLowerCase().includes("killed") ||
-            listResponse.toLowerCase().includes("terminated") ||
-            toolOutputContains(listEvents, "bash_background_list", "killed")
+              listResponse.toLowerCase().includes("terminated") ||
+              toolOutputContains(listEvents, "bash_background_list", "killed")
           ).toBe(true);
         } finally {
           await cleanup();
@@ -313,8 +314,8 @@ describeIntegration("Background Bash Execution", () => {
           // The main assertion is that the process was tracked
           expect(
             hasExited ||
-            listResponse.includes(processId!) ||
-            toolOutputContains(listEvents, "bash_background_list", processId!)
+              listResponse.includes(processId!) ||
+              toolOutputContains(listEvents, "bash_background_list", processId!)
           ).toBe(true);
         } finally {
           await cleanup();

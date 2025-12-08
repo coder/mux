@@ -180,14 +180,28 @@ describe("backgroundCommands", () => {
       expect(result).toContain("< /dev/null");
     });
 
-    it("should background and echo PID", () => {
+    it("should background and echo PID PGID (setsid=true, Unix)", () => {
       const result = buildSpawnCommand({
         wrapperScript: "sleep 60",
         stdoutPath: "/tmp/out",
         stderrPath: "/tmp/err",
       });
 
-      expect(result).toMatch(/& echo \$!\)$/);
+      // With setsid (default), PID == PGID, so output is "$! $!"
+      expect(result).toContain('& echo "$! $!")');
+    });
+
+    it("should read PGID from /proc when setsid=false (Windows MSYS2)", () => {
+      const result = buildSpawnCommand({
+        wrapperScript: "sleep 60",
+        stdoutPath: "/tmp/out",
+        stderrPath: "/tmp/err",
+        useSetsid: false,
+      });
+
+      // Without setsid, must read PGID from /proc (MSYS2 provides this)
+      expect(result).toContain('& echo "$! $(cat /proc/$!/pgid 2>/dev/null || echo $!)")');
+      expect(result).not.toContain("setsid");
     });
 
     it("should quote the wrapper script", () => {
