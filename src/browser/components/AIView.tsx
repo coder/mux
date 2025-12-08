@@ -631,6 +631,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
           onSendToChat={handleSendReviewToChat}
           onRemove={pendingReviews.removeReview}
           onClearChecked={pendingReviews.clearChecked}
+          onClearAll={pendingReviews.clearAll}
         />
         <ChatInput
           variant="workspace"

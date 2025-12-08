@@ -32,6 +32,8 @@ export interface UsePendingReviewsReturn {
   removeReview: (reviewId: string) => void;
   /** Clear all checked reviews */
   clearChecked: () => void;
+  /** Clear all reviews (for error recovery) */
+  clearAll: () => void;
   /** Get a review by ID */
   getReview: (reviewId: string) => PendingReview | undefined;
 }
@@ -160,6 +162,14 @@ export function usePendingReviews(workspaceId: string): UsePendingReviewsReturn 
     });
   }, [setState]);
 
+  const clearAll = useCallback(() => {
+    setState((prev) => ({
+      ...prev,
+      reviews: {},
+      lastUpdated: Date.now(),
+    }));
+  }, [setState]);
+
   const getReview = useCallback(
     (reviewId: string): PendingReview | undefined => {
       return state.reviews[reviewId];
@@ -176,6 +186,7 @@ export function usePendingReviews(workspaceId: string): UsePendingReviewsReturn 
     uncheckReview,
     removeReview,
     clearChecked,
+    clearAll,
     getReview,
   };
 }

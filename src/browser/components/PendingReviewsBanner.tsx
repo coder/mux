@@ -6,7 +6,7 @@
  * that map to CSS variables defined in globals.css.
  */
 
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback, useMemo, Component, type ReactNode } from "react";
 import {
   ChevronDown,
   ChevronUp,
@@ -17,11 +17,54 @@ import {
   MessageSquare,
   Eye,
   EyeOff,
+  AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipWrapper } from "./Tooltip";
 import type { PendingReview, ReviewNoteData } from "@/common/types/review";
+
+/**
+ * Error boundary for the banner - catches rendering errors from malformed data
+ */
+interface ErrorBoundaryState {
+  hasError: boolean;
+}
+
+class BannerErrorBoundary extends Component<
+  { children: ReactNode; onClear: () => void },
+  ErrorBoundaryState
+> {
+  state: ErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): ErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="border-border bg-dark flex items-center gap-2 border-t px-3 py-1.5 text-xs">
+          <AlertTriangle className="text-warning size-3.5" />
+          <span className="text-muted">Reviews data corrupted</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-error h-5 px-2 text-xs"
+            onClick={() => {
+              this.props.onClear();
+              this.setState({ hasError: false });
+            }}
+          >
+            <Trash2 className="mr-1 h-3 w-3" />
+            Clear all
+          </Button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 interface PendingReviewsBannerProps {
   /** All reviews (pending and checked) */
@@ -40,6 +83,8 @@ interface PendingReviewsBannerProps {
   onRemove: (reviewId: string) => void;
   /** Clear all checked reviews */
   onClearChecked: () => void;
+  /** Clear all reviews (used for error recovery) */
+  onClearAll: () => void;
 }
 
 /**
@@ -122,7 +167,7 @@ const ReviewItem: React.FC<{
   );
 };
 
-export const PendingReviewsBanner: React.FC<PendingReviewsBannerProps> = ({
+const PendingReviewsBannerInner: React.FC<PendingReviewsBannerProps> = ({
   reviews,
   pendingCount,
   checkedCount,
@@ -247,5 +292,16 @@ export const PendingReviewsBanner: React.FC<PendingReviewsBannerProps> = ({
         </div>
       )}
     </div>
+  );
+};
+
+/**
+ * Exported component wrapped in error boundary
+ */
+export const PendingReviewsBanner: React.FC<PendingReviewsBannerProps> = (props) => {
+  return (
+    <BannerErrorBoundary onClear={props.onClearAll}>
+      <PendingReviewsBannerInner {...props} />
+    </BannerErrorBoundary>
   );
 };

@@ -32,7 +32,11 @@ import { parseDiff, extractAllHunks, buildGitDiffCommand } from "@/common/utils/
 import { getReviewSearchStateKey } from "@/common/constants/storage";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
 import { parseNumstat, buildFileTree, extractNewPath } from "@/common/utils/git/numstatParser";
-import type { DiffHunk, ReviewFilters as ReviewFiltersType, ReviewNoteData } from "@/common/types/review";
+import type {
+  DiffHunk,
+  ReviewFilters as ReviewFiltersType,
+  ReviewNoteData,
+} from "@/common/types/review";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { applyFrontendFilters } from "@/browser/utils/review/filterHunks";
