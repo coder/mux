@@ -79,10 +79,7 @@ export const BashBackgroundListToolCall: React.FC<BashBackgroundListToolCallProp
             <DetailSection>
               <div className="space-y-2">
                 {processes.map((proc) => (
-                  <div
-                    key={proc.display_name ?? proc.process_id}
-                    className="bg-code-bg rounded px-2 py-1.5 text-[11px]"
-                  >
+                  <div key={proc.process_id} className="bg-code-bg rounded px-2 py-1.5 text-[11px]">
                     <div className="mb-1 flex items-center gap-2">
                       <span className="text-text font-mono">
                         {proc.display_name ?? proc.process_id}
