@@ -52,6 +52,8 @@ import { useForceCompaction } from "@/browser/hooks/useForceCompaction";
 import { useAPI } from "@/browser/contexts/API";
 import { usePendingReviews } from "@/browser/hooks/usePendingReviews";
 import { PendingReviewsBanner } from "./PendingReviewsBanner";
+import type { ReviewNoteData } from "@/common/types/review";
+import { formatReviewNoteForChat } from "@/common/types/review";
 
 interface AIViewProps {
   workspaceId: string;
@@ -220,15 +222,15 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
   // Handler for review notes from Code Review tab - adds to pending reviews
   const handleReviewNote = useCallback(
-    (note: string) => {
-      pendingReviews.addReview(note);
+    (data: ReviewNoteData) => {
+      pendingReviews.addReview(data);
     },
     [pendingReviews]
   );
 
-  // Handler to send a review to chat input
-  const handleSendReviewToChat = useCallback((content: string) => {
-    chatInputAPI.current?.appendText(content);
+  // Handler to send a review to chat input (formats to message string)
+  const handleSendReviewToChat = useCallback((data: ReviewNoteData) => {
+    chatInputAPI.current?.appendText(formatReviewNoteForChat(data));
   }, []);
 
   // Handler for manual compaction from CompactionWarning click

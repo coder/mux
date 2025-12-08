@@ -18,6 +18,7 @@ import {
   highlightSearchMatches,
   type SearchHighlightConfig,
 } from "@/browser/utils/highlighting/highlightSearchTerms";
+import type { ReviewNoteData } from "@/common/types/review";
 
 // Shared type for diff line types
 export type DiffLineType = "add" | "remove" | "context" | "header";
@@ -313,8 +314,8 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
 interface SelectableDiffRendererProps extends Omit<DiffRendererProps, "filePath"> {
   /** File path for generating review notes */
   filePath: string;
-  /** Callback when user submits a review note */
-  onReviewNote?: (note: string) => void;
+  /** Callback when user submits a review note with structured data */
+  onReviewNote?: (data: ReviewNoteData) => void;
   /** Callback when user clicks on a line (to activate parent hunk) */
   onLineClick?: () => void;
   /** Search highlight configuration (optional) */
@@ -339,7 +340,7 @@ interface ReviewNoteInputProps {
   lineData: Array<{ index: number; type: DiffLineType; lineNum: number }>;
   lines: string[]; // Original diff lines with +/- prefix
   filePath: string;
-  onSubmit: (note: string) => void;
+  onSubmit: (data: ReviewNoteData) => void;
   onCancel: () => void;
 }
 
@@ -379,20 +380,25 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
       });
 
       // Elide middle lines if more than 3 lines selected
-      let selectedLines: string;
+      let selectedCode: string;
       if (allLines.length <= 3) {
-        selectedLines = allLines.join("\n");
+        selectedCode = allLines.join("\n");
       } else {
         const omittedCount = allLines.length - 2;
-        selectedLines = [
+        selectedCode = [
           allLines[0],
           `    (${omittedCount} lines omitted)`,
           allLines[allLines.length - 1],
         ].join("\n");
       }
 
-      const reviewNote = `<review>\nRe ${filePath}:${lineRange}\n\`\`\`\n${selectedLines}\n\`\`\`\n> ${noteText.trim()}\n</review>`;
-      onSubmit(reviewNote);
+      // Pass structured data instead of formatted message
+      onSubmit({
+        filePath,
+        lineRange,
+        selectedCode,
+        userNote: noteText.trim(),
+      });
     };
 
     return (
@@ -530,9 +536,9 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       });
     };
 
-    const handleSubmitNote = (reviewNote: string) => {
+    const handleSubmitNote = (data: ReviewNoteData) => {
       if (!onReviewNote) return;
-      onReviewNote(reviewNote);
+      onReviewNote(data);
       setSelection(null);
     };
 

@@ -3,7 +3,7 @@
  */
 
 import React, { useState, useMemo } from "react";
-import type { DiffHunk } from "@/common/types/review";
+import type { DiffHunk, ReviewNoteData } from "@/common/types/review";
 import { SelectableDiffRenderer } from "../../shared/DiffRenderer";
 import {
   type SearchHighlightConfig,
@@ -24,7 +24,7 @@ interface HunkViewerProps {
   onClick?: (e: React.MouseEvent<HTMLElement>) => void;
   onToggleRead?: (e: React.MouseEvent<HTMLElement>) => void;
   onRegisterToggleExpand?: (hunkId: string, toggleFn: () => void) => void;
-  onReviewNote?: (note: string) => void;
+  onReviewNote?: (data: ReviewNoteData) => void;
   searchConfig?: SearchHighlightConfig;
 }
 

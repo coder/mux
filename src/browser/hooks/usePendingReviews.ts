@@ -6,19 +6,7 @@
 import { useCallback, useMemo } from "react";
 import { usePersistedState } from "./usePersistedState";
 import { getPendingReviewsKey } from "@/common/constants/storage";
-import type { PendingReview, PendingReviewsState } from "@/common/types/review";
-
-/**
- * Parse a review note to extract file path and line range
- * Expected format: <review>\nRe filePath:lineRange\n...
- */
-function parseReviewNote(content: string): { filePath: string; lineRange: string } {
-  const match = /Re ([^:]+):(\d+(?:-\d+)?)/.exec(content);
-  if (match) {
-    return { filePath: match[1], lineRange: match[2] };
-  }
-  return { filePath: "unknown", lineRange: "?" };
-}
+import type { PendingReview, PendingReviewsState, ReviewNoteData } from "@/common/types/review";
 
 /**
  * Generate a unique ID for a review
@@ -34,8 +22,8 @@ export interface UsePendingReviewsReturn {
   pendingCount: number;
   /** Count of checked reviews */
   checkedCount: number;
-  /** Add a new review from a review note */
-  addReview: (content: string) => PendingReview;
+  /** Add a new review from structured data */
+  addReview: (data: ReviewNoteData) => PendingReview;
   /** Mark a review as checked */
   checkReview: (reviewId: string) => void;
   /** Uncheck a review (mark as pending again) */
@@ -77,13 +65,10 @@ export function usePendingReviews(workspaceId: string): UsePendingReviewsReturn 
   }, [reviews]);
 
   const addReview = useCallback(
-    (content: string): PendingReview => {
-      const { filePath, lineRange } = parseReviewNote(content);
+    (data: ReviewNoteData): PendingReview => {
       const review: PendingReview = {
         id: generateReviewId(),
-        content,
-        filePath,
-        lineRange,
+        data,
         status: "pending",
         createdAt: Date.now(),
       };

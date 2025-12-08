@@ -1,5 +1,6 @@
 import React from "react";
 import type { DisplayedMessage } from "@/common/types/message";
+import type { ReviewNoteData } from "@/common/types/review";
 import { UserMessage } from "./UserMessage";
 import { AssistantMessage } from "./AssistantMessage";
 import { ToolMessage } from "./ToolMessage";
@@ -16,7 +17,7 @@ interface MessageRendererProps {
   workspaceId?: string;
   isCompacting?: boolean;
   /** Handler for adding review notes from inline diffs */
-  onReviewNote?: (note: string) => void;
+  onReviewNote?: (data: ReviewNoteData) => void;
 }
 
 // Memoized to prevent unnecessary re-renders when parent (AIView) updates

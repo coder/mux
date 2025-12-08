@@ -35,13 +35,14 @@ import type {
   WebFetchToolArgs,
   WebFetchToolResult,
 } from "@/common/types/tools";
+import type { ReviewNoteData } from "@/common/types/review";
 
 interface ToolMessageProps {
   message: DisplayedMessage & { type: "tool" };
   className?: string;
   workspaceId?: string;
   /** Handler for adding review notes from inline diffs */
-  onReviewNote?: (note: string) => void;
+  onReviewNote?: (data: ReviewNoteData) => void;
 }
 
 // Type guards using Zod schemas for single source of truth

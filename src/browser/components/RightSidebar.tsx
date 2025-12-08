@@ -12,6 +12,7 @@ import { calculateTokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { cn } from "@/common/lib/utils";
+import type { ReviewNoteData } from "@/common/types/review";
 
 interface SidebarContainerProps {
   collapsed: boolean;
@@ -84,7 +85,7 @@ interface RightSidebarProps {
   /** Whether currently resizing */
   isResizing?: boolean;
   /** Callback when user adds a review note from Code Review tab */
-  onReviewNote?: (note: string) => void;
+  onReviewNote?: (data: ReviewNoteData) => void;
   /** Workspace is still being created (git operations in progress) */
   isCreating?: boolean;
 }

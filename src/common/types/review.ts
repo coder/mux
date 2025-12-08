@@ -100,18 +100,30 @@ export interface ReviewStats {
 export type PendingReviewStatus = "pending" | "checked";
 
 /**
+ * Structured data for a review note.
+ * Passed from DiffRenderer when user creates a review.
+ * Stored as-is for rich UI display, formatted to message only when sending to chat.
+ */
+export interface ReviewNoteData {
+  /** File path being reviewed */
+  filePath: string;
+  /** Line range (e.g., "42" or "42-45") */
+  lineRange: string;
+  /** Selected code lines with line numbers and +/-/space indicators */
+  selectedCode: string;
+  /** User's review comment */
+  userNote: string;
+}
+
+/**
  * A single pending review note
  * Created when user adds a review note from the diff viewer
  */
 export interface PendingReview {
   /** Unique identifier */
   id: string;
-  /** The review note content (includes <review> tags and context) */
-  content: string;
-  /** File path referenced in the review */
-  filePath: string;
-  /** Line range referenced (e.g., "42-45") */
-  lineRange: string;
+  /** Structured review data for rich UI display */
+  data: ReviewNoteData;
   /** Current status */
   status: PendingReviewStatus;
   /** Timestamp when created */
@@ -130,4 +142,12 @@ export interface PendingReviewsState {
   reviews: Record<string, PendingReview>;
   /** Last update timestamp */
   lastUpdated: number;
+}
+
+/**
+ * Format a ReviewNoteData into the message format for the model.
+ * Only called when sending to chat.
+ */
+export function formatReviewNoteForChat(data: ReviewNoteData): string {
+  return `<review>\nRe ${data.filePath}:${data.lineRange}\n\`\`\`\n${data.selectedCode}\n\`\`\`\n> ${data.userNote.trim()}\n</review>`;
 }

@@ -79,9 +79,12 @@ export function createPendingReview(
 ): PendingReview {
   return {
     id,
-    content: `<review>\nRe ${filePath}:${lineRange}\n\`\`\`\n// sample code\n\`\`\`\n> ${note}\n</review>`,
-    filePath,
-    lineRange,
+    data: {
+      filePath,
+      lineRange,
+      selectedCode: "// sample code",
+      userNote: note,
+    },
     status,
     createdAt: Date.now() - Math.random() * 3600000, // Random time in last hour
     statusChangedAt: status === "checked" ? Date.now() : undefined,

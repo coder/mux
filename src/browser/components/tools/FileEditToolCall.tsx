@@ -25,6 +25,7 @@ import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./shared/to
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { DiffContainer, DiffRenderer, SelectableDiffRenderer } from "../shared/DiffRenderer";
 import { KebabMenu, type KebabMenuItem } from "../KebabMenu";
+import type { ReviewNoteData } from "@/common/types/review";
 
 type FileEditOperationArgs =
   | FileEditReplaceStringToolArgs
@@ -41,13 +42,13 @@ interface FileEditToolCallProps {
   args: FileEditOperationArgs;
   result?: FileEditToolResult;
   status?: ToolStatus;
-  onReviewNote?: (note: string) => void;
+  onReviewNote?: (data: ReviewNoteData) => void;
 }
 
 function renderDiff(
   diff: string,
   filePath?: string,
-  onReviewNote?: (note: string) => void
+  onReviewNote?: (data: ReviewNoteData) => void
 ): React.ReactNode {
   try {
     const patches = parsePatch(diff);

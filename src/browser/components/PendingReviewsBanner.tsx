@@ -21,7 +21,7 @@ import {
 import { cn } from "@/common/lib/utils";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipWrapper } from "./Tooltip";
-import type { PendingReview } from "@/common/types/review";
+import type { PendingReview, ReviewNoteData } from "@/common/types/review";
 
 interface PendingReviewsBannerProps {
   /** All reviews (pending and checked) */
@@ -35,7 +35,7 @@ interface PendingReviewsBannerProps {
   /** Uncheck a review */
   onUncheck: (reviewId: string) => void;
   /** Send review content to chat input */
-  onSendToChat: (content: string) => void;
+  onSendToChat: (data: ReviewNoteData) => void;
   /** Remove a review */
   onRemove: (reviewId: string) => void;
   /** Clear all checked reviews */
@@ -46,13 +46,8 @@ interface PendingReviewsBannerProps {
  * Extract a short summary from review content for display
  */
 function getReviewSummary(review: PendingReview): string {
-  // Extract the user's note from the review content (after the code block)
-  const noteMatch = /```\n> (.+?)\n<\/review>/s.exec(review.content);
-  if (noteMatch) {
-    const note = noteMatch[1].trim();
-    return note.length > 50 ? note.slice(0, 50) + "…" : note;
-  }
-  return `${review.filePath}:${review.lineRange}`;
+  const note = review.data.userNote.trim();
+  return note.length > 50 ? note.slice(0, 50) + "…" : note;
 }
 
 /**
@@ -91,7 +86,7 @@ const ReviewItem: React.FC<{
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-1.5">
           <span className="font-mono text-[var(--color-review-accent)]">
-            {review.filePath}:{review.lineRange}
+            {review.data.filePath}:{review.data.lineRange}
           </span>
         </div>
         <div className="text-muted truncate">{getReviewSummary(review)}</div>
@@ -243,7 +238,7 @@ export const PendingReviewsBanner: React.FC<PendingReviewsBannerProps> = ({
                   review={review}
                   onCheck={() => onCheck(review.id)}
                   onUncheck={() => onUncheck(review.id)}
-                  onSendToChat={() => onSendToChat(review.content)}
+                  onSendToChat={() => onSendToChat(review.data)}
                   onRemove={() => onRemove(review.id)}
                 />
               ))

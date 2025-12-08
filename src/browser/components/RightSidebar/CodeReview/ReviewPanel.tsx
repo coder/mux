@@ -32,7 +32,7 @@ import { parseDiff, extractAllHunks, buildGitDiffCommand } from "@/common/utils/
 import { getReviewSearchStateKey } from "@/common/constants/storage";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
 import { parseNumstat, buildFileTree, extractNewPath } from "@/common/utils/git/numstatParser";
-import type { DiffHunk, ReviewFilters as ReviewFiltersType } from "@/common/types/review";
+import type { DiffHunk, ReviewFilters as ReviewFiltersType, ReviewNoteData } from "@/common/types/review";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { applyFrontendFilters } from "@/browser/utils/review/filterHunks";
@@ -42,7 +42,7 @@ import { useAPI } from "@/browser/contexts/API";
 interface ReviewPanelProps {
   workspaceId: string;
   workspacePath: string;
-  onReviewNote?: (note: string) => void;
+  onReviewNote?: (data: ReviewNoteData) => void;
   /** Trigger to focus panel (increment to trigger) */
   focusTrigger?: number;
   /** Workspace is still being created (git operations in progress) */
