@@ -104,15 +104,16 @@ describe("backgroundCommands", () => {
   });
 
   describe("buildSpawnCommand", () => {
-    it("should use nohup pattern", () => {
+    it("should use set -m and nohup pattern", () => {
       const result = buildSpawnCommand({
         wrapperScript: "echo hello",
         stdoutPath: "/tmp/stdout.log",
         stderrPath: "/tmp/stderr.log",
       });
 
+      // set -m enables job control for process group isolation
       // bash path is quoted to handle paths with spaces (e.g., Windows Git Bash)
-      expect(result).toMatch(/^\(nohup 'bash' -c /);
+      expect(result).toMatch(/^\(set -m; nohup 'bash' -c /);
     });
 
     it("should include niceness prefix when provided", () => {
@@ -123,7 +124,7 @@ describe("backgroundCommands", () => {
         niceness: 10,
       });
 
-      expect(result).toMatch(/^\(nice -n 10 nohup/);
+      expect(result).toMatch(/^\(set -m; nice -n 10 nohup/);
     });
 
     it("should not include niceness prefix when not provided", () => {
@@ -181,15 +182,16 @@ describe("backgroundCommands", () => {
       expect(result).toContain("< /dev/null");
     });
 
-    it("should use universal PGID lookup fallback chain", () => {
+    it("should use set -m for process group isolation and PGID lookup", () => {
       const result = buildSpawnCommand({
         wrapperScript: "sleep 60",
         stdoutPath: "/tmp/out",
         stderrPath: "/tmp/err",
       });
 
-      // Universal fallback: ps → /proc → PID
-      // Works on Linux, macOS, and Windows MSYS2 without platform detection
+      // set -m enables job control so backgrounded process gets its own PGID
+      expect(result).toMatch(/^\(set -m;/);
+      // PGID lookup for verification: ps → /proc → PID
       expect(result).toContain("PGID=$(ps -o pgid= -p $! 2>/dev/null | tr -d ' ')");
       expect(result).toContain("PGID=$(cat /proc/$!/pgid 2>/dev/null)");
       expect(result).toContain("PGID=$!");

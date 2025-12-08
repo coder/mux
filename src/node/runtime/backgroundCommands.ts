@@ -103,27 +103,26 @@ export interface SpawnCommandOptions {
  * Build the spawn command using subshell + nohup pattern.
  *
  * Uses subshell (...) to isolate the process group so the outer shell exits immediately.
+ * set -m: enables job control so backgrounded process gets its own process group (PID === PGID)
  * nohup: ignores SIGHUP (survives terminal hangup)
  *
- * Returns "PID PGID" via echo, using a universal fallback chain for PGID lookup:
- * 1. ps -o pgid= (POSIX standard, works on Linux/macOS)
- * 2. /proc/$!/pgid (works on Linux, MSYS2; not available on macOS)
- * 3. Fall back to PID itself (degraded but functional - kills main process only)
+ * Returns "PID PGID" via echo. With set -m, the PGID equals PID, but we still look it up
+ * for verification and compatibility.
  */
 export function buildSpawnCommand(options: SpawnCommandOptions): string {
   const bash = options.bashPath ?? "bash";
   const nicePrefix = options.niceness !== undefined ? `nice -n ${options.niceness} ` : "";
   const quotePath = options.quotePath ?? shellQuote;
 
-  // Universal PGID lookup chain: try ps → /proc → fall back to PID
-  // This works on Linux, macOS, and Windows MSYS2 without platform detection
+  // With set -m, the backgrounded process gets its own process group (PID === PGID).
+  // We still look up PGID for verification: try ps → /proc → fall back to PID
   const pgidLookup =
     "PGID=$(ps -o pgid= -p $! 2>/dev/null | tr -d ' ') || " +
     "PGID=$(cat /proc/$!/pgid 2>/dev/null) || " +
     "PGID=$!";
 
   return (
-    `(${nicePrefix}nohup ${shellQuote(bash)} -c ${shellQuote(options.wrapperScript)} ` +
+    `(set -m; ${nicePrefix}nohup ${shellQuote(bash)} -c ${shellQuote(options.wrapperScript)} ` +
     `> ${quotePath(options.stdoutPath)} ` +
     `2> ${quotePath(options.stderrPath)} ` +
     `< /dev/null & ${pgidLookup}; echo "$! $PGID")`
