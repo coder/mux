@@ -83,7 +83,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
             >
               timeout: {args.timeout_secs ?? BASH_DEFAULT_TIMEOUT_SECS}s
               {result && ` • took ${formatDuration(result.wall_duration_ms)}`}
-              {!result && isPending && elapsedTime > 0 && ` • ${formatDuration(elapsedTime)}`}
+              {!result && isPending && elapsedTime > 0 && ` • ${Math.round(elapsedTime / 1000)}s`}
             </span>
             {result && (
               <span
