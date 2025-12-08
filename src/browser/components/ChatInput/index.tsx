@@ -1355,7 +1355,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
 
           {/* Attached reviews preview - show styled blocks with remove buttons */}
           {variant === "workspace" && attachedReviewIds.length > 0 && props.getReview && (
-            <div className="border-border max-h-36 space-y-0.5 overflow-y-auto border-b px-1.5 py-1">
+            <div className="border-border max-h-36 space-y-1 overflow-y-auto border-b px-1.5 py-1">
               {attachedReviewIds.map((reviewId) => {
                 const review = props.getReview!(reviewId);
                 if (!review) return null;
@@ -1365,7 +1365,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                     <button
                       type="button"
                       onClick={() => detachReview(reviewId)}
-                      className="bg-dark/80 text-muted hover:text-error absolute top-1.5 right-1.5 rounded-full p-0.5 opacity-0 transition-opacity group-hover:opacity-100"
+                      className="bg-dark text-muted hover:text-error absolute top-0.5 right-0.5 flex size-4 items-center justify-center rounded opacity-0 transition-opacity group-hover:opacity-100"
                       title="Remove from message"
                     >
                       <X className="size-3" />

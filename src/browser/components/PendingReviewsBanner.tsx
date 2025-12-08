@@ -190,20 +190,22 @@ const ReviewItem: React.FC<ReviewItemProps> = ({
           <TooltipContent>{isChecked ? "Mark as pending" : "Mark as done"}</TooltipContent>
         </Tooltip>
 
-        {/* Send to chat - near safe actions, away from delete */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 [&_svg]:size-3"
-              onClick={onSendToChat}
-            >
-              <Send />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>Send to chat</TooltipContent>
-        </Tooltip>
+        {/* Send to chat - always visible for pending items, away from delete */}
+        {!isChecked && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-5 shrink-0 [&_svg]:size-3"
+                onClick={onSendToChat}
+              >
+                <Send />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Send to chat</TooltipContent>
+          </Tooltip>
+        )}
 
         {/* File path and age */}
         <button

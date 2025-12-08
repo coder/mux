@@ -51,7 +51,8 @@ export function usePendingReviews(workspaceId: string): UsePendingReviewsReturn 
       workspaceId,
       reviews: {},
       lastUpdated: Date.now(),
-    }
+    },
+    { listener: true } // Enable cross-component sync so banner updates when AIView adds reviews
   );
 
   // Convert reviews object to sorted array (newest first)

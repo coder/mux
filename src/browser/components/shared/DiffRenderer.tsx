@@ -402,16 +402,12 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
     };
 
     return (
-      <div
-        className="bg-dark m-0 border-t px-2 py-1.5"
-        style={{ borderColor: "hsl(from var(--color-review-accent) h s l / 0.3)" }}
-      >
+      <div className="m-0 border-t border-[var(--color-review-accent)]/30 bg-[var(--color-review-accent)]/5 px-2 py-1.5">
         <textarea
           ref={textareaRef}
-          className="bg-dark text-text placeholder:text-muted w-full resize-none overflow-y-hidden rounded-sm border px-2 py-1.5 font-mono text-xs leading-[1.4] focus:border-[hsl(from_var(--color-review-accent)_h_s_l_/_0.6)] focus:outline-none"
+          className="text-primary placeholder:text-muted w-full resize-none overflow-y-hidden rounded border border-[var(--color-review-accent)]/40 bg-[var(--color-review-accent)]/10 px-2 py-1.5 text-xs leading-[1.4] focus:border-[var(--color-review-accent)]/60 focus:outline-none"
           style={{
             minHeight: "calc(12px * 1.4 * 3 + 12px)",
-            borderColor: "hsl(from var(--color-review-accent) h s l / 0.4)",
           }}
           placeholder="Add a review note to chat (Shift-click + button to select range, Enter to submit, Shift+Enter for newline, Esc to cancel)&#10;j, k to iterate through hunks, m to toggle as read"
           value={noteText}
