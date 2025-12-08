@@ -38,6 +38,8 @@ export interface ChatInputWorkspaceVariant {
   autoCompactionCheck?: AutoCompactionCheckResult; // Computed in parent (AIView) to avoid duplicate calculation
   /** Called after reviews are sent in a message - allows parent to mark them as checked */
   onReviewsSent?: (reviewIds: string[]) => void;
+  /** Called when attached reviews change (for syncing with banner) */
+  onAttachedReviewsChange?: (reviewIds: string[]) => void;
   /** Get a pending review by ID (for resolving attached review IDs to data) */
   getReview?: (id: string) => PendingReview | undefined;
 }

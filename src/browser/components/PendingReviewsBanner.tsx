@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { Button } from "./ui/button";
-import { Tooltip, TooltipWrapper } from "./Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import type { PendingReview } from "@/common/types/review";
 import { usePendingReviews } from "@/browser/hooks/usePendingReviews";
 import type { ChatInputAPI } from "./ChatInput";
@@ -176,17 +176,34 @@ const ReviewItem: React.FC<ReviewItemProps> = ({
         </button>
 
         {/* Check/Uncheck button */}
-        <TooltipWrapper inline>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn("size-5 shrink-0 [&_svg]:size-3", isChecked && "text-success")}
-            onClick={isChecked ? onUncheck : onCheck}
-          >
-            {isChecked ? <Undo2 /> : <Check />}
-          </Button>
-          <Tooltip align="center">{isChecked ? "Mark as pending" : "Mark as done"}</Tooltip>
-        </TooltipWrapper>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn("size-5 shrink-0 [&_svg]:size-3", isChecked && "text-success")}
+              onClick={isChecked ? onUncheck : onCheck}
+            >
+              {isChecked ? <Undo2 /> : <Check />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{isChecked ? "Mark as pending" : "Mark as done"}</TooltipContent>
+        </Tooltip>
+
+        {/* Send to chat - near safe actions, away from delete */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 [&_svg]:size-3"
+              onClick={onSendToChat}
+            >
+              <Send />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Send to chat</TooltipContent>
+        </Tooltip>
 
         {/* File path and age */}
         <button
@@ -200,32 +217,20 @@ const ReviewItem: React.FC<ReviewItemProps> = ({
           <span className="text-muted shrink-0 text-[10px]">{age}</span>
         </button>
 
-        {/* Actions */}
-        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-          <TooltipWrapper inline>
+        {/* Delete action - separate from safe actions */}
+        <Tooltip>
+          <TooltipTrigger asChild>
             <Button
               variant="ghost"
               size="icon"
-              className="size-5 [&_svg]:size-3"
-              onClick={onSendToChat}
-            >
-              <Send />
-            </Button>
-            <Tooltip align="center">Send to chat</Tooltip>
-          </TooltipWrapper>
-
-          <TooltipWrapper inline>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="text-error size-5 [&_svg]:size-3"
+              className="text-error size-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 [&_svg]:size-3"
               onClick={onRemove}
             >
               <Trash2 />
             </Button>
-            <Tooltip align="center">Remove</Tooltip>
-          </TooltipWrapper>
-        </div>
+          </TooltipTrigger>
+          <TooltipContent>Remove</TooltipContent>
+        </Tooltip>
       </div>
 
       {/* Expanded content */}
@@ -300,11 +305,13 @@ const ReviewItem: React.FC<ReviewItemProps> = ({
 interface PendingReviewsBannerInnerProps {
   workspaceId: string;
   chatInputAPI: React.RefObject<ChatInputAPI | null>;
+  attachedReviewIds: string[];
 }
 
 const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({
   workspaceId,
   chatInputAPI,
+  attachedReviewIds,
 }) => {
   const pendingReviews = usePendingReviews(workspaceId);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -312,12 +319,19 @@ const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({
 
   const INITIAL_COMPLETED_COUNT = 3;
 
-  // Separate pending and completed reviews
+  // Set of attached review IDs for quick lookup
+  const attachedSet = useMemo(() => new Set(attachedReviewIds), [attachedReviewIds]);
+
+  // Separate pending and completed reviews, excluding those already attached to chat
   const { pendingList, completedList } = useMemo(() => {
-    const pending = pendingReviews.reviews.filter((r) => r.status === "pending");
-    const completed = pendingReviews.reviews.filter((r) => r.status === "checked");
+    const pending = pendingReviews.reviews.filter(
+      (r) => r.status === "pending" && !attachedSet.has(r.id)
+    );
+    const completed = pendingReviews.reviews.filter(
+      (r) => r.status === "checked" && !attachedSet.has(r.id)
+    );
     return { pendingList: pending, completedList: completed };
-  }, [pendingReviews.reviews]);
+  }, [pendingReviews.reviews, attachedSet]);
 
   // Completed reviews to display (limited unless expanded)
   const displayedCompleted = useMemo(() => {
@@ -358,7 +372,12 @@ const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({
         onClick={handleToggle}
         className="hover:bg-hover flex w-full items-center gap-2 px-3 py-1.5 text-xs transition-colors"
       >
-        <MessageSquare className="size-3.5 text-[var(--color-review-accent)]" />
+        <MessageSquare
+          className={cn(
+            "size-3.5",
+            pendingReviews.pendingCount > 0 ? "text-[var(--color-review-accent)]" : "text-muted"
+          )}
+        />
         <span className="text-secondary">
           {pendingReviews.pendingCount > 0 ? (
             <>
@@ -415,15 +434,13 @@ const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({
                   Completed ({completedList.length})
                 </div>
                 {completedList.length > 0 && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-error h-5 px-2 text-xs"
+                  <button
+                    type="button"
                     onClick={pendingReviews.clearChecked}
+                    className="text-muted hover:text-error text-[10px] transition-colors"
                   >
-                    <Trash2 className="mr-1 size-3" />
-                    Clear all
-                  </Button>
+                    Clear
+                  </button>
                 )}
               </div>
               {displayedCompleted.map((review) => (
@@ -467,6 +484,8 @@ const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({
 interface PendingReviewsBannerProps {
   workspaceId: string;
   chatInputAPI: React.RefObject<ChatInputAPI | null>;
+  /** Review IDs currently attached to chat input (hidden from banner to prevent double-send) */
+  attachedReviewIds: string[];
 }
 
 /**
@@ -476,12 +495,17 @@ interface PendingReviewsBannerProps {
 export const PendingReviewsBanner: React.FC<PendingReviewsBannerProps> = ({
   workspaceId,
   chatInputAPI,
+  attachedReviewIds,
 }) => {
   const pendingReviews = usePendingReviews(workspaceId);
 
   return (
     <BannerErrorBoundary onClear={pendingReviews.clearAll}>
-      <PendingReviewsBannerInner workspaceId={workspaceId} chatInputAPI={chatInputAPI} />
+      <PendingReviewsBannerInner
+        workspaceId={workspaceId}
+        chatInputAPI={chatInputAPI}
+        attachedReviewIds={attachedReviewIds}
+      />
     </BannerErrorBoundary>
   );
 };

@@ -111,6 +111,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
   // Pending reviews state
   const pendingReviews = usePendingReviews(workspaceId);
+  const [attachedReviewIds, setAttachedReviewIds] = useState<string[]>([]);
   const { options } = useProviderOptions();
   const use1M = options.anthropic?.use1MContext ?? false;
   // Get pending model for auto-compaction settings (threshold is per-model)
@@ -616,7 +617,11 @@ const AIViewInner: React.FC<AIViewProps> = ({
             onCompactClick={handleCompactClick}
           />
         )}
-        <PendingReviewsBanner workspaceId={workspaceId} chatInputAPI={chatInputAPI} />
+        <PendingReviewsBanner
+          workspaceId={workspaceId}
+          chatInputAPI={chatInputAPI}
+          attachedReviewIds={attachedReviewIds}
+        />
         <ChatInput
           variant="workspace"
           workspaceId={workspaceId}
@@ -634,6 +639,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
           autoCompactionCheck={autoCompactionResult}
           getReview={pendingReviews.getReview}
           onReviewsSent={(ids) => ids.forEach((id) => pendingReviews.checkReview(id))}
+          onAttachedReviewsChange={setAttachedReviewIds}
         />
       </div>
 

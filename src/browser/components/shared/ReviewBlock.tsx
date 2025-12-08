@@ -56,12 +56,10 @@ export const ReviewBlock: React.FC<ReviewBlockProps> = ({ content }) => {
   }, [parsed.code]);
 
   return (
-    <div className="my-2 overflow-hidden rounded border border-[var(--color-review-accent)]/30 bg-[var(--color-review-accent)]/5">
+    <div className="overflow-hidden rounded border border-[var(--color-review-accent)]/30 bg-[var(--color-review-accent)]/5">
       {/* Header */}
-      <div className="flex items-center gap-2 border-b border-[var(--color-review-accent)]/20 bg-[var(--color-review-accent)]/10 px-3 py-1.5 text-xs">
-        <MessageSquare className="size-3.5 text-[var(--color-review-accent)]" />
-        <span className="font-medium text-[var(--color-review-accent)]">Review Note</span>
-        <span className="text-muted">·</span>
+      <div className="flex items-center gap-1.5 border-b border-[var(--color-review-accent)]/20 bg-[var(--color-review-accent)]/10 px-2 py-1 text-xs">
+        <MessageSquare className="size-3 text-[var(--color-review-accent)]" />
         <span className="text-secondary font-mono">
           {parsed.filePath}:{parsed.lineRange}
         </span>
@@ -69,7 +67,7 @@ export const ReviewBlock: React.FC<ReviewBlockProps> = ({ content }) => {
 
       {/* Code snippet */}
       {parsed.code && (
-        <div className="max-h-32 overflow-auto border-b border-[var(--color-review-accent)]/20 text-[11px]">
+        <div className="max-h-28 overflow-auto border-b border-[var(--color-review-accent)]/20 text-[11px]">
           <DiffRenderer
             content={diffContent}
             showLineNumbers={false}
@@ -81,8 +79,8 @@ export const ReviewBlock: React.FC<ReviewBlockProps> = ({ content }) => {
 
       {/* Comment */}
       {parsed.comment && (
-        <div className="px-3 py-2">
-          <blockquote className="text-primary border-l-2 border-[var(--color-review-accent)] pl-2 text-sm italic">
+        <div className="px-2 py-1">
+          <blockquote className="text-primary border-l-2 border-[var(--color-review-accent)] pl-1.5 text-xs italic">
             {parsed.comment}
           </blockquote>
         </div>

@@ -154,24 +154,26 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const modelSelectorRef = useRef<ModelSelectorRef>(null);
 
-  // Draft state combines text input and image attachments
-  // Use these helpers to avoid accidentally losing images when modifying text
+  // Draft state combines text input, image attachments, and attached reviews
+  // Use these helpers to avoid accidentally losing content when modifying text
   interface DraftState {
     text: string;
     images: ImageAttachment[];
+    reviewIds: string[];
   }
   const getDraft = useCallback(
-    (): DraftState => ({ text: input, images: imageAttachments }),
-    [input, imageAttachments]
+    (): DraftState => ({ text: input, images: imageAttachments, reviewIds: attachedReviewIds }),
+    [input, imageAttachments, attachedReviewIds]
   );
   const setDraft = useCallback(
     (draft: DraftState) => {
       setInput(draft.text);
       setImageAttachments(draft.images);
+      setAttachedReviewIds(draft.reviewIds);
     },
     [setInput]
   );
-  const preEditDraftRef = useRef<DraftState>({ text: "", images: [] });
+  const preEditDraftRef = useRef<DraftState>({ text: "", images: [], reviewIds: [] });
   const { open } = useSettings();
   const { selectedWorkspace } = useWorkspaceContext();
   const [mode, setMode] = useMode();
@@ -356,6 +358,13 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   // Get currently attached reviews
   const getAttachedReviews = useCallback(() => attachedReviewIds, [attachedReviewIds]);
 
+  // Notify parent when attached reviews change (workspace variant only)
+  useEffect(() => {
+    if (variant === "workspace" && props.onAttachedReviewsChange) {
+      props.onAttachedReviewsChange(attachedReviewIds);
+    }
+  }, [variant, attachedReviewIds, props]);
+
   // Provide API to parent via callback
   useEffect(() => {
     if (props.onReady) {
@@ -411,7 +420,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   useEffect(() => {
     if (editingMessage) {
       preEditDraftRef.current = getDraft();
-      setDraft({ text: editingMessage.content, images: [] });
+      setDraft({ text: editingMessage.content, images: [], reviewIds: [] });
       // Auto-resize textarea and focus
       setTimeout(() => {
         if (inputRef.current) {
@@ -968,8 +977,8 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
       }
       setIsSending(true);
 
-      // Save current state for restoration on error
-      const previousImageAttachments = [...imageAttachments];
+      // Save current draft state for restoration on error
+      const preSendDraft = getDraft();
 
       // Auto-compaction check (workspace variant only)
       // Check if we should auto-compact before sending this message
@@ -1002,8 +1011,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
 
           if (!result.success) {
             // Restore on error
-            setInput(messageText);
-            setImageAttachments(previousImageAttachments);
+            setDraft(preSendDraft);
             setToast({
               id: Date.now().toString(),
               type: "error",
@@ -1020,8 +1028,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           }
         } catch (error) {
           // Restore on unexpected error
-          setInput(messageText);
-          setImageAttachments(previousImageAttachments);
+          setDraft(preSendDraft);
           setToast({
             id: Date.now().toString(),
             type: "error",
@@ -1035,9 +1042,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
 
         return; // Skip normal send
       }
-
-      // Store attached review IDs before try block so catch block can access them
-      const sentReviewIds = [...attachedReviewIds];
 
       try {
         // Prepare image parts if any
@@ -1135,10 +1139,8 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           console.error("Failed to send message:", result.error);
           // Show error using enhanced toast
           setToast(createErrorToast(result.error));
-          // Restore input, images, and attached reviews on error so user can try again
-          setInput(messageText);
-          setImageAttachments(previousImageAttachments);
-          setAttachedReviewIds(sentReviewIds);
+          // Restore draft on error so user can try again
+          setDraft(preSendDraft);
         } else {
           // Track telemetry for successful message send
           telemetry.messageSent(
@@ -1151,8 +1153,8 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           );
 
           // Mark attached reviews as completed
-          if (sentReviewIds.length > 0) {
-            props.onReviewsSent?.(sentReviewIds);
+          if (preSendDraft.reviewIds.length > 0) {
+            props.onReviewsSent?.(preSendDraft.reviewIds);
           }
 
           // Exit editing mode if we were editing
@@ -1170,9 +1172,8 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             raw: error instanceof Error ? error.message : "Failed to send message",
           })
         );
-        setInput(messageText);
-        setImageAttachments(previousImageAttachments);
-        setAttachedReviewIds(sentReviewIds);
+        // Restore draft on error
+        setDraft(preSendDraft);
       } finally {
         setIsSending(false);
       }
@@ -1354,7 +1355,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
 
           {/* Attached reviews preview - show styled blocks with remove buttons */}
           {variant === "workspace" && attachedReviewIds.length > 0 && props.getReview && (
-            <div className="border-border max-h-40 space-y-1 overflow-y-auto border-b px-2 py-1.5">
+            <div className="border-border max-h-36 space-y-0.5 overflow-y-auto border-b px-1.5 py-1">
               {attachedReviewIds.map((reviewId) => {
                 const review = props.getReview!(reviewId);
                 if (!review) return null;
@@ -1364,10 +1365,10 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                     <button
                       type="button"
                       onClick={() => detachReview(reviewId)}
-                      className="bg-dark/80 text-muted hover:text-error absolute top-3 right-3 rounded-full p-0.5 opacity-0 transition-opacity group-hover:opacity-100"
+                      className="bg-dark/80 text-muted hover:text-error absolute top-1.5 right-1.5 rounded-full p-0.5 opacity-0 transition-opacity group-hover:opacity-100"
                       title="Remove from message"
                     >
-                      <X className="size-3.5" />
+                      <X className="size-3" />
                     </button>
                   </div>
                 );
