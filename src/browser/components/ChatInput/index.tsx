@@ -52,7 +52,7 @@ import {
 } from "@/browser/utils/ui/keybinds";
 import { ModelSelector, type ModelSelectorRef } from "../ModelSelector";
 import { useModelLRU } from "@/browser/hooks/useModelLRU";
-import { SendHorizontal, X } from "lucide-react";
+import { SendHorizontal } from "lucide-react";
 import { VimTextArea } from "../VimTextArea";
 import { ImageAttachments, type ImageAttachment } from "../ImageAttachments";
 import {
@@ -241,7 +241,8 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   );
   const hasTypedText = input.trim().length > 0;
   const hasImages = imageAttachments.length > 0;
-  const canSend = (hasTypedText || hasImages) && !disabled && !isSending;
+  const hasReviews = attachedReviewIds.length > 0;
+  const canSend = (hasTypedText || hasImages || hasReviews) && !disabled && !isSending;
   // Setter for model - updates localStorage directly so useSendMessageOptions picks it up
   const setPreferredModel = useCallback(
     (model: string) => {
@@ -1360,17 +1361,11 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 const review = props.getReview!(reviewId);
                 if (!review) return null;
                 return (
-                  <div key={reviewId} className="group relative">
-                    <ReviewBlock content={formatReviewNoteForChat(review.data).slice(8, -9)} />
-                    <button
-                      type="button"
-                      onClick={() => detachReview(reviewId)}
-                      className="bg-dark text-muted hover:text-error absolute top-0.5 right-0.5 flex size-4 items-center justify-center rounded opacity-0 transition-opacity group-hover:opacity-100"
-                      title="Remove from message"
-                    >
-                      <X className="size-3" />
-                    </button>
-                  </div>
+                  <ReviewBlock
+                    key={reviewId}
+                    content={formatReviewNoteForChat(review.data).slice(8, -9)}
+                    onRemove={() => detachReview(reviewId)}
+                  />
                 );
               })}
             </div>

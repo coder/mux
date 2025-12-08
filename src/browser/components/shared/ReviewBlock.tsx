@@ -8,12 +8,14 @@
  */
 
 import React, { useMemo } from "react";
-import { MessageSquare } from "lucide-react";
+import { MessageSquare, X } from "lucide-react";
 import { DiffRenderer } from "./DiffRenderer";
 
 interface ReviewBlockProps {
   /** Raw content inside the <review> tags */
   content: string;
+  /** Optional callback to remove the review (shows X button in header) */
+  onRemove?: () => void;
 }
 
 interface ParsedReview {
@@ -43,7 +45,7 @@ function parseReviewContent(content: string): ParsedReview {
 /**
  * Styled review block component
  */
-export const ReviewBlock: React.FC<ReviewBlockProps> = ({ content }) => {
+export const ReviewBlock: React.FC<ReviewBlockProps> = ({ content, onRemove }) => {
   const parsed = useMemo(() => parseReviewContent(content), [content]);
 
   // Format code for diff display - add context markers if needed
@@ -59,10 +61,20 @@ export const ReviewBlock: React.FC<ReviewBlockProps> = ({ content }) => {
     <div className="overflow-hidden rounded border border-[var(--color-review-accent)]/30 bg-[var(--color-review-accent)]/5">
       {/* Header */}
       <div className="flex items-center gap-1.5 border-b border-[var(--color-review-accent)]/20 bg-[var(--color-review-accent)]/10 px-2 py-1 text-xs">
-        <MessageSquare className="size-3 text-[var(--color-review-accent)]" />
-        <span className="text-secondary font-mono">
+        <MessageSquare className="size-3 shrink-0 text-[var(--color-review-accent)]" />
+        <span className="text-secondary min-w-0 flex-1 truncate font-mono">
           {parsed.filePath}:{parsed.lineRange}
         </span>
+        {onRemove && (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="text-muted hover:text-error -mr-0.5 flex shrink-0 items-center justify-center rounded p-0.5 transition-colors"
+            title="Remove from message"
+          >
+            <X className="size-3" />
+          </button>
+        )}
       </div>
 
       {/* Code snippet */}

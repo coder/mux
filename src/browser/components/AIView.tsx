@@ -220,10 +220,12 @@ const AIViewInner: React.FC<AIViewProps> = ({
     chatInputAPI.current = api;
   }, []);
 
-  // Handler for review notes from Code Review tab - adds to pending reviews
+  // Handler for review notes from Code Review tab - adds to pending reviews and attaches to chat
   const handleReviewNote = useCallback(
     (data: ReviewNoteData) => {
-      pendingReviews.addReview(data);
+      const review = pendingReviews.addReview(data);
+      // Auto-attach to chat input for immediate sending
+      chatInputAPI.current?.attachReview(review.id);
     },
     [pendingReviews]
   );
