@@ -63,12 +63,13 @@ You are in a git worktree at ${workspacePath}
 /**
  * Build MCP servers context XML block.
  * Only included when at least one MCP server is configured.
+ * Note: We only expose server names, not commands, to avoid leaking secrets.
  */
 function buildMCPContext(mcpServers: MCPServerMap): string {
-  const entries = Object.entries(mcpServers);
-  if (entries.length === 0) return "";
+  const names = Object.keys(mcpServers);
+  if (names.length === 0) return "";
 
-  const serverList = entries.map(([name, command]) => `- ${name}: \`${command}\``).join("\n");
+  const serverList = names.map((name) => `- ${name}`).join("\n");
 
   return `
 <mcp>
