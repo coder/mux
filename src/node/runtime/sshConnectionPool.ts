@@ -59,6 +59,12 @@ export interface ConnectionHealth {
 const BACKOFF_SCHEDULE = [1, 5, 10, 20, 40, 60];
 
 /**
+ * Time after which a "healthy" connection should be re-probed.
+ * Prevents stale health state when network silently degrades.
+ */
+const HEALTHY_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
  * SSH Connection Pool
  *
  * Call acquireConnection() before any SSH operation to ensure the connection
@@ -91,10 +97,16 @@ export class SSHConnectionPool {
       );
     }
 
-    // Return immediately if known healthy
+    // Return immediately if known healthy and not stale
     if (health?.status === "healthy") {
-      log.debug(`SSH connection to ${config.host} is known healthy, skipping probe`);
-      return;
+      const age = Date.now() - (health.lastSuccess?.getTime() ?? 0);
+      if (age < HEALTHY_TTL_MS) {
+        log.debug(`SSH connection to ${config.host} is known healthy, skipping probe`);
+        return;
+      }
+      log.debug(
+        `SSH connection to ${config.host} health is stale (${Math.round(age / 1000)}s), re-probing`
+      );
     }
 
     // Check for inflight probe - singleflighting
@@ -243,7 +255,9 @@ export class SSHConnectionPool {
         stderr += data.toString();
       });
 
+      let timedOut = false;
       const timeout = setTimeout(() => {
+        timedOut = true;
         proc.kill("SIGKILL");
         const error = "SSH probe timed out";
         this.markFailedByKey(key, error);
@@ -252,6 +266,7 @@ export class SSHConnectionPool {
 
       proc.on("close", (code) => {
         clearTimeout(timeout);
+        if (timedOut) return; // Already handled by timeout
 
         if (code === 0) {
           this.markHealthyByKey(key);
@@ -304,11 +319,13 @@ export function getControlPath(config: SSHRuntimeConfig): string {
  * Includes local username to prevent cross-user socket collisions.
  */
 function makeConnectionKey(config: SSHRuntimeConfig): string {
+  // Note: srcBaseDir is intentionally excluded - connection identity is determined
+  // by user + host + port + key. This allows health tracking and multiplexing
+  // to be shared across workspaces on the same host.
   const parts = [
     os.userInfo().username, // Include local user to prevent cross-user collisions
     config.host,
     config.port?.toString() ?? "22",
-    config.srcBaseDir,
     config.identityFile ?? "default",
   ];
   return parts.join(":");

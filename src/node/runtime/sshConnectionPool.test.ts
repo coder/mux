@@ -58,7 +58,9 @@ describe("sshConnectionPool", () => {
       expect(getControlPath(config1)).not.toBe(getControlPath(config2));
     });
 
-    test("different srcBaseDirs produce different controlPaths", () => {
+    test("different srcBaseDirs produce same controlPaths (connection shared)", () => {
+      // srcBaseDir is intentionally excluded from connection key -
+      // workspaces on the same host share health tracking and multiplexing
       const config1: SSHRuntimeConfig = {
         host: "test.com",
         srcBaseDir: "/work1",
@@ -68,7 +70,7 @@ describe("sshConnectionPool", () => {
         srcBaseDir: "/work2",
       };
 
-      expect(getControlPath(config1)).not.toBe(getControlPath(config2));
+      expect(getControlPath(config1)).toBe(getControlPath(config2));
     });
 
     test("controlPath is in tmpdir with expected format", () => {
@@ -262,22 +264,22 @@ describe("SSHConnectionPool", () => {
     test("concurrent acquireConnection calls share same probe", async () => {
       const pool = new SSHConnectionPool();
       const config: SSHRuntimeConfig = {
-        host: "test.example.com",
+        host: "nonexistent.invalid.host.test",
         srcBaseDir: "/work",
       };
 
-      // Mark healthy to avoid actual probe
-      pool.markHealthy(config);
-
-      // Multiple concurrent calls should all succeed
-      const results = await Promise.all([
-        pool.acquireConnection(config),
-        pool.acquireConnection(config),
-        pool.acquireConnection(config),
+      // All concurrent calls should share the same probe and get same result
+      const results = await Promise.allSettled([
+        pool.acquireConnection(config, 1000),
+        pool.acquireConnection(config, 1000),
+        pool.acquireConnection(config, 1000),
       ]);
 
-      // All should resolve (no errors)
-      expect(results).toHaveLength(3);
+      // All should be rejected (connection fails)
+      expect(results.every((r) => r.status === "rejected")).toBe(true);
+
+      // Only 1 failure should be recorded (not 3) - proves singleflighting worked
+      expect(pool.getConnectionHealth(config)?.consecutiveFailures).toBe(1);
     });
   });
 });
