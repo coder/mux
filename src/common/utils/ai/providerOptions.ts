@@ -69,7 +69,7 @@ export function buildProviderOptions(
   // Always clamp to the model's supported thinking policy (e.g., gpt-5-pro = HIGH only)
   const effectiveThinking = enforceThinkingPolicy(modelString, thinkingLevel);
   // Parse provider from model string
-  const [provider] = modelString.split(":");
+  let [provider, modelName] = modelString.split(":", 2);
 
   log.debug("buildProviderOptions", {
     modelString,
@@ -82,11 +82,19 @@ export function buildProviderOptions(
     return {};
   }
 
+  // Convert mux-gateway provider to the actual provider and model name.
+  if (provider === "mux-gateway") {
+    const [innerProvider, innerModelName] = modelName.split("/", 2);
+    log.debug("buildProviderOptions: detected mux-gateway provider, using inner provider and model name", {
+      innerProvider,
+      innerModelName,
+    });
+    provider = innerProvider;
+    modelName = innerModelName;
+  }
+
   // Build Anthropic-specific options
   if (provider === "anthropic") {
-    // Extract model name from model string (e.g., "anthropic:claude-opus-4-5" -> "claude-opus-4-5")
-    const [, modelName] = modelString.split(":");
-
     // Check if this is Opus 4.5 (supports effort parameter)
     // Opus 4.5 uses the new "effort" parameter for reasoning control
     // All other Anthropic models use the "thinking" parameter with budgetTokens
