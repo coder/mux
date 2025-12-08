@@ -365,7 +365,7 @@ const ReviewsBannerInner: React.FC<ReviewsBannerInnerProps> = ({ workspaceId }) 
       <button
         type="button"
         onClick={handleToggle}
-        className="hover:bg-hover mx-auto flex w-full max-w-4xl items-center gap-2 py-1.5 text-xs transition-colors"
+        className="hover:bg-hover mx-auto flex w-full max-w-4xl items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors"
       >
         <MessageSquare
           className={cn(
