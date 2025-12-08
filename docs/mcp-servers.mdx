@@ -7,7 +7,11 @@ MCP (Model Context Protocol) servers provide additional tools to agents. Configu
 
 ## Configuration
 
-Create `.mux/mcp.jsonc` in your project root:
+You can either configure the servers in the UI (`Ctrl+,`):
+
+![MCP Servers UI](./img/mcp-servers-1.webp)
+
+Or directly in the `.mux/mcp.jsonc` file in your project root:
 
 ```jsonc
 {
@@ -40,15 +44,6 @@ Examples:
 /mcp remove github
 /mcp edit chrome npx -y chrome-devtools-mcp@latest --headless --isolated
 ```
-
-## Settings UI
-
-Configure servers in **Settings → Projects**:
-
-1. Select a project from the dropdown
-2. Add servers with name and command
-3. Use **Test** (play button) to verify before adding
-4. Use **Edit** (pencil) or **Remove** (trash) to manage existing servers
 
 ## Scope
 
