@@ -271,7 +271,10 @@ export class StreamManager extends EventEmitter {
   public async createTempDirForStream(streamToken: StreamToken, runtime: Runtime): Promise<string> {
     // Create directory and get absolute path (works for both local and remote)
     // Use 'cd' + 'pwd' to resolve ~ to absolute path
-    const command = `mkdir -p ~/.mux-tmp/${streamToken} && cd ~/.mux-tmp/${streamToken} && pwd`;
+    // On Windows, use cygpath to convert Git Bash path to native Windows path
+    const isWindows = process.platform === "win32";
+    const pwdCmd = isWindows ? 'cygpath -w "$(pwd)"' : "pwd";
+    const command = `mkdir -p ~/.mux-tmp/${streamToken} && cd ~/.mux-tmp/${streamToken} && ${pwdCmd}`;
     const result = await execBuffered(runtime, command, {
       cwd: "/",
       timeout: 10,
