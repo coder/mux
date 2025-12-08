@@ -73,8 +73,9 @@ function toolOutputContains(
       "toolName" in event &&
       event.toolName === toolName
     ) {
-      const result = (event as { result?: { output?: string } }).result?.output;
-      if (typeof result === "string" && result.includes(substring)) {
+      const result = (event as { result?: { output?: string; message?: string } }).result;
+      const text = result?.output ?? result?.message;
+      if (typeof text === "string" && text.includes(substring)) {
         return true;
       }
     }
