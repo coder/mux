@@ -20,6 +20,7 @@ import {
 import { log } from "@/node/services/log";
 import type { MuxMessage } from "@/common/types/message";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
+import { normalizeGatewayModel } from "./models";
 
 /**
  * OpenRouter reasoning options
@@ -68,25 +69,23 @@ export function buildProviderOptions(
 ): ProviderOptions {
   // Always clamp to the model's supported thinking policy (e.g., gpt-5-pro = HIGH only)
   const effectiveThinking = enforceThinkingPolicy(modelString, thinkingLevel);
-  // Parse provider from model string
-  const [provider] = modelString.split(":");
+  // Parse provider from normalized model string
+  const [provider, modelName] = normalizeGatewayModel(modelString).split(":", 2);
 
   log.debug("buildProviderOptions", {
     modelString,
     provider,
+    modelName,
     thinkingLevel,
   });
 
-  if (!provider) {
-    log.debug("buildProviderOptions: No provider found, returning empty");
+  if (!provider || !modelName) {
+    log.debug("buildProviderOptions: No provider or model name found, returning empty");
     return {};
   }
 
   // Build Anthropic-specific options
   if (provider === "anthropic") {
-    // Extract model name from model string (e.g., "anthropic:claude-opus-4-5" -> "claude-opus-4-5")
-    const [, modelName] = modelString.split(":");
-
     // Check if this is Opus 4.5 (supports effort parameter)
     // Opus 4.5 uses the new "effort" parameter for reasoning control
     // All other Anthropic models use the "thinking" parameter with budgetTokens
