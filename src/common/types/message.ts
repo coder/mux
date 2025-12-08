@@ -30,7 +30,17 @@ export type MuxFrontendMetadata =
     }
   | {
       type: "normal"; // Regular messages
+      /** Structured review data for rich UI display (avoids parsing from text) */
+      reviews?: ReviewNoteDataForDisplay[];
     };
+
+/** Review data stored in message metadata for display */
+export interface ReviewNoteDataForDisplay {
+  filePath: string;
+  lineRange: string;
+  selectedCode: string;
+  userNote: string;
+}
 
 // Our custom metadata type
 export interface MuxMetadata {
@@ -109,6 +119,8 @@ export type DisplayedMessage =
         rawCommand: string;
         parsed: CompactionRequestData;
       };
+      /** Structured review data for rich UI display (from muxMetadata) */
+      reviews?: ReviewNoteDataForDisplay[];
     }
   | {
       type: "assistant";

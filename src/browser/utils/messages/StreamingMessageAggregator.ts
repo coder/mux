@@ -862,6 +862,10 @@ export class StreamingMessageAggregator {
                 }
               : undefined;
 
+          // Extract reviews from muxMetadata for rich UI display
+          const reviews =
+            muxMeta?.type === "normal" && muxMeta.reviews ? muxMeta.reviews : undefined;
+
           displayedMessages.push({
             type: "user",
             id: message.id,
@@ -871,6 +875,7 @@ export class StreamingMessageAggregator {
             historySequence,
             timestamp: baseTimestamp,
             compactionRequest,
+            reviews,
           });
         } else if (message.role === "assistant") {
           // Assistant messages: each part becomes a separate DisplayedMessage

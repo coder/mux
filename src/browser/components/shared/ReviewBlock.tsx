@@ -11,6 +11,7 @@ import React, { useMemo, useState, useCallback, useRef } from "react";
 import { MessageSquare, X, Pencil, Check } from "lucide-react";
 import { DiffRenderer } from "./DiffRenderer";
 import { Button } from "../ui/button";
+import type { ReviewNoteDataForDisplay } from "@/common/types/message";
 
 interface ReviewBlockProps {
   /** Raw content inside the <review> tags */
@@ -18,6 +19,15 @@ interface ReviewBlockProps {
   /** Optional callback to remove the review (shows X button in header) */
   onRemove?: () => void;
   /** Optional callback to edit the comment - enables edit mode when provided */
+  onEditComment?: (newComment: string) => void;
+}
+
+interface ReviewBlockFromDataProps {
+  /** Structured review data (no parsing needed) */
+  data: ReviewNoteDataForDisplay;
+  /** Optional callback to remove the review */
+  onRemove?: () => void;
+  /** Optional callback to edit the comment */
   onEditComment?: (newComment: string) => void;
 }
 
@@ -99,7 +109,7 @@ export const ReviewBlock: React.FC<ReviewBlockProps> = ({ content, onRemove, onE
       {/* Header */}
       <div className="flex items-center gap-1.5 border-b border-[var(--color-review-accent)]/20 bg-[var(--color-review-accent)]/10 px-2 py-1 text-xs">
         <MessageSquare className="size-3 shrink-0 text-[var(--color-review-accent)]" />
-        <span className="text-secondary min-w-0 flex-1 truncate font-mono">
+        <span className="text-primary min-w-0 flex-1 truncate font-mono">
           {parsed.filePath}:{parsed.lineRange}
         </span>
         {onRemove && (
@@ -167,6 +177,151 @@ export const ReviewBlock: React.FC<ReviewBlockProps> = ({ content, onRemove, onE
             <div className="flex items-start gap-1">
               <blockquote className="text-primary flex-1 border-l-2 border-[var(--color-review-accent)] pl-1.5 text-xs italic">
                 {parsed.comment || <span className="text-muted">No comment</span>}
+              </blockquote>
+              {onEditComment && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-5 shrink-0 opacity-0 transition-opacity group-hover/comment:opacity-100 [&_svg]:size-3"
+                  onClick={handleStartEdit}
+                >
+                  <Pencil />
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/**
+ * ReviewBlock variant that takes structured data directly (no parsing)
+ * Used when review data is available from muxMetadata
+ */
+export const ReviewBlockFromData: React.FC<ReviewBlockFromDataProps> = ({
+  data,
+  onRemove,
+  onEditComment,
+}) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState(data.userNote);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Format code for diff display - add context markers if needed
+  const diffContent = useMemo(() => {
+    if (!data.selectedCode) return "";
+    const lines = data.selectedCode.split("\n");
+    const hasDiffMarkers = lines.some((l) => /^[+-\s]/.test(l));
+    if (hasDiffMarkers) return data.selectedCode;
+    return lines.map((l) => ` ${l}`).join("\n");
+  }, [data.selectedCode]);
+
+  const handleStartEdit = useCallback(() => {
+    setEditValue(data.userNote);
+    setIsEditing(true);
+    setTimeout(() => textareaRef.current?.focus(), 0);
+  }, [data.userNote]);
+
+  const handleSaveEdit = useCallback(() => {
+    if (onEditComment && editValue.trim() !== data.userNote) {
+      onEditComment(editValue.trim());
+    }
+    setIsEditing(false);
+  }, [editValue, data.userNote, onEditComment]);
+
+  const handleCancelEdit = useCallback(() => {
+    setEditValue(data.userNote);
+    setIsEditing(false);
+  }, [data.userNote]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        handleSaveEdit();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        handleCancelEdit();
+      }
+    },
+    [handleSaveEdit, handleCancelEdit]
+  );
+
+  return (
+    <div className="overflow-hidden rounded border border-[var(--color-review-accent)]/30 bg-[var(--color-review-accent)]/5">
+      {/* Header */}
+      <div className="flex items-center gap-1.5 border-b border-[var(--color-review-accent)]/20 bg-[var(--color-review-accent)]/10 px-2 py-1 text-xs">
+        <MessageSquare className="size-3 shrink-0 text-[var(--color-review-accent)]" />
+        <span className="text-primary min-w-0 flex-1 truncate font-mono">
+          {data.filePath}:{data.lineRange}
+        </span>
+        {onRemove && (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="text-muted hover:text-error -mr-0.5 flex shrink-0 items-center justify-center rounded p-0.5 transition-colors"
+            title="Remove from message"
+          >
+            <X className="size-3" />
+          </button>
+        )}
+      </div>
+
+      {/* Code snippet */}
+      {data.selectedCode && (
+        <div className="max-h-64 overflow-auto border-b border-[var(--color-review-accent)]/20 text-[11px]">
+          <DiffRenderer
+            content={diffContent}
+            showLineNumbers={false}
+            fontSize="11px"
+            filePath={data.filePath}
+            className="rounded-none"
+          />
+        </div>
+      )}
+
+      {/* Comment - editable when onEditComment provided */}
+      {(data.userNote || onEditComment) && (
+        <div className="group/comment px-2 py-1">
+          {isEditing ? (
+            <div className="space-y-1">
+              <textarea
+                ref={textareaRef}
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                className="text-primary w-full resize-none rounded border border-[var(--color-review-accent)]/40 bg-[var(--color-review-accent)]/10 px-1.5 py-1 text-xs focus:border-[var(--color-review-accent)]/60 focus:outline-none"
+                rows={2}
+                placeholder="Your comment..."
+              />
+              <div className="flex items-center justify-end gap-1">
+                <span className="text-muted mr-1 text-[10px]">⌘Enter save, Esc cancel</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-5 px-1.5 text-[10px]"
+                  onClick={handleCancelEdit}
+                >
+                  <X className="mr-0.5 size-2.5" />
+                  Cancel
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="h-5 px-1.5 text-[10px]"
+                  onClick={handleSaveEdit}
+                >
+                  <Check className="mr-0.5 size-2.5" />
+                  Save
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-start gap-1">
+              <blockquote className="text-primary flex-1 border-l-2 border-[var(--color-review-accent)] pl-1.5 text-xs italic">
+                {data.userNote || <span className="text-muted">No comment</span>}
               </blockquote>
               {onEditComment && (
                 <Button

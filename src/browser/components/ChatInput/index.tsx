@@ -1102,7 +1102,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           }
         }
 
-        // Prepend attached reviews to message
+        // Prepend attached reviews to message and store in metadata for display
         const attachedReviews = attachedReviewIds
           .map((id) => props.getReview?.(id))
           .filter((r): r is NonNullable<typeof r> => r !== undefined);
@@ -1112,6 +1112,19 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         const finalMessageText = reviewsText
           ? reviewsText + (actualMessageText ? "\n\n" + actualMessageText : "")
           : actualMessageText;
+
+        // Store review data in muxMetadata for rich UI display (avoids re-parsing text)
+        if (attachedReviews.length > 0 && !muxMetadata) {
+          muxMetadata = {
+            type: "normal",
+            reviews: attachedReviews.map((r) => ({
+              filePath: r.data.filePath,
+              lineRange: r.data.lineRange,
+              selectedCode: r.data.selectedCode,
+              userNote: r.data.userNote,
+            })),
+          };
+        }
 
         // Clear input, images, and attached reviews immediately for responsive UI
         // These will be restored if the send operation fails

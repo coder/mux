@@ -1,5 +1,5 @@
 import React from "react";
-import type { DisplayedMessage } from "@/common/types/message";
+import type { DisplayedMessage, ReviewNoteDataForDisplay } from "@/common/types/message";
 import type { ButtonConfig } from "./MessageWindow";
 import { MessageWindow } from "./MessageWindow";
 import { TerminalOutput } from "./TerminalOutput";
@@ -9,7 +9,24 @@ import { copyToClipboard } from "@/browser/utils/clipboard";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { Clipboard, ClipboardCheck, Pencil } from "lucide-react";
-import { ContentWithReviews, hasReviewBlocks } from "../shared/ReviewBlock";
+import { ReviewBlockFromData, ContentWithReviews, hasReviewBlocks } from "../shared/ReviewBlock";
+
+/** Helper component to render reviews from structured data with optional text */
+const ReviewsWithText: React.FC<{
+  reviews: ReviewNoteDataForDisplay[];
+  textContent: string;
+}> = ({ reviews, textContent }) => (
+  <div className="space-y-2">
+    {reviews.map((review, idx) => (
+      <ReviewBlockFromData key={idx} data={review} />
+    ))}
+    {textContent && (
+      <pre className="font-primary m-0 leading-6 break-words whitespace-pre-wrap text-[var(--color-user-text)]">
+        {textContent}
+      </pre>
+    )}
+  </div>
+);
 
 interface UserMessageProps {
   message: DisplayedMessage & { type: "user" };
@@ -90,8 +107,14 @@ export const UserMessage: React.FC<UserMessageProps> = ({
     );
   }
 
-  // Check if content has review blocks
-  const containsReviews = content && hasReviewBlocks(content);
+  // Check if we have structured review data in metadata (preferred) or need to parse from text (legacy)
+  const hasReviewsFromMetadata = message.reviews && message.reviews.length > 0;
+  const hasReviewsFromText = content && hasReviewBlocks(content);
+
+  // Extract plain text content (without review tags) for display alongside review blocks
+  const plainTextContent = hasReviewsFromMetadata
+    ? content.replace(/<review>[\s\S]*?<\/review>\s*/g, "").trim()
+    : content;
 
   // Otherwise, render as normal user message
   return (
@@ -102,17 +125,23 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       className={className}
       variant="user"
     >
-      {content &&
-        (containsReviews ? (
-          <ContentWithReviews
-            content={content}
-            textClassName="font-primary m-0 leading-6 break-words whitespace-pre-wrap text-[var(--color-user-text)]"
-          />
-        ) : (
+      {hasReviewsFromMetadata ? (
+        // Use structured review data from metadata (no parsing needed)
+        <ReviewsWithText reviews={message.reviews!} textContent={plainTextContent} />
+      ) : hasReviewsFromText ? (
+        // Fallback: parse reviews from text (legacy messages before metadata support)
+        <ContentWithReviews
+          content={content}
+          textClassName="font-primary m-0 leading-6 break-words whitespace-pre-wrap text-[var(--color-user-text)]"
+        />
+      ) : (
+        // No reviews - just plain text
+        content && (
           <pre className="font-primary m-0 leading-6 break-words whitespace-pre-wrap text-[var(--color-user-text)]">
             {content}
           </pre>
-        ))}
+        )
+      )}
       {message.imageParts && message.imageParts.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-3">
           {message.imageParts.map((img, idx) => (
