@@ -74,17 +74,21 @@ function getWorkerAPI(): Comlink.Remote<HighlightWorkerAPI> | null {
     // Use relative path - @/ alias doesn't work in worker context
     const worker = new Worker(new URL("../../workers/highlightWorker.ts", import.meta.url), {
       type: "module",
+      name: "shiki-highlighter", // Shows up in DevTools
     });
 
-    worker.onerror = () => {
+    worker.onerror = (e) => {
+      console.error("[highlightWorkerClient] Worker failed to load:", e);
       workerFailed = true;
       workerAPI = null;
     };
 
+    console.log("[highlightWorkerClient] Worker created successfully");
     workerAPI = Comlink.wrap<HighlightWorkerAPI>(worker);
     return workerAPI;
-  } catch {
+  } catch (e) {
     // Workers not available (e.g., test environment)
+    console.error("[highlightWorkerClient] Failed to create worker:", e);
     workerFailed = true;
     return null;
   }
