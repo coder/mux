@@ -18,6 +18,8 @@ import { InitStateManager } from "@/node/services/initStateManager";
 import { AIService } from "@/node/services/aiService";
 import { AgentSession, type AgentSessionChatEvent } from "@/node/services/agentSession";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
+import { MCPConfigService } from "@/node/services/mcpConfigService";
+import { MCPServerManager } from "@/node/services/mcpServerManager";
 import {
   isCaughtUpMessage,
   isStreamAbort,
@@ -278,6 +280,11 @@ async function main(): Promise<void> {
   );
   ensureProvidersConfig(config);
 
+  // Initialize MCP support
+  const mcpConfigService = new MCPConfigService();
+  const mcpServerManager = new MCPServerManager(mcpConfigService);
+  aiService.setMCPServerManager(mcpServerManager);
+
   const session = new AgentSession({
     workspaceId,
     config,
@@ -523,6 +530,7 @@ async function main(): Promise<void> {
   } finally {
     unsubscribe();
     session.dispose();
+    mcpServerManager.dispose();
   }
 }
 
