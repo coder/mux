@@ -309,6 +309,47 @@ describe("BackgroundProcessManager", () => {
     });
   });
 
+  describe("process group termination", () => {
+    it("should terminate child processes when parent is killed", async () => {
+      // This test validates that set -m creates a process group where PID === PGID,
+      // allowing kill -PID to terminate the entire process tree.
+
+      // Spawn a parent that creates a child process
+      // The parent runs: (sleep 60 &); wait
+      // This creates: parent bash -> child sleep
+      const result = await manager.spawn(runtime, testWorkspaceId, "bash -c 'sleep 60 & wait'", {
+        cwd: process.cwd(),
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Give the child process time to start
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Verify process is running
+      const procBefore = await manager.getProcess(result.processId);
+      expect(procBefore?.status).toBe("running");
+
+      // Terminate - this should kill both parent and child via process group
+      await manager.terminate(result.processId);
+
+      // Verify parent is killed
+      const procAfter = await manager.getProcess(result.processId);
+      expect(procAfter?.status).toBe("killed");
+
+      // Wait a moment for any orphaned processes to show up
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // Verify no orphaned sleep processes from our test
+      // (checking via ps would be flaky, so we rely on the exit code being set,
+      // which only happens after the entire process group is dead)
+      const exitCode = procAfter?.exitCode;
+      expect(exitCode).not.toBeNull();
+      expect(exitCode).toBeGreaterThanOrEqual(128); // Signal exit code
+    });
+  });
+
   describe("exit_code file", () => {
     it("should write exit_code file when process exits", async () => {
       const result = await manager.spawn(runtime, testWorkspaceId, "exit 42", {

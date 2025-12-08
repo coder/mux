@@ -109,6 +109,38 @@ describe("bash_background_list tool", () => {
     tempDir[Symbol.dispose]();
   });
 
+  it("should include display_name in listed processes", async () => {
+    const manager = new BackgroundProcessManager();
+    const tempDir = new TestTempDir("test-bash-bg-list");
+    const runtime = createTestRuntime(tempDir.path);
+    const config = createTestToolConfig(process.cwd(), { sessionsDir: tempDir.path });
+    config.runtimeTempDir = tempDir.path;
+    config.backgroundProcessManager = manager;
+
+    // Spawn a process with display_name
+    const spawnResult = await manager.spawn(runtime, "test-workspace", "sleep 10", {
+      cwd: process.cwd(),
+      displayName: "Dev Server",
+    });
+
+    if (!spawnResult.success) {
+      throw new Error("Failed to spawn process");
+    }
+
+    const tool = createBashBackgroundListTool(config);
+    const result = (await tool.execute!({}, mockToolCallOptions)) as BashBackgroundListResult;
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.processes.length).toBe(1);
+      expect(result.processes[0].display_name).toBe("Dev Server");
+    }
+
+    // Cleanup
+    await manager.cleanup("test-workspace");
+    tempDir[Symbol.dispose]();
+  });
+
   it("should only list processes for the current workspace", async () => {
     const manager = new BackgroundProcessManager();
     const tempDir = new TestTempDir("test-bash-bg-list");
