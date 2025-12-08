@@ -12,6 +12,20 @@ export function parseExitCode(content: string): number | null {
   const code = parseInt(content.trim(), 10);
   return isNaN(code) ? null : code;
 }
+/**
+ * Parse "PID PGID" output from buildSpawnCommand.
+ * Returns { pid, pgid } or null if PID is invalid.
+ * Falls back PGID to PID if PGID parsing fails.
+ */
+export function parsePidPgid(output: string): { pid: number; pgid: number } | null {
+  const [pidStr, pgidStr] = output.trim().split(/\s+/);
+  const pid = parseInt(pidStr, 10);
+  if (isNaN(pid) || pid <= 0) {
+    return null;
+  }
+  const pgid = parseInt(pgidStr, 10);
+  return { pid, pgid: isNaN(pgid) ? pid : pgid };
+}
 
 /**
  * Shared command builders for background process management.
@@ -81,48 +95,45 @@ export interface SpawnCommandOptions {
   bashPath?: string;
   /** Optional niceness value for process priority */
   niceness?: number;
-  /** Whether to use setsid (default: true). Set false on Windows local. */
-  useSetsid?: boolean;
   /** Function to quote paths for shell (default: shellQuote). Use expandTildeForSSH for SSH. */
   quotePath?: (path: string) => string;
 }
 
 /**
- * Build the spawn command using subshell + setsid + nohup pattern.
+ * Build the spawn command using subshell + nohup pattern.
  *
  * Uses subshell (...) to isolate the process group so the outer shell exits immediately.
- * setsid: creates new session, process becomes group leader (enables kill -PID)
  * nohup: ignores SIGHUP (survives terminal hangup)
  *
- * Returns "PID PGID" via echo:
- * - Unix with setsid: outputs "PID PID" (process is session leader, so PID == PGID)
- * - Windows MSYS2 without setsid: outputs "PID PGID" where PGID is read from /proc/$!/pgid
- *   (MSYS2 provides /proc filesystem; macOS does not have /proc)
+ * Returns "PID PGID" via echo, using a universal fallback chain for PGID lookup:
+ * 1. ps -o pgid= (POSIX standard, works on Linux/macOS)
+ * 2. /proc/$!/pgid (works on Linux, MSYS2; not available on macOS)
+ * 3. Fall back to PID itself (degraded but functional - kills main process only)
  */
 export function buildSpawnCommand(options: SpawnCommandOptions): string {
   const bash = options.bashPath ?? "bash";
   const nicePrefix = options.niceness !== undefined ? `nice -n ${options.niceness} ` : "";
-  const setsidPrefix = options.useSetsid === false ? "" : "setsid ";
   const quotePath = options.quotePath ?? shellQuote;
 
-  // With setsid (Unix): process becomes session leader, so PID == PGID
-  // Without setsid (Windows MSYS2): must read PGID from /proc (MSYS2 provides this)
-  // CRITICAL: We can't run this on macOS, since it doesn't have /proc
-  const pgidExpr =
-    options.useSetsid === false ? "$(cat /proc/$!/pgid 2>/dev/null || echo $!)" : "$!";
+  // Universal PGID lookup chain: try ps → /proc → fall back to PID
+  // This works on Linux, macOS, and Windows MSYS2 without platform detection
+  const pgidLookup =
+    "PGID=$(ps -o pgid= -p $! 2>/dev/null | tr -d ' ') || " +
+    "PGID=$(cat /proc/$!/pgid 2>/dev/null) || " +
+    "PGID=$!";
 
   return (
-    `(${nicePrefix}${setsidPrefix}nohup ${shellQuote(bash)} -c ${shellQuote(options.wrapperScript)} ` +
+    `(${nicePrefix}nohup ${shellQuote(bash)} -c ${shellQuote(options.wrapperScript)} ` +
     `> ${quotePath(options.stdoutPath)} ` +
     `2> ${quotePath(options.stderrPath)} ` +
-    `< /dev/null & echo "$! ${pgidExpr}")`
+    `< /dev/null & ${pgidLookup}; echo "$! $PGID")`
   );
 }
 
 /**
  * Build the terminate command for killing a process group.
  *
- * Uses negative PID to kill entire process group (setsid makes process a group leader).
+ * Uses negative PGID to kill entire process group.
  * Sends SIGTERM, waits 2 seconds, then SIGKILL if still running.
  * Writes EXIT_CODE_SIGKILL on force kill.
  *
@@ -137,10 +148,10 @@ export function buildTerminateCommand(
 ): string {
   const pgid = -pid;
   return (
-    `kill -TERM ${pgid} 2>/dev/null || true; ` +
+    `kill -15 ${pgid} 2>/dev/null || true; ` +
     `sleep 2; ` +
     `if kill -0 ${pid} 2>/dev/null; then ` +
-    `kill -KILL ${pgid} 2>/dev/null || true; ` +
+    `kill -9 ${pgid} 2>/dev/null || true; ` +
     `echo ${EXIT_CODE_SIGKILL} > ${quotePath(exitCodePath)}; ` +
     `fi`
   );

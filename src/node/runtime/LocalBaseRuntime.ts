@@ -27,7 +27,7 @@ import { DisposableProcess, execAsync } from "@/node/utils/disposableExec";
 import { expandTilde } from "./tildeExpansion";
 import { getInitHookPath, createLineBufferedLoggers } from "./initHook";
 import { LocalBackgroundHandle } from "./LocalBackgroundHandle";
-import { buildWrapperScript, buildSpawnCommand } from "./backgroundCommands";
+import { buildWrapperScript, buildSpawnCommand, parsePidPgid } from "./backgroundCommands";
 import { log } from "@/node/services/log";
 import { toPosixPath } from "@/node/utils/paths";
 
@@ -371,28 +371,24 @@ export abstract class LocalBaseRuntime implements Runtime {
       stderrPath: toPosixPath(stderrPath),
       bashPath: getBashPath(),
       niceness: options.niceness,
-      useSetsid: process.platform !== "win32",
     });
 
     try {
-      // Use bash shell explicitly - spawnCommand uses POSIX commands (nohup, setsid)
+      // Use bash shell explicitly - spawnCommand uses POSIX commands (nohup, ps)
       using proc = execAsync(spawnCommand, { shell: getBashPath() });
       const result = await proc.result;
 
-      // Parse "PID PGID" from output
-      // On Unix with setsid, both values are the same (process is group leader)
-      // On Windows MSYS2, PGID comes from /proc/$!/pgid
-      const [pidStr, pgidStr] = result.stdout.trim().split(/\s+/);
-      const pid = parseInt(pidStr, 10);
-      const pgid = parseInt(pgidStr, 10);
-      if (isNaN(pid) || pid <= 0) {
+      const parsed = parsePidPgid(result.stdout);
+      if (!parsed) {
         log.debug(`LocalBaseRuntime.spawnBackground: Invalid PID: ${result.stdout}`);
         return { success: false, error: `Failed to get valid PID from spawn: ${result.stdout}` };
       }
 
-      log.debug(`LocalBaseRuntime.spawnBackground: Spawned with PID ${pid}, PGID ${pgid}`);
-      const handle = new LocalBackgroundHandle(pid, isNaN(pgid) ? pid : pgid, outputDir);
-      return { success: true, handle, pid };
+      log.debug(
+        `LocalBaseRuntime.spawnBackground: Spawned with PID ${parsed.pid}, PGID ${parsed.pgid}`
+      );
+      const handle = new LocalBackgroundHandle(parsed.pid, parsed.pgid, outputDir);
+      return { success: true, handle, pid: parsed.pid };
     } catch (e) {
       const err = e as Error;
       log.debug(`LocalBaseRuntime.spawnBackground: Failed to spawn: ${err.message}`);

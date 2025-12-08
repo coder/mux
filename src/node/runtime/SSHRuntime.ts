@@ -31,7 +31,7 @@ import { getControlPath } from "./sshConnectionPool";
 import { getBashPath } from "@/node/utils/main/bashPath";
 import { SSHBackgroundHandle } from "./SSHBackgroundHandle";
 import { execBuffered } from "@/node/utils/runtime/helpers";
-import { shellQuote, buildSpawnCommand } from "./backgroundCommands";
+import { shellQuote, buildSpawnCommand, parsePidPgid } from "./backgroundCommands";
 
 /**
  * Shell-escape helper for remote bash.
@@ -393,8 +393,8 @@ export class SSHRuntime implements Runtime {
         };
       }
 
-      const pid = parseInt(result.stdout.trim(), 10);
-      if (isNaN(pid) || pid <= 0) {
+      const parsed = parsePidPgid(result.stdout);
+      if (!parsed) {
         log.debug(`SSHRuntime.spawnBackground: Invalid PID: ${result.stdout}`);
         return {
           success: false,
@@ -402,11 +402,11 @@ export class SSHRuntime implements Runtime {
         };
       }
 
-      log.debug(`SSHRuntime.spawnBackground: Spawned with PID ${pid}`);
+      log.debug(`SSHRuntime.spawnBackground: Spawned with PID ${parsed.pid}, PGID ${parsed.pgid}`);
 
       // outputDir is already absolute (getBgOutputDir resolves tildes upfront)
-      const handle = new SSHBackgroundHandle(this, pid, outputDir);
-      return { success: true, handle, pid };
+      const handle = new SSHBackgroundHandle(this, parsed.pid, parsed.pgid, outputDir);
+      return { success: true, handle, pid: parsed.pid };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       log.debug(`SSHRuntime.spawnBackground: Error: ${errorMessage}`);

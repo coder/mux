@@ -7,6 +7,7 @@ import {
   parseExitCode,
   EXIT_CODE_SIGKILL,
   EXIT_CODE_SIGTERM,
+  parsePidPgid,
 } from "./backgroundCommands";
 
 describe("backgroundCommands", () => {
@@ -103,7 +104,7 @@ describe("backgroundCommands", () => {
   });
 
   describe("buildSpawnCommand", () => {
-    it("should use setsid nohup pattern", () => {
+    it("should use nohup pattern", () => {
       const result = buildSpawnCommand({
         wrapperScript: "echo hello",
         stdoutPath: "/tmp/stdout.log",
@@ -111,7 +112,7 @@ describe("backgroundCommands", () => {
       });
 
       // bash path is quoted to handle paths with spaces (e.g., Windows Git Bash)
-      expect(result).toMatch(/^\(setsid nohup 'bash' -c /);
+      expect(result).toMatch(/^\(nohup 'bash' -c /);
     });
 
     it("should include niceness prefix when provided", () => {
@@ -122,7 +123,7 @@ describe("backgroundCommands", () => {
         niceness: 10,
       });
 
-      expect(result).toMatch(/^\(nice -n 10 setsid nohup/);
+      expect(result).toMatch(/^\(nice -n 10 nohup/);
     });
 
     it("should not include niceness prefix when not provided", () => {
@@ -180,27 +181,19 @@ describe("backgroundCommands", () => {
       expect(result).toContain("< /dev/null");
     });
 
-    it("should background and echo PID PGID (setsid=true, Unix)", () => {
+    it("should use universal PGID lookup fallback chain", () => {
       const result = buildSpawnCommand({
         wrapperScript: "sleep 60",
         stdoutPath: "/tmp/out",
         stderrPath: "/tmp/err",
       });
 
-      // With setsid (default), PID == PGID, so output is "$! $!"
-      expect(result).toContain('& echo "$! $!")');
-    });
-
-    it("should read PGID from /proc when setsid=false (Windows MSYS2)", () => {
-      const result = buildSpawnCommand({
-        wrapperScript: "sleep 60",
-        stdoutPath: "/tmp/out",
-        stderrPath: "/tmp/err",
-        useSetsid: false,
-      });
-
-      // Without setsid, must read PGID from /proc (MSYS2 provides this)
-      expect(result).toContain('& echo "$! $(cat /proc/$!/pgid 2>/dev/null || echo $!)")');
+      // Universal fallback: ps → /proc → PID
+      // Works on Linux, macOS, and Windows MSYS2 without platform detection
+      expect(result).toContain("PGID=$(ps -o pgid= -p $! 2>/dev/null | tr -d ' ')");
+      expect(result).toContain("PGID=$(cat /proc/$!/pgid 2>/dev/null)");
+      expect(result).toContain("PGID=$!");
+      expect(result).toContain('echo "$! $PGID")');
       expect(result).not.toContain("setsid");
     });
 
@@ -220,8 +213,8 @@ describe("backgroundCommands", () => {
     it("should use negative PID for process group", () => {
       const result = buildTerminateCommand(1234, "/tmp/exit_code");
 
-      expect(result).toContain("kill -TERM -1234");
-      expect(result).toContain("kill -KILL -1234");
+      expect(result).toContain("kill -15 -1234");
+      expect(result).toContain("kill -9 -1234");
     });
 
     it("should check process status with positive PID", () => {
@@ -235,7 +228,7 @@ describe("backgroundCommands", () => {
       const result = buildTerminateCommand(1234, "/tmp/exit_code");
 
       // Should send TERM first
-      expect(result).toMatch(/kill -TERM.*sleep 2.*kill -KILL/);
+      expect(result).toMatch(/kill -15.*sleep 2.*kill -9/);
     });
 
     it("should write exit code 137 on force kill", () => {
@@ -248,8 +241,8 @@ describe("backgroundCommands", () => {
       const result = buildTerminateCommand(1234, "/tmp/exit_code");
 
       // Both kill commands should suppress errors
-      expect(result).toMatch(/kill -TERM -1234 2>\/dev\/null/);
-      expect(result).toMatch(/kill -KILL -1234 2>\/dev\/null/);
+      expect(result).toMatch(/kill -15 -1234 2>\/dev\/null/);
+      expect(result).toMatch(/kill -9 -1234 2>\/dev\/null/);
     });
 
     it("should continue on error with || true", () => {
@@ -392,5 +385,32 @@ describe("backgroundCommands", () => {
         expect(result).toContain("'/c/temp/mux-bashes/bg-abc/exit_code'");
       });
     });
+  });
+});
+
+describe("parsePidPgid", () => {
+  it("should parse valid PID and PGID", () => {
+    expect(parsePidPgid("1234 5678")).toEqual({ pid: 1234, pgid: 5678 });
+  });
+
+  it("should handle whitespace variations", () => {
+    expect(parsePidPgid("  1234   5678  ")).toEqual({ pid: 1234, pgid: 5678 });
+    expect(parsePidPgid("1234\t5678")).toEqual({ pid: 1234, pgid: 5678 });
+  });
+
+  it("should return null for invalid PID", () => {
+    expect(parsePidPgid("abc 5678")).toBeNull();
+    expect(parsePidPgid("-1 5678")).toBeNull();
+    expect(parsePidPgid("0 5678")).toBeNull();
+  });
+
+  it("should fall back PGID to PID if PGID is invalid", () => {
+    expect(parsePidPgid("1234")).toEqual({ pid: 1234, pgid: 1234 });
+    expect(parsePidPgid("1234 abc")).toEqual({ pid: 1234, pgid: 1234 });
+  });
+
+  it("should return null for empty string", () => {
+    expect(parsePidPgid("")).toBeNull();
+    expect(parsePidPgid("   ")).toBeNull();
   });
 });
