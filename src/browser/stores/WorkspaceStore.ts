@@ -125,6 +125,11 @@ export class WorkspaceStore {
   private workspaceMetadata = new Map<string, FrontendWorkspaceMetadata>(); // Store metadata for name lookup
   private queuedMessages = new Map<string, QueuedMessage | null>(); // Cached queued messages
 
+  // Debounce timers for high-frequency delta events to reduce re-renders during streaming
+  // Data is always updated immediately in the aggregator; only UI notification is debounced
+  private deltaDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private static readonly DELTA_DEBOUNCE_MS = 16; // ~60fps cap for smooth streaming
+
   /**
    * Map of event types to their handlers. This is the single source of truth for:
    * 1. Which events should be buffered during replay (the keys)
@@ -154,7 +159,7 @@ export class WorkspaceStore {
     },
     "stream-delta": (workspaceId, aggregator, data) => {
       aggregator.handleStreamDelta(data as never);
-      this.states.bump(workspaceId);
+      this.debouncedStateBump(workspaceId);
     },
     "stream-end": (workspaceId, aggregator, data) => {
       const streamEndData = data as StreamEndEvent;
@@ -167,6 +172,8 @@ export class WorkspaceStore {
       // Reset retry state on successful stream completion
       updatePersistedState(getRetryStateKey(workspaceId), createFreshRetryState());
 
+      // Flush any pending debounced bump before final bump to avoid double-bump
+      this.flushPendingDebouncedBump(workspaceId);
       this.states.bump(workspaceId);
       this.checkAndBumpRecencyIfChanged();
       this.finalizeUsageStats(workspaceId, streamEndData.metadata);
@@ -191,6 +198,8 @@ export class WorkspaceStore {
         );
       }
 
+      // Flush any pending debounced bump before final bump to avoid double-bump
+      this.flushPendingDebouncedBump(workspaceId);
       this.states.bump(workspaceId);
       this.dispatchResumeCheck(workspaceId);
       this.finalizeUsageStats(workspaceId, streamAbortData.metadata);
@@ -201,7 +210,7 @@ export class WorkspaceStore {
     },
     "tool-call-delta": (workspaceId, aggregator, data) => {
       aggregator.handleToolCallDelta(data as never);
-      this.states.bump(workspaceId);
+      this.debouncedStateBump(workspaceId);
     },
     "tool-call-end": (workspaceId, aggregator, data) => {
       aggregator.handleToolCallEnd(data as never);
@@ -210,7 +219,7 @@ export class WorkspaceStore {
     },
     "reasoning-delta": (workspaceId, aggregator, data) => {
       aggregator.handleReasoningDelta(data as never);
-      this.states.bump(workspaceId);
+      this.debouncedStateBump(workspaceId);
     },
     "reasoning-end": (workspaceId, aggregator, data) => {
       aggregator.handleReasoningEnd(data as never);
@@ -302,6 +311,40 @@ export class WorkspaceStore {
    */
   private dispatchResumeCheck(workspaceId: string): void {
     window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.RESUME_CHECK_REQUESTED, { workspaceId }));
+  }
+
+  /**
+   * Debounced state bump for high-frequency delta events.
+   * Coalesces rapid updates (stream-delta, tool-call-delta, reasoning-delta)
+   * into a single bump per frame (~60fps), reducing React re-renders during streaming.
+   *
+   * Data is always updated immediately in the aggregator - only UI notification is debounced.
+   */
+  private debouncedStateBump(workspaceId: string): void {
+    // Skip if already scheduled
+    if (this.deltaDebounceTimers.has(workspaceId)) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this.deltaDebounceTimers.delete(workspaceId);
+      this.states.bump(workspaceId);
+    }, WorkspaceStore.DELTA_DEBOUNCE_MS);
+
+    this.deltaDebounceTimers.set(workspaceId, timer);
+  }
+
+  /**
+   * Flush any pending debounced state bump for a workspace (without double-bumping).
+   * Used when immediate state visibility is needed (e.g., stream-end).
+   * Just clears the timer - the caller will bump() immediately after.
+   */
+  private flushPendingDebouncedBump(workspaceId: string): void {
+    const timer = this.deltaDebounceTimers.get(workspaceId);
+    if (timer) {
+      clearTimeout(timer);
+      this.deltaDebounceTimers.delete(workspaceId);
+    }
   }
 
   /**
@@ -743,6 +786,13 @@ export class WorkspaceStore {
   removeWorkspace(workspaceId: string): void {
     // Clean up consumer manager state
     this.consumerManager.removeWorkspace(workspaceId);
+
+    // Clean up debounce timer to prevent stale callbacks
+    const timer = this.deltaDebounceTimers.get(workspaceId);
+    if (timer) {
+      clearTimeout(timer);
+      this.deltaDebounceTimers.delete(workspaceId);
+    }
 
     // Unsubscribe from IPC
     const unsubscribe = this.ipcUnsubscribers.get(workspaceId);
