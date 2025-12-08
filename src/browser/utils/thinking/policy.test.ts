@@ -120,74 +120,74 @@ describe("getThinkingPolicyForModel", () => {
   });
 });
 
-// describe("enforceThinkingPolicy", () => {
-//   describe("single-option policy models (gpt-5-pro)", () => {
-//     test("enforces high for any requested level", () => {
-//       expect(enforceThinkingPolicy("openai:gpt-5-pro", "off")).toBe("high");
-//       expect(enforceThinkingPolicy("openai:gpt-5-pro", "low")).toBe("high");
-//       expect(enforceThinkingPolicy("openai:gpt-5-pro", "medium")).toBe("high");
-//       expect(enforceThinkingPolicy("openai:gpt-5-pro", "high")).toBe("high");
-//     });
+describe("enforceThinkingPolicy", () => {
+  describe("single-option policy models (gpt-5-pro)", () => {
+    test("enforces high for any requested level", () => {
+      expect(enforceThinkingPolicy("openai:gpt-5-pro", "off")).toBe("high");
+      expect(enforceThinkingPolicy("openai:gpt-5-pro", "low")).toBe("high");
+      expect(enforceThinkingPolicy("openai:gpt-5-pro", "medium")).toBe("high");
+      expect(enforceThinkingPolicy("openai:gpt-5-pro", "high")).toBe("high");
+    });
 
-//     test("enforces high for versioned gpt-5-pro", () => {
-//       expect(enforceThinkingPolicy("openai:gpt-5-pro-2025-10-06", "low")).toBe("high");
-//     });
-//   });
+    test("enforces high for versioned gpt-5-pro", () => {
+      expect(enforceThinkingPolicy("openai:gpt-5-pro-2025-10-06", "low")).toBe("high");
+    });
+  });
 
-//   describe("multi-option policy models", () => {
-//     test("allows requested level if in allowed set", () => {
-//       expect(enforceThinkingPolicy("anthropic:claude-opus-4", "off")).toBe("off");
-//       expect(enforceThinkingPolicy("anthropic:claude-opus-4", "low")).toBe("low");
-//       expect(enforceThinkingPolicy("anthropic:claude-opus-4", "medium")).toBe("medium");
-//       expect(enforceThinkingPolicy("anthropic:claude-opus-4", "high")).toBe("high");
-//     });
+  describe("multi-option policy models", () => {
+    test("allows requested level if in allowed set", () => {
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4", "off")).toBe("off");
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4", "low")).toBe("low");
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4", "medium")).toBe("medium");
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4", "high")).toBe("high");
+    });
 
-//     test("falls back to medium when requested level not allowed", () => {
-//       // Simulating behavior with gpt-5-pro (only allows "high")
-//       // When requesting "low", falls back to first allowed level which is "high"
-//       expect(enforceThinkingPolicy("openai:gpt-5-pro", "low")).toBe("high");
-//     });
-//   });
+    test("falls back to medium when requested level not allowed", () => {
+      // Simulating behavior with gpt-5-pro (only allows "high")
+      // When requesting "low", falls back to first allowed level which is "high"
+      expect(enforceThinkingPolicy("openai:gpt-5-pro", "low")).toBe("high");
+    });
+  });
 
-//   describe("Opus 4.5 (all levels supported)", () => {
-//     test("allows all levels including off", () => {
-//       expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "off")).toBe("off");
-//       expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "low")).toBe("low");
-//       expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "medium")).toBe("medium");
-//       expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "high")).toBe("high");
-//     });
+  describe("Opus 4.5 (all levels supported)", () => {
+    test("allows all levels including off", () => {
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "off")).toBe("off");
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "low")).toBe("low");
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "medium")).toBe("medium");
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "high")).toBe("high");
+    });
 
-//     test("allows off for versioned model", () => {
-//       expect(enforceThinkingPolicy("anthropic:claude-opus-4-5-20251101", "off")).toBe("off");
-//     });
-//   });
+    test("allows off for versioned model", () => {
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-5-20251101", "off")).toBe("off");
+    });
+  });
 
-//   describe("GPT-5.1-Codex-Max (5 levels including xhigh)", () => {
-//     test("allows all 5 levels including xhigh", () => {
-//       expect(enforceThinkingPolicy("openai:gpt-5.1-codex-max", "off")).toBe("off");
-//       expect(enforceThinkingPolicy("openai:gpt-5.1-codex-max", "low")).toBe("low");
-//       expect(enforceThinkingPolicy("openai:gpt-5.1-codex-max", "medium")).toBe("medium");
-//       expect(enforceThinkingPolicy("openai:gpt-5.1-codex-max", "high")).toBe("high");
-//       expect(enforceThinkingPolicy("openai:gpt-5.1-codex-max", "xhigh")).toBe("xhigh");
-//     });
+  describe("GPT-5.1-Codex-Max (5 levels including xhigh)", () => {
+    test("allows all 5 levels including xhigh", () => {
+      expect(enforceThinkingPolicy("openai:gpt-5.1-codex-max", "off")).toBe("off");
+      expect(enforceThinkingPolicy("openai:gpt-5.1-codex-max", "low")).toBe("low");
+      expect(enforceThinkingPolicy("openai:gpt-5.1-codex-max", "medium")).toBe("medium");
+      expect(enforceThinkingPolicy("openai:gpt-5.1-codex-max", "high")).toBe("high");
+      expect(enforceThinkingPolicy("openai:gpt-5.1-codex-max", "xhigh")).toBe("xhigh");
+    });
 
-//     test("allows xhigh for versioned model", () => {
-//       expect(enforceThinkingPolicy("openai:gpt-5.1-codex-max-2025-12-01", "xhigh")).toBe("xhigh");
-//     });
-//   });
+    test("allows xhigh for versioned model", () => {
+      expect(enforceThinkingPolicy("openai:gpt-5.1-codex-max-2025-12-01", "xhigh")).toBe("xhigh");
+    });
+  });
 
-//   describe("xhigh fallback for non-codex-max models", () => {
-//     test("falls back to medium when xhigh requested on standard model", () => {
-//       // Standard models don't support xhigh, so fall back to medium (preferred fallback)
-//       expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "xhigh")).toBe("medium");
-//     });
+  describe("xhigh fallback for non-codex-max models", () => {
+    test("falls back to medium when xhigh requested on standard model", () => {
+      // Standard models don't support xhigh, so fall back to medium (preferred fallback)
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "xhigh")).toBe("medium");
+    });
 
-//     test("falls back to high when xhigh requested on gpt-5-pro", () => {
-//       // gpt-5-pro only supports high, so xhigh falls back to high
-//       expect(enforceThinkingPolicy("openai:gpt-5-pro", "xhigh")).toBe("high");
-//     });
-//   });
-// });
+    test("falls back to high when xhigh requested on gpt-5-pro", () => {
+      // gpt-5-pro only supports high, so xhigh falls back to high
+      expect(enforceThinkingPolicy("openai:gpt-5-pro", "xhigh")).toBe("high");
+    });
+  });
+});
 
 // Note: Tests for invalid levels removed - TypeScript type system prevents invalid
 // ThinkingLevel values at compile time, making runtime invalid-level tests unnecessary.

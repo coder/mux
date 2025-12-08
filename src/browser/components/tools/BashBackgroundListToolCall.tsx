@@ -14,6 +14,7 @@ import {
   LoadingDots,
   ToolIcon,
   ErrorBox,
+  OutputPaths,
 } from "./shared/ToolPrimitives";
 import {
   useToolExpansion,
@@ -102,24 +103,9 @@ export const BashBackgroundListToolCall: React.FC<BashBackgroundListToolCallProp
                     <div className="text-text-secondary truncate font-mono" title={proc.script}>
                       {proc.script}
                     </div>
-                    <div className="text-text-secondary mt-1 space-y-0.5 text-[10px]">
-                      <div>
-                        <span className="opacity-60">stdout:</span> {proc.stdout_path}
-                      </div>
-                      <div>
-                        <span className="opacity-60">stderr:</span> {proc.stderr_path}
-                      </div>
-                    </div>
+                    <OutputPaths stdout={proc.stdout_path} stderr={proc.stderr_path} compact />
                   </div>
                 ))}
-              </div>
-            </DetailSection>
-          )}
-
-          {result?.success && processes.length === 0 && (
-            <DetailSection>
-              <div className="text-text-secondary text-[11px] italic">
-                No background processes running
               </div>
             </DetailSection>
           )}
