@@ -133,12 +133,17 @@ export function buildTerminateCommand(
   quotePath: (p: string) => string = shellQuote
 ): string {
   const negPid = -pid; // Negative PID targets process group (PID === PGID due to set -m)
+  // Send SIGTERM, wait for process to exit, then write the correct exit code.
+  // We can't write immediately because the process's EXIT trap would overwrite it.
+  // After sleep 2, either the process exited (write SIGTERM code) or we escalate to SIGKILL.
   return (
     `kill -15 ${negPid} 2>/dev/null || true; ` +
     `sleep 2; ` +
     `if kill -0 ${pid} 2>/dev/null; then ` +
     `kill -9 ${negPid} 2>/dev/null || true; ` +
     `echo ${EXIT_CODE_SIGKILL} > ${quotePath(exitCodePath)}; ` +
+    `else ` +
+    `echo ${EXIT_CODE_SIGTERM} > ${quotePath(exitCodePath)}; ` +
     `fi`
   );
 }

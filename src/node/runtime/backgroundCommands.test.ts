@@ -135,12 +135,8 @@ describe("backgroundCommands", () => {
       expect(result).toContain("sleep 2");
       expect(result).toContain("kill -0 1234");
       expect(result).toContain("kill -9 -1234 2>/dev/null || true");
-    });
-
-    it("writes exit code 137 on force kill", () => {
-      const result = buildTerminateCommand(1234, "/tmp/exit_code");
-
-      expect(result).toContain("echo 137 > '/tmp/exit_code'");
+      expect(result).toContain("echo 137 >"); // SIGKILL exit code
+      expect(result).toContain("echo 143 >"); // SIGTERM exit code (written after process exits)
     });
 
     it("quotes exit code path with spaces", () => {
