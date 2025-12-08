@@ -70,6 +70,7 @@ import { getTokenCountPromise } from "@/browser/utils/tokenizer/rendererClient";
 import { CreationCenterContent } from "./CreationCenterContent";
 import { cn } from "@/common/lib/utils";
 import { CreationControls } from "./CreationControls";
+import { CreationToolbar } from "./CreationToolbar";
 import { useCreationWorkspace } from "./useCreationWorkspace";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { useVoiceInput } from "@/browser/hooks/useVoiceInput";
@@ -1381,118 +1382,19 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             </>
           )}
 
-          <div className="flex flex-col gap-0.5" data-component="ChatModeToggles">
-            {/* Editing indicator - workspace only */}
-            {variant === "workspace" && editingMessage && (
-              <div className="text-edit-mode text-[11px] font-medium">
-                Editing message ({formatKeybind(KEYBINDS.CANCEL_EDIT)}
-                {vimEnabled ? "×2" : ""} to cancel)
-              </div>
-            )}
-
-            <div className="@container flex flex-wrap items-center gap-x-3 gap-y-1">
-              {/* Model Selector - always visible */}
-              <div
-                className="flex items-center"
-                data-component="ModelSelectorGroup"
-                data-tutorial="model-selector"
-              >
-                <ModelSelector
-                  ref={modelSelectorRef}
-                  value={preferredModel}
-                  onChange={setPreferredModel}
-                  recentModels={recentModels}
-                  onComplete={() => inputRef.current?.focus()}
-                  defaultModel={defaultModel}
-                  onSetDefaultModel={setDefaultModel}
-                />
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <HelpIndicator>?</HelpIndicator>
-                  </TooltipTrigger>
-                  <TooltipContent align="start" className="max-w-80 whitespace-normal">
-                    <strong>Click to edit</strong> or use{" "}
-                    {formatKeybind(KEYBINDS.OPEN_MODEL_SELECTOR)}
-                    <br />
-                    <br />
-                    <strong>Abbreviations:</strong>
-                    {MODEL_ABBREVIATION_EXAMPLES.map((ex) => (
-                      <React.Fragment key={ex.abbrev}>
-                        <br />• <code>/model {ex.abbrev}</code> - {ex.displayName}
-                      </React.Fragment>
-                    ))}
-                    <br />
-                    <br />
-                    <strong>Full format:</strong>
-                    <br />
-                    <code>/model provider:model-name</code>
-                    <br />
-                    (e.g., <code>/model anthropic:claude-sonnet-4-5</code>)
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-
-              {/* Thinking Slider - slider hidden on narrow containers, label always clickable */}
-              <div
-                className="flex items-center [&_.thinking-slider]:[@container(max-width:550px)]:hidden"
-                data-component="ThinkingSliderGroup"
-              >
-                <ThinkingSliderComponent modelString={baseModel} />
-              </div>
-
-              <div className="ml-4 flex items-center" data-component="ModelSettingsGroup">
-                <ModelSettings model={preferredModel || ""} />
-              </div>
-
-              {preferredModel && (
-                <div className={hasTypedText ? "block" : "hidden"}>
-                  <Suspense
-                    fallback={
-                      <div
-                        className="text-muted flex items-center gap-1 text-xs"
-                        data-component="TokenEstimate"
-                      >
-                        <span>Calculating tokens…</span>
-                      </div>
-                    }
-                  >
-                    <TokenCountDisplay reader={tokenCountReader} />
-                  </Suspense>
-                </div>
-              )}
-
-              <div
-                className="ml-auto flex items-center gap-2"
-                data-component="ModelControls"
-                data-tutorial="mode-selector"
-              >
-                <ModeSelector mode={mode} onChange={setMode} />
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={() => void handleSend()}
-                      disabled={!canSend}
-                      aria-label="Send message"
-                      className={cn(
-                        "inline-flex items-center gap-1 rounded-sm border border-border-light px-1.5 py-0.5 text-[11px] font-medium text-white transition-colors duration-200 disabled:opacity-50",
-                        mode === "plan"
-                          ? "bg-plan-mode hover:bg-plan-mode-hover disabled:hover:bg-plan-mode"
-                          : "bg-exec-mode hover:bg-exec-mode-hover disabled:hover:bg-exec-mode"
-                      )}
-                    >
-                      <SendHorizontal className="h-3.5 w-3.5" strokeWidth={2.5} />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent align="center">
-                    Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-            </div>
-
-            {/* Creation controls - below model controls for creation variant */}
-            {variant === "creation" && (
+          {/* Creation variant: compact centered toolbar */}
+          {variant === "creation" ? (
+            <div className="flex flex-col items-center gap-2">
+              <CreationToolbar
+                model={preferredModel}
+                recentModels={recentModels}
+                onModelChange={setPreferredModel}
+                mode={mode}
+                onModeChange={setMode}
+                canSend={canSend}
+                onSend={() => void handleSend()}
+                disabled={creationState.isSending || isSending}
+              />
               <CreationControls
                 branches={creationState.branches}
                 trunkBranch={creationState.trunkBranch}
@@ -1502,8 +1404,119 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 onSshHostChange={creationState.setSshHost}
                 disabled={creationState.isSending || isSending}
               />
-            )}
-          </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-0.5" data-component="ChatModeToggles">
+              {/* Editing indicator - workspace only */}
+              {editingMessage && (
+                <div className="text-edit-mode text-[11px] font-medium">
+                  Editing message ({formatKeybind(KEYBINDS.CANCEL_EDIT)}
+                  {vimEnabled ? "×2" : ""} to cancel)
+                </div>
+              )}
+
+              <div className="@container flex flex-wrap items-center gap-x-3 gap-y-1">
+                {/* Model Selector - always visible */}
+                <div
+                  className="flex items-center"
+                  data-component="ModelSelectorGroup"
+                  data-tutorial="model-selector"
+                >
+                  <ModelSelector
+                    ref={modelSelectorRef}
+                    value={preferredModel}
+                    onChange={setPreferredModel}
+                    recentModels={recentModels}
+                    onComplete={() => inputRef.current?.focus()}
+                    defaultModel={defaultModel}
+                    onSetDefaultModel={setDefaultModel}
+                  />
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <HelpIndicator>?</HelpIndicator>
+                    </TooltipTrigger>
+                    <TooltipContent align="start" className="max-w-80 whitespace-normal">
+                      <strong>Click to edit</strong> or use{" "}
+                      {formatKeybind(KEYBINDS.OPEN_MODEL_SELECTOR)}
+                      <br />
+                      <br />
+                      <strong>Abbreviations:</strong>
+                      {MODEL_ABBREVIATION_EXAMPLES.map((ex) => (
+                        <React.Fragment key={ex.abbrev}>
+                          <br />• <code>/model {ex.abbrev}</code> - {ex.displayName}
+                        </React.Fragment>
+                      ))}
+                      <br />
+                      <br />
+                      <strong>Full format:</strong>
+                      <br />
+                      <code>/model provider:model-name</code>
+                      <br />
+                      (e.g., <code>/model anthropic:claude-sonnet-4-5</code>)
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+
+                {/* Thinking Slider - slider hidden on narrow containers, label always clickable */}
+                <div
+                  className="flex items-center [&_.thinking-slider]:[@container(max-width:550px)]:hidden"
+                  data-component="ThinkingSliderGroup"
+                >
+                  <ThinkingSliderComponent modelString={baseModel} />
+                </div>
+
+                <div className="ml-4 flex items-center" data-component="ModelSettingsGroup">
+                  <ModelSettings model={preferredModel || ""} />
+                </div>
+
+                {preferredModel && (
+                  <div className={hasTypedText ? "block" : "hidden"}>
+                    <Suspense
+                      fallback={
+                        <div
+                          className="text-muted flex items-center gap-1 text-xs"
+                          data-component="TokenEstimate"
+                        >
+                          <span>Calculating tokens…</span>
+                        </div>
+                      }
+                    >
+                      <TokenCountDisplay reader={tokenCountReader} />
+                    </Suspense>
+                  </div>
+                )}
+
+                <div
+                  className="ml-auto flex items-center gap-2"
+                  data-component="ModelControls"
+                  data-tutorial="mode-selector"
+                >
+                  <ModeSelector mode={mode} onChange={setMode} />
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={() => void handleSend()}
+                        disabled={!canSend}
+                        aria-label="Send message"
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-sm border border-border-light px-1.5 py-0.5 text-[11px] font-medium text-white transition-colors duration-200 disabled:opacity-50",
+                          mode === "plan"
+                            ? "bg-plan-mode hover:bg-plan-mode-hover disabled:hover:bg-plan-mode"
+                            : "bg-exec-mode hover:bg-exec-mode-hover disabled:hover:bg-exec-mode"
+                        )}
+                      >
+                        <SendHorizontal className="h-3.5 w-3.5" strokeWidth={2.5} />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent align="center">
+                      Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </Wrapper>

@@ -1,0 +1,167 @@
+import React from "react";
+import { Plus, Image } from "lucide-react";
+import { cn } from "@/common/lib/utils";
+import { ProviderIcon } from "../ProviderIcon";
+import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
+import { Select, SelectTrigger, SelectContent, SelectItem } from "../ui/select";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
+import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import type { UIMode } from "@/common/types/mode";
+
+interface CreationToolbarProps {
+  /** Current model string (provider:model format) */
+  model: string;
+  /** Recent models for dropdown */
+  recentModels: string[];
+  /** Callback when model changes */
+  onModelChange: (model: string) => void;
+  /** Current mode */
+  mode: UIMode;
+  /** Callback when mode changes */
+  onModeChange: (mode: UIMode) => void;
+  /** Whether send is enabled */
+  canSend: boolean;
+  /** Send callback */
+  onSend: () => void;
+  /** Add file callback */
+  onAddFile?: () => void;
+  /** Add image callback */
+  onAddImage?: () => void;
+  /** Whether the toolbar is disabled */
+  disabled?: boolean;
+}
+
+/**
+ * Extract provider from model string (e.g., "anthropic:claude-sonnet-4-5" -> "anthropic")
+ */
+function getProvider(model: string): string {
+  return model.split(":")[0] || "anthropic";
+}
+
+/**
+ * Extract model name from model string (e.g., "anthropic:claude-sonnet-4-5" -> "claude-sonnet-4-5")
+ */
+function getModelName(model: string): string {
+  return model.split(":")[1] || model;
+}
+
+/**
+ * Get short display name for mode
+ */
+function getModeDisplayName(mode: UIMode): string {
+  return mode === "exec" ? "Auto-Edit" : "Plan Only";
+}
+
+/**
+ * Compact toolbar for creation view matching the reference design:
+ * [+] | [Icon Model ∨] [Mode ∨] [📷] [Send ⌘↵]
+ */
+export function CreationToolbar(props: CreationToolbarProps) {
+  const provider = getProvider(props.model);
+  const modelName = getModelName(props.model);
+  const displayName = formatModelDisplayName(modelName);
+
+  return (
+    <div
+      className="bg-dark border-border-medium inline-flex items-center gap-1 rounded-lg border px-2 py-1.5"
+      data-component="CreationToolbar"
+    >
+      {/* Add file button */}
+      {props.onAddFile && (
+        <>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={props.onAddFile}
+                disabled={props.disabled}
+                className="text-muted hover:text-foreground flex items-center justify-center p-1 transition-colors disabled:opacity-50"
+                aria-label="Add file"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Add file</TooltipContent>
+          </Tooltip>
+          <div className="bg-border-medium mx-1 h-4 w-px" />
+        </>
+      )}
+
+      {/* Model selector */}
+      <Select value={props.model} onValueChange={props.onModelChange} disabled={props.disabled}>
+        <SelectTrigger className="text-muted hover:text-foreground h-auto gap-1.5 border-0 bg-transparent p-1 text-sm font-medium focus:ring-0">
+          <ProviderIcon provider={provider} className="h-4 w-4" />
+          <span>{displayName}</span>
+        </SelectTrigger>
+        <SelectContent>
+          {props.recentModels.map((m) => {
+            const mProvider = getProvider(m);
+            const mDisplayName = formatModelDisplayName(getModelName(m));
+            return (
+              <SelectItem key={m} value={m}>
+                <span className="flex items-center gap-2">
+                  <ProviderIcon provider={mProvider} />
+                  {mDisplayName}
+                </span>
+              </SelectItem>
+            );
+          })}
+        </SelectContent>
+      </Select>
+
+      {/* Mode selector */}
+      <Select
+        value={props.mode}
+        onValueChange={(value) => props.onModeChange(value as UIMode)}
+        disabled={props.disabled}
+      >
+        <SelectTrigger className="text-muted hover:text-foreground h-auto gap-1 border-0 bg-transparent p-1 text-sm font-medium focus:ring-0">
+          <span>{getModeDisplayName(props.mode)}</span>
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="exec">Auto-Edit</SelectItem>
+          <SelectItem value="plan">Plan Only</SelectItem>
+        </SelectContent>
+      </Select>
+
+      {/* Add image button */}
+      {props.onAddImage && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={props.onAddImage}
+              disabled={props.disabled}
+              className="text-muted hover:text-foreground flex items-center justify-center p-1 transition-colors disabled:opacity-50"
+              aria-label="Add image"
+            >
+              <Image className="h-4 w-4" strokeWidth={1.5} />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Add image</TooltipContent>
+        </Tooltip>
+      )}
+
+      {/* Send button */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onClick={props.onSend}
+            disabled={!props.canSend || props.disabled}
+            className={cn(
+              "ml-1 inline-flex items-center gap-1.5 rounded px-2 py-1 text-sm font-medium transition-colors disabled:opacity-50",
+              props.mode === "plan"
+                ? "bg-plan-mode hover:bg-plan-mode-hover text-white"
+                : "bg-exec-mode hover:bg-exec-mode-hover text-white"
+            )}
+          >
+            Send
+            <span className="text-white/70">{formatKeybind(KEYBINDS.SEND_MESSAGE)}</span>
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>Send message</TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
