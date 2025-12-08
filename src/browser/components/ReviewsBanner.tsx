@@ -360,12 +360,12 @@ const ReviewsBannerInner: React.FC<ReviewsBannerInnerProps> = ({ workspaceId }) 
   }
 
   return (
-    <div className="border-border bg-dark border-t">
-      {/* Collapsed banner - thin stripe */}
+    <div className="border-border bg-dark border-t px-[15px]">
+      {/* Collapsed banner - thin stripe, content aligned with chat */}
       <button
         type="button"
         onClick={handleToggle}
-        className="hover:bg-hover flex w-full items-center gap-2 px-3 py-1.5 text-xs transition-colors"
+        className="hover:bg-hover mx-auto flex w-full max-w-4xl items-center gap-2 py-1.5 text-xs transition-colors"
       >
         <MessageSquare
           className={cn(
@@ -398,9 +398,9 @@ const ReviewsBannerInner: React.FC<ReviewsBannerInnerProps> = ({ workspaceId }) 
         </div>
       </button>
 
-      {/* Expanded view */}
+      {/* Expanded view - content aligned with chat */}
       {isExpanded && (
-        <div className="border-border max-h-80 space-y-3 overflow-y-auto border-t px-3 py-2">
+        <div className="border-border mx-auto max-h-80 max-w-4xl space-y-3 overflow-y-auto border-t py-2">
           {/* Pending reviews section */}
           {pendingList.length > 0 && (
             <div className="space-y-1.5">
