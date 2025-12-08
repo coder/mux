@@ -969,15 +969,9 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         }));
 
         // Prepare reviews data for the continue message (orthogonal to compaction)
+        // Review.data is already ReviewNoteData shape
         const reviewsData =
-          attachedReviews.length > 0
-            ? attachedReviews.map((r) => ({
-                filePath: r.data.filePath,
-                lineRange: r.data.lineRange,
-                selectedCode: r.data.selectedCode,
-                userNote: r.data.userNote,
-              }))
-            : undefined;
+          attachedReviews.length > 0 ? attachedReviews.map((r) => r.data) : undefined;
 
         // Capture review IDs for marking as checked on success
         const sentReviewIds = attachedReviews.map((r) => r.id);
@@ -1098,15 +1092,9 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         }
 
         // Process reviews into message text and metadata using shared utility
+        // Review.data is already ReviewNoteData shape
         const reviewsData =
-          attachedReviews.length > 0
-            ? attachedReviews.map((r) => ({
-                filePath: r.data.filePath,
-                lineRange: r.data.lineRange,
-                selectedCode: r.data.selectedCode,
-                userNote: r.data.userNote,
-              }))
-            : undefined;
+          attachedReviews.length > 0 ? attachedReviews.map((r) => r.data) : undefined;
         const { finalText: finalMessageText, metadata: reviewMetadata } = prepareUserMessageForSend(
           { text: actualMessageText, reviews: reviewsData },
           muxMetadata
