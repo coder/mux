@@ -2,6 +2,7 @@ import type { Runtime, BackgroundHandle } from "@/node/runtime/Runtime";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "./log";
 import * as path from "path";
+import * as fs from "fs/promises";
 
 /**
  * Metadata written to meta.json for bookkeeping
@@ -35,16 +36,28 @@ export interface BackgroundProcess {
 }
 
 /**
+ * Tracks read position for incremental output retrieval.
+ * Each call to getOutput() returns only new content since the last read.
+ */
+interface OutputReadPosition {
+  stdoutBytes: number;
+  stderrBytes: number;
+}
+
+/**
  * Manages background bash processes for workspaces.
  *
  * Processes are spawned via Runtime.spawnBackground() and tracked by ID.
- * Output is stored in circular buffers for later retrieval.
+ * Supports incremental output retrieval via getOutput().
  */
 export class BackgroundProcessManager {
   // NOTE: This map is in-memory only. Background processes use nohup/setsid so they
   // could survive app restarts, but we kill all tracked processes on shutdown via
   // dispose(). Rehydrating from meta.json on startup is out of scope for now.
   private processes = new Map<string, BackgroundProcess>();
+
+  // Tracks read positions for incremental output retrieval
+  private readPositions = new Map<string, OutputReadPosition>();
 
   /**
    * Spawn a new background process.
@@ -161,6 +174,105 @@ export class BackgroundProcessManager {
     }
 
     return proc;
+  }
+
+  /**
+   * Get incremental output from a background process.
+   * Returns only NEW output since the last call (tracked per process).
+   * @param processId Process ID to get output from
+   * @param filter Optional regex pattern to filter output lines (non-matching lines are discarded permanently)
+   */
+  async getOutput(
+    processId: string,
+    filter?: string
+  ): Promise<
+    | {
+        success: true;
+        status: "running" | "exited" | "killed" | "failed";
+        stdout: string;
+        stderr: string;
+        exitCode?: number;
+      }
+    | { success: false; error: string }
+  > {
+    log.debug(`BackgroundProcessManager.getOutput(${processId}, filter=${filter ?? "none"}) called`);
+
+    const proc = await this.getProcess(processId);
+    if (!proc) {
+      return { success: false, error: `Process not found: ${processId}` };
+    }
+
+    // Get or initialize read position
+    let pos = this.readPositions.get(processId);
+    if (!pos) {
+      pos = { stdoutBytes: 0, stderrBytes: 0 };
+      this.readPositions.set(processId, pos);
+    }
+
+    const stdoutPath = path.join(proc.outputDir, "stdout.log");
+    const stderrPath = path.join(proc.outputDir, "stderr.log");
+
+    // Read new content from each file
+    const [stdout, stderr] = await Promise.all([
+      this.readNewContent(stdoutPath, pos.stdoutBytes),
+      this.readNewContent(stderrPath, pos.stderrBytes),
+    ]);
+
+    // Update read positions
+    pos.stdoutBytes += stdout.length;
+    pos.stderrBytes += stderr.length;
+
+    // Apply filter if provided (permanently discards non-matching lines)
+    let filteredStdout = stdout;
+    let filteredStderr = stderr;
+    if (filter) {
+      try {
+        const regex = new RegExp(filter);
+        filteredStdout = stdout
+          .split("\n")
+          .filter((line) => regex.test(line))
+          .join("\n");
+        filteredStderr = stderr
+          .split("\n")
+          .filter((line) => regex.test(line))
+          .join("\n");
+      } catch (e) {
+        return { success: false, error: `Invalid filter regex: ${getErrorMessage(e)}` };
+      }
+    }
+
+    return {
+      success: true,
+      status: proc.status,
+      stdout: filteredStdout,
+      stderr: filteredStderr,
+      exitCode: proc.exitCode,
+    };
+  }
+
+  /**
+   * Read new content from a file starting at a byte offset.
+   * Returns empty string if file doesn't exist or offset is at/beyond EOF.
+   */
+  private async readNewContent(filePath: string, offset: number): Promise<string> {
+    try {
+      const fd = await fs.open(filePath, "r");
+      try {
+        const stat = await fd.stat();
+        if (offset >= stat.size) {
+          return "";
+        }
+        const buffer = Buffer.alloc(stat.size - offset);
+        const { bytesRead } = await fd.read(buffer, 0, buffer.length, offset);
+        return buffer.toString("utf-8", 0, bytesRead);
+      } finally {
+        await fd.close();
+      }
+    } catch (e) {
+      // File doesn't exist yet or other error - return empty
+      log.debug(`readNewContent(${filePath}): ${getErrorMessage(e)}`);
+      return "";
+    }
   }
 
   /**

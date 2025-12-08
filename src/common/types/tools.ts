@@ -227,6 +227,22 @@ export interface StatusSetToolArgs {
   url?: string;
 }
 
+// Bash Output Tool Types (read incremental output from background processes)
+export interface BashOutputToolArgs {
+  process_id: string;
+  filter?: string;
+}
+
+export type BashOutputToolResult =
+  | {
+      success: true;
+      status: "running" | "exited" | "killed" | "failed";
+      stdout: string;
+      stderr: string;
+      exitCode?: number;
+    }
+  | { success: false; error: string };
+
 // Bash Background Tool Types
 export interface BashBackgroundTerminateArgs {
   process_id: string;
