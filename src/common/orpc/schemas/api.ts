@@ -28,6 +28,19 @@ export { telemetry, TelemetryEventSchema } from "./telemetry";
 
 // --- API Router Schemas ---
 
+// Background process info (for UI display)
+export const BackgroundProcessInfoSchema = z.object({
+  id: z.string(),
+  pid: z.number(),
+  script: z.string(),
+  displayName: z.string().optional(),
+  startTime: z.number(),
+  status: z.enum(["running", "exited", "killed", "failed"]),
+  exitCode: z.number().optional(),
+});
+
+export type BackgroundProcessInfo = z.infer<typeof BackgroundProcessInfoSchema>;
+
 // Tokenizer
 export const tokenizer = {
   countTokens: {
@@ -307,6 +320,16 @@ export const workspace = {
       }),
       z.string()
     ),
+  },
+  backgroundProcesses: {
+    list: {
+      input: z.object({ workspaceId: z.string() }),
+      output: z.array(BackgroundProcessInfoSchema),
+    },
+    terminate: {
+      input: z.object({ workspaceId: z.string(), processId: z.string() }),
+      output: ResultSchema(z.void(), z.string()),
+    },
   },
 };
 

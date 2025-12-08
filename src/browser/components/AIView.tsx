@@ -51,6 +51,8 @@ import { evictModelFromLRU } from "@/browser/hooks/useModelLRU";
 import { QueuedMessage } from "./Messages/QueuedMessage";
 import { CompactionWarning } from "./CompactionWarning";
 import { ConcurrentLocalWarning } from "./ConcurrentLocalWarning";
+import { BackgroundProcessesBanner } from "./BackgroundProcessesBanner";
+import { useBackgroundProcesses } from "@/browser/hooks/useBackgroundProcesses";
 import { checkAutoCompaction } from "@/browser/utils/compaction/autoCompactionCheck";
 import { executeCompaction } from "@/browser/utils/chatCommands";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
@@ -119,6 +121,15 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
   // Reviews state
   const reviews = useReviews(workspaceId);
+
+  const { processes: backgroundProcesses, terminate: terminateBackgroundProcessAsync } =
+    useBackgroundProcesses(api, workspaceId);
+  const handleTerminateBackgroundProcess = useCallback(
+    (processId: string) => {
+      void terminateBackgroundProcessAsync(processId);
+    },
+    [terminateBackgroundProcessAsync]
+  );
   const { options } = useProviderOptions();
   const use1M = options.anthropic?.use1MContext ?? false;
   // Get pending model for auto-compaction settings (threshold is per-model)
@@ -648,6 +659,10 @@ const AIViewInner: React.FC<AIViewProps> = ({
           />
         )}
         <ReviewsBanner workspaceId={workspaceId} />
+        <BackgroundProcessesBanner
+          processes={backgroundProcesses}
+          onTerminate={handleTerminateBackgroundProcess}
+        />
         <ChatInput
           variant="workspace"
           workspaceId={workspaceId}

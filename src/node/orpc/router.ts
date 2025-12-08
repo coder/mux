@@ -691,6 +691,27 @@ export const router = (authToken?: string) => {
           }
           return { success: true as const, data: { content, path: planPath } };
         }),
+      backgroundProcesses: {
+        list: t
+          .input(schemas.workspace.backgroundProcesses.list.input)
+          .output(schemas.workspace.backgroundProcesses.list.output)
+          .handler(async ({ context, input }) => {
+            return context.workspaceService.listBackgroundProcesses(input.workspaceId);
+          }),
+        terminate: t
+          .input(schemas.workspace.backgroundProcesses.terminate.input)
+          .output(schemas.workspace.backgroundProcesses.terminate.output)
+          .handler(async ({ context, input }) => {
+            const result = await context.workspaceService.terminateBackgroundProcess(
+              input.workspaceId,
+              input.processId
+            );
+            if (!result.success) {
+              return { success: false, error: result.error };
+            }
+            return { success: true, data: undefined };
+          }),
+      },
     },
     window: {
       setTitle: t
