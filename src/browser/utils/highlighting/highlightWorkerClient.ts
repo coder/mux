@@ -10,7 +10,7 @@
 
 import { LRUCache } from "lru-cache";
 import * as Comlink from "comlink";
-import { createHighlighter, type Highlighter } from "shiki";
+import type { Highlighter } from "shiki";
 import type { HighlightWorkerAPI } from "@/browser/workers/highlightWorker";
 import { mapToShikiLang, SHIKI_DARK_THEME, SHIKI_LIGHT_THEME } from "./shiki-shared";
 
@@ -46,15 +46,18 @@ let highlighterPromise: Promise<Highlighter> | null = null;
 
 /**
  * Get or create main-thread Shiki highlighter (for fallback when worker unavailable)
+ * Uses dynamic import to avoid loading Shiki on main thread unless actually needed.
  */
-function getShikiHighlighter(): Promise<Highlighter> {
+async function getShikiHighlighter(): Promise<Highlighter> {
   // Must use if-check instead of ??= to prevent race condition
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
   if (!highlighterPromise) {
-    highlighterPromise = createHighlighter({
-      themes: [SHIKI_DARK_THEME, SHIKI_LIGHT_THEME],
-      langs: [],
-    });
+    highlighterPromise = import("shiki").then(({ createHighlighter }) =>
+      createHighlighter({
+        themes: [SHIKI_DARK_THEME, SHIKI_LIGHT_THEME],
+        langs: [],
+      })
+    );
   }
   return highlighterPromise;
 }

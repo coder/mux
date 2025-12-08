@@ -491,6 +491,28 @@ export default defineConfig([
     },
   },
   {
+    // Shiki must only be imported in the highlight worker to avoid blocking main thread
+    // Type-only imports are allowed (erased at compile time)
+    files: ["src/**/*.ts", "src/**/*.tsx"],
+    ignores: ["src/browser/workers/highlightWorker.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["shiki"],
+              importNamePattern: "^(?!type\\s)",
+              allowTypeImports: true,
+              message:
+                "Shiki must only be imported in highlightWorker.ts to avoid blocking the main thread. Use highlightCode() from highlightWorkerClient.ts instead.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // Renderer process (frontend) architectural boundary - prevent Node.js API usage
     files: ["src/**/*.ts", "src/**/*.tsx"],
     ignores: [
