@@ -13,14 +13,33 @@ Create `.mux/mcp.jsonc` in your project root:
 {
   "servers": {
     // Knowledge graph for persistent memory
-    "memory": "npx -y @anthropic-ai/mcp-server-memory",
-    // Access external APIs
-    "github": "npx -y @modelcontextprotocol/server-github",
+    "memory": "npx -y @modelcontextprotocol/server-memory",
+    // Browser automation and screenshots
+    "chrome": "npx -y chrome-devtools-mcp@latest --headless",
   },
 }
 ```
 
 Each entry maps a server name to its shell command. The command must start a process that speaks MCP over stdio (NDJSON format).
+
+## Slash Commands
+
+Manage MCP servers directly from chat:
+
+| Command                      | Description                         |
+| ---------------------------- | ----------------------------------- |
+| `/mcp add <name> <command>`  | Add a new MCP server                |
+| `/mcp remove <name>`         | Remove an MCP server                |
+| `/mcp edit <name> <command>` | Update an existing server's command |
+
+Examples:
+
+```
+/mcp add memory npx -y @modelcontextprotocol/server-memory
+/mcp add chrome npx -y chrome-devtools-mcp@latest --headless
+/mcp remove github
+/mcp edit chrome npx -y chrome-devtools-mcp@latest --headless --isolated
+```
 
 ## Settings UI
 
@@ -28,8 +47,8 @@ Configure servers in **Settings → Projects**:
 
 1. Select a project from the dropdown
 2. Add servers with name and command
-3. Use **Test** to verify before adding
-4. View available tools after successful test
+3. Use **Test** (play button) to verify before adding
+4. Use **Edit** (pencil) or **Remove** (trash) to manage existing servers
 
 ## Behavior
 
