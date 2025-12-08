@@ -1655,13 +1655,13 @@ pre code {
   box-shadow: var(--thumb-shadow, none);
 }
 
-/* Custom animations for CompactionBackground */
-@keyframes shimmer {
-  0% {
-    background-position: -1000px 0;
+/* GPU-accelerated shimmer for CompactionBackground - runs on compositor thread */
+@keyframes shimmer-slide {
+  from {
+    transform: translateX(0);
   }
-  100% {
-    background-position: 1000px 0;
+  to {
+    transform: translateX(53.33%);
   }
 }
 

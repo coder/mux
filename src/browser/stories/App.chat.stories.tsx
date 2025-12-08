@@ -7,6 +7,7 @@ import {
   STABLE_TIMESTAMP,
   createUserMessage,
   createAssistantMessage,
+  createCompactionRequestMessage,
   createFileReadTool,
   createFileEditTool,
   createTerminalTool,
@@ -323,5 +324,48 @@ export const GenericTool: AppStory = {
       const toolHeader = canvas.getByText("fetch_data");
       await userEvent.click(toolHeader);
     });
+  },
+};
+
+/** Streaming compaction with shimmer effect - tests GPU-accelerated animation */
+export const StreamingCompaction: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupStreamingChatStory({
+          workspaceId: "ws-compaction",
+          messages: [
+            createUserMessage("msg-1", "Help me refactor this codebase", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 300000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "I've analyzed the codebase and made several improvements to the architecture.",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 200000,
+              }
+            ),
+            createCompactionRequestMessage("msg-3", {
+              historySequence: 3,
+              timestamp: STABLE_TIMESTAMP - 3000,
+            }),
+          ],
+          streamingMessageId: "msg-4",
+          historySequence: 4,
+          streamText:
+            "## Conversation Summary\n\nThe user requested help refactoring the codebase. Key changes made:\n\n- Restructured component hierarchy for better separation of concerns\n- Extracted shared utilities into dedicated modules\n- Improved type safety across API boundaries",
+        })
+      }
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Shows the compaction shimmer effect during streaming. The shimmer uses GPU-accelerated CSS transforms instead of background-position animations to prevent frame drops.",
+      },
+    },
   },
 };
