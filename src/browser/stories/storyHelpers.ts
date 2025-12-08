@@ -13,9 +13,10 @@ import {
   EXPANDED_PROJECTS_KEY,
   getInputKey,
   getModelKey,
-  getPendingReviewsKey,
+  getReviewsKey,
 } from "@/common/constants/storage";
-import type { PendingReview, PendingReviewsState } from "@/common/types/review";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import type { PendingReview, ReviewsState } from "@/common/types/review";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 import {
   createWorkspace,
@@ -61,12 +62,12 @@ export function expandProjects(projectPaths: string[]): void {
 
 /** Set pending reviews for a workspace */
 export function setPendingReviews(workspaceId: string, reviews: PendingReview[]): void {
-  const state: PendingReviewsState = {
+  const state: ReviewsState = {
     workspaceId,
     reviews: Object.fromEntries(reviews.map((r) => [r.id, r])),
     lastUpdated: Date.now(),
   };
-  localStorage.setItem(getPendingReviewsKey(workspaceId), JSON.stringify(state));
+  updatePersistedState(getReviewsKey(workspaceId), state);
 }
 
 /** Create a sample pending review for stories */

@@ -5,8 +5,8 @@
 
 import { useCallback, useMemo } from "react";
 import { usePersistedState } from "./usePersistedState";
-import { getPendingReviewsKey } from "@/common/constants/storage";
-import type { PendingReview, PendingReviewsState, ReviewNoteData } from "@/common/types/review";
+import { getReviewsKey } from "@/common/constants/storage";
+import type { PendingReview, ReviewsState, ReviewNoteData } from "@/common/types/review";
 
 /**
  * Generate a unique ID for a review
@@ -53,8 +53,8 @@ export interface UsePendingReviewsReturn {
  * Persists reviews to localStorage
  */
 export function usePendingReviews(workspaceId: string): UsePendingReviewsReturn {
-  const [state, setState] = usePersistedState<PendingReviewsState>(
-    getPendingReviewsKey(workspaceId),
+  const [state, setState] = usePersistedState<ReviewsState>(
+    getReviewsKey(workspaceId),
     {
       workspaceId,
       reviews: {},

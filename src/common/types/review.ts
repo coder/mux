@@ -136,9 +136,10 @@ export interface PendingReview {
 }
 
 /**
- * Persisted state for pending reviews (per workspace)
+ * Persisted state for reviews (per workspace)
+ * Contains reviews in all states: pending, attached, and checked
  */
-export interface PendingReviewsState {
+export interface ReviewsState {
   /** Workspace ID */
   workspaceId: string;
   /** All reviews keyed by ID */
