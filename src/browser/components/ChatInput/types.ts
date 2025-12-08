@@ -10,12 +10,6 @@ export interface ChatInputAPI {
   appendText: (text: string) => void;
   prependText: (text: string) => void;
   restoreImages: (images: ImagePart[]) => void;
-  /** Attach a review by ID (shows in preview, included when sending) */
-  attachReview: (reviewId: string) => void;
-  /** Detach a review by ID */
-  detachReview: (reviewId: string) => void;
-  /** Get currently attached review IDs */
-  getAttachedReviews: () => string[];
 }
 
 // Workspace variant: full functionality for existing workspaces
@@ -36,12 +30,12 @@ export interface ChatInputWorkspaceVariant {
   disabled?: boolean;
   onReady?: (api: ChatInputAPI) => void;
   autoCompactionCheck?: AutoCompactionCheckResult; // Computed in parent (AIView) to avoid duplicate calculation
-  /** Called after reviews are sent in a message - allows parent to mark them as checked */
-  onReviewsSent?: (reviewIds: string[]) => void;
-  /** Called when attached reviews change (for syncing with banner) */
-  onAttachedReviewsChange?: (reviewIds: string[]) => void;
-  /** Get a pending review by ID (for resolving attached review IDs to data) */
-  getReview?: (id: string) => PendingReview | undefined;
+  /** Reviews currently attached to chat (from usePendingReviews hook) */
+  attachedReviews?: PendingReview[];
+  /** Detach a review from chat input (sets status to pending) */
+  onDetachReview?: (reviewId: string) => void;
+  /** Mark reviews as checked after sending */
+  onCheckReviews?: (reviewIds: string[]) => void;
   /** Update a review's comment/note */
   onUpdateReviewNote?: (reviewId: string, newNote: string) => void;
 }

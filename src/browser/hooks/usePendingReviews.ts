@@ -16,15 +16,23 @@ function generateReviewId(): string {
 }
 
 export interface UsePendingReviewsReturn {
-  /** All reviews (pending and checked) */
+  /** All reviews (pending, attached, and checked) */
   reviews: PendingReview[];
-  /** Count of pending (unchecked) reviews */
+  /** Count of pending reviews (not attached, not checked) */
   pendingCount: number;
+  /** Count of attached reviews (in chat input draft) */
+  attachedCount: number;
   /** Count of checked reviews */
   checkedCount: number;
-  /** Add a new review from structured data */
+  /** Reviews currently attached to chat input */
+  attachedReviews: PendingReview[];
+  /** Add a new review from structured data (starts as attached) */
   addReview: (data: ReviewNoteData) => PendingReview;
-  /** Mark a review as checked */
+  /** Mark a review as attached to chat input */
+  attachReview: (reviewId: string) => void;
+  /** Detach a review from chat input (back to pending) */
+  detachReview: (reviewId: string) => void;
+  /** Mark a review as checked (sent) */
   checkReview: (reviewId: string) => void;
   /** Uncheck a review (mark as pending again) */
   uncheckReview: (reviewId: string) => void;
@@ -60,10 +68,17 @@ export function usePendingReviews(workspaceId: string): UsePendingReviewsReturn 
     return Object.values(state.reviews).sort((a, b) => b.createdAt - a.createdAt);
   }, [state.reviews]);
 
-  // Count pending and checked reviews
+  // Filter reviews by status
+  const attachedReviews = useMemo(() => {
+    return reviews.filter((r) => r.status === "attached");
+  }, [reviews]);
+
+  // Count reviews by status
   const pendingCount = useMemo(() => {
     return reviews.filter((r) => r.status === "pending").length;
   }, [reviews]);
+
+  const attachedCount = attachedReviews.length;
 
   const checkedCount = useMemo(() => {
     return reviews.filter((r) => r.status === "checked").length;
@@ -74,7 +89,7 @@ export function usePendingReviews(workspaceId: string): UsePendingReviewsReturn 
       const review: PendingReview = {
         id: generateReviewId(),
         data,
-        status: "pending",
+        status: "attached", // New reviews start attached to chat input
         createdAt: Date.now(),
       };
 
@@ -88,6 +103,52 @@ export function usePendingReviews(workspaceId: string): UsePendingReviewsReturn 
       }));
 
       return review;
+    },
+    [setState]
+  );
+
+  const attachReview = useCallback(
+    (reviewId: string) => {
+      setState((prev) => {
+        const review = prev.reviews[reviewId];
+        if (!review || review.status === "attached") return prev;
+
+        return {
+          ...prev,
+          reviews: {
+            ...prev.reviews,
+            [reviewId]: {
+              ...review,
+              status: "attached",
+              statusChangedAt: Date.now(),
+            },
+          },
+          lastUpdated: Date.now(),
+        };
+      });
+    },
+    [setState]
+  );
+
+  const detachReview = useCallback(
+    (reviewId: string) => {
+      setState((prev) => {
+        const review = prev.reviews[reviewId];
+        if (review?.status !== "attached") return prev;
+
+        return {
+          ...prev,
+          reviews: {
+            ...prev.reviews,
+            [reviewId]: {
+              ...review,
+              status: "pending",
+              statusChangedAt: Date.now(),
+            },
+          },
+          lastUpdated: Date.now(),
+        };
+      });
     },
     [setState]
   );
@@ -208,8 +269,12 @@ export function usePendingReviews(workspaceId: string): UsePendingReviewsReturn 
   return {
     reviews,
     pendingCount,
+    attachedCount,
     checkedCount,
+    attachedReviews,
     addReview,
+    attachReview,
+    detachReview,
     checkReview,
     uncheckReview,
     removeReview,

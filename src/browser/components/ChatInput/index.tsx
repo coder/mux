@@ -75,7 +75,7 @@ import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { useVoiceInput } from "@/browser/hooks/useVoiceInput";
 import { VoiceInputButton } from "./VoiceInputButton";
 import { RecordingOverlay } from "./RecordingOverlay";
-import { ReviewBlock } from "../shared/ReviewBlock";
+import { ReviewBlockFromData } from "../shared/ReviewBlock";
 import { formatReviewNoteForChat } from "@/common/types/review";
 
 type TokenCountReader = () => number;
@@ -147,33 +147,32 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   const [providerNames, setProviderNames] = useState<string[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
   const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([]);
-  const [attachedReviewIds, setAttachedReviewIds] = useState<string[]>([]);
+  // Attached reviews come from parent via props (persisted in pendingReviews state)
+  const attachedReviews = variant === "workspace" ? (props.attachedReviews ?? []) : [];
   const handleToastDismiss = useCallback(() => {
     setToast(null);
   }, []);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const modelSelectorRef = useRef<ModelSelectorRef>(null);
 
-  // Draft state combines text input, image attachments, and attached reviews
-  // Use these helpers to avoid accidentally losing content when modifying text
+  // Draft state combines text input and image attachments
+  // Reviews are managed separately via props (persisted in pendingReviews state)
   interface DraftState {
     text: string;
     images: ImageAttachment[];
-    reviewIds: string[];
   }
   const getDraft = useCallback(
-    (): DraftState => ({ text: input, images: imageAttachments, reviewIds: attachedReviewIds }),
-    [input, imageAttachments, attachedReviewIds]
+    (): DraftState => ({ text: input, images: imageAttachments }),
+    [input, imageAttachments]
   );
   const setDraft = useCallback(
     (draft: DraftState) => {
       setInput(draft.text);
       setImageAttachments(draft.images);
-      setAttachedReviewIds(draft.reviewIds);
     },
     [setInput]
   );
-  const preEditDraftRef = useRef<DraftState>({ text: "", images: [], reviewIds: [] });
+  const preEditDraftRef = useRef<DraftState>({ text: "", images: [] });
   const { open } = useSettings();
   const { selectedWorkspace } = useWorkspaceContext();
   const [mode, setMode] = useMode();
@@ -241,7 +240,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   );
   const hasTypedText = input.trim().length > 0;
   const hasImages = imageAttachments.length > 0;
-  const hasReviews = attachedReviewIds.length > 0;
+  const hasReviews = attachedReviews.length > 0;
   const canSend = (hasTypedText || hasImages || hasReviews) && !disabled && !isSending;
   // Setter for model - updates localStorage directly so useSendMessageOptions picks it up
   const setPreferredModel = useCallback(
@@ -346,26 +345,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     setImageAttachments(attachments);
   }, []);
 
-  // Attach a review by ID (for pending reviews feature)
-  const attachReview = useCallback((reviewId: string) => {
-    setAttachedReviewIds((prev) => (prev.includes(reviewId) ? prev : [...prev, reviewId]));
-  }, []);
-
-  // Detach a review by ID
-  const detachReview = useCallback((reviewId: string) => {
-    setAttachedReviewIds((prev) => prev.filter((id) => id !== reviewId));
-  }, []);
-
-  // Get currently attached reviews
-  const getAttachedReviews = useCallback(() => attachedReviewIds, [attachedReviewIds]);
-
-  // Notify parent when attached reviews change (workspace variant only)
-  useEffect(() => {
-    if (variant === "workspace" && props.onAttachedReviewsChange) {
-      props.onAttachedReviewsChange(attachedReviewIds);
-    }
-  }, [variant, attachedReviewIds, props]);
-
   // Provide API to parent via callback
   useEffect(() => {
     if (props.onReady) {
@@ -375,9 +354,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         appendText,
         prependText,
         restoreImages,
-        attachReview,
-        detachReview,
-        getAttachedReviews,
       });
     }
   }, [
@@ -387,9 +363,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     appendText,
     prependText,
     restoreImages,
-    attachReview,
-    detachReview,
-    getAttachedReviews,
     props,
   ]);
 
@@ -421,7 +394,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   useEffect(() => {
     if (editingMessage) {
       preEditDraftRef.current = getDraft();
-      setDraft({ text: editingMessage.content, images: [], reviewIds: [] });
+      setDraft({ text: editingMessage.content, images: [] });
       // Auto-resize textarea and focus
       setTimeout(() => {
         if (inputRef.current) {
@@ -1103,9 +1076,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         }
 
         // Prepend attached reviews to message and store in metadata for display
-        const attachedReviews = attachedReviewIds
-          .map((id) => props.getReview?.(id))
-          .filter((r): r is NonNullable<typeof r> => r !== undefined);
         const reviewsText = attachedReviews
           .map((r) => formatReviewNoteForChat(r.data))
           .join("\n\n");
@@ -1126,11 +1096,13 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           };
         }
 
-        // Clear input, images, and attached reviews immediately for responsive UI
+        // Capture review IDs before clearing (for marking as checked on success)
+        const sentReviewIds = attachedReviews.map((r) => r.id);
+
+        // Clear input and images immediately for responsive UI
         // These will be restored if the send operation fails
         setInput("");
         setImageAttachments([]);
-        setAttachedReviewIds([]);
         // Clear inline height style - VimTextArea's useLayoutEffect will handle sizing
         if (inputRef.current) {
           inputRef.current.style.height = "";
@@ -1166,9 +1138,9 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             sendMessageOptions.thinkingLevel ?? "off"
           );
 
-          // Mark attached reviews as completed
-          if (preSendDraft.reviewIds.length > 0) {
-            props.onReviewsSent?.(preSendDraft.reviewIds);
+          // Mark attached reviews as completed (checked)
+          if (sentReviewIds.length > 0) {
+            props.onCheckReviews?.(sentReviewIds);
           }
 
           // Exit editing mode if we were editing
@@ -1368,24 +1340,22 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           )}
 
           {/* Attached reviews preview - show styled blocks with remove/edit buttons */}
-          {variant === "workspace" && attachedReviewIds.length > 0 && props.getReview && (
+          {variant === "workspace" && attachedReviews.length > 0 && (
             <div className="border-border max-h-[50vh] space-y-2 overflow-y-auto border-b px-1.5 py-1.5">
-              {attachedReviewIds.map((reviewId) => {
-                const review = props.getReview!(reviewId);
-                if (!review) return null;
-                return (
-                  <ReviewBlock
-                    key={reviewId}
-                    content={formatReviewNoteForChat(review.data).slice(8, -9)}
-                    onRemove={() => detachReview(reviewId)}
-                    onEditComment={
-                      props.onUpdateReviewNote
-                        ? (newNote) => props.onUpdateReviewNote!(reviewId, newNote)
-                        : undefined
-                    }
-                  />
-                );
-              })}
+              {attachedReviews.map((review) => (
+                <ReviewBlockFromData
+                  key={review.id}
+                  data={review.data}
+                  onRemove={
+                    props.onDetachReview ? () => props.onDetachReview!(review.id) : undefined
+                  }
+                  onEditComment={
+                    props.onUpdateReviewNote
+                      ? (newNote) => props.onUpdateReviewNote!(review.id, newNote)
+                      : undefined
+                  }
+                />
+              ))}
             </div>
           )}
 

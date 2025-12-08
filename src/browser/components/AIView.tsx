@@ -111,7 +111,6 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
   // Pending reviews state
   const pendingReviews = usePendingReviews(workspaceId);
-  const [attachedReviewIds, setAttachedReviewIds] = useState<string[]>([]);
   const { options } = useProviderOptions();
   const use1M = options.anthropic?.use1MContext ?? false;
   // Get pending model for auto-compaction settings (threshold is per-model)
@@ -220,12 +219,11 @@ const AIViewInner: React.FC<AIViewProps> = ({
     chatInputAPI.current = api;
   }, []);
 
-  // Handler for review notes from Code Review tab - adds to pending reviews and attaches to chat
+  // Handler for review notes from Code Review tab - adds to pending reviews (starts attached)
   const handleReviewNote = useCallback(
     (data: ReviewNoteData) => {
-      const review = pendingReviews.addReview(data);
-      // Auto-attach to chat input for immediate sending
-      chatInputAPI.current?.attachReview(review.id);
+      pendingReviews.addReview(data);
+      // New reviews start with status "attached" so they appear in chat input immediately
     },
     [pendingReviews]
   );
@@ -619,11 +617,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
             onCompactClick={handleCompactClick}
           />
         )}
-        <PendingReviewsBanner
-          workspaceId={workspaceId}
-          chatInputAPI={chatInputAPI}
-          attachedReviewIds={attachedReviewIds}
-        />
+        <PendingReviewsBanner workspaceId={workspaceId} />
         <ChatInput
           variant="workspace"
           workspaceId={workspaceId}
@@ -639,9 +633,9 @@ const AIViewInner: React.FC<AIViewProps> = ({
           canInterrupt={canInterrupt}
           onReady={handleChatInputReady}
           autoCompactionCheck={autoCompactionResult}
-          getReview={pendingReviews.getReview}
-          onReviewsSent={(ids) => ids.forEach((id) => pendingReviews.checkReview(id))}
-          onAttachedReviewsChange={setAttachedReviewIds}
+          attachedReviews={pendingReviews.attachedReviews}
+          onDetachReview={pendingReviews.detachReview}
+          onCheckReviews={(ids) => ids.forEach((id) => pendingReviews.checkReview(id))}
           onUpdateReviewNote={pendingReviews.updateReviewNote}
         />
       </div>

@@ -2,9 +2,8 @@
  * ReviewBlock - Renders review data as styled components
  *
  * Used in:
- * - UserMessage to display submitted reviews (from metadata or parsed)
- * - ChatInput preview to show reviews before sending
- * - MarkdownComponents for assistant message context (legacy parsing)
+ * - UserMessage to display submitted reviews (from metadata via ReviewBlockFromData)
+ * - ChatInput preview to show reviews before sending (via ReviewBlock with parsed content)
  */
 
 import React, { useMemo, useState, useCallback, useRef } from "react";
@@ -83,7 +82,7 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
   );
 
   return (
-    <div className="overflow-hidden rounded border border-[var(--color-review-accent)]/30 bg-[var(--color-review-accent)]/5">
+    <div className="min-w-0 overflow-hidden rounded border border-[var(--color-review-accent)]/30 bg-[var(--color-review-accent)]/5">
       {/* Header */}
       <div className="flex items-center gap-1.5 border-b border-[var(--color-review-accent)]/20 bg-[var(--color-review-accent)]/10 px-2 py-1 text-xs">
         <MessageSquare className="size-3 shrink-0 text-[var(--color-review-accent)]" />
@@ -102,7 +101,7 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
         )}
       </div>
 
-      {/* Code snippet */}
+      {/* Code snippet - horizontal scroll for long lines, vertical scroll limited to max-h-64 */}
       {code && (
         <div className="max-h-64 overflow-auto border-b border-[var(--color-review-accent)]/20 text-[11px]">
           <DiffRenderer
@@ -111,7 +110,7 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
             fontSize="11px"
             filePath={filePath}
             maxHeight="none"
-            className="rounded-none"
+            className="min-w-fit rounded-none"
           />
         </div>
       )}
@@ -262,87 +261,5 @@ export const ReviewBlockFromData: React.FC<ReviewBlockFromDataProps> = ({
       onRemove={onRemove}
       onEditComment={onEditComment}
     />
-  );
-};
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// UTILITIES
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Check if content contains review blocks (for legacy message detection)
- */
-export function hasReviewBlocks(content: string): boolean {
-  return /<review>[\s\S]*?<\/review>/.test(content);
-}
-
-/**
- * Split content into segments of text and review blocks
- */
-export interface ContentSegment {
-  type: "text" | "review";
-  content: string;
-}
-
-export function splitContentWithReviews(content: string): ContentSegment[] {
-  const segments: ContentSegment[] = [];
-  const regex = /<review>([\s\S]*?)<\/review>/g;
-  let lastIndex = 0;
-  let match;
-
-  while ((match = regex.exec(content)) !== null) {
-    // Add text before the review block
-    if (match.index > lastIndex) {
-      const text = content.slice(lastIndex, match.index);
-      if (text.trim()) {
-        segments.push({ type: "text", content: text });
-      }
-    }
-    // Add the review block
-    segments.push({ type: "review", content: match[1] });
-    lastIndex = match.index + match[0].length;
-  }
-
-  // Add remaining text after last review block
-  if (lastIndex < content.length) {
-    const text = content.slice(lastIndex);
-    if (text.trim()) {
-      segments.push({ type: "text", content: text });
-    }
-  }
-
-  return segments;
-}
-
-/**
- * Render content with review blocks inline (legacy parsing)
- */
-export const ContentWithReviews: React.FC<{ content: string; textClassName?: string }> = ({
-  content,
-  textClassName,
-}) => {
-  const segments = useMemo(() => splitContentWithReviews(content), [content]);
-
-  if (segments.length === 0) {
-    return null;
-  }
-
-  // If no review blocks, just return null to let caller render normally
-  if (segments.length === 1 && segments[0].type === "text") {
-    return null;
-  }
-
-  return (
-    <div className="space-y-2">
-      {segments.map((segment, idx) =>
-        segment.type === "review" ? (
-          <ReviewBlock key={idx} content={segment.content} />
-        ) : (
-          <pre key={idx} className={textClassName}>
-            {segment.content.trim()}
-          </pre>
-        )
-      )}
-    </div>
   );
 };

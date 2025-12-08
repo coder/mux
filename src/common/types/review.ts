@@ -96,8 +96,11 @@ export interface ReviewStats {
 
 /**
  * Status of a pending review
+ * - pending: In banner, not attached to chat input
+ * - attached: Currently attached to chat input draft
+ * - checked: Marked as done (after being sent)
  */
-export type PendingReviewStatus = "pending" | "checked";
+export type PendingReviewStatus = "pending" | "attached" | "checked";
 
 /**
  * Structured data for a review note.

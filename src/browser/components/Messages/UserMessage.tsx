@@ -9,7 +9,7 @@ import { copyToClipboard } from "@/browser/utils/clipboard";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { Clipboard, ClipboardCheck, Pencil } from "lucide-react";
-import { ReviewBlockFromData, ContentWithReviews, hasReviewBlocks } from "../shared/ReviewBlock";
+import { ReviewBlockFromData } from "../shared/ReviewBlock";
 
 /** Helper component to render reviews from structured data with optional text */
 const ReviewsWithText: React.FC<{
@@ -107,12 +107,11 @@ export const UserMessage: React.FC<UserMessageProps> = ({
     );
   }
 
-  // Check if we have structured review data in metadata (preferred) or need to parse from text (legacy)
-  const hasReviewsFromMetadata = message.reviews && message.reviews.length > 0;
-  const hasReviewsFromText = content && hasReviewBlocks(content);
+  // Check if we have structured review data in metadata
+  const hasReviews = message.reviews && message.reviews.length > 0;
 
   // Extract plain text content (without review tags) for display alongside review blocks
-  const plainTextContent = hasReviewsFromMetadata
+  const plainTextContent = hasReviews
     ? content.replace(/<review>[\s\S]*?<\/review>\s*/g, "").trim()
     : content;
 
@@ -125,15 +124,9 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       className={className}
       variant="user"
     >
-      {hasReviewsFromMetadata ? (
-        // Use structured review data from metadata (no parsing needed)
+      {hasReviews ? (
+        // Use structured review data from metadata
         <ReviewsWithText reviews={message.reviews!} textContent={plainTextContent} />
-      ) : hasReviewsFromText ? (
-        // Fallback: parse reviews from text (legacy messages before metadata support)
-        <ContentWithReviews
-          content={content}
-          textClassName="font-primary m-0 leading-6 break-words whitespace-pre-wrap text-[var(--color-user-text)]"
-        />
       ) : (
         // No reviews - just plain text
         content && (

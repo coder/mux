@@ -27,7 +27,6 @@ import { Button } from "./ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import type { PendingReview } from "@/common/types/review";
 import { usePendingReviews } from "@/browser/hooks/usePendingReviews";
-import type { ChatInputAPI } from "./ChatInput";
 import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
 import { DiffRenderer } from "./shared/DiffRenderer";
 import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
@@ -307,34 +306,22 @@ const ReviewItem: React.FC<ReviewItemProps> = ({
 
 interface PendingReviewsBannerInnerProps {
   workspaceId: string;
-  chatInputAPI: React.RefObject<ChatInputAPI | null>;
-  attachedReviewIds: string[];
 }
 
-const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({
-  workspaceId,
-  chatInputAPI,
-  attachedReviewIds,
-}) => {
+const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({ workspaceId }) => {
   const pendingReviews = usePendingReviews(workspaceId);
   const [isExpanded, setIsExpanded] = useState(false);
   const [showAllCompleted, setShowAllCompleted] = useState(false);
 
   const INITIAL_COMPLETED_COUNT = 3;
 
-  // Set of attached review IDs for quick lookup
-  const attachedSet = useMemo(() => new Set(attachedReviewIds), [attachedReviewIds]);
-
-  // Separate pending and completed reviews, excluding those already attached to chat
+  // Separate pending and completed reviews
+  // "attached" reviews are shown in ChatInput, so we only show "pending" and "checked" here
   const { pendingList, completedList } = useMemo(() => {
-    const pending = pendingReviews.reviews.filter(
-      (r) => r.status === "pending" && !attachedSet.has(r.id)
-    );
-    const completed = pendingReviews.reviews.filter(
-      (r) => r.status === "checked" && !attachedSet.has(r.id)
-    );
+    const pending = pendingReviews.reviews.filter((r) => r.status === "pending");
+    const completed = pendingReviews.reviews.filter((r) => r.status === "checked");
     return { pendingList: pending, completedList: completed };
-  }, [pendingReviews.reviews, attachedSet]);
+  }, [pendingReviews.reviews]);
 
   // Completed reviews to display (limited unless expanded)
   const displayedCompleted = useMemo(() => {
@@ -350,9 +337,9 @@ const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({
 
   const handleSendToChat = useCallback(
     (reviewId: string) => {
-      chatInputAPI.current?.attachReview(reviewId);
+      pendingReviews.attachReview(reviewId);
     },
-    [chatInputAPI]
+    [pendingReviews]
   );
 
   const handleUpdateNote = useCallback(
@@ -486,29 +473,19 @@ const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({
 
 interface PendingReviewsBannerProps {
   workspaceId: string;
-  chatInputAPI: React.RefObject<ChatInputAPI | null>;
-  /** Review IDs currently attached to chat input (hidden from banner to prevent double-send) */
-  attachedReviewIds: string[];
 }
 
 /**
  * Self-contained pending reviews banner.
- * Uses usePendingReviews hook internally - only needs workspaceId and chatInputAPI.
+ * Uses usePendingReviews hook internally - only needs workspaceId.
+ * Shows only "pending" and "checked" reviews (not "attached" which are in ChatInput).
  */
-export const PendingReviewsBanner: React.FC<PendingReviewsBannerProps> = ({
-  workspaceId,
-  chatInputAPI,
-  attachedReviewIds,
-}) => {
+export const PendingReviewsBanner: React.FC<PendingReviewsBannerProps> = ({ workspaceId }) => {
   const pendingReviews = usePendingReviews(workspaceId);
 
   return (
     <BannerErrorBoundary onClear={pendingReviews.clearAll}>
-      <PendingReviewsBannerInner
-        workspaceId={workspaceId}
-        chatInputAPI={chatInputAPI}
-        attachedReviewIds={attachedReviewIds}
-      />
+      <PendingReviewsBannerInner workspaceId={workspaceId} />
     </BannerErrorBoundary>
   );
 };
