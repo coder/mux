@@ -1067,4 +1067,23 @@ export class WorkspaceService extends EventEmitter {
     }
     return Ok(undefined);
   }
+
+  /**
+   * Check if a workspace has a foreground bash process that can be sent to background.
+   */
+  hasForegroundProcess(workspaceId: string): boolean {
+    return this.backgroundProcessManager.hasForegroundProcess(workspaceId);
+  }
+
+  /**
+   * Send the current foreground bash process to background.
+   * The process continues running but the agent stops waiting for it.
+   */
+  sendToBackground(workspaceId: string): Result<void> {
+    const result = this.backgroundProcessManager.sendToBackground(workspaceId);
+    if (!result.success) {
+      return Err(result.error);
+    }
+    return Ok(undefined);
+  }
 }

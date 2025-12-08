@@ -45,6 +45,10 @@ interface ToolMessageProps {
   onReviewNote?: (data: ReviewNoteData) => void;
   /** Whether this is the latest propose_plan in the conversation */
   isLatestProposePlan?: boolean;
+  /** Whether there's a foreground bash that can be sent to background */
+  canSendBashToBackground?: boolean;
+  /** Callback to send the current foreground bash to background */
+  onSendBashToBackground?: () => void;
 }
 
 // Type guards using Zod schemas for single source of truth
@@ -119,6 +123,8 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
   workspaceId,
   onReviewNote,
   isLatestProposePlan,
+  canSendBashToBackground,
+  onSendBashToBackground,
 }) => {
   // Route to specialized components based on tool name
   if (isBashTool(message.toolName, message.args)) {
@@ -129,6 +135,8 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
           result={message.result as BashToolResult | undefined}
           status={message.status}
           startedAt={message.timestamp}
+          canSendToBackground={canSendBashToBackground}
+          onSendToBackground={onSendBashToBackground}
         />
       </div>
     );

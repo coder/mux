@@ -27,6 +27,10 @@ interface BashToolCallProps {
   result?: BashToolResult;
   status?: ToolStatus;
   startedAt?: number;
+  /** Whether there's a foreground bash that can be sent to background */
+  canSendToBackground?: boolean;
+  /** Callback to send the current foreground bash to background */
+  onSendToBackground?: () => void;
 }
 
 export const BashToolCall: React.FC<BashToolCallProps> = ({
@@ -34,6 +38,8 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   result,
   status = "pending",
   startedAt,
+  canSendToBackground,
+  onSendToBackground,
 }) => {
   const { expanded, toggleExpanded } = useToolExpansion();
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -97,6 +103,20 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
           </>
         )}
         <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
+        {/* Show "Background" button when bash is executing and can be sent to background */}
+        {status === "executing" && !isBackground && canSendToBackground && onSendToBackground && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation(); // Don't toggle expand
+              onSendToBackground();
+            }}
+            className="text-muted hover:text-light bg-surface hover:bg-surface-hover ml-2 cursor-pointer rounded px-2 py-0.5 text-[10px] transition-colors"
+            title="Send to background - process continues but agent stops waiting"
+          >
+            Background
+          </button>
+        )}
       </ToolHeader>
 
       {expanded && (

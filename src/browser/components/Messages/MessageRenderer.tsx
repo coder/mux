@@ -22,6 +22,10 @@ interface MessageRendererProps {
   onReviewNote?: (data: ReviewNoteData) => void;
   /** Whether this message is the latest propose_plan tool call (for external edit detection) */
   isLatestProposePlan?: boolean;
+  /** Whether there's a foreground bash that can be sent to background */
+  canSendBashToBackground?: boolean;
+  /** Callback to send the current foreground bash to background */
+  onSendBashToBackground?: () => void;
 }
 
 // Memoized to prevent unnecessary re-renders when parent (AIView) updates
@@ -34,6 +38,8 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
     isCompacting,
     onReviewNote,
     isLatestProposePlan,
+    canSendBashToBackground,
+    onSendBashToBackground,
   }) => {
     // Route based on message type
     switch (message.type) {
@@ -63,6 +69,8 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
             workspaceId={workspaceId}
             onReviewNote={onReviewNote}
             isLatestProposePlan={isLatestProposePlan}
+            canSendBashToBackground={canSendBashToBackground}
+            onSendBashToBackground={onSendBashToBackground}
           />
         );
       case "reasoning":

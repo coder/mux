@@ -14,18 +14,28 @@ export function useBackgroundBashes(
   processes: BackgroundProcessInfo[];
   terminate: (processId: string) => Promise<void>;
   refresh: () => Promise<void>;
+  /** Whether there's a foreground bash process that can be sent to background */
+  hasForeground: boolean;
+  /** Send the current foreground bash process to background */
+  sendToBackground: () => Promise<void>;
 } {
   const [processes, setProcesses] = useState<BackgroundProcessInfo[]>([]);
+  const [hasForeground, setHasForeground] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!api || !workspaceId) {
       setProcesses([]);
+      setHasForeground(false);
       return;
     }
 
     try {
-      const result = await api.workspace.backgroundBashes.list({ workspaceId });
+      const [result, hasFg] = await Promise.all([
+        api.workspace.backgroundBashes.list({ workspaceId }),
+        api.workspace.backgroundBashes.hasForeground({ workspaceId }),
+      ]);
       setProcesses(result);
+      setHasForeground(hasFg);
     } catch {
       // Keep existing state on error - polling will retry
     }
@@ -50,10 +60,26 @@ export function useBackgroundBashes(
     [api, workspaceId, refresh]
   );
 
+  const sendToBackground = useCallback(async (): Promise<void> => {
+    if (!api || !workspaceId) {
+      throw new Error("API or workspace not available");
+    }
+
+    const result = await api.workspace.backgroundBashes.sendToBackground({
+      workspaceId,
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+    // Refresh to update hasForeground state
+    await refresh();
+  }, [api, workspaceId, refresh]);
+
   // Initial fetch and polling
   useEffect(() => {
     if (!api || !workspaceId) {
       setProcesses([]);
+      setHasForeground(false);
       return;
     }
 
@@ -68,5 +94,5 @@ export function useBackgroundBashes(
     return () => clearInterval(interval);
   }, [api, workspaceId, pollingIntervalMs, refresh]);
 
-  return { processes, terminate, refresh };
+  return { processes, terminate, refresh, hasForeground, sendToBackground };
 }

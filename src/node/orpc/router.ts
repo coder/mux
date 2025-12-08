@@ -711,6 +711,22 @@ export const router = (authToken?: string) => {
             }
             return { success: true, data: undefined };
           }),
+        hasForeground: t
+          .input(schemas.workspace.backgroundBashes.hasForeground.input)
+          .output(schemas.workspace.backgroundBashes.hasForeground.output)
+          .handler(({ context, input }) => {
+            return context.workspaceService.hasForegroundProcess(input.workspaceId);
+          }),
+        sendToBackground: t
+          .input(schemas.workspace.backgroundBashes.sendToBackground.input)
+          .output(schemas.workspace.backgroundBashes.sendToBackground.output)
+          .handler(({ context, input }) => {
+            const result = context.workspaceService.sendToBackground(input.workspaceId);
+            if (!result.success) {
+              return { success: false, error: result.error };
+            }
+            return { success: true, data: undefined };
+          }),
       },
     },
     window: {

@@ -124,10 +124,12 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Reviews state
   const reviews = useReviews(workspaceId);
 
-  const { processes: backgroundBashes, terminate: terminateBackgroundBash } = useBackgroundBashes(
-    api,
-    workspaceId
-  );
+  const {
+    processes: backgroundBashes,
+    terminate: terminateBackgroundBash,
+    hasForeground: hasForegroundBash,
+    sendToBackground: sendBashToBackground,
+  } = useBackgroundBashes(api, workspaceId);
   const backgroundBashError = usePopoverError();
   const handleTerminateBackgroundBash = useCallback(
     (processId: string) => {
@@ -137,6 +139,11 @@ const AIViewInner: React.FC<AIViewProps> = ({
     },
     [terminateBackgroundBash, backgroundBashError]
   );
+  const handleSendBashToBackground = useCallback(() => {
+    sendBashToBackground().catch((error: Error) => {
+      backgroundBashError.showError("send-to-background", error.message);
+    });
+  }, [sendBashToBackground, backgroundBashError]);
   const { options } = useProviderOptions();
   const use1M = options.anthropic?.use1MContext ?? false;
   // Get pending model for auto-compaction settings (threshold is per-model)
@@ -591,6 +598,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
                               msg.toolName === "propose_plan" &&
                               msg.id === latestProposePlanId
                             }
+                            canSendBashToBackground={hasForegroundBash}
+                            onSendBashToBackground={handleSendBashToBackground}
                           />
                         </div>
                         {isAtCutoff && (
@@ -669,6 +678,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
         <BackgroundProcessesBanner
           processes={backgroundBashes}
           onTerminate={handleTerminateBackgroundBash}
+          hasForegroundBash={hasForegroundBash}
+          onSendToBackground={handleSendBashToBackground}
         />
         <ChatInput
           variant="workspace"
