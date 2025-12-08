@@ -52,7 +52,7 @@ import {
 } from "@/browser/utils/ui/keybinds";
 import { ModelSelector, type ModelSelectorRef } from "../ModelSelector";
 import { useModelLRU } from "@/browser/hooks/useModelLRU";
-import { SendHorizontal } from "lucide-react";
+import { SendHorizontal, X } from "lucide-react";
 import { VimTextArea } from "../VimTextArea";
 import { ImageAttachments, type ImageAttachment } from "../ImageAttachments";
 import {
@@ -75,7 +75,8 @@ import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { useVoiceInput } from "@/browser/hooks/useVoiceInput";
 import { VoiceInputButton } from "./VoiceInputButton";
 import { RecordingOverlay } from "./RecordingOverlay";
-import { ReviewBlock, hasReviewBlocks } from "../shared/ReviewBlock";
+import { ReviewBlock } from "../shared/ReviewBlock";
+import { formatReviewNoteForChat } from "@/common/types/review";
 
 type TokenCountReader = () => number;
 
@@ -146,6 +147,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   const [providerNames, setProviderNames] = useState<string[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
   const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([]);
+  const [attachedReviewIds, setAttachedReviewIds] = useState<string[]>([]);
   const handleToastDismiss = useCallback(() => {
     setToast(null);
   }, []);
@@ -341,6 +343,19 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     setImageAttachments(attachments);
   }, []);
 
+  // Attach a review by ID (for pending reviews feature)
+  const attachReview = useCallback((reviewId: string) => {
+    setAttachedReviewIds((prev) => (prev.includes(reviewId) ? prev : [...prev, reviewId]));
+  }, []);
+
+  // Detach a review by ID
+  const detachReview = useCallback((reviewId: string) => {
+    setAttachedReviewIds((prev) => prev.filter((id) => id !== reviewId));
+  }, []);
+
+  // Get currently attached reviews
+  const getAttachedReviews = useCallback(() => attachedReviewIds, [attachedReviewIds]);
+
   // Provide API to parent via callback
   useEffect(() => {
     if (props.onReady) {
@@ -350,6 +365,9 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         appendText,
         prependText,
         restoreImages,
+        attachReview,
+        detachReview,
+        getAttachedReviews,
       });
     }
   }, [
@@ -359,6 +377,9 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     appendText,
     prependText,
     restoreImages,
+    attachReview,
+    detachReview,
+    getAttachedReviews,
     props,
   ]);
 
@@ -1015,6 +1036,9 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         return; // Skip normal send
       }
 
+      // Store attached review IDs before try block so catch block can access them
+      const sentReviewIds = [...attachedReviewIds];
+
       try {
         // Prepare image parts if any
         const imageParts = imageAttachments.map((img, index) => {
@@ -1073,10 +1097,22 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           }
         }
 
-        // Clear input and images immediately for responsive UI
+        // Prepend attached reviews to message
+        const attachedReviews = attachedReviewIds
+          .map((id) => props.getReview?.(id))
+          .filter((r): r is NonNullable<typeof r> => r !== undefined);
+        const reviewsText = attachedReviews
+          .map((r) => formatReviewNoteForChat(r.data))
+          .join("\n\n");
+        const finalMessageText = reviewsText
+          ? reviewsText + (actualMessageText ? "\n\n" + actualMessageText : "")
+          : actualMessageText;
+
+        // Clear input, images, and attached reviews immediately for responsive UI
         // These will be restored if the send operation fails
         setInput("");
         setImageAttachments([]);
+        setAttachedReviewIds([]);
         // Clear inline height style - VimTextArea's useLayoutEffect will handle sizing
         if (inputRef.current) {
           inputRef.current.style.height = "";
@@ -1084,7 +1120,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
 
         const result = await api.workspace.sendMessage({
           workspaceId: props.workspaceId,
-          message: actualMessageText,
+          message: finalMessageText,
           options: {
             ...sendMessageOptions,
             ...compactionOptions,
@@ -1099,19 +1135,25 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           console.error("Failed to send message:", result.error);
           // Show error using enhanced toast
           setToast(createErrorToast(result.error));
-          // Restore input and images on error so user can try again
+          // Restore input, images, and attached reviews on error so user can try again
           setInput(messageText);
           setImageAttachments(previousImageAttachments);
+          setAttachedReviewIds(sentReviewIds);
         } else {
           // Track telemetry for successful message send
           telemetry.messageSent(
             props.workspaceId,
             sendMessageOptions.model,
             mode,
-            actualMessageText.length,
+            finalMessageText.length,
             runtimeType,
             sendMessageOptions.thinkingLevel ?? "off"
           );
+
+          // Mark attached reviews as completed
+          if (sentReviewIds.length > 0) {
+            props.onReviewsSent?.(sentReviewIds);
+          }
 
           // Exit editing mode if we were editing
           if (editingMessage && props.onCancelEdit) {
@@ -1130,6 +1172,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         );
         setInput(messageText);
         setImageAttachments(previousImageAttachments);
+        setAttachedReviewIds(sentReviewIds);
       } finally {
         setIsSending(false);
       }
@@ -1309,12 +1352,26 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             <ChatInputToast toast={toast} onDismiss={handleToastDismiss} />
           )}
 
-          {/* Review preview - show styled review blocks above input */}
-          {variant === "workspace" && hasReviewBlocks(input) && (
-            <div className="border-border max-h-40 overflow-y-auto border-b px-2 pb-2">
-              {input.match(/<review>([\s\S]*?)<\/review>/g)?.map((match, idx) => (
-                <ReviewBlock key={idx} content={match.slice(8, -9)} />
-              ))}
+          {/* Attached reviews preview - show styled blocks with remove buttons */}
+          {variant === "workspace" && attachedReviewIds.length > 0 && props.getReview && (
+            <div className="border-border max-h-40 space-y-1 overflow-y-auto border-b px-2 py-1.5">
+              {attachedReviewIds.map((reviewId) => {
+                const review = props.getReview!(reviewId);
+                if (!review) return null;
+                return (
+                  <div key={reviewId} className="group relative">
+                    <ReviewBlock content={formatReviewNoteForChat(review.data).slice(8, -9)} />
+                    <button
+                      type="button"
+                      onClick={() => detachReview(reviewId)}
+                      className="bg-dark/80 text-muted hover:text-error absolute top-3 right-3 rounded-full p-0.5 opacity-0 transition-opacity group-hover:opacity-100"
+                      title="Remove from message"
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
 

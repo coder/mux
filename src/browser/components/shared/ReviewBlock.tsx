@@ -70,14 +70,19 @@ export const ReviewBlock: React.FC<ReviewBlockProps> = ({ content }) => {
       {/* Code snippet */}
       {parsed.code && (
         <div className="max-h-32 overflow-auto border-b border-[var(--color-review-accent)]/20 text-[11px]">
-          <DiffRenderer content={diffContent} showLineNumbers={false} fontSize="11px" />
+          <DiffRenderer
+            content={diffContent}
+            showLineNumbers={false}
+            fontSize="11px"
+            filePath={parsed.filePath}
+          />
         </div>
       )}
 
       {/* Comment */}
       {parsed.comment && (
         <div className="px-3 py-2">
-          <blockquote className="text-secondary border-l-2 border-[var(--color-review-accent)] pl-2 text-sm italic">
+          <blockquote className="text-primary border-l-2 border-[var(--color-review-accent)] pl-2 text-sm italic">
             {parsed.comment}
           </blockquote>
         </div>

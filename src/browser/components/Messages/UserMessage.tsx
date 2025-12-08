@@ -102,8 +102,8 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       className={className}
       variant="user"
     >
-      {content && (
-        containsReviews ? (
+      {content &&
+        (containsReviews ? (
           <ContentWithReviews
             content={content}
             textClassName="font-primary m-0 leading-6 break-words whitespace-pre-wrap text-[var(--color-user-text)]"
@@ -112,8 +112,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
           <pre className="font-primary m-0 leading-6 break-words whitespace-pre-wrap text-[var(--color-user-text)]">
             {content}
           </pre>
-        )
-      )}
+        ))}
       {message.imageParts && message.imageParts.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-3">
           {message.imageParts.map((img, idx) => (

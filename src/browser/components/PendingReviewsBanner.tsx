@@ -25,8 +25,7 @@ import {
 import { cn } from "@/common/lib/utils";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipWrapper } from "./Tooltip";
-import type { PendingReview, ReviewNoteData } from "@/common/types/review";
-import { formatReviewNoteForChat } from "@/common/types/review";
+import type { PendingReview } from "@/common/types/review";
 import { usePendingReviews } from "@/browser/hooks/usePendingReviews";
 import type { ChatInputAPI } from "./ChatInput";
 import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
@@ -169,7 +168,11 @@ const ReviewItem: React.FC<ReviewItemProps> = ({
           onClick={handleToggleExpand}
           className="text-muted hover:text-secondary shrink-0"
         >
-          {isExpanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+          {isExpanded ? (
+            <ChevronDown className="size-3.5" />
+          ) : (
+            <ChevronRight className="size-3.5" />
+          )}
         </button>
 
         {/* Check/Uncheck button */}
@@ -200,7 +203,12 @@ const ReviewItem: React.FC<ReviewItemProps> = ({
         {/* Actions */}
         <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
           <TooltipWrapper inline>
-            <Button variant="ghost" size="icon" className="size-5 [&_svg]:size-3" onClick={onSendToChat}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-5 [&_svg]:size-3"
+              onClick={onSendToChat}
+            >
               <Send />
             </Button>
             <Tooltip align="center">Send to chat</Tooltip>
@@ -243,7 +251,12 @@ const ReviewItem: React.FC<ReviewItemProps> = ({
                 />
                 <div className="flex items-center justify-end gap-1">
                   <span className="text-muted mr-2 text-[10px]">⌘Enter to save, Esc to cancel</span>
-                  <Button variant="ghost" size="sm" className="h-5 px-2 text-xs" onClick={handleCancelEdit}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-5 px-2 text-xs"
+                    onClick={handleCancelEdit}
+                  >
                     <X className="mr-1 size-3" />
                     Cancel
                   </Button>
@@ -260,7 +273,7 @@ const ReviewItem: React.FC<ReviewItemProps> = ({
               </div>
             ) : (
               <div className="group/comment flex items-start gap-2">
-                <blockquote className="text-secondary flex-1 border-l-2 border-[var(--color-review-accent)] pl-2 text-xs italic">
+                <blockquote className="text-primary flex-1 border-l-2 border-[var(--color-review-accent)] pl-2 text-xs italic">
                   {review.data.userNote || <span className="text-muted">No comment</span>}
                 </blockquote>
                 <Button
@@ -319,8 +332,8 @@ const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({
   }, []);
 
   const handleSendToChat = useCallback(
-    (data: ReviewNoteData) => {
-      chatInputAPI.current?.appendText(formatReviewNoteForChat(data));
+    (reviewId: string) => {
+      chatInputAPI.current?.attachReview(reviewId);
     },
     [chatInputAPI]
   );
@@ -386,7 +399,7 @@ const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({
                   review={review}
                   onCheck={() => pendingReviews.checkReview(review.id)}
                   onUncheck={() => pendingReviews.uncheckReview(review.id)}
-                  onSendToChat={() => handleSendToChat(review.data)}
+                  onSendToChat={() => handleSendToChat(review.id)}
                   onRemove={() => pendingReviews.removeReview(review.id)}
                   onUpdateNote={(note) => handleUpdateNote(review.id, note)}
                 />
@@ -419,7 +432,7 @@ const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({
                   review={review}
                   onCheck={() => pendingReviews.checkReview(review.id)}
                   onUncheck={() => pendingReviews.uncheckReview(review.id)}
-                  onSendToChat={() => handleSendToChat(review.data)}
+                  onSendToChat={() => handleSendToChat(review.id)}
                   onRemove={() => pendingReviews.removeReview(review.id)}
                   onUpdateNote={(note) => handleUpdateNote(review.id, note)}
                 />
@@ -430,7 +443,8 @@ const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({
                   onClick={() => setShowAllCompleted(true)}
                   className="text-muted hover:text-secondary w-full py-1 text-center text-xs transition-colors"
                 >
-                  Show {hiddenCompletedCount} more completed review{hiddenCompletedCount !== 1 && "s"}
+                  Show {hiddenCompletedCount} more completed review
+                  {hiddenCompletedCount !== 1 && "s"}
                 </button>
               )}
             </div>
@@ -447,10 +461,10 @@ const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// EXPORTED CONNECTED COMPONENT
+// EXPORTED COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════════
 
-interface ConnectedPendingReviewsBannerProps {
+interface PendingReviewsBannerProps {
   workspaceId: string;
   chatInputAPI: React.RefObject<ChatInputAPI | null>;
 }
@@ -459,7 +473,7 @@ interface ConnectedPendingReviewsBannerProps {
  * Self-contained pending reviews banner.
  * Uses usePendingReviews hook internally - only needs workspaceId and chatInputAPI.
  */
-export const ConnectedPendingReviewsBanner: React.FC<ConnectedPendingReviewsBannerProps> = ({
+export const PendingReviewsBanner: React.FC<PendingReviewsBannerProps> = ({
   workspaceId,
   chatInputAPI,
 }) => {

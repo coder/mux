@@ -51,7 +51,7 @@ import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { useForceCompaction } from "@/browser/hooks/useForceCompaction";
 import { useAPI } from "@/browser/contexts/API";
 import { usePendingReviews } from "@/browser/hooks/usePendingReviews";
-import { ConnectedPendingReviewsBanner } from "./PendingReviewsBanner";
+import { PendingReviewsBanner } from "./PendingReviewsBanner";
 import type { ReviewNoteData } from "@/common/types/review";
 
 interface AIViewProps {
@@ -616,7 +616,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
             onCompactClick={handleCompactClick}
           />
         )}
-        <ConnectedPendingReviewsBanner workspaceId={workspaceId} chatInputAPI={chatInputAPI} />
+        <PendingReviewsBanner workspaceId={workspaceId} chatInputAPI={chatInputAPI} />
         <ChatInput
           variant="workspace"
           workspaceId={workspaceId}
@@ -632,6 +632,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
           canInterrupt={canInterrupt}
           onReady={handleChatInputReady}
           autoCompactionCheck={autoCompactionResult}
+          getReview={pendingReviews.getReview}
+          onReviewsSent={(ids) => ids.forEach((id) => pendingReviews.checkReview(id))}
         />
       </div>
 
