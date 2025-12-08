@@ -64,13 +64,25 @@ function transformMCPResult(result: MCPCallToolResult): unknown {
     return result;
   }
 
+  // Debug: log what we received from MCP
+  log.debug("[MCP] transformMCPResult input", {
+    contentTypes: result.content.map((c) => c.type),
+    imageItems: result.content
+      .filter((c): c is MCPImageContent => c.type === "image")
+      .map((c) => ({ type: c.type, mimeType: c.mimeType, dataLen: c.data?.length })),
+  });
+
   // Transform to AI SDK content format
   const transformedContent: AISDKContentPart[] = result.content.map((item) => {
     if (item.type === "text") {
       return { type: "text" as const, text: item.text };
     }
     if (item.type === "image") {
-      return { type: "media" as const, data: item.data, mediaType: item.mimeType };
+      const imageItem = item;
+      // Ensure mediaType is present - default to image/png if missing
+      const mediaType = imageItem.mimeType || "image/png";
+      log.debug("[MCP] Transforming image content", { mimeType: imageItem.mimeType, mediaType });
+      return { type: "media" as const, data: imageItem.data, mediaType };
     }
     // For resource type, convert to text representation
     if (item.type === "resource") {
