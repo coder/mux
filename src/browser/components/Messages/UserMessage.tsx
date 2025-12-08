@@ -9,6 +9,7 @@ import { copyToClipboard } from "@/browser/utils/clipboard";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { Clipboard, ClipboardCheck, Pencil } from "lucide-react";
+import { ContentWithReviews, hasReviewBlocks } from "../shared/ReviewBlock";
 
 interface UserMessageProps {
   message: DisplayedMessage & { type: "user" };
@@ -89,6 +90,9 @@ export const UserMessage: React.FC<UserMessageProps> = ({
     );
   }
 
+  // Check if content has review blocks
+  const containsReviews = content && hasReviewBlocks(content);
+
   // Otherwise, render as normal user message
   return (
     <MessageWindow
@@ -99,9 +103,16 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       variant="user"
     >
       {content && (
-        <pre className="font-primary m-0 leading-6 break-words whitespace-pre-wrap text-[var(--color-user-text)]">
-          {content}
-        </pre>
+        containsReviews ? (
+          <ContentWithReviews
+            content={content}
+            textClassName="font-primary m-0 leading-6 break-words whitespace-pre-wrap text-[var(--color-user-text)]"
+          />
+        ) : (
+          <pre className="font-primary m-0 leading-6 break-words whitespace-pre-wrap text-[var(--color-user-text)]">
+            {content}
+          </pre>
+        )
       )}
       {message.imageParts && message.imageParts.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-3">

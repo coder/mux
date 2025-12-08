@@ -51,9 +51,8 @@ import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { useForceCompaction } from "@/browser/hooks/useForceCompaction";
 import { useAPI } from "@/browser/contexts/API";
 import { usePendingReviews } from "@/browser/hooks/usePendingReviews";
-import { PendingReviewsBanner } from "./PendingReviewsBanner";
+import { ConnectedPendingReviewsBanner } from "./PendingReviewsBanner";
 import type { ReviewNoteData } from "@/common/types/review";
-import { formatReviewNoteForChat } from "@/common/types/review";
 
 interface AIViewProps {
   workspaceId: string;
@@ -227,11 +226,6 @@ const AIViewInner: React.FC<AIViewProps> = ({
     },
     [pendingReviews]
   );
-
-  // Handler to send a review to chat input (formats to message string)
-  const handleSendReviewToChat = useCallback((data: ReviewNoteData) => {
-    chatInputAPI.current?.appendText(formatReviewNoteForChat(data));
-  }, []);
 
   // Handler for manual compaction from CompactionWarning click
   const handleCompactClick = useCallback(() => {
@@ -622,17 +616,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
             onCompactClick={handleCompactClick}
           />
         )}
-        <PendingReviewsBanner
-          reviews={pendingReviews.reviews}
-          pendingCount={pendingReviews.pendingCount}
-          checkedCount={pendingReviews.checkedCount}
-          onCheck={pendingReviews.checkReview}
-          onUncheck={pendingReviews.uncheckReview}
-          onSendToChat={handleSendReviewToChat}
-          onRemove={pendingReviews.removeReview}
-          onClearChecked={pendingReviews.clearChecked}
-          onClearAll={pendingReviews.clearAll}
-        />
+        <ConnectedPendingReviewsBanner workspaceId={workspaceId} chatInputAPI={chatInputAPI} />
         <ChatInput
           variant="workspace"
           workspaceId={workspaceId}

@@ -75,6 +75,7 @@ import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { useVoiceInput } from "@/browser/hooks/useVoiceInput";
 import { VoiceInputButton } from "./VoiceInputButton";
 import { RecordingOverlay } from "./RecordingOverlay";
+import { ReviewBlock, hasReviewBlocks } from "../shared/ReviewBlock";
 
 type TokenCountReader = () => number;
 
@@ -1306,6 +1307,15 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           {/* Workspace toast */}
           {variant === "workspace" && (
             <ChatInputToast toast={toast} onDismiss={handleToastDismiss} />
+          )}
+
+          {/* Review preview - show styled review blocks above input */}
+          {variant === "workspace" && hasReviewBlocks(input) && (
+            <div className="border-border max-h-40 overflow-y-auto border-b px-2 pb-2">
+              {input.match(/<review>([\s\S]*?)<\/review>/g)?.map((match, idx) => (
+                <ReviewBlock key={idx} content={match.slice(8, -9)} />
+              ))}
+            </div>
           )}
 
           {/* Command suggestions - workspace only */}

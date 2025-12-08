@@ -30,6 +30,8 @@ export interface UsePendingReviewsReturn {
   uncheckReview: (reviewId: string) => void;
   /** Remove a review entirely */
   removeReview: (reviewId: string) => void;
+  /** Update a review's note/comment */
+  updateReviewNote: (reviewId: string, newNote: string) => void;
   /** Clear all checked reviews */
   clearChecked: () => void;
   /** Clear all reviews (for error recovery) */
@@ -149,6 +151,31 @@ export function usePendingReviews(workspaceId: string): UsePendingReviewsReturn 
     [setState]
   );
 
+  const updateReviewNote = useCallback(
+    (reviewId: string, newNote: string) => {
+      setState((prev) => {
+        const review = prev.reviews[reviewId];
+        if (!review) return prev;
+
+        return {
+          ...prev,
+          reviews: {
+            ...prev.reviews,
+            [reviewId]: {
+              ...review,
+              data: {
+                ...review.data,
+                userNote: newNote,
+              },
+            },
+          },
+          lastUpdated: Date.now(),
+        };
+      });
+    },
+    [setState]
+  );
+
   const clearChecked = useCallback(() => {
     setState((prev) => {
       const filtered = Object.fromEntries(
@@ -185,6 +212,7 @@ export function usePendingReviews(workspaceId: string): UsePendingReviewsReturn 
     checkReview,
     uncheckReview,
     removeReview,
+    updateReviewNote,
     clearChecked,
     clearAll,
     getReview,

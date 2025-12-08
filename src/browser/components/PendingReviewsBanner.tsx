@@ -1,32 +1,41 @@
 /**
- * PendingReviewsBanner - Shows pending code reviews in the chat area
- * Displays as a thin collapsible stripe above the chat input
+ * PendingReviewsBanner - Self-contained pending reviews UI
  *
- * Uses shadcn/ui Button component and semantic Tailwind color classes
- * that map to CSS variables defined in globals.css.
+ * Features:
+ * - Collapsible banner above chat input
+ * - Full review display with diff and editable comments
+ * - Pending reviews first, then completed with "show more"
+ * - Relative timestamps
+ * - Error boundary for corrupted data
  */
 
-import React, { useState, useCallback, useMemo, Component, type ReactNode } from "react";
+import React, { useState, useCallback, useMemo, Component, type ReactNode, useRef } from "react";
 import {
   ChevronDown,
-  ChevronUp,
+  ChevronRight,
   Check,
   Undo2,
   Send,
   Trash2,
   MessageSquare,
-  Eye,
-  EyeOff,
   AlertTriangle,
+  Pencil,
+  X,
 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipWrapper } from "./Tooltip";
 import type { PendingReview, ReviewNoteData } from "@/common/types/review";
+import { formatReviewNoteForChat } from "@/common/types/review";
+import { usePendingReviews } from "@/browser/hooks/usePendingReviews";
+import type { ChatInputAPI } from "./ChatInput";
+import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
+import { DiffRenderer } from "./shared/DiffRenderer";
 
-/**
- * Error boundary for the banner - catches rendering errors from malformed data
- */
+// ═══════════════════════════════════════════════════════════════════════════════
+// ERROR BOUNDARY
+// ═══════════════════════════════════════════════════════════════════════════════
+
 interface ErrorBoundaryState {
   hasError: boolean;
 }
@@ -56,7 +65,7 @@ class BannerErrorBoundary extends Component<
               this.setState({ hasError: false });
             }}
           >
-            <Trash2 className="mr-1 h-3 w-3" />
+            <Trash2 className="mr-1 size-3" />
             Clear all
           </Button>
         </div>
@@ -66,138 +75,265 @@ class BannerErrorBoundary extends Component<
   }
 }
 
-interface PendingReviewsBannerProps {
-  /** All reviews (pending and checked) */
-  reviews: PendingReview[];
-  /** Count of pending reviews */
-  pendingCount: number;
-  /** Count of checked reviews */
-  checkedCount: number;
-  /** Mark a review as checked */
-  onCheck: (reviewId: string) => void;
-  /** Uncheck a review */
-  onUncheck: (reviewId: string) => void;
-  /** Send review content to chat input */
-  onSendToChat: (data: ReviewNoteData) => void;
-  /** Remove a review */
-  onRemove: (reviewId: string) => void;
-  /** Clear all checked reviews */
-  onClearChecked: () => void;
-  /** Clear all reviews (used for error recovery) */
-  onClearAll: () => void;
-}
+// ═══════════════════════════════════════════════════════════════════════════════
+// REVIEW ITEM COMPONENT
+// ═══════════════════════════════════════════════════════════════════════════════
 
-/**
- * Extract a short summary from review content for display
- */
-function getReviewSummary(review: PendingReview): string {
-  const note = review.data.userNote.trim();
-  return note.length > 50 ? note.slice(0, 50) + "…" : note;
-}
-
-/**
- * Single review item in the list
- */
-const ReviewItem: React.FC<{
+interface ReviewItemProps {
   review: PendingReview;
   onCheck: () => void;
   onUncheck: () => void;
   onSendToChat: () => void;
   onRemove: () => void;
-}> = ({ review, onCheck, onUncheck, onSendToChat, onRemove }) => {
-  const isChecked = review.status === "checked";
+  onUpdateNote: (newNote: string) => void;
+}
 
-  return (
-    <div
-      className={cn(
-        "group flex items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors",
-        isChecked ? "bg-hover opacity-60" : "bg-border-medium/30 hover:bg-hover"
-      )}
-    >
-      {/* Check/Uncheck button */}
-      <TooltipWrapper inline>
-        <Button
-          variant="ghost"
-          size="icon"
-          className={cn("h-5 w-5 shrink-0 [&_svg]:size-3", isChecked && "text-success")}
-          onClick={isChecked ? onUncheck : onCheck}
-        >
-          {isChecked ? <Undo2 /> : <Check />}
-        </Button>
-        <Tooltip align="center">{isChecked ? "Mark as pending" : "Mark as done"}</Tooltip>
-      </TooltipWrapper>
-
-      {/* Review info */}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-1.5">
-          <span className="font-mono text-[var(--color-review-accent)]">
-            {review.data.filePath}:{review.data.lineRange}
-          </span>
-        </div>
-        <div className="text-muted truncate">{getReviewSummary(review)}</div>
-      </div>
-
-      {/* Actions */}
-      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-        <TooltipWrapper inline>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-5 w-5 [&_svg]:size-3"
-            onClick={onSendToChat}
-          >
-            <Send />
-          </Button>
-          <Tooltip align="center">Send to chat</Tooltip>
-        </TooltipWrapper>
-
-        <TooltipWrapper inline>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="text-error h-5 w-5 [&_svg]:size-3"
-            onClick={onRemove}
-          >
-            <Trash2 />
-          </Button>
-          <Tooltip align="center">Remove</Tooltip>
-        </TooltipWrapper>
-      </div>
-    </div>
-  );
-};
-
-const PendingReviewsBannerInner: React.FC<PendingReviewsBannerProps> = ({
-  reviews,
-  pendingCount,
-  checkedCount,
+const ReviewItem: React.FC<ReviewItemProps> = ({
+  review,
   onCheck,
   onUncheck,
   onSendToChat,
   onRemove,
-  onClearChecked,
+  onUpdateNote,
 }) => {
+  const isChecked = review.status === "checked";
   const [isExpanded, setIsExpanded] = useState(false);
-  const [showChecked, setShowChecked] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState(review.data.userNote);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Filter reviews based on view mode
-  const displayedReviews = useMemo(() => {
-    if (showChecked) {
-      return reviews.filter((r) => r.status === "checked");
+  const handleToggleExpand = useCallback(() => {
+    setIsExpanded((prev) => !prev);
+  }, []);
+
+  const handleStartEdit = useCallback(() => {
+    setEditValue(review.data.userNote);
+    setIsEditing(true);
+    // Focus textarea after render
+    setTimeout(() => textareaRef.current?.focus(), 0);
+  }, [review.data.userNote]);
+
+  const handleSaveEdit = useCallback(() => {
+    if (editValue.trim() !== review.data.userNote) {
+      onUpdateNote(editValue.trim());
     }
-    return reviews.filter((r) => r.status === "pending");
-  }, [reviews, showChecked]);
+    setIsEditing(false);
+  }, [editValue, review.data.userNote, onUpdateNote]);
+
+  const handleCancelEdit = useCallback(() => {
+    setEditValue(review.data.userNote);
+    setIsEditing(false);
+  }, [review.data.userNote]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        handleSaveEdit();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        handleCancelEdit();
+      }
+    },
+    [handleSaveEdit, handleCancelEdit]
+  );
+
+  // Format code for diff display - add diff markers if not present
+  const diffContent = useMemo(() => {
+    const lines = review.data.selectedCode.split("\n");
+    // Check if lines already have diff markers
+    const hasDiffMarkers = lines.some((l) => /^[+-\s]/.test(l));
+    if (hasDiffMarkers) {
+      return review.data.selectedCode;
+    }
+    // Add context markers
+    return lines.map((l) => ` ${l}`).join("\n");
+  }, [review.data.selectedCode]);
+
+  const age = formatRelativeTime(review.createdAt);
+
+  return (
+    <div
+      className={cn(
+        "group rounded border transition-colors",
+        isChecked
+          ? "border-border-light bg-hover/50 opacity-70"
+          : "border-border-medium bg-border-medium/20"
+      )}
+    >
+      {/* Header row - always visible */}
+      <div className="flex items-center gap-2 px-2 py-1.5 text-xs">
+        {/* Expand toggle */}
+        <button
+          type="button"
+          onClick={handleToggleExpand}
+          className="text-muted hover:text-secondary shrink-0"
+        >
+          {isExpanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+        </button>
+
+        {/* Check/Uncheck button */}
+        <TooltipWrapper inline>
+          <Button
+            variant="ghost"
+            size="icon"
+            className={cn("size-5 shrink-0 [&_svg]:size-3", isChecked && "text-success")}
+            onClick={isChecked ? onUncheck : onCheck}
+          >
+            {isChecked ? <Undo2 /> : <Check />}
+          </Button>
+          <Tooltip align="center">{isChecked ? "Mark as pending" : "Mark as done"}</Tooltip>
+        </TooltipWrapper>
+
+        {/* File path and age */}
+        <button
+          type="button"
+          onClick={handleToggleExpand}
+          className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
+        >
+          <span className="truncate font-mono text-[var(--color-review-accent)]">
+            {review.data.filePath}:{review.data.lineRange}
+          </span>
+          <span className="text-muted shrink-0 text-[10px]">{age}</span>
+        </button>
+
+        {/* Actions */}
+        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+          <TooltipWrapper inline>
+            <Button variant="ghost" size="icon" className="size-5 [&_svg]:size-3" onClick={onSendToChat}>
+              <Send />
+            </Button>
+            <Tooltip align="center">Send to chat</Tooltip>
+          </TooltipWrapper>
+
+          <TooltipWrapper inline>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-error size-5 [&_svg]:size-3"
+              onClick={onRemove}
+            >
+              <Trash2 />
+            </Button>
+            <Tooltip align="center">Remove</Tooltip>
+          </TooltipWrapper>
+        </div>
+      </div>
+
+      {/* Expanded content */}
+      {isExpanded && (
+        <div className="border-border-light border-t">
+          {/* Code diff */}
+          <div className="max-h-32 overflow-auto text-[11px]">
+            <DiffRenderer content={diffContent} showLineNumbers={false} fontSize="11px" />
+          </div>
+
+          {/* Comment section */}
+          <div className="border-border-light border-t p-2">
+            {isEditing ? (
+              <div className="space-y-1.5">
+                <textarea
+                  ref={textareaRef}
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  className="bg-dark border-border text-secondary w-full resize-none rounded border p-2 text-xs focus:border-[var(--color-review-accent)] focus:outline-none"
+                  rows={2}
+                  placeholder="Your comment..."
+                />
+                <div className="flex items-center justify-end gap-1">
+                  <span className="text-muted mr-2 text-[10px]">⌘Enter to save, Esc to cancel</span>
+                  <Button variant="ghost" size="sm" className="h-5 px-2 text-xs" onClick={handleCancelEdit}>
+                    <X className="mr-1 size-3" />
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="h-5 px-2 text-xs"
+                    onClick={handleSaveEdit}
+                  >
+                    <Check className="mr-1 size-3" />
+                    Save
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="group/comment flex items-start gap-2">
+                <blockquote className="text-secondary flex-1 border-l-2 border-[var(--color-review-accent)] pl-2 text-xs italic">
+                  {review.data.userNote || <span className="text-muted">No comment</span>}
+                </blockquote>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-5 shrink-0 opacity-0 transition-opacity group-hover/comment:opacity-100 [&_svg]:size-3"
+                  onClick={handleStartEdit}
+                >
+                  <Pencil />
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MAIN BANNER COMPONENT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface PendingReviewsBannerInnerProps {
+  workspaceId: string;
+  chatInputAPI: React.RefObject<ChatInputAPI | null>;
+}
+
+const PendingReviewsBannerInner: React.FC<PendingReviewsBannerInnerProps> = ({
+  workspaceId,
+  chatInputAPI,
+}) => {
+  const pendingReviews = usePendingReviews(workspaceId);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [showAllCompleted, setShowAllCompleted] = useState(false);
+
+  const INITIAL_COMPLETED_COUNT = 3;
+
+  // Separate pending and completed reviews
+  const { pendingList, completedList } = useMemo(() => {
+    const pending = pendingReviews.reviews.filter((r) => r.status === "pending");
+    const completed = pendingReviews.reviews.filter((r) => r.status === "checked");
+    return { pendingList: pending, completedList: completed };
+  }, [pendingReviews.reviews]);
+
+  // Completed reviews to display (limited unless expanded)
+  const displayedCompleted = useMemo(() => {
+    if (showAllCompleted) return completedList;
+    return completedList.slice(0, INITIAL_COMPLETED_COUNT);
+  }, [completedList, showAllCompleted]);
+
+  const hiddenCompletedCount = completedList.length - INITIAL_COMPLETED_COUNT;
 
   const handleToggle = useCallback(() => {
     setIsExpanded((prev) => !prev);
   }, []);
 
-  const handleToggleShowChecked = useCallback(() => {
-    setShowChecked((prev) => !prev);
-  }, []);
+  const handleSendToChat = useCallback(
+    (data: ReviewNoteData) => {
+      chatInputAPI.current?.appendText(formatReviewNoteForChat(data));
+    },
+    [chatInputAPI]
+  );
+
+  const handleUpdateNote = useCallback(
+    (reviewId: string, newNote: string) => {
+      pendingReviews.updateReviewNote(reviewId, newNote);
+    },
+    [pendingReviews]
+  );
 
   // Don't show anything if no reviews
-  if (reviews.length === 0) {
+  if (pendingReviews.reviews.length === 0) {
     return null;
   }
 
@@ -209,99 +345,129 @@ const PendingReviewsBannerInner: React.FC<PendingReviewsBannerProps> = ({
         onClick={handleToggle}
         className="hover:bg-hover flex w-full items-center gap-2 px-3 py-1.5 text-xs transition-colors"
       >
-        <MessageSquare className="h-3.5 w-3.5 text-[var(--color-review-accent)]" />
+        <MessageSquare className="size-3.5 text-[var(--color-review-accent)]" />
         <span className="text-secondary">
-          {pendingCount > 0 ? (
+          {pendingReviews.pendingCount > 0 ? (
             <>
-              <span className="font-medium text-[var(--color-review-accent)]">{pendingCount}</span>
+              <span className="font-medium text-[var(--color-review-accent)]">
+                {pendingReviews.pendingCount}
+              </span>
               {" pending review"}
-              {pendingCount !== 1 && "s"}
+              {pendingReviews.pendingCount !== 1 && "s"}
             </>
           ) : (
             <span className="text-muted">No pending reviews</span>
           )}
-          {checkedCount > 0 && <span className="text-muted"> · {checkedCount} checked</span>}
+          {pendingReviews.checkedCount > 0 && (
+            <span className="text-muted"> · {pendingReviews.checkedCount} completed</span>
+          )}
         </span>
         <div className="ml-auto">
           {isExpanded ? (
-            <ChevronDown className="text-muted h-3.5 w-3.5" />
+            <ChevronDown className="text-muted size-3.5" />
           ) : (
-            <ChevronUp className="text-muted h-3.5 w-3.5" />
+            <ChevronRight className="text-muted size-3.5" />
           )}
         </div>
       </button>
 
       {/* Expanded view */}
       {isExpanded && (
-        <div className="border-border border-t px-3 py-2">
-          {/* View toggle and actions */}
-          <div className="mb-2 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <TooltipWrapper inline>
-                <Button
-                  variant={showChecked ? "secondary" : "ghost"}
-                  size="sm"
-                  className="h-6 px-2 text-xs"
-                  onClick={handleToggleShowChecked}
-                >
-                  {showChecked ? (
-                    <Eye className="mr-1 h-3 w-3" />
-                  ) : (
-                    <EyeOff className="mr-1 h-3 w-3" />
-                  )}
-                  {showChecked ? "Checked" : "Pending"}
-                </Button>
-                <Tooltip align="center">
-                  {showChecked ? "Showing checked reviews" : "Showing pending reviews"}
-                </Tooltip>
-              </TooltipWrapper>
-            </div>
-
-            {showChecked && checkedCount > 0 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-error h-6 px-2 text-xs"
-                onClick={onClearChecked}
-              >
-                <Trash2 className="mr-1 h-3 w-3" />
-                Clear all
-              </Button>
-            )}
-          </div>
-
-          {/* Review list */}
-          <div className="max-h-48 space-y-1 overflow-y-auto">
-            {displayedReviews.length === 0 ? (
-              <div className="text-muted py-3 text-center text-xs">
-                {showChecked ? "No checked reviews" : "No pending reviews"}
+        <div className="border-border max-h-80 space-y-3 overflow-y-auto border-t px-3 py-2">
+          {/* Pending reviews section */}
+          {pendingList.length > 0 && (
+            <div className="space-y-1.5">
+              <div className="text-muted text-[10px] font-medium tracking-wide uppercase">
+                Pending ({pendingList.length})
               </div>
-            ) : (
-              displayedReviews.map((review) => (
+              {pendingList.map((review) => (
                 <ReviewItem
                   key={review.id}
                   review={review}
-                  onCheck={() => onCheck(review.id)}
-                  onUncheck={() => onUncheck(review.id)}
-                  onSendToChat={() => onSendToChat(review.data)}
-                  onRemove={() => onRemove(review.id)}
+                  onCheck={() => pendingReviews.checkReview(review.id)}
+                  onUncheck={() => pendingReviews.uncheckReview(review.id)}
+                  onSendToChat={() => handleSendToChat(review.data)}
+                  onRemove={() => pendingReviews.removeReview(review.id)}
+                  onUpdateNote={(note) => handleUpdateNote(review.id, note)}
                 />
-              ))
-            )}
-          </div>
+              ))}
+            </div>
+          )}
+
+          {/* Completed reviews section */}
+          {completedList.length > 0 && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <div className="text-muted text-[10px] font-medium tracking-wide uppercase">
+                  Completed ({completedList.length})
+                </div>
+                {completedList.length > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-error h-5 px-2 text-xs"
+                    onClick={pendingReviews.clearChecked}
+                  >
+                    <Trash2 className="mr-1 size-3" />
+                    Clear all
+                  </Button>
+                )}
+              </div>
+              {displayedCompleted.map((review) => (
+                <ReviewItem
+                  key={review.id}
+                  review={review}
+                  onCheck={() => pendingReviews.checkReview(review.id)}
+                  onUncheck={() => pendingReviews.uncheckReview(review.id)}
+                  onSendToChat={() => handleSendToChat(review.data)}
+                  onRemove={() => pendingReviews.removeReview(review.id)}
+                  onUpdateNote={(note) => handleUpdateNote(review.id, note)}
+                />
+              ))}
+              {hiddenCompletedCount > 0 && !showAllCompleted && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllCompleted(true)}
+                  className="text-muted hover:text-secondary w-full py-1 text-center text-xs transition-colors"
+                >
+                  Show {hiddenCompletedCount} more completed review{hiddenCompletedCount !== 1 && "s"}
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Empty state */}
+          {pendingList.length === 0 && completedList.length === 0 && (
+            <div className="text-muted py-3 text-center text-xs">No reviews yet</div>
+          )}
         </div>
       )}
     </div>
   );
 };
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// EXPORTED CONNECTED COMPONENT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface ConnectedPendingReviewsBannerProps {
+  workspaceId: string;
+  chatInputAPI: React.RefObject<ChatInputAPI | null>;
+}
+
 /**
- * Exported component wrapped in error boundary
+ * Self-contained pending reviews banner.
+ * Uses usePendingReviews hook internally - only needs workspaceId and chatInputAPI.
  */
-export const PendingReviewsBanner: React.FC<PendingReviewsBannerProps> = (props) => {
+export const ConnectedPendingReviewsBanner: React.FC<ConnectedPendingReviewsBannerProps> = ({
+  workspaceId,
+  chatInputAPI,
+}) => {
+  const pendingReviews = usePendingReviews(workspaceId);
+
   return (
-    <BannerErrorBoundary onClear={props.onClearAll}>
-      <PendingReviewsBannerInner {...props} />
+    <BannerErrorBoundary onClear={pendingReviews.clearAll}>
+      <PendingReviewsBannerInner workspaceId={workspaceId} chatInputAPI={chatInputAPI} />
     </BannerErrorBoundary>
   );
 };
