@@ -12,9 +12,9 @@ const mockToolCallOptions: ToolCallOptions = {
   messages: [],
 };
 
-// Create test runtime with isolated sessions directory
-function createTestRuntime(sessionsDir: string): Runtime {
-  return new LocalRuntime(process.cwd(), sessionsDir);
+// Create test runtime
+function createTestRuntime(): Runtime {
+  return new LocalRuntime(process.cwd());
 }
 
 describe("bash_background_list tool", () => {
@@ -35,8 +35,8 @@ describe("bash_background_list tool", () => {
   });
 
   it("should return error when workspaceId not available", async () => {
-    const manager = new BackgroundProcessManager();
     const tempDir = new TestTempDir("test-bash-bg-list");
+    const manager = new BackgroundProcessManager(tempDir.path);
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
     config.backgroundProcessManager = manager;
@@ -54,8 +54,8 @@ describe("bash_background_list tool", () => {
   });
 
   it("should return empty list when no processes", async () => {
-    const manager = new BackgroundProcessManager();
     const tempDir = new TestTempDir("test-bash-bg-list");
+    const manager = new BackgroundProcessManager(tempDir.path);
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
     config.backgroundProcessManager = manager;
@@ -72,9 +72,9 @@ describe("bash_background_list tool", () => {
   });
 
   it("should list spawned processes with correct fields", async () => {
-    const manager = new BackgroundProcessManager();
     const tempDir = new TestTempDir("test-bash-bg-list");
-    const runtime = createTestRuntime(tempDir.path);
+    const manager = new BackgroundProcessManager(tempDir.path);
+    const runtime = createTestRuntime();
     const config = createTestToolConfig(process.cwd(), { sessionsDir: tempDir.path });
     config.runtimeTempDir = tempDir.path;
     config.backgroundProcessManager = manager;
@@ -110,9 +110,9 @@ describe("bash_background_list tool", () => {
   });
 
   it("should include display_name in listed processes", async () => {
-    const manager = new BackgroundProcessManager();
     const tempDir = new TestTempDir("test-bash-bg-list");
-    const runtime = createTestRuntime(tempDir.path);
+    const manager = new BackgroundProcessManager(tempDir.path);
+    const runtime = createTestRuntime();
     const config = createTestToolConfig(process.cwd(), { sessionsDir: tempDir.path });
     config.runtimeTempDir = tempDir.path;
     config.backgroundProcessManager = manager;
@@ -142,9 +142,9 @@ describe("bash_background_list tool", () => {
   });
 
   it("should only list processes for the current workspace", async () => {
-    const manager = new BackgroundProcessManager();
     const tempDir = new TestTempDir("test-bash-bg-list");
-    const runtime = createTestRuntime(tempDir.path);
+    const manager = new BackgroundProcessManager(tempDir.path);
+    const runtime = createTestRuntime();
 
     const config = createTestToolConfig(process.cwd(), {
       workspaceId: "workspace-a",

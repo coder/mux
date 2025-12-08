@@ -1,7 +1,6 @@
 import { spawn } from "child_process";
 import { Readable, Writable } from "stream";
 import * as path from "path";
-import { randomBytes } from "crypto";
 import type {
   Runtime,
   ExecOptions,
@@ -14,8 +13,6 @@ import type {
   WorkspaceForkParams,
   WorkspaceForkResult,
   InitLogger,
-  BackgroundSpawnOptions,
-  BackgroundSpawnResult,
 } from "./Runtime";
 import { RuntimeError as RuntimeErrorClass } from "./Runtime";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
@@ -24,14 +21,11 @@ import { checkInitHookExists, createLineBufferedLoggers, getMuxEnv } from "./ini
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { streamProcessToLogger } from "./streamProcess";
 import { expandTildeForSSH, cdCommandForSSH } from "./tildeExpansion";
-import { getProjectName } from "@/node/utils/runtime/helpers";
+import { getProjectName, execBuffered } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 import { execAsync, DisposableProcess } from "@/node/utils/disposableExec";
 import { getControlPath } from "./sshConnectionPool";
 import { getBashPath } from "@/node/utils/main/bashPath";
-import { SSHBackgroundHandle } from "./SSHBackgroundHandle";
-import { execBuffered } from "@/node/utils/runtime/helpers";
-import { shellQuote, buildSpawnCommand, parsePid } from "./backgroundCommands";
 
 /**
  * Shell-escape helper for remote bash.
@@ -96,8 +90,9 @@ export class SSHRuntime implements Runtime {
   /**
    * Get resolved background output directory (tilde expanded), caching the result.
    * This ensures all background process paths are absolute from the start.
+   * Public for use by BackgroundProcessExecutor.
    */
-  private async getBgOutputDir(): Promise<string> {
+  async getBgOutputDir(): Promise<string> {
     if (this.resolvedBgOutputDir !== null) {
       return this.resolvedBgOutputDir;
     }
@@ -269,131 +264,6 @@ export class SSHRuntime implements Runtime {
     }
 
     return { stdout, stderr, stdin, exitCode, duration };
-  }
-
-  /**
-   * Spawn a background process on the remote machine.
-   *
-   * Uses nohup + shell redirection to detach the process from SSH.
-   * Exit code is captured via bash trap and written to exit_code file.
-   * Output is written directly to stdout.log and stderr.log on the remote.
-   *
-   * Output directory: {bgOutputDir}/{workspaceId}/{processId}/
-   */
-  async spawnBackground(
-    script: string,
-    options: BackgroundSpawnOptions
-  ): Promise<BackgroundSpawnResult> {
-    log.debug(`SSHRuntime.spawnBackground: Spawning in ${options.cwd}`);
-
-    // Verify working directory exists on remote (parity with local runtime)
-    const cwdCheck = await execBuffered(this, cdCommandForSSH(options.cwd), {
-      cwd: "/",
-      timeout: 10,
-    });
-    if (cwdCheck.exitCode !== 0) {
-      return { success: false, error: `Working directory does not exist: ${options.cwd}` };
-    }
-
-    // Generate unique process ID and compute output directory
-    // /tmp is cleaned by OS, so no explicit cleanup needed
-    const processId = `bg-${randomBytes(4).toString("hex")}`;
-    const bgOutputDir = await this.getBgOutputDir();
-    const outputDir = `${bgOutputDir}/${options.workspaceId}/${processId}`;
-    const stdoutPath = `${outputDir}/stdout.log`;
-    const stderrPath = `${outputDir}/stderr.log`;
-    const exitCodePath = `${outputDir}/exit_code`;
-
-    // Use expandTildeForSSH for paths that may contain ~ (shescape.quote prevents tilde expansion)
-    const outputDirExpanded = expandTildeForSSH(outputDir);
-    const stdoutPathExpanded = expandTildeForSSH(stdoutPath);
-    const stderrPathExpanded = expandTildeForSSH(stderrPath);
-    const exitCodePathExpanded = expandTildeForSSH(exitCodePath);
-
-    // Create output directory and empty files on remote
-    const mkdirResult = await execBuffered(
-      this,
-      `mkdir -p ${outputDirExpanded} && touch ${stdoutPathExpanded} ${stderrPathExpanded}`,
-      { cwd: "/", timeout: 30 }
-    );
-    if (mkdirResult.exitCode !== 0) {
-      return {
-        success: false,
-        error: `Failed to create output directory: ${mkdirResult.stderr}`,
-      };
-    }
-
-    // Build the wrapper script with trap to capture exit code
-    // The trap writes exit code to file when the script exits (any exit path)
-    // Note: SSH uses expandTildeForSSH/cdCommandForSSH for tilde expansion, so we can't
-    // use buildWrapperScript directly. But we use buildSpawnCommand for parity.
-    const wrapperParts: string[] = [];
-
-    // Set up trap first (use expanded path for tilde support)
-    wrapperParts.push(`trap 'echo $? > ${exitCodePathExpanded}' EXIT`);
-
-    // Change to working directory
-    wrapperParts.push(cdCommandForSSH(options.cwd));
-
-    // Add environment variable exports (use shellQuote for parity with Local)
-    const envVars = { ...options.env, ...NON_INTERACTIVE_ENV_VARS };
-    for (const [key, value] of Object.entries(envVars)) {
-      wrapperParts.push(`export ${key}=${shellQuote(value)}`);
-    }
-
-    // Add the actual script
-    wrapperParts.push(script);
-
-    const wrapperScript = wrapperParts.join(" && ");
-
-    // Use shared buildSpawnCommand for parity with Local
-    // Use expandTildeForSSH for path quoting to support ~/... paths
-    const spawnCommand = buildSpawnCommand({
-      wrapperScript,
-      stdoutPath,
-      stderrPath,
-      niceness: options.niceness,
-      quotePath: expandTildeForSSH,
-    });
-
-    try {
-      // No timeout - the spawn command backgrounds the process and returns immediately,
-      // but if wrapped in `timeout`, it would wait for the backgrounded process to exit.
-      // SSH connection hangs are protected by ConnectTimeout (see buildSshArgs in this file).
-      const result = await execBuffered(this, spawnCommand, {
-        cwd: "/", // cwd doesn't matter, we cd in the wrapper
-      });
-
-      if (result.exitCode !== 0) {
-        log.debug(`SSHRuntime.spawnBackground: spawn command failed: ${result.stderr}`);
-        return {
-          success: false,
-          error: `Failed to spawn background process: ${result.stderr}`,
-        };
-      }
-
-      const pid = parsePid(result.stdout);
-      if (!pid) {
-        log.debug(`SSHRuntime.spawnBackground: Invalid PID: ${result.stdout}`);
-        return {
-          success: false,
-          error: `Failed to get valid PID from spawn: ${result.stdout}`,
-        };
-      }
-
-      log.debug(`SSHRuntime.spawnBackground: Spawned with PID ${pid}`);
-
-      // outputDir is already absolute (getBgOutputDir resolves tildes upfront)
-      const handle = new SSHBackgroundHandle(this, pid, outputDir);
-      return { success: true, handle, pid };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      log.debug(`SSHRuntime.spawnBackground: Error: ${errorMessage}`);
-      return {
-        success: false,
-        error: `Failed to spawn background process: ${errorMessage}`,
-      };
-    }
   }
 
   /**

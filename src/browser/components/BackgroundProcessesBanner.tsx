@@ -111,18 +111,13 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
                 )}
               >
                 <div className="min-w-0 flex-1">
-                  <div
-                    className="truncate font-mono text-xs text-foreground"
-                    title={proc.script}
-                  >
+                  <div className="text-foreground truncate font-mono text-xs" title={proc.script}>
                     {proc.displayName ?? truncateScript(proc.script)}
                   </div>
-                  <div className="font-mono text-[10px] text-muted">
-                    pid {proc.pid}
-                  </div>
+                  <div className="text-muted font-mono text-[10px]">pid {proc.pid}</div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <span className="text-[10px] text-muted">
+                  <span className="text-muted text-[10px]">
                     {formatDuration(Date.now() - proc.startTime)}
                   </span>
                   <TooltipWrapper>

@@ -17,6 +17,20 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 
 /**
+ * Error thrown when a foreground process is sent to background.
+ * Used to signal early return from foreground execution.
+ */
+export class BackgroundedError extends Error {
+  constructor(
+    public readonly processId: string,
+    public readonly outputDir: string
+  ) {
+    super(`Process ${processId} sent to background`);
+    this.name = "BackgroundedError";
+  }
+}
+
+/**
  * Validates bash script input for common issues
  * Returns error result if validation fails, null if valid
  */
@@ -237,7 +251,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
       const validationError = validateScript(script, config);
       if (validationError) return validationError;
 
-      // Handle background execution
+      // Handle explicit background execution (run_in_background=true)
       if (run_in_background) {
         if (!config.workspaceId || !config.backgroundProcessManager || !config.runtime) {
           return {
@@ -265,9 +279,10 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
           script,
           {
             cwd: config.cwd,
-            secrets: config.secrets,
+            env: config.secrets,
             niceness: config.niceness,
             displayName: display_name,
+            isForeground: false, // Explicit background
           }
         );
 
@@ -300,6 +315,25 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
       const totalBytesRef = { current: 0 }; // Use ref for shared access in line handler
       let overflowReason: string | null = null;
       const truncationState = { displayTruncated: false, fileTruncated: false };
+
+      // Track backgrounding state
+      let backgrounded = false;
+      let backgroundResolve: (() => void) | null = null;
+
+      // Register foreground process for "send to background" feature
+      // Only if manager is available (AI tool calls, not IPC)
+      const fgRegistration =
+        config.backgroundProcessManager && config.workspaceId
+          ? config.backgroundProcessManager.registerForegroundProcess(
+              config.workspaceId,
+              script,
+              () => {
+                backgrounded = true;
+                // Resolve the background promise to unblock the wait
+                if (backgroundResolve) backgroundResolve();
+              }
+            )
+          : null;
 
       // Execute using runtime interface (works for both local and SSH)
       const scriptWithClosedStdin = `exec </dev/null
@@ -429,11 +463,44 @@ ${script}`;
       const consumeStdout = consumeStream(execStream.stdout);
       const consumeStderr = consumeStream(execStream.stderr);
 
+      // Create a promise that resolves when user clicks "Background"
+      const backgroundPromise = new Promise<void>((resolve) => {
+        backgroundResolve = resolve;
+      });
+
       // Wait for process exit and stream consumption concurrently
+      // Also race with the background promise to detect early return request
       let exitCode: number;
       try {
-        [exitCode] = await Promise.all([execStream.exitCode, consumeStdout, consumeStderr]);
+        const result = await Promise.race([
+          Promise.all([execStream.exitCode, consumeStdout, consumeStderr]),
+          backgroundPromise.then(() => "backgrounded" as const),
+        ]);
+
+        // Check if we were backgrounded
+        if (result === "backgrounded" || backgrounded) {
+          // Unregister foreground process
+          fgRegistration?.unregister();
+
+          // Return early with info about the running process
+          // Note: Process continues running in the background
+          const wall_duration_ms = Math.round(performance.now() - startTime);
+          return {
+            success: true,
+            output: `Process sent to background. It will continue running.\n\nOutput so far (${lines.length} lines):\n${lines.slice(-20).join("\n")}${lines.length > 20 ? "\n...(showing last 20 lines)" : ""}`,
+            exitCode: 0,
+            wall_duration_ms,
+            // Note: We don't have backgroundProcessId since this wasn't spawned via manager
+            // The process continues with runtime.exec() infrastructure
+          };
+        }
+
+        // Normal completion - extract exit code
+        exitCode = result[0];
       } catch (err: unknown) {
+        // Unregister on error
+        fgRegistration?.unregister();
+
         // Check if this was an abort
         if (abortSignal?.aborted) {
           return {
@@ -450,6 +517,9 @@ ${script}`;
           wall_duration_ms: Math.round(performance.now() - startTime),
         };
       }
+
+      // Unregister foreground process on normal completion
+      fgRegistration?.unregister();
 
       // Check if command was aborted (exitCode will be EXIT_CODE_ABORTED = -997)
       // This can happen if abort signal fired after Promise.all resolved but before we check

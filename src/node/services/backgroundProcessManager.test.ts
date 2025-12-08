@@ -16,10 +16,10 @@ describe("BackgroundProcessManager", () => {
   const testWorkspaceId2 = `test-ws2-${testRunId}`;
 
   beforeEach(async () => {
-    manager = new BackgroundProcessManager();
-    // Create isolated temp directory for sessions
+    // Create isolated temp directory for each test to avoid cross-test pollution
     bgOutputDir = await fs.mkdtemp(path.join(os.tmpdir(), "bg-proc-test-"));
-    runtime = new LocalRuntime(process.cwd(), bgOutputDir);
+    manager = new BackgroundProcessManager(bgOutputDir);
+    runtime = new LocalRuntime(process.cwd());
   });
 
   afterEach(async () => {
@@ -38,7 +38,7 @@ describe("BackgroundProcessManager", () => {
 
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.processId).toMatch(/^bg-/);
+        expect(result.processId).toMatch(/^bash_\d+$/);
         expect(result.outputDir).toContain(bgOutputDir);
         expect(result.outputDir).toContain(testWorkspaceId);
         expect(result.outputDir).toContain(result.processId);

@@ -15,9 +15,9 @@ const mockToolCallOptions: ToolCallOptions = {
   messages: [],
 };
 
-// Create test runtime with isolated sessions directory
-function createTestRuntime(sessionsDir: string): Runtime {
-  return new LocalRuntime(process.cwd(), sessionsDir);
+// Create test runtime
+function createTestRuntime(): Runtime {
+  return new LocalRuntime(process.cwd());
 }
 
 describe("bash_background_terminate tool", () => {
@@ -45,8 +45,8 @@ describe("bash_background_terminate tool", () => {
   });
 
   it("should return error for non-existent process", async () => {
-    const manager = new BackgroundProcessManager();
     const tempDir = new TestTempDir("test-bash-bg-term");
+    const manager = new BackgroundProcessManager(tempDir.path);
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
     config.backgroundProcessManager = manager;
@@ -65,9 +65,9 @@ describe("bash_background_terminate tool", () => {
   });
 
   it("should terminate a running process", async () => {
-    const manager = new BackgroundProcessManager();
     const tempDir = new TestTempDir("test-bash-bg-term");
-    const runtime = createTestRuntime(tempDir.path);
+    const manager = new BackgroundProcessManager(tempDir.path);
+    const runtime = createTestRuntime();
     const config = createTestToolConfig(process.cwd(), { sessionsDir: tempDir.path });
     config.runtimeTempDir = tempDir.path;
     config.backgroundProcessManager = manager;
@@ -105,9 +105,9 @@ describe("bash_background_terminate tool", () => {
   });
 
   it("should be idempotent (double-terminate succeeds)", async () => {
-    const manager = new BackgroundProcessManager();
     const tempDir = new TestTempDir("test-bash-bg-term");
-    const runtime = createTestRuntime(tempDir.path);
+    const manager = new BackgroundProcessManager(tempDir.path);
+    const runtime = createTestRuntime();
     const config = createTestToolConfig(process.cwd(), { sessionsDir: tempDir.path });
     config.runtimeTempDir = tempDir.path;
     config.backgroundProcessManager = manager;
@@ -145,9 +145,9 @@ describe("bash_background_terminate tool", () => {
   });
 
   it("should not terminate processes from other workspaces", async () => {
-    const manager = new BackgroundProcessManager();
     const tempDir = new TestTempDir("test-bash-bg-term");
-    const runtime = createTestRuntime(tempDir.path);
+    const manager = new BackgroundProcessManager(tempDir.path);
+    const runtime = createTestRuntime();
 
     // Config is for workspace-a
     const config = createTestToolConfig(process.cwd(), {

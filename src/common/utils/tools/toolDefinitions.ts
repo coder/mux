@@ -246,7 +246,7 @@ export const TOOL_DEFINITIONS = {
     schema: z.object({
       process_id: z
         .string()
-        .regex(/^bg-[0-9a-f]{8}$/, "Invalid process ID format")
+        .regex(/^bash_\d+$/, "Invalid process ID format (expected bash_N)")
         .describe("The ID of the background process to retrieve output from"),
       filter: z
         .string()
@@ -273,7 +273,7 @@ export const TOOL_DEFINITIONS = {
     schema: z.object({
       process_id: z
         .string()
-        .regex(/^bg-[0-9a-f]{8}$/, "Invalid process ID format")
+        .regex(/^bash_\d+$/, "Invalid process ID format (expected bash_N)")
         .describe("Background process ID to terminate"),
     }),
   },

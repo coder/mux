@@ -207,7 +207,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd(), tempDir.path),
+      runtime: new LocalRuntime(process.cwd()),
       runtimeTempDir: tempDir.path,
       overflow_policy: "truncate",
     });
@@ -243,7 +243,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd(), tempDir.path),
+      runtime: new LocalRuntime(process.cwd()),
       runtimeTempDir: tempDir.path,
       overflow_policy: "truncate",
     });
@@ -283,7 +283,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd(), tempDir.path),
+      runtime: new LocalRuntime(process.cwd()),
       runtimeTempDir: tempDir.path,
       // overflow_policy not specified - should default to tmpfile
     });
@@ -318,7 +318,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd(), tempDir.path),
+      runtime: new LocalRuntime(process.cwd()),
       runtimeTempDir: tempDir.path,
     });
 
@@ -372,7 +372,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd(), tempDir.path),
+      runtime: new LocalRuntime(process.cwd()),
       runtimeTempDir: tempDir.path,
     });
 
@@ -417,7 +417,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd(), tempDir.path),
+      runtime: new LocalRuntime(process.cwd()),
       runtimeTempDir: tempDir.path,
     });
 
@@ -461,7 +461,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd(), tempDir.path),
+      runtime: new LocalRuntime(process.cwd()),
       runtimeTempDir: tempDir.path,
     });
 
@@ -503,7 +503,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd(), tempDir.path),
+      runtime: new LocalRuntime(process.cwd()),
       runtimeTempDir: tempDir.path,
     });
 
@@ -535,7 +535,7 @@ describe("bash tool", () => {
     const tool = createBashTool({
       ...getTestDeps(),
       cwd: process.cwd(),
-      runtime: new LocalRuntime(process.cwd(), tempDir.path),
+      runtime: new LocalRuntime(process.cwd()),
       runtimeTempDir: tempDir.path,
     });
 
@@ -1422,7 +1422,7 @@ describe("bash tool - background execution", () => {
   });
 
   it("should reject timeout with background mode", async () => {
-    const manager = new BackgroundProcessManager();
+    const manager = new BackgroundProcessManager("/tmp/mux-test-bg");
 
     const tempDir = new TestTempDir("test-bash-bg");
     const config = createTestToolConfig(tempDir.path);
@@ -1446,7 +1446,7 @@ describe("bash tool - background execution", () => {
   });
 
   it("should start background process and return process ID", async () => {
-    const manager = new BackgroundProcessManager();
+    const manager = new BackgroundProcessManager("/tmp/mux-test-bg");
 
     const tempDir = new TestTempDir("test-bash-bg");
     const config = createTestToolConfig(tempDir.path);
@@ -1463,7 +1463,7 @@ describe("bash tool - background execution", () => {
     expect(result.success).toBe(true);
     if (result.success && "backgroundProcessId" in result) {
       expect(result.backgroundProcessId).toBeDefined();
-      expect(result.backgroundProcessId).toMatch(/^bg-/);
+      expect(result.backgroundProcessId).toMatch(/^bash_\d+$/);
     } else {
       throw new Error("Expected background process ID in result");
     }

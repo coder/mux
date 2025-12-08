@@ -12,9 +12,9 @@ const mockToolCallOptions: ToolCallOptions = {
   messages: [],
 };
 
-// Create test runtime with isolated sessions directory
-function createTestRuntime(sessionsDir: string): Runtime {
-  return new LocalRuntime(process.cwd(), sessionsDir);
+// Create test runtime
+function createTestRuntime(): Runtime {
+  return new LocalRuntime(process.cwd());
 }
 
 describe("bash_output tool", () => {
@@ -25,7 +25,7 @@ describe("bash_output tool", () => {
 
     const tool = createBashOutputTool(config);
     const result = (await tool.execute!(
-      { process_id: "bg-12345678" },
+      { process_id: "bash_1" },
       mockToolCallOptions
     )) as BashOutputToolResult;
 
@@ -38,8 +38,9 @@ describe("bash_output tool", () => {
   });
 
   it("should return error when workspaceId not available", async () => {
-    const manager = new BackgroundProcessManager();
     const tempDir = new TestTempDir("test-bash-output");
+    const manager = new BackgroundProcessManager(tempDir.path);
+
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
     config.backgroundProcessManager = manager;
@@ -47,7 +48,7 @@ describe("bash_output tool", () => {
 
     const tool = createBashOutputTool(config);
     const result = (await tool.execute!(
-      { process_id: "bg-12345678" },
+      { process_id: "bash_1" },
       mockToolCallOptions
     )) as BashOutputToolResult;
 
@@ -60,15 +61,16 @@ describe("bash_output tool", () => {
   });
 
   it("should return error for non-existent process", async () => {
-    const manager = new BackgroundProcessManager();
     const tempDir = new TestTempDir("test-bash-output");
+    const manager = new BackgroundProcessManager(tempDir.path);
+
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
     config.backgroundProcessManager = manager;
 
     const tool = createBashOutputTool(config);
     const result = (await tool.execute!(
-      { process_id: "bg-12345678" },
+      { process_id: "bash_1" },
       mockToolCallOptions
     )) as BashOutputToolResult;
 
@@ -81,9 +83,10 @@ describe("bash_output tool", () => {
   });
 
   it("should return incremental output from process", async () => {
-    const manager = new BackgroundProcessManager();
     const tempDir = new TestTempDir("test-bash-output");
-    const runtime = createTestRuntime(tempDir.path);
+    const manager = new BackgroundProcessManager(tempDir.path);
+
+    const runtime = createTestRuntime();
     const config = createTestToolConfig(process.cwd(), { sessionsDir: tempDir.path });
     config.runtimeTempDir = tempDir.path;
     config.backgroundProcessManager = manager;
@@ -138,9 +141,10 @@ describe("bash_output tool", () => {
   });
 
   it("should filter output with regex", async () => {
-    const manager = new BackgroundProcessManager();
     const tempDir = new TestTempDir("test-bash-output");
-    const runtime = createTestRuntime(tempDir.path);
+    const manager = new BackgroundProcessManager(tempDir.path);
+
+    const runtime = createTestRuntime();
     const config = createTestToolConfig(process.cwd(), { sessionsDir: tempDir.path });
     config.runtimeTempDir = tempDir.path;
     config.backgroundProcessManager = manager;
@@ -179,9 +183,10 @@ describe("bash_output tool", () => {
   });
 
   it("should return error for invalid regex filter", async () => {
-    const manager = new BackgroundProcessManager();
     const tempDir = new TestTempDir("test-bash-output");
-    const runtime = createTestRuntime(tempDir.path);
+    const manager = new BackgroundProcessManager(tempDir.path);
+
+    const runtime = createTestRuntime();
     const config = createTestToolConfig(process.cwd(), { sessionsDir: tempDir.path });
     config.runtimeTempDir = tempDir.path;
     config.backgroundProcessManager = manager;
@@ -214,9 +219,10 @@ describe("bash_output tool", () => {
   });
 
   it("should not return output from other workspace's processes", async () => {
-    const manager = new BackgroundProcessManager();
     const tempDir = new TestTempDir("test-bash-output");
-    const runtime = createTestRuntime(tempDir.path);
+    const manager = new BackgroundProcessManager(tempDir.path);
+
+    const runtime = createTestRuntime();
 
     const config = createTestToolConfig(process.cwd(), {
       workspaceId: "workspace-a",
@@ -251,9 +257,10 @@ describe("bash_output tool", () => {
   });
 
   it("should include process status and exit code", async () => {
-    const manager = new BackgroundProcessManager();
     const tempDir = new TestTempDir("test-bash-output");
-    const runtime = createTestRuntime(tempDir.path);
+    const manager = new BackgroundProcessManager(tempDir.path);
+
+    const runtime = createTestRuntime();
     const config = createTestToolConfig(process.cwd(), { sessionsDir: tempDir.path });
     config.runtimeTempDir = tempDir.path;
     config.backgroundProcessManager = manager;

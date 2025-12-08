@@ -50,7 +50,7 @@ function extractProcessId(events: WorkspaceChatMessage[]): string | null {
     ) {
       const result = (event as { result?: { output?: string } }).result?.output;
       if (typeof result === "string") {
-        const match = result.match(/Background process started with ID: (bg-[a-z0-9]+)/);
+        const match = result.match(/Background process started with ID: (bash_\d+)/);
         if (match) return match[1];
       }
     }
@@ -130,7 +130,7 @@ describeIntegration("Background Bash Execution", () => {
           // Extract process ID from tool output
           const processId = extractProcessId(startEvents);
           expect(processId).not.toBeNull();
-          expect(processId).toMatch(/^bg-[a-z0-9]+$/);
+          expect(processId).toMatch(/^bash_\d+$/);
 
           // List background processes to verify it's tracked
           const listEvents = await sendMessageAndWait(

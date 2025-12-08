@@ -9,6 +9,7 @@
  */
 
 import { Command } from "commander";
+import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
 import { Config } from "@/node/config";
@@ -297,7 +298,9 @@ async function main(): Promise<void> {
   const historyService = new HistoryService(config);
   const partialService = new PartialService(config, historyService);
   const initStateManager = new InitStateManager(config);
-  const backgroundProcessManager = new BackgroundProcessManager();
+  const backgroundProcessManager = new BackgroundProcessManager(
+    path.join(os.tmpdir(), "mux-bashes")
+  );
   const aiService = new AIService(
     config,
     historyService,

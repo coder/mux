@@ -21,7 +21,7 @@ export class SSHBackgroundHandle implements BackgroundHandle {
   constructor(
     private readonly sshRuntime: SSHRuntime,
     private readonly pid: number,
-    /** Remote path to output directory (e.g., /tmp/mux-bashes/workspace/bg-xxx) */
+    /** Remote path to output directory (e.g., /tmp/mux-bashes/workspace/bash_1) */
     public readonly outputDir: string
   ) {}
 

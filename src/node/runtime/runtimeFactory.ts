@@ -1,6 +1,3 @@
-import * as os from "os";
-import * as path from "path";
-
 import type { Runtime } from "./Runtime";
 import { LocalRuntime } from "./LocalRuntime";
 import { WorktreeRuntime } from "./WorktreeRuntime";
@@ -11,18 +8,6 @@ import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility
 
 // Re-export for backward compatibility with existing imports
 export { isIncompatibleRuntimeConfig };
-
-/**
- * Get the default output directory for background processes.
- * Uses os.tmpdir() for platform-appropriate temp directory.
- *
- * Returns native path format (Windows or POSIX) since this is used by Node.js
- * filesystem APIs. Conversion to POSIX for Git Bash shell commands happens
- * at command construction time via toPosixPath().
- */
-function getDefaultBgOutputDir(): string {
-  return path.join(os.tmpdir(), "mux-bashes");
-}
 
 /**
  * Error thrown when a workspace has an incompatible runtime configuration,
@@ -64,15 +49,13 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
     );
   }
 
-  const bgOutputDir = config.bgOutputDir ?? getDefaultBgOutputDir();
-
   switch (config.type) {
     case "local":
       // Check if this is legacy "local" with srcBaseDir (= worktree semantics)
       // or new "local" without srcBaseDir (= project-dir semantics)
       if (hasSrcBaseDir(config)) {
         // Legacy: "local" with srcBaseDir is treated as worktree
-        return new WorktreeRuntime(config.srcBaseDir, bgOutputDir);
+        return new WorktreeRuntime(config.srcBaseDir);
       }
       // Project-dir: uses project path directly, no isolation
       if (!options?.projectPath) {
@@ -80,10 +63,10 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
           "LocalRuntime requires projectPath in options for project-dir config (type: 'local' without srcBaseDir)"
         );
       }
-      return new LocalRuntime(options.projectPath, bgOutputDir);
+      return new LocalRuntime(options.projectPath);
 
     case "worktree":
-      return new WorktreeRuntime(config.srcBaseDir, bgOutputDir);
+      return new WorktreeRuntime(config.srcBaseDir);
 
     case "ssh":
       return new SSHRuntime({

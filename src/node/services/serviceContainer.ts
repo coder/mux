@@ -1,3 +1,4 @@
+import * as os from "os";
 import * as path from "path";
 import type { Config } from "@/node/config";
 import { AIService } from "@/node/services/aiService";
@@ -63,7 +64,9 @@ export class ServiceContainer {
     this.extensionMetadata = new ExtensionMetadataService(
       path.join(config.rootDir, "extensionMetadata.json")
     );
-    this.backgroundProcessManager = new BackgroundProcessManager();
+    this.backgroundProcessManager = new BackgroundProcessManager(
+      path.join(os.tmpdir(), "mux-bashes")
+    );
     this.mcpServerManager = new MCPServerManager(this.mcpConfigService);
     this.aiService = new AIService(
       config,
