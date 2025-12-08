@@ -5,7 +5,6 @@ import { highlightCode } from "@/browser/utils/highlighting/highlightWorkerClien
 import { extractShikiLines } from "@/browser/utils/highlighting/shiki-shared";
 import { useTheme } from "@/browser/contexts/ThemeContext";
 import { CopyButton } from "@/browser/components/ui/CopyButton";
-import { ReviewBlock } from "@/browser/components/shared/ReviewBlock";
 
 interface CodeProps {
   node?: unknown;
@@ -112,30 +111,10 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
   );
 };
 
-// Helper to extract text from React children (needed because markdown parser wraps content in nodes)
-function extractTextContent(node: ReactNode): string {
-  if (typeof node === "string") return node;
-  if (typeof node === "number") return String(node);
-  if (!node) return "";
-  if (Array.isArray(node)) return node.map(extractTextContent).join("");
-  if (typeof node === "object" && "props" in node) {
-    return extractTextContent(
-      (node as React.ReactElement<{ children?: ReactNode }>).props.children
-    );
-  }
-  return "";
-}
-
 // Custom components for markdown rendering
 export const markdownComponents = {
   // Pass through pre element - let code component handle the wrapping
   pre: ({ children }: PreProps) => <>{children}</>,
-
-  // Custom review component - renders <review> tags as styled blocks
-  review: ({ children }: { children?: ReactNode }) => {
-    const content = extractTextContent(children);
-    return <ReviewBlock content={content} />;
-  },
 
   // Custom anchor to open links externally
   a: ({ href, children }: AnchorProps) => (

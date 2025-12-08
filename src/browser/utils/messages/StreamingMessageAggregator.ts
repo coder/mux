@@ -862,9 +862,8 @@ export class StreamingMessageAggregator {
                 }
               : undefined;
 
-          // Extract reviews from muxMetadata for rich UI display
-          const reviews =
-            muxMeta?.type === "normal" && muxMeta.reviews ? muxMeta.reviews : undefined;
+          // Extract reviews from muxMetadata for rich UI display (orthogonal to message type)
+          const reviews = muxMeta?.reviews;
 
           displayedMessages.push({
             type: "user",

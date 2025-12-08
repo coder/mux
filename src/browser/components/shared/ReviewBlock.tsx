@@ -2,11 +2,11 @@
  * ReviewBlock - Renders review data as styled components
  *
  * Used in:
- * - UserMessage to display submitted reviews (from metadata via ReviewBlockFromData)
- * - ChatInput preview to show reviews before sending (via ReviewBlock with parsed content)
+ * - UserMessage to display submitted reviews (from metadata)
+ * - ChatInput preview to show reviews before sending
  */
 
-import React, { useMemo, useState, useCallback, useRef } from "react";
+import React, { useState, useCallback, useRef, useMemo } from "react";
 import { MessageSquare, X, Pencil, Check } from "lucide-react";
 import { DiffRenderer } from "./DiffRenderer";
 import { Button } from "../ui/button";
@@ -175,64 +175,8 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// PARSING (for legacy messages without metadata)
+// PUBLIC COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════════
-
-interface ParsedReview {
-  filePath: string;
-  lineRange: string;
-  code: string;
-  comment: string;
-}
-
-/**
- * Parse review format: Re path:lines\n\`\`\`\ncode\n\`\`\`\n> comment
- * Used for legacy messages that don't have structured metadata
- */
-function parseReviewContent(content: string): ParsedReview {
-  const trimmed = content.trim();
-  const headerMatch = /^Re\s+([^:]+):(\S+)/.exec(trimmed);
-  const codeMatch = /```\n?([\s\S]*?)```/.exec(trimmed);
-  const commentMatch = /```[\s\S]*?```\s*\n>\s*(.+?)$/m.exec(trimmed);
-
-  return {
-    filePath: headerMatch?.[1] ?? "unknown",
-    lineRange: headerMatch?.[2] ?? "",
-    code: codeMatch?.[1]?.trim() ?? "",
-    comment: commentMatch?.[1]?.trim() ?? "",
-  };
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// PUBLIC COMPONENTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-interface ReviewBlockProps {
-  /** Raw content inside the <review> tags (requires parsing) */
-  content: string;
-  /** Optional callback to remove the review */
-  onRemove?: () => void;
-  /** Optional callback to edit the comment */
-  onEditComment?: (newComment: string) => void;
-}
-
-/**
- * ReviewBlock that parses content string (legacy format)
- * Used by MarkdownComponents and ContentWithReviews for backward compatibility
- */
-export const ReviewBlock: React.FC<ReviewBlockProps> = ({ content, onRemove, onEditComment }) => {
-  const parsed = useMemo(() => parseReviewContent(content), [content]);
-  return (
-    <ReviewBlockCore
-      filePath={parsed.filePath}
-      lineRange={parsed.lineRange}
-      code={parsed.code}
-      comment={parsed.comment}
-      onRemove={onRemove}
-      onEditComment={onEditComment}
-    />
-  );
-};
 
 interface ReviewBlockFromDataProps {
   /** Structured review data (no parsing needed) */

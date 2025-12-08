@@ -22,18 +22,6 @@ export interface CompactionRequestData {
 
 // Frontend-specific metadata stored in muxMetadata field
 // Backend stores this as-is without interpretation (black-box)
-export type MuxFrontendMetadata =
-  | {
-      type: "compaction-request";
-      rawCommand: string; // The original /compact command as typed by user (for display)
-      parsed: CompactionRequestData;
-    }
-  | {
-      type: "normal"; // Regular messages
-      /** Structured review data for rich UI display (avoids parsing from text) */
-      reviews?: ReviewNoteDataForDisplay[];
-    };
-
 /** Review data stored in message metadata for display */
 export interface ReviewNoteDataForDisplay {
   filePath: string;
@@ -41,6 +29,24 @@ export interface ReviewNoteDataForDisplay {
   selectedCode: string;
   userNote: string;
 }
+
+/** Base fields common to all metadata types */
+interface MuxFrontendMetadataBase {
+  /** Structured review data for rich UI display (orthogonal to message type) */
+  reviews?: ReviewNoteDataForDisplay[];
+}
+
+export type MuxFrontendMetadata = MuxFrontendMetadataBase &
+  (
+    | {
+        type: "compaction-request";
+        rawCommand: string; // The original /compact command as typed by user (for display)
+        parsed: CompactionRequestData;
+      }
+    | {
+        type: "normal"; // Regular messages
+      }
+  );
 
 // Our custom metadata type
 export interface MuxMetadata {

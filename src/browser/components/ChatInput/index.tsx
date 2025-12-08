@@ -1083,17 +1083,17 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           ? reviewsText + (actualMessageText ? "\n\n" + actualMessageText : "")
           : actualMessageText;
 
-        // Store review data in muxMetadata for rich UI display (avoids re-parsing text)
-        if (attachedReviews.length > 0 && !muxMetadata) {
-          muxMetadata = {
-            type: "normal",
-            reviews: attachedReviews.map((r) => ({
-              filePath: r.data.filePath,
-              lineRange: r.data.lineRange,
-              selectedCode: r.data.selectedCode,
-              userNote: r.data.userNote,
-            })),
-          };
+        // Store review data in muxMetadata for rich UI display (orthogonal to message type)
+        if (attachedReviews.length > 0) {
+          const reviewsData = attachedReviews.map((r) => ({
+            filePath: r.data.filePath,
+            lineRange: r.data.lineRange,
+            selectedCode: r.data.selectedCode,
+            userNote: r.data.userNote,
+          }));
+          muxMetadata = muxMetadata
+            ? { ...muxMetadata, reviews: reviewsData }
+            : { type: "normal", reviews: reviewsData };
         }
 
         // Capture review IDs before clearing (for marking as checked on success)

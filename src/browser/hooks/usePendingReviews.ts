@@ -63,9 +63,9 @@ export function usePendingReviews(workspaceId: string): UsePendingReviewsReturn 
     { listener: true } // Enable cross-component sync so banner updates when AIView adds reviews
   );
 
-  // Convert reviews object to sorted array (newest first)
+  // Convert reviews object to sorted array (oldest first - newest at end)
   const reviews = useMemo(() => {
-    return Object.values(state.reviews).sort((a, b) => b.createdAt - a.createdAt);
+    return Object.values(state.reviews).sort((a, b) => a.createdAt - b.createdAt);
   }, [state.reviews]);
 
   // Filter reviews by status
