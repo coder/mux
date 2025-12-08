@@ -80,10 +80,13 @@ export function buildProviderOptions(
   // Convert mux-gateway provider to the actual provider and model name.
   if (provider === "mux-gateway") {
     const [innerProvider, innerModelName] = modelName.split("/", 2);
-    log.debug("buildProviderOptions: detected mux-gateway provider, using inner provider and model name", {
-      innerProvider,
-      innerModelName,
-    });
+    log.debug(
+      "buildProviderOptions: detected mux-gateway provider, using inner provider and model name",
+      {
+        innerProvider,
+        innerModelName,
+      }
+    );
     provider = innerProvider;
     modelName = innerModelName;
   }
