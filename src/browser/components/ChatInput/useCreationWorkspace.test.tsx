@@ -404,9 +404,8 @@ describe("useCreationWorkspace", () => {
     });
 
     persistedPreferences[getModeKey(getProjectScopeId(TEST_PROJECT_PATH))] = "plan";
-    persistedPreferences[getThinkingLevelKey(getProjectScopeId(TEST_PROJECT_PATH))] = "high";
-    // Set model preference for the project scope (read by getSendOptionsFromStorage)
     persistedPreferences[getModelKey(getProjectScopeId(TEST_PROJECT_PATH))] = "gpt-4";
+    persistedPreferences[getThinkingLevelKey(getProjectScopeId(TEST_PROJECT_PATH))] = "high";
 
     draftSettingsState = createDraftSettingsHarness({
       runtimeMode: "ssh",

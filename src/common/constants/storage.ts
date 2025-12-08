@@ -49,10 +49,10 @@ export const SELECTED_WORKSPACE_KEY = "selectedWorkspace";
 export const EXPANDED_PROJECTS_KEY = "expandedProjects";
 
 /**
- * Helper to create a thinking level storage key for a workspace
- * Format: "thinkingLevel:{workspaceId}"
+ * Helper to create a thinking level storage key for a scope (workspace or project).
+ * Format: "thinkingLevel:{scopeId}"
  */
-export const getThinkingLevelKey = (workspaceId: string): string => `thinkingLevel:${workspaceId}`;
+export const getThinkingLevelKey = (scopeId: string): string => `thinkingLevel:${scopeId}`;
 
 /**
  * Get the localStorage key for the user's preferred model for a workspace
@@ -81,15 +81,6 @@ export function getAutoRetryKey(workspaceId: string): string {
  */
 export function getRetryStateKey(workspaceId: string): string {
   return `${workspaceId}-retryState`;
-}
-
-/**
- * Get the localStorage key for the last active thinking level used for a model
- * Stores only active levels ("low" | "medium" | "high"), never "off"
- * Format: "lastThinkingByModel:{modelName}"
- */
-export function getLastThinkingByModelKey(modelName: string): string {
-  return `lastThinkingByModel:${modelName}`;
 }
 
 /**
@@ -258,7 +249,7 @@ const EPHEMERAL_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> 
 
 /**
  * Copy all workspace-specific localStorage keys from source to destination workspace
- * This includes: model, input, mode, thinking level, auto-retry, retry state, review expand state, file tree expand state
+ * This includes: model, input, mode, auto-retry, retry state, review expand state, file tree expand state
  */
 export function copyWorkspaceStorage(sourceWorkspaceId: string, destWorkspaceId: string): void {
   for (const getKey of PERSISTENT_WORKSPACE_KEY_FUNCTIONS) {

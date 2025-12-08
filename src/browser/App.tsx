@@ -7,7 +7,11 @@ import { LeftSidebar } from "./components/LeftSidebar";
 import { ProjectCreateModal } from "./components/ProjectCreateModal";
 import { AIView } from "./components/AIView";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { usePersistedState, updatePersistedState } from "./hooks/usePersistedState";
+import {
+  usePersistedState,
+  updatePersistedState,
+  readPersistedState,
+} from "./hooks/usePersistedState";
 import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
 import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
 import { useResumeManager } from "./hooks/useResumeManager";
@@ -267,18 +271,12 @@ function AppInner() {
       return "off";
     }
 
-    if (typeof window === "undefined" || !window.localStorage) {
-      return "off";
-    }
-
     try {
-      const key = getThinkingLevelKey(workspaceId);
-      const stored = window.localStorage.getItem(key);
-      if (!stored || stored === "undefined") {
-        return "off";
-      }
-      const parsed = JSON.parse(stored) as ThinkingLevel;
-      return THINKING_LEVELS.includes(parsed) ? parsed : "off";
+      const storedLevel = readPersistedState<ThinkingLevel>(
+        getThinkingLevelKey(workspaceId),
+        "off"
+      );
+      return THINKING_LEVELS.includes(storedLevel) ? storedLevel : "off";
     } catch (error) {
       console.warn("Failed to read thinking level", error);
       return "off";
@@ -293,11 +291,8 @@ function AppInner() {
     const normalized = THINKING_LEVELS.includes(level) ? level : "off";
     const key = getThinkingLevelKey(workspaceId);
 
-    // Use the utility function which handles localStorage and event dispatch
-    // ThinkingProvider will pick this up via its listener
     updatePersistedState(key, normalized);
 
-    // Dispatch toast notification event for UI feedback
     if (typeof window !== "undefined") {
       window.dispatchEvent(
         new CustomEvent(CUSTOM_EVENTS.THINKING_LEVEL_TOAST, {

@@ -29,11 +29,9 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = ({
   // Priority: workspace-scoped > project-scoped > global
   const scopeId = workspaceId ?? (projectPath ? getProjectScopeId(projectPath) : GLOBAL_SCOPE_ID);
   const key = getThinkingLevelKey(scopeId);
-  const [thinkingLevel, setThinkingLevel] = usePersistedState<ThinkingLevel>(
-    key,
-    "off",
-    { listener: true } // Listen for changes from command palette and other sources
-  );
+  const [thinkingLevel, setThinkingLevel] = usePersistedState<ThinkingLevel>(key, "off", {
+    listener: true,
+  });
 
   return (
     <ThinkingContext.Provider value={{ thinkingLevel, setThinkingLevel }}>

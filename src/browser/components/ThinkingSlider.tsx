@@ -1,11 +1,9 @@
 import React, { useEffect, useId } from "react";
-import type { ThinkingLevel, ThinkingLevelOn } from "@/common/types/thinking";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { TooltipWrapper, Tooltip } from "./Tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { getThinkingPolicyForModel } from "@/browser/utils/thinking/policy";
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { getLastThinkingByModelKey } from "@/common/constants/storage";
 
 // Uses CSS variable --color-thinking-mode for theme compatibility
 // Glow is applied via CSS using color-mix with the theme color
@@ -144,13 +142,8 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
   };
 
   const handleThinkingLevelChange = (newLevel: ThinkingLevel) => {
+    // ThinkingContext handles per-model persistence automatically
     setThinkingLevel(newLevel);
-    // Also save to lastThinkingByModel for Ctrl+Shift+T toggle memory
-    // Only save active levels (not "off") - matches useAIViewKeybinds logic
-    if (newLevel !== "off") {
-      const lastThinkingKey = getLastThinkingByModelKey(modelString);
-      updatePersistedState(lastThinkingKey, newLevel as ThinkingLevelOn);
-    }
   };
 
   // Cycle through allowed thinking levels
