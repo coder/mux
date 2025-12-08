@@ -577,14 +577,15 @@ if (gotTheLock) {
     event.preventDefault();
     isDisposing = true;
 
-    services
-      .dispose()
-      .catch((err) => {
-        console.error("Error during ServiceContainer dispose:", err);
-      })
-      .finally(() => {
-        app.quit();
-      });
+    // Race dispose against timeout to ensure app quits even if disposal hangs
+    const disposePromise = services.dispose().catch((err) => {
+      console.error("Error during ServiceContainer dispose:", err);
+    });
+    const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, 5000));
+
+    void Promise.race([disposePromise, timeoutPromise]).finally(() => {
+      app.quit();
+    });
   });
 
   app.on("window-all-closed", () => {

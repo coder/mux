@@ -1,4 +1,4 @@
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 
 /**
  * Convert a path to POSIX format for Git Bash on Windows.
@@ -11,7 +11,8 @@ export function toPosixPath(windowsPath: string): string {
   if (process.platform !== "win32") return windowsPath;
   try {
     // cygpath converts Windows paths to POSIX format for Git Bash / MSYS2
-    return execSync(`cygpath -u "${windowsPath}"`, { encoding: "utf8" }).trim();
+    // Use execFileSync with args array to avoid shell injection
+    return execFileSync("cygpath", ["-u", windowsPath], { encoding: "utf8" }).trim();
   } catch {
     // Fallback if cygpath unavailable (shouldn't happen with Git Bash)
     return windowsPath;

@@ -106,7 +106,15 @@ export class SSHRuntime implements Runtime {
 
     if (dir === "~" || dir.startsWith("~/")) {
       const result = await execBuffered(this, 'echo "$HOME"', { cwd: "/", timeout: 10 });
-      const home = result.exitCode === 0 && result.stdout.trim() ? result.stdout.trim() : "/tmp";
+      let home: string;
+      if (result.exitCode === 0 && result.stdout.trim()) {
+        home = result.stdout.trim();
+      } else {
+        log.warn(
+          `SSHRuntime: Failed to resolve $HOME (exitCode=${result.exitCode}). Falling back to /tmp.`
+        );
+        home = "/tmp";
+      }
       dir = dir === "~" ? home : `${home}/${dir.slice(2)}`;
     }
 

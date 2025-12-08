@@ -278,7 +278,7 @@ describeIntegration("Background Bash Execution", () => {
 
         try {
           // Start a background process that outputs a unique marker then exits
-          const marker = `BGTEST_${Date.now()}`;
+          const marker = `BGTEST_${Date.now()}_${Math.random().toString(36).slice(2)}`;
           const startEvents = await sendMessageAndWait(
             env,
             workspaceId,
