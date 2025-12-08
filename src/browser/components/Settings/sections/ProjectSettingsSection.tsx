@@ -14,6 +14,7 @@ import {
   Check,
   X,
 } from "lucide-react";
+import { Button } from "@/browser/components/ui/button";
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
 import type { CachedMCPTestResult } from "@/common/types/mcp";
@@ -359,11 +360,12 @@ export const ProjectSettingsSection: React.FC = () => {
                   <div className="flex shrink-0 gap-1">
                     {isEditing ? (
                       <>
-                        <button
-                          type="button"
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           onClick={() => void handleSaveEdit()}
                           disabled={savingEdit || !editing.command.trim()}
-                          className="text-muted-foreground rounded p-1.5 transition-colors hover:bg-green-500/10 hover:text-green-500 disabled:opacity-50"
+                          className="h-7 w-7 text-green-500 hover:text-green-400"
                           title="Save (Enter)"
                         >
                           {savingEdit ? (
@@ -371,24 +373,26 @@ export const ProjectSettingsSection: React.FC = () => {
                           ) : (
                             <Check className="h-4 w-4" />
                           )}
-                        </button>
-                        <button
-                          type="button"
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           onClick={handleCancelEdit}
                           disabled={savingEdit}
-                          className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive rounded p-1.5 transition-colors"
+                          className="text-muted hover:text-foreground h-7 w-7"
                           title="Cancel (Esc)"
                         >
                           <X className="h-4 w-4" />
-                        </button>
+                        </Button>
                       </>
                     ) : (
                       <>
-                        <button
-                          type="button"
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           onClick={() => void handleTest(name)}
                           disabled={isTesting}
-                          className="text-muted-foreground hover:bg-secondary hover:text-accent rounded p-1.5 transition-colors disabled:opacity-50"
+                          className="text-muted hover:text-accent h-7 w-7"
                           title="Test connection"
                         >
                           {isTesting ? (
@@ -396,24 +400,26 @@ export const ProjectSettingsSection: React.FC = () => {
                           ) : (
                             <Play className="h-4 w-4" />
                           )}
-                        </button>
-                        <button
-                          type="button"
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           onClick={() => handleStartEdit(name, command)}
-                          className="text-muted-foreground hover:bg-secondary hover:text-accent rounded p-1.5 transition-colors"
+                          className="text-muted hover:text-accent h-7 w-7"
                           title="Edit command"
                         >
                           <Pencil className="h-4 w-4" />
-                        </button>
-                        <button
-                          type="button"
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           onClick={() => void handleRemove(name)}
                           disabled={loading}
-                          className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive rounded p-1.5 transition-colors"
+                          className="text-muted hover:text-error h-7 w-7"
                           title="Remove server"
                         >
                           <Trash2 className="h-4 w-4" />
-                        </button>
+                        </Button>
                       </>
                     )}
                   </div>
@@ -503,11 +509,11 @@ export const ProjectSettingsSection: React.FC = () => {
           )}
 
           <div className="flex gap-2">
-            <button
-              type="button"
+            <Button
+              variant="outline"
               onClick={() => void handleTestNewCommand()}
               disabled={!canTest || testingNew}
-              className="border-border-medium hover:bg-secondary flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm transition-colors disabled:opacity-50"
+              className="h-auto px-3 py-1.5"
             >
               {testingNew ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -515,20 +521,15 @@ export const ProjectSettingsSection: React.FC = () => {
                 <Play className="h-4 w-4" />
               )}
               {testingNew ? "Testing…" : "Test"}
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleAddServer()}
-              disabled={!canAdd || addingServer}
-              className="bg-accent hover:bg-accent/90 flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-white transition-colors disabled:opacity-50"
-            >
+            </Button>
+            <Button onClick={() => void handleAddServer()} disabled={!canAdd || addingServer}>
               {addingServer ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Plus className="h-4 w-4" />
               )}
               {addingServer ? "Adding…" : "Add"}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

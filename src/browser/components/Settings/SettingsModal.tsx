@@ -69,7 +69,7 @@ export function SettingsModal() {
               <X className="h-4 w-4" />
             </Button>
           </div>
-          <nav className="flex overflow-x-auto p-2 md:flex-1 md:flex-col md:overflow-y-auto">
+          <nav className="flex gap-1 overflow-x-auto p-2 md:flex-1 md:flex-col md:overflow-y-auto">
             {SECTIONS.map((section) => (
               <Button
                 key={section.id}
