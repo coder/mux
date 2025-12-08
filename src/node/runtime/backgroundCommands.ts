@@ -94,7 +94,10 @@ export interface SpawnCommandOptions {
  * setsid: creates new session, process becomes group leader (enables kill -PID)
  * nohup: ignores SIGHUP (survives terminal hangup)
  *
- * Returns PID via echo $! (correct because & is inside subshell)
+ * Returns "PID PGID" via echo:
+ * - Unix with setsid: outputs "PID PID" (process is session leader, so PID == PGID)
+ * - Windows MSYS2 without setsid: outputs "PID PGID" where PGID is read from /proc/$!/pgid
+ *   (MSYS2 provides /proc filesystem; macOS does not have /proc)
  */
 export function buildSpawnCommand(options: SpawnCommandOptions): string {
   const bash = options.bashPath ?? "bash";
@@ -102,11 +105,17 @@ export function buildSpawnCommand(options: SpawnCommandOptions): string {
   const setsidPrefix = options.useSetsid === false ? "" : "setsid ";
   const quotePath = options.quotePath ?? shellQuote;
 
+  // With setsid (Unix): process becomes session leader, so PID == PGID
+  // Without setsid (Windows MSYS2): must read PGID from /proc (MSYS2 provides this)
+  // CRITICAL: We can't run this on macOS, since it doesn't have /proc
+  const pgidExpr =
+    options.useSetsid === false ? '$(cat /proc/$!/pgid 2>/dev/null || echo $!)' : '$!';
+
   return (
     `(${nicePrefix}${setsidPrefix}nohup ${shellQuote(bash)} -c ${shellQuote(options.wrapperScript)} ` +
     `> ${quotePath(options.stdoutPath)} ` +
     `2> ${quotePath(options.stderrPath)} ` +
-    `< /dev/null & echo $!)`
+    `< /dev/null & echo "$! ${pgidExpr}")`
   );
 }
 

@@ -29,7 +29,6 @@ import {
   checkInitHookExists,
   getInitHookPath,
   createLineBufferedLoggers,
-  getInitHookEnv,
 } from "./initHook";
 import { LocalBackgroundHandle } from "./LocalBackgroundHandle";
 import { buildWrapperScript, buildSpawnCommand } from "./backgroundCommands";
@@ -384,14 +383,19 @@ export abstract class LocalBaseRuntime implements Runtime {
       using proc = execAsync(spawnCommand, { shell: getBashPath() });
       const result = await proc.result;
 
-      const pid = parseInt(result.stdout.trim(), 10);
+      // Parse "PID PGID" from output
+      // On Unix with setsid, both values are the same (process is group leader)
+      // On Windows MSYS2, PGID comes from /proc/$!/pgid
+      const [pidStr, pgidStr] = result.stdout.trim().split(/\s+/);
+      const pid = parseInt(pidStr, 10);
+      const pgid = parseInt(pgidStr, 10);
       if (isNaN(pid) || pid <= 0) {
         log.debug(`LocalBaseRuntime.spawnBackground: Invalid PID: ${result.stdout}`);
         return { success: false, error: `Failed to get valid PID from spawn: ${result.stdout}` };
       }
 
-      log.debug(`LocalBaseRuntime.spawnBackground: Spawned with PID ${pid}`);
-      const handle = new LocalBackgroundHandle(pid, outputDir);
+      log.debug(`LocalBaseRuntime.spawnBackground: Spawned with PID ${pid}, PGID ${pgid}`);
+      const handle = new LocalBackgroundHandle(pid, isNaN(pgid) ? pid : pgid, outputDir);
       return { success: true, handle, pid };
     } catch (e) {
       const err = e as Error;

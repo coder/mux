@@ -21,6 +21,12 @@ export class LocalBackgroundHandle implements BackgroundHandle {
 
   constructor(
     private readonly pid: number,
+    /**
+     * Process group ID for termination.
+     * - Unix (setsid=true): equals pid, since setsid makes process a session/group leader
+     * - Windows MSYS2 (setsid=false): actual PGID from /proc, used with kill -PGID
+     */
+    private readonly pgid: number,
     public readonly outputDir: string
   ) {}
 
@@ -53,31 +59,23 @@ export class LocalBackgroundHandle implements BackgroundHandle {
 
     const exitCodePath = path.join(this.outputDir, "exit_code");
 
-    // Windows: convert MSYS2 PID to Windows PID and use taskkill
-    // Must run via bash because /proc/PID/winpid is MSYS2's virtual filesystem,
-    // not visible to Node.js running as a native Windows process
+    // Windows: use MSYS2's kill command with negative PGID to kill process group
+    // taskkill doesn't work because MSYS2's process tree doesn't match Windows' process tree
+    // MSYS2's kill understands its own process groups, so kill -PGID works correctly
     if (process.platform === "win32") {
       try {
-        // Script reads winpid from MSYS2's /proc, then uses taskkill
-        // taskkill /F = force, /T = kill child processes
-        // Double slashes needed because bash interprets single slash as path
-        const terminateScript = `
-          if [ -f /proc/${this.pid}/winpid ]; then
-            winpid=$(cat /proc/${this.pid}/winpid)
-            taskkill //PID $winpid //F //T 2>/dev/null
-          fi
-          kill -9 ${this.pid} 2>/dev/null || true
-        `;
-        log.debug(`LocalBackgroundHandle: Terminating MSYS2 PID ${this.pid} via bash`);
+        // Use PGID to kill entire process group via MSYS2's kill command
+        const terminateScript = `kill -9 -${this.pgid} 2>/dev/null || true`;
+        log.debug(`LocalBackgroundHandle: Terminating MSYS2 process group ${this.pgid} via bash`);
         using proc = execAsync(terminateScript, { shell: getBashPath() });
         await proc.result;
       } catch (error) {
-        // Process already dead or winpid unavailable
+        // Process already dead
         log.debug(
           `LocalBackgroundHandle: Windows terminate error: ${error instanceof Error ? error.message : String(error)}`
         );
       }
-      // Write exit code - trap may not fire with taskkill
+      // Write exit code - trap may not fire with kill -9
       try {
         await fs.access(exitCodePath);
       } catch {
@@ -89,11 +87,11 @@ export class LocalBackgroundHandle implements BackgroundHandle {
     }
 
     // Unix: use process group signals
-    const pgid = -this.pid; // Negative PID = process group
+    const negativePgid = -this.pgid; // Negative PGID = process group
 
     try {
-      log.debug(`LocalBackgroundHandle: Sending SIGTERM to process group ${pgid}`);
-      process.kill(pgid, "SIGTERM");
+      log.debug(`LocalBackgroundHandle: Sending SIGTERM to process group ${negativePgid}`);
+      process.kill(negativePgid, "SIGTERM");
 
       // Wait 2 seconds for graceful shutdown
       await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -108,8 +106,8 @@ export class LocalBackgroundHandle implements BackgroundHandle {
       }
 
       if (stillRunning) {
-        log.debug(`LocalBackgroundHandle: Process still running, sending SIGKILL to group ${pgid}`);
-        process.kill(pgid, "SIGKILL");
+        log.debug(`LocalBackgroundHandle: Process still running, sending SIGKILL to group ${negativePgid}`);
+        process.kill(negativePgid, "SIGKILL");
 
         // Write exit code for SIGKILL since we had to force kill
         await fs.writeFile(exitCodePath, String(EXIT_CODE_SIGKILL)).catch(() => {
