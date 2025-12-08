@@ -275,6 +275,23 @@ export function createPendingTool(toolCallId: string, toolName: string, args: ob
   };
 }
 
+/** Create a generic tool call with custom name, args, and output - falls back to GenericToolCall */
+export function createGenericTool(
+  toolCallId: string,
+  toolName: string,
+  input: object,
+  output: object
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName,
+    state: "output-available",
+    input,
+    output,
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // GIT STATUS MOCKS
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -30,12 +30,8 @@ const highlightCache = new LRUCache<string, string>({
 });
 
 async function getCacheKey(code: string, language: string, theme: string): Promise<string> {
-  const data = new TextEncoder().encode(`${language}:${theme}:${code}`);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  // Take first 8 bytes (64 bits) as hex
-  return Array.from(new Uint8Array(hash).slice(0, 8))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  const { hashKey } = await import("@/common/lib/hashKey");
+  return hashKey(`${language}:${theme}:${code}`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

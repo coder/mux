@@ -122,7 +122,7 @@ export const DetailContent: React.FC<React.HTMLAttributes<HTMLPreElement>> = ({
 }) => (
   <pre
     className={cn(
-      "m-0 px-2 py-1.5 bg-code-bg rounded-sm text-[11px] leading-relaxed whitespace-pre-wrap break-words max-h-[200px] overflow-y-auto",
+      "m-0 bg-code-bg rounded-sm text-[11px] leading-relaxed whitespace-pre-wrap break-words max-h-[200px] overflow-y-auto",
       className
     )}
     {...props}

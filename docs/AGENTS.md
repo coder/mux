@@ -70,7 +70,8 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 
 ### Storybook
 
-- Prefer full-app stories (`App.stories.tsx`) to isolated components.
+- Prefer full-app stories (`App.stories.tsx`) to isolated component stories. This tests components in their real context with proper providers, state management, and styling.
+- Use play functions with `@storybook/test` utilities (`within`, `userEvent`, `waitFor`) to interact with the UI and set up the desired visual state. Do not add props to production components solely for storybook convenience.
 
 ### TDD Expectations
 

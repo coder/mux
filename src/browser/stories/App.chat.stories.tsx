@@ -11,8 +11,10 @@ import {
   createFileEditTool,
   createTerminalTool,
   createStatusTool,
+  createGenericTool,
 } from "./mockFactory";
 import { setupSimpleChatStory, setupStreamingChatStory } from "./storyHelpers";
+import { within, userEvent, waitFor } from "@storybook/test";
 
 export default {
   ...appMeta,
@@ -263,4 +265,63 @@ export const Streaming: AppStory = {
       }
     />
   ),
+};
+
+/** Generic tool call with JSON-highlighted arguments and results */
+export const GenericTool: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          messages: [
+            createUserMessage("msg-1", "Fetch a large dataset", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 60000,
+            }),
+            createAssistantMessage("msg-2", "I'll fetch that data for you.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 55000,
+              toolCalls: [
+                createGenericTool(
+                  "call-1",
+                  "fetch_data",
+                  {
+                    endpoint: "/api/users",
+                    params: { limit: 100, offset: 0 },
+                  },
+                  {
+                    success: true,
+                    // Generate 100+ line result to test line number alignment
+                    data: Array.from({ length: 50 }, (_, i) => ({
+                      id: i + 1,
+                      name: `User ${i + 1}`,
+                      email: `user${i + 1}@example.com`,
+                      active: i % 3 !== 0,
+                    })),
+                    total: 500,
+                    page: 1,
+                  }
+                ),
+              ],
+            }),
+          ],
+        })
+      }
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story: "Generic tool call with JSON syntax highlighting and 100+ lines.",
+      },
+    },
+  },
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const canvas = within(canvasElement);
+
+    await waitFor(async () => {
+      const toolHeader = canvas.getByText("fetch_data");
+      await userEvent.click(toolHeader);
+    });
+  },
 };

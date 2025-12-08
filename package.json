@@ -104,6 +104,7 @@
     "undici": "^7.16.0",
     "write-file-atomic": "^6.0.0",
     "ws": "^8.18.3",
+    "xxhash-wasm": "^1.1.0",
     "zod": "^4.1.11",
     "zod-to-json-schema": "^3.24.6"
   },
