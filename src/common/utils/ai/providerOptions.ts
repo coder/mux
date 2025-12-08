@@ -20,6 +20,7 @@ import {
 import { log } from "@/node/services/log";
 import type { MuxMessage } from "@/common/types/message";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
+import { normalizeGatewayModel } from "./models";
 
 /**
  * OpenRouter reasoning options
@@ -68,28 +69,15 @@ export function buildProviderOptions(
 ): ProviderOptions {
   // Always clamp to the model's supported thinking policy (e.g., gpt-5-pro = HIGH only)
   const effectiveThinking = enforceThinkingPolicy(modelString, thinkingLevel);
-  // Parse provider from model string
-  let [provider, modelName] = modelString.split(":", 2);
+  // Parse provider from normalized model string
+  let [provider, modelName] = normalizeGatewayModel(modelString).split(":", 2);
 
   log.debug("buildProviderOptions", {
     modelString,
     provider,
+    modelName,
     thinkingLevel,
   });
-
-  // Convert mux-gateway provider to the actual provider and model name.
-  if (provider === "mux-gateway") {
-    const [innerProvider, innerModelName] = modelName.split("/", 2);
-    log.debug(
-      "buildProviderOptions: detected mux-gateway provider, using inner provider and model name",
-      {
-        innerProvider,
-        innerModelName,
-      }
-    );
-    provider = innerProvider;
-    modelName = innerModelName;
-  }
 
   if (!provider || !modelName) {
     log.debug("buildProviderOptions: No provider or model name found, returning empty");
