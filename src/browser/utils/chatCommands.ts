@@ -615,19 +615,21 @@ export function prepareCompactionMessage(options: CompactionOptions): {
   const effectiveModel = resolveCompactionModel(options.model);
 
   // Create compaction metadata (will be stored in user message)
-  // Only include continueMessage if there's text or images to queue after compaction
+  // Only include continueMessage if there's text, images, or reviews to queue after compaction
   const hasText = options.continueMessage?.text;
   const hasImages =
     options.continueMessage?.imageParts && options.continueMessage.imageParts.length > 0;
+  const hasReviews = options.continueMessage?.reviews && options.continueMessage.reviews.length > 0;
   const compactData: CompactionRequestData = {
     model: effectiveModel,
     maxOutputTokens: options.maxOutputTokens,
     continueMessage:
-      hasText || hasImages
+      hasText || hasImages || hasReviews
         ? {
             text: options.continueMessage?.text ?? "",
             imageParts: options.continueMessage?.imageParts,
             model: options.continueMessage?.model ?? options.sendMessageOptions.model,
+            reviews: options.continueMessage?.reviews,
           }
         : undefined,
   };

@@ -22,7 +22,8 @@ import { createUnknownSendMessageError } from "@/node/services/utils/sendMessage
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
-import type { MuxFrontendMetadata } from "@/common/types/message";
+import type { MuxFrontendMetadata, ContinueMessage } from "@/common/types/message";
+import { prepareUserMessageForSend } from "@/common/types/message";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { MessageQueue } from "./messageQueue";
 import type { StreamEndEvent } from "@/common/types/stream";
@@ -33,7 +34,7 @@ import type { BackgroundProcessManager } from "./backgroundProcessManager";
 interface CompactionRequestMetadata {
   type: "compaction-request";
   parsed: {
-    continueMessage?: string;
+    continueMessage?: ContinueMessage;
   };
 }
 
@@ -393,25 +394,35 @@ export class AgentSession {
       typedMuxMetadata.parsed.continueMessage &&
       options
     ) {
-      // Strip out compaction-specific fields so the queued message is a fresh user message
-      // Use Omit to avoid unsafe destructuring of any-typed muxMetadata
       const continueMessage = typedMuxMetadata.parsed.continueMessage;
+
+      // Process the continue message content (handles reviews -> text formatting + metadata)
+      const { finalText, metadata } = prepareUserMessageForSend(continueMessage);
+
+      // Build options for the queued message (strip compaction-specific fields)
       const sanitizedOptions: Omit<
         SendMessageOptions,
         "muxMetadata" | "mode" | "editMessageId" | "imageParts" | "maxOutputTokens"
-      > & { imageParts?: typeof continueMessage.imageParts } = {
+      > & { imageParts?: typeof continueMessage.imageParts; muxMetadata?: typeof metadata } = {
         model: continueMessage.model ?? options.model,
         thinkingLevel: options.thinkingLevel,
         toolPolicy: options.toolPolicy,
         additionalSystemInstructions: options.additionalSystemInstructions,
         providerOptions: options.providerOptions,
       };
+
+      // Add image parts if present
       const continueImageParts = continueMessage.imageParts;
-      const continuePayload =
-        continueImageParts && continueImageParts.length > 0
-          ? { ...sanitizedOptions, imageParts: continueImageParts }
-          : sanitizedOptions;
-      this.messageQueue.add(continueMessage.text, continuePayload);
+      if (continueImageParts && continueImageParts.length > 0) {
+        sanitizedOptions.imageParts = continueImageParts;
+      }
+
+      // Add metadata with reviews if present
+      if (metadata) {
+        sanitizedOptions.muxMetadata = metadata;
+      }
+
+      this.messageQueue.add(finalText, sanitizedOptions);
       this.emitQueuedMessageChanged();
     }
 

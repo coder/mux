@@ -63,6 +63,7 @@ import {
 
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { MuxFrontendMetadata } from "@/common/types/message";
+import { prepareUserMessageForSend } from "@/common/types/message";
 import { MODEL_ABBREVIATION_EXAMPLES } from "@/common/constants/knownModels";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 
@@ -76,7 +77,6 @@ import { useVoiceInput } from "@/browser/hooks/useVoiceInput";
 import { VoiceInputButton } from "./VoiceInputButton";
 import { RecordingOverlay } from "./RecordingOverlay";
 import { ReviewBlockFromData } from "../shared/ReviewBlock";
-import { formatReviewNoteForChat } from "@/common/types/review";
 
 type TokenCountReader = () => number;
 
@@ -968,9 +968,24 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           mediaType: img.mediaType,
         }));
 
+        // Prepare reviews data for the continue message (orthogonal to compaction)
+        const reviewsData =
+          attachedReviews.length > 0
+            ? attachedReviews.map((r) => ({
+                filePath: r.data.filePath,
+                lineRange: r.data.lineRange,
+                selectedCode: r.data.selectedCode,
+                userNote: r.data.userNote,
+              }))
+            : undefined;
+
+        // Capture review IDs for marking as checked on success
+        const sentReviewIds = attachedReviews.map((r) => r.id);
+
         // Clear input immediately for responsive UX
         setInput("");
         setImageAttachments([]);
+        setHideReviewsDuringSend(true);
 
         try {
           const result = await executeCompaction({
@@ -980,6 +995,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
               text: messageText,
               imageParts,
               model: sendMessageOptions.model,
+              reviews: reviewsData,
             },
             sendMessageOptions,
           });
@@ -994,6 +1010,10 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
               message: result.error ?? "Failed to start auto-compaction",
             });
           } else {
+            // Mark reviews as checked on success
+            if (sentReviewIds.length > 0) {
+              props.onCheckReviews?.(sentReviewIds);
+            }
             setToast({
               id: Date.now().toString(),
               type: "success",
@@ -1013,6 +1033,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           });
         } finally {
           setIsSending(false);
+          setHideReviewsDuringSend(false);
         }
 
         return; // Skip normal send
@@ -1076,26 +1097,21 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           }
         }
 
-        // Prepend attached reviews to message and store in metadata for display
-        const reviewsText = attachedReviews
-          .map((r) => formatReviewNoteForChat(r.data))
-          .join("\n\n");
-        const finalMessageText = reviewsText
-          ? reviewsText + (actualMessageText ? "\n\n" + actualMessageText : "")
-          : actualMessageText;
-
-        // Store review data in muxMetadata for rich UI display (orthogonal to message type)
-        if (attachedReviews.length > 0) {
-          const reviewsData = attachedReviews.map((r) => ({
-            filePath: r.data.filePath,
-            lineRange: r.data.lineRange,
-            selectedCode: r.data.selectedCode,
-            userNote: r.data.userNote,
-          }));
-          muxMetadata = muxMetadata
-            ? { ...muxMetadata, reviews: reviewsData }
-            : { type: "normal", reviews: reviewsData };
-        }
+        // Process reviews into message text and metadata using shared utility
+        const reviewsData =
+          attachedReviews.length > 0
+            ? attachedReviews.map((r) => ({
+                filePath: r.data.filePath,
+                lineRange: r.data.lineRange,
+                selectedCode: r.data.selectedCode,
+                userNote: r.data.userNote,
+              }))
+            : undefined;
+        const { finalText: finalMessageText, metadata: reviewMetadata } = prepareUserMessageForSend(
+          { text: actualMessageText, reviews: reviewsData },
+          muxMetadata
+        );
+        muxMetadata = reviewMetadata;
 
         // Capture review IDs before clearing (for marking as checked on success)
         const sentReviewIds = attachedReviews.map((r) => r.id);

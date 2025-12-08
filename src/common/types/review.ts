@@ -147,11 +147,3 @@ export interface ReviewsState {
   /** Last update timestamp */
   lastUpdated: number;
 }
-
-/**
- * Format a ReviewNoteData into the message format for the model.
- * Only called when sending to chat.
- */
-export function formatReviewNoteForChat(data: ReviewNoteData): string {
-  return `<review>\nRe ${data.filePath}:${data.lineRange}\n\`\`\`\n${data.selectedCode}\n\`\`\`\n> ${data.userNote.trim()}\n</review>`;
-}

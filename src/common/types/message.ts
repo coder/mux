@@ -6,10 +6,31 @@ import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import type { ImagePart, MuxToolPartSchema } from "@/common/orpc/schemas";
 import type { z } from "zod";
 
-// Message to continue with after compaction
-export interface ContinueMessage {
+/** Review data stored in message metadata for display */
+export interface ReviewNoteDataForDisplay {
+  filePath: string;
+  lineRange: string;
+  selectedCode: string;
+  userNote: string;
+}
+
+/**
+ * Content that a user wants to send in a message.
+ * Shared between normal send and continue-after-compaction to ensure
+ * both paths handle the same fields (text, images, reviews).
+ */
+export interface UserMessageContent {
   text: string;
   imageParts?: ImagePart[];
+  /** Review data - formatted into message text AND stored in metadata for display */
+  reviews?: ReviewNoteDataForDisplay[];
+}
+
+/**
+ * Message to continue with after compaction.
+ * Extends UserMessageContent with model preference.
+ */
+export interface ContinueMessage extends UserMessageContent {
   model?: string;
 }
 
@@ -20,14 +41,41 @@ export interface CompactionRequestData {
   continueMessage?: ContinueMessage;
 }
 
-// Frontend-specific metadata stored in muxMetadata field
-// Backend stores this as-is without interpretation (black-box)
-/** Review data stored in message metadata for display */
-export interface ReviewNoteDataForDisplay {
-  filePath: string;
-  lineRange: string;
-  selectedCode: string;
-  userNote: string;
+/**
+ * Format a single review into the message format for the model.
+ */
+function formatReviewForModel(review: ReviewNoteDataForDisplay): string {
+  return `<review>\nRe ${review.filePath}:${review.lineRange}\n\`\`\`\n${review.selectedCode}\n\`\`\`\n> ${review.userNote.trim()}\n</review>`;
+}
+
+/**
+ * Process UserMessageContent into final message text and metadata.
+ * Used by both normal send path and backend continue message processing.
+ *
+ * @param content - The user message content (text, images, reviews)
+ * @param existingMetadata - Optional existing metadata to merge with (e.g., for compaction messages)
+ * @returns Object with finalText (reviews prepended) and metadata (reviews for display)
+ */
+export function prepareUserMessageForSend(
+  content: UserMessageContent,
+  existingMetadata?: MuxFrontendMetadata
+): {
+  finalText: string;
+  metadata: MuxFrontendMetadata | undefined;
+} {
+  const { text, reviews } = content;
+
+  // Format reviews into message text
+  const reviewsText = reviews?.length ? reviews.map(formatReviewForModel).join("\n\n") : "";
+  const finalText = reviewsText ? reviewsText + (text ? "\n\n" + text : "") : text;
+
+  // Build metadata with reviews for display
+  let metadata: MuxFrontendMetadata | undefined = existingMetadata;
+  if (reviews?.length) {
+    metadata = metadata ? { ...metadata, reviews } : { type: "normal", reviews };
+  }
+
+  return { finalText, metadata };
 }
 
 /** Base fields common to all metadata types */
