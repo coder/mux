@@ -5,14 +5,13 @@ import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import type { ImagePart, MuxToolPartSchema } from "@/common/orpc/schemas";
 import type { z } from "zod";
+import { type ReviewNoteData, formatReviewForModel } from "./review";
 
-/** Review data stored in message metadata for display */
-export interface ReviewNoteDataForDisplay {
-  filePath: string;
-  lineRange: string;
-  selectedCode: string;
-  userNote: string;
-}
+/**
+ * Review data stored in message metadata for display.
+ * Alias for ReviewNoteData - they have identical shape.
+ */
+export type ReviewNoteDataForDisplay = ReviewNoteData;
 
 /**
  * Content that a user wants to send in a message.
@@ -39,13 +38,6 @@ export interface CompactionRequestData {
   model?: string; // Custom model override for compaction
   maxOutputTokens?: number;
   continueMessage?: ContinueMessage;
-}
-
-/**
- * Format a single review into the message format for the model.
- */
-function formatReviewForModel(review: ReviewNoteDataForDisplay): string {
-  return `<review>\nRe ${review.filePath}:${review.lineRange}\n\`\`\`\n${review.selectedCode}\n\`\`\`\n> ${review.userNote.trim()}\n</review>`;
 }
 
 /**
