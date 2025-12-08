@@ -125,10 +125,10 @@ export class WorkspaceStore {
   private workspaceMetadata = new Map<string, FrontendWorkspaceMetadata>(); // Store metadata for name lookup
   private queuedMessages = new Map<string, QueuedMessage | null>(); // Cached queued messages
 
-  // Debounce timers for high-frequency delta events to reduce re-renders during streaming
-  // Data is always updated immediately in the aggregator; only UI notification is debounced
-  private deltaDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private static readonly DELTA_DEBOUNCE_MS = 32; // ~30fps cap - balances smoothness with render perf
+  // Idle callback handles for high-frequency delta events to reduce re-renders during streaming.
+  // Data is always updated immediately in the aggregator; only UI notification is scheduled.
+  // Using requestIdleCallback adapts to actual CPU availability rather than a fixed timer.
+  private deltaIdleHandles = new Map<string, number>();
 
   /**
    * Map of event types to their handlers. This is the single source of truth for:
@@ -159,7 +159,7 @@ export class WorkspaceStore {
     },
     "stream-delta": (workspaceId, aggregator, data) => {
       aggregator.handleStreamDelta(data as never);
-      this.debouncedStateBump(workspaceId);
+      this.scheduleIdleStateBump(workspaceId);
     },
     "stream-end": (workspaceId, aggregator, data) => {
       const streamEndData = data as StreamEndEvent;
@@ -173,7 +173,7 @@ export class WorkspaceStore {
       updatePersistedState(getRetryStateKey(workspaceId), createFreshRetryState());
 
       // Flush any pending debounced bump before final bump to avoid double-bump
-      this.flushPendingDebouncedBump(workspaceId);
+      this.cancelPendingIdleBump(workspaceId);
       this.states.bump(workspaceId);
       this.checkAndBumpRecencyIfChanged();
       this.finalizeUsageStats(workspaceId, streamEndData.metadata);
@@ -199,7 +199,7 @@ export class WorkspaceStore {
       }
 
       // Flush any pending debounced bump before final bump to avoid double-bump
-      this.flushPendingDebouncedBump(workspaceId);
+      this.cancelPendingIdleBump(workspaceId);
       this.states.bump(workspaceId);
       this.dispatchResumeCheck(workspaceId);
       this.finalizeUsageStats(workspaceId, streamAbortData.metadata);
@@ -210,7 +210,7 @@ export class WorkspaceStore {
     },
     "tool-call-delta": (workspaceId, aggregator, data) => {
       aggregator.handleToolCallDelta(data as never);
-      this.debouncedStateBump(workspaceId);
+      this.scheduleIdleStateBump(workspaceId);
     },
     "tool-call-end": (workspaceId, aggregator, data) => {
       aggregator.handleToolCallEnd(data as never);
@@ -219,7 +219,7 @@ export class WorkspaceStore {
     },
     "reasoning-delta": (workspaceId, aggregator, data) => {
       aggregator.handleReasoningDelta(data as never);
-      this.debouncedStateBump(workspaceId);
+      this.scheduleIdleStateBump(workspaceId);
     },
     "reasoning-end": (workspaceId, aggregator, data) => {
       aggregator.handleReasoningEnd(data as never);
@@ -314,36 +314,40 @@ export class WorkspaceStore {
   }
 
   /**
-   * Debounced state bump for high-frequency delta events.
-   * Coalesces rapid updates (stream-delta, tool-call-delta, reasoning-delta)
-   * into a single bump per frame (~60fps), reducing React re-renders during streaming.
+   * Schedule a state bump during browser idle time.
+   * Instead of updating UI on every delta, wait until the browser has spare capacity.
+   * This adapts to actual CPU availability - fast machines update more frequently,
+   * slow machines naturally throttle without dropping data.
    *
-   * Data is always updated immediately in the aggregator - only UI notification is debounced.
+   * Data is always updated immediately in the aggregator - only UI notification is deferred.
    */
-  private debouncedStateBump(workspaceId: string): void {
+  private scheduleIdleStateBump(workspaceId: string): void {
     // Skip if already scheduled
-    if (this.deltaDebounceTimers.has(workspaceId)) {
+    if (this.deltaIdleHandles.has(workspaceId)) {
       return;
     }
 
-    const timer = setTimeout(() => {
-      this.deltaDebounceTimers.delete(workspaceId);
-      this.states.bump(workspaceId);
-    }, WorkspaceStore.DELTA_DEBOUNCE_MS);
+    const handle = requestIdleCallback(
+      () => {
+        this.deltaIdleHandles.delete(workspaceId);
+        this.states.bump(workspaceId);
+      },
+      { timeout: 100 } // Force update within 100ms even if browser stays busy
+    );
 
-    this.deltaDebounceTimers.set(workspaceId, timer);
+    this.deltaIdleHandles.set(workspaceId, handle);
   }
 
   /**
-   * Flush any pending debounced state bump for a workspace (without double-bumping).
+   * Cancel any pending idle state bump for a workspace.
    * Used when immediate state visibility is needed (e.g., stream-end).
-   * Just clears the timer - the caller will bump() immediately after.
+   * Just cancels the callback - the caller will bump() immediately after.
    */
-  private flushPendingDebouncedBump(workspaceId: string): void {
-    const timer = this.deltaDebounceTimers.get(workspaceId);
-    if (timer) {
-      clearTimeout(timer);
-      this.deltaDebounceTimers.delete(workspaceId);
+  private cancelPendingIdleBump(workspaceId: string): void {
+    const handle = this.deltaIdleHandles.get(workspaceId);
+    if (handle) {
+      cancelIdleCallback(handle);
+      this.deltaIdleHandles.delete(workspaceId);
     }
   }
 
@@ -787,11 +791,11 @@ export class WorkspaceStore {
     // Clean up consumer manager state
     this.consumerManager.removeWorkspace(workspaceId);
 
-    // Clean up debounce timer to prevent stale callbacks
-    const timer = this.deltaDebounceTimers.get(workspaceId);
-    if (timer) {
-      clearTimeout(timer);
-      this.deltaDebounceTimers.delete(workspaceId);
+    // Clean up idle callback to prevent stale callbacks
+    const handle = this.deltaIdleHandles.get(workspaceId);
+    if (handle) {
+      cancelIdleCallback(handle);
+      this.deltaIdleHandles.delete(workspaceId);
     }
 
     // Unsubscribe from IPC
