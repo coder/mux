@@ -713,12 +713,21 @@ export class WorkspaceStore {
             });
           }
         } catch (error) {
-          if (!signal.aborted) {
-            console.error(
-              `[WorkspaceStore] Error in onChat subscription for ${workspaceId}:`,
-              error
-            );
-          }
+          // Suppress errors when subscription was intentionally cleaned up
+          if (signal.aborted) return;
+
+          // EVENT_ITERATOR_VALIDATION_FAILED with ErrorEvent cause happens when:
+          // - The workspace was removed on server side (iterator ends with error)
+          // - Connection dropped (WebSocket/MessagePort error)
+          // Only suppress if workspace no longer exists (was removed during the race)
+          const isIteratorError =
+            error instanceof Error &&
+            "code" in error &&
+            error.code === "EVENT_ITERATOR_VALIDATION_FAILED";
+          const workspaceRemoved = !this.states.has(workspaceId);
+          if (isIteratorError && workspaceRemoved) return;
+
+          console.error(`[WorkspaceStore] Error in onChat subscription for ${workspaceId}:`, error);
         }
       })();
 
