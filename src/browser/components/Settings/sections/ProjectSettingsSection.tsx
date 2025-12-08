@@ -15,8 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
-
-type TestResult = { success: true; tools: string[] } | { success: false; error: string };
+import type { MCPTestResult } from "@/common/types/mcp";
 
 export const ProjectSettingsSection: React.FC = () => {
   const { api } = useAPI();
@@ -28,14 +27,14 @@ export const ProjectSettingsSection: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [testingServer, setTestingServer] = useState<string | null>(null);
-  const [testResults, setTestResults] = useState<Map<string, TestResult>>(new Map());
+  const [testResults, setTestResults] = useState<Map<string, MCPTestResult>>(new Map());
 
   // Add server form state
   const [newServerName, setNewServerName] = useState("");
   const [newServerCommand, setNewServerCommand] = useState("");
   const [addingServer, setAddingServer] = useState(false);
   const [testingNewCommand, setTestingNewCommand] = useState(false);
-  const [newCommandTestResult, setNewCommandTestResult] = useState<TestResult | null>(null);
+  const [newCommandTestResult, setNewCommandTestResult] = useState<MCPTestResult | null>(null);
 
   // Edit server state
   const [editingServer, setEditingServer] = useState<string | null>(null);

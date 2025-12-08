@@ -40,7 +40,7 @@ export class MCPConfigService {
       if (!parsed || typeof parsed !== "object" || !parsed.servers) {
         return { servers: {} };
       }
-      return { servers: parsed.servers ?? {} };
+      return { servers: parsed.servers };
     } catch (error) {
       log.error("Failed to read MCP config", { projectPath, error });
       return { servers: {} };
@@ -55,7 +55,7 @@ export class MCPConfigService {
 
   async listServers(projectPath: string): Promise<MCPServerMap> {
     const cfg = await this.getConfig(projectPath);
-    return cfg.servers ?? {};
+    return cfg.servers;
   }
 
   async addServer(projectPath: string, name: string, command: string): Promise<Result<void>> {
@@ -67,7 +67,6 @@ export class MCPConfigService {
     }
 
     const cfg = await this.getConfig(projectPath);
-    cfg.servers = cfg.servers ?? {};
     cfg.servers[name] = command;
 
     try {

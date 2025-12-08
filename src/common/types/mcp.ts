@@ -3,3 +3,6 @@ export interface MCPConfig {
 }
 
 export type MCPServerMap = Record<string, string>;
+
+/** Result of testing an MCP server connection */
+export type MCPTestResult = { success: true; tools: string[] } | { success: false; error: string };

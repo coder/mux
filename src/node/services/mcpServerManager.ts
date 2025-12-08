@@ -2,7 +2,7 @@ import { experimental_createMCPClient, type MCPTransport } from "@ai-sdk/mcp";
 import type { Tool } from "ai";
 import { log } from "@/node/services/log";
 import { MCPStdioTransport } from "@/node/services/mcpStdioTransport";
-import type { MCPServerMap } from "@/common/types/mcp";
+import type { MCPServerMap, MCPTestResult } from "@/common/types/mcp";
 import type { Runtime } from "@/node/runtime/Runtime";
 import type { MCPConfigService } from "@/node/services/mcpConfigService";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
@@ -120,7 +120,56 @@ function wrapMCPTools(tools: Record<string, Tool>): Record<string, Tool> {
   return wrapped;
 }
 
-export type MCPTestResult = { success: true; tools: string[] } | { success: false; error: string };
+export type { MCPTestResult } from "@/common/types/mcp";
+
+/**
+ * Run a test connection to an MCP server command.
+ * Spawns the process, connects, fetches tools, then closes.
+ */
+async function runServerTest(
+  command: string,
+  projectPath: string,
+  logContext: string
+): Promise<MCPTestResult> {
+  const runtime = createRuntime({ type: "local", srcBaseDir: projectPath });
+  const timeoutPromise = new Promise<MCPTestResult>((resolve) =>
+    setTimeout(() => resolve({ success: false, error: "Connection timed out" }), TEST_TIMEOUT_MS)
+  );
+
+  const testPromise = (async (): Promise<MCPTestResult> => {
+    let transport: MCPStdioTransport | null = null;
+    try {
+      log.debug(`[MCP] Testing ${logContext}`, { command });
+      const execStream = await runtime.exec(command, {
+        cwd: projectPath,
+        timeout: TEST_TIMEOUT_MS / 1000,
+      });
+
+      transport = new MCPStdioTransport(execStream);
+      await transport.start();
+      const client = await experimental_createMCPClient({ transport });
+      const tools = await client.tools();
+      const toolNames = Object.keys(tools);
+      await client.close();
+      await transport.close();
+      log.info(`[MCP] ${logContext} test successful`, { tools: toolNames });
+      return { success: true, tools: toolNames };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.warn(`[MCP] ${logContext} test failed`, { error: message });
+      if (transport) {
+        try {
+          await transport.close();
+        } catch {
+          // ignore cleanup errors
+        }
+      }
+      return { success: false, error: message };
+    }
+  })();
+
+  return Promise.race([testPromise, timeoutPromise]);
+}
 
 interface MCPServerInstance {
   name: string;
@@ -155,21 +204,18 @@ export class MCPServerManager {
   }): Promise<Record<string, Tool>> {
     const { workspaceId, projectPath, runtime, workspacePath } = options;
     const servers = await this.configService.listServers(projectPath);
-    const signature = JSON.stringify(servers ?? {});
-    const serverCount = Object.keys(servers ?? {}).length;
+    const signature = JSON.stringify(servers);
+    const serverNames = Object.keys(servers);
 
     const existing = this.workspaceServers.get(workspaceId);
     if (existing?.configSignature === signature) {
-      log.debug("[MCP] Using cached servers", { workspaceId, serverCount });
+      log.debug("[MCP] Using cached servers", { workspaceId, serverCount: serverNames.length });
       return this.collectTools(existing.instances);
     }
 
     // Config changed or not started yet -> restart
-    if (serverCount > 0) {
-      log.info("[MCP] Starting servers", {
-        workspaceId,
-        servers: Object.keys(servers ?? {}),
-      });
+    if (serverNames.length > 0) {
+      log.info("[MCP] Starting servers", { workspaceId, servers: serverNames });
     }
     await this.stopServers(workspaceId);
     const instances = await this.startServers(servers, runtime, workspacePath);
@@ -201,49 +247,11 @@ export class MCPServerManager {
    */
   async testServer(projectPath: string, name: string): Promise<MCPTestResult> {
     const servers = await this.configService.listServers(projectPath);
-    const command = servers?.[name];
+    const command = servers[name];
     if (!command) {
       return { success: false, error: `Server "${name}" not found in configuration` };
     }
-
-    const runtime = createRuntime({ type: "local", srcBaseDir: projectPath });
-    const timeoutPromise = new Promise<MCPTestResult>((resolve) =>
-      setTimeout(() => resolve({ success: false, error: "Connection timed out" }), TEST_TIMEOUT_MS)
-    );
-
-    const testPromise = (async (): Promise<MCPTestResult> => {
-      let transport: MCPStdioTransport | null = null;
-      try {
-        log.debug("[MCP] Testing server", { name, command });
-        const execStream = await runtime.exec(command, {
-          cwd: projectPath,
-          timeout: TEST_TIMEOUT_MS / 1000,
-        });
-
-        transport = new MCPStdioTransport(execStream);
-        await transport.start();
-        const client = await experimental_createMCPClient({ transport });
-        const tools = await client.tools();
-        const toolNames = Object.keys(tools);
-        await client.close();
-        await transport.close();
-        log.info("[MCP] Test successful", { name, tools: toolNames });
-        return { success: true, tools: toolNames };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        log.warn("[MCP] Test failed", { name, error: message });
-        if (transport) {
-          try {
-            await transport.close();
-          } catch {
-            // ignore cleanup errors
-          }
-        }
-        return { success: false, error: message };
-      }
-    })();
-
-    return Promise.race([testPromise, timeoutPromise]);
+    return runServerTest(command, projectPath, `server "${name}"`);
   }
 
   /**
@@ -254,45 +262,7 @@ export class MCPServerManager {
     if (!command.trim()) {
       return { success: false, error: "Command is required" };
     }
-
-    const runtime = createRuntime({ type: "local", srcBaseDir: projectPath });
-    const timeoutPromise = new Promise<MCPTestResult>((resolve) =>
-      setTimeout(() => resolve({ success: false, error: "Connection timed out" }), TEST_TIMEOUT_MS)
-    );
-
-    const testPromise = (async (): Promise<MCPTestResult> => {
-      let transport: MCPStdioTransport | null = null;
-      try {
-        log.debug("[MCP] Testing command", { command });
-        const execStream = await runtime.exec(command, {
-          cwd: projectPath,
-          timeout: TEST_TIMEOUT_MS / 1000,
-        });
-
-        transport = new MCPStdioTransport(execStream);
-        await transport.start();
-        const client = await experimental_createMCPClient({ transport });
-        const tools = await client.tools();
-        const toolNames = Object.keys(tools);
-        await client.close();
-        await transport.close();
-        log.info("[MCP] Command test successful", { command, tools: toolNames });
-        return { success: true, tools: toolNames };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        log.warn("[MCP] Command test failed", { command, error: message });
-        if (transport) {
-          try {
-            await transport.close();
-          } catch {
-            // ignore cleanup errors
-          }
-        }
-        return { success: false, error: message };
-      }
-    })();
-
-    return Promise.race([testPromise, timeoutPromise]);
+    return runServerTest(command, projectPath, "command");
   }
 
   private collectTools(instances: Map<string, MCPServerInstance>): Record<string, Tool> {
@@ -309,7 +279,7 @@ export class MCPServerManager {
     workspacePath: string
   ): Promise<Map<string, MCPServerInstance>> {
     const result = new Map<string, MCPServerInstance>();
-    const entries = Object.entries(servers ?? {});
+    const entries = Object.entries(servers);
     for (const [name, command] of entries) {
       try {
         const instance = await this.startSingleServer(name, command, runtime, workspacePath);
