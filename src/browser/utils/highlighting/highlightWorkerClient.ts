@@ -15,22 +15,28 @@ import type { HighlightRequest, HighlightResponse } from "@/browser/workers/high
 import { mapToShikiLang, SHIKI_DARK_THEME, SHIKI_LIGHT_THEME } from "./shiki-shared";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LRU Cache
+// LRU Cache with 64-bit hashing
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Cache for highlighted HTML results
- * Key: CRC32 hash of (language:theme:code)
+ * Key: 64-bit hash of (language:theme:code) as bigint
  * Value: Shiki HTML output
+ *
+ * Uses two CRC32 hashes (with different seeds) combined into a 64-bit key
+ * to reduce collision probability vs a single 32-bit hash.
  */
-const highlightCache = new LRUCache<number, string>({
+const highlightCache = new LRUCache<bigint, string>({
   max: 10000, // High limit — rely on maxSize for eviction
   maxSize: 8 * 1024 * 1024, // 8MB total
   sizeCalculation: (html) => html.length * 2, // Rough bytes for JS strings
 });
 
-function getCacheKey(code: string, language: string, theme: string): number {
-  return CRC32.str(`${language}:${theme}:${code}`);
+function getCacheKey(code: string, language: string, theme: string): bigint {
+  const input = `${language}:${theme}:${code}`;
+  const lo = CRC32.str(input) >>> 0; // unsigned 32-bit
+  const hi = CRC32.str(input, 0x9e3779b9) >>> 0; // different seed
+  return (BigInt(hi) << 32n) | BigInt(lo);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
