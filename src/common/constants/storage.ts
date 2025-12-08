@@ -193,6 +193,19 @@ export function getStatusUrlKey(workspaceId: string): string {
   return `statusUrl:${workspaceId}`;
 }
 
+
+/**
+ * Right sidebar tab selection (global)
+ * Format: "right-sidebar-tab"
+ */
+export const RIGHT_SIDEBAR_TAB_KEY = "right-sidebar-tab";
+
+/**
+ * Right sidebar collapsed state (global)
+ * Format: "right-sidebar:collapsed"
+ */
+export const RIGHT_SIDEBAR_COLLAPSED_KEY = "right-sidebar:collapsed";
+
 /**
  * Get the localStorage key for unified Review search state per workspace
  * Stores: { input: string, useRegex: boolean, matchCase: boolean }

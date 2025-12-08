@@ -1,4 +1,5 @@
 import React from "react";
+import { RIGHT_SIDEBAR_TAB_KEY, RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
@@ -100,7 +101,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   isCreating = false,
 }) => {
   // Global tab preference (not per-workspace)
-  const [selectedTab, setSelectedTab] = usePersistedState<TabType>("right-sidebar-tab", "costs");
+  const [selectedTab, setSelectedTab] = usePersistedState<TabType>(RIGHT_SIDEBAR_TAB_KEY, "costs");
 
   // Trigger for focusing Review panel (preserves hunk selection)
   const [focusTrigger, setFocusTrigger] = React.useState(0);
@@ -167,7 +168,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Persist collapsed state globally (not per-workspace) since chat area width is shared
   // This prevents animation flash when switching workspaces - sidebar maintains its state
   const [showCollapsed, setShowCollapsed] = usePersistedState<boolean>(
-    "right-sidebar:collapsed",
+    RIGHT_SIDEBAR_COLLAPSED_KEY,
     false
   );
 
