@@ -5,7 +5,7 @@
 
 import React from "react";
 import { Mic, Loader2 } from "lucide-react";
-import { TooltipWrapper, Tooltip } from "../Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";
 import type { VoiceInputState } from "@/browser/hooks/useVoiceInput";
@@ -60,22 +60,24 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
   const isTranscribing = props.state === "transcribing";
 
   return (
-    <TooltipWrapper inline>
-      <button
-        type="button"
-        onClick={props.onToggle}
-        disabled={(props.disabled ?? false) || isTranscribing || isDisabled}
-        aria-label={label}
-        aria-pressed={props.state === "recording"}
-        className={cn(
-          "inline-flex items-center justify-center rounded p-0.5 transition-colors duration-150",
-          "disabled:cursor-not-allowed disabled:opacity-40",
-          colorClass
-        )}
-      >
-        <Icon className={cn("h-4 w-4", isTranscribing && "animate-spin")} strokeWidth={1.5} />
-      </button>
-      <Tooltip className="tooltip" align="right">
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={props.onToggle}
+          disabled={(props.disabled ?? false) || isTranscribing || isDisabled}
+          aria-label={label}
+          aria-pressed={props.state === "recording"}
+          className={cn(
+            "inline-flex items-center justify-center rounded p-0.5 transition-colors duration-150",
+            "disabled:cursor-not-allowed disabled:opacity-40",
+            colorClass
+          )}
+        >
+          <Icon className={cn("h-4 w-4", isTranscribing && "animate-spin")} strokeWidth={1.5} />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>
         {needsHttps ? (
           <>
             Voice input requires a secure connection.
@@ -98,7 +100,7 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
             While recording: space sends, esc cancels
           </>
         )}
-      </Tooltip>
-    </TooltipWrapper>
+      </TooltipContent>
+    </Tooltip>
   );
 };

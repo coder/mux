@@ -3,7 +3,7 @@ import { cn } from "@/common/lib/utils";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { isSSHRuntime, isWorktreeRuntime, isLocalProjectRuntime } from "@/common/types/runtime";
 import { extractSshHostname } from "@/browser/utils/ui/runtimeBadge";
-import { TooltipWrapper, Tooltip } from "./Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { SSHIcon, WorktreeIcon, LocalIcon } from "./icons/RuntimeIcons";
 
 interface RuntimeBadgeProps {
@@ -50,18 +50,20 @@ export function RuntimeBadge({ runtimeConfig, className, isWorking = false }: Ru
     const hostname = extractSshHostname(runtimeConfig);
     const styles = isWorking ? RUNTIME_STYLES.ssh.working : RUNTIME_STYLES.ssh.idle;
     return (
-      <TooltipWrapper inline>
-        <span
-          className={cn(
-            "inline-flex items-center rounded px-1 py-0.5 border transition-colors",
-            styles,
-            className
-          )}
-        >
-          <SSHIcon />
-        </span>
-        <Tooltip align="right">SSH: {hostname ?? runtimeConfig.host}</Tooltip>
-      </TooltipWrapper>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className={cn(
+              "inline-flex items-center rounded px-1 py-0.5 border transition-colors",
+              styles,
+              className
+            )}
+          >
+            <SSHIcon />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent align="end">SSH: {hostname ?? runtimeConfig.host}</TooltipContent>
+      </Tooltip>
     );
   }
 
@@ -69,18 +71,20 @@ export function RuntimeBadge({ runtimeConfig, className, isWorking = false }: Ru
   if (isWorktreeRuntime(runtimeConfig)) {
     const styles = isWorking ? RUNTIME_STYLES.worktree.working : RUNTIME_STYLES.worktree.idle;
     return (
-      <TooltipWrapper inline>
-        <span
-          className={cn(
-            "inline-flex items-center rounded px-1 py-0.5 border transition-colors",
-            styles,
-            className
-          )}
-        >
-          <WorktreeIcon />
-        </span>
-        <Tooltip align="right">Worktree: isolated git worktree</Tooltip>
-      </TooltipWrapper>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className={cn(
+              "inline-flex items-center rounded px-1 py-0.5 border transition-colors",
+              styles,
+              className
+            )}
+          >
+            <WorktreeIcon />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent align="end">Worktree: isolated git worktree</TooltipContent>
+      </Tooltip>
     );
   }
 
@@ -88,18 +92,20 @@ export function RuntimeBadge({ runtimeConfig, className, isWorking = false }: Ru
   if (isLocalProjectRuntime(runtimeConfig)) {
     const styles = isWorking ? RUNTIME_STYLES.local.working : RUNTIME_STYLES.local.idle;
     return (
-      <TooltipWrapper inline>
-        <span
-          className={cn(
-            "inline-flex items-center rounded px-1 py-0.5 border transition-colors",
-            styles,
-            className
-          )}
-        >
-          <LocalIcon />
-        </span>
-        <Tooltip align="right">Local: project directory</Tooltip>
-      </TooltipWrapper>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className={cn(
+              "inline-flex items-center rounded px-1 py-0.5 border transition-colors",
+              styles,
+              className
+            )}
+          >
+            <LocalIcon />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent align="end">Local: project directory</TooltipContent>
+      </Tooltip>
     );
   }
 

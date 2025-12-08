@@ -10,7 +10,7 @@ import { VerticalTokenMeter } from "./RightSidebar/VerticalTokenMeter";
 import { ReviewPanel } from "./RightSidebar/CodeReview/ReviewPanel";
 import { calculateTokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
-import { TooltipWrapper, Tooltip } from "./Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { cn } from "@/common/lib/utils";
 
 interface SidebarContainerProps {
@@ -239,48 +239,52 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
             role="tablist"
             aria-label="Metadata views"
           >
-            <TooltipWrapper inline>
-              <button
-                className={cn(
-                  "w-full py-2.5 px-[15px] border-none border-solid cursor-pointer font-primary text-[13px] font-medium transition-all duration-200",
-                  selectedTab === "costs"
-                    ? "bg-separator border-b-2 border-b-plan-mode text-[var(--color-sidebar-tab-active)]"
-                    : "bg-transparent text-secondary border-b-2 border-b-transparent hover:bg-background-secondary hover:text-foreground"
-                )}
-                onClick={() => setSelectedTab("costs")}
-                id={costsTabId}
-                role="tab"
-                type="button"
-                aria-selected={selectedTab === "costs"}
-                aria-controls={costsPanelId}
-              >
-                Costs
-              </button>
-              <Tooltip className="tooltip" position="bottom" align="center">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  className={cn(
+                    "w-full py-2.5 px-[15px] border-none border-solid cursor-pointer font-primary text-[13px] font-medium transition-all duration-200",
+                    selectedTab === "costs"
+                      ? "bg-separator border-b-2 border-b-plan-mode text-[var(--color-sidebar-tab-active)]"
+                      : "bg-transparent text-secondary border-b-2 border-b-transparent hover:bg-background-secondary hover:text-foreground"
+                  )}
+                  onClick={() => setSelectedTab("costs")}
+                  id={costsTabId}
+                  role="tab"
+                  type="button"
+                  aria-selected={selectedTab === "costs"}
+                  aria-controls={costsPanelId}
+                >
+                  Costs
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="center">
                 {formatKeybind(KEYBINDS.COSTS_TAB)}
-              </Tooltip>
-            </TooltipWrapper>
-            <TooltipWrapper inline>
-              <button
-                className={cn(
-                  "w-full py-2.5 px-[15px] border-none border-solid cursor-pointer font-primary text-[13px] font-medium transition-all duration-200",
-                  selectedTab === "review"
-                    ? "bg-separator border-b-2 border-b-plan-mode text-[var(--color-sidebar-tab-active)]"
-                    : "bg-transparent text-secondary border-b-2 border-b-transparent hover:bg-background-secondary hover:text-foreground"
-                )}
-                onClick={() => setSelectedTab("review")}
-                id={reviewTabId}
-                role="tab"
-                type="button"
-                aria-selected={selectedTab === "review"}
-                aria-controls={reviewPanelId}
-              >
-                Review
-              </button>
-              <Tooltip className="tooltip" position="bottom" align="center">
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  className={cn(
+                    "w-full py-2.5 px-[15px] border-none border-solid cursor-pointer font-primary text-[13px] font-medium transition-all duration-200",
+                    selectedTab === "review"
+                      ? "bg-separator border-b-2 border-b-plan-mode text-[var(--color-sidebar-tab-active)]"
+                      : "bg-transparent text-secondary border-b-2 border-b-transparent hover:bg-background-secondary hover:text-foreground"
+                  )}
+                  onClick={() => setSelectedTab("review")}
+                  id={reviewTabId}
+                  role="tab"
+                  type="button"
+                  aria-selected={selectedTab === "review"}
+                  aria-controls={reviewPanelId}
+                >
+                  Review
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="center">
                 {formatKeybind(KEYBINDS.REVIEW_TAB)}
-              </Tooltip>
-            </TooltipWrapper>
+              </TooltipContent>
+            </Tooltip>
           </div>
           <div
             className={cn("flex-1 overflow-y-auto", selectedTab === "review" ? "p-0" : "p-[15px]")}

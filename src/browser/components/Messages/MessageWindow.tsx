@@ -4,7 +4,7 @@ import { formatTimestamp } from "@/browser/utils/ui/dateTime";
 import { Code2Icon } from "lucide-react";
 import type { ReactNode } from "react";
 import React, { useMemo, useState } from "react";
-import { Tooltip, TooltipWrapper } from "../Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { Button } from "../ui/button";
 
 export interface ButtonConfig {
@@ -153,10 +153,10 @@ const IconActionButton: React.FC<IconActionButtonProps> = ({ button }) => {
 
   if (button.tooltip || button.label) {
     return (
-      <TooltipWrapper inline>
-        {content}
-        <Tooltip align="center">{button.tooltip ?? button.label}</Tooltip>
-      </TooltipWrapper>
+      <Tooltip>
+        <TooltipTrigger asChild>{content}</TooltipTrigger>
+        <TooltipContent align="center">{button.tooltip ?? button.label}</TooltipContent>
+      </Tooltip>
     );
   }
 

@@ -9,7 +9,7 @@ import React, {
 import { cn } from "@/common/lib/utils";
 import { Settings, Star } from "lucide-react";
 import { GatewayIcon } from "./icons/GatewayIcon";
-import { TooltipWrapper, Tooltip } from "./Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useGateway } from "@/browser/hooks/useGatewayModels";
 
@@ -197,12 +197,12 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       return (
         <div ref={containerRef} className="relative flex items-center gap-1">
           {gatewayActive && (
-            <TooltipWrapper inline>
-              <GatewayIcon className="text-accent h-3 w-3 shrink-0" active />
-              <Tooltip className="tooltip" align="center">
-                Using Mux Gateway
-              </Tooltip>
-            </TooltipWrapper>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <GatewayIcon className="text-accent h-3 w-3 shrink-0" active />
+              </TooltipTrigger>
+              <TooltipContent align="center">Using Mux Gateway</TooltipContent>
+            </Tooltip>
           )}
           <div
             className="text-muted-light font-monospace dir-rtl hover:bg-hover max-w-36 cursor-pointer truncate rounded-sm px-1 py-0.5 text-left font-mono text-[10px] leading-[11px] transition-colors duration-200"
@@ -210,19 +210,19 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
           >
             {value}
           </div>
-          <TooltipWrapper inline>
-            <button
-              type="button"
-              onClick={() => openSettings("models")}
-              className="text-muted-light hover:text-foreground flex items-center justify-center rounded-sm p-0.5 transition-colors duration-150"
-              aria-label="Manage models"
-            >
-              <Settings className="h-3 w-3" />
-            </button>
-            <Tooltip className="tooltip" align="center">
-              Manage models
-            </Tooltip>
-          </TooltipWrapper>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={() => openSettings("models")}
+                className="text-muted-light hover:text-foreground flex items-center justify-center rounded-sm p-0.5 transition-colors duration-150"
+                aria-label="Manage models"
+              >
+                <Settings className="h-3 w-3" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent align="center">Manage models</TooltipContent>
+          </Tooltip>
         </div>
       );
     }
@@ -267,67 +267,71 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                     <div className="flex items-center gap-0.5">
                       {/* Gateway toggle */}
                       {gateway.canToggleModel(model) && (
-                        <TooltipWrapper inline>
-                          <button
-                            type="button"
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              gateway.toggleModelGateway(model);
-                            }}
-                            className={cn(
-                              "flex items-center justify-center rounded-sm border px-1 py-0.5 transition-colors duration-150",
-                              gateway.modelUsesGateway(model)
-                                ? "text-accent border-accent/40"
-                                : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
-                            )}
-                            aria-label={
-                              gateway.modelUsesGateway(model)
-                                ? "Disable Mux Gateway"
-                                : "Enable Mux Gateway"
-                            }
-                          >
-                            <GatewayIcon
-                              className="h-3 w-3"
-                              active={gateway.modelUsesGateway(model)}
-                            />
-                          </button>
-                          <Tooltip className="tooltip" align="center">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                gateway.toggleModelGateway(model);
+                              }}
+                              className={cn(
+                                "flex items-center justify-center rounded-sm border px-1 py-0.5 transition-colors duration-150",
+                                gateway.modelUsesGateway(model)
+                                  ? "text-accent border-accent/40"
+                                  : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
+                              )}
+                              aria-label={
+                                gateway.modelUsesGateway(model)
+                                  ? "Disable Mux Gateway"
+                                  : "Enable Mux Gateway"
+                              }
+                            >
+                              <GatewayIcon
+                                className="h-3 w-3"
+                                active={gateway.modelUsesGateway(model)}
+                              />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent align="center">
                             {gateway.modelUsesGateway(model)
                               ? "Using Mux Gateway"
                               : "Use Mux Gateway"}
-                          </Tooltip>
-                        </TooltipWrapper>
+                          </TooltipContent>
+                        </Tooltip>
                       )}
                       {/* Default model toggle */}
                       {onSetDefaultModel && (
-                        <TooltipWrapper inline>
-                          <button
-                            type="button"
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={(e) => handleSetDefault(e, model)}
-                            className={cn(
-                              "flex items-center justify-center rounded-sm border px-1 py-0.5 transition-colors duration-150",
-                              defaultModel === model
-                                ? "text-yellow-400 border-yellow-400/40 cursor-default"
-                                : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
-                            )}
-                            aria-label={
-                              defaultModel === model
-                                ? "Current default model"
-                                : "Set as default model"
-                            }
-                            disabled={defaultModel === model}
-                          >
-                            <Star className="h-3 w-3" />
-                          </button>
-                          <Tooltip className="tooltip" align="center">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={(e) => handleSetDefault(e, model)}
+                              className={cn(
+                                "flex items-center justify-center rounded-sm border px-1 py-0.5 transition-colors duration-150",
+                                defaultModel === model
+                                  ? "text-yellow-400 border-yellow-400/40 cursor-default"
+                                  : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
+                              )}
+                              aria-label={
+                                defaultModel === model
+                                  ? "Current default model"
+                                  : "Set as default model"
+                              }
+                              disabled={defaultModel === model}
+                            >
+                              <Star className="h-3 w-3" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent align="center">
                             {defaultModel === model
                               ? "Current default model"
                               : "Set as default model"}
-                          </Tooltip>
-                        </TooltipWrapper>
+                          </TooltipContent>
+                        </Tooltip>
                       )}
                     </div>
                   </div>

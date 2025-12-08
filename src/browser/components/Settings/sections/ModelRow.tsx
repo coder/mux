@@ -2,7 +2,7 @@ import React from "react";
 import { Check, Pencil, Star, Trash2, X } from "lucide-react";
 import { GatewayIcon } from "@/browser/components/icons/GatewayIcon";
 import { cn } from "@/common/lib/utils";
-import { TooltipWrapper, Tooltip } from "@/browser/components/Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import { Button } from "@/browser/components/ui/button";
 
@@ -60,14 +60,14 @@ export function ModelRow(props: ModelRowProps) {
               {props.modelId}
             </span>
             {props.aliases && props.aliases.length > 0 && (
-              <TooltipWrapper inline>
-                <span className="text-muted-light shrink-0 text-xs">
-                  ({props.aliases.join(", ")})
-                </span>
-                <Tooltip className="tooltip" align="center">
-                  Use with /m {props.aliases[0]}
-                </Tooltip>
-              </TooltipWrapper>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-muted-light shrink-0 text-xs">
+                    ({props.aliases.join(", ")})
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent align="center">Use with /m {props.aliases[0]}</TooltipContent>
+              </Tooltip>
             )}
           </div>
         )}
@@ -100,46 +100,52 @@ export function ModelRow(props: ModelRowProps) {
           <>
             {/* Gateway toggle button */}
             {props.onToggleGateway && (
-              <TooltipWrapper inline>
-                <button
-                  type="button"
-                  onClick={props.onToggleGateway}
-                  className={cn(
-                    "p-0.5 transition-colors",
-                    props.isGatewayEnabled ? "text-accent" : "text-muted hover:text-accent"
-                  )}
-                  aria-label={props.isGatewayEnabled ? "Disable Mux Gateway" : "Enable Mux Gateway"}
-                >
-                  <GatewayIcon className="h-3.5 w-3.5" active={props.isGatewayEnabled} />
-                </button>
-                <Tooltip className="tooltip" align="center">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={props.onToggleGateway}
+                    className={cn(
+                      "p-0.5 transition-colors",
+                      props.isGatewayEnabled ? "text-accent" : "text-muted hover:text-accent"
+                    )}
+                    aria-label={
+                      props.isGatewayEnabled ? "Disable Mux Gateway" : "Enable Mux Gateway"
+                    }
+                  >
+                    <GatewayIcon className="h-3.5 w-3.5" active={props.isGatewayEnabled} />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent align="center">
                   {props.isGatewayEnabled ? "Using Mux Gateway" : "Use Mux Gateway"}
-                </Tooltip>
-              </TooltipWrapper>
+                </TooltipContent>
+              </Tooltip>
             )}
             {/* Favorite/default button */}
-            <TooltipWrapper inline>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => {
-                  if (!props.isDefault) props.onSetDefault();
-                }}
-                className={cn(
-                  "h-6 w-6",
-                  props.isDefault
-                    ? "cursor-default text-yellow-400 hover:text-yellow-400"
-                    : "text-muted hover:text-yellow-400"
-                )}
-                disabled={props.isDefault}
-                aria-label={props.isDefault ? "Current default model" : "Set as default model"}
-              >
-                <Star className={cn("h-3.5 w-3.5", props.isDefault && "fill-current")} />
-              </Button>
-              <Tooltip className="tooltip" align="center">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => {
+                    if (!props.isDefault) props.onSetDefault();
+                  }}
+                  className={cn(
+                    "h-6 w-6",
+                    props.isDefault
+                      ? "cursor-default text-yellow-400 hover:text-yellow-400"
+                      : "text-muted hover:text-yellow-400"
+                  )}
+                  disabled={props.isDefault}
+                  aria-label={props.isDefault ? "Current default model" : "Set as default model"}
+                >
+                  <Star className={cn("h-3.5 w-3.5", props.isDefault && "fill-current")} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent align="center">
                 {props.isDefault ? "Default model" : "Set as default"}
-              </Tooltip>
-            </TooltipWrapper>
+              </TooltipContent>
+            </Tooltip>
             {/* Edit/delete buttons only for custom models */}
             {props.isCustom && (
               <>

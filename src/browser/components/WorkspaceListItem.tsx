@@ -6,7 +6,7 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import React, { useState } from "react";
 import { GitStatusIndicator } from "./GitStatusIndicator";
 import { RuntimeBadge } from "./RuntimeBadge";
-import { Tooltip, TooltipWrapper } from "./Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
 
@@ -162,31 +162,31 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                 data-workspace-id={workspaceId}
               />
             ) : (
-              <TooltipWrapper inline>
-                <span
-                  className={cn(
-                    "text-foreground block truncate text-left text-[14px] transition-colors duration-200",
-                    !isDisabled && "cursor-pointer"
-                  )}
-                  onDoubleClick={(e) => {
-                    if (isDisabled) return;
-                    e.stopPropagation();
-                    startRenaming();
-                  }}
-                  title={isDisabled ? undefined : "Double-click to rename"}
-                >
-                  {canInterrupt || isCreating ? (
-                    <Shimmer className="w-full truncate" colorClass="var(--color-foreground)">
-                      {displayName}
-                    </Shimmer>
-                  ) : (
-                    displayName
-                  )}
-                </span>
-                <Tooltip className="tooltip" align="left">
-                  Double-click to rename
-                </Tooltip>
-              </TooltipWrapper>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    className={cn(
+                      "text-foreground block truncate text-left text-[14px] transition-colors duration-200",
+                      !isDisabled && "cursor-pointer"
+                    )}
+                    onDoubleClick={(e) => {
+                      if (isDisabled) return;
+                      e.stopPropagation();
+                      startRenaming();
+                    }}
+                    title={isDisabled ? undefined : "Double-click to rename"}
+                  >
+                    {canInterrupt || isCreating ? (
+                      <Shimmer className="w-full truncate" colorClass="var(--color-foreground)">
+                        {displayName}
+                      </Shimmer>
+                    ) : (
+                      displayName
+                    )}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent align="start">Double-click to rename</TooltipContent>
+              </Tooltip>
             )}
 
             <div className="flex items-center gap-1">
@@ -199,22 +199,22 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                     isWorking={canInterrupt}
                   />
 
-                  <TooltipWrapper inline>
-                    <button
-                      className="text-muted hover:text-foreground flex h-5 w-5 cursor-pointer items-center justify-center border-none bg-transparent p-0 text-base opacity-0 transition-all duration-200 hover:rounded-sm hover:bg-white/10"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void onRemoveWorkspace(workspaceId, e.currentTarget);
-                      }}
-                      aria-label={`Remove workspace ${displayName}`}
-                      data-workspace-id={workspaceId}
-                    >
-                      ×
-                    </button>
-                    <Tooltip className="tooltip" align="right">
-                      Remove workspace
-                    </Tooltip>
-                  </TooltipWrapper>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        className="text-muted hover:text-foreground flex h-5 w-5 cursor-pointer items-center justify-center border-none bg-transparent p-0 text-base opacity-0 transition-all duration-200 hover:rounded-sm hover:bg-white/10"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void onRemoveWorkspace(workspaceId, e.currentTarget);
+                        }}
+                        aria-label={`Remove workspace ${displayName}`}
+                        data-workspace-id={workspaceId}
+                      >
+                        ×
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent align="end">Remove workspace</TooltipContent>
+                  </Tooltip>
                 </>
               )}
             </div>

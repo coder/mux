@@ -30,7 +30,7 @@ import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useReviewState } from "@/browser/hooks/useReviewState";
 import { parseDiff, extractAllHunks, buildGitDiffCommand } from "@/common/utils/git/diffParser";
 import { getReviewSearchStateKey } from "@/common/constants/storage";
-import { Tooltip, TooltipWrapper } from "@/browser/components/Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
 import { parseNumstat, buildFileTree, extractNewPath } from "@/common/utils/git/numstatParser";
 import type { DiffHunk, ReviewFilters as ReviewFiltersType } from "@/common/types/review";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
@@ -661,46 +661,50 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                 onChange={(e) => setSearchState({ ...searchState, input: e.target.value })}
                 className="text-foreground placeholder:text-dim focus:bg-separator flex h-full flex-1 items-center border-none bg-transparent px-2.5 py-1.5 font-sans text-xs leading-[1.4] outline-none"
               />
-              <TooltipWrapper inline>
-                <button
-                  className={cn(
-                    "py-1.5 px-2.5 border-none border-l border-light text-[11px] font-monospace font-semibold leading-[1.4] cursor-pointer outline-none transition-all duration-150 whitespace-nowrap flex items-center h-full",
-                    searchState.useRegex
-                      ? "bg-review-bg-blue text-accent-light shadow-[inset_0_0_0_1px_rgba(77,184,255,0.4)] hover:bg-review-bg-info hover:text-accent-light"
-                      : "bg-transparent text-subtle hover:bg-separator hover:text-foreground",
-                    "active:translate-y-px"
-                  )}
-                  onClick={() =>
-                    setSearchState({ ...searchState, useRegex: !searchState.useRegex })
-                  }
-                >
-                  .*
-                </button>
-                <Tooltip position="bottom">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    className={cn(
+                      "py-1.5 px-2.5 border-none border-l border-light text-[11px] font-monospace font-semibold leading-[1.4] cursor-pointer outline-none transition-all duration-150 whitespace-nowrap flex items-center h-full",
+                      searchState.useRegex
+                        ? "bg-review-bg-blue text-accent-light shadow-[inset_0_0_0_1px_rgba(77,184,255,0.4)] hover:bg-review-bg-info hover:text-accent-light"
+                        : "bg-transparent text-subtle hover:bg-separator hover:text-foreground",
+                      "active:translate-y-px"
+                    )}
+                    onClick={() =>
+                      setSearchState({ ...searchState, useRegex: !searchState.useRegex })
+                    }
+                  >
+                    .*
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
                   {searchState.useRegex ? "Using regex search" : "Using substring search"}
-                </Tooltip>
-              </TooltipWrapper>
-              <TooltipWrapper inline>
-                <button
-                  className={cn(
-                    "py-1.5 px-2.5 border-none border-l border-light text-[11px] font-monospace font-semibold leading-[1.4] cursor-pointer outline-none transition-all duration-150 whitespace-nowrap flex items-center h-full",
-                    searchState.matchCase
-                      ? "bg-review-bg-blue text-accent-light shadow-[inset_0_0_0_1px_rgba(77,184,255,0.4)] hover:bg-review-bg-info hover:text-accent-light"
-                      : "bg-transparent text-subtle hover:bg-separator hover:text-foreground",
-                    "active:translate-y-px"
-                  )}
-                  onClick={() =>
-                    setSearchState({ ...searchState, matchCase: !searchState.matchCase })
-                  }
-                >
-                  Aa
-                </button>
-                <Tooltip position="bottom">
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    className={cn(
+                      "py-1.5 px-2.5 border-none border-l border-light text-[11px] font-monospace font-semibold leading-[1.4] cursor-pointer outline-none transition-all duration-150 whitespace-nowrap flex items-center h-full",
+                      searchState.matchCase
+                        ? "bg-review-bg-blue text-accent-light shadow-[inset_0_0_0_1px_rgba(77,184,255,0.4)] hover:bg-review-bg-info hover:text-accent-light"
+                        : "bg-transparent text-subtle hover:bg-separator hover:text-foreground",
+                      "active:translate-y-px"
+                    )}
+                    onClick={() =>
+                      setSearchState({ ...searchState, matchCase: !searchState.matchCase })
+                    }
+                  >
+                    Aa
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
                   {searchState.matchCase
                     ? "Match case (case-sensitive)"
                     : "Ignore case (case-insensitive)"}
-                </Tooltip>
-              </TooltipWrapper>
+                </TooltipContent>
+              </Tooltip>
             </div>
           </div>
 

@@ -3,7 +3,7 @@ import type { ButtonConfig } from "./MessageWindow";
 import { MessageWindow } from "./MessageWindow";
 import type { QueuedMessage as QueuedMessageType } from "@/common/types/message";
 import { Pencil } from "lucide-react";
-import { Tooltip, TooltipWrapper } from "../Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 
 interface QueuedMessageProps {
   message: QueuedMessageType;
@@ -43,17 +43,19 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = ({
 
   // Clickable "Queued" label with tooltip
   const queuedLabel = onSendImmediately ? (
-    <TooltipWrapper inline>
-      <button
-        type="button"
-        onClick={() => void handleSendImmediately()}
-        disabled={isSending}
-        className="cursor-pointer hover:underline disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        Queued
-      </button>
-      <Tooltip align="center">Click to send immediately</Tooltip>
-    </TooltipWrapper>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={() => void handleSendImmediately()}
+          disabled={isSending}
+          className="cursor-pointer hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Queued
+        </button>
+      </TooltipTrigger>
+      <TooltipContent align="center">Click to send immediately</TooltipContent>
+    </Tooltip>
   ) : (
     "Queued"
   );

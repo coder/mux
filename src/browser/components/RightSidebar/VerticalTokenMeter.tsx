@@ -1,5 +1,5 @@
 import React from "react";
-import { TooltipWrapper, Tooltip } from "../Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { TokenMeter } from "./TokenMeter";
 import { VerticalThresholdSlider, type AutoCompactionConfig } from "./ThresholdSlider";
 import {
@@ -45,16 +45,20 @@ const VerticalTokenMeterComponent: React.FC<VerticalTokenMeterProps> = ({
           className="flex min-h-[20px] w-full flex-col items-center"
           style={{ flex: usagePercentage }}
         >
-          {/* [&>*] selector makes TooltipWrapper span fill available space */}
+          {/* Tooltip wraps the meter for hover display */}
           <div className="flex h-full w-full flex-col items-center [&>*]:flex [&>*]:h-full [&>*]:flex-col">
-            <TooltipWrapper>
-              <TokenMeter
-                segments={data.segments}
-                orientation="vertical"
-                data-meter="token-bar"
-                data-segment-count={data.segments.length}
-              />
-              <Tooltip position="left">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="flex h-full flex-col">
+                  <TokenMeter
+                    segments={data.segments}
+                    orientation="vertical"
+                    data-meter="token-bar"
+                    data-segment-count={data.segments.length}
+                  />
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="left">
                 <div className="font-primary flex flex-col gap-2 text-xs">
                   <div className="text-foreground text-[13px] font-semibold">Last Request</div>
                   <div className="border-border-light my-1 border-t" />
@@ -82,8 +86,8 @@ const VerticalTokenMeterComponent: React.FC<VerticalTokenMeterProps> = ({
                     💡 Expand your viewport to see full details
                   </div>
                 </div>
-              </Tooltip>
-            </TooltipWrapper>
+              </TooltipContent>
+            </Tooltip>
           </div>
         </div>
         {/* Empty portion - takes remaining space */}

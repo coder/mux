@@ -1,7 +1,7 @@
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { ExternalLinkIcon } from "lucide-react";
 import { memo } from "react";
-import { Tooltip, TooltipWrapper } from "./Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { Button } from "./ui/button";
 
 export const WorkspaceStatusIndicator = memo<{ workspaceId: string }>(({ workspaceId }) => {
@@ -20,21 +20,20 @@ export const WorkspaceStatusIndicator = memo<{ workspaceId: string }>(({ workspa
       )}
       <span className="min-w-0 truncate">{agentStatus.message}</span>
       {agentStatus.url && (
-        <TooltipWrapper inline>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="flex h-4 w-4 shrink-0 items-center justify-center [&_svg]:size-3"
-          >
-            <a href={agentStatus.url} target="_blank" rel="noopener noreferrer">
-              <ExternalLinkIcon />
-            </a>
-          </Button>
-
-          <Tooltip className="tooltip" align="center">
-            {agentStatus.url}
-          </Tooltip>
-        </TooltipWrapper>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="flex h-4 w-4 shrink-0 items-center justify-center [&_svg]:size-3"
+            >
+              <a href={agentStatus.url} target="_blank" rel="noopener noreferrer">
+                <ExternalLinkIcon />
+              </a>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent align="center">{agentStatus.url}</TooltipContent>
+        </Tooltip>
       )}
     </div>
   );

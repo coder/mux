@@ -13,7 +13,7 @@ import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useStartHere } from "@/browser/hooks/useStartHere";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
-import { TooltipWrapper, Tooltip } from "../Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { cn } from "@/common/lib/utils";
 
 interface ProposePlanToolCallProps {
@@ -75,29 +75,33 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = ({
               </div>
               <div className="flex items-center gap-1.5">
                 {workspaceId && (
-                  <TooltipWrapper inline>
-                    <button
-                      onClick={openModal}
-                      disabled={startHereDisabled}
-                      className={cn(
-                        controlButtonClasses,
-                        "plan-chip",
-                        startHereDisabled
-                          ? "cursor-not-allowed opacity-50"
-                          : "hover:plan-chip-hover active:plan-chip-active"
-                      )}
-                      onMouseEnter={() => {
-                        if (!startHereDisabled) {
-                          setIsHovered(true);
-                        }
-                      }}
-                      onMouseLeave={() => setIsHovered(false)}
-                    >
-                      {isHovered && <span className="mr-1">{buttonEmoji}</span>}
-                      {buttonLabel}
-                    </button>
-                    <Tooltip align="center">Replace all chat history with this plan</Tooltip>
-                  </TooltipWrapper>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={openModal}
+                        disabled={startHereDisabled}
+                        className={cn(
+                          controlButtonClasses,
+                          "plan-chip",
+                          startHereDisabled
+                            ? "cursor-not-allowed opacity-50"
+                            : "hover:plan-chip-hover active:plan-chip-active"
+                        )}
+                        onMouseEnter={() => {
+                          if (!startHereDisabled) {
+                            setIsHovered(true);
+                          }
+                        }}
+                        onMouseLeave={() => setIsHovered(false)}
+                      >
+                        {isHovered && <span className="mr-1">{buttonEmoji}</span>}
+                        {buttonLabel}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent align="center">
+                      Replace all chat history with this plan
+                    </TooltipContent>
+                  </Tooltip>
                 )}
                 <button
                   onClick={() => void copyToClipboard(args.plan)}

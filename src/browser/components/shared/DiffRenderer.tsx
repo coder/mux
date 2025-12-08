@@ -7,7 +7,7 @@
 import React, { useEffect, useState } from "react";
 import { cn } from "@/common/lib/utils";
 import { getLanguageFromPath } from "@/common/utils/git/languageDetector";
-import { Tooltip, TooltipWrapper } from "../Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { groupDiffLines } from "@/browser/utils/highlighting/diffChunking";
 import { useTheme, type ThemeMode } from "@/browser/contexts/ThemeContext";
 import {
@@ -578,35 +578,37 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                 }}
               >
                 <span className="absolute top-1/2 left-1 z-[1] -translate-y-1/2">
-                  <TooltipWrapper inline>
-                    <button
-                      className="bg-review-accent flex h-3.5 w-3.5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-none p-0 font-bold text-white opacity-0 transition-opacity duration-150 group-hover:opacity-70 hover:!opacity-100 active:scale-90"
-                      style={{
-                        background: "var(--color-review-accent)",
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleCommentButtonClick(displayIndex, e.shiftKey);
-                      }}
-                      onMouseEnter={(e) => {
-                        const target = e.currentTarget;
-                        target.style.background =
-                          "hsl(from var(--color-review-accent) h s calc(l * 1.2))";
-                      }}
-                      onMouseLeave={(e) => {
-                        const target = e.currentTarget;
-                        target.style.background = "var(--color-review-accent)";
-                      }}
-                      aria-label="Add review comment"
-                    >
-                      +
-                    </button>
-                    <Tooltip position="bottom" align="left">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        className="bg-review-accent flex h-3.5 w-3.5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-none p-0 font-bold text-white opacity-0 transition-opacity duration-150 group-hover:opacity-70 hover:!opacity-100 active:scale-90"
+                        style={{
+                          background: "var(--color-review-accent)",
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCommentButtonClick(displayIndex, e.shiftKey);
+                        }}
+                        onMouseEnter={(e) => {
+                          const target = e.currentTarget;
+                          target.style.background =
+                            "hsl(from var(--color-review-accent) h s calc(l * 1.2))";
+                        }}
+                        onMouseLeave={(e) => {
+                          const target = e.currentTarget;
+                          target.style.background = "var(--color-review-accent)";
+                        }}
+                        aria-label="Add review comment"
+                      >
+                        +
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" align="start">
                       Add review comment
                       <br />
                       (Shift-click to select range)
-                    </Tooltip>
-                  </TooltipWrapper>
+                    </TooltipContent>
+                  </Tooltip>
                 </span>
                 <div
                   className="flex px-2 font-mono whitespace-pre"

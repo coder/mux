@@ -1,5 +1,5 @@
 import React from "react";
-import { TooltipWrapper, Tooltip } from "@/browser/components/Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
 import { ProviderIcon } from "@/browser/components/ProviderIcon";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 
@@ -68,11 +68,13 @@ export const ModelDisplay: React.FC<ModelDisplayProps> = ({ modelString, showToo
   }
 
   return (
-    <TooltipWrapper inline data-model-display-tooltip>
-      {content}
-      <Tooltip align="center" data-model-tooltip-text>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span data-model-display-tooltip>{content}</span>
+      </TooltipTrigger>
+      <TooltipContent align="center" data-model-tooltip-text>
         {modelString}
-      </Tooltip>
-    </TooltipWrapper>
+      </TooltipContent>
+    </Tooltip>
   );
 };

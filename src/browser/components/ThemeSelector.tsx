@@ -1,5 +1,5 @@
 import { useTheme, THEME_OPTIONS, type ThemeMode } from "@/browser/contexts/ThemeContext";
-import { TooltipWrapper, Tooltip } from "./Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import {
   Select,
   SelectContent,
@@ -13,24 +13,26 @@ export function ThemeSelector() {
   const currentLabel = THEME_OPTIONS.find((t) => t.value === theme)?.label ?? theme;
 
   return (
-    <TooltipWrapper>
-      <Select value={theme} onValueChange={(value) => setTheme(value as ThemeMode)}>
-        <SelectTrigger
-          className="border-border-light text-muted-foreground hover:border-border-medium/80 hover:bg-toggle-bg/70 h-5 w-auto cursor-pointer border bg-transparent px-1.5 text-[11px] transition-colors duration-150"
-          aria-label="Select theme"
-          data-testid="theme-selector"
-        >
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {THEME_OPTIONS.map((option) => (
-            <SelectItem key={option.value} value={option.value}>
-              {option.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <Tooltip align="right">Theme: {currentLabel}</Tooltip>
-    </TooltipWrapper>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Select value={theme} onValueChange={(value) => setTheme(value as ThemeMode)}>
+          <SelectTrigger
+            className="border-border-light text-muted-foreground hover:border-border-medium/80 hover:bg-toggle-bg/70 h-5 w-auto cursor-pointer border bg-transparent px-1.5 text-[11px] transition-colors duration-150"
+            aria-label="Select theme"
+            data-testid="theme-selector"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {THEME_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </TooltipTrigger>
+      <TooltipContent align="end">Theme: {currentLabel}</TooltipContent>
+    </Tooltip>
   );
 }

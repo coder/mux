@@ -4,7 +4,7 @@ import { Select } from "../Select";
 import { RuntimeIconSelector } from "../RuntimeIconSelector";
 import { Loader2, Wand2 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
-import { Tooltip, TooltipWrapper } from "../Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
 
 interface CreationControlsProps {
@@ -80,27 +80,31 @@ export function CreationControls(props: CreationControlsProps) {
             {nameState.isGenerating ? (
               <Loader2 className="text-accent h-3.5 w-3.5 animate-spin" />
             ) : (
-              <TooltipWrapper inline>
-                <button
-                  type="button"
-                  onClick={handleWandClick}
-                  disabled={props.disabled}
-                  className="flex h-full items-center disabled:opacity-50"
-                  aria-label={nameState.autoGenerate ? "Disable auto-naming" : "Enable auto-naming"}
-                >
-                  <Wand2
-                    className={cn(
-                      "h-3.5 w-3.5 transition-colors",
-                      nameState.autoGenerate
-                        ? "text-accent"
-                        : "text-muted-foreground opacity-50 hover:opacity-75"
-                    )}
-                  />
-                </button>
-                <Tooltip className="tooltip" align="center">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={handleWandClick}
+                    disabled={props.disabled}
+                    className="flex h-full items-center disabled:opacity-50"
+                    aria-label={
+                      nameState.autoGenerate ? "Disable auto-naming" : "Enable auto-naming"
+                    }
+                  >
+                    <Wand2
+                      className={cn(
+                        "h-3.5 w-3.5 transition-colors",
+                        nameState.autoGenerate
+                          ? "text-accent"
+                          : "text-muted-foreground opacity-50 hover:opacity-75"
+                      )}
+                    />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent align="center">
                   {nameState.autoGenerate ? "Auto-naming enabled" : "Click to enable auto-naming"}
-                </Tooltip>
-              </TooltipWrapper>
+                </TooltipContent>
+              </Tooltip>
             )}
           </div>
         </div>

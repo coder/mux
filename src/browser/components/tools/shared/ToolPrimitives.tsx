@@ -1,6 +1,6 @@
 import React from "react";
 import { cn } from "@/common/lib/utils";
-import { TooltipWrapper, Tooltip } from "../../Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../../ui/tooltip";
 
 /**
  * Shared styled components for tool UI
@@ -168,10 +168,12 @@ interface ToolIconProps {
 }
 
 export const ToolIcon: React.FC<ToolIconProps> = ({ emoji, toolName }) => (
-  <TooltipWrapper inline>
-    <span>{emoji}</span>
-    <Tooltip>{toolName}</Tooltip>
-  </TooltipWrapper>
+  <Tooltip>
+    <TooltipTrigger asChild>
+      <span>{emoji}</span>
+    </TooltipTrigger>
+    <TooltipContent>{toolName}</TooltipContent>
+  </Tooltip>
 );
 
 /**

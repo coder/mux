@@ -2,7 +2,7 @@ import React from "react";
 import { cn } from "@/common/lib/utils";
 import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
 import { SSHIcon, WorktreeIcon, LocalIcon } from "./icons/RuntimeIcons";
-import { TooltipWrapper, Tooltip } from "./Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 
 interface RuntimeIconSelectorProps {
   value: RuntimeMode;
@@ -73,23 +73,29 @@ function RuntimeIconButton(props: RuntimeIconButtonProps) {
         : LocalIcon;
 
   return (
-    <TooltipWrapper inline>
-      <button
-        type="button"
-        onClick={props.onClick}
-        disabled={props.disabled}
-        className={cn(
-          "inline-flex items-center justify-center rounded border p-1 transition-colors",
-          "focus:outline-none focus-visible:ring-1 focus-visible:ring-blue-500",
-          stateStyle,
-          props.disabled && "cursor-not-allowed opacity-50"
-        )}
-        aria-label={`${info.label} runtime`}
-        aria-pressed={props.isSelected}
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={props.onClick}
+          disabled={props.disabled}
+          className={cn(
+            "inline-flex items-center justify-center rounded border p-1 transition-colors",
+            "focus:outline-none focus-visible:ring-1 focus-visible:ring-blue-500",
+            stateStyle,
+            props.disabled && "cursor-not-allowed opacity-50"
+          )}
+          aria-label={`${info.label} runtime`}
+          aria-pressed={props.isSelected}
+        >
+          <Icon />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent
+        align="center"
+        side="bottom"
+        className="pointer-events-auto max-w-80 whitespace-normal"
       >
-        <Icon />
-      </button>
-      <Tooltip align="center" width="wide" position="bottom" interactive>
         <strong>{info.label}</strong>
         <p className="text-muted mt-0.5 text-xs">{info.description}</p>
         <label className="mt-1.5 flex cursor-pointer items-center gap-1.5 text-xs">
@@ -101,8 +107,8 @@ function RuntimeIconButton(props: RuntimeIconButtonProps) {
           />
           <span className="text-muted">Default for project</span>
         </label>
-      </Tooltip>
-    </TooltipWrapper>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

@@ -18,7 +18,7 @@ import {
   formatDaysThreshold,
   AGE_THRESHOLDS_DAYS,
 } from "@/browser/utils/ui/workspaceFiltering";
-import { TooltipWrapper, Tooltip } from "./Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import SecretsModal from "./SecretsModal";
 import type { Secret } from "@/common/types/secrets";
 import { ForceDeleteModal } from "./ForceDeleteModal";
@@ -437,18 +437,18 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             <>
               <div className="border-dark flex items-center justify-between border-b p-4">
                 <h2 className="text-foreground m-0 text-lg font-medium">Projects</h2>
-                <TooltipWrapper inline>
-                  <button
-                    onClick={onAddProject}
-                    aria-label="Add project"
-                    className="text-secondary hover:bg-hover hover:border-border-light flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 text-2xl transition-all duration-200"
-                  >
-                    +
-                  </button>
-                  <Tooltip className="tooltip" align="right">
-                    Add Project
-                  </Tooltip>
-                </TooltipWrapper>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={onAddProject}
+                      aria-label="Add project"
+                      className="text-secondary hover:bg-hover hover:border-border-light flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 text-2xl transition-all duration-200"
+                    >
+                      +
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent align="end">Add Project</TooltipContent>
+                </Tooltip>
               </div>
               <div className="flex-1 overflow-y-auto">
                 {projects.size === 0 ? (
@@ -511,65 +511,67 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             />
                           </button>
                           <div className="flex min-w-0 flex-1 items-center pr-2">
-                            <TooltipWrapper inline>
-                              <div className="text-muted-dark flex gap-2 truncate text-sm">
-                                {(() => {
-                                  const abbrevPath = PlatformPaths.abbreviate(projectPath);
-                                  const { basename } = PlatformPaths.splitAbbreviated(abbrevPath);
-                                  return (
-                                    <span className="text-foreground font-medium">{basename}</span>
-                                  );
-                                })()}
-                              </div>
-                              <Tooltip className="tooltip" align="left">
-                                {projectPath}
-                              </Tooltip>
-                            </TooltipWrapper>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <div className="text-muted-dark flex gap-2 truncate text-sm">
+                                  {(() => {
+                                    const abbrevPath = PlatformPaths.abbreviate(projectPath);
+                                    const { basename } = PlatformPaths.splitAbbreviated(abbrevPath);
+                                    return (
+                                      <span className="text-foreground font-medium">
+                                        {basename}
+                                      </span>
+                                    );
+                                  })()}
+                                </div>
+                              </TooltipTrigger>
+                              <TooltipContent align="start">{projectPath}</TooltipContent>
+                            </Tooltip>
                           </div>
-                          <TooltipWrapper inline>
-                            <button
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                void handleOpenSecrets(projectPath);
-                              }}
-                              aria-label={`Manage secrets for ${projectName}`}
-                              data-project-path={projectPath}
-                              className="text-muted-dark mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-sm opacity-0 transition-all duration-200 hover:bg-yellow-500/10 hover:text-yellow-500"
-                            >
-                              <KeyRound size={12} />
-                            </button>
-                            <Tooltip className="tooltip" align="right">
-                              Manage secrets
-                            </Tooltip>
-                          </TooltipWrapper>
-                          <TooltipWrapper inline>
-                            <button
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                const buttonElement = event.currentTarget;
-                                void (async () => {
-                                  const result = await onRemoveProject(projectPath);
-                                  if (!result.success) {
-                                    const error = result.error ?? "Failed to remove project";
-                                    const rect = buttonElement.getBoundingClientRect();
-                                    const anchor = {
-                                      top: rect.top + window.scrollY,
-                                      left: rect.right + 10,
-                                    };
-                                    projectRemoveError.showError(projectPath, error, anchor);
-                                  }
-                                })();
-                              }}
-                              aria-label={`Remove project ${projectName}`}
-                              data-project-path={projectPath}
-                              className="text-muted-dark hover:text-danger-light hover:bg-danger-light/10 mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-base opacity-0 transition-all duration-200"
-                            >
-                              ×
-                            </button>
-                            <Tooltip className="tooltip" align="right">
-                              Remove project
-                            </Tooltip>
-                          </TooltipWrapper>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void handleOpenSecrets(projectPath);
+                                }}
+                                aria-label={`Manage secrets for ${projectName}`}
+                                data-project-path={projectPath}
+                                className="text-muted-dark mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-sm opacity-0 transition-all duration-200 hover:bg-yellow-500/10 hover:text-yellow-500"
+                              >
+                                <KeyRound size={12} />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent align="end">Manage secrets</TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  const buttonElement = event.currentTarget;
+                                  void (async () => {
+                                    const result = await onRemoveProject(projectPath);
+                                    if (!result.success) {
+                                      const error = result.error ?? "Failed to remove project";
+                                      const rect = buttonElement.getBoundingClientRect();
+                                      const anchor = {
+                                        top: rect.top + window.scrollY,
+                                        left: rect.right + 10,
+                                      };
+                                      projectRemoveError.showError(projectPath, error, anchor);
+                                    }
+                                  })();
+                                }}
+                                aria-label={`Remove project ${projectName}`}
+                                data-project-path={projectPath}
+                                className="text-muted-dark hover:text-danger-light hover:bg-danger-light/10 mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-base opacity-0 transition-all duration-200"
+                              >
+                                ×
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent align="end">Remove project</TooltipContent>
+                          </Tooltip>
                           <button
                             onClick={(event) => {
                               event.stopPropagation();
@@ -697,19 +699,21 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
               </div>
             </>
           )}
-          <TooltipWrapper inline>
-            <button
-              onClick={onToggleCollapsed}
-              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-              className="text-muted border-dark hover:bg-hover hover:text-foreground mt-auto flex h-9 w-full cursor-pointer items-center justify-center border-t border-none bg-transparent p-0 text-sm transition-all duration-200"
-            >
-              {collapsed ? "»" : "«"}
-            </button>
-            <Tooltip className="tooltip" align="center">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={onToggleCollapsed}
+                aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+                className="text-muted border-dark hover:bg-hover hover:text-foreground mt-auto flex h-9 w-full cursor-pointer items-center justify-center border-t border-none bg-transparent p-0 text-sm transition-all duration-200"
+              >
+                {collapsed ? "»" : "«"}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent align="center">
               {collapsed ? "Expand sidebar" : "Collapse sidebar"} (
               {formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)})
-            </Tooltip>
-          </TooltipWrapper>
+            </TooltipContent>
+          </Tooltip>
           {secretsModalState && (
             <SecretsModal
               isOpen={secretsModalState.isOpen}

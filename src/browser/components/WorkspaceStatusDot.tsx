@@ -2,7 +2,7 @@ import { cn } from "@/common/lib/utils";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { getStatusTooltip } from "@/browser/utils/ui/statusTooltip";
 import { memo, useMemo } from "react";
-import { Tooltip, TooltipWrapper } from "./Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 
 export const WorkspaceStatusDot = memo<{
   workspaceId: string;
@@ -39,25 +39,25 @@ export const WorkspaceStatusDot = memo<{
     const cursor = onClick && !streaming ? "cursor-pointer" : "cursor-default";
 
     return (
-      <TooltipWrapper inline>
-        <div
-          style={{ width: size, height: size }}
-          className={cn(
-            "rounded-full shrink-0 transition-colors duration-200",
-            bgColor,
-            cursor,
-            onClick && !streaming && "hover:opacity-70",
-            streaming && "animate-pulse"
-          )}
-          onClick={(e) => {
-            e.stopPropagation();
-            onClick?.(e);
-          }}
-        />
-        <Tooltip className="tooltip" align="center">
-          {title}
-        </Tooltip>
-      </TooltipWrapper>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div
+            style={{ width: size, height: size }}
+            className={cn(
+              "rounded-full shrink-0 transition-colors duration-200",
+              bgColor,
+              cursor,
+              onClick && !streaming && "hover:opacity-70",
+              streaming && "animate-pulse"
+            )}
+            onClick={(e) => {
+              e.stopPropagation();
+              onClick?.(e);
+            }}
+          />
+        </TooltipTrigger>
+        <TooltipContent align="center">{title}</TooltipContent>
+      </Tooltip>
     );
   },
   (prevProps, nextProps) =>

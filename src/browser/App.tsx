@@ -41,6 +41,7 @@ import { AuthTokenModal } from "@/browser/components/AuthTokenModal";
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
 import { SettingsModal } from "./components/Settings/SettingsModal";
 import { TutorialProvider } from "./contexts/TutorialContext";
+import { TooltipProvider } from "./components/ui/tooltip";
 
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high"];
 
@@ -690,13 +691,15 @@ function AppInner() {
 function App() {
   return (
     <ThemeProvider>
-      <SettingsProvider>
-        <TutorialProvider>
-          <CommandRegistryProvider>
-            <AppInner />
-          </CommandRegistryProvider>
-        </TutorialProvider>
-      </SettingsProvider>
+      <TooltipProvider delayDuration={200}>
+        <SettingsProvider>
+          <TutorialProvider>
+            <CommandRegistryProvider>
+              <AppInner />
+            </CommandRegistryProvider>
+          </TutorialProvider>
+        </SettingsProvider>
+      </TooltipProvider>
     </ThemeProvider>
   );
 }
