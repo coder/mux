@@ -691,16 +691,16 @@ export const router = (authToken?: string) => {
           }
           return { success: true as const, data: { content, path: planPath } };
         }),
-      backgroundProcesses: {
+      backgroundBashes: {
         list: t
-          .input(schemas.workspace.backgroundProcesses.list.input)
-          .output(schemas.workspace.backgroundProcesses.list.output)
+          .input(schemas.workspace.backgroundBashes.list.input)
+          .output(schemas.workspace.backgroundBashes.list.output)
           .handler(async ({ context, input }) => {
             return context.workspaceService.listBackgroundProcesses(input.workspaceId);
           }),
         terminate: t
-          .input(schemas.workspace.backgroundProcesses.terminate.input)
-          .output(schemas.workspace.backgroundProcesses.terminate.output)
+          .input(schemas.workspace.backgroundBashes.terminate.input)
+          .output(schemas.workspace.backgroundBashes.terminate.output)
           .handler(async ({ context, input }) => {
             const result = await context.workspaceService.terminateBackgroundProcess(
               input.workspaceId,

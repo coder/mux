@@ -9,7 +9,7 @@ import type { APIClient } from "@/browser/contexts/API";
 export function useBackgroundProcesses(
   api: APIClient | null,
   workspaceId: string | null,
-  pollingIntervalMs = 3000
+  pollingIntervalMs = 1000
 ): {
   processes: BackgroundProcessInfo[];
   terminate: (processId: string) => Promise<void>;
@@ -24,7 +24,7 @@ export function useBackgroundProcesses(
     }
 
     try {
-      const result = await api.workspace.backgroundProcesses.list({ workspaceId });
+      const result = await api.workspace.backgroundBashes.list({ workspaceId });
       setProcesses(result);
     } catch (error) {
       console.error("Failed to fetch background processes:", error);
@@ -37,7 +37,7 @@ export function useBackgroundProcesses(
       if (!api || !workspaceId) return;
 
       try {
-        const result = await api.workspace.backgroundProcesses.terminate({
+        const result = await api.workspace.backgroundBashes.terminate({
           workspaceId,
           processId,
         });

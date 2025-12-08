@@ -192,7 +192,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           await new Promise(() => {}); // Never resolves
         },
       },
-      backgroundProcesses: {
+      backgroundBashes: {
         list: async (input: { workspaceId: string }) => {
           return backgroundProcesses.get(input.workspaceId) ?? [];
         },

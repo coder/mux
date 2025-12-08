@@ -321,7 +321,7 @@ export const workspace = {
       z.string()
     ),
   },
-  backgroundProcesses: {
+  backgroundBashes: {
     list: {
       input: z.object({ workspaceId: z.string() }),
       output: z.array(BackgroundProcessInfoSchema),
