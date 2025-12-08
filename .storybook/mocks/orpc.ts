@@ -27,6 +27,19 @@ export interface MockORPCClientOptions {
   providersList?: string[];
   /** Mock for projects.remove - return error string to simulate failure */
   onProjectRemove?: (projectPath: string) => { success: true } | { success: false; error: string };
+  /** Background processes per workspace */
+  backgroundProcesses?: Map<
+    string,
+    Array<{
+      id: string;
+      pid: number;
+      script: string;
+      displayName?: string;
+      startTime: number;
+      status: "running" | "exited" | "killed" | "failed";
+      exitCode?: number;
+    }>
+  >;
 }
 
 /**
@@ -55,6 +68,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     providersConfig = {},
     providersList = [],
     onProjectRemove,
+    backgroundProcesses = new Map(),
   } = options;
 
   const workspaceMap = new Map(workspaces.map((w) => [w.id, w]));
@@ -177,6 +191,12 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         subscribe: async function* () {
           await new Promise(() => {}); // Never resolves
         },
+      },
+      backgroundProcesses: {
+        list: async (input: { workspaceId: string }) => {
+          return backgroundProcesses.get(input.workspaceId) ?? [];
+        },
+        terminate: async () => ({ success: true, data: undefined }),
       },
     },
     window: {
