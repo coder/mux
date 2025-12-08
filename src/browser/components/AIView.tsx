@@ -642,6 +642,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
           getReview={pendingReviews.getReview}
           onReviewsSent={(ids) => ids.forEach((id) => pendingReviews.checkReview(id))}
           onAttachedReviewsChange={setAttachedReviewIds}
+          onUpdateReviewNote={pendingReviews.updateReviewNote}
         />
       </div>
 

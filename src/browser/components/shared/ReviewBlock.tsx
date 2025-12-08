@@ -7,15 +7,18 @@
  * - MarkdownComponents for assistant message context
  */
 
-import React, { useMemo } from "react";
-import { MessageSquare, X } from "lucide-react";
+import React, { useMemo, useState, useCallback, useRef } from "react";
+import { MessageSquare, X, Pencil, Check } from "lucide-react";
 import { DiffRenderer } from "./DiffRenderer";
+import { Button } from "../ui/button";
 
 interface ReviewBlockProps {
   /** Raw content inside the <review> tags */
   content: string;
   /** Optional callback to remove the review (shows X button in header) */
   onRemove?: () => void;
+  /** Optional callback to edit the comment - enables edit mode when provided */
+  onEditComment?: (newComment: string) => void;
 }
 
 interface ParsedReview {
@@ -45,8 +48,11 @@ function parseReviewContent(content: string): ParsedReview {
 /**
  * Styled review block component
  */
-export const ReviewBlock: React.FC<ReviewBlockProps> = ({ content, onRemove }) => {
+export const ReviewBlock: React.FC<ReviewBlockProps> = ({ content, onRemove, onEditComment }) => {
   const parsed = useMemo(() => parseReviewContent(content), [content]);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState(parsed.comment);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Format code for diff display - add context markers if needed
   const diffContent = useMemo(() => {
@@ -56,6 +62,37 @@ export const ReviewBlock: React.FC<ReviewBlockProps> = ({ content, onRemove }) =
     if (hasDiffMarkers) return parsed.code;
     return lines.map((l) => ` ${l}`).join("\n");
   }, [parsed.code]);
+
+  const handleStartEdit = useCallback(() => {
+    setEditValue(parsed.comment);
+    setIsEditing(true);
+    setTimeout(() => textareaRef.current?.focus(), 0);
+  }, [parsed.comment]);
+
+  const handleSaveEdit = useCallback(() => {
+    if (onEditComment && editValue.trim() !== parsed.comment) {
+      onEditComment(editValue.trim());
+    }
+    setIsEditing(false);
+  }, [editValue, parsed.comment, onEditComment]);
+
+  const handleCancelEdit = useCallback(() => {
+    setEditValue(parsed.comment);
+    setIsEditing(false);
+  }, [parsed.comment]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        handleSaveEdit();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        handleCancelEdit();
+      }
+    },
+    [handleSaveEdit, handleCancelEdit]
+  );
 
   return (
     <div className="overflow-hidden rounded border border-[var(--color-review-accent)]/30 bg-[var(--color-review-accent)]/5">
@@ -90,12 +127,59 @@ export const ReviewBlock: React.FC<ReviewBlockProps> = ({ content, onRemove }) =
         </div>
       )}
 
-      {/* Comment */}
-      {parsed.comment && (
-        <div className="px-2 py-1">
-          <blockquote className="text-primary border-l-2 border-[var(--color-review-accent)] pl-1.5 text-xs italic">
-            {parsed.comment}
-          </blockquote>
+      {/* Comment - editable when onEditComment provided */}
+      {(parsed.comment || onEditComment) && (
+        <div className="group/comment px-2 py-1">
+          {isEditing ? (
+            <div className="space-y-1">
+              <textarea
+                ref={textareaRef}
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                className="text-primary w-full resize-none rounded border border-[var(--color-review-accent)]/40 bg-[var(--color-review-accent)]/10 px-1.5 py-1 text-xs focus:border-[var(--color-review-accent)]/60 focus:outline-none"
+                rows={2}
+                placeholder="Your comment..."
+              />
+              <div className="flex items-center justify-end gap-1">
+                <span className="text-muted mr-1 text-[10px]">⌘Enter save, Esc cancel</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-5 px-1.5 text-[10px]"
+                  onClick={handleCancelEdit}
+                >
+                  <X className="mr-0.5 size-2.5" />
+                  Cancel
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="h-5 px-1.5 text-[10px]"
+                  onClick={handleSaveEdit}
+                >
+                  <Check className="mr-0.5 size-2.5" />
+                  Save
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-start gap-1">
+              <blockquote className="text-primary flex-1 border-l-2 border-[var(--color-review-accent)] pl-1.5 text-xs italic">
+                {parsed.comment || <span className="text-muted">No comment</span>}
+              </blockquote>
+              {onEditComment && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-5 shrink-0 opacity-0 transition-opacity group-hover/comment:opacity-100 [&_svg]:size-3"
+                  onClick={handleStartEdit}
+                >
+                  <Pencil />
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -166,16 +250,16 @@ export const ContentWithReviews: React.FC<{ content: string; textClassName?: str
   }
 
   return (
-    <>
+    <div className="space-y-2">
       {segments.map((segment, idx) =>
         segment.type === "review" ? (
           <ReviewBlock key={idx} content={segment.content} />
         ) : (
           <pre key={idx} className={textClassName}>
-            {segment.content}
+            {segment.content.trim()}
           </pre>
         )
       )}
-    </>
+    </div>
   );
 };

@@ -1354,9 +1354,9 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             <ChatInputToast toast={toast} onDismiss={handleToastDismiss} />
           )}
 
-          {/* Attached reviews preview - show styled blocks with remove buttons */}
+          {/* Attached reviews preview - show styled blocks with remove/edit buttons */}
           {variant === "workspace" && attachedReviewIds.length > 0 && props.getReview && (
-            <div className="border-border max-h-36 space-y-1 overflow-y-auto border-b px-1.5 py-1">
+            <div className="border-border max-h-[50vh] space-y-2 overflow-y-auto border-b px-1.5 py-1.5">
               {attachedReviewIds.map((reviewId) => {
                 const review = props.getReview!(reviewId);
                 if (!review) return null;
@@ -1365,6 +1365,11 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                     key={reviewId}
                     content={formatReviewNoteForChat(review.data).slice(8, -9)}
                     onRemove={() => detachReview(reviewId)}
+                    onEditComment={
+                      props.onUpdateReviewNote
+                        ? (newNote) => props.onUpdateReviewNote!(reviewId, newNote)
+                        : undefined
+                    }
                   />
                 );
               })}

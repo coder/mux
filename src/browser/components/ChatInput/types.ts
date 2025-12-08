@@ -42,6 +42,8 @@ export interface ChatInputWorkspaceVariant {
   onAttachedReviewsChange?: (reviewIds: string[]) => void;
   /** Get a pending review by ID (for resolving attached review IDs to data) */
   getReview?: (id: string) => PendingReview | undefined;
+  /** Update a review's comment/note */
+  onUpdateReviewNote?: (reviewId: string, newNote: string) => void;
 }
 
 // Creation variant: simplified for first message / workspace creation
