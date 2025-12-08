@@ -74,5 +74,10 @@
   },
   "footerSocials": {
     "github": "https://github.com/coder/mux"
+  },
+  "integrations": {
+    "ga4": {
+      "measurementId": "G-D1HL4PBRSY"
+    }
   }
 }
