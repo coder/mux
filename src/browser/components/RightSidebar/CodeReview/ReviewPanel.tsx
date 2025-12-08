@@ -133,9 +133,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // Derive hunks from diffState for use in filters and rendering
   const hunks = useMemo(
     () =>
-      diffState.status === "loaded" || diffState.status === "refreshing"
-        ? diffState.hunks
-        : [],
+      diffState.status === "loaded" || diffState.status === "refreshing" ? diffState.hunks : [],
     [diffState]
   );
 
@@ -627,7 +625,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         stats={stats}
         onFiltersChange={setFilters}
         onRefresh={() => setRefreshTrigger((prev) => prev + 1)}
-        isLoading={diffState.status === "loading" || diffState.status === "refreshing" || isLoadingTree}
+        isLoading={
+          diffState.status === "loading" || diffState.status === "refreshing" || isLoadingTree
+        }
         workspaceId={workspaceId}
         workspacePath={workspacePath}
         refreshTrigger={refreshTrigger}
