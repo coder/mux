@@ -165,6 +165,8 @@ interface DiffRendererProps {
   fontSize?: string;
   /** Max height for diff container (default: "400px", use "none" for no limit) */
   maxHeight?: string;
+  /** Additional className for container (e.g., "rounded-none" to remove rounding) */
+  className?: string;
 }
 
 /**
@@ -241,6 +243,7 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
   filePath,
   fontSize,
   maxHeight,
+  className,
 }) => {
   // Detect language for syntax highlighting (memoized to prevent repeated detection)
   const { theme } = useTheme();
@@ -254,14 +257,14 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
   // Show loading state while highlighting
   if (!highlightedChunks) {
     return (
-      <DiffContainer fontSize={fontSize} maxHeight={maxHeight}>
+      <DiffContainer fontSize={fontSize} maxHeight={maxHeight} className={className}>
         <div style={{ opacity: 0.5, padding: "8px" }}>Processing...</div>
       </DiffContainer>
     );
   }
 
   return (
-    <DiffContainer fontSize={fontSize} maxHeight={maxHeight}>
+    <DiffContainer fontSize={fontSize} maxHeight={maxHeight} className={className}>
       {highlightedChunks.flatMap((chunk) =>
         chunk.lines.map((line) => {
           const indicator = chunk.type === "add" ? "+" : chunk.type === "remove" ? "-" : " ";
@@ -379,16 +382,18 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
         return `${lineInfo.lineNum} ${indicator} ${content}`;
       });
 
-      // Elide middle lines if more than 3 lines selected
+      // Elide middle lines if more than 20 lines selected (show 10 at start, 10 at end)
       let selectedCode: string;
-      if (allLines.length <= 3) {
+      const CONTEXT_LINES = 10;
+      const MAX_FULL_LINES = CONTEXT_LINES * 2;
+      if (allLines.length <= MAX_FULL_LINES) {
         selectedCode = allLines.join("\n");
       } else {
-        const omittedCount = allLines.length - 2;
+        const omittedCount = allLines.length - MAX_FULL_LINES;
         selectedCode = [
-          allLines[0],
+          ...allLines.slice(0, CONTEXT_LINES),
           `    (${omittedCount} lines omitted)`,
-          allLines[allLines.length - 1],
+          ...allLines.slice(-CONTEXT_LINES),
         ].join("\n");
       }
 

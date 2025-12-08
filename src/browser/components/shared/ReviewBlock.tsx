@@ -79,12 +79,13 @@ export const ReviewBlock: React.FC<ReviewBlockProps> = ({ content, onRemove }) =
 
       {/* Code snippet */}
       {parsed.code && (
-        <div className="max-h-28 overflow-auto border-b border-[var(--color-review-accent)]/20 text-[11px]">
+        <div className="max-h-64 overflow-auto border-b border-[var(--color-review-accent)]/20 text-[11px]">
           <DiffRenderer
             content={diffContent}
             showLineNumbers={false}
             fontSize="11px"
             filePath={parsed.filePath}
+            className="rounded-none"
           />
         </div>
       )}

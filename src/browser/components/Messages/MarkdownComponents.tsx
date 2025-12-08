@@ -112,23 +112,14 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
   );
 };
 
-// Helper to extract text content from children
-function extractTextContent(children: ReactNode): string {
-  if (typeof children === "string") return children;
-  if (Array.isArray(children)) {
-    return children
-      .map((child): string => {
-        if (typeof child === "string") return child;
-        // Handle React elements - check if it's a valid element with props
-        if (child !== null && typeof child === "object" && "props" in child) {
-          const element = child as React.ReactElement<{ children?: ReactNode }>;
-          if (element.props.children) {
-            return extractTextContent(element.props.children);
-          }
-        }
-        return "";
-      })
-      .join("");
+// Helper to extract text from React children (needed because markdown parser wraps content in nodes)
+function extractTextContent(node: ReactNode): string {
+  if (typeof node === "string") return node;
+  if (typeof node === "number") return String(node);
+  if (!node) return "";
+  if (Array.isArray(node)) return node.map(extractTextContent).join("");
+  if (typeof node === "object" && "props" in node) {
+    return extractTextContent((node as React.ReactElement<{ children?: ReactNode }>).props.children);
   }
   return "";
 }
