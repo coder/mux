@@ -174,39 +174,10 @@ export class SSHRuntime implements Runtime {
       fullCommand = `timeout -s KILL ${remoteTimeout} ${fullCommand}`;
     }
 
-    // Build SSH args
+    // Build SSH args from shared base config
     // -T: Disable pseudo-terminal allocation (default)
     // -t: Force pseudo-terminal allocation (for interactive shells)
-    const sshArgs: string[] = [options.forcePTY ? "-t" : "-T"];
-
-    // Add port if specified
-    if (this.config.port) {
-      sshArgs.push("-p", this.config.port.toString());
-    }
-
-    // Add identity file if specified
-    if (this.config.identityFile) {
-      sshArgs.push("-i", this.config.identityFile);
-      // Disable strict host key checking for test environments
-      sshArgs.push("-o", "StrictHostKeyChecking=no");
-      sshArgs.push("-o", "UserKnownHostsFile=/dev/null");
-      sshArgs.push("-o", "LogLevel=ERROR"); // Suppress SSH warnings
-    }
-
-    // Enable SSH connection multiplexing for better performance and to avoid
-    // exhausting connection limits when running many concurrent operations
-    // ControlMaster=auto: Create master connection if none exists, otherwise reuse
-    // ControlPath: Unix socket path for multiplexing
-    // ControlPersist=60: Keep master connection alive for 60s after last session
-    //
-    // Socket reuse is safe even with timeouts because:
-    // - Each SSH command gets its own channel within the multiplexed connection
-    // - SIGKILL on the client immediately closes that channel
-    // - Remote sshd terminates the command when the channel closes
-    // - Multiplexing only shares the TCP connection, not command lifetime
-    sshArgs.push("-o", "ControlMaster=auto");
-    sshArgs.push("-o", `ControlPath=${this.controlPath}`);
-    sshArgs.push("-o", "ControlPersist=60");
+    const sshArgs: string[] = [options.forcePTY ? "-t" : "-T", ...this.buildSSHArgs()];
 
     // Set comprehensive timeout options to ensure SSH respects the timeout
     // ConnectTimeout: Maximum time to wait for connection establishment (DNS, TCP handshake, SSH auth)
@@ -675,10 +646,10 @@ export class SSHRuntime implements Runtime {
   }
 
   /**
-   * Build common SSH arguments based on runtime config
-   * @param includeHost - Whether to include the host in the args (for direct ssh commands)
+   * Build base SSH args shared by all SSH operations.
+   * Includes: port, identity file, LogLevel, ControlMaster options.
    */
-  private buildSSHArgs(includeHost = false): string[] {
+  private buildSSHArgs(): string[] {
     const args: string[] = [];
 
     // Add port if specified
@@ -692,18 +663,17 @@ export class SSHRuntime implements Runtime {
       // Disable strict host key checking for test environments
       args.push("-o", "StrictHostKeyChecking=no");
       args.push("-o", "UserKnownHostsFile=/dev/null");
-      args.push("-o", "LogLevel=ERROR");
     }
 
+    // Suppress SSH warnings (e.g., ControlMaster messages) that would pollute command output
+    // These go to stderr and get merged with stdout in bash tool results
+    args.push("-o", "LogLevel=ERROR");
+
     // Add ControlMaster options for connection multiplexing
-    // This ensures git bundle transfers also reuse the master connection
+    // This ensures all SSH operations reuse the master connection
     args.push("-o", "ControlMaster=auto");
     args.push("-o", `ControlPath=${this.controlPath}`);
     args.push("-o", "ControlPersist=60");
-
-    if (includeHost) {
-      args.push(this.config.host);
-    }
 
     return args;
   }
@@ -767,7 +737,7 @@ export class SSHRuntime implements Runtime {
           return;
         }
 
-        const sshArgs = this.buildSSHArgs(true);
+        const sshArgs = [...this.buildSSHArgs(), this.config.host];
         const command = `cd ${shescape.quote(projectPath)} && git bundle create - --all | ssh ${sshArgs.join(" ")} "cat > ${bundleTempPath}"`;
 
         log.debug(`Creating bundle: ${command}`);
