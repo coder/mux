@@ -21,10 +21,6 @@ export class LocalBackgroundHandle implements BackgroundHandle {
 
   constructor(
     private readonly pid: number,
-    /**
-     * Process group ID for termination (looked up via universal fallback: ps → /proc → PID).
-     */
-    private readonly pgid: number,
     public readonly outputDir: string
   ) {}
 
@@ -54,8 +50,8 @@ export class LocalBackgroundHandle implements BackgroundHandle {
 
     try {
       const exitCodePath = path.join(this.outputDir, "exit_code");
-      const terminateCmd = buildTerminateCommand(this.pgid, exitCodePath);
-      log.debug(`LocalBackgroundHandle: Terminating process group ${this.pgid}`);
+      const terminateCmd = buildTerminateCommand(this.pid, exitCodePath);
+      log.debug(`LocalBackgroundHandle: Terminating process group ${this.pid}`);
       using proc = execAsync(terminateCmd, { shell: getBashPath() });
       await proc.result;
     } catch (error) {

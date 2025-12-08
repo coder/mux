@@ -27,7 +27,7 @@ import { DisposableProcess, execAsync } from "@/node/utils/disposableExec";
 import { expandTilde } from "./tildeExpansion";
 import { getInitHookPath, createLineBufferedLoggers } from "./initHook";
 import { LocalBackgroundHandle } from "./LocalBackgroundHandle";
-import { buildWrapperScript, buildSpawnCommand, parsePidPgid } from "./backgroundCommands";
+import { buildWrapperScript, buildSpawnCommand, parsePid } from "./backgroundCommands";
 import { log } from "@/node/services/log";
 import { toPosixPath } from "@/node/utils/paths";
 
@@ -378,17 +378,15 @@ export abstract class LocalBaseRuntime implements Runtime {
       using proc = execAsync(spawnCommand, { shell: getBashPath() });
       const result = await proc.result;
 
-      const parsed = parsePidPgid(result.stdout);
-      if (!parsed) {
+      const pid = parsePid(result.stdout);
+      if (!pid) {
         log.debug(`LocalBaseRuntime.spawnBackground: Invalid PID: ${result.stdout}`);
         return { success: false, error: `Failed to get valid PID from spawn: ${result.stdout}` };
       }
 
-      log.debug(
-        `LocalBaseRuntime.spawnBackground: Spawned with PID ${parsed.pid}, PGID ${parsed.pgid}`
-      );
-      const handle = new LocalBackgroundHandle(parsed.pid, parsed.pgid, outputDir);
-      return { success: true, handle, pid: parsed.pid };
+      log.debug(`LocalBaseRuntime.spawnBackground: Spawned with PID ${pid}`);
+      const handle = new LocalBackgroundHandle(pid, outputDir);
+      return { success: true, handle, pid };
     } catch (e) {
       const err = e as Error;
       log.debug(`LocalBaseRuntime.spawnBackground: Failed to spawn: ${err.message}`);

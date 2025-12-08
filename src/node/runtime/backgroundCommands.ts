@@ -13,18 +13,12 @@ export function parseExitCode(content: string): number | null {
   return isNaN(code) ? null : code;
 }
 /**
- * Parse "PID PGID" output from buildSpawnCommand.
- * Returns { pid, pgid } or null if PID is invalid.
- * Falls back PGID to PID if PGID parsing fails.
+ * Parse PID from buildSpawnCommand output.
+ * Returns the PID or null if invalid.
  */
-export function parsePidPgid(output: string): { pid: number; pgid: number } | null {
-  const [pidStr, pgidStr] = output.trim().split(/\s+/);
-  const pid = parseInt(pidStr, 10);
-  if (isNaN(pid) || pid <= 0) {
-    return null;
-  }
-  const pgid = parseInt(pgidStr, 10);
-  return { pid, pgid: isNaN(pgid) ? pid : pgid };
+export function parsePid(output: string): number | null {
+  const pid = parseInt(output.trim(), 10);
+  return isNaN(pid) || pid <= 0 ? null : pid;
 }
 
 /**
@@ -106,37 +100,30 @@ export interface SpawnCommandOptions {
  * set -m: enables job control so backgrounded process gets its own process group (PID === PGID)
  * nohup: ignores SIGHUP (survives terminal hangup)
  *
- * Returns "PID PGID" via echo. With set -m, the PGID equals PID, but we still look it up
- * for verification and compatibility.
+ * Returns PID via echo. With set -m, PID === PGID (process is its own group leader).
  */
 export function buildSpawnCommand(options: SpawnCommandOptions): string {
   const bash = options.bashPath ?? "bash";
   const nicePrefix = options.niceness !== undefined ? `nice -n ${options.niceness} ` : "";
   const quotePath = options.quotePath ?? shellQuote;
 
-  // With set -m, the backgrounded process gets its own process group (PID === PGID).
-  // We still look up PGID for verification: try ps → /proc → fall back to PID
-  const pgidLookup =
-    "PGID=$(ps -o pgid= -p $! 2>/dev/null | tr -d ' ') || " +
-    "PGID=$(cat /proc/$!/pgid 2>/dev/null) || " +
-    "PGID=$!";
-
   return (
     `(set -m; ${nicePrefix}nohup ${shellQuote(bash)} -c ${shellQuote(options.wrapperScript)} ` +
     `> ${quotePath(options.stdoutPath)} ` +
     `2> ${quotePath(options.stderrPath)} ` +
-    `< /dev/null & ${pgidLookup}; echo "$! $PGID")`
+    `< /dev/null & echo $!)`
   );
 }
 
 /**
  * Build the terminate command for killing a process group.
  *
- * Uses negative PGID to kill entire process group.
+ * Uses negative PID to kill entire process group.
+ * Relies on set -m ensuring PID === PGID (process is its own group leader).
  * Sends SIGTERM, waits 2 seconds, then SIGKILL if still running.
  * Writes EXIT_CODE_SIGKILL on force kill.
  *
- * @param pid - Process ID to terminate
+ * @param pid - Process ID (equals PGID due to set -m in buildSpawnCommand)
  * @param exitCodePath - Path to write exit code (raw, will be quoted by quotePath)
  * @param quotePath - Function to quote path (default: shellQuote). Use expandTildeForSSH for SSH.
  */
@@ -145,12 +132,12 @@ export function buildTerminateCommand(
   exitCodePath: string,
   quotePath: (p: string) => string = shellQuote
 ): string {
-  const pgid = -pid;
+  const negPid = -pid; // Negative PID targets process group (PID === PGID due to set -m)
   return (
-    `kill -15 ${pgid} 2>/dev/null || true; ` +
+    `kill -15 ${negPid} 2>/dev/null || true; ` +
     `sleep 2; ` +
     `if kill -0 ${pid} 2>/dev/null; then ` +
-    `kill -9 ${pgid} 2>/dev/null || true; ` +
+    `kill -9 ${negPid} 2>/dev/null || true; ` +
     `echo ${EXIT_CODE_SIGKILL} > ${quotePath(exitCodePath)}; ` +
     `fi`
   );

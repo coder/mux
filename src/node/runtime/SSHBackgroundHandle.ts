@@ -21,10 +21,6 @@ export class SSHBackgroundHandle implements BackgroundHandle {
   constructor(
     private readonly sshRuntime: SSHRuntime,
     private readonly pid: number,
-    /**
-     * Process group ID for termination (looked up via universal fallback: ps → /proc → PID).
-     */
-    private readonly pgid: number,
     /** Remote path to output directory (e.g., /tmp/mux-bashes/workspace/bg-xxx) */
     public readonly outputDir: string
   ) {}
@@ -68,12 +64,12 @@ export class SSHBackgroundHandle implements BackgroundHandle {
       // Pass raw path + expandTildeForSSH to avoid double-quoting
       // (expandTildeForSSH returns quoted strings, buildTerminateCommand would quote again)
       const exitCodePath = `${this.outputDir}/exit_code`;
-      const terminateCmd = buildTerminateCommand(this.pgid, exitCodePath, expandTildeForSSH);
+      const terminateCmd = buildTerminateCommand(this.pid, exitCodePath, expandTildeForSSH);
       await execBuffered(this.sshRuntime, terminateCmd, {
         cwd: "/",
         timeout: 15,
       });
-      log.debug(`SSHBackgroundHandle: Terminated process group ${this.pgid} (PID ${this.pid})`);
+      log.debug(`SSHBackgroundHandle: Terminated process group ${this.pid}`);
     } catch (error) {
       // Process may already be dead - that's fine
       log.debug(
