@@ -667,7 +667,8 @@ export class SSHRuntime implements Runtime {
 
     // Suppress SSH warnings (e.g., ControlMaster messages) that would pollute command output
     // These go to stderr and get merged with stdout in bash tool results
-    args.push("-o", "LogLevel=ERROR");
+    // Use FATAL (not ERROR) because mux_client_request_session messages are at ERROR level
+    args.push("-o", "LogLevel=FATAL");
 
     // Add ControlMaster options for connection multiplexing
     // This ensures all SSH operations reuse the master connection
