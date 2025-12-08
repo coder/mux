@@ -136,8 +136,8 @@ describeIntegration("MCP server integration with model", () => {
           toolCallEnds.map((e) => ({ toolName: e.toolName, resultType: typeof e.result }))
         );
 
-        // Find the screenshot tool result
-        const screenshotResult = toolCallEnds.find((e) => e.toolName === "take_screenshot");
+        // Find the screenshot tool result (namespaced as chrome_take_screenshot)
+        const screenshotResult = toolCallEnds.find((e) => e.toolName === "chrome_take_screenshot");
         expect(screenshotResult).toBeDefined();
 
         // Verify the result has correct AI SDK format with mediaType
@@ -275,8 +275,8 @@ describeIntegration("MCP server integration with model", () => {
         // Should have at least one tool call
         expect(toolCallStarts.length).toBeGreaterThan(0);
 
-        // Should have called the MCP memory tool (create_entities)
-        const mcpToolCall = toolCallStarts.find((e) => e.toolName === "create_entities");
+        // Should have called the MCP memory tool (namespaced as memory_create_entities)
+        const mcpToolCall = toolCallStarts.find((e) => e.toolName === "memory_create_entities");
         expect(mcpToolCall).toBeDefined();
 
         // Verify response mentions the entity was created

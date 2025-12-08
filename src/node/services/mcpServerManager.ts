@@ -295,7 +295,11 @@ export class MCPServerManager {
   private collectTools(instances: Map<string, MCPServerInstance>): Record<string, Tool> {
     const aggregated: Record<string, Tool> = {};
     for (const instance of instances.values()) {
-      Object.assign(aggregated, instance.tools);
+      for (const [toolName, tool] of Object.entries(instance.tools)) {
+        // Namespace tools with server name to prevent collisions
+        const namespacedName = `${instance.name}_${toolName}`;
+        aggregated[namespacedName] = tool;
+      }
     }
     return aggregated;
   }
