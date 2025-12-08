@@ -290,16 +290,6 @@ export class BackgroundProcessManager extends EventEmitter {
   }
 
   /**
-   * Mark a process as no longer foreground (after it completes or is backgrounded).
-   */
-  markAsBackground(processId: string): void {
-    const proc = this.processes.get(processId);
-    if (proc) {
-      proc.isForeground = false;
-    }
-  }
-
-  /**
    * Write/update meta.json for a process
    */
   private async updateMetaFile(proc: BackgroundProcess): Promise<void> {

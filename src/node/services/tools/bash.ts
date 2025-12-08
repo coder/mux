@@ -17,20 +17,6 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 
 /**
- * Error thrown when a foreground process is sent to background.
- * Used to signal early return from foreground execution.
- */
-export class BackgroundedError extends Error {
-  constructor(
-    public readonly processId: string,
-    public readonly outputDir: string
-  ) {
-    super(`Process ${processId} sent to background`);
-    this.name = "BackgroundedError";
-  }
-}
-
-/**
  * Validates bash script input for common issues
  * Returns error result if validation fails, null if valid
  */
