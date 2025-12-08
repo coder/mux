@@ -189,13 +189,7 @@ export const router = (authToken?: string) => {
           .input(schemas.projects.mcp.test.input)
           .output(schemas.projects.mcp.test.output)
           .handler(({ context, input }) =>
-            context.mcpServerManager.testServer(input.projectPath, input.name)
-          ),
-        testCommand: t
-          .input(schemas.projects.mcp.testCommand.input)
-          .output(schemas.projects.mcp.testCommand.output)
-          .handler(({ context, input }) =>
-            context.mcpServerManager.testCommand(input.projectPath, input.command)
+            context.mcpServerManager.test(input.projectPath, input.name, input.command)
           ),
       },
     },

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import {
@@ -15,30 +15,87 @@ import {
   X,
 } from "lucide-react";
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
-import type { MCPTestResult } from "@/common/types/mcp";
+import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
+import type { CachedMCPTestResult } from "@/common/types/mcp";
+import { getMCPTestResultsKey } from "@/common/constants/storage";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+
+type CachedResults = Record<string, CachedMCPTestResult>;
+
+/** Hook to manage MCP test results with localStorage caching */
+function useMCPTestCache(projectPath: string) {
+  const storageKey = useMemo(
+    () => (projectPath ? getMCPTestResultsKey(projectPath) : ""),
+    [projectPath]
+  );
+
+  const [cache, setCache] = useState<CachedResults>(() =>
+    storageKey ? readPersistedState<CachedResults>(storageKey, {}) : {}
+  );
+
+  // Reload cache when project changes
+  useEffect(() => {
+    if (storageKey) {
+      setCache(readPersistedState<CachedResults>(storageKey, {}));
+    } else {
+      setCache({});
+    }
+  }, [storageKey]);
+
+  const setResult = useCallback(
+    (name: string, result: CachedMCPTestResult["result"]) => {
+      const entry: CachedMCPTestResult = { result, testedAt: Date.now() };
+      setCache((prev) => {
+        const next = { ...prev, [name]: entry };
+        if (storageKey) updatePersistedState(storageKey, next);
+        return next;
+      });
+    },
+    [storageKey]
+  );
+
+  const clearResult = useCallback(
+    (name: string) => {
+      setCache((prev) => {
+        const next = { ...prev };
+        delete next[name];
+        if (storageKey) updatePersistedState(storageKey, next);
+        return next;
+      });
+    },
+    [storageKey]
+  );
+
+  return { cache, setResult, clearResult };
+}
 
 export const ProjectSettingsSection: React.FC = () => {
   const { api } = useAPI();
   const { projects } = useProjectContext();
   const projectList = Array.from(projects.keys());
 
+  // Core state
   const [selectedProject, setSelectedProject] = useState<string>("");
   const [servers, setServers] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Test state with caching
+  const {
+    cache: testCache,
+    setResult: cacheTestResult,
+    clearResult: clearTestResult,
+  } = useMCPTestCache(selectedProject);
   const [testingServer, setTestingServer] = useState<string | null>(null);
-  const [testResults, setTestResults] = useState<Map<string, MCPTestResult>>(new Map());
 
-  // Add server form state
-  const [newServerName, setNewServerName] = useState("");
-  const [newServerCommand, setNewServerCommand] = useState("");
+  // Add form state
+  const [newServer, setNewServer] = useState({ name: "", command: "" });
   const [addingServer, setAddingServer] = useState(false);
-  const [testingNewCommand, setTestingNewCommand] = useState(false);
-  const [newCommandTestResult, setNewCommandTestResult] = useState<MCPTestResult | null>(null);
+  const [testingNew, setTestingNew] = useState(false);
+  const [newTestResult, setNewTestResult] = useState<CachedMCPTestResult | null>(null);
 
-  // Edit server state
-  const [editingServer, setEditingServer] = useState<string | null>(null);
-  const [editCommand, setEditCommand] = useState("");
+  // Edit state
+  const [editing, setEditing] = useState<{ name: string; command: string } | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
 
   // Set default project when projects load
@@ -64,13 +121,12 @@ export const ProjectSettingsSection: React.FC = () => {
 
   useEffect(() => {
     void refresh();
-    setTestResults(new Map());
   }, [refresh]);
 
   // Clear new command test result when command changes
   useEffect(() => {
-    setNewCommandTestResult(null);
-  }, [newServerCommand]);
+    setNewTestResult(null);
+  }, [newServer.command]);
 
   const handleRemove = useCallback(
     async (name: string) => {
@@ -81,6 +137,7 @@ export const ProjectSettingsSection: React.FC = () => {
         if (!result.success) {
           setError(result.error ?? "Failed to remove MCP server");
         } else {
+          clearTestResult(name);
           await refresh();
         }
       } catch (err) {
@@ -89,71 +146,67 @@ export const ProjectSettingsSection: React.FC = () => {
         setLoading(false);
       }
     },
-    [api, selectedProject, refresh]
+    [api, selectedProject, refresh, clearTestResult]
   );
 
   const handleTest = useCallback(
     async (name: string) => {
       if (!api || !selectedProject) return;
       setTestingServer(name);
-      setTestResults((prev) => {
-        const next = new Map(prev);
-        next.delete(name);
-        return next;
-      });
       try {
         const result = await api.projects.mcp.test({ projectPath: selectedProject, name });
-        setTestResults((prev) => new Map(prev).set(name, result));
+        cacheTestResult(name, result);
       } catch (err) {
-        setTestResults((prev) =>
-          new Map(prev).set(name, {
-            success: false,
-            error: err instanceof Error ? err.message : "Test failed",
-          })
-        );
+        cacheTestResult(name, {
+          success: false,
+          error: err instanceof Error ? err.message : "Test failed",
+        });
       } finally {
         setTestingServer(null);
       }
     },
-    [api, selectedProject]
+    [api, selectedProject, cacheTestResult]
   );
 
   const handleTestNewCommand = useCallback(async () => {
-    if (!api || !selectedProject || !newServerCommand.trim()) return;
-    setTestingNewCommand(true);
-    setNewCommandTestResult(null);
+    if (!api || !selectedProject || !newServer.command.trim()) return;
+    setTestingNew(true);
+    setNewTestResult(null);
     try {
-      const result = await api.projects.mcp.testCommand({
+      const result = await api.projects.mcp.test({
         projectPath: selectedProject,
-        command: newServerCommand.trim(),
+        command: newServer.command.trim(),
       });
-      setNewCommandTestResult(result);
+      setNewTestResult({ result, testedAt: Date.now() });
     } catch (err) {
-      setNewCommandTestResult({
-        success: false,
-        error: err instanceof Error ? err.message : "Test failed",
+      setNewTestResult({
+        result: { success: false, error: err instanceof Error ? err.message : "Test failed" },
+        testedAt: Date.now(),
       });
     } finally {
-      setTestingNewCommand(false);
+      setTestingNew(false);
     }
-  }, [api, selectedProject, newServerCommand]);
+  }, [api, selectedProject, newServer.command]);
 
   const handleAddServer = useCallback(async () => {
-    if (!api || !selectedProject || !newServerName.trim() || !newServerCommand.trim()) return;
+    if (!api || !selectedProject || !newServer.name.trim() || !newServer.command.trim()) return;
     setAddingServer(true);
     setError(null);
     try {
       const result = await api.projects.mcp.add({
         projectPath: selectedProject,
-        name: newServerName.trim(),
-        command: newServerCommand.trim(),
+        name: newServer.name.trim(),
+        command: newServer.command.trim(),
       });
       if (!result.success) {
         setError(result.error ?? "Failed to add MCP server");
       } else {
-        setNewServerName("");
-        setNewServerCommand("");
-        setNewCommandTestResult(null);
+        // Cache the test result if we have one
+        if (newTestResult?.result.success) {
+          cacheTestResult(newServer.name.trim(), newTestResult.result);
+        }
+        setNewServer({ name: "", command: "" });
+        setNewTestResult(null);
         await refresh();
       }
     } catch (err) {
@@ -161,39 +214,32 @@ export const ProjectSettingsSection: React.FC = () => {
     } finally {
       setAddingServer(false);
     }
-  }, [api, selectedProject, newServerName, newServerCommand, refresh]);
+  }, [api, selectedProject, newServer, newTestResult, refresh, cacheTestResult]);
 
   const handleStartEdit = useCallback((name: string, command: string) => {
-    setEditingServer(name);
-    setEditCommand(command);
+    setEditing({ name, command });
   }, []);
 
   const handleCancelEdit = useCallback(() => {
-    setEditingServer(null);
-    setEditCommand("");
+    setEditing(null);
   }, []);
 
   const handleSaveEdit = useCallback(async () => {
-    if (!api || !selectedProject || !editingServer || !editCommand.trim()) return;
+    if (!api || !selectedProject || !editing?.command.trim()) return;
     setSavingEdit(true);
     setError(null);
     try {
       const result = await api.projects.mcp.add({
         projectPath: selectedProject,
-        name: editingServer,
-        command: editCommand.trim(),
+        name: editing.name,
+        command: editing.command.trim(),
       });
       if (!result.success) {
         setError(result.error ?? "Failed to update MCP server");
       } else {
-        setEditingServer(null);
-        setEditCommand("");
-        // Clear test result for this server since command changed
-        setTestResults((prev) => {
-          const next = new Map(prev);
-          next.delete(editingServer);
-          return next;
-        });
+        // Clear cached test result since command changed
+        clearTestResult(editing.name);
+        setEditing(null);
         await refresh();
       }
     } catch (err) {
@@ -201,7 +247,7 @@ export const ProjectSettingsSection: React.FC = () => {
     } finally {
       setSavingEdit(false);
     }
-  }, [api, selectedProject, editingServer, editCommand, refresh]);
+  }, [api, selectedProject, editing, refresh, clearTestResult]);
 
   if (projectList.length === 0) {
     return (
@@ -215,8 +261,8 @@ export const ProjectSettingsSection: React.FC = () => {
   }
 
   const projectName = (path: string) => path.split(/[\\/]/).pop() ?? path;
-  const canAdd = newServerName.trim() && newServerCommand.trim();
-  const canTest = newServerCommand.trim();
+  const canAdd = newServer.name.trim() && newServer.command.trim();
+  const canTest = newServer.command.trim();
 
   return (
     <div className="space-y-6">
@@ -274,25 +320,28 @@ export const ProjectSettingsSection: React.FC = () => {
         <ul className="space-y-2">
           {Object.entries(servers).map(([name, command]) => {
             const isTesting = testingServer === name;
-            const testResult = testResults.get(name);
-            const isEditing = editingServer === name;
+            const cached = testCache[name];
+            const isEditing = editing?.name === name;
             return (
               <li key={name} className="border-border-medium bg-secondary/20 rounded-lg border p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{name}</span>
-                      {testResult?.success && !isEditing && (
-                        <span className="rounded bg-green-500/10 px-1.5 py-0.5 text-xs text-green-500">
-                          {testResult.tools.length} tools
+                      {cached?.result.success && !isEditing && (
+                        <span
+                          className="rounded bg-green-500/10 px-1.5 py-0.5 text-xs text-green-500"
+                          title={`Tested ${formatRelativeTime(cached.testedAt)}`}
+                        >
+                          {cached.result.tools.length} tools
                         </span>
                       )}
                     </div>
                     {isEditing ? (
                       <input
                         type="text"
-                        value={editCommand}
-                        onChange={(e) => setEditCommand(e.target.value)}
+                        value={editing.command}
+                        onChange={(e) => setEditing({ ...editing, command: e.target.value })}
                         className="border-border-medium bg-secondary/30 text-foreground placeholder:text-muted-foreground focus:ring-accent mt-1 w-full rounded-md border px-2 py-1 font-mono text-xs focus:ring-1 focus:outline-none"
                         autoFocus
                         spellCheck={false}
@@ -313,7 +362,7 @@ export const ProjectSettingsSection: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => void handleSaveEdit()}
-                          disabled={savingEdit || !editCommand.trim()}
+                          disabled={savingEdit || !editing.command.trim()}
                           className="text-muted-foreground rounded p-1.5 transition-colors hover:bg-green-500/10 hover:text-green-500 disabled:opacity-50"
                           title="Save (Enter)"
                         >
@@ -369,15 +418,18 @@ export const ProjectSettingsSection: React.FC = () => {
                     )}
                   </div>
                 </div>
-                {testResult && !testResult.success && !isEditing && (
+                {cached && !cached.result.success && !isEditing && (
                   <div className="text-destructive mt-2 flex items-start gap-1.5 text-xs">
                     <XCircle className="mt-0.5 h-3 w-3 shrink-0" />
-                    <span>{testResult.error}</span>
+                    <span>{cached.result.error}</span>
                   </div>
                 )}
-                {testResult?.success && testResult.tools.length > 0 && !isEditing && (
+                {cached?.result.success && cached.result.tools.length > 0 && !isEditing && (
                   <p className="text-muted-foreground mt-2 text-xs">
-                    Tools: {testResult.tools.join(", ")}
+                    Tools: {cached.result.tools.join(", ")}
+                    <span className="text-muted-foreground/60 ml-2">
+                      ({formatRelativeTime(cached.testedAt)})
+                    </span>
                   </p>
                 )}
               </li>
@@ -398,8 +450,8 @@ export const ProjectSettingsSection: React.FC = () => {
               id="server-name"
               type="text"
               placeholder="e.g., memory"
-              value={newServerName}
-              onChange={(e) => setNewServerName(e.target.value)}
+              value={newServer.name}
+              onChange={(e) => setNewServer((prev) => ({ ...prev, name: e.target.value }))}
               className="border-border-medium bg-secondary/30 text-foreground placeholder:text-muted-foreground focus:ring-accent w-full rounded-md border px-3 py-2 text-sm focus:ring-1 focus:outline-none"
             />
           </div>
@@ -411,32 +463,32 @@ export const ProjectSettingsSection: React.FC = () => {
               id="server-command"
               type="text"
               placeholder="e.g., npx -y @modelcontextprotocol/server-memory"
-              value={newServerCommand}
-              onChange={(e) => setNewServerCommand(e.target.value)}
+              value={newServer.command}
+              onChange={(e) => setNewServer((prev) => ({ ...prev, command: e.target.value }))}
               spellCheck={false}
               className="border-border-medium bg-secondary/30 text-foreground placeholder:text-muted-foreground focus:ring-accent w-full rounded-md border px-3 py-2 font-mono text-sm focus:ring-1 focus:outline-none"
             />
           </div>
 
           {/* Test result for new command */}
-          {newCommandTestResult && (
+          {newTestResult && (
             <div
               className={`flex items-start gap-2 rounded-md px-3 py-2 text-sm ${
-                newCommandTestResult.success
+                newTestResult.result.success
                   ? "bg-green-500/10 text-green-500"
                   : "bg-destructive/10 text-destructive"
               }`}
             >
-              {newCommandTestResult.success ? (
+              {newTestResult.result.success ? (
                 <>
                   <CheckCircle className="mt-0.5 h-4 w-4 shrink-0" />
                   <div>
                     <span className="font-medium">
-                      Connection successful — {newCommandTestResult.tools.length} tools available
+                      Connection successful — {newTestResult.result.tools.length} tools available
                     </span>
-                    {newCommandTestResult.tools.length > 0 && (
+                    {newTestResult.result.tools.length > 0 && (
                       <p className="mt-0.5 text-xs opacity-80">
-                        {newCommandTestResult.tools.join(", ")}
+                        {newTestResult.result.tools.join(", ")}
                       </p>
                     )}
                   </div>
@@ -444,7 +496,7 @@ export const ProjectSettingsSection: React.FC = () => {
               ) : (
                 <>
                   <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>{newCommandTestResult.error}</span>
+                  <span>{newTestResult.result.error}</span>
                 </>
               )}
             </div>
@@ -454,15 +506,15 @@ export const ProjectSettingsSection: React.FC = () => {
             <button
               type="button"
               onClick={() => void handleTestNewCommand()}
-              disabled={!canTest || testingNewCommand}
+              disabled={!canTest || testingNew}
               className="border-border-medium hover:bg-secondary flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm transition-colors disabled:opacity-50"
             >
-              {testingNewCommand ? (
+              {testingNew ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Play className="h-4 w-4" />
               )}
-              {testingNewCommand ? "Testing…" : "Test"}
+              {testingNew ? "Testing…" : "Test"}
             </button>
             <button
               type="button"

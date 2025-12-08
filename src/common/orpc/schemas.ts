@@ -44,7 +44,6 @@ export {
   MCPAddParamsSchema,
   MCPRemoveParamsSchema,
   MCPTestParamsSchema,
-  MCPTestCommandParamsSchema,
   MCPTestResultSchema,
 } from "./schemas/mcp";
 

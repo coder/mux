@@ -13,14 +13,14 @@ export const MCPRemoveParamsSchema = z.object({
   name: z.string(),
 });
 
+/**
+ * Unified test params - provide either name (to test configured server) or command (to test arbitrary command).
+ * At least one of name or command must be provided.
+ */
 export const MCPTestParamsSchema = z.object({
   projectPath: z.string(),
-  name: z.string(),
-});
-
-export const MCPTestCommandParamsSchema = z.object({
-  projectPath: z.string(),
-  command: z.string(),
+  name: z.string().optional(),
+  command: z.string().optional(),
 });
 
 export const MCPTestResultSchema = z.discriminatedUnion("success", [

@@ -80,7 +80,7 @@ export class MCPConfigService {
 
   async removeServer(projectPath: string, name: string): Promise<Result<void>> {
     const cfg = await this.getConfig(projectPath);
-    if (!cfg.servers?.[name]) {
+    if (!cfg.servers[name]) {
       return Err(`Server ${name} not found`);
     }
     delete cfg.servers[name];

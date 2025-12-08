@@ -49,6 +49,15 @@ export const SELECTED_WORKSPACE_KEY = "selectedWorkspace";
 export const EXPANDED_PROJECTS_KEY = "expandedProjects";
 
 /**
+ * Get the localStorage key for cached MCP server test results (per project)
+ * Format: "mcpTestResults:{projectPath}"
+ * Stores: Record<serverName, CachedMCPTestResult>
+ */
+export function getMCPTestResultsKey(projectPath: string): string {
+  return `mcpTestResults:${projectPath}`;
+}
+
+/**
  * Helper to create a thinking level storage key for a workspace
  * Format: "thinkingLevel:{workspaceId}"
  */

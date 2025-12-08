@@ -242,27 +242,23 @@ export class MCPServerManager {
   }
 
   /**
-   * Test an MCP server configuration by spawning it, fetching tools, then closing.
-   * Used by the Settings UI to verify a server works before relying on it.
+   * Test an MCP server. Provide either:
+   * - `name` to test a configured server by looking up its command
+   * - `command` to test an arbitrary command directly
    */
-  async testServer(projectPath: string, name: string): Promise<MCPTestResult> {
-    const servers = await this.configService.listServers(projectPath);
-    const command = servers[name];
-    if (!command) {
-      return { success: false, error: `Server "${name}" not found in configuration` };
+  async test(projectPath: string, name?: string, command?: string): Promise<MCPTestResult> {
+    if (name) {
+      const servers = await this.configService.listServers(projectPath);
+      const serverCommand = servers[name];
+      if (!serverCommand) {
+        return { success: false, error: `Server "${name}" not found in configuration` };
+      }
+      return runServerTest(serverCommand, projectPath, `server "${name}"`);
     }
-    return runServerTest(command, projectPath, `server "${name}"`);
-  }
-
-  /**
-   * Test an MCP command directly without requiring it to be in config.
-   * Used by Settings UI to validate before adding.
-   */
-  async testCommand(projectPath: string, command: string): Promise<MCPTestResult> {
-    if (!command.trim()) {
-      return { success: false, error: "Command is required" };
+    if (command?.trim()) {
+      return runServerTest(command, projectPath, "command");
     }
-    return runServerTest(command, projectPath, "command");
+    return { success: false, error: "Either name or command is required" };
   }
 
   private collectTools(instances: Map<string, MCPServerInstance>): Record<string, Tool> {

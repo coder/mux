@@ -585,6 +585,25 @@ const newCommandDefinition: SlashCommandDefinition = {
   },
 };
 
+/**
+ * Parse MCP subcommand that takes name + command (add/edit).
+ * Returns { name, command } or null if invalid.
+ */
+function parseMCPNameCommand(
+  subcommand: string,
+  tokens: string[],
+  rawInput: string
+): { name: string; command: string } | null {
+  const name = tokens[1];
+  // Extract command text after "subcommand name"
+  const command = rawInput
+    .trim()
+    .replace(new RegExp(`^${subcommand}\\s+[^\\s]+\\s*`, "i"), "")
+    .trim();
+  if (!name || !command) return null;
+  return { name, command };
+}
+
 const mcpCommandDefinition: SlashCommandDefinition = {
   key: "mcp",
   description: "Manage MCP servers for this project",
@@ -594,28 +613,13 @@ const mcpCommandDefinition: SlashCommandDefinition = {
     }
 
     const sub = cleanRemainingTokens[0];
-    if (sub === "add") {
-      const name = cleanRemainingTokens[1];
-      const commandText = rawInput
-        .trim()
-        .replace(/^add\s+[^\s]+\s*/i, "")
-        .trim();
-      if (!name || !commandText) {
-        return { type: "unknown-command", command: "mcp", subcommand: "add" };
-      }
-      return { type: "mcp-add", name, command: commandText };
-    }
 
-    if (sub === "edit") {
-      const name = cleanRemainingTokens[1];
-      const commandText = rawInput
-        .trim()
-        .replace(/^edit\s+[^\s]+\s*/i, "")
-        .trim();
-      if (!name || !commandText) {
-        return { type: "unknown-command", command: "mcp", subcommand: "edit" };
+    if (sub === "add" || sub === "edit") {
+      const parsed = parseMCPNameCommand(sub, cleanRemainingTokens, rawInput);
+      if (!parsed) {
+        return { type: "unknown-command", command: "mcp", subcommand: sub };
       }
-      return { type: "mcp-edit", name, command: commandText };
+      return { type: sub === "add" ? "mcp-add" : "mcp-edit", ...parsed };
     }
 
     if (sub === "remove") {

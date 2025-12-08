@@ -20,7 +20,6 @@ import {
   MCPRemoveParamsSchema,
   MCPServerMapSchema,
   MCPTestParamsSchema,
-  MCPTestCommandParamsSchema,
   MCPTestResultSchema,
 } from "./mcp";
 
@@ -139,10 +138,6 @@ export const projects = {
     },
     test: {
       input: MCPTestParamsSchema,
-      output: MCPTestResultSchema,
-    },
-    testCommand: {
-      input: MCPTestCommandParamsSchema,
       output: MCPTestResultSchema,
     },
   },
