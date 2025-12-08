@@ -169,6 +169,65 @@ describe("mux CLI", () => {
       expect(result.exitCode).toBe(1);
       expect(result.output.length).toBeGreaterThan(0);
     });
+
+    test("--help shows --mcp option", async () => {
+      const result = await runCli(["run", "--help"]);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("--mcp");
+      expect(result.stdout).toContain("name=command");
+      expect(result.stdout).toContain("--no-mcp-config");
+    });
+
+    test("--mcp without = shows error", async () => {
+      const result = await runRunDirect(["--mcp", "invalid-format", "test message"]);
+      expect(result.exitCode).toBe(1);
+      expect(result.output).toContain("Invalid --mcp format");
+      expect(result.output).toContain("Expected: name=command");
+    });
+
+    test("--mcp with empty name shows error", async () => {
+      const result = await runRunDirect(["--mcp", "=some-command", "test message"]);
+      expect(result.exitCode).toBe(1);
+      expect(result.output).toContain("Server name is required");
+    });
+
+    test("--mcp with empty command shows error", async () => {
+      const result = await runRunDirect(["--mcp", "myserver=", "test message"]);
+      expect(result.exitCode).toBe(1);
+      expect(result.output).toContain("Command is required");
+    });
+
+    test("--mcp accepts valid name=command format", async () => {
+      // Test with a nonexistent directory to ensure parsing succeeds before failing
+      const result = await runRunDirect([
+        "--dir",
+        "/nonexistent/path/for/mcp/test",
+        "--mcp",
+        "memory=npx -y @modelcontextprotocol/server-memory",
+        "test message",
+      ]);
+      // Should not fail with "Invalid --mcp format" - will fail on directory instead
+      expect(result.output).not.toContain("Invalid --mcp format");
+      // Verify it got past argument parsing to directory validation
+      expect(result.exitCode).toBe(1);
+    });
+
+    test("--mcp can be repeated multiple times", async () => {
+      // Test with a nonexistent directory to ensure parsing succeeds before failing
+      const result = await runRunDirect([
+        "--dir",
+        "/nonexistent/path/for/mcp/test",
+        "--mcp",
+        "server1=command1",
+        "--mcp",
+        "server2=command2 with args",
+        "test message",
+      ]);
+      // Should not fail with "Invalid --mcp format"
+      expect(result.output).not.toContain("Invalid --mcp format");
+      // Verify it got past argument parsing to directory validation
+      expect(result.exitCode).toBe(1);
+    });
   });
 
   describe("mux server", () => {

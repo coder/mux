@@ -100,12 +100,30 @@ interface WorkspaceServers {
   lastActivity: number;
 }
 
+export interface MCPServerManagerOptions {
+  /** Inline servers to use (merged with config file servers by default) */
+  inlineServers?: MCPServerMap;
+  /** If true, ignore config file servers and use only inline servers */
+  ignoreConfigFile?: boolean;
+}
+
 export class MCPServerManager {
   private readonly workspaceServers = new Map<string, WorkspaceServers>();
   private readonly idleCheckInterval: ReturnType<typeof setInterval>;
+  private inlineServers: MCPServerMap = {};
+  private ignoreConfigFile = false;
 
-  constructor(private readonly configService: MCPConfigService) {
+  constructor(
+    private readonly configService: MCPConfigService,
+    options?: MCPServerManagerOptions
+  ) {
     this.idleCheckInterval = setInterval(() => this.cleanupIdleServers(), IDLE_CHECK_INTERVAL_MS);
+    if (options?.inlineServers) {
+      this.inlineServers = options.inlineServers;
+    }
+    if (options?.ignoreConfigFile) {
+      this.ignoreConfigFile = options.ignoreConfigFile;
+    }
   }
 
   /**
@@ -131,11 +149,23 @@ export class MCPServerManager {
   }
 
   /**
+   * Get merged servers: config file servers (unless ignoreConfigFile) + inline servers.
+   * Inline servers take precedence over config file servers with the same name.
+   */
+  private async getMergedServers(projectPath: string): Promise<MCPServerMap> {
+    const configServers = this.ignoreConfigFile
+      ? {}
+      : await this.configService.listServers(projectPath);
+    // Inline servers override config file servers
+    return { ...configServers, ...this.inlineServers };
+  }
+
+  /**
    * List configured MCP servers for a project (name -> command).
    * Used to show server info in the system prompt.
    */
   async listServers(projectPath: string): Promise<MCPServerMap> {
-    return this.configService.listServers(projectPath);
+    return this.getMergedServers(projectPath);
   }
 
   async getToolsForWorkspace(options: {
@@ -145,7 +175,7 @@ export class MCPServerManager {
     workspacePath: string;
   }): Promise<Record<string, Tool>> {
     const { workspaceId, projectPath, runtime, workspacePath } = options;
-    const servers = await this.configService.listServers(projectPath);
+    const servers = await this.getMergedServers(projectPath);
     const signature = JSON.stringify(servers);
     const serverNames = Object.keys(servers);
 

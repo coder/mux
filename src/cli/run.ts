@@ -155,6 +155,27 @@ function renderUnknown(value: unknown): string {
   }
 }
 
+interface MCPServerEntry {
+  name: string;
+  command: string;
+}
+
+function collectMcpServers(value: string, previous: MCPServerEntry[]): MCPServerEntry[] {
+  const eqIndex = value.indexOf("=");
+  if (eqIndex === -1) {
+    throw new Error(`Invalid --mcp format: "${value}". Expected: name=command`);
+  }
+  const name = value.slice(0, eqIndex).trim();
+  const command = value.slice(eqIndex + 1).trim();
+  if (!name) {
+    throw new Error(`Invalid --mcp format: "${value}". Server name is required`);
+  }
+  if (!command) {
+    throw new Error(`Invalid --mcp format: "${value}". Command is required`);
+  }
+  return [...previous, { name, command }];
+}
+
 const program = new Command();
 
 program
@@ -173,6 +194,8 @@ program
   .option("-q, --quiet", "only output final result")
   .option("--workspace-id <id>", "explicit workspace ID (auto-generated if not provided)")
   .option("--config-root <path>", "mux config directory")
+  .option("--mcp <server>", "MCP server as name=command (can be repeated)", collectMcpServers, [])
+  .option("--no-mcp-config", "ignore .mux/mcp.jsonc, use only --mcp servers")
   .addHelpText(
     "after",
     `
@@ -183,6 +206,8 @@ Examples:
   $ mux run --mode plan "Refactor the auth module"
   $ echo "Add logging" | mux run
   $ mux run --json "List all files" | jq '.type'
+  $ mux run --mcp "memory=npx -y @modelcontextprotocol/server-memory" "Remember this"
+  $ mux run --mcp "chrome=npx chrome-devtools-mcp" --mcp "fs=npx @anthropic/mcp-fs" "Take a screenshot"
 `
   );
 
@@ -201,6 +226,8 @@ interface CLIOptions {
   quiet?: boolean;
   workspaceId?: string;
   configRoot?: string;
+  mcp: MCPServerEntry[];
+  mcpConfig: boolean;
 }
 
 const opts = program.opts<CLIOptions>();
@@ -282,7 +309,14 @@ async function main(): Promise<void> {
 
   // Initialize MCP support
   const mcpConfigService = new MCPConfigService();
-  const mcpServerManager = new MCPServerManager(mcpConfigService);
+  const inlineServers: Record<string, string> = {};
+  for (const entry of opts.mcp) {
+    inlineServers[entry.name] = entry.command;
+  }
+  const mcpServerManager = new MCPServerManager(mcpConfigService, {
+    inlineServers,
+    ignoreConfigFile: !opts.mcpConfig,
+  });
   aiService.setMCPServerManager(mcpServerManager);
 
   const session = new AgentSession({
