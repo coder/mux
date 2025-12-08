@@ -1,5 +1,13 @@
 import { useState, useCallback } from "react";
-import { Modal } from "./Modal";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/browser/components/ui/dialog";
+import { Button } from "@/browser/components/ui/button";
 
 interface AuthTokenModalProps {
   isOpen: boolean;
@@ -48,64 +56,43 @@ export function AuthTokenModal(props: AuthTokenModalProps) {
     [token, onSubmit]
   );
 
+  // This modal cannot be dismissed without providing a token
+  const handleOpenChange = useCallback(() => {
+    // Do nothing - modal cannot be closed without submitting
+  }, []);
+
   return (
-    <Modal isOpen={props.isOpen} onClose={() => undefined} title="Authentication Required">
-      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        <p style={{ margin: 0, color: "var(--color-text-secondary)" }}>
-          This server requires an authentication token. Enter the token provided when the server was
-          started.
-        </p>
+    <Dialog open={props.isOpen} onOpenChange={handleOpenChange}>
+      <DialogContent showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>Authentication Required</DialogTitle>
+          <DialogDescription>
+            This server requires an authentication token. Enter the token provided when the server
+            was started.
+          </DialogDescription>
+        </DialogHeader>
 
-        {props.error && (
-          <div
-            style={{
-              padding: "8px 12px",
-              borderRadius: 4,
-              backgroundColor: "var(--color-error-background, rgba(255, 0, 0, 0.1))",
-              color: "var(--color-error, #ff6b6b)",
-              fontSize: 13,
-            }}
-          >
-            {props.error}
-          </div>
-        )}
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          {props.error && (
+            <div className="bg-error-bg text-error rounded p-2 px-3 text-[13px]">{props.error}</div>
+          )}
 
-        <input
-          type="password"
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          placeholder="Enter auth token"
-          autoFocus
-          style={{
-            padding: "10px 12px",
-            borderRadius: 4,
-            border: "1px solid var(--color-border)",
-            backgroundColor: "var(--color-input-background)",
-            color: "var(--color-text)",
-            fontSize: 14,
-            outline: "none",
-          }}
-        />
+          <input
+            type="password"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="Enter auth token"
+            autoFocus
+            className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-muted text-foreground rounded border px-3 py-2.5 text-sm focus:outline-none"
+          />
 
-        <button
-          type="submit"
-          disabled={!token.trim()}
-          style={{
-            padding: "10px 16px",
-            borderRadius: 4,
-            border: "none",
-            backgroundColor: token.trim()
-              ? "var(--color-primary)"
-              : "var(--color-button-disabled-background)",
-            color: token.trim() ? "white" : "var(--color-text-disabled)",
-            fontSize: 14,
-            fontWeight: 500,
-            cursor: token.trim() ? "pointer" : "not-allowed",
-          }}
-        >
-          Connect
-        </button>
-      </form>
-    </Modal>
+          <DialogFooter className="pt-0">
+            <Button type="submit" disabled={!token.trim()} className="w-full">
+              Connect
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

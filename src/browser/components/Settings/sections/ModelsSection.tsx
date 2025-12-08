@@ -7,6 +7,14 @@ import { useGateway } from "@/browser/hooks/useGatewayModels";
 import { ModelRow } from "./ModelRow";
 import { useAPI } from "@/browser/contexts/API";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/browser/components/ui/select";
+import { Button } from "@/browser/components/ui/button";
 
 // Providers to exclude from the custom models UI (handled specially or internal)
 const HIDDEN_PROVIDERS = new Set(["mux-gateway"]);
@@ -167,19 +175,22 @@ export function ModelsSection() {
 
         {/* Add new model form */}
         <div className="border-border-medium bg-background-secondary rounded-md border p-2">
-          <div className="flex flex-wrap gap-1.5">
-            <select
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Select
               value={newModel.provider}
-              onChange={(e) => setNewModel((prev) => ({ ...prev, provider: e.target.value }))}
-              className="bg-modal-bg border-border-medium focus:border-accent shrink-0 rounded border px-2 py-1 text-xs focus:outline-none"
+              onValueChange={(value) => setNewModel((prev) => ({ ...prev, provider: value }))}
             >
-              <option value="">Provider</option>
-              {SUPPORTED_PROVIDERS.map((p) => (
-                <option key={p} value={p}>
-                  {PROVIDER_DISPLAY_NAMES[p]}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger className="bg-modal-bg border-border-medium focus:border-accent h-7 w-auto shrink-0 rounded border px-2 text-xs">
+                <SelectValue placeholder="Provider" />
+              </SelectTrigger>
+              <SelectContent>
+                {SUPPORTED_PROVIDERS.map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {PROVIDER_DISPLAY_NAMES[p]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <input
               type="text"
               value={newModel.modelId}
@@ -190,15 +201,16 @@ export function ModelsSection() {
                 if (e.key === "Enter") void handleAddModel();
               }}
             />
-            <button
+            <Button
               type="button"
+              size="sm"
               onClick={handleAddModel}
               disabled={!newModel.provider || !newModel.modelId.trim()}
-              className="bg-accent hover:bg-accent-dark disabled:bg-border-medium flex shrink-0 items-center gap-1 rounded px-2 py-1 text-xs text-white transition-colors disabled:cursor-not-allowed"
+              className="h-7 shrink-0 gap-1 px-2 text-xs"
             >
               <Plus className="h-3.5 w-3.5" />
               Add
-            </button>
+            </Button>
           </div>
           {error && !editing && <div className="text-error mt-1.5 text-xs">{error}</div>}
         </div>

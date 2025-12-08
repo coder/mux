@@ -51,10 +51,11 @@ async function openSettingsToSection(canvasElement: HTMLElement, section?: strin
   const settingsButton = await canvas.findByTestId("settings-button", {}, { timeout: 10000 });
   await userEvent.click(settingsButton);
 
-  // Wait for modal to appear
+  // Wait for modal to appear - Radix Dialog uses a portal so we need to search the entire document
+  const body = within(document.body);
   await waitFor(
     () => {
-      const modal = canvas.getByRole("dialog");
+      const modal = body.getByRole("dialog");
       if (!modal) throw new Error("Settings modal not found");
     },
     { timeout: 5000 }
@@ -63,7 +64,7 @@ async function openSettingsToSection(canvasElement: HTMLElement, section?: strin
   // Navigate to specific section if requested
   // The sidebar nav has buttons with exact section names
   if (section && section !== "general") {
-    const modal = canvas.getByRole("dialog");
+    const modal = body.getByRole("dialog");
     const modalCanvas = within(modal);
     // Find the nav section button (exact text match)
     const navButtons = await modalCanvas.findAllByRole("button");
