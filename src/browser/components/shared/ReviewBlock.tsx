@@ -10,7 +10,7 @@ import React, { useState, useCallback, useRef, useMemo } from "react";
 import { MessageSquare, X, Pencil, Check } from "lucide-react";
 import { DiffRenderer } from "./DiffRenderer";
 import { Button } from "../ui/button";
-import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import { matchesKeybind, formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import type { ReviewNoteDataForDisplay } from "@/common/types/message";
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -130,7 +130,9 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
                 placeholder="Your comment..."
               />
               <div className="flex items-center justify-end gap-1">
-                <span className="text-muted mr-1 text-[10px]">⌘Enter save, Esc cancel</span>
+                <span className="text-muted mr-1 text-[10px]">
+                  {formatKeybind(KEYBINDS.SAVE_EDIT)} save, Esc cancel
+                </span>
                 <Button
                   variant="ghost"
                   size="sm"

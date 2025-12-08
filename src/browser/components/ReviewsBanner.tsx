@@ -29,7 +29,7 @@ import type { Review } from "@/common/types/review";
 import { useReviews } from "@/browser/hooks/useReviews";
 import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
 import { DiffRenderer } from "./shared/DiffRenderer";
-import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import { matchesKeybind, formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ERROR BOUNDARY
@@ -262,7 +262,9 @@ const ReviewItem: React.FC<ReviewItemProps> = ({
                   placeholder="Your comment..."
                 />
                 <div className="flex items-center justify-end gap-1">
-                  <span className="text-muted mr-2 text-[10px]">⌘Enter to save, Esc to cancel</span>
+                  <span className="text-muted mr-2 text-[10px]">
+                    {formatKeybind(KEYBINDS.SAVE_EDIT)} to save, Esc to cancel
+                  </span>
                   <Button
                     variant="ghost"
                     size="sm"
