@@ -195,7 +195,9 @@ export class BackgroundProcessManager {
       }
     | { success: false; error: string }
   > {
-    log.debug(`BackgroundProcessManager.getOutput(${processId}, filter=${filter ?? "none"}) called`);
+    log.debug(
+      `BackgroundProcessManager.getOutput(${processId}, filter=${filter ?? "none"}) called`
+    );
 
     const proc = await this.getProcess(processId);
     if (!proc) {
