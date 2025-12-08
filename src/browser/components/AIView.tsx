@@ -52,7 +52,7 @@ import { QueuedMessage } from "./Messages/QueuedMessage";
 import { CompactionWarning } from "./CompactionWarning";
 import { ConcurrentLocalWarning } from "./ConcurrentLocalWarning";
 import { BackgroundProcessesBanner } from "./BackgroundProcessesBanner";
-import { useBackgroundProcesses } from "@/browser/hooks/useBackgroundProcesses";
+import { useBackgroundBashes } from "@/browser/hooks/useBackgroundBashes";
 import { checkAutoCompaction } from "@/browser/utils/compaction/autoCompactionCheck";
 import { executeCompaction } from "@/browser/utils/chatCommands";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
@@ -122,13 +122,18 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Reviews state
   const reviews = useReviews(workspaceId);
 
-  const { processes: backgroundProcesses, terminate: terminateBackgroundProcessAsync } =
-    useBackgroundProcesses(api, workspaceId);
-  const handleTerminateBackgroundProcess = useCallback(
+  const { processes: backgroundBashes, terminate: terminateBackgroundBash } = useBackgroundBashes(
+    api,
+    workspaceId
+  );
+  const handleTerminateBackgroundBash = useCallback(
     (processId: string) => {
-      void terminateBackgroundProcessAsync(processId);
+      terminateBackgroundBash(processId).catch((error: Error) => {
+        // TODO: Show toast with error.message
+        console.error("Failed to terminate background bash:", error);
+      });
     },
-    [terminateBackgroundProcessAsync]
+    [terminateBackgroundBash]
   );
   const { options } = useProviderOptions();
   const use1M = options.anthropic?.use1MContext ?? false;
@@ -660,8 +665,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
         )}
         <ReviewsBanner workspaceId={workspaceId} />
         <BackgroundProcessesBanner
-          processes={backgroundProcesses}
-          onTerminate={handleTerminateBackgroundProcess}
+          processes={backgroundBashes}
+          onTerminate={handleTerminateBackgroundBash}
         />
         <ChatInput
           variant="workspace"

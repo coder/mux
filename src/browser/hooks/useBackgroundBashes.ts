@@ -3,10 +3,10 @@ import type { BackgroundProcessInfo } from "@/common/orpc/schemas/api";
 import type { APIClient } from "@/browser/contexts/API";
 
 /**
- * Hook to manage background processes for a workspace.
+ * Hook to manage background bash processes for a workspace.
  * Polls the backend periodically to get current process state.
  */
-export function useBackgroundProcesses(
+export function useBackgroundBashes(
   api: APIClient | null,
   workspaceId: string | null,
   pollingIntervalMs = 1000
@@ -26,29 +26,26 @@ export function useBackgroundProcesses(
     try {
       const result = await api.workspace.backgroundBashes.list({ workspaceId });
       setProcesses(result);
-    } catch (error) {
-      console.error("Failed to fetch background processes:", error);
-      // Keep existing state on error
+    } catch {
+      // Keep existing state on error - polling will retry
     }
   }, [api, workspaceId]);
 
   const terminate = useCallback(
-    async (processId: string) => {
-      if (!api || !workspaceId) return;
-
-      try {
-        const result = await api.workspace.backgroundBashes.terminate({
-          workspaceId,
-          processId,
-        });
-        if (!result.success) {
-          console.error("Failed to terminate process:", result.error);
-        }
-        // Refresh list after termination
-        await refresh();
-      } catch (error) {
-        console.error("Failed to terminate process:", error);
+    async (processId: string): Promise<void> => {
+      if (!api || !workspaceId) {
+        throw new Error("API or workspace not available");
       }
+
+      const result = await api.workspace.backgroundBashes.terminate({
+        workspaceId,
+        processId,
+      });
+      if (!result.success) {
+        throw new Error(result.error);
+      }
+      // Refresh list after termination
+      await refresh();
     },
     [api, workspaceId, refresh]
   );
