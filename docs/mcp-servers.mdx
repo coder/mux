@@ -63,7 +63,8 @@ This means you configure servers once per project, but each workspace (branch) g
 
 - **Hot reload** — Config changes apply on your next message (no restart needed)
 - **Isolated** — Server processes run in the workspace directory with its environment
-- **Automatic lifecycle** — Servers start when first needed and stop when the workspace closes
+- **Lazy start** — Servers start when you send your first message in a workspace
+- **Idle timeout** — Servers stop after 10 minutes of inactivity to conserve resources, then restart automatically when needed
 
 ## Finding MCP Servers
 

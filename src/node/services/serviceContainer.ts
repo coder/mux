@@ -122,6 +122,7 @@ export class ServiceContainer {
    * Terminates all background processes to prevent orphans.
    */
   async dispose(): Promise<void> {
+    this.mcpServerManager.dispose();
     await this.backgroundProcessManager.terminateAll();
   }
 }

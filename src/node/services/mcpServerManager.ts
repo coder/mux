@@ -8,6 +8,8 @@ import type { MCPConfigService } from "@/node/services/mcpConfigService";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 
 const TEST_TIMEOUT_MS = 10_000;
+const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+const IDLE_CHECK_INTERVAL_MS = 60 * 1000; // Check every minute
 
 /**
  * MCP CallToolResult content types (from @ai-sdk/mcp)
@@ -181,12 +183,38 @@ interface MCPServerInstance {
 interface WorkspaceServers {
   configSignature: string;
   instances: Map<string, MCPServerInstance>;
+  lastActivity: number;
 }
 
 export class MCPServerManager {
   private readonly workspaceServers = new Map<string, WorkspaceServers>();
+  private readonly idleCheckInterval: ReturnType<typeof setInterval>;
 
-  constructor(private readonly configService: MCPConfigService) {}
+  constructor(private readonly configService: MCPConfigService) {
+    this.idleCheckInterval = setInterval(() => this.cleanupIdleServers(), IDLE_CHECK_INTERVAL_MS);
+  }
+
+  /**
+   * Stop the idle cleanup interval. Call when shutting down.
+   */
+  dispose(): void {
+    clearInterval(this.idleCheckInterval);
+  }
+
+  private cleanupIdleServers(): void {
+    const now = Date.now();
+    for (const [workspaceId, entry] of this.workspaceServers) {
+      if (entry.instances.size === 0) continue;
+      const idleMs = now - entry.lastActivity;
+      if (idleMs >= IDLE_TIMEOUT_MS) {
+        log.info("[MCP] Stopping idle servers", {
+          workspaceId,
+          idleMinutes: Math.round(idleMs / 60_000),
+        });
+        void this.stopServers(workspaceId);
+      }
+    }
+  }
 
   /**
    * List configured MCP servers for a project (name -> command).
@@ -209,6 +237,8 @@ export class MCPServerManager {
 
     const existing = this.workspaceServers.get(workspaceId);
     if (existing?.configSignature === signature) {
+      // Update activity timestamp to prevent idle cleanup
+      existing.lastActivity = Date.now();
       log.debug("[MCP] Using cached servers", { workspaceId, serverCount: serverNames.length });
       return this.collectTools(existing.instances);
     }
@@ -222,6 +252,7 @@ export class MCPServerManager {
     this.workspaceServers.set(workspaceId, {
       configSignature: signature,
       instances,
+      lastActivity: Date.now(),
     });
     return this.collectTools(instances);
   }
