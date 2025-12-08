@@ -63,6 +63,8 @@ import { useAPI } from "@/browser/contexts/API";
 import { useReviews } from "@/browser/hooks/useReviews";
 import { ReviewsBanner } from "./ReviewsBanner";
 import type { ReviewNoteData } from "@/common/types/review";
+import { usePopoverError } from "@/browser/hooks/usePopoverError";
+import { PopoverError } from "./PopoverError";
 
 interface AIViewProps {
   workspaceId: string;
@@ -126,14 +128,14 @@ const AIViewInner: React.FC<AIViewProps> = ({
     api,
     workspaceId
   );
+  const backgroundBashError = usePopoverError();
   const handleTerminateBackgroundBash = useCallback(
     (processId: string) => {
       terminateBackgroundBash(processId).catch((error: Error) => {
-        // TODO: Show toast with error.message
-        console.error("Failed to terminate background bash:", error);
+        backgroundBashError.showError(processId, error.message);
       });
     },
-    [terminateBackgroundBash]
+    [terminateBackgroundBash, backgroundBashError]
   );
   const { options } = useProviderOptions();
   const use1M = options.anthropic?.use1MContext ?? false;
@@ -702,6 +704,12 @@ const AIViewInner: React.FC<AIViewProps> = ({
         isResizing={isResizing} // Pass resizing state
         onReviewNote={handleReviewNote} // Pass review note handler to append to chat
         isCreating={status === "creating"} // Workspace still being set up
+      />
+
+      <PopoverError
+        error={backgroundBashError.error}
+        prefix="Failed to terminate:"
+        onDismiss={backgroundBashError.clearError}
       />
     </div>
   );
