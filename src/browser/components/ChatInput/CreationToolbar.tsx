@@ -59,7 +59,7 @@ export function CreationToolbar(props: CreationToolbarProps) {
 
   return (
     <div
-      className="bg-dark border-border-medium inline-flex items-center gap-1 rounded-lg border px-2 py-1.5"
+      className="bg-dark border-border-medium inline-flex items-center gap-3 rounded-lg border px-4 py-2"
       data-component="CreationToolbar"
     >
       {/* Add file button */}
