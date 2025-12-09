@@ -27,11 +27,16 @@ export class EditorService {
   }
 
   /**
-   * Open the workspace in the user's configured code editor.
-   * For SSH workspaces, opens via Remote-SSH extension (VS Code/Cursor only).
+   * Open a path in the user's configured code editor.
+   * For SSH workspaces with Remote-SSH extension enabled, opens directly in the editor.
+   *
+   * @param workspaceId - The workspace (used to determine if SSH and get remote host)
+   * @param targetPath - The path to open (workspace directory or specific file)
+   * @param editorConfig - Editor configuration from user settings
    */
-  async openWorkspaceInEditor(
+  async openInEditor(
     workspaceId: string,
+    targetPath: string,
     editorConfig: EditorConfig
   ): Promise<{ success: true; data: void } | { success: false; error: string }> {
     try {
@@ -71,21 +76,18 @@ export class EditorService {
         }
 
         // Build the remote command: code --remote ssh-remote+host /remote/path
-        const sshHost = runtimeConfig.host;
-        const remotePath = workspace.namedWorkspacePath;
-        const args = ["--remote", `ssh-remote+${sshHost}`, remotePath];
+        const args = ["--remote", `ssh-remote+${runtimeConfig.host}`, targetPath];
 
-        log.info(`Opening SSH workspace in editor: ${editorCommand} ${args.join(" ")}`);
+        log.info(`Opening SSH path in editor: ${editorCommand} ${args.join(" ")}`);
         const child = spawn(editorCommand, args, {
           detached: true,
           stdio: "ignore",
         });
         child.unref();
       } else {
-        // Local workspace - just open the path
-        const workspacePath = workspace.namedWorkspacePath;
-        log.info(`Opening local workspace in editor: ${editorCommand} ${workspacePath}`);
-        const child = spawn(editorCommand, [workspacePath], {
+        // Local - just open the path
+        log.info(`Opening local path in editor: ${editorCommand} ${targetPath}`);
+        const child = spawn(editorCommand, [targetPath], {
           detached: true,
           stdio: "ignore",
         });

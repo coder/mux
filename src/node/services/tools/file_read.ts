@@ -6,7 +6,7 @@ import {
   validatePathInCwd,
   validateFileSize,
   validateAndCorrectPath,
-  isPlanFileAccess,
+  isPlanFilePath,
 } from "./fileCommon";
 import { RuntimeError } from "@/node/runtime/Runtime";
 import { readFileString } from "@/node/utils/runtime/helpers";
@@ -38,22 +38,9 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
         // Use runtime's normalizePath method to resolve paths correctly for both local and SSH runtimes
         const resolvedPath = config.runtime.normalizePath(filePath, config.cwd);
 
-        // Determine if this is a plan file access - plan files always use local filesystem
-        const isPlanFile = isPlanFileAccess(resolvedPath, config);
-
-        // Select runtime: plan files use localRuntime (always local), others use workspace runtime
-        const effectiveRuntime =
-          isPlanFile && config.localRuntime ? config.localRuntime : config.runtime;
-
-        // For plan files, resolve path using local runtime since plan files are always local
-        const effectiveResolvedPath =
-          isPlanFile && config.localRuntime
-            ? config.localRuntime.normalizePath(filePath, config.cwd)
-            : resolvedPath;
-
         // Validate that the path is within the working directory
-        // Exception: allow reading the plan file in plan mode (it's outside workspace cwd)
-        if (!isPlanFile) {
+        // Exception: allow reading the plan file in plan mode (it may be outside workspace cwd)
+        if (!isPlanFilePath(resolvedPath, config)) {
           const pathValidation = validatePathInCwd(filePath, config.cwd, config.runtime);
           if (pathValidation) {
             return {
@@ -66,7 +53,7 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
         // Check if file exists using runtime
         let fileStat;
         try {
-          fileStat = await effectiveRuntime.stat(effectiveResolvedPath);
+          fileStat = await config.runtime.stat(resolvedPath);
         } catch (err) {
           if (err instanceof RuntimeError) {
             return {
@@ -80,7 +67,7 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
         if (fileStat.isDirectory) {
           return {
             success: false,
-            error: `Path is a directory, not a file: ${effectiveResolvedPath}`,
+            error: `Path is a directory, not a file: ${resolvedPath}`,
           };
         }
 
@@ -96,7 +83,7 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
         // Read full file content using runtime helper
         let fullContent: string;
         try {
-          fullContent = await readFileString(effectiveRuntime, effectiveResolvedPath);
+          fullContent = await readFileString(config.runtime, resolvedPath);
         } catch (err) {
           if (err instanceof RuntimeError) {
             return {

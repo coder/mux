@@ -25,12 +25,19 @@ import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOpt
 import { resolveCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
 import type { ImageAttachment } from "../components/ImageAttachments";
 import { dispatchWorkspaceSwitch } from "./workspaceEvents";
-import { getRuntimeKey, copyWorkspaceStorage } from "@/common/constants/storage";
+import {
+  getRuntimeKey,
+  copyWorkspaceStorage,
+  EDITOR_CONFIG_KEY,
+  DEFAULT_EDITOR_CONFIG,
+  type EditorConfig,
+} from "@/common/constants/storage";
 import {
   DEFAULT_COMPACTION_WORD_TARGET,
   WORDS_TO_TOKENS_RATIO,
   buildCompactionPrompt,
 } from "@/common/constants/ui";
+import { readPersistedState } from "@/browser/hooks/usePersistedState";
 
 // ============================================================================
 // Workspace Creation
@@ -968,10 +975,14 @@ export async function handlePlanOpenCommand(
     return { clearInput: true, toastShown: true };
   }
 
-  // Open in editor
+  // Read editor config from localStorage
+  const editorConfig = readPersistedState<EditorConfig>(EDITOR_CONFIG_KEY, DEFAULT_EDITOR_CONFIG);
+
+  // Open in editor (runtime-aware)
   const openResult = await api.general.openInEditor({
-    filePath: planResult.data.path,
     workspaceId,
+    targetPath: planResult.data.path,
+    editorConfig,
   });
 
   if (!openResult.success) {
@@ -981,23 +992,6 @@ export async function handlePlanOpenCommand(
       message: openResult.error ?? "Failed to open editor",
     });
     return { clearInput: true, toastShown: true };
-  }
-
-  // If opened in embedded terminal (server mode), open terminal window
-  if (
-    openResult.data.openedInEmbeddedTerminal &&
-    openResult.data.workspaceId &&
-    openResult.data.sessionId
-  ) {
-    const isBrowser = !window.api;
-    if (isBrowser) {
-      const url = `/terminal.html?workspaceId=${encodeURIComponent(openResult.data.workspaceId)}&sessionId=${encodeURIComponent(openResult.data.sessionId)}`;
-      window.open(
-        url,
-        `terminal-editor-${openResult.data.sessionId}`,
-        "width=1000,height=600,popup=yes"
-      );
-    }
   }
 
   trackCommandUsed("plan");

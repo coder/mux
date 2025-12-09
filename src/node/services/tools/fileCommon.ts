@@ -31,13 +31,12 @@ export function generateDiff(filePath: string, oldContent: string, newContent: s
 
 /**
  * Check if a file path is the plan file in plan mode.
- * Used to allow access to the plan file even though it's outside the workspace cwd.
  *
  * @param resolvedPath - The resolved absolute path of the file
  * @param config - Tool configuration containing mode and planFilePath
  * @returns true if this is the plan file in plan mode
  */
-export function isPlanFileAccess(resolvedPath: string, config: ToolConfiguration): boolean {
+export function isPlanFilePath(resolvedPath: string, config: ToolConfiguration): boolean {
   if (config.mode !== "plan" || !config.planFilePath) {
     return false;
   }

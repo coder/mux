@@ -40,13 +40,13 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
 
   const handleOpenInEditor = useCallback(async () => {
     setEditorError(null);
-    const result = await openInEditor(workspaceId, runtimeConfig);
+    const result = await openInEditor(workspaceId, namedWorkspacePath, runtimeConfig);
     if (!result.success && result.error) {
       setEditorError(result.error);
       // Clear error after 3 seconds
       setTimeout(() => setEditorError(null), 3000);
     }
-  }, [workspaceId, openInEditor, runtimeConfig]);
+  }, [workspaceId, namedWorkspacePath, openInEditor, runtimeConfig]);
 
   // Start workspace tutorial on first entry (only if settings tutorial is done)
   useEffect(() => {

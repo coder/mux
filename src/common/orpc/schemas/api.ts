@@ -482,61 +482,17 @@ export const general = {
     output: eventIterator(z.object({ tick: z.number(), timestamp: z.number() })),
   },
   /**
-   * Open a file in the user's preferred external editor.
-   * Uses $VISUAL -> $EDITOR -> 'code' fallback chain.
+   * Open a path in the user's configured code editor.
+   * For SSH workspaces with useRemoteExtension enabled, uses Remote-SSH extension.
    *
-   * In desktop mode: Opens native terminal or spawns GUI editor directly.
-   * In server mode: Creates embedded terminal session with the editor command.
-   *
-   * When openedInEmbeddedTerminal is true, the frontend should open/focus
-   * the terminal panel for the specified workspace to show the editor.
+   * @param workspaceId - The workspace (used to determine if SSH and get remote host)
+   * @param targetPath - The path to open (workspace directory or specific file)
+   * @param editorConfig - Editor configuration from user settings
    */
   openInEditor: {
     input: z.object({
-      filePath: z.string(),
-      /** Required for server mode to create embedded terminal */
-      workspaceId: z.string().optional(),
-    }),
-    output: ResultSchema(
-      z.object({
-        /** True if opened in embedded terminal (server mode with $EDITOR) */
-        openedInEmbeddedTerminal: z.boolean(),
-        /** Workspace ID if embedded terminal was used */
-        workspaceId: z.string().optional(),
-        /** Terminal session ID if embedded terminal was used */
-        sessionId: z.string().optional(),
-      }),
-      z.string()
-    ),
-  },
-  /**
-   * Check if an external editor is available for opening files.
-   * Used to conditionally show/hide Edit buttons in the UI.
-   *
-   * Discovery priority:
-   * 1. $VISUAL - User's explicit GUI editor preference
-   * 2. $EDITOR - User's explicit editor preference
-   * 3. GUI fallbacks: cursor, code, zed, subl (discovered via `which`)
-   * 4. Terminal fallbacks: nvim, vim, vi, nano, emacs (discovered via `which`)
-   */
-  canOpenInEditor: {
-    input: z.void(),
-    output: z.object({
-      /** How the editor was discovered */
-      method: z.enum(["visual", "editor", "gui-fallback", "terminal-fallback", "none"]),
-      /** The actual editor command that will be used (undefined when method="none") */
-      editor: z.string().optional(),
-      /** True if the editor requires a terminal window (terminal-fallback only) */
-      requiresTerminal: z.boolean().optional(),
-    }),
-  },
-  /**
-   * Open the workspace in the user's configured editor.
-   * For SSH workspaces, uses Remote-SSH extension (VS Code/Cursor only).
-   */
-  openWorkspaceInEditor: {
-    input: z.object({
       workspaceId: z.string(),
+      targetPath: z.string(),
       editorConfig: EditorConfigSchema,
     }),
     output: ResultSchema(z.void(), z.string()),

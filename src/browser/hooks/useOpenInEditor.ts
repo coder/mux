@@ -16,20 +16,26 @@ export interface OpenInEditorResult {
 }
 
 /**
- * Hook to open a workspace in the user's configured code editor.
+ * Hook to open a path in the user's configured code editor.
  *
  * If no editor is configured, opens Settings to the General section.
  * For SSH workspaces with unsupported editors (Zed, custom), returns an error.
  *
- * @returns A function that takes workspaceId and optional runtimeConfig,
- *          returns a result object with success/error status.
+ * @returns A function that opens a path in the editor:
+ *   - workspaceId: required workspace identifier
+ *   - targetPath: the path to open (workspace directory or specific file)
+ *   - runtimeConfig: optional, used to detect SSH workspaces for validation
  */
 export function useOpenInEditor() {
   const { api } = useAPI();
   const { open: openSettings } = useSettings();
 
   return useCallback(
-    async (workspaceId: string, runtimeConfig?: RuntimeConfig): Promise<OpenInEditorResult> => {
+    async (
+      workspaceId: string,
+      targetPath: string,
+      runtimeConfig?: RuntimeConfig
+    ): Promise<OpenInEditorResult> => {
       // Read editor config from localStorage
       const editorConfig = readPersistedState<EditorConfig>(
         EDITOR_CONFIG_KEY,
@@ -44,10 +50,13 @@ export function useOpenInEditor() {
         return { success: false, error: "Please configure a custom editor command in Settings" };
       }
 
-      // For SSH workspaces, validate the editor supports Remote-SSH
+      // For SSH workspaces, validate the editor supports Remote-SSH (only VS Code/Cursor)
       if (isSSH) {
         if (editorConfig.editor === "zed") {
-          return { success: false, error: "Zed does not support Remote-SSH for SSH workspaces" };
+          return {
+            success: false,
+            error: "Zed does not support Remote-SSH for SSH workspaces",
+          };
         }
         if (editorConfig.editor === "custom") {
           return {
@@ -58,8 +67,9 @@ export function useOpenInEditor() {
       }
 
       // Call the backend API
-      const result = await api?.general.openWorkspaceInEditor({
+      const result = await api?.general.openInEditor({
         workspaceId,
+        targetPath,
         editorConfig,
       });
 

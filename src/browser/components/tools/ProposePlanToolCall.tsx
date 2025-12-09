@@ -21,11 +21,13 @@ import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { cn } from "@/common/lib/utils";
 import { useAPI } from "@/browser/contexts/API";
+import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
+import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 
 /**
- * Check if the result is from the new file-based propose_plan tool
+ * Check if the result is a successful file-based propose_plan result
  */
-function isNewProposePlanResult(result: unknown): result is ProposePlanToolResult {
+function isProposePlanResult(result: unknown): result is ProposePlanToolResult {
   return (
     result !== null &&
     typeof result === "object" &&
@@ -50,7 +52,7 @@ function isProposePlanError(result: unknown): result is ProposePlanToolError {
 }
 
 /**
- * Check if the result is from the legacy propose_plan tool
+ * Check if the result is from the legacy propose_plan tool (title + plan params)
  */
 function isLegacyProposePlanResult(result: unknown): result is LegacyProposePlanToolResult {
   return (
@@ -105,21 +107,16 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const { expanded, toggleExpanded } = useToolExpansion(true); // Expand by default
   const [showRaw, setShowRaw] = useState(false);
   const { api } = useAPI();
+  const openInEditor = useOpenInEditor();
+  const { workspaceMetadata } = useWorkspaceContext();
+
+  // Get runtimeConfig for the workspace (needed for SSH-aware editor opening)
+  const runtimeConfig = workspaceId ? workspaceMetadata.get(workspaceId)?.runtimeConfig : undefined;
 
   // Fresh content from disk for the latest plan (external edit detection)
   // Skip for ephemeral previews which already have fresh content
   const [freshContent, setFreshContent] = useState<string | null>(null);
   const [freshPath, setFreshPath] = useState<string | null>(null);
-
-  // Check if an editor is available (hides Edit button if not)
-  const [canEdit, setCanEdit] = useState(false);
-
-  useEffect(() => {
-    if (!api) return;
-    void api.general.canOpenInEditor().then((result) => {
-      setCanEdit(result.method !== "none");
-    });
-  }, [api]);
 
   // Fetch fresh plan content for the latest plan
   // Re-fetches on mount and when window regains focus (after user edits in external editor)
@@ -152,7 +149,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     };
   }, [api, workspaceId, isLatest, isEphemeralPreview]);
 
-  // Determine plan content and title based on result type (prefer result over args)
+  // Determine plan content and title based on result type
   // For ephemeral previews, use direct content/path props
   // For the latest plan, prefer fresh content from disk (external edit support)
   let planContent: string;
@@ -172,13 +169,14 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     // Extract title from first markdown heading or use filename
     const titleMatch = /^#\s+(.+)$/m.exec(freshContent);
     planTitle = titleMatch ? titleMatch[1] : (planPath?.split("/").pop() ?? "Plan");
-  } else if (isNewProposePlanResult(result)) {
+  } else if (isProposePlanResult(result)) {
     planContent = result.planContent;
     planPath = result.planPath;
     // Extract title from first markdown heading or use filename
     const titleMatch = /^#\s+(.+)$/m.exec(result.planContent);
     planTitle = titleMatch ? titleMatch[1] : (planPath.split("/").pop() ?? "Plan");
   } else if (isLegacyProposePlanResult(result)) {
+    // Legacy format: title + plan passed directly (no file)
     planContent = result.plan;
     planTitle = result.title;
   } else if (isProposePlanError(result)) {
@@ -187,11 +185,11 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     planTitle = "Plan Error";
     errorMessage = result.error;
   } else if (isLegacyProposePlanArgs(args)) {
-    // Fallback to args for backwards compatibility
+    // Fallback to args for legacy format (streaming state before result)
     planContent = args.plan;
     planTitle = args.title;
   } else {
-    // No valid plan data available
+    // No valid plan data available (e.g., pending state)
     planContent = "";
     planTitle = "Plan";
   }
@@ -213,36 +211,12 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const { copied, copyToClipboard } = useCopyToClipboard();
 
   const handleOpenInEditor = async () => {
-    if (!planPath || !api) {
+    if (!planPath || !workspaceId) {
       return;
     }
-    try {
-      const result = await api.general.openInEditor({
-        filePath: planPath,
-        workspaceId,
-      });
-      if (!result.success) {
-        console.error("Failed to open plan in editor:", result.error);
-        return;
-      }
-      // If opened in embedded terminal (server mode), open terminal window
-      if (
-        result.data.openedInEmbeddedTerminal &&
-        result.data.workspaceId &&
-        result.data.sessionId
-      ) {
-        const isBrowser = !window.api;
-        if (isBrowser) {
-          const url = `/terminal.html?workspaceId=${encodeURIComponent(result.data.workspaceId)}&sessionId=${encodeURIComponent(result.data.sessionId)}`;
-          window.open(
-            url,
-            `terminal-editor-${result.data.sessionId}`,
-            "width=1000,height=600,popup=yes"
-          );
-        }
-      }
-    } catch (err) {
-      console.error("openInEditor threw error:", err);
+    const result = await openInEditor(workspaceId, planPath, runtimeConfig);
+    if (!result.success) {
+      console.error("Failed to open plan in editor:", result.error);
     }
   };
 
@@ -262,8 +236,8 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
           )}
         </div>
         <div className="flex items-center gap-1.5">
-          {/* Edit button: show for ephemeral preview OR latest tool call, only if editor available */}
-          {(isEphemeralPreview ?? isLatest) && planPath && api && canEdit && (
+          {/* Edit button: show for ephemeral preview OR latest tool call */}
+          {(isEphemeralPreview ?? isLatest) && planPath && workspaceId && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <button

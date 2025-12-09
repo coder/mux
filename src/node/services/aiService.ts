@@ -23,7 +23,6 @@ import type { InitStateManager } from "./initStateManager";
 import type { SendMessageError } from "@/common/types/errors";
 import { getToolsForModel } from "@/common/utils/tools/tools";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
-import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import { secretsToRecord } from "@/common/types/secrets";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
@@ -55,7 +54,7 @@ import type {
 import { applyToolPolicy, type ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { MockScenarioPlayer } from "./mock/mockScenarioPlayer";
 import { EnvHttpProxyAgent, type Dispatcher } from "undici";
-import { getPlanFilePath, planFileExists } from "@/common/utils/planStorage";
+import { getPlanFilePath } from "@/common/utils/planStorage";
 import { getPlanModeInstruction } from "@/common/utils/ui/modeUtils";
 import type { UIMode } from "@/common/types/mode";
 
@@ -1028,7 +1027,14 @@ export class AIService extends EventEmitter {
       let effectiveAdditionalInstructions = additionalSystemInstructions;
       if (mode === "plan") {
         const planFilePath = getPlanFilePath(workspaceId);
-        const planExists = planFileExists(workspaceId);
+        // Check if plan file exists using runtime (supports both local and SSH)
+        let planExists = false;
+        try {
+          await runtime.stat(planFilePath);
+          planExists = true;
+        } catch {
+          // File doesn't exist
+        }
         const planModeInstruction = getPlanModeInstruction(planFilePath, planExists);
         effectiveAdditionalInstructions = additionalSystemInstructions
           ? `${planModeInstruction}\n\n${additionalSystemInstructions}`
@@ -1085,9 +1091,6 @@ export class AIService extends EventEmitter {
         {
           cwd: workspacePath,
           runtime,
-          // Plan files are always local - create a local runtime for plan file I/O
-          // even when the workspace uses SSH runtime
-          localRuntime: mode === "plan" ? new LocalRuntime(workspacePath) : undefined,
           secrets: secretsToRecord(projectSecrets),
           muxEnv: getMuxEnv(
             metadata.projectPath,

@@ -27,8 +27,6 @@ export interface ToolConfiguration {
   cwd: string;
   /** Runtime environment for executing commands and file operations */
   runtime: Runtime;
-  /** Local runtime for plan file operations (bypasses SSH for plan files which are always local) */
-  localRuntime?: Runtime;
   /** Environment secrets to inject (optional) */
   secrets?: Record<string, string>;
   /** MUX_ environment variables (MUX_PROJECT_PATH, MUX_RUNTIME) - set from init hook env */

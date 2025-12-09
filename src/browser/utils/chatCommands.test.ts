@@ -254,9 +254,7 @@ describe("handlePlanOpenCommand", () => {
     getPlanContentResult:
       | { success: true; data: { content: string; path: string } }
       | { success: false; error: string },
-    openInEditorResult?:
-      | { success: true; data: { openedInEmbeddedTerminal: boolean } }
-      | { success: false; error: string }
+    openInEditorResult?: { success: true; data: undefined } | { success: false; error: string }
   ): CommandHandlerContext => {
     const setInput = mock(() => undefined);
     const setToast = mock(() => undefined);
@@ -271,9 +269,7 @@ describe("handlePlanOpenCommand", () => {
         },
         general: {
           openInEditor: mock(() =>
-            Promise.resolve(
-              openInEditorResult ?? { success: true, data: { openedInEmbeddedTerminal: false } }
-            )
+            Promise.resolve(openInEditorResult ?? { success: true, data: undefined })
           ),
         },
       } as unknown as CommandHandlerContext["api"],
@@ -309,7 +305,7 @@ describe("handlePlanOpenCommand", () => {
   test("opens plan in editor when plan exists", async () => {
     const context = createMockContext(
       { success: true, data: { content: "# My Plan", path: "/path/to/plan.md" } },
-      { success: true, data: { openedInEmbeddedTerminal: false } }
+      { success: true, data: undefined }
     );
 
     const result = await handlePlanOpenCommand(context);
@@ -320,8 +316,10 @@ describe("handlePlanOpenCommand", () => {
       workspaceId: "test-workspace-id",
     });
     expect(context.api.general.openInEditor).toHaveBeenCalledWith({
-      filePath: "/path/to/plan.md",
       workspaceId: "test-workspace-id",
+      targetPath: "/path/to/plan.md",
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      editorConfig: expect.any(Object),
     });
   });
 

@@ -7,7 +7,7 @@ import {
   generateDiff,
   validateAndCorrectPath,
   validatePathInCwd,
-  isPlanFileAccess,
+  isPlanFilePath,
 } from "./fileCommon";
 import { executeFileEditOperation } from "./file_edit_operation";
 import { fileExists } from "@/node/utils/runtime/fileExists";
@@ -66,28 +66,15 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
 
         const resolvedPath = config.runtime.normalizePath(file_path, config.cwd);
 
-        // Determine if this is a plan file access - plan files always use local filesystem
-        const isPlanFile = isPlanFileAccess(resolvedPath, config);
-
-        // Select runtime: plan files use localRuntime (always local), others use workspace runtime
-        const effectiveRuntime =
-          isPlanFile && config.localRuntime ? config.localRuntime : config.runtime;
-
-        // For plan files, resolve path using local runtime since plan files are always local
-        const effectiveResolvedPath =
-          isPlanFile && config.localRuntime
-            ? config.localRuntime.normalizePath(file_path, config.cwd)
-            : resolvedPath;
-
         // Plan mode restriction: only allow editing/creating the plan file
         if (config.mode === "plan" && config.planFilePath) {
-          if (!isPlanFile) {
+          if (!isPlanFilePath(resolvedPath, config)) {
             return {
               success: false,
               error: `In plan mode, only the plan file can be edited. Attempted to edit: ${file_path}`,
             };
           }
-          // Skip cwd validation for plan file - it's intentionally outside workspace
+          // Skip cwd validation for plan file - it may be outside workspace
         } else {
           // Standard cwd validation for non-plan-mode edits
           const pathValidation = validatePathInCwd(file_path, config.cwd, config.runtime);
@@ -99,11 +86,11 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
           }
         }
 
-        const exists = await fileExists(effectiveRuntime, effectiveResolvedPath, abortSignal);
+        const exists = await fileExists(config.runtime, resolvedPath, abortSignal);
 
         if (!exists) {
           try {
-            await writeFileString(effectiveRuntime, effectiveResolvedPath, content, abortSignal);
+            await writeFileString(config.runtime, resolvedPath, content, abortSignal);
           } catch (err) {
             if (err instanceof RuntimeError) {
               return {
@@ -114,7 +101,7 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
             throw err;
           }
 
-          const diff = generateDiff(effectiveResolvedPath, "", content);
+          const diff = generateDiff(resolvedPath, "", content);
           return {
             success: true,
             diff,

@@ -1,9 +1,9 @@
-import { stat } from "fs/promises";
 import { tool } from "ai";
 import { z } from "zod";
 import type { ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
-import { getPlanFilePath, readPlanFile } from "@/common/utils/planStorage";
+import { readFileString } from "@/node/utils/runtime/helpers";
+import { RuntimeError } from "@/node/runtime/Runtime";
 
 // Schema for propose_plan - empty object (no input parameters)
 // Defined locally to avoid type inference issues with `as const` in TOOL_DEFINITIONS
@@ -20,23 +20,27 @@ export const createProposePlanTool: ToolFactory = (config) => {
     description: TOOL_DEFINITIONS.propose_plan.description,
     inputSchema: proposePlanSchema,
     execute: async () => {
-      const workspaceId = config.workspaceId;
+      const planPath = config.planFilePath;
 
-      if (!workspaceId) {
+      if (!planPath) {
         return {
           success: false as const,
-          error: "No workspace ID available. Cannot determine plan file location.",
+          error: "No plan file path configured. Are you in plan mode?",
         };
       }
 
-      const planPath = getPlanFilePath(workspaceId);
-      const planContent = readPlanFile(workspaceId);
-
-      if (planContent === null) {
-        return {
-          success: false as const,
-          error: `No plan file found at ${planPath}. Please write your plan to this file before calling propose_plan.`,
-        };
+      // Read plan file using workspace runtime (works for both local and SSH)
+      let planContent: string;
+      try {
+        planContent = await readFileString(config.runtime, planPath);
+      } catch (err) {
+        if (err instanceof RuntimeError) {
+          return {
+            success: false as const,
+            error: `No plan file found at ${planPath}. Please write your plan to this file before calling propose_plan.`,
+          };
+        }
+        throw err;
       }
 
       if (planContent === "") {
@@ -49,8 +53,11 @@ export const createProposePlanTool: ToolFactory = (config) => {
       // Record file state for external edit detection
       if (config.recordFileState) {
         try {
-          const mtime = (await stat(planPath)).mtimeMs;
-          config.recordFileState(planPath, { content: planContent, timestamp: mtime });
+          const fileStat = await config.runtime.stat(planPath);
+          config.recordFileState(planPath, {
+            content: planContent,
+            timestamp: fileStat.modifiedTime.getTime(),
+          });
         } catch {
           // File stat failed, skip recording (shouldn't happen since we just read it)
         }

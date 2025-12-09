@@ -23,17 +23,6 @@ If the user suggests that you should make edits to other files, ask them to swit
 }
 
 /**
- * Legacy constant for backwards compatibility.
- * @deprecated Use getPlanModeInstruction(planFilePath, planExists) instead
- */
-export const PLAN_MODE_INSTRUCTION = `You are in Plan Mode. You may use tools to research and understand the task, but you MUST call the propose_plan tool with your findings before completing your response. Do not provide a text response without calling propose_plan.
-
-Do not make edits in plan mode. You may have tools like bash but only use them for read-only operations. This rule on edits applies beyond files. Do not create side effects of any kind in plan mode.
-
-If the user suggests that you should make edits, ask them to changes modes first!
-`;
-
-/**
  * Get the tool policy for a given UI mode.
  * In plan mode, file_edit_* tools remain enabled (agent needs them to write plan file),
  * but strict path enforcement in file_edit_operation.ts restricts edits to only the plan file.
