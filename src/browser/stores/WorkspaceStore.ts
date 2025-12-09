@@ -402,6 +402,12 @@ export class WorkspaceStore {
   subscribe = this.states.subscribeAny;
 
   /**
+   * Subscribe to derived state changes (recency, etc.).
+   * Use for hooks that depend on derived.bump() rather than states.bump().
+   */
+  subscribeDerived = this.derived.subscribeAny;
+
+  /**
    * Subscribe to changes for a specific workspace.
    * Only notified when this workspace's state changes.
    */
@@ -1087,11 +1093,12 @@ export function useWorkspaceStoreRaw(): WorkspaceStore {
 
 /**
  * Hook to get workspace recency timestamps.
+ * Subscribes to derived state since recency is updated via derived.bump("recency").
  */
 export function useWorkspaceRecency(): Record<string, number> {
   const store = getStoreInstance();
 
-  return useSyncExternalStore(store.subscribe, () => store.getWorkspaceRecency());
+  return useSyncExternalStore(store.subscribeDerived, () => store.getWorkspaceRecency());
 }
 
 /**
