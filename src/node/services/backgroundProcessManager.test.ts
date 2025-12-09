@@ -568,9 +568,12 @@ describe("BackgroundProcessManager", () => {
 
       expect(spawnResult).toBeDefined();
       expect(spawnResult.success).toBe(true);
-      expect(spawnResult.backgroundProcessId).toBeDefined();
+      expect("backgroundProcessId" in spawnResult).toBe(true);
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      // Type narrowing for background process result
+      if (!("backgroundProcessId" in spawnResult)) {
+        throw new Error("Expected background process result");
+      }
       const processId: string = spawnResult.backgroundProcessId;
 
       // Wait for output
@@ -583,7 +586,7 @@ describe("BackgroundProcessManager", () => {
         { process_id: processId },
         { toolCallId: "test2", messages: [] }
       );
-       
+
       const outputResult = rawOutputResult as BashOutputToolResult;
 
       expect(outputResult).toBeDefined();

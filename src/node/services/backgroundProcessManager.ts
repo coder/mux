@@ -235,6 +235,59 @@ export class BackgroundProcessManager extends EventEmitter {
   }
 
   /**
+   * Register a migrated foreground process as a tracked background process.
+   *
+   * Called by bash tool when migration completes, after migrateToBackground()
+   * has created the output directory and started file writing.
+   *
+   * @param handle The BackgroundHandle from migrateToBackground()
+   * @param processId The generated process ID
+   * @param workspaceId Workspace the process belongs to
+   * @param script Original script being executed
+   * @param outputDir Directory containing output files
+   * @param displayName Optional human-readable name
+   */
+  registerMigratedProcess(
+    handle: BackgroundHandle,
+    processId: string,
+    workspaceId: string,
+    script: string,
+    outputDir: string,
+    displayName?: string
+  ): void {
+    const startTime = Date.now();
+
+    const proc: BackgroundProcess = {
+      id: processId,
+      pid: 0, // Unknown for migrated processes (could be remote)
+      workspaceId,
+      outputDir,
+      script,
+      startTime,
+      status: "running",
+      handle,
+      displayName,
+      isForeground: false, // Now in background
+    };
+
+    // Store process in map
+    this.processes.set(processId, proc);
+
+    // Write meta.json
+    const meta: BackgroundProcessMeta = {
+      id: processId,
+      pid: 0,
+      script,
+      startTime,
+      status: "running",
+      displayName,
+    };
+    void handle.writeMeta(JSON.stringify(meta, null, 2));
+
+    log.debug(`Migrated process ${processId} registered for workspace ${workspaceId}`);
+  }
+
+  /**
    * Send a foreground process to background.
    *
    * For processes started with background infrastructure (isForeground=true in spawn):

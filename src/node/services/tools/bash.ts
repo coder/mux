@@ -15,6 +15,7 @@ import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCod
 import type { BashToolResult } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+import { migrateToBackground } from "@/node/services/backgroundProcessExecutor";
 
 /**
  * Validates bash script input for common issues
@@ -335,6 +336,11 @@ ${script}`;
         /* ignore */ return;
       });
 
+      // Tee streams so we can migrate to background if needed
+      // One branch goes to line handler (UI), other is held for potential migration
+      const [stdoutForUI, stdoutForMigration] = execStream.stdout.tee();
+      const [stderrForUI, stderrForMigration] = execStream.stderr.tee();
+
       // Collect output concurrently from Web Streams to avoid readline race conditions.
       const lines: string[] = [];
       let truncated = false;
@@ -353,11 +359,17 @@ ${script}`;
         truncationState.displayTruncated = true;
         truncated = true;
         overflowReason = reason;
-        // Cancel the streams to stop the process and unblock readers
-        execStream.stdout.cancel().catch(() => {
+        // Cancel all stream branches to stop the process and unblock readers
+        stdoutForUI.cancel().catch(() => {
           /* ignore */ return;
         });
-        execStream.stderr.cancel().catch(() => {
+        stderrForUI.cancel().catch(() => {
+          /* ignore */ return;
+        });
+        stdoutForMigration.cancel().catch(() => {
+          /* ignore */ return;
+        });
+        stderrForMigration.cancel().catch(() => {
           /* ignore */ return;
         });
       };
@@ -440,9 +452,9 @@ ${script}`;
         }
       };
 
-      // Start consuming stdout and stderr concurrently
-      const consumeStdout = consumeStream(execStream.stdout);
-      const consumeStderr = consumeStream(execStream.stderr);
+      // Start consuming stdout and stderr concurrently (using UI branches)
+      const consumeStdout = consumeStream(stdoutForUI);
+      const consumeStderr = consumeStream(stderrForUI);
 
       // Create a promise that resolves when user clicks "Background"
       const backgroundPromise = new Promise<void>((resolve) => {
@@ -463,16 +475,61 @@ ${script}`;
           // Unregister foreground process
           fgRegistration?.unregister();
 
-          // Return early with info about the running process
-          // Note: Process continues running in the background
           const wall_duration_ms = Math.round(performance.now() - startTime);
+
+          // Migrate to background tracking if manager is available
+          if (config.backgroundProcessManager && config.workspaceId) {
+            const processId = config.backgroundProcessManager.generateProcessId();
+
+            // Create a synthetic ExecStream for the migration streams
+            // The UI streams are still being consumed, migration streams continue to files
+            const migrationStream = {
+              stdout: stdoutForMigration,
+              stderr: stderrForMigration,
+              stdin: execStream.stdin,
+              exitCode: execStream.exitCode,
+              duration: execStream.duration,
+            };
+
+            const migrateResult = await migrateToBackground(
+              migrationStream,
+              {
+                cwd: config.cwd,
+                workspaceId: config.workspaceId,
+                processId,
+                script,
+                existingOutput: lines,
+              },
+              config.backgroundProcessManager.getBgOutputDir()
+            );
+
+            if (migrateResult.success) {
+              // Register the migrated process with the manager
+              config.backgroundProcessManager.registerMigratedProcess(
+                migrateResult.handle,
+                processId,
+                config.workspaceId,
+                script,
+                migrateResult.outputDir
+              );
+
+              return {
+                success: true,
+                output: `Process sent to background with ID: ${processId}\n\nOutput so far (${lines.length} lines):\n${lines.slice(-20).join("\n")}${lines.length > 20 ? "\n...(showing last 20 lines)" : ""}`,
+                exitCode: 0,
+                wall_duration_ms,
+                backgroundProcessId: processId,
+              };
+            }
+            // Migration failed, fall through to simple return
+          }
+
+          // Fallback: return without process ID (no manager or migration failed)
           return {
             success: true,
             output: `Process sent to background. It will continue running.\n\nOutput so far (${lines.length} lines):\n${lines.slice(-20).join("\n")}${lines.length > 20 ? "\n...(showing last 20 lines)" : ""}`,
             exitCode: 0,
             wall_duration_ms,
-            // Note: We don't have backgroundProcessId since this wasn't spawned via manager
-            // The process continues with runtime.exec() infrastructure
           };
         }
 

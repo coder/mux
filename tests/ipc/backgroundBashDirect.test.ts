@@ -17,11 +17,7 @@
 
 import * as fs from "fs/promises";
 import * as path from "path";
-import {
-  createTestEnvironment,
-  cleanupTestEnvironment,
-  type TestEnvironment,
-} from "./setup";
+import { createTestEnvironment, cleanupTestEnvironment, type TestEnvironment } from "./setup";
 import { createTempGitRepo, cleanupTempGitRepo, generateBranchName } from "./helpers";
 import { detectDefaultTrunkBranch } from "../../src/node/git";
 import { getToolsForModel } from "../../src/common/utils/tools/tools";
