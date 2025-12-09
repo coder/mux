@@ -938,6 +938,7 @@ export class StreamManager extends EventEmitter {
 
             // Format error output
             const errorOutput = {
+              success: false,
               error:
                 typeof toolErrorPart.error === "string"
                   ? toolErrorPart.error

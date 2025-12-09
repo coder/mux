@@ -54,12 +54,16 @@ function hasSuccessResult(result: unknown): boolean {
 }
 
 /**
- * Check if a tool result indicates failure (for tools that return { success: boolean })
+ * Check if a tool result indicates failure.
+ * Handles both explicit failure ({ success: false }) and implicit failure ({ error: "..." })
  */
 function hasFailureResult(result: unknown): boolean {
-  return (
-    typeof result === "object" && result !== null && "success" in result && result.success === false
-  );
+  if (typeof result !== "object" || result === null) return false;
+  // Explicit failure
+  if ("success" in result && result.success === false) return true;
+  // Implicit failure - error field present
+  if ("error" in result && result.error) return true;
+  return false;
 }
 
 export class StreamingMessageAggregator {
