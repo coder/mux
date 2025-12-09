@@ -132,5 +132,23 @@ describe("ProjectService", () => {
       if (result.success) throw new Error("Expected failure");
       expect(result.error).toContain("ENOENT");
     });
+
+    it("expands ~ to home directory", async () => {
+      const result = await service.listDirectory("~");
+
+      expect(result.success).toBe(true);
+      if (!result.success) throw new Error("Expected success");
+
+      expect(result.data.path).toBe(os.homedir());
+    });
+
+    it("expands ~/subpath to home directory subpath", async () => {
+      const result = await service.listDirectory("~/.");
+
+      expect(result.success).toBe(true);
+      if (!result.success) throw new Error("Expected success");
+
+      expect(result.data.path).toBe(os.homedir());
+    });
   });
 });

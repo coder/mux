@@ -185,7 +185,7 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
       </Dialog>
       <DirectoryPickerModal
         isOpen={isDirPickerOpen}
-        initialPath={path || "."}
+        initialPath={path || "~"}
         onClose={() => setIsDirPickerOpen(false)}
         onSelectPath={handleWebPickerPathSelected}
       />

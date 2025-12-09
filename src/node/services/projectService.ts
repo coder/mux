@@ -9,6 +9,7 @@ import { log } from "@/node/services/log";
 import type { BranchListResult } from "@/common/orpc/types";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import * as path from "path";
+import * as os from "os";
 
 /**
  * List directory contents for the DirectoryPickerModal.
@@ -17,7 +18,12 @@ import * as path from "path";
  * - children are the immediate subdirectories (not recursive)
  */
 async function listDirectory(requestedPath: string): Promise<FileTreeNode> {
-  const normalizedRoot = path.resolve(requestedPath || ".");
+  // Expand ~ to home directory (path.resolve doesn't handle tilde)
+  const expanded =
+    requestedPath === "~" || requestedPath.startsWith("~/")
+      ? requestedPath.replace("~", os.homedir())
+      : requestedPath;
+  const normalizedRoot = path.resolve(expanded || ".");
   const entries = await fsPromises.readdir(normalizedRoot, { withFileTypes: true });
 
   const children: FileTreeNode[] = entries
