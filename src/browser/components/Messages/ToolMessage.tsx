@@ -45,9 +45,9 @@ interface ToolMessageProps {
   onReviewNote?: (data: ReviewNoteData) => void;
   /** Whether this is the latest propose_plan in the conversation */
   isLatestProposePlan?: boolean;
-  /** Whether there's a foreground bash that can be sent to background */
-  canSendBashToBackground?: boolean;
-  /** Callback to send the current foreground bash to background */
+  /** Tool call ID of the foreground bash (null if none running) */
+  foregroundBashToolCallId?: string | null;
+  /** Callback to send the foreground bash to background */
   onSendBashToBackground?: () => void;
 }
 
@@ -123,11 +123,13 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
   workspaceId,
   onReviewNote,
   isLatestProposePlan,
-  canSendBashToBackground,
+  foregroundBashToolCallId,
   onSendBashToBackground,
 }) => {
   // Route to specialized components based on tool name
   if (isBashTool(message.toolName, message.args)) {
+    // Only show "Background" button if this specific tool call is the foreground process
+    const canSendToBackground = foregroundBashToolCallId === message.toolCallId;
     return (
       <div className={className}>
         <BashToolCall
@@ -135,7 +137,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
           result={message.result as BashToolResult | undefined}
           status={message.status}
           startedAt={message.timestamp}
-          canSendToBackground={canSendBashToBackground}
+          canSendToBackground={canSendToBackground}
           onSendToBackground={onSendBashToBackground}
         />
       </div>

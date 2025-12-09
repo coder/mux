@@ -52,7 +52,7 @@ import { QueuedMessage } from "./Messages/QueuedMessage";
 import { CompactionWarning } from "./CompactionWarning";
 import { ConcurrentLocalWarning } from "./ConcurrentLocalWarning";
 import { BackgroundProcessesBanner } from "./BackgroundProcessesBanner";
-import { useBackgroundBashes } from "@/browser/hooks/useBackgroundBashes";
+import { useBackgroundBashHandlers } from "@/browser/hooks/useBackgroundBashHandlers";
 import { checkAutoCompaction } from "@/browser/utils/compaction/autoCompactionCheck";
 import { executeCompaction } from "@/browser/utils/chatCommands";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
@@ -63,7 +63,6 @@ import { useAPI } from "@/browser/contexts/API";
 import { useReviews } from "@/browser/hooks/useReviews";
 import { ReviewsBanner } from "./ReviewsBanner";
 import type { ReviewNoteData } from "@/common/types/review";
-import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "./PopoverError";
 
 interface AIViewProps {
@@ -126,33 +125,12 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
   const {
     processes: backgroundBashes,
-    terminate: terminateBackgroundBash,
-    sendToBackground: sendBashToBackground,
-  } = useBackgroundBashes(api, workspaceId);
-  const backgroundBashError = usePopoverError();
-  const handleTerminateBackgroundBash = useCallback(
-    (processId: string) => {
-      terminateBackgroundBash(processId).catch((error: Error) => {
-        backgroundBashError.showError(processId, error.message);
-      });
-    },
-    [terminateBackgroundBash, backgroundBashError]
-  );
-  const handleSendBashToBackground = useCallback(() => {
-    sendBashToBackground().catch((error: Error) => {
-      backgroundBashError.showError("send-to-background", error.message);
-    });
-  }, [sendBashToBackground, backgroundBashError]);
-
-  // Compute whether there's a foreground bash from messages (executing bash tool)
-  const hasForegroundBash =
-    workspaceState?.messages.some(
-      (m) =>
-        m.type === "tool" &&
-        m.toolName === "bash" &&
-        m.status === "executing" &&
-        !(m.args as { run_in_background?: boolean })?.run_in_background
-    ) ?? false;
+    handleTerminate: handleTerminateBackgroundBash,
+    foregroundToolCallId,
+    handleSendToBackground: handleSendBashToBackground,
+    handleMessageSentBackground,
+    error: backgroundBashError,
+  } = useBackgroundBashHandlers(api, workspaceId);
   const { options } = useProviderOptions();
   const use1M = options.anthropic?.use1MContext ?? false;
   // Get pending model for auto-compaction settings (threshold is per-model)
@@ -348,11 +326,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const handleMessageSent = useCallback(() => {
     // Auto-background any running foreground bash when user sends a new message
     // This prevents the user from waiting for the bash to complete before their message is processed
-    if (hasForegroundBash) {
-      sendBashToBackground().catch(() => {
-        // Ignore errors - the bash might have finished just before we tried to background it
-      });
-    }
+    handleMessageSentBackground();
 
     // Enable auto-scroll when user sends a message
     setAutoScroll(true);
@@ -360,7 +334,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
     // Reset autoRetry when user sends a message
     // User action = clear intent: "I'm actively using this workspace"
     setAutoRetry(true);
-  }, [setAutoScroll, setAutoRetry, hasForegroundBash, sendBashToBackground]);
+  }, [setAutoScroll, setAutoRetry, handleMessageSentBackground]);
 
   const handleClearHistory = useCallback(
     async (percentage = 1.0) => {
@@ -615,7 +589,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
                               msg.toolName === "propose_plan" &&
                               msg.id === latestProposePlanId
                             }
-                            canSendBashToBackground={hasForegroundBash}
+                            foregroundBashToolCallId={foregroundToolCallId}
                             onSendBashToBackground={handleSendBashToBackground}
                           />
                         </div>

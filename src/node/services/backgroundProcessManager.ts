@@ -55,6 +55,8 @@ interface OutputReadPosition {
 export interface ForegroundProcess {
   /** Workspace ID */
   workspaceId: string;
+  /** Tool call ID that started this process (for UI to match) */
+  toolCallId: string;
   /** Script being executed */
   script: string;
   /** Callback to invoke when user requests backgrounding */
@@ -205,23 +207,28 @@ export class BackgroundProcessManager extends EventEmitter {
    * Called by bash tool when starting foreground execution.
    *
    * @param workspaceId Workspace the process belongs to
+   * @param toolCallId Tool call ID (for UI to identify which bash row)
    * @param script Script being executed
    * @param onBackground Callback invoked when user requests backgrounding
    * @returns Cleanup function to call when process completes
    */
   registerForegroundProcess(
     workspaceId: string,
+    toolCallId: string,
     script: string,
     onBackground: () => void
   ): { unregister: () => void; addOutput: (line: string) => void } {
     const proc: ForegroundProcess = {
       workspaceId,
+      toolCallId,
       script,
       onBackground,
       output: [],
     };
     this.foregroundProcesses.set(workspaceId, proc);
-    log.debug(`Registered foreground process for workspace ${workspaceId}`);
+    log.debug(
+      `Registered foreground process for workspace ${workspaceId}, toolCallId ${toolCallId}`
+    );
 
     return {
       unregister: () => {
@@ -326,6 +333,19 @@ export class BackgroundProcessManager extends EventEmitter {
     }
 
     return { success: false, error: "No foreground process found for this workspace" };
+  }
+
+  /**
+   * Get the tool call ID of the foreground process for a workspace.
+   * Returns null if no foreground process is running.
+   */
+  getForegroundToolCallId(workspaceId: string): string | null {
+    // Check exec-based foreground processes
+    const fgProc = this.foregroundProcesses.get(workspaceId);
+    if (fgProc) {
+      return fgProc.toolCallId;
+    }
+    return null;
   }
 
   /**

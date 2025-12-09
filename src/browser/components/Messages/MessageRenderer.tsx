@@ -22,9 +22,9 @@ interface MessageRendererProps {
   onReviewNote?: (data: ReviewNoteData) => void;
   /** Whether this message is the latest propose_plan tool call (for external edit detection) */
   isLatestProposePlan?: boolean;
-  /** Whether there's a foreground bash that can be sent to background */
-  canSendBashToBackground?: boolean;
-  /** Callback to send the current foreground bash to background */
+  /** Tool call ID of the foreground bash (null if none running) */
+  foregroundBashToolCallId?: string | null;
+  /** Callback to send the foreground bash to background */
   onSendBashToBackground?: () => void;
 }
 
@@ -38,7 +38,7 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
     isCompacting,
     onReviewNote,
     isLatestProposePlan,
-    canSendBashToBackground,
+    foregroundBashToolCallId,
     onSendBashToBackground,
   }) => {
     // Route based on message type
@@ -69,7 +69,7 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
             workspaceId={workspaceId}
             onReviewNote={onReviewNote}
             isLatestProposePlan={isLatestProposePlan}
-            canSendBashToBackground={canSendBashToBackground}
+            foregroundBashToolCallId={foregroundBashToolCallId}
             onSendBashToBackground={onSendBashToBackground}
           />
         );

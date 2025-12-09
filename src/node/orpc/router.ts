@@ -711,6 +711,12 @@ export const router = (authToken?: string) => {
             }
             return { success: true, data: undefined };
           }),
+        getForegroundToolCallId: t
+          .input(schemas.workspace.backgroundBashes.getForegroundToolCallId.input)
+          .output(schemas.workspace.backgroundBashes.getForegroundToolCallId.output)
+          .handler(({ context, input }) => {
+            return context.workspaceService.getForegroundToolCallId(input.workspaceId);
+          }),
         sendToBackground: t
           .input(schemas.workspace.backgroundBashes.sendToBackground.input)
           .output(schemas.workspace.backgroundBashes.sendToBackground.output)

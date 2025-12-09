@@ -232,7 +232,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
     inputSchema: TOOL_DEFINITIONS.bash.schema,
     execute: async (
       { script, timeout_secs, run_in_background, display_name },
-      { abortSignal }
+      { abortSignal, toolCallId }
     ): Promise<BashToolResult> => {
       // Validate script input
       const validationError = validateScript(script, config);
@@ -305,9 +305,10 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
       // Register foreground process for "send to background" feature
       // Only if manager is available (AI tool calls, not IPC)
       const fgRegistration =
-        config.backgroundProcessManager && config.workspaceId
+        config.backgroundProcessManager && config.workspaceId && toolCallId
           ? config.backgroundProcessManager.registerForegroundProcess(
               config.workspaceId,
+              toolCallId,
               script,
               () => {
                 backgrounded = true;
