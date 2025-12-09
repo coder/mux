@@ -231,9 +231,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const expandedProjects = new Set(
     Array.isArray(expandedProjectsArray) ? expandedProjectsArray : []
   );
-  const setExpandedProjects = (projects: Set<string>) => {
-    setExpandedProjectsArray(Array.from(projects));
-  };
 
   // Track which projects have old workspaces expanded (per-project, per-tier)
   // Key format: `${projectPath}:${tierIndex}` where tierIndex is 0, 1, 2 for 1/7/30 days
@@ -263,15 +260,21 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     return PlatformPaths.getProjectName(path);
   };
 
-  const toggleProject = (projectPath: string) => {
-    const newExpanded = new Set(expandedProjects);
-    if (newExpanded.has(projectPath)) {
-      newExpanded.delete(projectPath);
-    } else {
-      newExpanded.add(projectPath);
-    }
-    setExpandedProjects(newExpanded);
-  };
+  // Use functional update to avoid stale closure issues when clicking rapidly
+  const toggleProject = useCallback(
+    (projectPath: string) => {
+      setExpandedProjectsArray((prev) => {
+        const prevSet = new Set(Array.isArray(prev) ? prev : []);
+        if (prevSet.has(projectPath)) {
+          prevSet.delete(projectPath);
+        } else {
+          prevSet.add(projectPath);
+        }
+        return Array.from(prevSet);
+      });
+    },
+    [setExpandedProjectsArray]
+  );
 
   const toggleOldWorkspaces = (projectPath: string, tierIndex: number) => {
     const key = `${projectPath}:${tierIndex}`;
