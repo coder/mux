@@ -322,21 +322,24 @@ export const workspace = {
     ),
   },
   backgroundBashes: {
-    list: {
+    /**
+     * Subscribe to background bash state changes for a workspace.
+     * Emits full state on connect, then incremental updates.
+     */
+    subscribe: {
       input: z.object({ workspaceId: z.string() }),
-      output: z.array(BackgroundProcessInfoSchema),
+      output: eventIterator(
+        z.object({
+          /** Background processes (not including foreground ones being waited on) */
+          processes: z.array(BackgroundProcessInfoSchema),
+          /** Tool call IDs of foreground bashes that can be sent to background */
+          foregroundToolCallIds: z.array(z.string()),
+        })
+      ),
     },
     terminate: {
       input: z.object({ workspaceId: z.string(), processId: z.string() }),
       output: ResultSchema(z.void(), z.string()),
-    },
-    /**
-     * Get tool call IDs of all foreground bash processes.
-     * Returns empty array if no foreground bashes are running.
-     */
-    getForegroundToolCallIds: {
-      input: z.object({ workspaceId: z.string() }),
-      output: z.array(z.string()),
     },
     /**
      * Send a foreground bash process to background.

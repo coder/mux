@@ -52,6 +52,21 @@ export function compareRecords<V>(
 }
 
 /**
+ * Compare two Sets for equality (same size and values).
+ *
+ * @param prev Previous Set
+ * @param next Next Set
+ * @returns true if Sets are equal, false otherwise
+ */
+export function compareSets<T>(a: Set<T>, b: Set<T>): boolean {
+  if (a.size !== b.size) return false;
+  for (const item of a) {
+    if (!b.has(item)) return false;
+  }
+  return true;
+}
+
+/**
  * Compare two Arrays for deep equality (same length and values).
  * Uses === for value comparison by default.
  *

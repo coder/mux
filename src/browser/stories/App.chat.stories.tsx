@@ -246,7 +246,7 @@ npm test 2>&1 | head -20`,
 
     // Expand the bash tool to show Script section with padding
     await waitFor(async () => {
-      const toolHeader = canvas.getByText(/set -e/);
+      const toolHeader = canvas.getByText(/#!/);
       await userEvent.click(toolHeader);
     });
     // Wait for any auto-focus timers (ChatInput has 100ms delay), then blur

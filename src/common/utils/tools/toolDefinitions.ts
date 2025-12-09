@@ -63,7 +63,9 @@ export const TOOL_DEFINITIONS = {
             "Returns immediately with process_id. " +
             "Read output with bash_output (returns only new output since last check). " +
             "Terminate with bash_background_terminate using the process_id. " +
-            "Process persists until terminated or workspace is removed."
+            "Process persists until terminated or workspace is removed." +
+            "\\n\\nFor long-running tasks like builds or compilations, prefer background mode to continue productive work in parallel. " +
+            "Check back periodically with bash_output rather than blocking on completion."
         ),
       display_name: z
         .string()

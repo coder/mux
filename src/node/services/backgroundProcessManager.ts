@@ -78,7 +78,15 @@ export interface ForegroundProcess {
  *
  * Supports incremental output retrieval via getOutput().
  */
-export class BackgroundProcessManager extends EventEmitter {
+/**
+ * Event types emitted by BackgroundProcessManager.
+ * The 'change' event is emitted whenever the state changes for a workspace.
+ */
+export interface BackgroundProcessManagerEvents {
+  change: [workspaceId: string];
+}
+
+export class BackgroundProcessManager extends EventEmitter<BackgroundProcessManagerEvents> {
   // NOTE: This map is in-memory only. Background processes use nohup/setsid so they
   // could survive app restarts, but we kill all tracked processes on shutdown via
   // dispose(). Rehydrating from meta.json on startup is out of scope for now.
@@ -98,13 +106,17 @@ export class BackgroundProcessManager extends EventEmitter {
     this.bgOutputDir = bgOutputDir;
   }
 
+  /** Emit a change event for a workspace */
+  private emitChange(workspaceId: string): void {
+    this.emit("change", workspaceId);
+  }
+
   /**
    * Get the base directory for background process output files.
    */
   getBgOutputDir(): string {
     return this.bgOutputDir;
   }
-
 
   /**
    * Spawn a new process with background-style infrastructure.
@@ -191,6 +203,12 @@ export class BackgroundProcessManager extends EventEmitter {
     log.debug(
       `Process ${processId} spawned successfully with PID ${pid} (foreground: ${proc.isForeground})`
     );
+
+    // Emit change event (only if background - foreground processes don't show in list)
+    if (!proc.isForeground) {
+      this.emitChange(workspaceId);
+    }
+
     return { success: true, processId, outputDir, pid };
   }
 
@@ -223,11 +241,13 @@ export class BackgroundProcessManager extends EventEmitter {
     log.debug(
       `Registered foreground process for workspace ${workspaceId}, toolCallId ${toolCallId}`
     );
+    this.emitChange(workspaceId);
 
     return {
       unregister: () => {
         this.foregroundProcesses.delete(toolCallId);
         log.debug(`Unregistered foreground process toolCallId ${toolCallId}`);
+        this.emitChange(workspaceId);
       },
       addOutput: (line: string) => {
         proc.output.push(line);
@@ -286,6 +306,7 @@ export class BackgroundProcessManager extends EventEmitter {
     void handle.writeMeta(JSON.stringify(meta, null, 2));
 
     log.debug(`Migrated process ${processId} registered for workspace ${workspaceId}`);
+    this.emitChange(workspaceId);
   }
 
   /**
@@ -539,6 +560,7 @@ export class BackgroundProcessManager extends EventEmitter {
       await proc.handle.dispose();
 
       log.debug(`Process ${processId} terminated successfully`);
+      this.emitChange(proc.workspaceId);
       return { success: true };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -552,6 +574,7 @@ export class BackgroundProcessManager extends EventEmitter {
       });
       // Ensure handle is cleaned up even on error
       await proc.handle.dispose();
+      this.emitChange(proc.workspaceId);
       return { success: true };
     }
   }

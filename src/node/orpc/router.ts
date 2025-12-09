@@ -692,11 +692,64 @@ export const router = (authToken?: string) => {
           return { success: true as const, data: { content, path: planPath } };
         }),
       backgroundBashes: {
-        list: t
-          .input(schemas.workspace.backgroundBashes.list.input)
-          .output(schemas.workspace.backgroundBashes.list.output)
-          .handler(async ({ context, input }) => {
-            return context.workspaceService.listBackgroundProcesses(input.workspaceId);
+        subscribe: t
+          .input(schemas.workspace.backgroundBashes.subscribe.input)
+          .output(schemas.workspace.backgroundBashes.subscribe.output)
+          .handler(async function* ({ context, input }) {
+            const service = context.workspaceService;
+            const { workspaceId } = input;
+
+            type State = {
+              processes: Awaited<ReturnType<typeof service.listBackgroundProcesses>>;
+              foregroundToolCallIds: string[];
+            };
+
+            let resolveNext: ((value: State) => void) | null = null;
+            const queue: State[] = [];
+            let ended = false;
+
+            const getState = async (): Promise<State> => ({
+              processes: await service.listBackgroundProcesses(workspaceId),
+              foregroundToolCallIds: service.getForegroundToolCallIds(workspaceId),
+            });
+
+            const push = async () => {
+              if (ended) return;
+              const state = await getState();
+              if (resolveNext) {
+                const resolve = resolveNext;
+                resolveNext = null;
+                resolve(state);
+              } else {
+                queue.push(state);
+              }
+            };
+
+            const onChange = (changedWorkspaceId: string) => {
+              if (changedWorkspaceId === workspaceId) {
+                void push();
+              }
+            };
+
+            service.onBackgroundBashChange(onChange);
+
+            try {
+              // Emit initial state immediately
+              yield await getState();
+
+              while (!ended) {
+                if (queue.length > 0) {
+                  yield queue.shift()!;
+                } else {
+                  yield await new Promise<State>((resolve) => {
+                    resolveNext = resolve;
+                  });
+                }
+              }
+            } finally {
+              ended = true;
+              service.offBackgroundBashChange(onChange);
+            }
           }),
         terminate: t
           .input(schemas.workspace.backgroundBashes.terminate.input)
@@ -710,12 +763,6 @@ export const router = (authToken?: string) => {
               return { success: false, error: result.error };
             }
             return { success: true, data: undefined };
-          }),
-        getForegroundToolCallIds: t
-          .input(schemas.workspace.backgroundBashes.getForegroundToolCallIds.input)
-          .output(schemas.workspace.backgroundBashes.getForegroundToolCallIds.output)
-          .handler(({ context, input }) => {
-            return context.workspaceService.getForegroundToolCallIds(input.workspaceId);
           }),
         sendToBackground: t
           .input(schemas.workspace.backgroundBashes.sendToBackground.input)

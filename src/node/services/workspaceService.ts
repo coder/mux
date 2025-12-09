@@ -1069,7 +1069,7 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
-   * Get the tool call ID of the foreground bash process for a workspace.
+   * Get the tool call IDs of foreground bash processes for a workspace.
    * Returns empty array if no foreground bashes are running.
    */
   getForegroundToolCallIds(workspaceId: string): string[] {
@@ -1086,5 +1086,19 @@ export class WorkspaceService extends EventEmitter {
       return Err(result.error);
     }
     return Ok(undefined);
+  }
+
+  /**
+   * Subscribe to background bash state changes.
+   */
+  onBackgroundBashChange(callback: (workspaceId: string) => void): void {
+    this.backgroundProcessManager.on("change", callback);
+  }
+
+  /**
+   * Unsubscribe from background bash state changes.
+   */
+  offBackgroundBashChange(callback: (workspaceId: string) => void): void {
+    this.backgroundProcessManager.off("change", callback);
   }
 }
