@@ -127,9 +127,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
                 result.output && (
                   <DetailSection>
                     <DetailLabel>Output</DetailLabel>
-                    <pre className="bg-code-bg border-success m-0 max-h-[200px] overflow-y-auto rounded border-l-2 px-2 py-1.5 text-[11px] leading-[1.4] break-words whitespace-pre-wrap">
-                      {result.output}
-                    </pre>
+                    <DetailContent className="px-2 py-1.5">{result.output}</DetailContent>
                   </DetailSection>
                 )
               )}
