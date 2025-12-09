@@ -237,9 +237,7 @@ class RuntimeBackgroundHandle implements BackgroundHandle {
       );
       return parseExitCode(result.stdout);
     } catch (error) {
-      log.debug(
-        `RuntimeBackgroundHandle.getExitCode: Error: ${errorMsg(error)}`
-      );
+      log.debug(`RuntimeBackgroundHandle.getExitCode: Error: ${errorMsg(error)}`);
       return null;
     }
   }
@@ -261,9 +259,7 @@ class RuntimeBackgroundHandle implements BackgroundHandle {
       log.debug(`RuntimeBackgroundHandle: Terminated process group ${this.pid}`);
     } catch (error) {
       // Process may already be dead - that's fine
-      log.debug(
-        `RuntimeBackgroundHandle.terminate: Error: ${errorMsg(error)}`
-      );
+      log.debug(`RuntimeBackgroundHandle.terminate: Error: ${errorMsg(error)}`);
     }
 
     this.terminated = true;
@@ -288,9 +284,7 @@ class RuntimeBackgroundHandle implements BackgroundHandle {
         timeout: 10,
       });
     } catch (error) {
-      log.debug(
-        `RuntimeBackgroundHandle.writeMeta: Error: ${errorMsg(error)}`
-      );
+      log.debug(`RuntimeBackgroundHandle.writeMeta: Error: ${errorMsg(error)}`);
     }
   }
 
@@ -327,9 +321,7 @@ class RuntimeBackgroundHandle implements BackgroundHandle {
         newOffset: offset + readResult.stdout.length,
       };
     } catch (error) {
-      log.debug(
-        `RuntimeBackgroundHandle.readOutput: Error: ${errorMsg(error)}`
-      );
+      log.debug(`RuntimeBackgroundHandle.readOutput: Error: ${errorMsg(error)}`);
       return { content: "", newOffset: offset };
     }
   }
@@ -462,9 +454,7 @@ class MigratedBackgroundHandle implements BackgroundHandle {
         this.consumeStream(this.execStream.stderr),
       ]);
     } catch (error) {
-      log.debug(
-        `MigratedBackgroundHandle.consumeStreams: ${errorMsg(error)}`
-      );
+      log.debug(`MigratedBackgroundHandle.consumeStreams: ${errorMsg(error)}`);
     } finally {
       if (this.outputFd) {
         await this.outputFd.close();
@@ -493,9 +483,7 @@ class MigratedBackgroundHandle implements BackgroundHandle {
       }
     } catch (error) {
       // Stream may have been cancelled or process killed - that's fine
-      log.debug(
-        `MigratedBackgroundHandle.consumeStream: ${errorMsg(error)}`
-      );
+      log.debug(`MigratedBackgroundHandle.consumeStream: ${errorMsg(error)}`);
     }
   }
 
@@ -507,9 +495,7 @@ class MigratedBackgroundHandle implements BackgroundHandle {
       const exitCodePath = path.join(this.outputDir, EXIT_CODE_FILENAME);
       await fs.writeFile(exitCodePath, String(code));
     } catch (error) {
-      log.debug(
-        `MigratedBackgroundHandle.writeExitCode: ${errorMsg(error)}`
-      );
+      log.debug(`MigratedBackgroundHandle.writeExitCode: ${errorMsg(error)}`);
     }
   }
 
@@ -540,9 +526,7 @@ class MigratedBackgroundHandle implements BackgroundHandle {
       const metaPath = path.join(this.outputDir, "meta.json");
       await fs.writeFile(metaPath, metaJson);
     } catch (error) {
-      log.debug(
-        `MigratedBackgroundHandle.writeMeta: ${errorMsg(error)}`
-      );
+      log.debug(`MigratedBackgroundHandle.writeMeta: ${errorMsg(error)}`);
     }
   }
 
@@ -568,9 +552,7 @@ class MigratedBackgroundHandle implements BackgroundHandle {
         await fd.close();
       }
     } catch (error) {
-      log.debug(
-        `MigratedBackgroundHandle.readOutput: ${errorMsg(error)}`
-      );
+      log.debug(`MigratedBackgroundHandle.readOutput: ${errorMsg(error)}`);
       return { content: "", newOffset: offset };
     }
   }

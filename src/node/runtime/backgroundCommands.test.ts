@@ -1,4 +1,6 @@
 import { describe, it, expect } from "bun:test";
+import { execSync } from "child_process";
+import * as fs from "fs/promises";
 import {
   shellQuote,
   buildWrapperScript,
@@ -81,9 +83,6 @@ describe("backgroundCommands", () => {
       });
 
       // The wrapper script should be valid bash - execute it and verify exit code is captured
-      const { execSync } = await import("child_process");
-      const fs = await import("fs/promises");
-
       await fs.mkdir(testDir, { recursive: true });
       // Ensure no stale file
       await fs.rm(exitCodePath, { force: true });
