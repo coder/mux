@@ -33,11 +33,17 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
     null
   );
   const menuRef = useRef<HTMLDivElement>(null);
+  const selectedRef = useRef<HTMLDivElement>(null);
 
   // Reset selection whenever suggestions change
   useEffect(() => {
     setSelectedIndex(0);
   }, [suggestions]);
+
+  // Scroll selected item into view
+  useEffect(() => {
+    selectedRef.current?.scrollIntoView({ block: "nearest" });
+  }, [selectedIndex]);
 
   // Calculate position when using portal mode
   useLayoutEffect(() => {
@@ -153,6 +159,7 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
       {suggestions.map((suggestion, index) => (
         <div
           key={suggestion.id}
+          ref={index === selectedIndex ? selectedRef : undefined}
           onMouseEnter={() => setSelectedIndex(index)}
           onClick={() => onSelectSuggestion(suggestion)}
           id={`${resolvedListId}-option-${suggestion.id}`}
