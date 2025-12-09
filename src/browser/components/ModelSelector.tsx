@@ -243,7 +243,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
           )}
         </div>
         {showDropdown && (
-          <div className="bg-separator border-border-light absolute bottom-full left-0 z-[1000] mb-1 max-h-[200px] min-w-80 overflow-y-auto rounded border shadow-[0_4px_12px_rgba(0,0,0,0.3)]">
+          <div className="bg-separator border-border-light absolute bottom-full left-0 z-[1020] mb-1 max-h-[200px] min-w-80 overflow-y-auto rounded border shadow-[0_4px_12px_rgba(0,0,0,0.3)]">
             {filteredModels.length === 0 ? (
               <div className="text-muted-light font-monospace px-2.5 py-1.5 text-[11px]">
                 No matching models
