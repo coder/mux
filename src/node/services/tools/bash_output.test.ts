@@ -116,7 +116,7 @@ describe("bash_output tool", () => {
 
     expect(result1.success).toBe(true);
     if (result1.success) {
-      expect(result1.stdout).toContain("line1");
+      expect(result1.output).toContain("line1");
     }
 
     // Wait for more output
@@ -131,8 +131,8 @@ describe("bash_output tool", () => {
     expect(result2.success).toBe(true);
     if (result2.success) {
       // Should contain line2 but NOT line1 (already read)
-      expect(result2.stdout).toContain("line2");
-      expect(result2.stdout).not.toContain("line1");
+      expect(result2.output).toContain("line2");
+      expect(result2.output).not.toContain("line1");
     }
 
     // Cleanup
@@ -173,8 +173,8 @@ describe("bash_output tool", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       // Should only contain ERROR lines
-      expect(result.stdout).toContain("ERROR");
-      expect(result.stdout).not.toContain("INFO");
+      expect(result.output).toContain("ERROR");
+      expect(result.output).not.toContain("INFO");
     }
 
     // Cleanup

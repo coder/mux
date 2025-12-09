@@ -105,8 +105,9 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
           </>
         )}
         <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
-        {/* Show "Background" button when bash is executing and can be sent to background */}
-        {status === "executing" && !isBackground && canSendToBackground && onSendToBackground && (
+        {/* Show "Background" button when bash is executing and can be sent to background.
+            Use invisible when executing but not yet confirmed as foreground to avoid layout flash. */}
+        {status === "executing" && !isBackground && onSendToBackground && (
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -115,14 +116,15 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
                   e.stopPropagation(); // Don't toggle expand
                   onSendToBackground();
                 }}
+                disabled={!canSendToBackground}
                 className={cn(
-                  "ml-2 flex cursor-pointer items-center gap-1 rounded px-2 py-0.5 text-[10px] font-medium transition-colors",
+                  "ml-2 flex cursor-pointer items-center gap-1 rounded p-1 text-[10px] font-medium transition-colors",
                   "bg-[var(--color-pending)]/20 text-[var(--color-pending)]",
-                  "hover:bg-[var(--color-pending)]/30"
+                  "hover:bg-[var(--color-pending)]/30",
+                  "disabled:pointer-events-none disabled:invisible"
                 )}
               >
-                <Layers size={10} />
-                Background
+                <Layers size={12} />
               </button>
             </TooltipTrigger>
             <TooltipContent>

@@ -42,8 +42,6 @@ function getInitStateManager(env: TestEnvironment): InitStateManager {
 interface ToolExecuteResult {
   success: boolean;
   backgroundProcessId?: string;
-  stdout?: string;
-  stderr?: string;
   status?: string;
   error?: string;
   exitCode?: number;
@@ -140,7 +138,7 @@ describe("Background Bash Direct Integration", () => {
     )) as ToolExecuteResult;
 
     expect(outputResult.success).toBe(true);
-    expect(outputResult.stdout).toContain(marker);
+    expect(outputResult.output).toContain(marker);
   });
 
   it("should read output files via handle (works for SSH runtime)", async () => {
@@ -161,7 +159,7 @@ describe("Background Bash Direct Integration", () => {
     const output = await manager.getOutput(spawnResult.processId);
     expect(output.success).toBe(true);
     if (output.success) {
-      expect(output.stdout).toContain(marker);
+      expect(output.output).toContain(marker);
     }
   });
 
@@ -186,14 +184,14 @@ describe("Background Bash Direct Integration", () => {
     const output1 = await manager.getOutput(spawnResult.processId);
     expect(output1.success).toBe(true);
     if (output1.success) {
-      expect(output1.stdout).toContain(marker1);
+      expect(output1.output).toContain(marker1);
     }
 
     // Second read immediately - no new content
     const output2 = await manager.getOutput(spawnResult.processId);
     expect(output2.success).toBe(true);
     if (output2.success) {
-      expect(output2.stdout).toBe("");
+      expect(output2.output).toBe("");
     }
 
     // Wait for marker2
@@ -203,8 +201,8 @@ describe("Background Bash Direct Integration", () => {
     const output3 = await manager.getOutput(spawnResult.processId);
     expect(output3.success).toBe(true);
     if (output3.success) {
-      expect(output3.stdout).toContain(marker2);
-      expect(output3.stdout).not.toContain(marker1);
+      expect(output3.output).toContain(marker2);
+      expect(output3.output).not.toContain(marker1);
     }
   });
 
@@ -289,7 +287,7 @@ describe("Background Bash Output Capture", () => {
   });
 
   it("should capture stderr output when process exits with error", async () => {
-    // This reproduces the bug where error output is lost
+    // Verifies that stderr is included in unified output
     const manager = getBackgroundProcessManager(env);
     const runtime = new LocalRuntime(workspacePath);
 
@@ -310,7 +308,7 @@ describe("Background Bash Output Capture", () => {
     expect(output.success).toBe(true);
     if (output.success) {
       expect(output.exitCode).toBe(1);
-      expect(output.stderr).toContain(marker);
+      expect(output.output).toContain(marker);
     }
   });
 
@@ -320,7 +318,7 @@ describe("Background Bash Output Capture", () => {
 
     const marker1 = `BEFORE_${Date.now()}`;
     const marker2 = `ERROR_${Date.now()}`;
-    // Script that outputs, then fails, then would output more (but won't reach it)
+    // Script that outputs to stdout, then stderr, then continues
     const spawnResult = await manager.spawn(
       runtime,
       workspaceId,
@@ -335,10 +333,9 @@ describe("Background Bash Output Capture", () => {
     const output = await manager.getOutput(spawnResult.processId);
     expect(output.success).toBe(true);
     if (output.success) {
-      expect(output.stdout).toContain(marker1);
-      expect(output.stderr).toContain(marker2);
-      // The script doesn't have set -e, so "NEVER_SEEN" might still appear
-      // But if it does have set -e behavior from the wrapper, it won't
+      // Both stdout and stderr should be in unified output
+      expect(output.output).toContain(marker1);
+      expect(output.output).toContain(marker2);
     }
   });
 
@@ -362,10 +359,11 @@ describe("Background Bash Output Capture", () => {
     const output = await manager.getOutput(spawnResult.processId);
     expect(output.success).toBe(true);
     if (output.success) {
-      expect(output.stdout).toContain(`${outMarker}_1`);
-      expect(output.stdout).toContain(`${outMarker}_3`);
-      expect(output.stderr).toContain(`${errMarker}_1`);
-      expect(output.stderr).toContain(`${errMarker}_3`);
+      // Unified output should contain both stdout and stderr
+      expect(output.output).toContain(`${outMarker}_1`);
+      expect(output.output).toContain(`${outMarker}_3`);
+      expect(output.output).toContain(`${errMarker}_1`);
+      expect(output.output).toContain(`${errMarker}_3`);
     }
   });
 });

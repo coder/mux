@@ -235,8 +235,7 @@ export type BashOutputToolResult =
   | {
       success: true;
       status: "running" | "exited" | "killed" | "failed";
-      stdout: string;
-      stderr: string;
+      output: string;
       exitCode?: number;
     }
   | { success: false; error: string };

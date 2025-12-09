@@ -375,7 +375,7 @@ describe("BackgroundProcessManager", () => {
       expect(output1.success).toBe(true);
       if (!output1.success) return;
 
-      expect(output1.stdout).toContain("line 1");
+      expect(output1.output).toContain("line 1");
 
       // Wait for more output
       await new Promise((resolve) => setTimeout(resolve, 200));
@@ -386,9 +386,9 @@ describe("BackgroundProcessManager", () => {
       if (!output2.success) return;
 
       // Second call should only return new content (line 2)
-      expect(output2.stdout).toContain("line 2");
+      expect(output2.output).toContain("line 2");
       // And should NOT contain line 1 again (incremental reads)
-      expect(output2.stdout).not.toContain("line 1");
+      expect(output2.output).not.toContain("line 1");
     });
 
     it("should return stderr from a running process", async () => {
@@ -405,7 +405,7 @@ describe("BackgroundProcessManager", () => {
       expect(output.success).toBe(true);
       if (!output.success) return;
 
-      expect(output.stderr).toContain("error message");
+      expect(output.output).toContain("error message");
     });
 
     it("should return error for non-existent process", async () => {
@@ -457,9 +457,9 @@ describe("BackgroundProcessManager", () => {
       expect(output.success).toBe(true);
       if (!output.success) return;
 
-      expect(output.stdout).toContain("INFO: message");
-      expect(output.stdout).toContain("INFO: another");
-      expect(output.stdout).not.toContain("DEBUG");
+      expect(output.output).toContain("INFO: message");
+      expect(output.output).toContain("INFO: another");
+      expect(output.output).not.toContain("DEBUG");
     });
   });
 
@@ -484,7 +484,7 @@ describe("BackgroundProcessManager", () => {
       expect(output.success).toBe(true);
       if (!output.success) return;
 
-      expect(output.stdout).toContain("hello from bg");
+      expect(output.output).toContain("hello from bg");
     });
 
     it("should read from offset 0 on first call even if file already has content", async () => {
@@ -510,7 +510,7 @@ describe("BackgroundProcessManager", () => {
       if (!output.success) return;
 
       // Should have the output even though some time has passed
-      expect(output.stdout).toContain("initial output");
+      expect(output.output).toContain("initial output");
     });
 
     it("DEBUG: verifies outputDir from spawn matches getProcess", async () => {
@@ -540,7 +540,7 @@ describe("BackgroundProcessManager", () => {
       const output = await manager.getOutput(result.processId);
       expect(output.success).toBe(true);
       if (output.success) {
-        expect(output.stdout).toContain("verify test");
+        expect(output.output).toContain("verify test");
       }
     });
 
@@ -594,7 +594,7 @@ describe("BackgroundProcessManager", () => {
       // This is the key assertion - should succeed AND have content
       expect(outputResult.success).toBe(true);
       if (outputResult.success) {
-        expect(outputResult.stdout).toContain("hello from integration test");
+        expect(outputResult.output).toContain("hello from integration test");
       } else {
         throw new Error(`bash_output failed: ${outputResult.error}`);
       }

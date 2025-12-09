@@ -407,8 +407,7 @@ export class BackgroundProcessManager extends EventEmitter {
     | {
         success: true;
         status: "running" | "exited" | "killed" | "failed";
-        stdout: string;
-        stderr: string;
+        output: string;
         exitCode?: number;
       }
     | { success: false; error: string }
@@ -450,17 +449,18 @@ export class BackgroundProcessManager extends EventEmitter {
     pos.stdoutBytes = stdoutResult.newOffset;
     pos.stderrBytes = stderrResult.newOffset;
 
+    // Merge stdout and stderr into unified output (like bash tool does)
+    // This matches what users see in terminals and is easier for UI display
+    let output = stdout;
+    if (stderr) {
+      output = output ? `${output}\n${stderr}` : stderr;
+    }
+
     // Apply filter if provided (permanently discards non-matching lines)
-    let filteredStdout = stdout;
-    let filteredStderr = stderr;
     if (filter) {
       try {
         const regex = new RegExp(filter);
-        filteredStdout = stdout
-          .split("\n")
-          .filter((line) => regex.test(line))
-          .join("\n");
-        filteredStderr = stderr
+        output = output
           .split("\n")
           .filter((line) => regex.test(line))
           .join("\n");
@@ -472,8 +472,7 @@ export class BackgroundProcessManager extends EventEmitter {
     return {
       success: true,
       status: proc.status,
-      stdout: filteredStdout,
-      stderr: filteredStderr,
+      output,
       exitCode: proc.exitCode,
     };
   }
