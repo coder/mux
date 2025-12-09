@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useAPI } from "@/browser/contexts/API";
+import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 
 export interface UseWorkspaceNameOptions {
   /** The user's message to generate a name for */
@@ -206,7 +207,13 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
 
   const setName = useCallback((name: string) => {
     setManualName(name);
-    setError(null);
+    // Validate manual input and show errors in real-time
+    if (name.trim()) {
+      const validation = validateWorkspaceName(name);
+      setError(validation.error ?? null);
+    } else {
+      setError(null);
+    }
   }, []);
 
   const waitForGeneration = useCallback(async (): Promise<string> => {

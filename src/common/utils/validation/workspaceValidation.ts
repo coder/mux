@@ -17,7 +17,7 @@ export function validateWorkspaceName(name: string): { valid: boolean; error?: s
   if (!validPattern.test(name)) {
     return {
       valid: false,
-      error: "Workspace name can only contain lowercase letters, digits, underscore, and hyphen",
+      error: "Use only: a-z, 0-9, _, -",
     };
   }
 
