@@ -22,8 +22,20 @@ runs:
         restore-keys: |
           ${{ runner.os }}-${{ runner.arch }}-bun-${{ steps.bun-version.outputs.version }}-node-modules-
 
+    - name: Check if node_modules exists
+      id: check-node-modules
+      shell: bash
+      run: |
+        if [ -d "node_modules" ] && [ -d "node_modules/.bin" ]; then
+          echo "exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+        fi
+
+    # Only restore bun install cache when node_modules is completely missing.
+    # This avoids 88+ seconds of tar/zstd decompression on Windows for partial cache hits.
     - name: Cache bun install cache
-      if: steps.cache-node-modules.outputs.cache-hit != 'true'
+      if: steps.check-node-modules.outputs.exists != 'true'
       id: cache-bun-install
       uses: actions/cache@v4
       with:
@@ -33,6 +45,6 @@ runs:
           ${{ runner.os }}-bun-cache-
 
     - name: Install dependencies
-      if: steps.cache-node-modules.outputs.cache-hit != 'true'
+      if: steps.check-node-modules.outputs.exists != 'true'
       shell: bash
       run: bun install --frozen-lockfile
