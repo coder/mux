@@ -111,7 +111,7 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
           </DialogDescription>
         </DialogHeader>
         {error && <div className="text-error mb-3 text-xs">{error}</div>}
-        <div className="bg-modal-bg border-border-medium mb-4 h-64 overflow-hidden rounded border">
+        <div className="bg-modal-bg border-border-medium mb-4 h-80 overflow-hidden rounded border">
           <DirectoryTree
             currentPath={root ? root.path : null}
             entries={entries}
