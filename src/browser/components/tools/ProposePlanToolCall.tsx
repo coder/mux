@@ -230,9 +230,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const { copied, copyToClipboard } = useCopyToClipboard();
 
   const handleOpenInEditor = async (event: React.MouseEvent) => {
-    if (!planPath || !workspaceId) {
-      return;
-    }
+    if (!planPath || !workspaceId) return;
     const result = await openInEditor(workspaceId, planPath, runtimeConfig);
     if (!result.success && result.error) {
       const rect = (event.target as HTMLElement).getBoundingClientRect();

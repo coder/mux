@@ -6,6 +6,8 @@
 import type { ModelMessage, AssistantModelMessage, ToolModelMessage } from "ai";
 import type { MuxMessage } from "@/common/types/message";
 import type { EditedFileAttachment } from "@/node/services/agentSession";
+import type { PostCompactionAttachment } from "@/common/types/attachment";
+import { renderAttachmentsToContent } from "./attachmentRenderer";
 
 /**
  * Filter out assistant messages that are empty or only contain reasoning parts.
@@ -252,6 +254,60 @@ export function injectFileChangeNotifications(
   };
 
   return [...messages, syntheticMessage];
+}
+
+/**
+ * Inject post-compaction attachments as a synthetic user message.
+ * When compaction occurs, this injects a message containing plan file content
+ * and/or edited files to preserve context that would otherwise be lost.
+ *
+ * The message is inserted AFTER the compaction summary message to ensure
+ * the model receives this context for the next turn.
+ *
+ * @param messages The conversation history
+ * @param attachments Post-compaction attachments (plan file, edited files)
+ * @returns Messages with attachments injected after compaction summary
+ */
+export function injectPostCompactionAttachments(
+  messages: MuxMessage[],
+  attachments?: PostCompactionAttachment[] | null
+): MuxMessage[] {
+  if (!attachments || attachments.length === 0) {
+    return messages;
+  }
+
+  // Find the compaction summary message (marked with metadata.compacted)
+  const compactionIndex = messages.findIndex((msg) => msg.metadata?.compacted);
+
+  if (compactionIndex === -1) {
+    // No compaction message found - this shouldn't happen if attachments are provided,
+    // but append at end as a fallback
+    const syntheticMessage: MuxMessage = {
+      id: `post-compaction-${Date.now()}`,
+      role: "user",
+      parts: [{ type: "text", text: renderAttachmentsToContent(attachments) }],
+      metadata: {
+        timestamp: Date.now(),
+        synthetic: true,
+      },
+    };
+    return [...messages, syntheticMessage];
+  }
+
+  // Insert the synthetic message immediately after the compaction summary
+  const syntheticMessage: MuxMessage = {
+    id: `post-compaction-${Date.now()}`,
+    role: "user",
+    parts: [{ type: "text", text: renderAttachmentsToContent(attachments) }],
+    metadata: {
+      timestamp: messages[compactionIndex].metadata?.timestamp ?? Date.now(),
+      synthetic: true,
+    },
+  };
+
+  const result = [...messages];
+  result.splice(compactionIndex + 1, 0, syntheticMessage);
+  return result;
 }
 
 /**

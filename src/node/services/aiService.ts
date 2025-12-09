@@ -36,7 +36,9 @@ import {
   filterEmptyAssistantMessages,
   injectModeTransition,
   injectFileChangeNotifications,
+  injectPostCompactionAttachments,
 } from "@/browser/utils/messages/modelMessageTransform";
+import type { PostCompactionAttachment } from "@/common/types/attachment";
 import { applyCacheControl } from "@/common/utils/ai/cacheStrategy";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
@@ -857,6 +859,7 @@ export class AIService extends EventEmitter {
    * @param mode Optional mode name - affects system message via Mode: sections in AGENTS.md
    * @param recordFileState Optional callback to record file state for external edit detection
    * @param changedFileAttachments Optional attachments for files that were edited externally
+   * @param postCompactionAttachments Optional attachments to inject after compaction
    * @returns Promise that resolves when streaming completes or fails
    */
   async streamMessage(
@@ -871,7 +874,8 @@ export class AIService extends EventEmitter {
     muxProviderOptions?: MuxProviderOptions,
     mode?: string,
     recordFileState?: (filePath: string, state: FileState) => void,
-    changedFileAttachments?: EditedFileAttachment[]
+    changedFileAttachments?: EditedFileAttachment[],
+    postCompactionAttachments?: PostCompactionAttachment[] | null
   ): Promise<Result<void, SendMessageError>> {
     try {
       if (this.mockModeEnabled && this.mockScenarioPlayer) {
@@ -1035,9 +1039,15 @@ export class AIService extends EventEmitter {
         changedFileAttachments
       );
 
+      // Inject post-compaction attachments (plan file, edited files) after compaction summary
+      const messagesWithPostCompaction = injectPostCompactionAttachments(
+        messagesWithFileChanges,
+        postCompactionAttachments
+      );
+
       // Apply centralized tool-output redaction BEFORE converting to provider ModelMessages
       // This keeps the persisted/UI history intact while trimming heavy fields for the request
-      const redactedForProvider = applyToolOutputRedaction(messagesWithFileChanges);
+      const redactedForProvider = applyToolOutputRedaction(messagesWithPostCompaction);
       log.debug_obj(`${workspaceId}/2a_redacted_messages.json`, redactedForProvider);
 
       // Sanitize tool inputs to ensure they are valid objects (not strings or arrays)

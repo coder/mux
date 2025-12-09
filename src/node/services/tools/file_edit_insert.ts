@@ -101,6 +101,19 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
             throw err;
           }
 
+          // Record file state for post-compaction attachment tracking
+          if (config.recordFileState) {
+            try {
+              const newStat = await config.runtime.stat(resolvedPath, abortSignal);
+              config.recordFileState(resolvedPath, {
+                content,
+                timestamp: newStat.modifiedTime.getTime(),
+              });
+            } catch {
+              // File stat failed, skip recording
+            }
+          }
+
           const diff = generateDiff(resolvedPath, "", content);
           return {
             success: true,

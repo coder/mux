@@ -141,6 +141,19 @@ export async function executeFileEditOperation<TMetadata>({
       throw err;
     }
 
+    // Record file state for post-compaction attachment tracking
+    if (config.recordFileState) {
+      try {
+        const newStat = await config.runtime.stat(resolvedPath, abortSignal);
+        config.recordFileState(resolvedPath, {
+          content: operationResult.newContent,
+          timestamp: newStat.modifiedTime.getTime(),
+        });
+      } catch {
+        // File stat failed, skip recording (shouldn't happen since we just wrote it)
+      }
+    }
+
     const diff = generateDiff(resolvedPath, originalContent, operationResult.newContent);
 
     return {

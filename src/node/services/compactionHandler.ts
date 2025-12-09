@@ -10,6 +10,10 @@ import { collectUsageHistory } from "@/common/utils/tokens/displayUsage";
 import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import { log } from "@/node/services/log";
+import {
+  extractEditedFileDiffs,
+  type FileEditDiff,
+} from "@/common/utils/messages/extractEditedFiles";
 
 interface CompactionHandlerOptions {
   workspaceId: string;
@@ -33,11 +37,42 @@ export class CompactionHandler {
   private readonly emitter: EventEmitter;
   private readonly processedCompactionRequestIds: Set<string> = new Set<string>();
 
+  /** Flag indicating post-compaction attachments should be generated on next turn */
+  private postCompactionAttachmentsPending = false;
+  /** Cached file diffs extracted before history was cleared */
+  private cachedFileDiffs: FileEditDiff[] = [];
+
   constructor(options: CompactionHandlerOptions) {
     this.workspaceId = options.workspaceId;
     this.historyService = options.historyService;
     this.partialService = options.partialService;
     this.emitter = options.emitter;
+  }
+
+  /**
+   * Consume pending post-compaction diffs and clear them.
+   * Returns null if no compaction occurred, otherwise returns the cached diffs.
+   */
+  consumePendingDiffs(): FileEditDiff[] | null {
+    if (!this.postCompactionAttachmentsPending) {
+      return null;
+    }
+    this.postCompactionAttachmentsPending = false;
+    const diffs = this.cachedFileDiffs;
+    this.cachedFileDiffs = [];
+    return diffs;
+  }
+
+  /**
+   * Peek at cached file paths without consuming them.
+   * Returns paths of files that will be reinjected after compaction.
+   * Returns null if no pending compaction attachments.
+   */
+  peekCachedFilePaths(): string[] | null {
+    if (!this.postCompactionAttachmentsPending) {
+      return null;
+    }
+    return this.cachedFileDiffs.map((diff) => diff.path);
   }
 
   /**
@@ -122,6 +157,9 @@ export class CompactionHandler {
       // Continue anyway - the partial may not exist, which is fine
     }
 
+    // Extract diffs BEFORE clearing history (they'll be gone after clear)
+    this.cachedFileDiffs = extractEditedFileDiffs(messages);
+
     // Clear entire history and get deleted sequences
     const clearResult = await this.historyService.clearHistory(this.workspaceId);
     if (!clearResult.success) {
@@ -157,6 +195,9 @@ export class CompactionHandler {
     if (!appendResult.success) {
       return Err(`Failed to append summary: ${appendResult.error}`);
     }
+
+    // Set flag to trigger post-compaction attachment injection on next turn
+    this.postCompactionAttachmentsPending = true;
 
     // Emit delete event for old messages
     if (deletedSequences.length > 0) {

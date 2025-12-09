@@ -31,6 +31,10 @@ import type { StreamEndEvent } from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import { computeDiff } from "@/node/utils/diff";
+import { AttachmentService } from "./attachmentService";
+import type { PostCompactionAttachment } from "@/common/types/attachment";
+import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
+import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
 
 /**
  * Tracked file state for detecting external edits.
@@ -108,6 +112,18 @@ export class AgentSession {
    * Key: absolute file path, Value: last known content and mtime.
    */
   private readonly readFileState = new Map<string, FileState>();
+
+  /**
+   * Track turns since last post-compaction attachment injection.
+   * Start at max to trigger immediate injection on first turn after compaction.
+   */
+  private turnsSinceLastAttachment = TURNS_BETWEEN_ATTACHMENTS;
+
+  /**
+   * Flag indicating compaction has occurred in this session.
+   * Used to enable the cooldown-based attachment injection.
+   */
+  private compactionOccurred = false;
 
   constructor(options: AgentSessionOptions) {
     assert(options, "AgentSession requires options");
@@ -521,6 +537,9 @@ export class AgentSession {
     // Check for external file edits (timestamp-based polling)
     const changedFileAttachments = await this.getChangedFileAttachments();
 
+    // Check if post-compaction attachments should be injected
+    const postCompactionAttachments = await this.getPostCompactionAttachmentsIfNeeded();
+
     // Enforce thinking policy for the specified model (single source of truth)
     // This ensures model-specific requirements are met regardless of where the request originates
     const effectiveThinkingLevel = options?.thinkingLevel
@@ -542,7 +561,8 @@ export class AgentSession {
       options?.providerOptions,
       options?.mode,
       recordFileState,
-      changedFileAttachments.length > 0 ? changedFileAttachments : undefined
+      changedFileAttachments.length > 0 ? changedFileAttachments : undefined,
+      postCompactionAttachments
     );
   }
 
@@ -727,6 +747,99 @@ export class AgentSession {
   }
 
   /**
+   * Get the count of tracked files for UI display.
+   */
+  getTrackedFilesCount(): number {
+    return this.readFileState.size;
+  }
+
+  /**
+   * Get the paths of tracked files for UI display.
+   */
+  getTrackedFilePaths(): string[] {
+    return Array.from(this.readFileState.keys());
+  }
+
+  /**
+   * Clear all tracked file state (e.g., on /clear).
+   */
+  clearFileState(): void {
+    this.readFileState.clear();
+  }
+
+  /**
+   * Get post-compaction attachments if they should be injected this turn.
+   *
+   * Logic:
+   * - On first turn after compaction: inject immediately, clear file state cache
+   * - Subsequent turns: inject every TURNS_BETWEEN_ATTACHMENTS turns
+   *
+   * @returns Attachments to inject, or null if none needed
+   */
+  private async getPostCompactionAttachmentsIfNeeded(): Promise<PostCompactionAttachment[] | null> {
+    // Check if compaction just occurred (immediate injection with cached diffs)
+    const pendingDiffs = this.compactionHandler.consumePendingDiffs();
+    if (pendingDiffs !== null) {
+      this.compactionOccurred = true;
+      this.turnsSinceLastAttachment = 0;
+      // Clear file state cache since history context is gone
+      this.readFileState.clear();
+
+      // Get runtime for reading plan file
+      const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
+      if (!metadataResult.success) {
+        // Can't get metadata, skip plan reference but still include file diffs
+        return [
+          AttachmentService.generateEditedFilesAttachment(pendingDiffs) ?? [],
+        ].flat() as PostCompactionAttachment[];
+      }
+      const runtime = createRuntime(
+        metadataResult.data.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
+        { projectPath: metadataResult.data.projectPath }
+      );
+
+      // Use cached diffs extracted before history was cleared
+      return AttachmentService.generatePostCompactionAttachments(this.workspaceId, pendingDiffs, runtime);
+    }
+
+    // Increment turn counter
+    this.turnsSinceLastAttachment++;
+
+    // Check cooldown for subsequent injections (re-read from current history)
+    if (this.compactionOccurred && this.turnsSinceLastAttachment >= TURNS_BETWEEN_ATTACHMENTS) {
+      this.turnsSinceLastAttachment = 0;
+      return this.generatePostCompactionAttachments();
+    }
+
+    return null;
+  }
+
+  /**
+   * Generate post-compaction attachments by extracting diffs from message history.
+   */
+  private async generatePostCompactionAttachments(): Promise<PostCompactionAttachment[]> {
+    const historyResult = await this.historyService.getHistory(this.workspaceId);
+    if (!historyResult.success) {
+      return [];
+    }
+    const fileDiffs = extractEditedFileDiffs(historyResult.data);
+
+    // Get runtime for reading plan file
+    const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
+    if (!metadataResult.success) {
+      // Can't get metadata, skip plan reference but still include file diffs
+      const editedFilesRef = AttachmentService.generateEditedFilesAttachment(fileDiffs);
+      return editedFilesRef ? [editedFilesRef] : [];
+    }
+    const runtime = createRuntime(
+      metadataResult.data.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
+      { projectPath: metadataResult.data.projectPath }
+    );
+
+    return AttachmentService.generatePostCompactionAttachments(this.workspaceId, fileDiffs, runtime);
+  }
+
+  /**
    * Check tracked files for external modifications.
    * Returns attachments for files that changed since last recorded state.
    * Uses timestamp-based polling with diff injection.
@@ -759,6 +872,14 @@ export class AgentSession {
 
     const results = await Promise.all(checks);
     return results.filter((r): r is EditedFileAttachment => r !== null);
+  }
+
+  /**
+   * Peek at cached file paths from pending compaction.
+   * Returns paths that will be reinjected, or null if no pending compaction.
+   */
+  getPendingTrackedFilePaths(): string[] | null {
+    return this.compactionHandler.peekCachedFilePaths();
   }
 
   private assertNotDisposed(operation: string): void {

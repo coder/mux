@@ -362,6 +362,17 @@ export const workspace = {
       output: ResultSchema(z.void(), z.string()),
     },
   },
+  /**
+   * Get post-compaction context state for a workspace.
+   * Returns plan path (if exists) and tracked file paths that will be injected.
+   */
+  getPostCompactionState: {
+    input: z.object({ workspaceId: z.string() }),
+    output: z.object({
+      planPath: z.string().nullable(),
+      trackedFilePaths: z.array(z.string()),
+    }),
+  },
 };
 
 export type WorkspaceSendMessageOutput = z.infer<typeof workspace.sendMessage.output>;

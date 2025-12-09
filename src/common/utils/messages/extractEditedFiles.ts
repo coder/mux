@@ -1,0 +1,283 @@
+import type { MuxMessage } from "@/common/types/message";
+import { FILE_EDIT_TOOL_NAMES } from "@/common/types/tools";
+import { MAX_EDITED_FILES, MAX_FILE_CONTENT_SIZE } from "@/common/constants/attachments";
+import { applyPatch, createPatch, parsePatch } from "diff";
+
+/**
+ * Input shape for file edit tools.
+ * All file edit tools have a file_path field.
+ */
+interface FileEditToolInput {
+  file_path?: string;
+}
+
+/**
+ * Output shape for file edit tools.
+ * Successful edits contain a diff field.
+ */
+interface FileEditToolOutput {
+  success?: boolean;
+  diff?: string;
+}
+
+/**
+ * Represents a file and its combined diff from all edits.
+ */
+export interface FileEditDiff {
+  path: string;
+  diff: string;
+  truncated: boolean;
+}
+
+/**
+ * Extract unique file paths that have been edited from message history.
+ * Scans assistant messages for successful file_edit_* tool uses.
+ * Returns most recently edited files first, limited to MAX_EDITED_FILES.
+ *
+ * @param messages - The message history to scan
+ * @returns Array of unique absolute file paths that were edited (max MAX_EDITED_FILES)
+ */
+export function extractEditedFilePaths(messages: MuxMessage[]): string[] {
+  const editedFiles: string[] = [];
+  const seen = new Set<string>();
+
+  // Iterate in reverse to get most recent edits first
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.role !== "assistant") continue;
+
+    for (const part of message.parts) {
+      if (part.type !== "dynamic-tool") continue;
+      if (!FILE_EDIT_TOOL_NAMES.includes(part.toolName as (typeof FILE_EDIT_TOOL_NAMES)[number]))
+        continue;
+
+      // Only count successful edits (output-available with success)
+      if (part.state !== "output-available") continue;
+
+      // Check if the tool result indicates success
+      const output = part.output as { success?: boolean } | undefined;
+      if (!output?.success) continue;
+
+      // Extract file path from input
+      const input = part.input as FileEditToolInput | undefined;
+      const filePath = input?.file_path;
+      if (filePath && typeof filePath === "string" && !seen.has(filePath)) {
+        seen.add(filePath);
+        editedFiles.push(filePath);
+      }
+    }
+  }
+
+  // Return most recent files, limited to MAX_EDITED_FILES
+  return editedFiles.slice(0, MAX_EDITED_FILES);
+}
+
+/**
+ * Extract the original content from multiple unified diffs.
+ * Parses all diffs and reconstructs what the file looked like before any edits.
+ *
+ * Strategy:
+ * 1. The first diff's "original" side is the true original for regions it covers.
+ * 2. For regions not covered by the first diff, later diffs provide the original
+ *    content (since those regions weren't modified by earlier diffs).
+ * 3. Lines that the first diff ADDS (new content) should not be filled from
+ *    subsequent diffs, as they didn't exist in the original.
+ *
+ * Uses hunk positions to place content correctly and tracks claimed regions.
+ */
+function extractOriginalFromDiffs(diffs: string[]): string {
+  if (diffs.length === 0) return "";
+
+  const lines: string[] = [];
+
+  // First pass: extract original from first diff and track its coverage
+  // Also track line indices that were ADDED by the first diff (in the new file)
+  // These indices shouldn't be filled from subsequent diffs
+  const firstDiffOriginalIndices = new Set<number>();
+  const firstDiffAddedIndices = new Set<number>(); // Indices in the NEW file that were added
+
+  const firstDiff = diffs[0];
+  const firstPatches = parsePatch(firstDiff);
+  if (firstPatches.length > 0 && firstPatches[0].hunks) {
+    for (const hunk of firstPatches[0].hunks) {
+      let oldLineIndex = hunk.oldStart - 1;
+      let newLineIndex = hunk.newStart - 1;
+
+      // Fill gap with placeholder empty lines if needed
+      while (lines.length < oldLineIndex) {
+        lines.push("");
+      }
+
+      for (const line of hunk.lines) {
+        if (line.startsWith("-") || line.startsWith(" ")) {
+          // Original content
+          const content = line.slice(1);
+          if (oldLineIndex >= lines.length) {
+            lines.push(content);
+          } else {
+            lines[oldLineIndex] = content;
+          }
+          firstDiffOriginalIndices.add(oldLineIndex);
+          oldLineIndex++;
+        }
+        if (line.startsWith("+") || line.startsWith(" ")) {
+          // Track new-file indices for context lines and additions
+          firstDiffAddedIndices.add(newLineIndex);
+          newLineIndex++;
+        }
+      }
+    }
+  }
+
+  // Second pass: fill gaps from subsequent diffs
+  // Only add content for regions not covered by the first diff
+  for (let i = 1; i < diffs.length; i++) {
+    const diff = diffs[i];
+    const patches = parsePatch(diff);
+    if (patches.length === 0 || !patches[0].hunks) continue;
+
+    for (const hunk of patches[0].hunks) {
+      // The hunk's oldStart refers to line numbers in the file AFTER previous diffs
+      // For non-overlapping regions, this should match the original file
+      let lineIndex = hunk.oldStart - 1;
+
+      // Fill gap with placeholder empty lines if needed
+      while (lines.length < lineIndex) {
+        lines.push("");
+      }
+
+      for (const line of hunk.lines) {
+        if (line.startsWith("-") || line.startsWith(" ")) {
+          const content = line.slice(1);
+
+          // Only fill if:
+          // 1. This index wasn't part of the first diff's original content
+          // 2. This index wasn't ADDED by the first diff (would be intermediate state)
+          // 3. We haven't already filled this slot
+          const isOriginalFromFirstDiff = firstDiffOriginalIndices.has(lineIndex);
+          const wasAddedByFirstDiff = firstDiffAddedIndices.has(lineIndex);
+
+          if (!isOriginalFromFirstDiff && !wasAddedByFirstDiff) {
+            if (lineIndex >= lines.length) {
+              lines.push(content);
+            } else if (lines[lineIndex] === "") {
+              lines[lineIndex] = content;
+            }
+          }
+          lineIndex++;
+        }
+      }
+    }
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * Extract edited files with their combined diffs from message history.
+ * Scans assistant messages for successful file_edit_* tool uses and combines
+ * multiple edits to the same file into a single unified diff.
+ *
+ * Returns most recently edited files first, limited to MAX_EDITED_FILES.
+ *
+ * @param messages - The message history to scan
+ * @returns Array of file diffs (max MAX_EDITED_FILES)
+ */
+export function extractEditedFileDiffs(messages: MuxMessage[]): FileEditDiff[] {
+  // Collect all diffs per file path in chronological order
+  const diffsByPath = new Map<string, string[]>();
+  const editOrder: string[] = []; // Track order of last edit per file
+
+  for (const message of messages) {
+    if (message.role !== "assistant") continue;
+
+    for (const part of message.parts) {
+      if (part.type !== "dynamic-tool") continue;
+      if (!FILE_EDIT_TOOL_NAMES.includes(part.toolName as (typeof FILE_EDIT_TOOL_NAMES)[number]))
+        continue;
+      if (part.state !== "output-available") continue;
+
+      const output = part.output as FileEditToolOutput | undefined;
+      if (!output?.success || !output.diff) continue;
+
+      const input = part.input as FileEditToolInput | undefined;
+      const filePath = input?.file_path;
+      if (!filePath || typeof filePath !== "string") continue;
+
+      // Add diff to this file's list
+      if (!diffsByPath.has(filePath)) {
+        diffsByPath.set(filePath, []);
+      }
+      diffsByPath.get(filePath)!.push(output.diff);
+
+      // Update edit order (move to end if already exists)
+      const idx = editOrder.indexOf(filePath);
+      if (idx !== -1) editOrder.splice(idx, 1);
+      editOrder.push(filePath);
+    }
+  }
+
+  // Process files in reverse edit order (most recent first)
+  const results: FileEditDiff[] = [];
+  for (let i = editOrder.length - 1; i >= 0 && results.length < MAX_EDITED_FILES; i--) {
+    const filePath = editOrder[i];
+    const diffs = diffsByPath.get(filePath)!;
+
+    const combined = combineDiffs(filePath, diffs);
+    if (combined) {
+      results.push(combined);
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Combine multiple diffs for the same file into a single unified diff.
+ * Applies diffs sequentially to reconstruct original→final transformation.
+ */
+function combineDiffs(filePath: string, diffs: string[]): FileEditDiff | null {
+  if (diffs.length === 0) return null;
+
+  // Single diff - no combination needed
+  if (diffs.length === 1) {
+    const diff = diffs[0];
+    const truncated = diff.length > MAX_FILE_CONTENT_SIZE;
+    return {
+      path: filePath,
+      diff: truncated ? diff.slice(0, MAX_FILE_CONTENT_SIZE) : diff,
+      truncated,
+    };
+  }
+
+  // Multiple diffs - need to combine
+  // Start by extracting original content from all diffs (each covers different regions)
+  let content = extractOriginalFromDiffs(diffs);
+  const originalContent = content;
+
+  // Apply each diff sequentially
+  for (const diff of diffs) {
+    const result = applyPatch(content, diff);
+    if (result === false) {
+      // Patch failed to apply - fall back to just using the last diff
+      const lastDiff = diffs[diffs.length - 1];
+      const truncated = lastDiff.length > MAX_FILE_CONTENT_SIZE;
+      return {
+        path: filePath,
+        diff: truncated ? lastDiff.slice(0, MAX_FILE_CONTENT_SIZE) : lastDiff,
+        truncated,
+      };
+    }
+    content = result;
+  }
+
+  // Generate combined diff from original to final
+  const combinedDiff = createPatch(filePath, originalContent, content, "", "", { context: 3 });
+  const truncated = combinedDiff.length > MAX_FILE_CONTENT_SIZE;
+
+  return {
+    path: filePath,
+    diff: truncated ? combinedDiff.slice(0, MAX_FILE_CONTENT_SIZE) : combinedDiff,
+    truncated,
+  };
+}

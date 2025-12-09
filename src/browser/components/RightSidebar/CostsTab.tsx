@@ -11,6 +11,8 @@ import { ConsumerBreakdown } from "./ConsumerBreakdown";
 import { HorizontalThresholdSlider } from "./ThresholdSlider";
 import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
+import { PostCompactionSection } from "./PostCompactionSection";
+import { usePostCompactionState } from "@/browser/hooks/usePostCompactionState";
 
 // Format token display - show k for thousands with 1 decimal
 const formatTokens = (tokens: number) =>
@@ -64,6 +66,9 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
   const [viewMode, setViewMode] = usePersistedState<ViewMode>("costsTab:viewMode", "session");
   const { options } = useProviderOptions();
   const use1M = options.anthropic?.use1MContext ?? false;
+
+  // Post-compaction context state for UI display
+  const postCompactionState = usePostCompactionState(workspaceId);
 
   // Get model from context usage for per-model threshold storage
   // Use lastContextUsage for context window display (last step's usage)
@@ -265,6 +270,11 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
               );
             })()}
           </div>
+          <PostCompactionSection
+            workspaceId={workspaceId}
+            planPath={postCompactionState.planPath}
+            trackedFilePaths={postCompactionState.trackedFilePaths}
+          />
         </div>
       )}
 

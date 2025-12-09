@@ -15,6 +15,9 @@ import type { ExtensionMetadataService } from "@/node/services/ExtensionMetadata
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import { createRuntime, IncompatibleRuntimeError } from "@/node/runtime/runtimeFactory";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
+import { getPlanFilePath } from "@/common/utils/planStorage";
+import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
+import { fileExists } from "@/node/utils/runtime/fileExists";
 
 import type {
   SendMessageOptions,
@@ -271,6 +274,50 @@ export class WorkspaceService extends EventEmitter {
 
     session.dispose();
     this.sessions.delete(workspaceId);
+  }
+
+  /**
+   * Get post-compaction context state for a workspace.
+   * Returns info about what will be injected after compaction.
+   * Prefers cached paths from pending compaction, falls back to history extraction.
+   */
+  public async getPostCompactionState(workspaceId: string): Promise<{
+    planPath: string | null;
+    trackedFilePaths: string[];
+  }> {
+    const planPath = getPlanFilePath(workspaceId);
+
+    // Get workspace metadata to create runtime for plan file check
+    const metadata = await this.getInfo(workspaceId);
+    let planExists = false;
+    if (metadata) {
+      const runtime = createRuntime(metadata.runtimeConfig, { projectPath: metadata.projectPath });
+      planExists = await fileExists(runtime, planPath);
+    }
+
+    // If session has pending compaction attachments, use cached paths
+    // (history is cleared after compaction, but cache survives)
+    const session = this.sessions.get(workspaceId);
+    const pendingPaths = session?.getPendingTrackedFilePaths();
+    if (pendingPaths) {
+      const trackedFilePaths = pendingPaths.filter((p) => p !== planPath);
+      return {
+        planPath: planExists ? planPath : null,
+        trackedFilePaths,
+      };
+    }
+
+    // Fallback: compute tracked files from message history (survives reloads)
+    const historyResult = await this.historyService.getHistory(workspaceId);
+    const messages = historyResult.success ? historyResult.data : [];
+    const allPaths = extractEditedFilePaths(messages);
+
+    // Exclude plan file from tracked files since it has its own section
+    const trackedFilePaths = allPaths.filter((p) => p !== planPath);
+    return {
+      planPath: planExists ? planPath : null,
+      trackedFilePaths,
+    };
   }
 
   async create(
@@ -918,6 +965,27 @@ export class WorkspaceService extends EventEmitter {
         // Fallback to direct emit (legacy path)
         this.emit("chat", { workspaceId, message: deleteMessage });
       }
+    }
+
+    // On full clear, also delete plan file and clear file change tracking
+    if ((percentage ?? 1.0) === 1.0) {
+      // Delete plan file through runtime (supports both local and SSH)
+      const metadata = await this.getInfo(workspaceId);
+      if (metadata) {
+        const runtime = createRuntime(metadata.runtimeConfig, { projectPath: metadata.projectPath });
+        const planPath = getPlanFilePath(workspaceId);
+        try {
+          // Use exec to delete file since runtime doesn't have a deleteFile method
+          // The shell will expand ~ appropriately (local or remote)
+          await runtime.exec(`rm -f ${planPath}`, {
+            cwd: metadata.projectPath,
+            timeout: 10,
+          });
+        } catch {
+          // Plan file doesn't exist or can't be deleted - ignore
+        }
+      }
+      this.sessions.get(workspaceId)?.clearFileState();
     }
 
     return Ok(undefined);
