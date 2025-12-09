@@ -98,6 +98,7 @@
     "parse-duration": "^2.1.4",
     "posthog-node": "^5.17.0",
     "rehype-harden": "^1.1.5",
+    "rehype-sanitize": "^6.0.0",
     "shescape": "^2.1.6",
     "source-map-support": "^0.5.21",
     "streamdown": "1.6.10",

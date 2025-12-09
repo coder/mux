@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { harden } from "rehype-harden";
 import "katex/dist/katex.min.css";
 import { normalizeMarkdown } from "./MarkdownStyles";
@@ -30,10 +31,57 @@ const REMARK_PLUGINS: Pluggable[] = [
   [remarkMath, { singleDollarTextMath: false }],
 ];
 
+// Schema for rehype-sanitize that allows safe HTML elements.
+// Extends the default schema to support KaTeX math and collapsible sections.
+const sanitizeSchema = {
+  ...defaultSchema,
+  tagNames: [
+    ...(defaultSchema.tagNames ?? []),
+    // KaTeX MathML elements
+    "math",
+    "mrow",
+    "mi",
+    "mo",
+    "mn",
+    "msup",
+    "msub",
+    "mfrac",
+    "munder",
+    "mover",
+    "mtable",
+    "mtr",
+    "mtd",
+    "mspace",
+    "mtext",
+    "semantics",
+    "annotation",
+    "munderover",
+    "msqrt",
+    "mroot",
+    "mpadded",
+    "mphantom",
+    "menclose",
+    // Collapsible sections (GitHub-style)
+    "details",
+    "summary",
+  ],
+  attributes: {
+    ...defaultSchema.attributes,
+    // KaTeX uses style for coloring and positioning
+    span: [...(defaultSchema.attributes?.span ?? []), "style"],
+    // MathML elements need various attributes
+    math: ["xmlns", "display"],
+    annotation: ["encoding"],
+    // Allow class on all elements for styling
+    "*": [...(defaultSchema.attributes?.["*"] ?? []), "className", "class"],
+  },
+};
+
 const REHYPE_PLUGINS: Pluggable[] = [
   rehypeRaw, // Parse HTML elements first
+  [rehypeSanitize, sanitizeSchema], // Sanitize HTML to prevent XSS (strips dangerous elements/attributes)
   [
-    harden, // Sanitize after parsing raw HTML to prevent XSS
+    harden, // Additional URL filtering for links and images
     {
       allowedImagePrefixes: ["*"],
       allowedLinkPrefixes: ["*"],
