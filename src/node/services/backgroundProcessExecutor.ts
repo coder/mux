@@ -22,10 +22,21 @@ import {
   parsePid,
   parseExitCode,
   buildTerminateCommand,
+  shellQuote,
 } from "@/node/runtime/backgroundCommands";
 import { execBuffered } from "@/node/utils/runtime/helpers";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { toPosixPath } from "@/node/utils/paths";
+
+/**
+ * Quote a path for shell commands.
+ * On Windows, first converts to POSIX format, then shell-quotes.
+ * On Unix, just shell-quotes (handles spaces, special chars).
+ */
+function quotePathForShell(p: string): string {
+  const posixPath = toPosixPath(p);
+  return shellQuote(posixPath);
+}
 
 const isWindows = process.platform === "win32";
 const rootDir = isWindows ? "C:\\" : "/";
@@ -106,8 +117,8 @@ export async function spawnProcess(
   const tempDir = await runtime.tempDir();
   const bgOutputDir = `${tempDir}/${BG_OUTPUT_SUBDIR}`;
 
-  // All paths are absolute from tempDir, so simple POSIX quoting works everywhere
-  const quotePath = toPosixPath;
+  // Use shell-safe quoting for paths (handles spaces, special chars)
+  const quotePath = quotePathForShell;
 
   // Verify working directory exists
   const cwdCheck = await execBuffered(runtime, `cd ${quotePath(options.cwd)}`, {
@@ -139,9 +150,10 @@ export async function spawnProcess(
   }
 
   // Build wrapper script (same for all runtimes now that paths are absolute)
+  // Note: buildWrapperScript handles quoting internally via shellQuote
   const wrapperScript = buildWrapperScript({
-    exitCodePath: quotePath(exitCodePath),
-    cwd: quotePath(options.cwd),
+    exitCodePath,
+    cwd: options.cwd,
     env: { ...options.env, ...NON_INTERACTIVE_ENV_VARS },
     script,
   });
