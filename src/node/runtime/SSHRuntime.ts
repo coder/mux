@@ -1299,10 +1299,10 @@ export class SSHRuntime implements Runtime {
   /**
    * Get the runtime's temp directory (resolved absolute path on remote).
    */
-  async tempDir(): Promise<string> {
+  tempDir(): Promise<string> {
     // Use configured bgOutputDir's parent or default /tmp
     // The bgOutputDir is typically /tmp/mux-bashes, so we return /tmp
-    return "/tmp";
+    return Promise.resolve("/tmp");
   }
 }
 

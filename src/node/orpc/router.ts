@@ -16,6 +16,7 @@ import { createAuthMiddleware } from "./authMiddleware";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 import { getPlanFilePath, readPlanFile } from "@/common/utils/planStorage";
 import { findAvailableCommand, GUI_EDITORS, TERMINAL_EDITORS } from "@/node/utils/commandDiscovery";
+import { createAsyncEventQueue } from "@/common/utils/asyncEventIterator";
 
 export const router = (authToken?: string) => {
   const t = os.$context<ORPCContext>().use(createAuthMiddleware(authToken));
@@ -699,35 +700,16 @@ export const router = (authToken?: string) => {
             const service = context.workspaceService;
             const { workspaceId } = input;
 
-            type State = {
-              processes: Awaited<ReturnType<typeof service.listBackgroundProcesses>>;
-              foregroundToolCallIds: string[];
-            };
-
-            let resolveNext: ((value: State) => void) | null = null;
-            const queue: State[] = [];
-            let ended = false;
-
-            const getState = async (): Promise<State> => ({
+            const getState = async () => ({
               processes: await service.listBackgroundProcesses(workspaceId),
               foregroundToolCallIds: service.getForegroundToolCallIds(workspaceId),
             });
 
-            const push = async () => {
-              if (ended) return;
-              const state = await getState();
-              if (resolveNext) {
-                const resolve = resolveNext;
-                resolveNext = null;
-                resolve(state);
-              } else {
-                queue.push(state);
-              }
-            };
+            const queue = createAsyncEventQueue<Awaited<ReturnType<typeof getState>>>();
 
             const onChange = (changedWorkspaceId: string) => {
               if (changedWorkspaceId === workspaceId) {
-                void push();
+                void getState().then(queue.push);
               }
             };
 
@@ -736,18 +718,9 @@ export const router = (authToken?: string) => {
             try {
               // Emit initial state immediately
               yield await getState();
-
-              while (!ended) {
-                if (queue.length > 0) {
-                  yield queue.shift()!;
-                } else {
-                  yield await new Promise<State>((resolve) => {
-                    resolveNext = resolve;
-                  });
-                }
-              }
+              yield* queue.iterate();
             } finally {
-              ended = true;
+              queue.end();
               service.offBackgroundBashChange(onChange);
             }
           }),
@@ -928,36 +901,13 @@ export const router = (authToken?: string) => {
         .input(schemas.update.onStatus.input)
         .output(schemas.update.onStatus.output)
         .handler(async function* ({ context }) {
-          let resolveNext: ((value: UpdateStatus) => void) | null = null;
-          const queue: UpdateStatus[] = [];
-          let ended = false;
-
-          const push = (status: UpdateStatus) => {
-            if (ended) return;
-            if (resolveNext) {
-              const resolve = resolveNext;
-              resolveNext = null;
-              resolve(status);
-            } else {
-              queue.push(status);
-            }
-          };
-
-          const unsubscribe = context.updateService.onStatus(push);
+          const queue = createAsyncEventQueue<UpdateStatus>();
+          const unsubscribe = context.updateService.onStatus(queue.push);
 
           try {
-            while (!ended) {
-              if (queue.length > 0) {
-                yield queue.shift()!;
-              } else {
-                const status = await new Promise<UpdateStatus>((resolve) => {
-                  resolveNext = resolve;
-                });
-                yield status;
-              }
-            }
+            yield* queue.iterate();
           } finally {
-            ended = true;
+            queue.end();
             unsubscribe();
           }
         }),
@@ -967,29 +917,16 @@ export const router = (authToken?: string) => {
         .input(schemas.menu.onOpenSettings.input)
         .output(schemas.menu.onOpenSettings.output)
         .handler(async function* ({ context }) {
-          let resolveNext: (() => void) | null = null;
-          let ended = false;
-
-          const push = () => {
-            if (ended) return;
-            if (resolveNext) {
-              const resolve = resolveNext;
-              resolveNext = null;
-              resolve();
-            }
-          };
-
-          const unsubscribe = context.menuEventService.onOpenSettings(push);
+          // Use a sentinel value to signal events since void/undefined can't be queued
+          const queue = createAsyncEventQueue<true>();
+          const unsubscribe = context.menuEventService.onOpenSettings(() => queue.push(true));
 
           try {
-            while (!ended) {
-              await new Promise<void>((resolve) => {
-                resolveNext = resolve;
-              });
+            for await (const _ of queue.iterate()) {
               yield undefined;
             }
           } finally {
-            ended = true;
+            queue.end();
             unsubscribe();
           }
         }),

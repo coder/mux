@@ -30,6 +30,34 @@ import { toPosixPath } from "@/node/utils/paths";
 const isWindows = process.platform === "win32";
 const rootDir = isWindows ? "C:\\" : "/";
 
+/** Subdirectory under temp for background process output */
+export const BG_OUTPUT_SUBDIR = "mux-bashes";
+
+/** Output filename for combined stdout/stderr */
+export const OUTPUT_FILENAME = "output.log";
+
+/** Exit code filename */
+export const EXIT_CODE_FILENAME = "exit_code";
+
+/**
+ * Compute paths for a background process output directory.
+ * @param bgOutputDir Base directory (e.g., /tmp/mux-bashes or ~/.mux/sessions)
+ * @param workspaceId Workspace identifier
+ * @param processId Process identifier
+ */
+export function computeOutputPaths(
+  bgOutputDir: string,
+  workspaceId: string,
+  processId: string
+): { outputDir: string; outputPath: string; exitCodePath: string } {
+  const outputDir = `${bgOutputDir}/${workspaceId}/${processId}`;
+  return {
+    outputDir,
+    outputPath: `${outputDir}/${OUTPUT_FILENAME}`,
+    exitCodePath: `${outputDir}/${EXIT_CODE_FILENAME}`,
+  };
+}
+
 /**
  * Options for spawning a process
  */
@@ -76,7 +104,7 @@ export async function spawnProcess(
 
   // Get temp directory from runtime (absolute path, runtime-agnostic)
   const tempDir = await runtime.tempDir();
-  const bgOutputDir = `${tempDir}/mux-bashes`;
+  const bgOutputDir = `${tempDir}/${BG_OUTPUT_SUBDIR}`;
 
   // All paths are absolute from tempDir, so simple POSIX quoting works everywhere
   const quotePath = toPosixPath;
@@ -91,9 +119,11 @@ export async function spawnProcess(
   }
 
   // Compute output paths (unified output.log instead of separate stdout/stderr)
-  const outputDir = `${bgOutputDir}/${options.workspaceId}/${options.processId}`;
-  const outputPath = `${outputDir}/output.log`;
-  const exitCodePath = `${outputDir}/exit_code`;
+  const { outputDir, outputPath, exitCodePath } = computeOutputPaths(
+    bgOutputDir,
+    options.workspaceId,
+    options.processId
+  );
 
   // Create output directory and empty file
   const mkdirResult = await execBuffered(
@@ -182,7 +212,7 @@ class RuntimeBackgroundHandle implements BackgroundHandle {
    */
   async getExitCode(): Promise<number | null> {
     try {
-      const exitCodePath = this.quotePath(`${this.outputDir}/exit_code`);
+      const exitCodePath = this.quotePath(`${this.outputDir}/${EXIT_CODE_FILENAME}`);
       const result = await execBuffered(
         this.runtime,
         `cat ${exitCodePath} 2>/dev/null || echo ""`,
@@ -205,7 +235,7 @@ class RuntimeBackgroundHandle implements BackgroundHandle {
     if (this.terminated) return;
 
     try {
-      const exitCodePath = `${this.outputDir}/exit_code`;
+      const exitCodePath = `${this.outputDir}/${EXIT_CODE_FILENAME}`;
       const terminateCmd = buildTerminateCommand(this.pid, exitCodePath, this.quotePath);
       await execBuffered(this.runtime, terminateCmd, {
         cwd: rootDir,
@@ -253,7 +283,7 @@ class RuntimeBackgroundHandle implements BackgroundHandle {
    */
   async readOutput(offset: number): Promise<{ content: string; newOffset: number }> {
     try {
-      const filePath = this.quotePath(`${this.outputDir}/output.log`);
+      const filePath = this.quotePath(`${this.outputDir}/${OUTPUT_FILENAME}`);
       // Use dd to skip bytes and cat the rest. dd with bs=1 skip=N reads from byte N.
       // We get file size first to know how much we read.
       const sizeResult = await execBuffered(
@@ -335,14 +365,18 @@ export async function migrateToBackground(
   options: MigrateOptions,
   bgOutputDir: string
 ): Promise<MigrateResult> {
-  const outputDir = path.join(bgOutputDir, options.workspaceId, options.processId);
+  // Use shared path computation (path.join for local filesystem)
+  const { outputDir, outputPath } = computeOutputPaths(
+    bgOutputDir,
+    options.workspaceId,
+    options.processId
+  );
 
   try {
     // Create output directory
     await fs.mkdir(outputDir, { recursive: true });
 
     // Write existing output to unified output.log
-    const outputPath = path.join(outputDir, "output.log");
     await fs.writeFile(outputPath, options.existingOutput.join("\n") + "\n");
 
     // Create handle that will continue writing to file
@@ -453,7 +487,7 @@ class MigratedBackgroundHandle implements BackgroundHandle {
    */
   private async writeExitCode(code: number): Promise<void> {
     try {
-      const exitCodePath = path.join(this.outputDir, "exit_code");
+      const exitCodePath = path.join(this.outputDir, EXIT_CODE_FILENAME);
       await fs.writeFile(exitCodePath, String(code));
     } catch (error) {
       log.debug(

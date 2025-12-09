@@ -344,10 +344,10 @@ export abstract class LocalBaseRuntime implements Runtime {
    * Get the runtime's temp directory.
    * Uses OS temp dir on local systems.
    */
-  async tempDir(): Promise<string> {
+  tempDir(): Promise<string> {
     // Use /tmp on Unix, or OS temp dir on Windows
     const isWindows = process.platform === "win32";
-    return isWindows ? process.env.TEMP || "C:\\Temp" : "/tmp";
+    return Promise.resolve(isWindows ? (process.env.TEMP ?? "C:\\Temp") : "/tmp");
   }
 
   /**

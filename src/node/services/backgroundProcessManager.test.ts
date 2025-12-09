@@ -33,8 +33,12 @@ describe("BackgroundProcessManager", () => {
     // Remove temp sessions directory (legacy)
     await fs.rm(bgOutputDir, { recursive: true, force: true }).catch(() => undefined);
     // Remove actual output directories from /tmp/mux-bashes (where executor writes)
-    await fs.rm(`/tmp/mux-bashes/${testWorkspaceId}`, { recursive: true, force: true }).catch(() => undefined);
-    await fs.rm(`/tmp/mux-bashes/${testWorkspaceId2}`, { recursive: true, force: true }).catch(() => undefined);
+    await fs
+      .rm(`/tmp/mux-bashes/${testWorkspaceId}`, { recursive: true, force: true })
+      .catch(() => undefined);
+    await fs
+      .rm(`/tmp/mux-bashes/${testWorkspaceId2}`, { recursive: true, force: true })
+      .catch(() => undefined);
   });
 
   describe("spawn", () => {
