@@ -639,4 +639,80 @@ describe("Foreground to Background Migration", () => {
     expect(result.success).toBe(true);
     expect(result.output).toContain(marker);
   });
+
+  it("should not kill backgrounded process when abort signal fires", async () => {
+    // Regression test: Previously, when a foreground process was migrated to
+    // background and then the original stream was aborted (e.g., user sends
+    // new message), the abort signal would kill the process with exit code -997.
+
+    const manager = getBackgroundProcessManager(env);
+    const initStateManager = getInitStateManager(env);
+    const runtime = new LocalRuntime(workspacePath);
+
+    const testId = `abort_after_bg_${Date.now()}`;
+    const marker1 = `BEFORE_${testId}`;
+    const marker2 = `AFTER_${testId}`;
+
+    // Create an AbortController to simulate stream abort
+    const abortController = new AbortController();
+
+    const tools = await getToolsForModel(
+      "anthropic:claude-sonnet-4-20250514",
+      {
+        cwd: workspacePath,
+        runtime,
+        secrets: {},
+        muxEnv: {},
+        runtimeTempDir: "/tmp",
+        backgroundProcessManager: manager,
+        workspaceId,
+      },
+      workspaceId,
+      initStateManager,
+      {}
+    );
+
+    const toolCallId = `tool_${testId}`;
+
+    // Start a foreground bash with the abort signal
+    const bashPromise = tools.bash.execute!(
+      {
+        script: `echo "${marker1}"; sleep 2; echo "${marker2}"`,
+        run_in_background: false,
+        display_name: testId,
+        timeout_secs: 30,
+      },
+      { toolCallId, messages: [], abortSignal: abortController.signal }
+    ) as Promise<ToolExecuteResult>;
+
+    // Wait for first marker
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    // Send to background
+    manager.sendToBackground(toolCallId);
+    const result = await bashPromise;
+
+    expect(result.success).toBe(true);
+    expect(result.backgroundProcessId).toBe(testId);
+
+    // NOW simulate what happens when user sends a new message:
+    // The stream manager aborts the previous stream
+    abortController.abort();
+
+    // Wait for process to complete (it should NOT be killed by abort)
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+
+    // Check process status - should be "exited" with code 0, NOT "killed" with -997
+    const proc = await manager.getProcess(testId);
+    expect(proc).toBeDefined();
+    expect(proc?.status).toBe("exited");
+    expect(proc?.exitCode).toBe(0);
+
+    // Verify marker2 is in output (process continued to completion)
+    const output = await manager.getOutput(testId);
+    expect(output.success).toBe(true);
+    if (output.success) {
+      expect(output.output).toContain(marker2);
+    }
+  });
 });

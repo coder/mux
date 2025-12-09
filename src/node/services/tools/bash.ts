@@ -294,6 +294,18 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
       let backgrounded = false;
       let backgroundResolve: (() => void) | null = null;
 
+      // Wrap abort signal so we can detach when migrating to background.
+      // When detached, the original stream abort won't kill the process.
+      const wrappedAbortController = new AbortController();
+      let abortDetached = false;
+      if (abortSignal) {
+        abortSignal.addEventListener("abort", () => {
+          if (!abortDetached) {
+            wrappedAbortController.abort();
+          }
+        });
+      }
+
       // Register foreground process for "send to background" feature
       // Only if manager is available (AI tool calls, not IPC)
       const fgRegistration =
@@ -319,7 +331,7 @@ ${script}`;
         env: { ...config.muxEnv, ...config.secrets },
         timeout: effectiveTimeout,
         niceness: config.niceness,
-        abortSignal,
+        abortSignal: wrappedAbortController.signal,
       });
 
       // Force-close stdin immediately - we don't need to send any input
@@ -468,6 +480,10 @@ ${script}`;
         if (result === "backgrounded" || backgrounded) {
           // Unregister foreground process
           fgRegistration?.unregister();
+
+          // Detach from abort signal - process should continue running
+          // even when the stream ends and fires abort
+          abortDetached = true;
 
           const wall_duration_ms = Math.round(performance.now() - startTime);
 
