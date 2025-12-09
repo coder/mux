@@ -262,6 +262,12 @@ export const router = (authToken?: string) => {
 
           return { method: "none" as const };
         }),
+      openWorkspaceInEditor: t
+        .input(schemas.general.openWorkspaceInEditor.input)
+        .output(schemas.general.openWorkspaceInEditor.output)
+        .handler(async ({ context, input }) => {
+          return context.editorService.openWorkspaceInEditor(input.workspaceId, input.editorConfig);
+        }),
     },
     projects: {
       list: t

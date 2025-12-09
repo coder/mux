@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect } from "react";
+import React, { useCallback, useEffect, useState } from "react";
+import { Pencil } from "lucide-react";
 import { GitStatusIndicator } from "./GitStatusIndicator";
 import { RuntimeBadge } from "./RuntimeBadge";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
@@ -9,6 +10,7 @@ import { Button } from "@/browser/components/ui/button";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
+import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 
 interface WorkspaceHeaderProps {
   workspaceId: string;
@@ -26,12 +28,25 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   runtimeConfig,
 }) => {
   const openTerminal = useOpenTerminal();
+  const openInEditor = useOpenInEditor();
   const gitStatus = useGitStatus(workspaceId);
   const { canInterrupt } = useWorkspaceSidebarState(workspaceId);
   const { startSequence: startTutorial, isSequenceCompleted } = useTutorial();
+  const [editorError, setEditorError] = useState<string | null>(null);
+
   const handleOpenTerminal = useCallback(() => {
     openTerminal(workspaceId, runtimeConfig);
   }, [workspaceId, openTerminal, runtimeConfig]);
+
+  const handleOpenInEditor = useCallback(async () => {
+    setEditorError(null);
+    const result = await openInEditor(workspaceId, runtimeConfig);
+    if (!result.success && result.error) {
+      setEditorError(result.error);
+      // Clear error after 3 seconds
+      setTimeout(() => setEditorError(null), 3000);
+    }
+  }, [workspaceId, openInEditor, runtimeConfig]);
 
   // Start workspace tutorial on first entry (only if settings tutorial is done)
   useEffect(() => {
@@ -64,24 +79,42 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           {namedWorkspacePath}
         </span>
       </div>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleOpenTerminal}
-            className="text-muted hover:text-foreground ml-2 h-6 w-6 shrink-0 [&_svg]:h-4 [&_svg]:w-4"
-            data-tutorial="terminal-button"
-          >
-            <svg viewBox="0 0 16 16" fill="currentColor">
-              <path d="M0 2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75zm1.75-.25a.25.25 0 00-.25.25v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75zM7.25 8a.75.75 0 01-.22.53l-2.25 2.25a.75.75 0 01-1.06-1.06L5.44 8 3.72 6.28a.75.75 0 111.06-1.06l2.25 2.25c.141.14.22.331.22.53zm1.5 1.5a.75.75 0 000 1.5h3a.75.75 0 000-1.5h-3z" />
-            </svg>
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom" align="center">
-          Open terminal window ({formatKeybind(KEYBINDS.OPEN_TERMINAL)})
-        </TooltipContent>
-      </Tooltip>
+      <div className="flex items-center">
+        {editorError && <span className="text-danger-soft mr-2 text-xs">{editorError}</span>}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => void handleOpenInEditor()}
+              className="text-muted hover:text-foreground h-6 w-6 shrink-0"
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center">
+            Open in editor ({formatKeybind(KEYBINDS.OPEN_IN_EDITOR)})
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleOpenTerminal}
+              className="text-muted hover:text-foreground ml-1 h-6 w-6 shrink-0 [&_svg]:h-4 [&_svg]:w-4"
+              data-tutorial="terminal-button"
+            >
+              <svg viewBox="0 0 16 16" fill="currentColor">
+                <path d="M0 2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75zm1.75-.25a.25.25 0 00-.25.25v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75zM7.25 8a.75.75 0 01-.22.53l-2.25 2.25a.75.75 0 01-1.06-1.06L5.44 8 3.72 6.28a.75.75 0 111.06-1.06l2.25 2.25c.141.14.22.331.22.53zm1.5 1.5a.75.75 0 000 1.5h3a.75.75 0 000-1.5h-3z" />
+              </svg>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center">
+            Open terminal window ({formatKeybind(KEYBINDS.OPEN_TERMINAL)})
+          </TooltipContent>
+        </Tooltip>
+      </div>
     </div>
   );
 };

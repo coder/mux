@@ -158,6 +158,25 @@ export const PREFERRED_COMPACTION_MODEL_KEY = "preferredCompactionModel";
 export const VIM_ENABLED_KEY = "vimEnabled";
 
 /**
+ * Editor configuration for "Open in Editor" feature (global)
+ * Format: "editorConfig"
+ */
+export const EDITOR_CONFIG_KEY = "editorConfig";
+
+export type EditorType = "vscode" | "cursor" | "zed" | "custom";
+
+export interface EditorConfig {
+  editor: EditorType;
+  customCommand?: string; // Only when editor='custom'
+  useRemoteExtension: boolean; // For SSH workspaces, use Remote-SSH
+}
+
+export const DEFAULT_EDITOR_CONFIG: EditorConfig = {
+  editor: "vscode",
+  useRemoteExtension: true,
+};
+
+/**
  * Tutorial state storage key (global)
  * Stores: { disabled: boolean, completed: { settings?: true, creation?: true, workspace?: true } }
  */

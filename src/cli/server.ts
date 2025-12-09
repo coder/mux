@@ -74,6 +74,7 @@ const mockWindow: BrowserWindow = {
     workspaceService: serviceContainer.workspaceService,
     providerService: serviceContainer.providerService,
     terminalService: serviceContainer.terminalService,
+    editorService: serviceContainer.editorService,
     windowService: serviceContainer.windowService,
     updateService: serviceContainer.updateService,
     tokenizerService: serviceContainer.tokenizerService,

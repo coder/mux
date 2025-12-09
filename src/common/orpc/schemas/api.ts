@@ -411,6 +411,14 @@ export const update = {
   },
 };
 
+// Editor config schema for openWorkspaceInEditor
+const EditorTypeSchema = z.enum(["vscode", "cursor", "zed", "custom"]);
+const EditorConfigSchema = z.object({
+  editor: EditorTypeSchema,
+  customCommand: z.string().optional(),
+  useRemoteExtension: z.boolean(),
+});
+
 // General
 export const general = {
   listDirectory: {
@@ -480,6 +488,17 @@ export const general = {
       /** True if the editor requires a terminal window (terminal-fallback only) */
       requiresTerminal: z.boolean().optional(),
     }),
+  },
+  /**
+   * Open the workspace in the user's configured editor.
+   * For SSH workspaces with useRemoteExtension enabled, uses Remote-SSH extension.
+   */
+  openWorkspaceInEditor: {
+    input: z.object({
+      workspaceId: z.string(),
+      editorConfig: EditorConfigSchema,
+    }),
+    output: ResultSchema(z.void(), z.string()),
   },
 };
 

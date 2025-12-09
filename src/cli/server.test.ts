@@ -66,6 +66,7 @@ async function createTestServer(): Promise<TestServerHandle> {
     workspaceService: services.workspaceService,
     providerService: services.providerService,
     terminalService: services.terminalService,
+    editorService: services.editorService,
     windowService: services.windowService,
     updateService: services.updateService,
     tokenizerService: services.tokenizerService,

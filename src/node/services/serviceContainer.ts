@@ -11,6 +11,7 @@ import { WorkspaceService } from "@/node/services/workspaceService";
 import { ProviderService } from "@/node/services/providerService";
 import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
 import { TerminalService } from "@/node/services/terminalService";
+import { EditorService } from "@/node/services/editorService";
 import { WindowService } from "@/node/services/windowService";
 import { UpdateService } from "@/node/services/updateService";
 import { TokenizerService } from "@/node/services/tokenizerService";
@@ -37,6 +38,7 @@ export class ServiceContainer {
   public readonly workspaceService: WorkspaceService;
   public readonly providerService: ProviderService;
   public readonly terminalService: TerminalService;
+  public readonly editorService: EditorService;
   public readonly windowService: WindowService;
   public readonly updateService: UpdateService;
   public readonly tokenizerService: TokenizerService;
@@ -87,6 +89,8 @@ export class ServiceContainer {
     this.terminalService = new TerminalService(config, this.ptyService);
     // Wire terminal service to workspace service for cleanup on removal
     this.workspaceService.setTerminalService(this.terminalService);
+    // Editor service for opening workspaces in code editors
+    this.editorService = new EditorService(config);
     this.windowService = new WindowService();
     this.updateService = new UpdateService();
     this.tokenizerService = new TokenizerService();
