@@ -90,7 +90,7 @@ export function CreationToolbar(props: CreationToolbarProps) {
       {/* Model selector */}
       <Select value={props.model} onValueChange={props.onModelChange} disabled={props.disabled}>
         <SelectTrigger className="text-muted hover:text-foreground h-auto gap-1.5 border-0 bg-transparent p-1 text-sm font-medium focus:ring-0">
-          <ProviderIcon provider={provider} className="h-5 w-5" />
+          <ProviderIcon provider={provider} className="h-6 w-6" />
           <span>{displayName}</span>
         </SelectTrigger>
         <SelectContent>
