@@ -193,11 +193,16 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         },
       },
       backgroundBashes: {
-        list: async (input: { workspaceId: string }) => {
-          return backgroundProcesses.get(input.workspaceId) ?? [];
+        subscribe: async function* (input: { workspaceId: string }) {
+          // Yield initial state
+          yield {
+            processes: backgroundProcesses.get(input.workspaceId) ?? [],
+            foregroundToolCallIds: [],
+          };
+          // Then hang forever (like a real subscription)
+          await new Promise(() => {});
         },
         terminate: async () => ({ success: true, data: undefined }),
-        getForegroundToolCallId: async () => null,
         sendToBackground: async () => ({ success: true, data: undefined }),
       },
     },
