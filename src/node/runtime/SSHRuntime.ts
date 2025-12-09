@@ -1,6 +1,7 @@
 import { spawn } from "child_process";
 import { Readable, Writable } from "stream";
 import * as path from "path";
+import { randomBytes } from "crypto";
 import type {
   Runtime,
   ExecOptions,
@@ -13,11 +14,14 @@ import type {
   WorkspaceForkParams,
   WorkspaceForkResult,
   InitLogger,
+  BackgroundSpawnOptions,
+  BackgroundSpawnResult,
 } from "./Runtime";
 import { RuntimeError as RuntimeErrorClass } from "./Runtime";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { log } from "@/node/services/log";
-import { checkInitHookExists, createLineBufferedLoggers, getInitHookEnv } from "./initHook";
+import { checkInitHookExists, createLineBufferedLoggers, getMuxEnv } from "./initHook";
+import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { streamProcessToLogger } from "./streamProcess";
 import { expandTildeForSSH, cdCommandForSSH } from "./tildeExpansion";
 import { getProjectName } from "@/node/utils/runtime/helpers";
@@ -25,10 +29,14 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { execAsync, DisposableProcess } from "@/node/utils/disposableExec";
 import { getControlPath } from "./sshConnectionPool";
 import { getBashPath } from "@/node/utils/main/bashPath";
+import { SSHBackgroundHandle } from "./SSHBackgroundHandle";
+import { execBuffered } from "@/node/utils/runtime/helpers";
+import { shellQuote, buildSpawnCommand, parsePid } from "./backgroundCommands";
 
 /**
  * Shell-escape helper for remote bash.
  * Reused across all SSH runtime operations for performance.
+ * Note: For background process commands, use shellQuote from backgroundCommands for parity.
  */
 const shescape = {
   quote(value: unknown): string {
@@ -47,6 +55,8 @@ export interface SSHRuntimeConfig {
   host: string;
   /** Working directory on remote host */
   srcBaseDir: string;
+  /** Directory on remote for background process output (default: /tmp/mux-bashes) */
+  bgOutputDir?: string;
   /** Optional: Path to SSH private key (if not using ~/.ssh/config or ssh-agent) */
   identityFile?: string;
   /** Optional: SSH port (default: 22) */
@@ -70,6 +80,8 @@ export interface SSHRuntimeConfig {
 export class SSHRuntime implements Runtime {
   private readonly config: SSHRuntimeConfig;
   private readonly controlPath: string;
+  /** Cached resolved bgOutputDir (tilde expanded to absolute path) */
+  private resolvedBgOutputDir: string | null = null;
 
   constructor(config: SSHRuntimeConfig) {
     // Note: srcBaseDir may contain tildes - they will be resolved via resolvePath() before use
@@ -79,6 +91,35 @@ export class SSHRuntime implements Runtime {
     // Multiple SSHRuntime instances with same config share the same controlPath,
     // enabling ControlMaster to multiplex SSH connections across operations
     this.controlPath = getControlPath(config);
+  }
+
+  /**
+   * Get resolved background output directory (tilde expanded), caching the result.
+   * This ensures all background process paths are absolute from the start.
+   */
+  private async getBgOutputDir(): Promise<string> {
+    if (this.resolvedBgOutputDir !== null) {
+      return this.resolvedBgOutputDir;
+    }
+
+    let dir = this.config.bgOutputDir ?? "/tmp/mux-bashes";
+
+    if (dir === "~" || dir.startsWith("~/")) {
+      const result = await execBuffered(this, 'echo "$HOME"', { cwd: "/", timeout: 10 });
+      let home: string;
+      if (result.exitCode === 0 && result.stdout.trim()) {
+        home = result.stdout.trim();
+      } else {
+        log.warn(
+          `SSHRuntime: Failed to resolve $HOME (exitCode=${result.exitCode}). Falling back to /tmp.`
+        );
+        home = "/tmp";
+      }
+      dir = dir === "~" ? home : `${home}/${dir.slice(2)}`;
+    }
+
+    this.resolvedBgOutputDir = dir;
+    return this.resolvedBgOutputDir;
   }
 
   /**
@@ -106,11 +147,10 @@ export class SSHRuntime implements Runtime {
     // Add cd command if cwd is specified
     parts.push(cdCommandForSSH(options.cwd));
 
-    // Add environment variable exports
-    if (options.env) {
-      for (const [key, value] of Object.entries(options.env)) {
-        parts.push(`export ${key}=${shescape.quote(value)}`);
-      }
+    // Add environment variable exports (user env first, then non-interactive overrides)
+    const envVars = { ...options.env, ...NON_INTERACTIVE_ENV_VARS };
+    for (const [key, value] of Object.entries(envVars)) {
+      parts.push(`export ${key}=${shescape.quote(value)}`);
     }
 
     // Add the actual command
@@ -119,48 +159,25 @@ export class SSHRuntime implements Runtime {
     // Join all parts with && to ensure each step succeeds before continuing
     let fullCommand = parts.join(" && ");
 
-    // Wrap remote command with timeout to ensure the command is killed on the remote side
+    // Always wrap in bash to ensure consistent shell behavior
+    // (user's login shell may be fish, zsh, etc. which have different syntax)
+    fullCommand = `bash -c ${shescape.quote(fullCommand)}`;
+
+    // Optionally wrap with timeout to ensure the command is killed on the remote side
     // even if the local SSH client is killed but the ControlMaster connection persists
     // Use timeout command with KILL signal
     // Set remote timeout slightly longer (+1s) than local timeout to ensure
     // the local timeout fires first in normal cases (for cleaner error handling)
     // Note: Using BusyBox-compatible syntax (-s KILL) which also works with GNU timeout
-    const remoteTimeout = Math.ceil(options.timeout) + 1;
-    fullCommand = `timeout -s KILL ${remoteTimeout} bash -c ${shescape.quote(fullCommand)}`;
+    if (options.timeout !== undefined) {
+      const remoteTimeout = Math.ceil(options.timeout) + 1;
+      fullCommand = `timeout -s KILL ${remoteTimeout} ${fullCommand}`;
+    }
 
-    // Build SSH args
+    // Build SSH args from shared base config
     // -T: Disable pseudo-terminal allocation (default)
     // -t: Force pseudo-terminal allocation (for interactive shells)
-    const sshArgs: string[] = [options.forcePTY ? "-t" : "-T"];
-
-    // Add port if specified
-    if (this.config.port) {
-      sshArgs.push("-p", this.config.port.toString());
-    }
-
-    // Add identity file if specified
-    if (this.config.identityFile) {
-      sshArgs.push("-i", this.config.identityFile);
-      // Disable strict host key checking for test environments
-      sshArgs.push("-o", "StrictHostKeyChecking=no");
-      sshArgs.push("-o", "UserKnownHostsFile=/dev/null");
-      sshArgs.push("-o", "LogLevel=ERROR"); // Suppress SSH warnings
-    }
-
-    // Enable SSH connection multiplexing for better performance and to avoid
-    // exhausting connection limits when running many concurrent operations
-    // ControlMaster=auto: Create master connection if none exists, otherwise reuse
-    // ControlPath: Unix socket path for multiplexing
-    // ControlPersist=60: Keep master connection alive for 60s after last session
-    //
-    // Socket reuse is safe even with timeouts because:
-    // - Each SSH command gets its own channel within the multiplexed connection
-    // - SIGKILL on the client immediately closes that channel
-    // - Remote sshd terminates the command when the channel closes
-    // - Multiplexing only shares the TCP connection, not command lifetime
-    sshArgs.push("-o", "ControlMaster=auto");
-    sshArgs.push("-o", `ControlPath=${this.controlPath}`);
-    sshArgs.push("-o", "ControlPersist=60");
+    const sshArgs: string[] = [options.forcePTY ? "-t" : "-T", ...this.buildSSHArgs()];
 
     // Set comprehensive timeout options to ensure SSH respects the timeout
     // ConnectTimeout: Maximum time to wait for connection establishment (DNS, TCP handshake, SSH auth)
@@ -171,7 +188,10 @@ export class SSHRuntime implements Runtime {
     // 1. Connection establishment can't hang indefinitely (max 15s)
     // 2. Established connections that die are detected quickly
     // 3. The overall command timeout is respected from the moment ssh command starts
-    sshArgs.push("-o", `ConnectTimeout=${Math.min(Math.ceil(options.timeout), 15)}`);
+    // When no timeout specified, use default 15s connect timeout to prevent hanging on connection
+    const connectTimeout =
+      options.timeout !== undefined ? Math.min(Math.ceil(options.timeout), 15) : 15;
+    sshArgs.push("-o", `ConnectTimeout=${connectTimeout}`);
     // Set aggressive keepalives to detect dead connections
     sshArgs.push("-o", "ServerAliveInterval=5");
     sshArgs.push("-o", "ServerAliveCountMax=2");
@@ -185,6 +205,8 @@ export class SSHRuntime implements Runtime {
     // Spawn ssh command
     const sshProcess = spawn("ssh", sshArgs, {
       stdio: ["pipe", "pipe", "pipe"],
+      // Prevent console window from appearing on Windows
+      windowsHide: true,
     });
 
     // Wrap in DisposableProcess for automatic cleanup
@@ -235,16 +257,143 @@ export class SSHRuntime implements Runtime {
       });
     }
 
-    // Handle timeout
-    const timeoutHandle = setTimeout(() => {
-      timedOut = true;
-      disposable[Symbol.dispose](); // Kill process and run cleanup
-    }, options.timeout * 1000);
+    // Handle timeout (only if timeout specified)
+    if (options.timeout !== undefined) {
+      const timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        disposable[Symbol.dispose](); // Kill process and run cleanup
+      }, options.timeout * 1000);
 
-    // Clear timeout if process exits naturally
-    void exitCode.finally(() => clearTimeout(timeoutHandle));
+      // Clear timeout if process exits naturally
+      void exitCode.finally(() => clearTimeout(timeoutHandle));
+    }
 
     return { stdout, stderr, stdin, exitCode, duration };
+  }
+
+  /**
+   * Spawn a background process on the remote machine.
+   *
+   * Uses nohup + shell redirection to detach the process from SSH.
+   * Exit code is captured via bash trap and written to exit_code file.
+   * Output is written directly to stdout.log and stderr.log on the remote.
+   *
+   * Output directory: {bgOutputDir}/{workspaceId}/{processId}/
+   */
+  async spawnBackground(
+    script: string,
+    options: BackgroundSpawnOptions
+  ): Promise<BackgroundSpawnResult> {
+    log.debug(`SSHRuntime.spawnBackground: Spawning in ${options.cwd}`);
+
+    // Verify working directory exists on remote (parity with local runtime)
+    const cwdCheck = await execBuffered(this, cdCommandForSSH(options.cwd), {
+      cwd: "/",
+      timeout: 10,
+    });
+    if (cwdCheck.exitCode !== 0) {
+      return { success: false, error: `Working directory does not exist: ${options.cwd}` };
+    }
+
+    // Generate unique process ID and compute output directory
+    // /tmp is cleaned by OS, so no explicit cleanup needed
+    const processId = `bg-${randomBytes(4).toString("hex")}`;
+    const bgOutputDir = await this.getBgOutputDir();
+    const outputDir = `${bgOutputDir}/${options.workspaceId}/${processId}`;
+    const stdoutPath = `${outputDir}/stdout.log`;
+    const stderrPath = `${outputDir}/stderr.log`;
+    const exitCodePath = `${outputDir}/exit_code`;
+
+    // Use expandTildeForSSH for paths that may contain ~ (shescape.quote prevents tilde expansion)
+    const outputDirExpanded = expandTildeForSSH(outputDir);
+    const stdoutPathExpanded = expandTildeForSSH(stdoutPath);
+    const stderrPathExpanded = expandTildeForSSH(stderrPath);
+    const exitCodePathExpanded = expandTildeForSSH(exitCodePath);
+
+    // Create output directory and empty files on remote
+    const mkdirResult = await execBuffered(
+      this,
+      `mkdir -p ${outputDirExpanded} && touch ${stdoutPathExpanded} ${stderrPathExpanded}`,
+      { cwd: "/", timeout: 30 }
+    );
+    if (mkdirResult.exitCode !== 0) {
+      return {
+        success: false,
+        error: `Failed to create output directory: ${mkdirResult.stderr}`,
+      };
+    }
+
+    // Build the wrapper script with trap to capture exit code
+    // The trap writes exit code to file when the script exits (any exit path)
+    // Note: SSH uses expandTildeForSSH/cdCommandForSSH for tilde expansion, so we can't
+    // use buildWrapperScript directly. But we use buildSpawnCommand for parity.
+    const wrapperParts: string[] = [];
+
+    // Set up trap first (use expanded path for tilde support)
+    wrapperParts.push(`trap 'echo $? > ${exitCodePathExpanded}' EXIT`);
+
+    // Change to working directory
+    wrapperParts.push(cdCommandForSSH(options.cwd));
+
+    // Add environment variable exports (use shellQuote for parity with Local)
+    const envVars = { ...options.env, ...NON_INTERACTIVE_ENV_VARS };
+    for (const [key, value] of Object.entries(envVars)) {
+      wrapperParts.push(`export ${key}=${shellQuote(value)}`);
+    }
+
+    // Add the actual script
+    wrapperParts.push(script);
+
+    const wrapperScript = wrapperParts.join(" && ");
+
+    // Use shared buildSpawnCommand for parity with Local
+    // Use expandTildeForSSH for path quoting to support ~/... paths
+    const spawnCommand = buildSpawnCommand({
+      wrapperScript,
+      stdoutPath,
+      stderrPath,
+      niceness: options.niceness,
+      quotePath: expandTildeForSSH,
+    });
+
+    try {
+      // No timeout - the spawn command backgrounds the process and returns immediately,
+      // but if wrapped in `timeout`, it would wait for the backgrounded process to exit.
+      // SSH connection hangs are protected by ConnectTimeout (see buildSshArgs in this file).
+      const result = await execBuffered(this, spawnCommand, {
+        cwd: "/", // cwd doesn't matter, we cd in the wrapper
+      });
+
+      if (result.exitCode !== 0) {
+        log.debug(`SSHRuntime.spawnBackground: spawn command failed: ${result.stderr}`);
+        return {
+          success: false,
+          error: `Failed to spawn background process: ${result.stderr}`,
+        };
+      }
+
+      const pid = parsePid(result.stdout);
+      if (!pid) {
+        log.debug(`SSHRuntime.spawnBackground: Invalid PID: ${result.stdout}`);
+        return {
+          success: false,
+          error: `Failed to get valid PID from spawn: ${result.stdout}`,
+        };
+      }
+
+      log.debug(`SSHRuntime.spawnBackground: Spawned with PID ${pid}`);
+
+      // outputDir is already absolute (getBgOutputDir resolves tildes upfront)
+      const handle = new SSHBackgroundHandle(this, pid, outputDir);
+      return { success: true, handle, pid };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log.debug(`SSHRuntime.spawnBackground: Error: ${errorMessage}`);
+      return {
+        success: false,
+        error: `Failed to spawn background process: ${errorMessage}`,
+      };
+    }
   }
 
   /**
@@ -408,7 +557,10 @@ export class SSHRuntime implements Runtime {
     sshArgs.push(this.config.host, command);
 
     return new Promise((resolve, reject) => {
-      const proc = spawn("ssh", sshArgs);
+      const proc = spawn("ssh", sshArgs, {
+        // Prevent console window from appearing on Windows
+        windowsHide: true,
+      });
       let stdout = "";
       let stderr = "";
       let timedOut = false;
@@ -494,10 +646,10 @@ export class SSHRuntime implements Runtime {
   }
 
   /**
-   * Build common SSH arguments based on runtime config
-   * @param includeHost - Whether to include the host in the args (for direct ssh commands)
+   * Build base SSH args shared by all SSH operations.
+   * Includes: port, identity file, LogLevel, ControlMaster options.
    */
-  private buildSSHArgs(includeHost = false): string[] {
+  private buildSSHArgs(): string[] {
     const args: string[] = [];
 
     // Add port if specified
@@ -511,18 +663,18 @@ export class SSHRuntime implements Runtime {
       // Disable strict host key checking for test environments
       args.push("-o", "StrictHostKeyChecking=no");
       args.push("-o", "UserKnownHostsFile=/dev/null");
-      args.push("-o", "LogLevel=ERROR");
     }
 
+    // Suppress SSH warnings (e.g., ControlMaster messages) that would pollute command output
+    // These go to stderr and get merged with stdout in bash tool results
+    // Use FATAL (not ERROR) because mux_client_request_session messages are at ERROR level
+    args.push("-o", "LogLevel=FATAL");
+
     // Add ControlMaster options for connection multiplexing
-    // This ensures git bundle transfers also reuse the master connection
+    // This ensures all SSH operations reuse the master connection
     args.push("-o", "ControlMaster=auto");
     args.push("-o", `ControlPath=${this.controlPath}`);
     args.push("-o", "ControlPersist=60");
-
-    if (includeHost) {
-      args.push(this.config.host);
-    }
 
     return args;
   }
@@ -586,12 +738,15 @@ export class SSHRuntime implements Runtime {
           return;
         }
 
-        const sshArgs = this.buildSSHArgs(true);
+        const sshArgs = [...this.buildSSHArgs(), this.config.host];
         const command = `cd ${shescape.quote(projectPath)} && git bundle create - --all | ssh ${sshArgs.join(" ")} "cat > ${bundleTempPath}"`;
 
         log.debug(`Creating bundle: ${command}`);
         const bashPath = getBashPath();
-        const proc = spawn(bashPath, ["-c", command]);
+        const proc = spawn(bashPath, ["-c", command], {
+          // Prevent console window from appearing on Windows
+          windowsHide: true,
+        });
 
         const cleanup = streamProcessToLogger(proc, initLogger, {
           logStdout: false,
@@ -724,19 +879,17 @@ export class SSHRuntime implements Runtime {
 
   /**
    * Run .mux/init hook on remote machine if it exists
+   * @param workspacePath - Path to the workspace directory on remote
+   * @param muxEnv - MUX_ environment variables (from getMuxEnv)
+   * @param initLogger - Logger for streaming output
+   * @param abortSignal - Optional abort signal
    */
   private async runInitHook(
-    projectPath: string,
     workspacePath: string,
+    muxEnv: Record<string, string>,
     initLogger: InitLogger,
     abortSignal?: AbortSignal
   ): Promise<void> {
-    // Check if hook exists locally (we synced the project, so local check is sufficient)
-    const hookExists = await checkInitHookExists(projectPath);
-    if (!hookExists) {
-      return;
-    }
-
     // Construct hook path - expand tilde if present
     const remoteHookPath = `${workspacePath}/.mux/init`;
     initLogger.logStep(`Running init hook: ${remoteHookPath}`);
@@ -751,7 +904,7 @@ export class SSHRuntime implements Runtime {
       cwd: workspacePath, // Run in the workspace directory
       timeout: 3600, // 1 hour - generous timeout for init hooks
       abortSignal,
-      env: getInitHookEnv(projectPath, "ssh"),
+      env: muxEnv,
     });
 
     // Create line-buffered loggers
@@ -906,11 +1059,15 @@ export class SSHRuntime implements Runtime {
       }
       initLogger.logStep("Branch checked out successfully");
 
-      // 3. Run .mux/init hook if it exists
+      // 3. Pull latest from origin (best-effort, non-blocking on failure)
+      await this.pullLatestFromOrigin(workspacePath, trunkBranch, initLogger, abortSignal);
+
+      // 4. Run .mux/init hook if it exists
       // Note: runInitHook calls logComplete() internally if hook exists
       const hookExists = await checkInitHookExists(projectPath);
       if (hookExists) {
-        await this.runInitHook(projectPath, workspacePath, initLogger, abortSignal);
+        const muxEnv = getMuxEnv(projectPath, "ssh", branchName);
+        await this.runInitHook(workspacePath, muxEnv, initLogger, abortSignal);
       } else {
         // No hook - signal completion immediately
         initLogger.logComplete(0);
@@ -925,6 +1082,68 @@ export class SSHRuntime implements Runtime {
         success: false,
         error: errorMsg,
       };
+    }
+  }
+
+  /**
+   * Fetch and rebase on latest origin/<trunkBranch> on remote
+   * Best-effort operation - logs status but doesn't fail workspace initialization
+   */
+  private async pullLatestFromOrigin(
+    workspacePath: string,
+    trunkBranch: string,
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    try {
+      initLogger.logStep(`Fetching latest from origin/${trunkBranch}...`);
+
+      // Fetch the trunk branch from origin
+      const fetchCmd = `git fetch origin ${shescape.quote(trunkBranch)}`;
+      const fetchStream = await this.exec(fetchCmd, {
+        cwd: workspacePath,
+        timeout: 120, // 2 minutes for network operation
+        abortSignal,
+      });
+
+      const fetchExitCode = await fetchStream.exitCode;
+      if (fetchExitCode !== 0) {
+        const fetchStderr = await streamToString(fetchStream.stderr);
+        initLogger.logStderr(
+          `Note: Could not fetch from origin (${fetchStderr}), using local branch state`
+        );
+        return;
+      }
+
+      initLogger.logStep("Fast-forward merging...");
+
+      // Attempt fast-forward merge from origin/<trunkBranch>
+      const mergeCmd = `git merge --ff-only origin/${shescape.quote(trunkBranch)}`;
+      const mergeStream = await this.exec(mergeCmd, {
+        cwd: workspacePath,
+        timeout: 60, // 1 minute for fast-forward merge
+        abortSignal,
+      });
+
+      const [mergeStderr, mergeExitCode] = await Promise.all([
+        streamToString(mergeStream.stderr),
+        mergeStream.exitCode,
+      ]);
+
+      if (mergeExitCode !== 0) {
+        // Fast-forward not possible (diverged branches) - just warn
+        initLogger.logStderr(
+          `Note: Fast-forward skipped (${mergeStderr || "branches diverged"}), using local branch state`
+        );
+      } else {
+        initLogger.logStep("Fast-forwarded to latest origin successfully");
+      }
+    } catch (error) {
+      // Non-fatal: log and continue
+      const errorMsg = getErrorMessage(error);
+      initLogger.logStderr(
+        `Note: Could not fetch from origin (${errorMsg}), using local branch state`
+      );
     }
   }
 
@@ -1021,24 +1240,60 @@ export class SSHRuntime implements Runtime {
               if [ -n "$unpushed" ]; then
                 # Get current branch for better error messaging
                 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
-                
-                # Get default branch (try origin/HEAD, fallback to main, then master)
-                DEFAULT=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-                if [ -z "$DEFAULT" ]; then
-                  if git rev-parse --verify origin/main >/dev/null 2>&1; then
-                    DEFAULT="main"
-                  elif git rev-parse --verify origin/master >/dev/null 2>&1; then
-                    DEFAULT="master"
+
+                # Get default branch (prefer main/master over origin/HEAD since origin/HEAD
+                # might point to a feature branch in some setups)
+                if git rev-parse --verify origin/main >/dev/null 2>&1; then
+                  DEFAULT="main"
+                elif git rev-parse --verify origin/master >/dev/null 2>&1; then
+                  DEFAULT="master"
+                else
+                  # Fallback to origin/HEAD if main/master don't exist
+                  DEFAULT=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+                fi
+
+                # Check for squash-merge: if all changed files match origin/$DEFAULT, content is merged
+                if [ -n "$DEFAULT" ]; then
+                  # Fetch latest to ensure we have current remote state
+                  git fetch origin "$DEFAULT" --quiet 2>/dev/null || true
+
+                  # Get merge-base between current branch and default
+                  MERGE_BASE=$(git merge-base "origin/$DEFAULT" HEAD 2>/dev/null)
+                  if [ -n "$MERGE_BASE" ]; then
+                    # Get files changed on this branch since fork point
+                    CHANGED_FILES=$(git diff --name-only "$MERGE_BASE" HEAD 2>/dev/null)
+
+                    if [ -n "$CHANGED_FILES" ]; then
+                      # Check if all changed files match what's in origin/$DEFAULT
+                      ALL_MERGED=true
+                      while IFS= read -r f; do
+                        # Compare file content between HEAD and origin/$DEFAULT
+                        # If file doesn't exist in one but exists in other, they differ
+                        if ! git diff --quiet "HEAD:$f" "origin/$DEFAULT:$f" 2>/dev/null; then
+                          ALL_MERGED=false
+                          break
+                        fi
+                      done <<< "$CHANGED_FILES"
+
+                      if $ALL_MERGED; then
+                        # All changes are in default branch - safe to delete (squash-merge case)
+                        exit 0
+                      fi
+                    else
+                      # No changed files means nothing to merge - safe to delete
+                      exit 0
+                    fi
                   fi
                 fi
-                
-                # If we have both branch and default, use show-branch for better output
+
+                # If we get here, there are real unpushed changes
+                # Show helpful output for debugging
                 if [ -n "$BRANCH" ] && [ -n "$DEFAULT" ] && git show-branch "$BRANCH" "origin/$DEFAULT" >/dev/null 2>&1; then
                   echo "Branch status compared to origin/$DEFAULT:" >&2
                   echo "" >&2
                   git show-branch "$BRANCH" "origin/$DEFAULT" 2>&1 | head -20 >&2
                   echo "" >&2
-                  echo "Note: If your PR was squash-merged, these commits are already in origin/$DEFAULT and safe to delete." >&2
+                  echo "Note: Branch has changes not yet in origin/$DEFAULT." >&2
                 else
                   # Fallback to just showing the commit list
                   echo "$unpushed" | head -10 >&2

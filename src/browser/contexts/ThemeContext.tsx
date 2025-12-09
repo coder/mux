@@ -9,7 +9,14 @@ import React, {
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { UI_THEME_KEY } from "@/common/constants/storage";
 
-export type ThemeMode = "light" | "dark";
+export type ThemeMode = "light" | "dark" | "solarized-light" | "solarized-dark";
+
+export const THEME_OPTIONS: Array<{ value: ThemeMode; label: string }> = [
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+  { value: "solarized-light", label: "Solarized Light" },
+  { value: "solarized-dark", label: "Solarized Dark" },
+];
 
 interface ThemeContextValue {
   theme: ThemeMode;
@@ -21,8 +28,17 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
-const DARK_THEME_COLOR = "#1e1e1e";
-const LIGHT_THEME_COLOR = "#f5f6f8";
+const THEME_COLORS: Record<ThemeMode, string> = {
+  dark: "#1e1e1e",
+  light: "#f5f6f8",
+  "solarized-light": "#fdf6e3",
+  "solarized-dark": "#002b36",
+};
+
+/** Map theme mode to CSS color-scheme value */
+function getColorScheme(theme: ThemeMode): "light" | "dark" {
+  return theme === "light" || theme === "solarized-light" ? "light" : "dark";
+}
 
 function resolveSystemTheme(): ThemeMode {
   if (typeof window === "undefined" || !window.matchMedia) {
@@ -39,9 +55,9 @@ function applyThemeToDocument(theme: ThemeMode) {
 
   const root = document.documentElement;
   root.dataset.theme = theme;
-  root.style.colorScheme = theme;
+  root.style.colorScheme = getColorScheme(theme);
 
-  const themeColor = theme === "light" ? LIGHT_THEME_COLOR : DARK_THEME_COLOR;
+  const themeColor = THEME_COLORS[theme];
   const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
   if (meta) {
     meta.setAttribute("content", themeColor);
@@ -90,7 +106,12 @@ export function ThemeProvider({
 
   const toggleTheme = useCallback(() => {
     if (!isNestedUnderForcedProvider) {
-      setTheme((current) => (current === "dark" ? "light" : "dark"));
+      setTheme((current) => {
+        const themeValues = THEME_OPTIONS.map((t) => t.value);
+        const currentIndex = themeValues.indexOf(current);
+        const nextIndex = (currentIndex + 1) % themeValues.length;
+        return themeValues[nextIndex];
+      });
     }
   }, [setTheme, isNestedUnderForcedProvider]);
 

@@ -6,6 +6,7 @@ import {
   type GitCommit,
   type GitBranchHeader,
 } from "@/common/utils/git/parseGitLog";
+import { useAPI } from "@/browser/contexts/API";
 
 const GitBranchDataSchema = z.object({
   showBranch: z.string(),
@@ -154,6 +155,7 @@ export function useGitBranchDetails(
     "useGitBranchDetails expects a non-empty workspaceId argument."
   );
 
+  const { api } = useAPI();
   const [branchHeaders, setBranchHeaders] = useState<GitBranchHeader[] | null>(null);
   const [commits, setCommits] = useState<GitCommit[] | null>(null);
   const [dirtyFiles, setDirtyFiles] = useState<string[] | null>(null);
@@ -169,6 +171,7 @@ export function useGitBranchDetails(
   } | null>(null);
 
   const fetchShowBranch = useCallback(async () => {
+    if (!api) return;
     setIsLoading(true);
 
     try {
@@ -215,9 +218,13 @@ printf '__MUX_BRANCH_DATA__BEGIN_DATES__\\n%s\\n__MUX_BRANCH_DATA__END_DATES__\\
 printf '__MUX_BRANCH_DATA__BEGIN_DIRTY_FILES__\\n%s\\n__MUX_BRANCH_DATA__END_DIRTY_FILES__\\n' "$DIRTY_FILES"
 `;
 
-      const result = await window.api.workspace.executeBash(workspaceId, script, {
-        timeout_secs: 5,
-        niceness: 19, // Lowest priority - don't interfere with user operations
+      const result = await api.workspace.executeBash({
+        workspaceId,
+        script,
+        options: {
+          timeout_secs: 5,
+          niceness: 19, // Lowest priority - don't interfere with user operations
+        },
       });
 
       if (!result.success) {
@@ -229,7 +236,7 @@ printf '__MUX_BRANCH_DATA__BEGIN_DIRTY_FILES__\\n%s\\n__MUX_BRANCH_DATA__END_DIR
       if (!result.data.success) {
         const errorMsg = result.data.output
           ? result.data.output.trim()
-          : result.data.error || "Unknown error";
+          : (result.data.error ?? "Unknown error");
         setErrorMessage(`Branch info unavailable: ${errorMsg}`);
         setCommits(null);
         return;
@@ -277,7 +284,7 @@ printf '__MUX_BRANCH_DATA__BEGIN_DIRTY_FILES__\\n%s\\n__MUX_BRANCH_DATA__END_DIR
     } finally {
       setIsLoading(false);
     }
-  }, [workspaceId, gitStatus]);
+  }, [api, workspaceId, gitStatus]);
 
   useEffect(() => {
     if (!enabled) {

@@ -9,9 +9,10 @@ import {
   DetailSection,
   DetailLabel,
   LoadingDots,
+  ToolIcon,
+  ErrorBox,
 } from "./shared/ToolPrimitives";
 import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./shared/toolUtils";
-import { TooltipWrapper, Tooltip } from "../Tooltip";
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
 
 interface WebFetchToolCallProps {
@@ -51,10 +52,7 @@ export const WebFetchToolCall: React.FC<WebFetchToolCallProps> = ({
     <ToolContainer expanded={expanded} className="@container">
       <ToolHeader onClick={toggleExpanded}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
-        <TooltipWrapper inline>
-          <span>🌐</span>
-          <Tooltip>web_fetch</Tooltip>
-        </TooltipWrapper>
+        <ToolIcon emoji="🌐" toolName="web_fetch" />
         <div className="text-text flex max-w-96 min-w-0 items-center gap-1.5">
           <span className="font-monospace truncate">{domain}</span>
         </div>
@@ -96,9 +94,7 @@ export const WebFetchToolCall: React.FC<WebFetchToolCallProps> = ({
               {result.success === false && result.error && (
                 <DetailSection>
                   <DetailLabel>Error</DetailLabel>
-                  <div className="text-danger bg-danger-overlay border-danger rounded border-l-2 px-2 py-1.5 text-[11px]">
-                    {result.error}
-                  </div>
+                  <ErrorBox>{result.error}</ErrorBox>
                 </DetailSection>
               )}
 

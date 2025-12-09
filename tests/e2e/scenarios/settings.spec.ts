@@ -22,7 +22,7 @@ test.describe("Settings Modal", () => {
     await expect(page.getByRole("button", { name: "Models", exact: true })).toBeVisible();
 
     // Verify default section is General (theme toggle visible)
-    await expect(page.getByText("Theme")).toBeVisible();
+    await expect(page.getByText("Theme", { exact: true })).toBeVisible();
   });
 
   test("navigates between settings sections", async ({ ui, page }) => {
@@ -39,7 +39,7 @@ test.describe("Settings Modal", () => {
 
     // Navigate back to General
     await ui.settings.selectSection("General");
-    await expect(page.getByText("Theme")).toBeVisible();
+    await expect(page.getByText("Theme", { exact: true })).toBeVisible();
   });
 
   test("closes settings with Escape key", async ({ ui }) => {
@@ -69,9 +69,9 @@ test.describe("Settings Modal", () => {
     await ui.projects.openFirstWorkspace();
     await ui.settings.open();
 
-    // Click overlay (outside modal content)
-    const overlay = page.locator('[role="presentation"]');
-    await overlay.click({ position: { x: 10, y: 10 } });
+    // Click overlay (outside modal content) - Radix Dialog uses data-state attribute
+    const overlay = page.locator('[data-state="open"].fixed.inset-0');
+    await overlay.click({ position: { x: 10, y: 10 }, force: true });
 
     // Verify closed
     await ui.settings.expectClosed();
@@ -97,7 +97,9 @@ test.describe("Settings Modal", () => {
 
     // Verify all providers are listed with correct display names
     await expect(page.getByRole("button", { name: /Anthropic/i })).toBeVisible();
-    await expect(page.getByRole("button", { name: /OpenAI/i })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /OpenAI/i }).filter({ has: page.getByText("OpenAI icon") })
+    ).toBeVisible();
     await expect(page.getByRole("button", { name: /Google/i })).toBeVisible();
     await expect(page.getByRole("button", { name: /xAI/i })).toBeVisible();
     await expect(page.getByRole("button", { name: /Ollama/i })).toBeVisible();
@@ -109,8 +111,8 @@ test.describe("Settings Modal", () => {
     await ui.settings.open();
     await ui.settings.selectSection("Models");
 
-    // Verify add model form elements - use exact match for title
-    await expect(page.getByText("Add Custom Model", { exact: true })).toBeVisible();
+    // Verify add model form elements
+    await expect(page.getByText("Custom Models")).toBeVisible();
     await expect(page.getByRole("combobox")).toBeVisible(); // Provider dropdown
     await expect(page.getByPlaceholder(/model-id/i)).toBeVisible();
     await expect(page.getByRole("button", { name: /^Add$/i })).toBeVisible();

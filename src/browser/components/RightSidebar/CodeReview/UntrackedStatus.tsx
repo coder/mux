@@ -5,6 +5,7 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/common/lib/utils";
+import { useAPI } from "@/browser/contexts/API";
 
 interface UntrackedStatusProps {
   workspaceId: string;
@@ -19,6 +20,7 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
   refreshTrigger,
   onRefresh,
 }) => {
+  const { api } = useAPI();
   const [untrackedFiles, setUntrackedFiles] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showTooltip, setShowTooltip] = useState(false);
@@ -72,18 +74,18 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
       }
 
       try {
-        const result = await window.api.workspace.executeBash(
+        const result = await api?.workspace.executeBash({
           workspaceId,
-          "git ls-files --others --exclude-standard",
-          { timeout_secs: 5 }
-        );
+          script: "git ls-files --others --exclude-standard",
+          options: { timeout_secs: 5 },
+        });
 
-        if (cancelled) return;
+        if (cancelled || !result) return;
 
         if (result.success) {
           const files = (result.data.output ?? "")
             .split("\n")
-            .map((f) => f.trim())
+            .map((f: string) => f.trim())
             .filter(Boolean);
           setUntrackedFiles(files);
         }
@@ -102,7 +104,7 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, workspacePath, refreshTrigger]);
+  }, [api, workspaceId, workspacePath, refreshTrigger]);
 
   // Close tooltip when clicking outside
   useEffect(() => {
@@ -129,19 +131,19 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
       // Use git add with -- to treat all arguments as file paths
       // Escape single quotes by replacing ' with '\'' for safe shell quoting
       const escapedFiles = untrackedFiles.map((f) => `'${f.replace(/'/g, "'\\''")}'`).join(" ");
-      const result = await window.api.workspace.executeBash(
+      const result = await api?.workspace.executeBash({
         workspaceId,
-        `git add -- ${escapedFiles}`,
-        { timeout_secs: 10 }
-      );
+        script: `git add -- ${escapedFiles}`,
+        options: { timeout_secs: 10 },
+      });
 
-      if (result.success) {
+      if (result?.success) {
         // Close tooltip first
         setShowTooltip(false);
         // Trigger refresh - this will reload untracked files from git
         // Don't clear untrackedFiles optimistically to avoid flicker
         onRefresh?.();
-      } else {
+      } else if (result) {
         console.error("Failed to track files:", result.error);
       }
     } catch (err) {

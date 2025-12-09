@@ -1,5 +1,14 @@
-import React, { useState, useEffect } from "react";
-import { Modal, ModalInfo, ModalActions, CancelButton, PrimaryButton } from "./Modal";
+import React, { useState, useEffect, useCallback } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+  DialogInfo,
+} from "@/browser/components/ui/dialog";
+import { Button } from "@/browser/components/ui/button";
 import type { Secret } from "@/common/types/secrets";
 
 // Visibility toggle icon component
@@ -70,11 +79,11 @@ const SecretsModal: React.FC<SecretsModalProps> = ({
     }
   }, [isOpen, initialSecrets]);
 
-  const handleCancel = () => {
+  const handleCancel = useCallback(() => {
     setSecrets(initialSecrets);
     setVisibleSecrets(new Set());
     onClose();
-  };
+  }, [initialSecrets, onClose]);
 
   const handleSave = async () => {
     setIsLoading(true);
@@ -120,90 +129,99 @@ const SecretsModal: React.FC<SecretsModalProps> = ({
     setVisibleSecrets(newVisible);
   };
 
+  const handleOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open && !isLoading) {
+        handleCancel();
+      }
+    },
+    [isLoading, handleCancel]
+  );
+
   return (
-    <Modal
-      isOpen={isOpen}
-      title="Manage Secrets"
-      subtitle={`Project: ${projectName}`}
-      onClose={handleCancel}
-      maxWidth="600px"
-      maxHeight="80vh"
-      isLoading={isLoading}
-    >
-      <ModalInfo>
-        <p>
-          Secrets are stored in <code>~/.mux/secrets.json</code> (kept away from source code) but
-          namespaced per project.
-        </p>
-        <p>Secrets are injected as environment variables to compute commands (e.g. Bash)</p>
-      </ModalInfo>
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+      <DialogContent maxWidth="600px" maxHeight="80vh" showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>Manage Secrets</DialogTitle>
+          <DialogDescription>Project: {projectName}</DialogDescription>
+        </DialogHeader>
+        <DialogInfo>
+          <p>
+            Secrets are stored in <code>~/.mux/secrets.json</code> (kept away from source code) but
+            namespaced per project.
+          </p>
+          <p>Secrets are injected as environment variables to compute commands (e.g. Bash)</p>
+        </DialogInfo>
 
-      <div className="mb-4 min-h-[200px] flex-1 overflow-y-auto">
-        {secrets.length === 0 ? (
-          <div className="text-muted px-4 py-8 text-center text-[13px]">No secrets configured</div>
-        ) : (
-          <div className="[&>label]:text-muted grid grid-cols-[1fr_1fr_auto_auto] items-end gap-1 [&>label]:mb-0.5 [&>label]:text-[11px]">
-            <label>Key</label>
-            <label>Value</label>
-            <div /> {/* Empty cell for eye icon column */}
-            <div /> {/* Empty cell for delete button column */}
-            {secrets.map((secret, index) => (
-              <React.Fragment key={index}>
-                <input
-                  type="text"
-                  value={secret.key}
-                  onChange={(e) => updateSecret(index, "key", e.target.value)}
-                  placeholder="SECRET_NAME"
-                  disabled={isLoading}
-                  className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-dim w-full rounded border px-2.5 py-1.5 font-mono text-[13px] text-white focus:outline-none"
-                />
-                <input
-                  type={visibleSecrets.has(index) ? "text" : "password"}
-                  value={secret.value}
-                  onChange={(e) => updateSecret(index, "value", e.target.value)}
-                  placeholder="secret value"
-                  disabled={isLoading}
-                  className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-dim w-full rounded border px-2.5 py-1.5 font-mono text-[13px] text-white focus:outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => toggleVisibility(index)}
-                  disabled={isLoading}
-                  className="text-muted hover:text-foreground flex cursor-pointer items-center justify-center self-center rounded-sm border-none bg-transparent px-1 py-0.5 text-base transition-all duration-200"
-                >
-                  <ToggleVisibilityIcon visible={visibleSecrets.has(index)} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => removeSecret(index)}
-                  disabled={isLoading}
-                  className="text-danger-light border-danger-light hover:bg-danger-light/10 cursor-pointer rounded border bg-transparent px-2.5 py-1.5 text-[13px] transition-all duration-200"
-                >
-                  ×
-                </button>
-              </React.Fragment>
-            ))}
-          </div>
-        )}
-      </div>
+        <div className="mb-4 min-h-[200px] flex-1 overflow-y-auto">
+          {secrets.length === 0 ? (
+            <div className="text-muted px-4 py-8 text-center text-[13px]">
+              No secrets configured
+            </div>
+          ) : (
+            <div className="[&>label]:text-muted grid grid-cols-[1fr_1fr_auto_auto] items-end gap-1 [&>label]:mb-0.5 [&>label]:text-[11px]">
+              <label>Key</label>
+              <label>Value</label>
+              <div /> {/* Empty cell for eye icon column */}
+              <div /> {/* Empty cell for delete button column */}
+              {secrets.map((secret, index) => (
+                <React.Fragment key={index}>
+                  <input
+                    type="text"
+                    value={secret.key}
+                    onChange={(e) => updateSecret(index, "key", e.target.value)}
+                    placeholder="SECRET_NAME"
+                    disabled={isLoading}
+                    className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-dim w-full rounded border px-2.5 py-1.5 font-mono text-[13px] text-white focus:outline-none"
+                  />
+                  <input
+                    type={visibleSecrets.has(index) ? "text" : "password"}
+                    value={secret.value}
+                    onChange={(e) => updateSecret(index, "value", e.target.value)}
+                    placeholder="secret value"
+                    disabled={isLoading}
+                    className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-dim w-full rounded border px-2.5 py-1.5 font-mono text-[13px] text-white focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => toggleVisibility(index)}
+                    disabled={isLoading}
+                    className="text-muted hover:text-foreground flex cursor-pointer items-center justify-center self-center rounded-sm border-none bg-transparent px-1 py-0.5 text-base transition-all duration-200"
+                  >
+                    <ToggleVisibilityIcon visible={visibleSecrets.has(index)} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeSecret(index)}
+                    disabled={isLoading}
+                    className="text-danger-light border-danger-light hover:bg-danger-light/10 cursor-pointer rounded border bg-transparent px-2.5 py-1.5 text-[13px] transition-all duration-200"
+                  >
+                    ×
+                  </button>
+                </React.Fragment>
+              ))}
+            </div>
+          )}
+        </div>
 
-      <button
-        onClick={addSecret}
-        disabled={isLoading}
-        className="text-muted border-border-medium hover:bg-hover hover:border-border-darker hover:text-foreground mb-4 w-full cursor-pointer rounded border border-dashed bg-transparent px-3 py-2 text-[13px] transition-all duration-200"
-      >
-        + Add Secret
-      </button>
+        <button
+          onClick={addSecret}
+          disabled={isLoading}
+          className="text-muted border-border-medium hover:bg-hover hover:border-border-darker hover:text-foreground mb-4 w-full cursor-pointer rounded border border-dashed bg-transparent px-3 py-2 text-[13px] transition-all duration-200"
+        >
+          + Add Secret
+        </button>
 
-      <ModalActions>
-        <CancelButton type="button" onClick={handleCancel} disabled={isLoading}>
-          Cancel
-        </CancelButton>
-        <PrimaryButton type="button" onClick={() => void handleSave()} disabled={isLoading}>
-          {isLoading ? "Saving..." : "Save"}
-        </PrimaryButton>
-      </ModalActions>
-    </Modal>
+        <DialogFooter>
+          <Button variant="secondary" type="button" onClick={handleCancel} disabled={isLoading}>
+            Cancel
+          </Button>
+          <Button type="button" onClick={() => void handleSave()} disabled={isLoading}>
+            {isLoading ? "Saving..." : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };
 

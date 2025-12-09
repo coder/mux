@@ -14,12 +14,12 @@ import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import type { ChatStats } from "@/common/types/chatStats.ts";
 import type { MuxMessage } from "@/common/types/message.ts";
-import type { WorkspaceChatMessage } from "@/common/types/ipc";
-import { isMuxMessage, isStreamEnd } from "@/common/types/ipc";
+import type { WorkspaceChatMessage } from "@/common/orpc/types";
+import { isMuxMessage, isStreamEnd } from "@/common/orpc/types";
 import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream.ts";
 
 import type { WorkspaceChatEvent } from "../types";
-import { useApiClient } from "../hooks/useApiClient";
+import { useORPC } from "../orpc/react";
 
 interface UsageEntry {
   messageId: string;
@@ -122,10 +122,10 @@ function sortEntries(entries: Iterable<UsageEntry>): ChatUsageDisplay[] {
     .map((entry) => entry.usage);
 }
 
-function extractMessagesFromReplay(events: WorkspaceChatEvent[]): MuxMessage[] {
+function extractMessagesFromReplay(events: WorkspaceChatMessage[]): MuxMessage[] {
   const messages: MuxMessage[] = [];
   for (const event of events) {
-    if (isMuxMessage(event as unknown as WorkspaceChatMessage)) {
+    if (isMuxMessage(event)) {
       messages.push(event as unknown as MuxMessage);
     }
   }
@@ -149,7 +149,7 @@ export function WorkspaceCostProvider({
   workspaceId?: string | null;
   children: ReactNode;
 }): JSX.Element {
-  const api = useApiClient();
+  const client = useORPC();
   const usageMapRef = useRef<Map<string, UsageEntry>>(new Map());
   const [usageHistory, setUsageHistory] = useState<ChatUsageDisplay[]>([]);
   const [isInitialized, setIsInitialized] = useState(false);
@@ -173,7 +173,7 @@ export function WorkspaceCostProvider({
 
     void (async () => {
       try {
-        const events = await api.workspace.getFullReplay(workspaceId!);
+        const events = await client.workspace.getFullReplay({ workspaceId: workspaceId! });
         if (isCancelled) {
           return;
         }
@@ -221,7 +221,7 @@ export function WorkspaceCostProvider({
     return () => {
       isCancelled = true;
     };
-  }, [api, workspaceId, isCreationMode]);
+  }, [client, workspaceId, isCreationMode]);
 
   const registerUsage = useCallback((entry: UsageEntry | null) => {
     if (!entry) {
@@ -276,7 +276,7 @@ export function WorkspaceCostProvider({
     });
 
     try {
-      const events = await api.workspace.getFullReplay(workspaceId!);
+      const events = await client.workspace.getFullReplay({ workspaceId: workspaceId! });
       const messages = extractMessagesFromReplay(events);
       if (messages.length === 0) {
         setConsumers({
@@ -293,13 +293,13 @@ export function WorkspaceCostProvider({
       }
 
       const model = getLastModel(messages) ?? "unknown";
-      const stats = await api.tokenizer.calculateStats(messages, model);
+      const stats = await client.tokenizer.calculateStats({ messages, model });
       setConsumers({ status: "ready", stats });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setConsumers({ status: "error", error: message });
     }
-  }, [api, workspaceId, isCreationMode]);
+  }, [client, workspaceId, isCreationMode]);
 
   const lastUsage = usageHistory.length > 0 ? usageHistory[usageHistory.length - 1] : undefined;
   const sessionUsage = useMemo(() => sumUsageHistory(usageHistory), [usageHistory]);

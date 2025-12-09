@@ -50,6 +50,11 @@ export function matchesKeybind(
   event: React.KeyboardEvent | KeyboardEvent,
   keybind: Keybind
 ): boolean {
+  // Guard against undefined event.key (can happen with dead keys, modifier-only events, etc.)
+  if (!event.key) {
+    return false;
+  }
+
   // Check key match (case-insensitive for letters)
   if (event.key.toLowerCase() !== keybind.key.toLowerCase()) {
     return false;
@@ -198,7 +203,10 @@ export const KEYBINDS = {
   CANCEL: { key: "Escape" },
 
   /** Cancel editing message (exit edit mode) */
-  CANCEL_EDIT: { key: "q", ctrl: true, macCtrlBehavior: "control" },
+  CANCEL_EDIT: { key: "Escape" },
+
+  /** Save edit (Cmd/Ctrl+Enter) */
+  SAVE_EDIT: { key: "Enter", ctrl: true },
 
   /** Interrupt active stream (destructive - stops AI generation) */
   // Vim mode: Ctrl+C (familiar from terminal interrupt)
@@ -285,4 +293,27 @@ export const KEYBINDS = {
   /** Open settings modal */
   // macOS: Cmd+, Win/Linux: Ctrl+,
   OPEN_SETTINGS: { key: ",", ctrl: true },
+
+  /** Toggle voice input (dictation) */
+  // macOS: Cmd+D, Win/Linux: Ctrl+D
+  // "D" for Dictate - intuitive and available
+  TOGGLE_VOICE_INPUT: { key: "d", ctrl: true },
 } as const;
+
+/**
+ * Create a keyboard event handler for inline edit inputs.
+ * Handles Enter to save and Escape to cancel (with stopPropagation to prevent modal close).
+ */
+export function createEditKeyHandler(options: {
+  onSave: () => void;
+  onCancel: () => void;
+}): (e: React.KeyboardEvent) => void {
+  return (e) => {
+    if (e.key === "Enter") {
+      options.onSave();
+    } else if (e.key === "Escape") {
+      e.stopPropagation();
+      options.onCancel();
+    }
+  };
+}

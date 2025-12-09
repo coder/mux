@@ -5,13 +5,13 @@
   "tsx": true,
   "tailwind": {
     "config": "",
-    "css": "src/styles/globals.css",
+    "css": "src/browser/styles/globals.css",
     "baseColor": "slate",
     "cssVariables": true,
     "prefix": ""
   },
   "aliases": {
-    "components": "@/components",
-    "utils": "@/lib/utils"
+    "components": "@/browser/components",
+    "utils": "@/common/lib/utils"
   }
 }

@@ -2,6 +2,7 @@ import * as path from "path";
 import { createPatch } from "diff";
 import type { FileStat, Runtime } from "@/node/runtime/Runtime";
 import { SSHRuntime } from "@/node/runtime/SSHRuntime";
+import type { ToolConfiguration } from "@/common/utils/tools/tools";
 
 /**
  * Maximum file size for file operations (1MB)
@@ -26,6 +27,22 @@ export const MAX_FILE_SIZE = 1024 * 1024; // 1MB
  */
 export function generateDiff(filePath: string, oldContent: string, newContent: string): string {
   return createPatch(filePath, oldContent, newContent, "", "", { context: 3 });
+}
+
+/**
+ * Check if a file path is the plan file in plan mode.
+ * Used to allow access to the plan file even though it's outside the workspace cwd.
+ *
+ * @param resolvedPath - The resolved absolute path of the file
+ * @param config - Tool configuration containing mode and planFilePath
+ * @returns true if this is the plan file in plan mode
+ */
+export function isPlanFileAccess(resolvedPath: string, config: ToolConfiguration): boolean {
+  if (config.mode !== "plan" || !config.planFilePath) {
+    return false;
+  }
+  const resolvedPlanPath = config.runtime.normalizePath(config.planFilePath, config.cwd);
+  return resolvedPath === resolvedPlanPath;
 }
 
 /**

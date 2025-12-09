@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { UIMode } from "@/common/types/mode";
 import * as vim from "@/browser/utils/vim";
-import { TooltipWrapper, Tooltip, HelpIndicator } from "./Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent, HelpIndicator } from "./ui/tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
@@ -24,20 +24,37 @@ import { VIM_ENABLED_KEY } from "@/common/constants/storage";
  * - src/utils/vim.test.ts (integration tests)
  */
 
-export interface VimTextAreaProps
-  extends Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "value"> {
+export interface VimTextAreaProps extends Omit<
+  React.TextareaHTMLAttributes<HTMLTextAreaElement>,
+  "onChange" | "value"
+> {
   value: string;
   onChange: (next: string) => void;
   mode: UIMode; // for styling (plan/exec focus color)
   isEditing?: boolean;
   suppressKeys?: string[]; // keys for which Vim should not interfere (e.g. ["Tab","ArrowUp","ArrowDown","Escape"]) when popovers are open
   trailingAction?: React.ReactNode;
+  /** Called when Escape is pressed in normal mode (vim) - useful for cancel edit */
+  onEscapeInNormalMode?: () => void;
 }
 
 type VimMode = vim.VimMode;
 
 export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProps>(
-  ({ value, onChange, mode, isEditing, suppressKeys, onKeyDown, trailingAction, ...rest }, ref) => {
+  (
+    {
+      value,
+      onChange,
+      mode,
+      isEditing,
+      suppressKeys,
+      onKeyDown,
+      trailingAction,
+      onEscapeInNormalMode,
+      ...rest
+    },
+    ref
+  ) => {
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
     // Expose DOM ref to parent
     useEffect(() => {
@@ -64,9 +81,23 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
     const yankBufferRef = useRef<string>("");
 
     // Auto-resize when value changes
-    useEffect(() => {
+    // Uses useLayoutEffect to measure and set height synchronously before paint.
+    // Key insight: when value is empty or whitespace-only, skip measurement entirely
+    // and use the CSS min-height. This avoids race conditions where scrollHeight
+    // returns incorrect values before flexbox layout settles.
+    useLayoutEffect(() => {
       const el = textareaRef.current;
       if (!el) return;
+
+      // For empty/whitespace content, let CSS min-height handle sizing.
+      // This is deterministic and avoids measuring scrollHeight when the
+      // flex container may not have settled.
+      if (!value.trim()) {
+        el.style.height = "";
+        return;
+      }
+
+      // For non-empty content, measure and set height
       el.style.height = "auto";
       const max = window.innerHeight * 0.5; // 50vh
       el.style.height = Math.min(el.scrollHeight, max) + "px";
@@ -125,13 +156,18 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
 
       e.preventDefault();
 
-      // Handle side effects (undo/redo)
+      // Handle side effects (undo/redo/escapeInNormalMode)
       if (result.action === "undo") {
         document.execCommand("undo");
         return;
       }
       if (result.action === "redo") {
         document.execCommand("redo");
+        return;
+      }
+      if (result.action === "escapeInNormalMode") {
+        e.stopPropagation(); // Prevent global handler from interrupting stream
+        onEscapeInNormalMode?.();
         return;
       }
 
@@ -173,9 +209,11 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
           <div className="flex items-center gap-1">
             {showVimMode && (
               <>
-                <TooltipWrapper>
-                  <HelpIndicator>?</HelpIndicator>
-                  <Tooltip align="left" width="wide">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <HelpIndicator>?</HelpIndicator>
+                  </TooltipTrigger>
+                  <TooltipContent align="start" className="max-w-80 whitespace-normal">
                     <strong>Vim Mode Enabled</strong>
                     <br />
                     <br />
@@ -194,8 +232,8 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
                       Vim Mode docs
                     </a>{" "}
                     for full command reference.
-                  </Tooltip>
-                </TooltipWrapper>
+                  </TooltipContent>
+                </Tooltip>
                 <span className="uppercase">normal</span>
                 {pendingCommand && <span>{pendingCommand}</span>}
               </>
@@ -227,7 +265,8 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
               ...(trailingAction ? { scrollbarGutter: "stable both-edges" } : {}),
             }}
             className={cn(
-              "w-full border text-light py-1.5 px-2 rounded font-mono text-[13px] resize-none min-h-8 max-h-[50vh] overflow-y-auto",
+              "w-full border text-light py-1.5 px-2 rounded text-[13px] resize-none min-h-8 max-h-[50vh] overflow-y-auto",
+              vimEnabled ? "font-monospace" : "font-sans",
               "placeholder:text-placeholder",
               "focus:outline-none",
               trailingAction && "pr-10",
@@ -237,7 +276,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
               !isEditing && (mode === "plan" ? "focus:border-plan-mode" : "focus:border-exec-mode"),
               vimMode === "normal"
                 ? "caret-transparent selection:bg-white/50"
-                : "caret-white selection:bg-selection"
+                : "caret-current selection:bg-selection"
             )}
           />
           {trailingAction && (

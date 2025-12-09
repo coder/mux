@@ -1,0 +1,343 @@
+name: PR
+
+on:
+  pull_request:
+    branches: ["**"]
+  merge_group:
+  workflow_dispatch:
+    inputs:
+      test_filter:
+        description: 'Optional test filter (e.g., "workspace", "tests/file.test.ts", or "-t pattern")'
+        required: false
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Detect what files changed to determine which jobs/tests to run
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      src: ${{ steps.filter.outputs.src }}
+      config: ${{ steps.filter.outputs.config }}
+      backend: ${{ steps.filter.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            src:
+              - 'src/**'
+              - 'tests/**'
+              - 'vscode/**'
+            backend:
+              - 'src/node/**'
+              - 'src/cli/**'
+              - 'src/desktop/**'
+              - 'src/common/**'
+              - 'tests/ipc/**'
+              - 'tests/runtime/**'
+            config:
+              - '.github/**'
+              - 'jest.config.cjs'
+              - 'babel.config.cjs'
+              - 'package.json'
+              - 'bun.lockb'
+              - 'tsconfig*.json'
+              - 'vite*.ts'
+              - 'Makefile'
+              - 'electron-builder.yml'
+
+  static-check:
+    name: Static Checks
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-mux
+      - run: ./scripts/generate-version.sh
+      - uses: actions/cache@v4
+        with:
+          path: ~/.local/bin/shfmt
+          key: ${{ runner.os }}-shfmt-latest
+      - name: Install shfmt
+        run: |
+          if [[ ! -f "$HOME/.local/bin/shfmt" ]] || ! "$HOME/.local/bin/shfmt" --version >/dev/null 2>&1; then
+            curl -sS https://webinstall.dev/shfmt | bash
+          fi
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - run: make -j static-check
+
+  test-unit:
+    name: Test / Unit
+    needs: [changes]
+    if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-mux
+      - run: make build-main
+      - run: bun test --coverage --coverage-reporter=lcov ${{ github.event.inputs.test_filter || 'src' }}
+      - uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          flags: unit-tests
+          fail_ci_if_error: false
+
+  test-integration:
+    name: Test / Integration
+    needs: [changes]
+    if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
+    timeout-minutes: 10
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-mux
+      - run: make build-main
+      - name: Run integration tests
+        run: |
+          # Manual override
+          if [[ -n "${{ github.event.inputs.test_filter }}" ]]; then
+            TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent ${{ github.event.inputs.test_filter }}
+            exit 0
+          fi
+          
+          # Skip integration tests when no backend changes
+          # Integration tests in tests/ are backend-focused (IPC, runtime, etc.)
+          # Browser changes are covered by unit tests, storybook, and E2E
+          if [[ "${{ needs.changes.outputs.backend }}" != "true" ]]; then
+            echo "No backend changes - skipping integration tests (browser changes covered by unit/storybook/e2e)"
+            exit 0
+          fi
+          
+          # Backend changed: run ALL integration tests
+          TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent tests/
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      - uses: codecov/codecov-action@v5
+        if: ${{ steps.test-filter.outputs.filter != '' }}
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          flags: integration-tests
+          fail_ci_if_error: false
+
+  test-storybook:
+    name: Test / Storybook
+    needs: [changes]
+    if: ${{ (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') && github.event.inputs.test_filter == '' }}
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-playwright
+      - run: make storybook-build
+      - run: |
+          bun x http-server storybook-static -p 6006 &
+          sleep 5
+      - run: make test-storybook
+
+  test-e2e:
+    name: Test / E2E (${{ matrix.os }})
+    needs: [changes]
+    if: ${{ (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') && github.event.inputs.test_filter == '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+          - os: macos
+            runner: ${{ github.repository_owner == 'coder' && 'depot-macos-latest' || 'macos-latest' }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-mux
+      - name: Install xvfb
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+      - uses: ./.github/actions/setup-playwright
+      - name: Run tests
+        if: matrix.os == 'linux'
+        run: xvfb-run -a make test-e2e
+        env:
+          ELECTRON_DISABLE_SANDBOX: 1
+      - name: Run tests
+        if: matrix.os == 'macos'
+        run: make test-e2e PLAYWRIGHT_ARGS="tests/e2e/scenarios/windowLifecycle.spec.ts"
+
+  smoke-server:
+    name: Smoke / Server
+    needs: [changes]
+    if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-mux
+      - run: make build
+      - run: npm pack
+      - env:
+          SERVER_PORT: 3001
+          SERVER_HOST: localhost
+          STARTUP_TIMEOUT: 30
+        run: |
+          TARBALL=$(ls mux-*.tgz | head -1)
+          PACKAGE_TARBALL="$TARBALL" ./scripts/smoke-test.sh
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: smoke-server-logs
+          path: /tmp/tmp.*/server.log
+          if-no-files-found: warn
+          retention-days: 7
+
+  smoke-docker:
+    name: Smoke / Docker
+    if: github.event_name == 'merge_group'
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: mux-server:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Test container
+        run: |
+          docker run -d --name mux-test -p 3000:3000 mux-server:test
+          for i in {1..30}; do
+            curl -sf http://localhost:3000/health && break
+            echo "Waiting... ($i/30)"
+            sleep 1
+          done
+          curl -sf http://localhost:3000/health | grep -q '"status":"ok"'
+          curl -sf http://localhost:3000/version | grep -q '"mode":"server"'
+      - if: failure()
+        run: docker logs mux-test
+      - if: always()
+        run: docker rm -f mux-test || true
+
+  build-linux:
+    name: Build / Linux
+    needs: [changes]
+    if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-mux
+      - run: bun run build
+      - run: make dist-linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-linux
+          path: release/*.AppImage
+          retention-days: 30
+          if-no-files-found: error
+
+  build-macos:
+    name: Build / macOS
+    needs: [changes]
+    if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-macos-15' || 'macos-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-mux
+      - run: make dist-mac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-macos-x64
+          path: release/*-x64.dmg
+          retention-days: 30
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-macos-arm64
+          path: release/*-arm64.dmg
+          retention-days: 30
+          if-no-files-found: error
+
+  build-vscode:
+    name: Build / VS Code
+    needs: [changes]
+    if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/build-vscode-extension
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-vscode
+          path: vscode/mux-*.vsix
+          retention-days: 30
+          if-no-files-found: error
+
+  codex-comments:
+    name: Codex Comments
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/check_codex_comments.sh ${{ github.event.pull_request.number }}
+
+  # Single required check - configure branch protection to require only this job
+  required:
+    name: Required
+    if: always()
+    needs:
+      - changes
+      - static-check
+      - test-unit
+      - test-integration
+      - test-storybook
+      - test-e2e
+      - smoke-server
+      - smoke-docker
+      - build-linux
+      - build-macos
+      - build-vscode
+      - codex-comments
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          results="${{ join(needs.*.result, ' ') }}"
+          echo "Job results: $results"
+          for result in $results; do
+            if [[ "$result" == "failure" || "$result" == "cancelled" ]]; then
+              echo "❌ CI failed"
+              exit 1
+            fi
+          done
+          echo "✅ All checks passed"

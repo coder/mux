@@ -28,22 +28,29 @@ import { ReviewControls } from "./ReviewControls";
 import { FileTree } from "./FileTree";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useReviewState } from "@/browser/hooks/useReviewState";
-import { parseDiff, extractAllHunks } from "@/common/utils/git/diffParser";
+import { parseDiff, extractAllHunks, buildGitDiffCommand } from "@/common/utils/git/diffParser";
 import { getReviewSearchStateKey } from "@/common/constants/storage";
-import { Tooltip, TooltipWrapper } from "@/browser/components/Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
 import { parseNumstat, buildFileTree, extractNewPath } from "@/common/utils/git/numstatParser";
-import type { DiffHunk, ReviewFilters as ReviewFiltersType } from "@/common/types/review";
+import type {
+  DiffHunk,
+  ReviewFilters as ReviewFiltersType,
+  ReviewNoteData,
+} from "@/common/types/review";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { applyFrontendFilters } from "@/browser/utils/review/filterHunks";
 import { cn } from "@/common/lib/utils";
+import { useAPI } from "@/browser/contexts/API";
 
 interface ReviewPanelProps {
   workspaceId: string;
   workspacePath: string;
-  onReviewNote?: (note: string) => void;
+  onReviewNote?: (data: ReviewNoteData) => void;
   /** Trigger to focus panel (increment to trigger) */
   focusTrigger?: number;
+  /** Workspace is still being created (git operations in progress) */
+  isCreating?: boolean;
 }
 
 interface ReviewSearchState {
@@ -60,75 +67,36 @@ interface DiagnosticInfo {
 }
 
 /**
- * Build git diff command based on diffBase and includeUncommitted flag
- * Shared logic between numstat (file tree) and diff (hunks) commands
- * Exported for testing
+ * Discriminated union for diff loading state.
+ * Makes it impossible to show "No changes" while loading.
  *
- * Git diff semantics:
- * - `git diff A...HEAD` (three-dot): Shows commits on current branch since branching from A
- *   → Uses merge-base(A, HEAD) as comparison point, so changes to A after branching don't appear
- * - `git diff $(git merge-base A HEAD)`: Shows all changes from branch point to working directory
- *   → Includes both committed changes on the branch AND uncommitted working directory changes
- *   → Single unified diff (no duplicate hunks from concatenation)
- * - `git diff HEAD`: Shows only uncommitted changes (working directory vs HEAD)
- * - `git diff --staged`: Shows only staged changes (index vs HEAD)
- *
- * The key insight: When includeUncommitted is true, we compare from the merge-base directly
- * to the working directory. This gives a stable comparison point (doesn't change when base
- * ref moves forward) while including both committed and uncommitted work in a single diff.
- *
- * @param diffBase - Base reference ("main", "HEAD", "--staged")
- * @param includeUncommitted - Include uncommitted working directory changes
- * @param pathFilter - Optional path filter (e.g., ' -- "src/foo.ts"')
- * @param command - "diff" (unified) or "numstat" (file stats)
+ * Note: Parent uses key={workspaceId} so component remounts on workspace change,
+ * guaranteeing fresh state. No need to track workspaceId in state.
  */
-export function buildGitDiffCommand(
-  diffBase: string,
-  includeUncommitted: boolean,
-  pathFilter: string,
-  command: "diff" | "numstat"
-): string {
-  const flags = command === "numstat" ? " -M --numstat" : " -M";
-
-  if (diffBase === "--staged") {
-    // Staged changes, optionally with unstaged appended as separate diff
-    const base = `git diff --staged${flags}${pathFilter}`;
-    return includeUncommitted ? `${base} && git diff HEAD${flags}${pathFilter}` : base;
-  }
-
-  if (diffBase === "HEAD") {
-    // Uncommitted changes only (working vs HEAD)
-    return `git diff HEAD${flags}${pathFilter}`;
-  }
-
-  // Branch diff: use three-dot for committed only, or merge-base for committed+uncommitted
-  if (includeUncommitted) {
-    // Use merge-base to get a unified diff from branch point to working directory
-    // This includes both committed changes on the branch AND uncommitted working changes
-    // Single command avoids duplicate hunks from concatenation
-    // Stable comparison point: merge-base doesn't change when diffBase ref moves forward
-    return `git diff $(git merge-base ${diffBase} HEAD)${flags}${pathFilter}`;
-  } else {
-    // Three-dot: committed changes only (merge-base to HEAD)
-    return `git diff ${diffBase}...HEAD${flags}${pathFilter}`;
-  }
-}
+type DiffState =
+  | { status: "loading" }
+  | { status: "refreshing"; hunks: DiffHunk[]; truncationWarning: string | null }
+  | { status: "loaded"; hunks: DiffHunk[]; truncationWarning: string | null }
+  | { status: "error"; message: string };
 
 export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   workspaceId,
   workspacePath,
   onReviewNote,
   focusTrigger,
+  isCreating = false,
 }) => {
+  const { api } = useAPI();
   const panelRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const [hunks, setHunks] = useState<DiffHunk[]>([]);
+
+  // Unified diff state - discriminated union makes invalid states unrepresentable
+  // Note: Parent renders with key={workspaceId}, so component remounts on workspace change
+  const [diffState, setDiffState] = useState<DiffState>({ status: "loading" });
+
   const [selectedHunkId, setSelectedHunkId] = useState<string | null>(null);
-  const [isLoadingHunks, setIsLoadingHunks] = useState(true);
   const [isLoadingTree, setIsLoadingTree] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [diagnosticInfo, setDiagnosticInfo] = useState<DiagnosticInfo | null>(null);
-  const [truncationWarning, setTruncationWarning] = useState<string | null>(null);
   const [isPanelFocused, setIsPanelFocused] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [fileTree, setFileTree] = useState<FileTreeNode | null>(null);
@@ -166,6 +134,13 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // Initialize review state hook
   const { isRead, toggleRead, markAsRead, markAsUnread } = useReviewState(workspaceId);
 
+  // Derive hunks from diffState for use in filters and rendering
+  const hunks = useMemo(
+    () =>
+      diffState.status === "loaded" || diffState.status === "refreshing" ? diffState.hunks : [],
+    [diffState]
+  );
+
   const [filters, setFilters] = useState<ReviewFiltersType>({
     showReadHunks: showReadHunks,
     diffBase: diffBase,
@@ -189,6 +164,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
   // Load file tree - when workspace, diffBase, or refreshTrigger changes
   useEffect(() => {
+    // Skip data loading while workspace is being created
+    if (!api || isCreating) return;
     let cancelled = false;
 
     const loadFileTree = async () => {
@@ -201,8 +178,10 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           "numstat"
         );
 
-        const numstatResult = await window.api.workspace.executeBash(workspaceId, numstatCommand, {
-          timeout_secs: 30,
+        const numstatResult = await api.workspace.executeBash({
+          workspaceId,
+          script: numstatCommand,
+          options: { timeout_secs: 30 },
         });
 
         if (cancelled) return;
@@ -227,16 +206,37 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, workspacePath, filters.diffBase, filters.includeUncommitted, refreshTrigger]);
+  }, [
+    api,
+    workspaceId,
+    workspacePath,
+    filters.diffBase,
+    filters.includeUncommitted,
+    refreshTrigger,
+    isCreating,
+  ]);
 
   // Load diff hunks - when workspace, diffBase, selected path, or refreshTrigger changes
   useEffect(() => {
+    // Skip data loading while workspace is being created
+    if (!api || isCreating) return;
     let cancelled = false;
 
+    // Transition to appropriate loading state:
+    // - "refreshing" if we have data (keeps UI stable during refresh)
+    // - "loading" if no data yet
+    setDiffState((prev) => {
+      if (prev.status === "loaded" || prev.status === "refreshing") {
+        return {
+          status: "refreshing",
+          hunks: prev.hunks,
+          truncationWarning: prev.truncationWarning,
+        };
+      }
+      return { status: "loading" };
+    });
+
     const loadDiff = async () => {
-      setIsLoadingHunks(true);
-      setError(null);
-      setTruncationWarning(null);
       try {
         // Git-level filters (affect what data is fetched):
         // - diffBase: what to diff against
@@ -253,8 +253,10 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         );
 
         // Fetch diff
-        const diffResult = await window.api.workspace.executeBash(workspaceId, diffCommand, {
-          timeout_secs: 30,
+        const diffResult = await api.workspace.executeBash({
+          workspaceId,
+          script: diffCommand,
+          options: { timeout_secs: 30 },
         });
 
         if (cancelled) return;
@@ -262,14 +264,14 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         if (!diffResult.success) {
           // Real error (not truncation-related)
           console.error("Git diff failed:", diffResult.error);
-          setError(diffResult.error);
-          setHunks([]);
+          setDiffState({ status: "error", message: diffResult.error ?? "Unknown error" });
           setDiagnosticInfo(null);
           return;
         }
 
         const diffOutput = diffResult.data.output ?? "";
-        const truncationInfo = diffResult.data.truncated;
+        const truncationInfo =
+          "truncated" in diffResult.data ? diffResult.data.truncated : undefined;
 
         const fileDiffs = parseDiff(diffOutput);
         const allHunks = extractAllHunks(fileDiffs);
@@ -282,25 +284,24 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           hunkCount: allHunks.length,
         });
 
-        // Set truncation warning only when not filtering by path
-        if (truncationInfo && !selectedFilePath) {
-          setTruncationWarning(
-            `Diff truncated (${truncationInfo.reason}). Filter by file to see more.`
-          );
-        }
+        // Build truncation warning (only when not filtering by path)
+        const truncationWarning =
+          truncationInfo && !selectedFilePath
+            ? `Diff truncated (${truncationInfo.reason}). Filter by file to see more.`
+            : null;
 
-        setHunks(allHunks);
+        // Single atomic state update with all data
+        setDiffState({ status: "loaded", hunks: allHunks, truncationWarning });
 
         // Auto-select first hunk if none selected
         if (allHunks.length > 0 && !selectedHunkId) {
           setSelectedHunkId(allHunks[0].id);
         }
       } catch (err) {
+        if (cancelled) return;
         const errorMsg = `Failed to load diff: ${err instanceof Error ? err.message : String(err)}`;
         console.error(errorMsg);
-        setError(errorMsg);
-      } finally {
-        setIsLoadingHunks(false);
+        setDiffState({ status: "error", message: errorMsg });
       }
     };
 
@@ -318,6 +319,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     filters.includeUncommitted,
     selectedFilePath,
     refreshTrigger,
+    isCreating,
   ]);
 
   // Persist diffBase when it changes
@@ -603,6 +605,17 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  // Show loading state while workspace is being created
+  if (isCreating) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center p-8 text-center">
+        <div className="mb-4 text-2xl">⏳</div>
+        <p className="text-secondary text-sm">Setting up workspace...</p>
+        <p className="text-secondary mt-1 text-xs">Review will be available once ready</p>
+      </div>
+    );
+  }
+
   return (
     <div
       ref={panelRef}
@@ -617,25 +630,27 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         stats={stats}
         onFiltersChange={setFilters}
         onRefresh={() => setRefreshTrigger((prev) => prev + 1)}
-        isLoading={isLoadingHunks || isLoadingTree}
+        isLoading={
+          diffState.status === "loading" || diffState.status === "refreshing" || isLoadingTree
+        }
         workspaceId={workspaceId}
         workspacePath={workspacePath}
         refreshTrigger={refreshTrigger}
       />
 
-      {error ? (
+      {diffState.status === "error" ? (
         <div className="text-danger-soft bg-danger-soft/10 border-danger-soft/30 font-monospace m-3 rounded border p-6 text-xs leading-[1.5] break-words whitespace-pre-wrap">
-          {error}
+          {diffState.message}
         </div>
-      ) : isLoadingHunks && hunks.length === 0 && !fileTree ? (
+      ) : diffState.status === "loading" ? (
         <div className="text-muted flex h-full items-center justify-center text-sm">
           Loading diff...
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          {truncationWarning && (
+          {diffState.truncationWarning && (
             <div className="bg-warning/10 border-warning/30 text-warning mx-3 my-3 flex items-center gap-1.5 rounded border px-3 py-1.5 text-[10px] leading-[1.3] before:text-xs before:content-['⚠️']">
-              {truncationWarning}
+              {diffState.truncationWarning}
             </div>
           )}
 
@@ -650,46 +665,50 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                 onChange={(e) => setSearchState({ ...searchState, input: e.target.value })}
                 className="text-foreground placeholder:text-dim focus:bg-separator flex h-full flex-1 items-center border-none bg-transparent px-2.5 py-1.5 font-sans text-xs leading-[1.4] outline-none"
               />
-              <TooltipWrapper inline>
-                <button
-                  className={cn(
-                    "py-1.5 px-2.5 border-none border-l border-light text-[11px] font-monospace font-semibold leading-[1.4] cursor-pointer outline-none transition-all duration-150 whitespace-nowrap flex items-center h-full",
-                    searchState.useRegex
-                      ? "bg-review-bg-blue text-accent-light shadow-[inset_0_0_0_1px_rgba(77,184,255,0.4)] hover:bg-review-bg-info hover:text-accent-light"
-                      : "bg-transparent text-subtle hover:bg-separator hover:text-foreground",
-                    "active:translate-y-px"
-                  )}
-                  onClick={() =>
-                    setSearchState({ ...searchState, useRegex: !searchState.useRegex })
-                  }
-                >
-                  .*
-                </button>
-                <Tooltip position="bottom">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    className={cn(
+                      "py-1.5 px-2.5 border-none border-l border-light text-[11px] font-monospace font-semibold leading-[1.4] cursor-pointer outline-none transition-all duration-150 whitespace-nowrap flex items-center h-full",
+                      searchState.useRegex
+                        ? "bg-review-bg-blue text-accent-light shadow-[inset_0_0_0_1px_rgba(77,184,255,0.4)] hover:bg-review-bg-info hover:text-accent-light"
+                        : "bg-transparent text-subtle hover:bg-separator hover:text-foreground",
+                      "active:translate-y-px"
+                    )}
+                    onClick={() =>
+                      setSearchState({ ...searchState, useRegex: !searchState.useRegex })
+                    }
+                  >
+                    .*
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
                   {searchState.useRegex ? "Using regex search" : "Using substring search"}
-                </Tooltip>
-              </TooltipWrapper>
-              <TooltipWrapper inline>
-                <button
-                  className={cn(
-                    "py-1.5 px-2.5 border-none border-l border-light text-[11px] font-monospace font-semibold leading-[1.4] cursor-pointer outline-none transition-all duration-150 whitespace-nowrap flex items-center h-full",
-                    searchState.matchCase
-                      ? "bg-review-bg-blue text-accent-light shadow-[inset_0_0_0_1px_rgba(77,184,255,0.4)] hover:bg-review-bg-info hover:text-accent-light"
-                      : "bg-transparent text-subtle hover:bg-separator hover:text-foreground",
-                    "active:translate-y-px"
-                  )}
-                  onClick={() =>
-                    setSearchState({ ...searchState, matchCase: !searchState.matchCase })
-                  }
-                >
-                  Aa
-                </button>
-                <Tooltip position="bottom">
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    className={cn(
+                      "py-1.5 px-2.5 border-none border-l border-light text-[11px] font-monospace font-semibold leading-[1.4] cursor-pointer outline-none transition-all duration-150 whitespace-nowrap flex items-center h-full",
+                      searchState.matchCase
+                        ? "bg-review-bg-blue text-accent-light shadow-[inset_0_0_0_1px_rgba(77,184,255,0.4)] hover:bg-review-bg-info hover:text-accent-light"
+                        : "bg-transparent text-subtle hover:bg-separator hover:text-foreground",
+                      "active:translate-y-px"
+                    )}
+                    onClick={() =>
+                      setSearchState({ ...searchState, matchCase: !searchState.matchCase })
+                    }
+                  >
+                    Aa
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
                   {searchState.matchCase
                     ? "Match case (case-sensitive)"
                     : "Ignore case (case-insensitive)"}
-                </Tooltip>
-              </TooltipWrapper>
+                </TooltipContent>
+              </Tooltip>
             </div>
           </div>
 

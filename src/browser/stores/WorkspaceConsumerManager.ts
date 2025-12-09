@@ -2,33 +2,27 @@ import type { WorkspaceConsumersState } from "./WorkspaceStore";
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import type { ChatStats } from "@/common/types/chatStats";
 import type { MuxMessage } from "@/common/types/message";
-import assert from "@/common/utils/assert";
 
 const TOKENIZER_CANCELLED_MESSAGE = "Cancelled by newer request";
 
 let globalTokenStatsRequestId = 0;
 const latestRequestByWorkspace = new Map<string, number>();
 
-function getTokenizerApi() {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  return window.api?.tokenizer ?? null;
-}
-
 async function calculateTokenStatsLatest(
   workspaceId: string,
   messages: MuxMessage[],
   model: string
 ): Promise<ChatStats> {
-  const tokenizer = getTokenizerApi();
-  assert(tokenizer, "Tokenizer IPC bridge unavailable");
+  const orpcClient = window.__ORPC_CLIENT__;
+  if (!orpcClient) {
+    throw new Error("ORPC client not initialized");
+  }
 
   const requestId = ++globalTokenStatsRequestId;
   latestRequestByWorkspace.set(workspaceId, requestId);
 
   try {
-    const stats = await tokenizer.calculateStats(messages, model);
+    const stats = await orpcClient.tokenizer.calculateStats({ messages, model });
     const latestRequestId = latestRequestByWorkspace.get(workspaceId);
     if (latestRequestId !== requestId) {
       throw new Error(TOKENIZER_CANCELLED_MESSAGE);

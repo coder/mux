@@ -1,5 +1,6 @@
 import { Worker } from "node:worker_threads";
 import { join, dirname, sep, extname } from "node:path";
+import { log } from "@/node/services/log";
 
 interface WorkerRequest {
   messageId: number;
@@ -27,6 +28,9 @@ const pendingPromises = new Map<
   number,
   { resolve: (value: unknown) => void; reject: (error: Error) => void }
 >();
+
+// Track if worker is alive - reject immediately if dead
+let workerError: Error | null = null;
 
 // Resolve worker path
 // In production: both workerPool.js and tokenizer.worker.js are in dist/utils/main/
@@ -62,7 +66,7 @@ const worker = new Worker(workerPath);
 worker.on("message", (response: WorkerResponse) => {
   const pending = pendingPromises.get(response.messageId);
   if (!pending) {
-    console.error(`[workerPool] No pending promise for messageId ${response.messageId}`);
+    log.error(`No pending promise for messageId ${response.messageId}`);
     return;
   }
 
@@ -79,7 +83,8 @@ worker.on("message", (response: WorkerResponse) => {
 
 // Handle worker errors
 worker.on("error", (error) => {
-  console.error("[workerPool] Worker error:", error);
+  log.error("Worker error:", error);
+  workerError = error;
   // Reject all pending promises
   for (const pending of pendingPromises.values()) {
     pending.reject(error);
@@ -90,8 +95,9 @@ worker.on("error", (error) => {
 // Handle worker exit
 worker.on("exit", (code) => {
   if (code !== 0) {
-    console.error(`[workerPool] Worker stopped with exit code ${code}`);
+    log.error(`Worker stopped with exit code ${code}`);
     const error = new Error(`Worker stopped with exit code ${code}`);
+    workerError = error;
     for (const pending of pendingPromises.values()) {
       pending.reject(error);
     }
@@ -109,6 +115,12 @@ worker.unref();
  * @returns A promise that resolves with the task result
  */
 export function run<T>(taskName: string, data: unknown): Promise<T> {
+  // If worker already died (e.g., failed to load), reject immediately
+  // This prevents hanging promises when the worker is not available
+  if (workerError) {
+    return Promise.reject(workerError);
+  }
+
   const messageId = messageIdCounter++;
   const request: WorkerRequest = { messageId, taskName, data };
 

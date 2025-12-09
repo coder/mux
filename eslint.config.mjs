@@ -117,12 +117,9 @@ const localPlugin = {
             "browser/ cannot import from node/. Move shared code to common/ or use IPC.",
           nodeToDesktop:
             "node/ cannot import from desktop/. Move shared code to common/ or use dependency injection.",
-          nodeToCli:
-            "node/ cannot import from cli/. Move shared code to common/.",
-          cliToBrowser:
-            "cli/ cannot import from browser/. Move shared code to common/.",
-          desktopToBrowser:
-            "desktop/ cannot import from browser/. Move shared code to common/.",
+          nodeToCli: "node/ cannot import from cli/. Move shared code to common/.",
+          cliToBrowser: "cli/ cannot import from browser/. Move shared code to common/.",
+          desktopToBrowser: "desktop/ cannot import from browser/. Move shared code to common/.",
         },
       },
       create(context) {
@@ -137,7 +134,9 @@ const localPlugin = {
             const importPath = node.source.value;
 
             // Extract folder from source file (browser, node, desktop, cli, common)
-            const sourceFolderMatch = sourceFile.match(/\/src\/(browser|node|desktop|cli|common)\//);
+            const sourceFolderMatch = sourceFile.match(
+              /\/src\/(browser|node|desktop|cli|common)\//
+            );
             if (!sourceFolderMatch) return;
             const sourceFolder = sourceFolderMatch[1];
 
@@ -460,7 +459,12 @@ export default defineConfig([
     // - Some utils are shared between main/renderer (e.g., utils/tools registry)
     // - Stores can import from utils/messages which is renderer-safe
     // - Type-only imports from services are safe (types live in src/common/types/)
-    files: ["src/browser/components/**", "src/browser/contexts/**", "src/browser/hooks/**", "src/browser/App.tsx"],
+    files: [
+      "src/browser/components/**",
+      "src/browser/contexts/**",
+      "src/browser/hooks/**",
+      "src/browser/App.tsx",
+    ],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -480,6 +484,28 @@ export default defineConfig([
               group: ["**/utils/main/**", "@/utils/main/**"],
               message:
                 "Frontend code cannot import from utils/main/ (contains Node.js APIs). Move shared code to utils/ or use IPC.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // Shiki must only be imported in the highlight worker to avoid blocking main thread
+    // Type-only imports are allowed (erased at compile time)
+    files: ["src/**/*.ts", "src/**/*.tsx"],
+    ignores: ["src/browser/workers/highlightWorker.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["shiki"],
+              importNamePattern: "^(?!type\\s)",
+              allowTypeImports: true,
+              message:
+                "Shiki must only be imported in highlightWorker.ts to avoid blocking the main thread. Use highlightCode() from highlightWorkerClient.ts instead.",
             },
           ],
         },

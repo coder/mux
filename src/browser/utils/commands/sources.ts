@@ -1,5 +1,6 @@
-import type { ThemeMode } from "@/browser/contexts/ThemeContext";
+import { THEME_OPTIONS, type ThemeMode } from "@/browser/contexts/ThemeContext";
 import type { CommandAction } from "@/browser/contexts/CommandRegistryContext";
+import type { APIClient } from "@/browser/contexts/API";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
@@ -7,9 +8,11 @@ import { CommandIds } from "@/browser/utils/commandIds";
 
 import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { BranchListResult } from "@/common/types/ipc";
+import type { BranchListResult } from "@/common/orpc/types";
+import type { RuntimeConfig } from "@/common/types/runtime";
 
 export interface BuildSourcesParams {
+  api: APIClient | null;
   projects: Map<string, ProjectConfig>;
   /** Map of workspace ID to workspace metadata (keyed by metadata.id, not path) */
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>;
@@ -42,13 +45,13 @@ export interface BuildSourcesParams {
   onRemoveProject: (path: string) => void;
   onToggleSidebar: () => void;
   onNavigateWorkspace: (dir: "next" | "prev") => void;
-  onOpenWorkspaceInTerminal: (workspaceId: string) => void;
+  onOpenWorkspaceInTerminal: (workspaceId: string, runtimeConfig?: RuntimeConfig) => void;
   onToggleTheme: () => void;
   onSetTheme: (theme: ThemeMode) => void;
   onOpenSettings?: (section?: string) => void;
 }
 
-const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high"];
+const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high", "xhigh"];
 
 /**
  * Command palette section names
@@ -128,6 +131,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     // Remove current workspace (rename action intentionally omitted until we add a proper modal)
     if (selected?.namedWorkspacePath) {
       const workspaceDisplayName = `${selected.projectName}/${selected.namedWorkspacePath.split("/").pop() ?? selected.namedWorkspacePath}`;
+      const selectedMeta = p.workspaceMetadata.get(selected.workspaceId);
       list.push({
         id: CommandIds.workspaceOpenTerminalCurrent(),
         title: "Open Current Workspace in Terminal",
@@ -135,7 +139,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         section: section.workspaces,
         shortcutHint: formatKeybind(KEYBINDS.OPEN_TERMINAL),
         run: () => {
-          p.onOpenWorkspaceInTerminal(selected.workspaceId);
+          p.onOpenWorkspaceInTerminal(selected.workspaceId, selectedMeta?.runtimeConfig);
         },
       });
       list.push({
@@ -202,7 +206,8 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
             },
           ],
           onSubmit: (vals) => {
-            p.onOpenWorkspaceInTerminal(vals.workspaceId);
+            const meta = p.workspaceMetadata.get(vals.workspaceId);
+            p.onOpenWorkspaceInTerminal(vals.workspaceId, meta?.runtimeConfig);
           },
         },
       });
@@ -319,28 +324,22 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     const list: CommandAction[] = [
       {
         id: CommandIds.themeToggle(),
-        title: `Switch to ${p.theme === "dark" ? "Light" : "Dark"} Theme`,
+        title: "Cycle Theme",
         section: section.appearance,
         run: () => p.onToggleTheme(),
       },
     ];
 
-    if (p.theme !== "dark") {
-      list.push({
-        id: CommandIds.themeSet("dark"),
-        title: "Use Dark Theme",
-        section: section.appearance,
-        run: () => p.onSetTheme("dark"),
-      });
-    }
-
-    if (p.theme !== "light") {
-      list.push({
-        id: CommandIds.themeSet("light"),
-        title: "Use Light Theme",
-        section: section.appearance,
-        run: () => p.onSetTheme("light"),
-      });
+    // Add command for each theme the user isn't currently using
+    for (const opt of THEME_OPTIONS) {
+      if (p.theme !== opt.value) {
+        list.push({
+          id: CommandIds.themeSet(opt.value),
+          title: `Use ${opt.label} Theme`,
+          section: section.appearance,
+          run: () => p.onSetTheme(opt.value),
+        });
+      }
     }
 
     return list;
@@ -356,7 +355,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         title: "Clear History",
         section: section.chat,
         run: async () => {
-          await window.api.workspace.truncateHistory(id, 1.0);
+          await p.api?.workspace.truncateHistory({ workspaceId: id, percentage: 1.0 });
         },
       });
       for (const pct of [0.75, 0.5, 0.25]) {
@@ -365,7 +364,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           title: `Truncate History to ${Math.round((1 - pct) * 100)}%`,
           section: section.chat,
           run: async () => {
-            await window.api.workspace.truncateHistory(id, pct);
+            await p.api?.workspace.truncateHistory({ workspaceId: id, percentage: pct });
           },
         });
       }
@@ -374,7 +373,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         title: "Interrupt Streaming",
         section: section.chat,
         run: async () => {
-          await window.api.workspace.interruptStream(id);
+          await p.api?.workspace.interruptStream({ workspaceId: id });
         },
       });
       list.push({
@@ -386,6 +385,17 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           // Dispatch the keybind; AIView listens for it
           const ev = new KeyboardEvent("keydown", { key: "G", shiftKey: true });
           window.dispatchEvent(ev);
+        },
+      });
+      list.push({
+        id: CommandIds.chatVoiceInput(),
+        title: "Toggle Voice Input",
+        subtitle: "Dictate instead of typing",
+        section: section.chat,
+        shortcutHint: formatKeybind(KEYBINDS.TOGGLE_VOICE_INPUT),
+        run: () => {
+          // Dispatch custom event; ChatInput listens for it
+          window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.TOGGLE_VOICE_INPUT));
         },
       });
     }
@@ -424,6 +434,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         low: "Low — add a bit of reasoning",
         medium: "Medium — balanced reasoning",
         high: "High — maximum reasoning depth",
+        xhigh: "Extra High — extended deep thinking",
       };
       const currentLevel = p.getThinkingLevel(workspaceId);
 
@@ -476,7 +487,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       section: section.help,
       run: () => {
         try {
-          window.open("https://cmux.io/keybinds.html", "_blank");
+          window.open("https://mux.coder.com/keybinds", "_blank");
         } catch {
           /* ignore */
         }

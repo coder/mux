@@ -1,56 +1,113 @@
 import React from "react";
 import { cn } from "@/common/lib/utils";
 import type { RuntimeConfig } from "@/common/types/runtime";
-import { isSSHRuntime } from "@/common/types/runtime";
+import { isSSHRuntime, isWorktreeRuntime, isLocalProjectRuntime } from "@/common/types/runtime";
 import { extractSshHostname } from "@/browser/utils/ui/runtimeBadge";
-import { TooltipWrapper, Tooltip } from "./Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
+import { SSHIcon, WorktreeIcon, LocalIcon } from "./icons/RuntimeIcons";
 
 interface RuntimeBadgeProps {
   runtimeConfig?: RuntimeConfig;
   className?: string;
+  /** When true, shows blue pulsing styling to indicate agent is working */
+  isWorking?: boolean;
 }
 
-/**
- * Badge to display SSH runtime information.
- * Shows icon-only badge for SSH runtimes with hostname in tooltip.
- */
-export function RuntimeBadge({ runtimeConfig, className }: RuntimeBadgeProps) {
-  const hostname = extractSshHostname(runtimeConfig);
+// Runtime-specific color schemes - each type has consistent colors in idle/working states
+// Colors use CSS variables (--color-runtime-*) so they adapt to theme (e.g., solarized)
+// Idle: subtle with visible colored border for discrimination
+// Working: brighter colors with pulse animation
+const RUNTIME_STYLES = {
+  ssh: {
+    idle: "bg-transparent text-muted border-[var(--color-runtime-ssh)]/50",
+    working:
+      "bg-[var(--color-runtime-ssh)]/20 text-[var(--color-runtime-ssh-text)] border-[var(--color-runtime-ssh)]/60 animate-pulse",
+  },
+  worktree: {
+    idle: "bg-transparent text-muted border-[var(--color-runtime-worktree)]/50",
+    working:
+      "bg-[var(--color-runtime-worktree)]/20 text-[var(--color-runtime-worktree-text)] border-[var(--color-runtime-worktree)]/60 animate-pulse",
+  },
+  local: {
+    idle: "bg-transparent text-muted border-[var(--color-runtime-local)]/50",
+    working:
+      "bg-[var(--color-runtime-local)]/30 text-[var(--color-runtime-local)] border-[var(--color-runtime-local)]/60 animate-pulse",
+  },
+} as const;
 
-  if (!hostname) {
-    return null;
+/**
+ * Badge to display runtime type information.
+ * Shows icon-only badge with tooltip describing the runtime type.
+ * - SSH: server icon with hostname (blue theme)
+ * - Worktree: git branch icon (purple theme)
+ * - Local: folder icon (gray theme)
+ *
+ * When isWorking=true, badges brighten and pulse within their color scheme.
+ */
+export function RuntimeBadge({ runtimeConfig, className, isWorking = false }: RuntimeBadgeProps) {
+  // SSH runtime: show server icon with hostname
+  if (isSSHRuntime(runtimeConfig)) {
+    const hostname = extractSshHostname(runtimeConfig);
+    const styles = isWorking ? RUNTIME_STYLES.ssh.working : RUNTIME_STYLES.ssh.idle;
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className={cn(
+              "inline-flex items-center rounded px-1 py-0.5 border transition-colors",
+              styles,
+              className
+            )}
+          >
+            <SSHIcon />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent align="end">SSH: {hostname ?? runtimeConfig.host}</TooltipContent>
+      </Tooltip>
+    );
   }
 
-  return (
-    <TooltipWrapper inline>
-      <span
-        className={cn(
-          "inline-flex items-center rounded px-1 py-0.5",
-          "bg-accent/10 text-accent border border-accent/30",
-          className
-        )}
-      >
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-label="SSH Runtime"
-        >
-          {/* Server rack icon */}
-          <rect x="2" y="2" width="12" height="4" rx="1" />
-          <rect x="2" y="10" width="12" height="4" rx="1" />
-          <line x1="5" y1="4" x2="5" y2="4" />
-          <line x1="5" y1="12" x2="5" y2="12" />
-        </svg>
-      </span>
-      <Tooltip align="right">
-        SSH: {isSSHRuntime(runtimeConfig) ? runtimeConfig.host : hostname}
+  // Worktree runtime: show git branch icon
+  if (isWorktreeRuntime(runtimeConfig)) {
+    const styles = isWorking ? RUNTIME_STYLES.worktree.working : RUNTIME_STYLES.worktree.idle;
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className={cn(
+              "inline-flex items-center rounded px-1 py-0.5 border transition-colors",
+              styles,
+              className
+            )}
+          >
+            <WorktreeIcon />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent align="end">Worktree: isolated git worktree</TooltipContent>
       </Tooltip>
-    </TooltipWrapper>
-  );
+    );
+  }
+
+  // Local project-dir runtime: show folder icon
+  if (isLocalProjectRuntime(runtimeConfig)) {
+    const styles = isWorking ? RUNTIME_STYLES.local.working : RUNTIME_STYLES.local.idle;
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className={cn(
+              "inline-flex items-center rounded px-1 py-0.5 border transition-colors",
+              styles,
+              className
+            )}
+          >
+            <LocalIcon />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent align="end">Local: project directory</TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return null;
 }

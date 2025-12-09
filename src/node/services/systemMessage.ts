@@ -1,4 +1,5 @@
 import type { WorkspaceMetadata } from "@/common/types/workspace";
+import type { MCPServerMap } from "@/common/types/mcp";
 import {
   readInstructionSet,
   readInstructionSetFromRuntime,
@@ -14,10 +15,6 @@ import { getMuxHome } from "@/common/constants/paths";
 import { getAvailableTools } from "@/common/utils/tools/toolDefinitions";
 
 // NOTE: keep this in sync with the docs/models.md file
-
-// The PRELUDE is intentionally minimal to not conflict with the user's instructions.
-// mux is designed to be model agnostic, and models have shown large inconsistency in how they
-// follow instructions.
 
 function sanitizeSectionTag(value: string | undefined, fallback: string): string {
   const normalized = (value ?? "")
@@ -36,9 +33,14 @@ function buildTaggedSection(
   const tag = sanitizeSectionTag(rawTagValue, fallback);
   return `\n\n<${tag}>\n${content}\n</${tag}>`;
 }
+
+// #region SYSTEM_PROMPT_DOCS
+// The PRELUDE is intentionally minimal to not conflict with the user's instructions.
+// mux is designed to be model agnostic, and models have shown large inconsistency in how they
+// follow instructions.
 const PRELUDE = ` 
 <prelude>
-You are a coding agent.
+You are a coding agent called Mux. You may find information about yourself here: https://mux.coder.com/.
   
 <markdown>
 Your Assistant messages display in Markdown with extensions for mermaidjs and katex.
@@ -52,6 +54,12 @@ When creating mermaid diagrams:
 
 Use GitHub-style \`<details>/<summary>\` tags to create collapsible sections for lengthy content, error traces, or supplementary information. Toggles help keep responses scannable while preserving detail.
 </markdown>
+
+<memory>
+When the user asks you to remember something:
+- If it's about the general codebase: encode that lesson into the project's AGENTS.md file, matching its existing tone and structure.
+- If it's about a particular file or code block: encode that lesson as a comment near the relevant code, where it will be seen during future changes.
+</memory>
 </prelude>
 `;
 
@@ -70,6 +78,29 @@ You are in a git worktree at ${workspacePath}
 </environment>
 `;
 }
+
+/**
+ * Build MCP servers context XML block.
+ * Only included when at least one MCP server is configured.
+ * Note: We only expose server names, not commands, to avoid leaking secrets.
+ */
+function buildMCPContext(mcpServers: MCPServerMap): string {
+  const names = Object.keys(mcpServers);
+  if (names.length === 0) return "";
+
+  const serverList = names.map((name) => `- ${name}`).join("\n");
+
+  return `
+<mcp>
+MCP (Model Context Protocol) servers provide additional tools. Configured in user's local project's .mux/mcp.jsonc:
+
+${serverList}
+
+Use /mcp add|edit|remove or Settings → Projects to manage servers.
+</mcp>
+`;
+}
+// #endregion SYSTEM_PROMPT_DOCS
 
 /**
  * Get the system directory where global mux configuration lives.
@@ -175,6 +206,7 @@ async function readInstructionSources(
  * @param mode - Optional mode name (e.g., "plan", "exec")
  * @param additionalSystemInstructions - Optional instructions appended last
  * @param modelString - Active model identifier used for Model-specific sections
+ * @param mcpServers - Optional MCP server configuration (name -> command)
  * @throws Error if metadata or workspacePath invalid
  */
 export async function buildSystemMessage(
@@ -183,7 +215,8 @@ export async function buildSystemMessage(
   workspacePath: string,
   mode?: string,
   additionalSystemInstructions?: string,
-  modelString?: string
+  modelString?: string,
+  mcpServers?: MCPServerMap
 ): Promise<string> {
   if (!metadata) throw new Error("Invalid workspace metadata: metadata is required");
   if (!workspacePath) throw new Error("Invalid workspace path: workspacePath is required");
@@ -228,6 +261,11 @@ export async function buildSystemMessage(
 
   // Build system message
   let systemMessage = `${PRELUDE.trim()}\n\n${buildEnvironmentContext(workspacePath)}`;
+
+  // Add MCP context if servers are configured
+  if (mcpServers && Object.keys(mcpServers).length > 0) {
+    systemMessage += buildMCPContext(mcpServers);
+  }
 
   if (customInstructions) {
     systemMessage += `\n<custom-instructions>\n${customInstructions}\n</custom-instructions>`;

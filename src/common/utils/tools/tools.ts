@@ -1,6 +1,8 @@
 import { type Tool } from "ai";
 import { createFileReadTool } from "@/node/services/tools/file_read";
 import { createBashTool } from "@/node/services/tools/bash";
+import { createBashBackgroundListTool } from "@/node/services/tools/bash_background_list";
+import { createBashBackgroundTerminateTool } from "@/node/services/tools/bash_background_terminate";
 import { createFileEditReplaceStringTool } from "@/node/services/tools/file_edit_replace_string";
 // DISABLED: import { createFileEditReplaceLinesTool } from "@/node/services/tools/file_edit_replace_lines";
 import { createFileEditInsertTool } from "@/node/services/tools/file_edit_insert";
@@ -12,6 +14,9 @@ import { log } from "@/node/services/log";
 
 import type { Runtime } from "@/node/runtime/Runtime";
 import type { InitStateManager } from "@/node/services/initStateManager";
+import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
+import type { UIMode } from "@/common/types/mode";
+import type { FileState } from "@/node/services/agentSession";
 
 /**
  * Configuration for tools that need runtime context
@@ -21,14 +26,28 @@ export interface ToolConfiguration {
   cwd: string;
   /** Runtime environment for executing commands and file operations */
   runtime: Runtime;
+  /** Local runtime for plan file operations (bypasses SSH for plan files which are always local) */
+  localRuntime?: Runtime;
   /** Environment secrets to inject (optional) */
   secrets?: Record<string, string>;
+  /** MUX_ environment variables (MUX_PROJECT_PATH, MUX_RUNTIME) - set from init hook env */
+  muxEnv?: Record<string, string>;
   /** Process niceness level (optional, -20 to 19, lower = higher priority) */
   niceness?: number;
   /** Temporary directory for tool outputs in runtime's context (local or remote) */
   runtimeTempDir: string;
   /** Overflow policy for bash tool output (optional, not exposed to AI) */
   overflow_policy?: "truncate" | "tmpfile";
+  /** Background process manager for bash tool (optional, AI-only) */
+  backgroundProcessManager?: BackgroundProcessManager;
+  /** Current UI mode (plan or exec) - used for plan file path enforcement */
+  mode?: UIMode;
+  /** Plan file path - only this file can be edited in plan mode */
+  planFilePath?: string;
+  /** Workspace ID for tracking background processes and plan storage */
+  workspaceId?: string;
+  /** Callback to record file state for external edit detection (plan files) */
+  recordFileState?: (filePath: string, state: FileState) => void;
 }
 
 /**
@@ -76,7 +95,8 @@ export async function getToolsForModel(
   config: ToolConfiguration,
   workspaceId: string,
   initStateManager: InitStateManager,
-  toolInstructions?: Record<string, string>
+  toolInstructions?: Record<string, string>,
+  mcpTools?: Record<string, Tool>
 ): Promise<Record<string, Tool>> {
   const [provider, modelId] = modelString.split(":");
 
@@ -99,6 +119,8 @@ export async function getToolsForModel(
     // and line number miscalculations. Use file_edit_replace_string instead.
     // file_edit_replace_lines: wrap(createFileEditReplaceLinesTool(config)),
     bash: wrap(createBashTool(config)),
+    bash_background_list: wrap(createBashBackgroundListTool(config)),
+    bash_background_terminate: wrap(createBashBackgroundTerminateTool(config)),
     web_fetch: wrap(createWebFetchTool(config)),
   };
 
@@ -118,14 +140,15 @@ export async function getToolsForModel(
 
   // Try to add provider-specific web search tools if available
   // Lazy-load providers to avoid loading all AI SDKs at startup
-  let allTools = baseTools;
+  let allTools = { ...baseTools, ...(mcpTools ?? {}) };
   try {
     switch (provider) {
       case "anthropic": {
         const { anthropic } = await import("@ai-sdk/anthropic");
         allTools = {
           ...baseTools,
-          // Type assertion needed due to SDK version mismatch between ai and @ai-sdk/anthropic
+          ...(mcpTools ?? {}),
+          // Provider-specific tool types are compatible with Tool at runtime
           web_search: anthropic.tools.webSearch_20250305({ maxUses: 1000 }) as Tool,
         };
         break;
@@ -137,7 +160,8 @@ export async function getToolsForModel(
           const { openai } = await import("@ai-sdk/openai");
           allTools = {
             ...baseTools,
-            // Type assertion needed due to SDK version mismatch between ai and @ai-sdk/openai
+            ...(mcpTools ?? {}),
+            // Provider-specific tool types are compatible with Tool at runtime
             web_search: openai.tools.webSearch({
               searchContextSize: "high",
             }) as Tool,

@@ -1,14 +1,23 @@
 import type { DisplayedMessage, WorkspaceChatEvent } from "../types";
-import type {
-  MuxMessage,
-  MuxTextPart,
-  MuxImagePart,
-  MuxReasoningPart,
-} from "@/common/types/message";
+import type { MuxMessage, MuxTextPart, MuxImagePart } from "@/common/types/message";
 import type { DynamicToolPart } from "@/common/types/toolParts";
-import type { WorkspaceChatMessage } from "@/common/types/ipc";
-import { isMuxMessage } from "@/common/types/ipc";
+import type { WorkspaceChatMessage } from "@/common/orpc/types";
+import { isMuxMessage } from "@/common/orpc/types";
 import { createChatEventProcessor } from "@/browser/utils/messages/ChatEventProcessor";
+
+/**
+ * All possible event types that have a `type` discriminant field.
+ * This is derived from WorkspaceChatMessage excluding MuxMessage (which uses `role`).
+ *
+ * IMPORTANT: When adding new event types to the schema, TypeScript will error
+ * here if the handler map doesn't handle them - preventing runtime surprises.
+ */
+type TypedEventType =
+  Exclude<WorkspaceChatMessage, MuxMessage> extends infer T
+    ? T extends { type: infer U }
+      ? U
+      : never
+    : never;
 
 type IncomingEvent = WorkspaceChatEvent | DisplayedMessage | string | number | null | undefined;
 
@@ -27,28 +36,6 @@ export const DISPLAYABLE_MESSAGE_TYPES: ReadonlySet<DisplayedMessage["type"]> = 
 ]);
 
 const DEBUG_TAG = "[ChatEventExpander]";
-
-function isDevEnvironment(): boolean {
-  if (typeof __DEV__ !== "undefined") {
-    return __DEV__;
-  }
-  if (typeof process !== "undefined") {
-    return process.env.NODE_ENV !== "production";
-  }
-  return false;
-}
-
-function debugLog(message: string, context?: Record<string, unknown>): void {
-  if (!isDevEnvironment()) {
-    return;
-  }
-  if (context) {
-    console.debug(`${DEBUG_TAG} ${message}`, context);
-  } else {
-    console.debug(`${DEBUG_TAG} ${message}`);
-  }
-}
-const PASS_THROUGH_TYPES = new Set(["delete", "status", "error", "stream-error", "caught-up"]);
 
 const INIT_MESSAGE_ID = "workspace-init";
 
@@ -325,77 +312,120 @@ export function createChatEventExpander(): ChatEventExpander {
         return [payload as DisplayedMessage];
       }
 
-      const type = payload.type;
+      const type = payload.type as TypedEventType;
+      // Cast once - we've verified payload is an object with a type field
+      const event = payload as Record<string, unknown>;
+      const getMessageId = () => (typeof event.messageId === "string" ? event.messageId : "");
 
-      // Emit init message updates
-      if (type === "init-start" || type === "init-output" || type === "init-end") {
-        processor.handleEvent(payload as unknown as WorkspaceChatMessage);
-        return emitInitMessage();
+      // Handler map for all typed events - TypeScript enforces exhaustiveness
+      // If a new event type is added to the schema, this will error until handled
+      const handlers: Record<TypedEventType, () => WorkspaceChatEvent[]> = {
+        // Init events: emit workspace init message
+        "init-start": () => {
+          processor.handleEvent(payload as unknown as WorkspaceChatMessage);
+          return emitInitMessage();
+        },
+        "init-output": () => {
+          processor.handleEvent(payload as unknown as WorkspaceChatMessage);
+          return emitInitMessage();
+        },
+        "init-end": () => {
+          processor.handleEvent(payload as unknown as WorkspaceChatMessage);
+          return emitInitMessage();
+        },
+
+        // Stream lifecycle: manage active streams and emit displayed messages
+        "stream-start": () => {
+          processor.handleEvent(payload as unknown as WorkspaceChatMessage);
+          const messageId = getMessageId();
+          if (!messageId) return [];
+          activeStreams.add(messageId);
+          return emitDisplayedMessages(messageId, { isStreaming: true });
+        },
+        "stream-delta": () => {
+          processor.handleEvent(payload as unknown as WorkspaceChatMessage);
+          const messageId = getMessageId();
+          if (!messageId) return [];
+          return emitDisplayedMessages(messageId, { isStreaming: true });
+        },
+        "stream-end": () => {
+          processor.handleEvent(payload as unknown as WorkspaceChatMessage);
+          const messageId = getMessageId();
+          if (!messageId) return [];
+          activeStreams.delete(messageId);
+          return emitDisplayedMessages(messageId, { isStreaming: false });
+        },
+        "stream-abort": () => {
+          processor.handleEvent(payload as unknown as WorkspaceChatMessage);
+          const messageId = getMessageId();
+          if (!messageId) return [];
+          activeStreams.delete(messageId);
+          return emitDisplayedMessages(messageId, { isStreaming: false });
+        },
+
+        // Tool call events: emit partial messages to show tool progress
+        "tool-call-start": () => {
+          processor.handleEvent(payload as unknown as WorkspaceChatMessage);
+          const messageId = getMessageId();
+          if (!messageId) return [];
+          return emitDisplayedMessages(messageId, { isStreaming: true });
+        },
+        "tool-call-delta": () => {
+          processor.handleEvent(payload as unknown as WorkspaceChatMessage);
+          const messageId = getMessageId();
+          if (!messageId) return [];
+          return emitDisplayedMessages(messageId, { isStreaming: true });
+        },
+        "tool-call-end": () => {
+          processor.handleEvent(payload as unknown as WorkspaceChatMessage);
+          const messageId = getMessageId();
+          if (!messageId) return [];
+          return emitDisplayedMessages(messageId, { isStreaming: true });
+        },
+
+        // Reasoning events
+        "reasoning-delta": () => {
+          processor.handleEvent(payload as unknown as WorkspaceChatMessage);
+          const messageId = getMessageId();
+          if (!messageId) return [];
+          return emitDisplayedMessages(messageId, { isStreaming: true });
+        },
+        "reasoning-end": () => {
+          processor.handleEvent(payload as unknown as WorkspaceChatMessage);
+          return [];
+        },
+
+        // Usage delta: mobile app doesn't display usage, silently ignore
+        "usage-delta": () => [],
+
+        // Pass-through events: return unchanged
+        "caught-up": () => [payload as WorkspaceChatEvent],
+        "stream-error": () => [payload as WorkspaceChatEvent],
+        delete: () => [payload as WorkspaceChatEvent],
+
+        // Error event: emit as stream-error for display
+        error: (): WorkspaceChatEvent[] => {
+          const errorEvent = event as { error?: string; errorType?: string };
+          return [
+            {
+              type: "stream-error",
+              error: errorEvent.error ?? "Unknown error",
+              errorType: errorEvent.errorType,
+            },
+          ];
+        },
+
+        // Queue/restore events: pass through (mobile may use these later)
+        "queued-message-changed": () => [payload as WorkspaceChatEvent],
+        "restore-to-input": () => [payload as WorkspaceChatEvent],
+      };
+
+      const handler = handlers[type];
+      if (handler) {
+        return handler();
       }
 
-      // Stream start: mark as active and emit initial partial message
-      if (type === "stream-start") {
-        processor.handleEvent(payload as unknown as WorkspaceChatMessage);
-        const messageId = typeof payload.messageId === "string" ? payload.messageId : "";
-        if (!messageId) return [];
-        activeStreams.add(messageId);
-        return emitDisplayedMessages(messageId, { isStreaming: true });
-      }
-
-      // Stream delta: emit partial message with accumulated content
-      if (type === "stream-delta") {
-        processor.handleEvent(payload as unknown as WorkspaceChatMessage);
-        const messageId = typeof payload.messageId === "string" ? payload.messageId : "";
-        if (!messageId) return [];
-        return emitDisplayedMessages(messageId, { isStreaming: true });
-      }
-
-      // Reasoning delta: emit partial reasoning message
-      if (type === "reasoning-delta") {
-        processor.handleEvent(payload as unknown as WorkspaceChatMessage);
-        const messageId = typeof payload.messageId === "string" ? payload.messageId : "";
-        if (!messageId) return [];
-        return emitDisplayedMessages(messageId, { isStreaming: true });
-      }
-
-      // Tool call events: emit partial messages to show tool progress
-      if (type === "tool-call-start" || type === "tool-call-delta" || type === "tool-call-end") {
-        processor.handleEvent(payload as unknown as WorkspaceChatMessage);
-        const messageId = typeof payload.messageId === "string" ? payload.messageId : "";
-        if (!messageId) return [];
-        return emitDisplayedMessages(messageId, { isStreaming: true });
-      }
-
-      // Reasoning end: just process, next delta will emit
-      if (type === "reasoning-end") {
-        processor.handleEvent(payload as unknown as WorkspaceChatMessage);
-        return [];
-      }
-
-      // Stream end: emit final complete message and clear streaming state
-      if (type === "stream-end") {
-        processor.handleEvent(payload as unknown as WorkspaceChatMessage);
-        const messageId = typeof payload.messageId === "string" ? payload.messageId : "";
-        if (!messageId) return [];
-        activeStreams.delete(messageId);
-        return emitDisplayedMessages(messageId, { isStreaming: false });
-      }
-
-      // Stream abort: emit partial message marked as interrupted
-      if (type === "stream-abort") {
-        processor.handleEvent(payload as unknown as WorkspaceChatMessage);
-        const messageId = typeof payload.messageId === "string" ? payload.messageId : "";
-        if (!messageId) return [];
-        activeStreams.delete(messageId);
-        return emitDisplayedMessages(messageId, { isStreaming: false });
-      }
-
-      // Pass through certain event types unchanged
-      if (PASS_THROUGH_TYPES.has(type)) {
-        return [payload as WorkspaceChatEvent];
-      }
-
-      // Log unsupported types once
+      // Fallback for truly unknown types (e.g., from newer backend)
       if (!unsupportedTypesLogged.has(type)) {
         console.warn(`Unhandled workspace chat event type: ${type}`, payload);
         unsupportedTypesLogged.add(type);

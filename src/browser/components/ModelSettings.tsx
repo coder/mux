@@ -1,7 +1,7 @@
 import React from "react";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { supports1MContext } from "@/common/utils/ai/models";
-import { TooltipWrapper, Tooltip } from "./Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 
 interface ModelSettingsProps {
   model: string;
@@ -27,12 +27,14 @@ export const ModelSettings: React.FC<ModelSettingsProps> = (props) => {
         />
         {label}
       </label>
-      <TooltipWrapper inline>
-        <span className="text-muted flex cursor-help items-center text-[10px] leading-none">?</span>
-        <Tooltip className="tooltip" align="center" width="auto">
-          {tooltipText}
-        </Tooltip>
-      </TooltipWrapper>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="text-muted flex cursor-help items-center text-[10px] leading-none">
+            ?
+          </span>
+        </TooltipTrigger>
+        <TooltipContent align="center">{tooltipText}</TooltipContent>
+      </Tooltip>
     </div>
   );
 

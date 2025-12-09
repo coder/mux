@@ -1,6 +1,6 @@
 # mux VS Code Extension
 
-Open [mux](https://cmux.io) workspaces from VS Code or Cursor.
+Open [mux](https://mux.coder.com) workspaces from VS Code or Cursor.
 
 ## Installation
 
@@ -17,6 +17,7 @@ code --install-extension mux-0.1.0.vsix
 ## Requirements
 
 **For SSH workspaces**: Install Remote-SSH extension
+
 - **VS Code**: `ms-vscode-remote.remote-ssh`
 - **Cursor**: `anysphere.remote-ssh`
 

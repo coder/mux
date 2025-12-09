@@ -15,5 +15,4 @@ export type WorkspaceChatEvent =
   | import("./message").DisplayedMessage
   | { type: "delete"; historySequences: number[] }
   | { type: "caught-up" }
-  | { type: "stream-error"; messageId: string; error: string; errorType: string }
   | { type: string; [key: string]: unknown };

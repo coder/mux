@@ -7,10 +7,10 @@ module.exports = {
     constructor(html, options) {
       this.window = {
         document: {
-          title: 'Mock Document',
-          body: { innerHTML: html || '' }
-        }
+          title: "Mock Document",
+          body: { innerHTML: html || "" },
+        },
       };
     }
-  }
+  },
 };

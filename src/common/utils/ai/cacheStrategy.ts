@@ -1,4 +1,5 @@
 import { tool as createTool, type ModelMessage, type Tool } from "ai";
+import { normalizeGatewayModel } from "./models";
 
 /**
  * Check if a model supports Anthropic cache control.
@@ -8,12 +9,13 @@ import { tool as createTool, type ModelMessage, type Tool } from "ai";
  * - OpenRouter Anthropic models: "openrouter:anthropic/claude-3.5-sonnet"
  */
 export function supportsAnthropicCache(modelString: string): boolean {
-  // Direct Anthropic provider
-  if (modelString.startsWith("anthropic:")) {
+  const normalized = normalizeGatewayModel(modelString);
+  // Direct Anthropic provider (or normalized gateway model)
+  if (normalized.startsWith("anthropic:")) {
     return true;
   }
-  // Gateway/router providers routing to Anthropic (format: "provider:anthropic/model")
-  const [, modelId] = modelString.split(":");
+  // Other gateway/router providers routing to Anthropic (format: "provider:anthropic/model")
+  const [, modelId] = normalized.split(":");
   if (modelId?.startsWith("anthropic/")) {
     return true;
   }
@@ -66,10 +68,10 @@ function addCacheControlToLastContentPart(msg: ModelMessage): ModelMessage {
 
 /**
  * Apply cache control to messages for Anthropic models.
- * Caches all messages except the last user message for optimal cache hits.
+ * Adds a cache marker to the last message so the entire conversation is cached.
  *
  * NOTE: The SDK requires providerOptions on content parts, not on the message.
- * We add cache_control to the last content part of the second-to-last message.
+ * We add cache_control to the last content part of the last message.
  */
 export function applyCacheControl(messages: ModelMessage[], modelString: string): ModelMessage[] {
   // Only apply cache control for Anthropic models
@@ -77,14 +79,13 @@ export function applyCacheControl(messages: ModelMessage[], modelString: string)
     return messages;
   }
 
-  // Need at least 2 messages to add a cache breakpoint
-  if (messages.length < 2) {
+  // Need at least 1 message to add a cache breakpoint
+  if (messages.length < 1) {
     return messages;
   }
 
-  // Add cache breakpoint at the second-to-last message
-  // This caches everything up to (but not including) the current user message
-  const cacheIndex = messages.length - 2;
+  // Add cache breakpoint at the last message
+  const cacheIndex = messages.length - 1;
 
   return messages.map((msg, index) => {
     if (index === cacheIndex) {

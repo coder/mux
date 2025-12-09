@@ -24,26 +24,35 @@ export type ThinkingPolicy = readonly ThinkingLevel[];
  * Returns the thinking policy for a given model.
  *
  * Rules:
+ * - openai:gpt-5.1-codex-max → ["off", "low", "medium", "high", "xhigh"] (5 levels including xhigh)
  * - openai:gpt-5-pro → ["high"] (only supported level)
  * - gemini-3 → ["low", "high"] (thinking level only)
- * - default → ["off", "low", "medium", "high"] (all levels selectable)
+ * - default → ["off", "low", "medium", "high"] (standard 4 levels)
  *
  * Tolerates version suffixes (e.g., gpt-5-pro-2025-10-06).
  * Does NOT match gpt-5-pro-mini (uses negative lookahead).
  */
 export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
-  // Match "openai:" followed by optional whitespace and "gpt-5-pro"
-  // Allow version suffixes like "-2025-10-06" but NOT "-mini" or other text suffixes
-  if (/^openai:\s*gpt-5-pro(?!-[a-z])/.test(modelString)) {
+  // Normalize to be robust to provider prefixes, whitespace, and version suffixes
+  const normalized = modelString.trim().toLowerCase();
+  const withoutPrefix = normalized.replace(/^[a-z0-9_-]+:\s*/, "");
+
+  // GPT-5.1-Codex-Max supports 5 reasoning levels including xhigh (Extra High)
+  if (withoutPrefix.startsWith("gpt-5.1-codex-max") || withoutPrefix.startsWith("codex-max")) {
+    return ["off", "low", "medium", "high", "xhigh"];
+  }
+
+  // gpt-5-pro (not mini) with optional version suffix
+  if (/^gpt-5-pro(?!-[a-z])/.test(withoutPrefix)) {
     return ["high"];
   }
 
   // Gemini 3 Pro only supports "low" and "high" reasoning levels
-  if (modelString.includes("gemini-3")) {
+  if (withoutPrefix.includes("gemini-3")) {
     return ["low", "high"];
   }
 
-  // Default policy: all levels selectable
+  // Default policy: standard 4 levels (xhigh only for codex-max)
   return ["off", "low", "medium", "high"];
 }
 

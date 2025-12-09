@@ -1,9 +1,10 @@
 import { describe, test, expect, beforeAll, afterAll } from "@jest/globals";
-import { createWorktree, listLocalBranches, detectDefaultTrunkBranch } from "./git";
+import { createWorktree, listLocalBranches, detectDefaultTrunkBranch, cleanStaleLock } from "./git";
 import { Config } from "./config";
 import * as path from "path";
 import * as os from "os";
 import * as fs from "fs/promises";
+import * as fsSync from "fs";
 import { exec } from "child_process";
 import { promisify } from "util";
 
@@ -101,5 +102,54 @@ describe("createWorktree", () => {
     for (let i = 1; i < branches.length; i += 1) {
       expect(branches[i - 1].localeCompare(branches[i])).toBeLessThanOrEqual(0);
     }
+  });
+});
+
+describe("cleanStaleLock", () => {
+  let tempDir: string;
+
+  beforeAll(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-lock-test-"));
+    await fs.mkdir(path.join(tempDir, ".git"));
+  });
+
+  afterAll(async () => {
+    try {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+  });
+
+  test("removes lock file older than threshold", async () => {
+    const lockPath = path.join(tempDir, ".git", "index.lock");
+    // Create a lock file with old mtime
+    await fs.writeFile(lockPath, "lock");
+    const oldTime = Date.now() - 10000; // 10 seconds ago
+    fsSync.utimesSync(lockPath, oldTime / 1000, oldTime / 1000);
+
+    cleanStaleLock(tempDir);
+
+    // Lock should be removed
+    expect(fsSync.existsSync(lockPath)).toBe(false);
+  });
+
+  test("does not remove recent lock file", async () => {
+    const lockPath = path.join(tempDir, ".git", "index.lock");
+    // Create a fresh lock file (now)
+    await fs.writeFile(lockPath, "lock");
+
+    cleanStaleLock(tempDir);
+
+    // Lock should still exist (it's too recent)
+    expect(fsSync.existsSync(lockPath)).toBe(true);
+
+    // Cleanup
+    await fs.unlink(lockPath);
+  });
+
+  test("does nothing when no lock exists", () => {
+    // Should not throw
+    cleanStaleLock(tempDir);
   });
 });

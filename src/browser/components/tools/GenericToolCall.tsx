@@ -11,12 +11,8 @@ import {
   DetailContent,
   LoadingDots,
 } from "./shared/ToolPrimitives";
-import {
-  useToolExpansion,
-  getStatusDisplay,
-  formatValue,
-  type ToolStatus,
-} from "./shared/toolUtils";
+import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./shared/toolUtils";
+import { JsonHighlight } from "./shared/HighlightedCode";
 
 interface GenericToolCallProps {
   toolName: string;
@@ -48,14 +44,18 @@ export const GenericToolCall: React.FC<GenericToolCallProps> = ({
           {args !== undefined && (
             <DetailSection>
               <DetailLabel>Arguments</DetailLabel>
-              <DetailContent>{formatValue(args)}</DetailContent>
+              <DetailContent>
+                <JsonHighlight value={args} />
+              </DetailContent>
             </DetailSection>
           )}
 
           {result !== undefined && (
             <DetailSection>
               <DetailLabel>Result</DetailLabel>
-              <DetailContent>{formatValue(result)}</DetailContent>
+              <DetailContent>
+                <JsonHighlight value={result} />
+              </DetailContent>
             </DetailSection>
           )}
 

@@ -3,13 +3,13 @@
  */
 
 import React, { useState, useMemo } from "react";
-import type { DiffHunk } from "@/common/types/review";
+import type { DiffHunk, ReviewNoteData } from "@/common/types/review";
 import { SelectableDiffRenderer } from "../../shared/DiffRenderer";
 import {
   type SearchHighlightConfig,
   highlightSearchInText,
 } from "@/browser/utils/highlighting/highlightSearchTerms";
-import { Tooltip, TooltipWrapper } from "../../Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../../ui/tooltip";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getReviewExpandStateKey } from "@/common/constants/storage";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
@@ -24,7 +24,7 @@ interface HunkViewerProps {
   onClick?: (e: React.MouseEvent<HTMLElement>) => void;
   onToggleRead?: (e: React.MouseEvent<HTMLElement>) => void;
   onRegisterToggleExpand?: (hunkId: string, toggleFn: () => void) => void;
-  onReviewNote?: (note: string) => void;
+  onReviewNote?: (data: ReviewNoteData) => void;
   searchConfig?: SearchHighlightConfig;
 }
 
@@ -46,8 +46,9 @@ export const HunkViewer = React.memo<HunkViewerProps>(
 
     // Track if hunk is visible in viewport for lazy syntax highlighting
     // Use ref for visibility to avoid re-renders when visibility changes
-    const isVisibleRef = React.useRef(true); // Start visible to avoid flash
-    const [isVisible, setIsVisible] = React.useState(true);
+    // Start as not visible to avoid eagerly highlighting off-screen hunks
+    const isVisibleRef = React.useRef(false);
+    const [isVisible, setIsVisible] = React.useState(false);
 
     // Use IntersectionObserver to track visibility
     React.useEffect(() => {
@@ -193,17 +194,19 @@ export const HunkViewer = React.memo<HunkViewerProps>(
       >
         <div className="bg-separator border-border-light font-monospace flex items-center justify-between gap-2 border-b px-3 py-2 text-xs">
           {isRead && (
-            <TooltipWrapper inline>
-              <span
-                className="text-read mr-1 inline-flex items-center text-sm"
-                aria-label="Marked as read"
-              >
-                ✓
-              </span>
-              <Tooltip align="center" position="top">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  className="text-read mr-1 inline-flex items-center text-sm"
+                  aria-label="Marked as read"
+                >
+                  ✓
+                </span>
+              </TooltipTrigger>
+              <TooltipContent align="center" side="top">
                 Marked as read
-              </Tooltip>
-            </TooltipWrapper>
+              </TooltipContent>
+            </Tooltip>
           )}
           <div
             className="text-foreground min-w-0 truncate font-medium"
@@ -220,20 +223,22 @@ export const HunkViewer = React.memo<HunkViewerProps>(
               ({lineCount} {lineCount === 1 ? "line" : "lines"})
             </span>
             {onToggleRead && (
-              <TooltipWrapper inline>
-                <button
-                  className="border-border-light text-muted hover:border-read hover:text-read flex cursor-pointer items-center gap-1 rounded-[3px] border bg-transparent px-1.5 py-0.5 text-[11px] transition-all duration-200 hover:bg-white/5 active:scale-95"
-                  data-hunk-id={hunkId}
-                  onClick={handleToggleRead}
-                  aria-label={`Mark as read (${formatKeybind(KEYBINDS.TOGGLE_HUNK_READ)})`}
-                >
-                  {isRead ? "○" : "◉"}
-                </button>
-                <Tooltip align="right" position="top">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    className="border-border-light text-muted hover:border-read hover:text-read flex cursor-pointer items-center gap-1 rounded-[3px] border bg-transparent px-1.5 py-0.5 text-[11px] transition-all duration-200 hover:bg-white/5 active:scale-95"
+                    data-hunk-id={hunkId}
+                    onClick={handleToggleRead}
+                    aria-label={`Mark as read (${formatKeybind(KEYBINDS.TOGGLE_HUNK_READ)})`}
+                  >
+                    {isRead ? "○" : "◉"}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent align="end" side="top">
                   Mark as read ({formatKeybind(KEYBINDS.TOGGLE_HUNK_READ)}) · Mark file (
                   {formatKeybind(KEYBINDS.MARK_FILE_READ)})
-                </Tooltip>
-              </TooltipWrapper>
+                </TooltipContent>
+              </Tooltip>
             )}
           </div>
         </div>

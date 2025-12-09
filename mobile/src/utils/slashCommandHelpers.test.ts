@@ -1,6 +1,11 @@
 import type { SlashSuggestion } from "@/browser/utils/slashCommands/types";
+import type { InferClientInputs } from "@orpc/client";
+import type { ORPCClient } from "../orpc/client";
 import { buildMobileCompactionPayload, filterSuggestionsForMobile } from "./slashCommandHelpers";
-import type { SendMessageOptions } from "../api/client";
+
+type SendMessageOptions = NonNullable<
+  InferClientInputs<ORPCClient>["workspace"]["sendMessage"]["options"]
+>;
 
 describe("filterSuggestionsForMobile", () => {
   it("filters out hidden commands by root key", () => {
@@ -49,6 +54,7 @@ describe("buildMobileCompactionPayload", () => {
     const payload = buildMobileCompactionPayload(parsed, baseOptions);
 
     expect(payload.messageText).toContain("approximately 615 words");
+
     expect(payload.messageText).toContain(parsed.continueMessage);
     expect(payload.metadata.type).toBe("compaction-request");
     expect(payload.metadata.rawCommand).toContain("/compact -t 800 -m anthropic:claude-opus-4-1");

@@ -265,6 +265,20 @@ export const electronTest = base.extend<ElectronFixtures>({
     const window = await app.firstWindow();
     await window.waitForLoadState("domcontentloaded");
     await window.setViewportSize({ width: 1600, height: 900 });
+
+    // Disable tutorials for e2e tests by marking them as completed
+    // Must set before React reads the state, so we set and reload
+    await window.evaluate(() => {
+      const tutorialState = {
+        disabled: false,
+        completed: { settings: true, creation: true, workspace: true },
+      };
+      localStorage.setItem("tutorialState", JSON.stringify(tutorialState));
+    });
+    // Reload so React picks up the tutorial state on mount
+    await window.reload();
+    await window.waitForLoadState("domcontentloaded");
+
     window.on("console", (msg) => {
       // eslint-disable-next-line no-console
       console.log(`[renderer:${msg.type()}]`, msg.text());

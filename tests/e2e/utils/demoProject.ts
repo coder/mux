@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { spawnSync } from "child_process";
 import { Config } from "../../../src/node/config";
 
 export interface DemoProjectConfig {
@@ -48,6 +49,16 @@ export function prepareDemoProject(
   fs.mkdirSync(projectPath, { recursive: true });
   fs.mkdirSync(workspacePath, { recursive: true });
   fs.mkdirSync(sessionsDir, { recursive: true });
+
+  // Initialize git repos with an initial commit so git commands work properly.
+  // Empty repos cause errors like "fatal: ref HEAD is not a symbolic ref" when
+  // detecting the default branch.
+  for (const repoPath of [projectPath, workspacePath]) {
+    spawnSync("git", ["init", "-q"], { cwd: repoPath });
+    spawnSync("git", ["config", "user.email", "test@example.com"], { cwd: repoPath });
+    spawnSync("git", ["config", "user.name", "Test"], { cwd: repoPath });
+    spawnSync("git", ["commit", "--allow-empty", "-q", "-m", "init"], { cwd: repoPath });
+  }
 
   // E2E tests use legacy workspace ID format to test backward compatibility.
   // Production code now uses generateStableId() for new workspaces.

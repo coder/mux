@@ -1,8 +1,16 @@
 import React, { useState, useCallback } from "react";
-import { Modal, ModalActions, CancelButton, PrimaryButton } from "./Modal";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/browser/components/ui/dialog";
 import { DirectoryPickerModal } from "./DirectoryPickerModal";
-import type { IPCApi } from "@/common/types/ipc";
+import { Button } from "@/browser/components/ui/button";
 import type { ProjectConfig } from "@/node/config";
+import { useAPI } from "@/browser/contexts/API";
 
 interface ProjectCreateModalProps {
   isOpen: boolean;
@@ -21,13 +29,13 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
   onClose,
   onSuccess,
 }) => {
+  const { api } = useAPI();
   const [path, setPath] = useState("");
   const [error, setError] = useState("");
-  // Detect desktop environment where native directory picker is available
-  const isDesktop =
-    window.api.platform !== "browser" && typeof window.api.projects.pickDirectory === "function";
-  const api = window.api as unknown as IPCApi;
-  const hasWebFsPicker = window.api.platform === "browser" && !!api.fs?.listDirectory;
+  // In Electron mode, window.api exists (set by preload) and has native directory picker via ORPC
+  // In browser mode, window.api doesn't exist and we use web-based DirectoryPickerModal
+  const isDesktop = !!window.api;
+  const hasWebFsPicker = !isDesktop;
   const [isCreating, setIsCreating] = useState(false);
   const [isDirPickerOpen, setIsDirPickerOpen] = useState(false);
 
@@ -44,7 +52,7 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
 
   const handleBrowse = useCallback(async () => {
     try {
-      const selectedPath = await window.api.projects.pickDirectory();
+      const selectedPath = await api?.projects.pickDirectory();
       if (selectedPath) {
         setPath(selectedPath);
         setError("");
@@ -52,7 +60,7 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
     } catch (err) {
       console.error("Failed to pick directory:", err);
     }
-  }, []);
+  }, [api]);
 
   const handleSelect = useCallback(async () => {
     const trimmedPath = path.trim();
@@ -62,22 +70,23 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
     }
 
     setError("");
+    if (!api) {
+      setError("Not connected to server");
+      return;
+    }
     setIsCreating(true);
 
     try {
       // First check if project already exists
-      const existingProjects = await window.api.projects.list();
+      const existingProjects = await api.projects.list();
       const existingPaths = new Map(existingProjects);
 
       // Try to create the project
-      const result = await window.api.projects.create(trimmedPath);
+      const result = await api.projects.create({ projectPath: trimmedPath });
 
       if (result.success) {
         // Check if duplicate (backend may normalize the path)
-        const { normalizedPath, projectConfig } = result.data as {
-          normalizedPath: string;
-          projectConfig: ProjectConfig;
-        };
+        const { normalizedPath, projectConfig } = result.data;
         if (existingPaths.has(normalizedPath)) {
           setError("This project has already been added.");
           return;
@@ -101,7 +110,7 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
     } finally {
       setIsCreating(false);
     }
-  }, [path, onSuccess, onClose]);
+  }, [path, onSuccess, onClose, api]);
 
   const handleBrowseClick = useCallback(() => {
     if (isDesktop) {
@@ -121,53 +130,62 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
     [handleSelect]
   );
 
+  const handleOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open && !isCreating) {
+        handleCancel();
+      }
+    },
+    [isCreating, handleCancel]
+  );
+
   return (
     <>
-      <Modal
-        isOpen={isOpen}
-        title="Add Project"
-        subtitle="Enter the path to your project directory"
-        onClose={handleCancel}
-        isLoading={isCreating}
-      >
-        <div className="mb-5 flex gap-2">
-          <input
-            type="text"
-            value={path}
-            onChange={(e) => {
-              setPath(e.target.value);
-              setError("");
-            }}
-            onKeyDown={handleKeyDown}
-            placeholder="/home/user/projects/my-project"
-            autoFocus
-            disabled={isCreating}
-            className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-muted text-foreground min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
-          />
-          {(isDesktop || hasWebFsPicker) && (
-            <button
-              type="button"
-              onClick={handleBrowseClick}
+      <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Add Project</DialogTitle>
+            <DialogDescription>Enter the path to your project directory</DialogDescription>
+          </DialogHeader>
+          <div className="mb-1 flex gap-2">
+            <input
+              type="text"
+              value={path}
+              onChange={(e) => {
+                setPath(e.target.value);
+                setError("");
+              }}
+              onKeyDown={handleKeyDown}
+              placeholder="/home/user/projects/my-project"
+              autoFocus
               disabled={isCreating}
-              className="bg-modal-bg border-border-medium text-muted hover:text-foreground hover:border-accent shrink-0 rounded border px-3 py-2 text-sm transition-colors disabled:opacity-50"
-            >
-              Browse…
-            </button>
-          )}
-        </div>
-        {error && <div className="text-error -mt-3 mb-3 text-xs">{error}</div>}
-        <ModalActions>
-          <CancelButton onClick={handleCancel} disabled={isCreating}>
-            Cancel
-          </CancelButton>
-          <PrimaryButton onClick={() => void handleSelect()} disabled={isCreating}>
-            {isCreating ? "Adding..." : "Add Project"}
-          </PrimaryButton>
-        </ModalActions>
-      </Modal>
+              className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-muted text-foreground min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
+            />
+            {(isDesktop || hasWebFsPicker) && (
+              <Button
+                variant="outline"
+                onClick={handleBrowseClick}
+                disabled={isCreating}
+                className="shrink-0"
+              >
+                Browse…
+              </Button>
+            )}
+          </div>
+          {error && <div className="text-error text-xs">{error}</div>}
+          <DialogFooter>
+            <Button variant="secondary" onClick={handleCancel} disabled={isCreating}>
+              Cancel
+            </Button>
+            <Button onClick={() => void handleSelect()} disabled={isCreating}>
+              {isCreating ? "Adding..." : "Add Project"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <DirectoryPickerModal
         isOpen={isDirPickerOpen}
-        initialPath={path || "."}
+        initialPath={path || "~"}
         onClose={() => setIsDirPickerOpen(false)}
         onSelectPath={handleWebPickerPathSelected}
       />

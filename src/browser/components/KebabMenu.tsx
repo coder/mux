@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { TooltipWrapper, Tooltip } from "./Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { cn } from "@/common/lib/utils";
 
 export interface KebabMenuItem {
@@ -69,29 +69,27 @@ export const KebabMenu: React.FC<KebabMenuProps> = ({ items, className }) => {
     setIsOpen(false);
   };
 
-  const button = (
-    <button
-      ref={buttonRef}
-      onClick={() => setIsOpen(!isOpen)}
-      className={cn(
-        "border border-white/20 text-foreground text-[10px] py-0.5 px-2 rounded-[3px] cursor-pointer transition-all duration-200 font-primary flex items-center justify-center whitespace-nowrap",
-        isOpen ? "bg-white/10" : "bg-none",
-        "hover:bg-white/10 hover:border-white/30",
-        "disabled:opacity-50 disabled:cursor-not-allowed",
-        className
-      )}
-    >
-      ⋮
-    </button>
-  );
-
   return (
     <>
       <div className="relative">
-        <TooltipWrapper inline>
-          {button}
-          <Tooltip align="center">More actions</Tooltip>
-        </TooltipWrapper>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              ref={buttonRef}
+              onClick={() => setIsOpen(!isOpen)}
+              className={cn(
+                "border border-white/20 text-foreground text-[10px] py-0.5 px-2 rounded-[3px] cursor-pointer transition-all duration-200 font-primary flex items-center justify-center whitespace-nowrap",
+                isOpen ? "bg-white/10" : "bg-none",
+                "hover:bg-white/10 hover:border-white/30",
+                "disabled:opacity-50 disabled:cursor-not-allowed",
+                className
+              )}
+            >
+              ⋮
+            </button>
+          </TooltipTrigger>
+          <TooltipContent align="center">More actions</TooltipContent>
+        </Tooltip>
       </div>
 
       {isOpen &&

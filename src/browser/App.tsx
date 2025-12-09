@@ -3,13 +3,13 @@ import "./styles/globals.css";
 import { useWorkspaceContext } from "./contexts/WorkspaceContext";
 import { useProjectContext } from "./contexts/ProjectContext";
 import type { WorkspaceSelection } from "./components/ProjectSidebar";
-import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { LeftSidebar } from "./components/LeftSidebar";
 import { ProjectCreateModal } from "./components/ProjectCreateModal";
 import { AIView } from "./components/AIView";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { usePersistedState, updatePersistedState } from "./hooks/usePersistedState";
 import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
+import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
 import { useResumeManager } from "./hooks/useResumeManager";
 import { useUnreadTracking } from "./hooks/useUnreadTracking";
 import { useWorkspaceStoreRaw, useWorkspaceRecency } from "./stores/WorkspaceStore";
@@ -18,6 +18,7 @@ import type { ChatInputAPI } from "./components/ChatInput/types";
 
 import { useStableReference, compareMaps } from "./hooks/useStableReference";
 import { CommandRegistryProvider, useCommandRegistry } from "./contexts/CommandRegistryContext";
+import { useOpenTerminal } from "./hooks/useOpenTerminal";
 import type { CommandAction } from "./contexts/CommandRegistryContext";
 import { ModeProvider } from "./contexts/ModeContext";
 import { ProviderOptionsProvider } from "./contexts/ProviderOptionsContext";
@@ -30,12 +31,17 @@ import type { ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
 import { getThinkingLevelKey } from "@/common/constants/storage";
-import type { BranchListResult } from "@/common/types/ipc";
+import type { BranchListResult } from "@/common/orpc/types";
 import { useTelemetry } from "./hooks/useTelemetry";
+import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
 import { useStartWorkspaceCreation, getFirstProjectPath } from "./hooks/useStartWorkspaceCreation";
+import { useAPI } from "@/browser/contexts/API";
+import { AuthTokenModal } from "@/browser/components/AuthTokenModal";
 
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
 import { SettingsModal } from "./components/Settings/SettingsModal";
+import { TutorialProvider } from "./contexts/TutorialContext";
+import { TooltipProvider } from "./components/ui/tooltip";
 
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high"];
 
@@ -60,6 +66,8 @@ function AppInner() {
     },
     [setTheme]
   );
+  const { api, status, error, authenticate } = useAPI();
+
   const {
     projects,
     removeProject,
@@ -114,14 +122,6 @@ function AppInner() {
     prevWorkspaceRef.current = selectedWorkspace;
   }, [selectedWorkspace, telemetry]);
 
-  // Validate selectedWorkspace when metadata changes
-  // Clear selection if workspace was deleted
-  useEffect(() => {
-    if (selectedWorkspace && !workspaceMetadata.has(selectedWorkspace.workspaceId)) {
-      setSelectedWorkspace(null);
-    }
-  }, [selectedWorkspace, workspaceMetadata, setSelectedWorkspace]);
-
   // Track last-read timestamps for unread indicators
   const { lastReadTimestamps, onToggleUnread } = useUnreadTracking(selectedWorkspace);
 
@@ -141,15 +141,19 @@ function AppInner() {
       const metadata = workspaceMetadata.get(selectedWorkspace.workspaceId);
       const workspaceName = metadata?.name ?? selectedWorkspace.workspaceId;
       const title = `${workspaceName} - ${selectedWorkspace.projectName} - mux`;
-      void window.api.window.setTitle(title);
+      // Set document.title locally for browser mode, call backend for Electron
+      document.title = title;
+      void api?.window.setTitle({ title });
     } else {
       // Clear hash when no workspace selected
       if (window.location.hash) {
         window.history.replaceState(null, "", window.location.pathname);
       }
-      void window.api.window.setTitle("mux");
+      // Set document.title locally for browser mode, call backend for Electron
+      document.title = "mux";
+      void api?.window.setTitle({ title: "mux" });
     }
-  }, [selectedWorkspace, workspaceMetadata]);
+  }, [selectedWorkspace, workspaceMetadata, api]);
   // Validate selected workspace exists and has all required fields
   useEffect(() => {
     if (selectedWorkspace) {
@@ -177,16 +181,14 @@ function AppInner() {
     }
   }, [selectedWorkspace, workspaceMetadata, setSelectedWorkspace]);
 
-  const openWorkspaceInTerminal = useCallback((workspaceId: string) => {
-    void window.api.terminal.openWindow(workspaceId);
-  }, []);
+  const openWorkspaceInTerminal = useOpenTerminal();
 
   const handleRemoveProject = useCallback(
-    async (path: string) => {
+    async (path: string): Promise<{ success: boolean; error?: string }> => {
       if (selectedWorkspace?.projectPath === path) {
         setSelectedWorkspace(null);
       }
-      await removeProject(path);
+      return removeProject(path);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [selectedWorkspace, setSelectedWorkspace]
@@ -197,46 +199,24 @@ function AppInner() {
   // NEW: Get workspace recency from store
   const workspaceRecency = useWorkspaceRecency();
 
-  // Sort workspaces by recency (most recent first)
-  // Returns Map<projectPath, FrontendWorkspaceMetadata[]> for direct component use
+  // Build sorted workspaces map including pending workspaces
   // Use stable reference to prevent sidebar re-renders when sort order hasn't changed
   const sortedWorkspacesByProject = useStableReference(
-    () => {
-      const result = new Map<string, FrontendWorkspaceMetadata[]>();
-      for (const [projectPath, config] of projects) {
-        // Transform Workspace[] to FrontendWorkspaceMetadata[] using workspace ID
-        const metadataList = config.workspaces
-          .map((ws) => (ws.id ? workspaceMetadata.get(ws.id) : undefined))
-          .filter((meta): meta is FrontendWorkspaceMetadata => meta !== undefined && meta !== null);
-
-        // Sort by recency
-        metadataList.sort((a, b) => {
-          const aTimestamp = workspaceRecency[a.id] ?? 0;
-          const bTimestamp = workspaceRecency[b.id] ?? 0;
-          return bTimestamp - aTimestamp;
+    () => buildSortedWorkspacesByProject(projects, workspaceMetadata, workspaceRecency),
+    (prev, next) =>
+      compareMaps(prev, next, (a, b) => {
+        if (a.length !== b.length) return false;
+        // Check ID, name, and status to detect changes
+        return a.every((meta, i) => {
+          const other = b[i];
+          return (
+            other &&
+            meta.id === other.id &&
+            meta.name === other.name &&
+            meta.status === other.status
+          );
         });
-
-        result.set(projectPath, metadataList);
-      }
-      return result;
-    },
-    (prev, next) => {
-      // Compare Maps: check if size, workspace order, and metadata content are the same
-      if (
-        !compareMaps(prev, next, (a, b) => {
-          if (a.length !== b.length) return false;
-          // Check both ID and name to detect renames
-          return a.every((metadata, i) => {
-            const bMeta = b[i];
-            if (!bMeta || !metadata) return false; // Null-safe
-            return metadata.id === bMeta.id && metadata.name === bMeta.name;
-          });
-        })
-      ) {
-        return false;
-      }
-      return true;
-    },
+      }),
     [projects, workspaceMetadata, workspaceRecency]
   );
 
@@ -339,23 +319,24 @@ function AppInner() {
 
   const getBranchesForProject = useCallback(
     async (projectPath: string): Promise<BranchListResult> => {
-      const branchResult = await window.api.projects.listBranches(projectPath);
-      const sanitizedBranches = Array.isArray(branchResult?.branches)
-        ? branchResult.branches.filter((branch): branch is string => typeof branch === "string")
-        : [];
+      if (!api) {
+        return { branches: [], recommendedTrunk: "" };
+      }
+      const branchResult = await api.projects.listBranches({ projectPath });
+      const sanitizedBranches = branchResult.branches.filter(
+        (branch): branch is string => typeof branch === "string"
+      );
 
-      const recommended =
-        typeof branchResult?.recommendedTrunk === "string" &&
-        sanitizedBranches.includes(branchResult.recommendedTrunk)
-          ? branchResult.recommendedTrunk
-          : (sanitizedBranches[0] ?? "");
+      const recommended = sanitizedBranches.includes(branchResult.recommendedTrunk)
+        ? branchResult.recommendedTrunk
+        : (sanitizedBranches[0] ?? "");
 
       return {
         branches: sanitizedBranches,
         recommendedTrunk: recommended,
       };
     },
-    []
+    [api]
   );
 
   const selectWorkspaceFromPalette = useCallback(
@@ -417,6 +398,7 @@ function AppInner() {
     onToggleTheme: toggleTheme,
     onSetTheme: setThemePreference,
     onOpenSettings: openSettings,
+    api,
   };
 
   useEffect(() => {
@@ -479,6 +461,28 @@ function AppInner() {
     openSettings,
   ]);
 
+  // Subscribe to menu bar "Open Settings" (macOS Cmd+, from app menu)
+  useEffect(() => {
+    if (!api) return;
+
+    const abortController = new AbortController();
+    const signal = abortController.signal;
+
+    (async () => {
+      try {
+        const iterator = await api.menu.onOpenSettings(undefined, { signal });
+        for await (const _ of iterator) {
+          if (signal.aborted) break;
+          openSettings();
+        }
+      } catch {
+        // Subscription cancelled via abort signal - expected on cleanup
+      }
+    })();
+
+    return () => abortController.abort();
+  }, [api, openSettings]);
+
   // Handle workspace fork switch event
   useEffect(() => {
     const handleForkSwitch = (e: Event) => {
@@ -528,13 +532,21 @@ function AppInner() {
 
   const handleProviderConfig = useCallback(
     async (provider: string, keyPath: string[], value: string) => {
-      const result = await window.api.providers.setProviderConfig(provider, keyPath, value);
+      if (!api) {
+        throw new Error("API not connected");
+      }
+      const result = await api.providers.setProviderConfig({ provider, keyPath, value });
       if (!result.success) {
         throw new Error(result.error);
       }
     },
-    []
+    [api]
   );
+
+  // Show auth modal if authentication is required
+  if (status === "auth_required") {
+    return <AuthTokenModal isOpen={true} onSubmit={authenticate} error={error} />;
+  }
 
   return (
     <>
@@ -550,23 +562,42 @@ function AppInner() {
         <div className="mobile-main-content flex min-w-0 flex-1 flex-col overflow-hidden">
           <div className="mobile-layout flex flex-1 overflow-hidden">
             {selectedWorkspace ? (
-              <ErrorBoundary
-                workspaceInfo={`${selectedWorkspace.projectName}/${selectedWorkspace.namedWorkspacePath?.split("/").pop() ?? selectedWorkspace.workspaceId}`}
-              >
-                <AIView
-                  key={selectedWorkspace.workspaceId}
-                  workspaceId={selectedWorkspace.workspaceId}
-                  projectName={selectedWorkspace.projectName}
-                  branch={
-                    selectedWorkspace.namedWorkspacePath?.split("/").pop() ??
-                    selectedWorkspace.workspaceId
-                  }
-                  namedWorkspacePath={selectedWorkspace.namedWorkspacePath ?? ""}
-                  runtimeConfig={
-                    workspaceMetadata.get(selectedWorkspace.workspaceId)?.runtimeConfig
-                  }
-                />
-              </ErrorBoundary>
+              (() => {
+                const currentMetadata = workspaceMetadata.get(selectedWorkspace.workspaceId);
+                // Guard: Don't render AIView if workspace metadata not found.
+                // This can happen when selectedWorkspace (from localStorage) refers to a
+                // deleted workspace, or during a race condition on reload before the
+                // validation effect clears the stale selection.
+                if (!currentMetadata) {
+                  return null;
+                }
+                // Use metadata.name for workspace name (works for both worktree and local runtimes)
+                // Fallback to path-based derivation for legacy compatibility
+                const workspaceName =
+                  currentMetadata.name ??
+                  selectedWorkspace.namedWorkspacePath?.split("/").pop() ??
+                  selectedWorkspace.workspaceId;
+                // Use live metadata path (updates on rename) with fallback to initial path
+                const workspacePath =
+                  currentMetadata.namedWorkspacePath ?? selectedWorkspace.namedWorkspacePath ?? "";
+                return (
+                  <ErrorBoundary
+                    workspaceInfo={`${selectedWorkspace.projectName}/${workspaceName}`}
+                  >
+                    <AIView
+                      key={selectedWorkspace.workspaceId}
+                      workspaceId={selectedWorkspace.workspaceId}
+                      projectPath={selectedWorkspace.projectPath}
+                      projectName={selectedWorkspace.projectName}
+                      branch={workspaceName}
+                      namedWorkspacePath={workspacePath}
+                      runtimeConfig={currentMetadata.runtimeConfig}
+                      incompatibleRuntime={currentMetadata.incompatibleRuntime}
+                      status={currentMetadata.status}
+                    />
+                  </ErrorBoundary>
+                );
+              })()
             ) : creationProjectPath ? (
               (() => {
                 const projectPath = creationProjectPath;
@@ -583,33 +614,41 @@ function AppInner() {
                           onProviderConfig={handleProviderConfig}
                           onReady={handleCreationChatReady}
                           onWorkspaceCreated={(metadata) => {
-                            // Add to workspace metadata map
+                            // IMPORTANT: Add workspace to store FIRST (synchronous) to ensure
+                            // the store knows about it before React processes the state updates.
+                            // This prevents race conditions where the UI tries to access the
+                            // workspace before the store has created its aggregator.
+                            workspaceStore.addWorkspace(metadata);
+
+                            // Add to workspace metadata map (triggers React state update)
                             setWorkspaceMetadata((prev) =>
                               new Map(prev).set(metadata.id, metadata)
                             );
 
-                            // Switch to new workspace
-                            setSelectedWorkspace({
-                              workspaceId: metadata.id,
-                              projectPath: metadata.projectPath,
-                              projectName: metadata.projectName,
-                              namedWorkspacePath: metadata.namedWorkspacePath,
+                            // Only switch to new workspace if user hasn't selected another one
+                            // during the creation process (selectedWorkspace was null when creation started)
+                            setSelectedWorkspace((current) => {
+                              if (current !== null) {
+                                // User has already selected another workspace - don't override
+                                return current;
+                              }
+                              return {
+                                workspaceId: metadata.id,
+                                projectPath: metadata.projectPath,
+                                projectName: metadata.projectName,
+                                namedWorkspacePath: metadata.namedWorkspacePath,
+                              };
                             });
 
                             // Track telemetry
-                            telemetry.workspaceCreated(metadata.id);
+                            telemetry.workspaceCreated(
+                              metadata.id,
+                              getRuntimeTypeForTelemetry(metadata.runtimeConfig)
+                            );
 
                             // Clear pending state
                             clearPendingWorkspaceCreation();
                           }}
-                          onCancel={
-                            pendingNewWorkspaceProject
-                              ? () => {
-                                  // User cancelled workspace creation - clear pending state
-                                  clearPendingWorkspaceCreation();
-                                }
-                              : undefined
-                          }
                         />
                       </ThinkingProvider>
                     </ProviderOptionsProvider>
@@ -652,11 +691,15 @@ function AppInner() {
 function App() {
   return (
     <ThemeProvider>
-      <SettingsProvider>
-        <CommandRegistryProvider>
-          <AppInner />
-        </CommandRegistryProvider>
-      </SettingsProvider>
+      <TooltipProvider delayDuration={200}>
+        <SettingsProvider>
+          <TutorialProvider>
+            <CommandRegistryProvider>
+              <AppInner />
+            </CommandRegistryProvider>
+          </TutorialProvider>
+        </SettingsProvider>
+      </TooltipProvider>
     </ThemeProvider>
   );
 }

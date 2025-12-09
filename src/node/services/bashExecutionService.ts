@@ -138,6 +138,8 @@ export class BashExecutionService {
       // When bash spawns background processes, detached:true allows killing
       // the entire group via process.kill(-pid)
       detached: config.detached ?? true,
+      // Prevent console window from appearing on Windows (WSL bash spawns steal focus otherwise)
+      windowsHide: true,
     });
 
     log.debug(`BashExecutionService: Spawned process with PID ${child.pid ?? "unknown"}`);
@@ -171,8 +173,10 @@ export class BashExecutionService {
       errBuf = flushLines(errBuf, true);
     });
 
-    child.on("close", (code: number | null) => {
-      log.debug(`BashExecutionService: Process exited with code ${code ?? "unknown"}`);
+    child.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
+      log.debug(
+        `BashExecutionService: Process exited with code ${code ?? "null"}, signal ${signal ?? "none"}`
+      );
       // Flush any remaining partial lines
       if (outBuf.trim().length > 0) {
         callbacks.onStdout(outBuf);
@@ -180,7 +184,22 @@ export class BashExecutionService {
       if (errBuf.trim().length > 0) {
         callbacks.onStderr(errBuf);
       }
-      callbacks.onExit(code ?? 0);
+
+      // Convert signal to exit code using Unix convention (128 + signal number)
+      // Common signals: SIGTERM=15 → 143, SIGKILL=9 → 137
+      let exitCode = code ?? 0;
+      if (code === null && signal) {
+        const signalNumbers: Record<string, number> = {
+          SIGHUP: 1,
+          SIGINT: 2,
+          SIGQUIT: 3,
+          SIGABRT: 6,
+          SIGKILL: 9,
+          SIGTERM: 15,
+        };
+        exitCode = 128 + (signalNumbers[signal] ?? 1);
+      }
+      callbacks.onExit(exitCode);
     });
 
     child.on("error", (error: Error) => {

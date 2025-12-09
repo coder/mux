@@ -1,18 +1,14 @@
-import {
-  getShikiHighlighter,
-  mapToShikiLang,
-  SHIKI_DARK_THEME,
-  SHIKI_LIGHT_THEME,
-  MAX_DIFF_SIZE_BYTES,
-} from "./shikiHighlighter";
+import { highlightCode } from "./highlightWorkerClient";
 import type { DiffChunk } from "./diffChunking";
 
 /**
- * Chunk-based diff highlighting with Shiki
+ * Chunk-based diff highlighting with Shiki (via Web Worker)
+ *
+ * Highlighting runs off-main-thread to avoid blocking UI during large diffs.
  *
  * Current approach: Parse Shiki HTML to extract individual line HTMLs
  * - Groups consecutive lines by type (add/remove/context)
- * - Highlights each chunk with Shiki
+ * - Highlights each chunk with Shiki in web worker
  * - Extracts per-line HTML for individual rendering
  *
  * Future optimization: Could render entire <code> blocks and use CSS to style
@@ -20,13 +16,22 @@ import type { DiffChunk } from "./diffChunking";
  * and reduce dangerouslySetInnerHTML usage.
  */
 
+// Maximum diff size to highlight (in bytes)
+// Diffs larger than this fall back to plain text for performance
+const MAX_DIFF_SIZE_BYTES = 32768; // 32kb
+
 export interface HighlightedLine {
   html: string; // HTML content (already escaped and tokenized)
   lineNumber: number;
   originalIndex: number; // Index in original diff
 }
 
-type ThemeMode = "light" | "dark";
+import type { ThemeMode } from "@/browser/contexts/ThemeContext";
+
+/** Map theme mode to Shiki theme (light/dark only) */
+function isLightTheme(theme: ThemeMode): boolean {
+  return theme === "light" || theme === "solarized-light";
+}
 
 export interface HighlightedChunk {
   type: DiffChunk["type"];
@@ -65,31 +70,11 @@ export async function highlightDiffChunk(
   }
 
   const code = chunk.lines.join("\n");
+  const workerTheme = isLightTheme(themeMode) ? "light" : "dark";
 
   try {
-    const highlighter = await getShikiHighlighter();
-    const shikiLang = mapToShikiLang(language);
-
-    // Load language on-demand if not already loaded
-    // This is race-safe: concurrent loads of the same language are idempotent
-    const loadedLangs = highlighter.getLoadedLanguages();
-    if (!loadedLangs.includes(shikiLang)) {
-      try {
-        // TypeScript doesn't know shikiLang is valid, but we handle errors gracefully
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
-        await highlighter.loadLanguage(shikiLang as any);
-      } catch {
-        // Language not available in Shiki bundle - fall back to plain text
-        console.warn(`Language '${shikiLang}' not available in Shiki, using plain text`);
-        return createFallbackChunk(chunk);
-      }
-    }
-
-    const shikiTheme = themeMode === "light" ? SHIKI_LIGHT_THEME : SHIKI_DARK_THEME;
-    const html = highlighter.codeToHtml(code, {
-      lang: shikiLang,
-      theme: shikiTheme,
-    });
+    // Highlight via worker (cached, off main thread)
+    const html = await highlightCode(code, language, workerTheme);
 
     // Parse HTML to extract line contents
     const lines = extractLinesFromHtml(html);

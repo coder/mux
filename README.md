@@ -4,12 +4,13 @@
 
 # mux - coding agent multiplexer
 
-[![CI](https://github.com/coder/mux/actions/workflows/ci.yml/badge.svg)](https://github.com/coder/mux/actions/workflows/ci.yml)
-[![Build](https://github.com/coder/mux/actions/workflows/build.yml/badge.svg?event=merge_group)](https://github.com/coder/mux/actions/workflows/build.yml?query=event:merge_group)
 [![Download](https://img.shields.io/badge/Download-Releases-purple)](https://github.com/coder/mux/releases)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL%203.0-blue.svg)](LICENSE)
+[![Discord](https://img.shields.io/discord/1446553342699507907?logo=discord&label=Discord)](https://discord.gg/thkEdtwm8c)
 
 </div>
+
+> 🎟️ **Have a voucher code?** Redeem it at [gateway.mux.coder.com](https://gateway.mux.coder.com)
 
 ![mux product screenshot](docs/img/product-hero.webp)
 
@@ -33,31 +34,32 @@ Here are some specific use cases we enable:
 
 ## Features
 
-- **Isolated workspaces** with central view on git divergence
-  - **Local**: git worktrees on your local machine ([docs](https://cmux.io/local.html))
-  - **SSH**: regular git clones on a remote server ([docs](https://cmux.io/ssh.html))
+- **Isolated workspaces** with central view on git divergence ([docs](https://mux.coder.com/runtime))
+  - **[Local](https://mux.coder.com/runtime/local)**: run directly in your project directory
+  - **[Worktree](https://mux.coder.com/runtime/worktree)**: git worktrees on your local machine
+  - **[SSH](https://mux.coder.com/runtime/ssh)**: remote execution on a server over SSH
 - **Multi-model** (`sonnet-4-*`, `grok-*`, `gpt-5-*`, `opus-4-*`)
-  - Ollama supported for local LLMs ([docs](https://cmux.io/models.html#ollama-local))
-  - OpenRouter supported for long-tail of LLMs ([docs](https://cmux.io/models.html#openrouter-cloud))
-- **VS Code Extension**: Jump into mux workspaces directly from VS Code ([docs](https://cmux.io/vscode-extension.html))
+  - Ollama supported for local LLMs ([docs](https://mux.coder.com/models#ollama-local))
+  - OpenRouter supported for long-tail of LLMs ([docs](https://mux.coder.com/models#openrouter-cloud))
+- **VS Code Extension**: Jump into mux workspaces directly from VS Code ([docs](https://mux.coder.com/vscode-extension))
 - Supporting UI and keybinds for efficiently managing a suite of agents
 - Rich markdown outputs (mermaid diagrams, LaTeX, etc.)
 
 mux has a custom agent loop but much of the core UX is inspired by Claude Code. You'll find familiar features like Plan/Exec mode, vim inputs, `/compact` and new ones
-like [opportunistic compaction](https://cmux.io/context-management.html) and [mode prompts](https://cmux.io/instruction-files.html#mode-prompts).
+like [opportunistic compaction](https://mux.coder.com/context-management) and [mode prompts](https://mux.coder.com/instruction-files#mode-prompts).
 
-**[Read the full documentation →](https://cmux.io)**
+**[Read the full documentation →](https://mux.coder.com)**
 
 ## Install
 
 > [!WARNING]  
-> mux is in a Preview state. You will encounter bugs and performance issues.
+> mux is in Beta. You may encounter bugs and performance issues.
 > It's still possible to be highly productive. We are using it almost exclusively for our own development.
 
 Download pre-built binaries from [the releases page](https://github.com/coder/mux/releases) for
 macOS and Linux.
 
-[More on installation →](https://cmux.io/install.html)
+[More on installation →](https://mux.coder.com/install)
 
 ## Screenshots
 
@@ -98,7 +100,7 @@ macOS and Linux.
 
 ## More reading
 
-See [the documentation](https://cmux.io) for more details.
+See [the documentation](https://mux.coder.com) for more details.
 
 ## Development
 

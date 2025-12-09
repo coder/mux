@@ -17,6 +17,8 @@ const MODEL_MAP: Record<string, KnownModelEntry> = MODEL_LIST.reduce(
 export const MODEL_PROVIDER_LABELS: Record<KnownModelEntry["provider"], string> = {
   anthropic: "Anthropic (Claude)",
   openai: "OpenAI",
+  google: "Google",
+  xai: "xAI (Grok)",
 };
 
 export const DEFAULT_MODEL_ID = WORKSPACE_DEFAULTS.model;

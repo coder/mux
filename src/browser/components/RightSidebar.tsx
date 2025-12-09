@@ -1,15 +1,18 @@
 import React from "react";
+import { RIGHT_SIDEBAR_TAB_KEY, RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useResizeObserver } from "@/browser/hooks/useResizeObserver";
+import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
 import { CostsTab } from "./RightSidebar/CostsTab";
 import { VerticalTokenMeter } from "./RightSidebar/VerticalTokenMeter";
 import { ReviewPanel } from "./RightSidebar/CodeReview/ReviewPanel";
 import { calculateTokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
-import { TooltipWrapper, Tooltip } from "./Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { cn } from "@/common/lib/utils";
+import type { ReviewNoteData } from "@/common/types/review";
 
 interface SidebarContainerProps {
   collapsed: boolean;
@@ -49,7 +52,7 @@ const SidebarContainer: React.FC<SidebarContainerProps> = ({
   return (
     <div
       className={cn(
-        "bg-separator border-l border-border-light flex flex-col overflow-hidden flex-shrink-0",
+        "bg-sidebar border-l border-border-light flex flex-col overflow-hidden flex-shrink-0",
         customWidth ? "" : "transition-[width] duration-200",
         collapsed && "sticky right-0 z-10 shadow-[-2px_0_4px_rgba(0,0,0,0.2)]",
         // Mobile: Show vertical meter when collapsed (20px), full width when expanded
@@ -82,7 +85,9 @@ interface RightSidebarProps {
   /** Whether currently resizing */
   isResizing?: boolean;
   /** Callback when user adds a review note from Code Review tab */
-  onReviewNote?: (note: string) => void;
+  onReviewNote?: (data: ReviewNoteData) => void;
+  /** Workspace is still being created (git operations in progress) */
+  isCreating?: boolean;
 }
 
 const RightSidebarComponent: React.FC<RightSidebarProps> = ({
@@ -94,9 +99,10 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   onStartResize,
   isResizing = false,
   onReviewNote,
+  isCreating = false,
 }) => {
   // Global tab preference (not per-workspace)
-  const [selectedTab, setSelectedTab] = usePersistedState<TabType>("right-sidebar-tab", "costs");
+  const [selectedTab, setSelectedTab] = usePersistedState<TabType>(RIGHT_SIDEBAR_TAB_KEY, "costs");
 
   // Trigger for focusing Review panel (preserves hunk selection)
   const [focusTrigger, setFocusTrigger] = React.useState(0);
@@ -134,16 +140,20 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const costsPanelId = `${baseId}-panel-costs`;
   const reviewPanelId = `${baseId}-panel-review`;
 
-  const lastUsage = usage?.liveUsage ?? usage?.usageHistory[usage.usageHistory.length - 1];
+  // Use lastContextUsage for context window display (last step = actual context size)
+  const lastUsage = usage?.liveUsage ?? usage?.lastContextUsage;
+  const model = lastUsage?.model ?? null;
+
+  // Auto-compaction settings: threshold per-model
+  const { threshold: autoCompactThreshold, setThreshold: setAutoCompactThreshold } =
+    useAutoCompactionSettings(workspaceId, model);
 
   // Memoize vertical meter data calculation to prevent unnecessary re-renders
   const verticalMeterData = React.useMemo(() => {
-    // Get model from last usage
-    const model = lastUsage?.model ?? "unknown";
     return lastUsage
-      ? calculateTokenMeterData(lastUsage, model, use1M, true)
+      ? calculateTokenMeterData(lastUsage, model ?? "unknown", use1M, true)
       : { segments: [], totalTokens: 0, totalPercentage: 0 };
-  }, [lastUsage, use1M]);
+  }, [lastUsage, model, use1M]);
 
   // Calculate if we should show collapsed view with hysteresis
   // Strategy: Observe ChatArea width directly (independent of sidebar width)
@@ -159,7 +169,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Persist collapsed state globally (not per-workspace) since chat area width is shared
   // This prevents animation flash when switching workspaces - sidebar maintains its state
   const [showCollapsed, setShowCollapsed] = usePersistedState<boolean>(
-    "right-sidebar:collapsed",
+    RIGHT_SIDEBAR_COLLAPSED_KEY,
     false
   );
 
@@ -184,7 +194,16 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Single render point for VerticalTokenMeter
   // Shows when: (1) collapsed, OR (2) Review tab is active
   const showMeter = showCollapsed || selectedTab === "review";
-  const verticalMeter = showMeter ? <VerticalTokenMeter data={verticalMeterData} /> : null;
+  const autoCompactionProps = React.useMemo(
+    () => ({
+      threshold: autoCompactThreshold,
+      setThreshold: setAutoCompactThreshold,
+    }),
+    [autoCompactThreshold, setAutoCompactThreshold]
+  );
+  const verticalMeter = showMeter ? (
+    <VerticalTokenMeter data={verticalMeterData} autoCompaction={autoCompactionProps} />
+  ) : null;
 
   return (
     <SidebarContainer
@@ -198,7 +217,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       <div className={cn("flex-row h-full", !showCollapsed ? "flex" : "hidden")}>
         {/* Render meter when Review tab is active */}
         {selectedTab === "review" && (
-          <div className="bg-separator border-border-light flex w-5 shrink-0 flex-col border-r">
+          <div className="bg-sidebar border-border-light flex w-5 shrink-0 flex-col border-r">
             {verticalMeter}
           </div>
         )}
@@ -221,48 +240,52 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
             role="tablist"
             aria-label="Metadata views"
           >
-            <TooltipWrapper inline>
-              <button
-                className={cn(
-                  "w-full py-2.5 px-[15px] border-none border-solid cursor-pointer font-primary text-[13px] font-medium transition-all duration-200",
-                  selectedTab === "costs"
-                    ? "bg-separator border-b-2 border-b-plan-mode text-[var(--color-sidebar-tab-active)]"
-                    : "bg-transparent text-secondary border-b-2 border-b-transparent hover:bg-background-secondary hover:text-foreground"
-                )}
-                onClick={() => setSelectedTab("costs")}
-                id={costsTabId}
-                role="tab"
-                type="button"
-                aria-selected={selectedTab === "costs"}
-                aria-controls={costsPanelId}
-              >
-                Costs
-              </button>
-              <Tooltip className="tooltip" position="bottom" align="center">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  className={cn(
+                    "w-full py-2.5 px-[15px] border-none border-solid cursor-pointer font-primary text-[13px] font-medium transition-all duration-200",
+                    selectedTab === "costs"
+                      ? "bg-separator border-b-2 border-b-plan-mode text-[var(--color-sidebar-tab-active)]"
+                      : "bg-transparent text-secondary border-b-2 border-b-transparent hover:bg-background-secondary hover:text-foreground"
+                  )}
+                  onClick={() => setSelectedTab("costs")}
+                  id={costsTabId}
+                  role="tab"
+                  type="button"
+                  aria-selected={selectedTab === "costs"}
+                  aria-controls={costsPanelId}
+                >
+                  Costs
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="center">
                 {formatKeybind(KEYBINDS.COSTS_TAB)}
-              </Tooltip>
-            </TooltipWrapper>
-            <TooltipWrapper inline>
-              <button
-                className={cn(
-                  "w-full py-2.5 px-[15px] border-none border-solid cursor-pointer font-primary text-[13px] font-medium transition-all duration-200",
-                  selectedTab === "review"
-                    ? "bg-separator border-b-2 border-b-plan-mode text-[var(--color-sidebar-tab-active)]"
-                    : "bg-transparent text-secondary border-b-2 border-b-transparent hover:bg-background-secondary hover:text-foreground"
-                )}
-                onClick={() => setSelectedTab("review")}
-                id={reviewTabId}
-                role="tab"
-                type="button"
-                aria-selected={selectedTab === "review"}
-                aria-controls={reviewPanelId}
-              >
-                Review
-              </button>
-              <Tooltip className="tooltip" position="bottom" align="center">
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  className={cn(
+                    "w-full py-2.5 px-[15px] border-none border-solid cursor-pointer font-primary text-[13px] font-medium transition-all duration-200",
+                    selectedTab === "review"
+                      ? "bg-separator border-b-2 border-b-plan-mode text-[var(--color-sidebar-tab-active)]"
+                      : "bg-transparent text-secondary border-b-2 border-b-transparent hover:bg-background-secondary hover:text-foreground"
+                  )}
+                  onClick={() => setSelectedTab("review")}
+                  id={reviewTabId}
+                  role="tab"
+                  type="button"
+                  aria-selected={selectedTab === "review"}
+                  aria-controls={reviewPanelId}
+                >
+                  Review
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="center">
                 {formatKeybind(KEYBINDS.REVIEW_TAB)}
-              </Tooltip>
-            </TooltipWrapper>
+              </TooltipContent>
+            </Tooltip>
           </div>
           <div
             className={cn("flex-1 overflow-y-auto", selectedTab === "review" ? "p-0" : "p-[15px]")}
@@ -280,10 +303,12 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
                 className="h-full"
               >
                 <ReviewPanel
+                  key={workspaceId}
                   workspaceId={workspaceId}
                   workspacePath={workspacePath}
                   onReviewNote={onReviewNote}
                   focusTrigger={focusTrigger}
+                  isCreating={isCreating}
                 />
               </div>
             )}

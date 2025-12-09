@@ -60,6 +60,10 @@ const DEFAULT_PROVIDER_NAMES: SuggestionDefinition[] = [
     key: "bedrock",
     description: "Amazon Bedrock provider (AWS)",
   },
+  {
+    key: "mux-gateway",
+    description: "Mux Gateway provider",
+  },
 ];
 
 const DEFAULT_PROVIDER_KEYS: Record<string, SuggestionDefinition[]> = {
@@ -109,6 +113,12 @@ const DEFAULT_PROVIDER_KEYS: Record<string, SuggestionDefinition[]> = {
     {
       key: "secretAccessKey",
       description: "AWS Secret Access Key (use with accessKeyId)",
+    },
+  ],
+  "mux-gateway": [
+    {
+      key: "couponCode",
+      description: "Coupon code for Mux Gateway access",
     },
   ],
   default: [
@@ -446,44 +456,24 @@ const vimCommandDefinition: SlashCommandDefinition = {
   },
 };
 
-const telemetryCommandDefinition: SlashCommandDefinition = {
-  key: "telemetry",
-  description: "Enable or disable telemetry",
+const planOpenCommandDefinition: SlashCommandDefinition = {
+  key: "open",
+  description: "Open plan in external editor",
+  appendSpace: false,
+  handler: (): ParsedCommand => ({ type: "plan-open" }),
+};
+
+const planCommandDefinition: SlashCommandDefinition = {
+  key: "plan",
+  description: "Show or edit the current plan",
+  appendSpace: false,
   handler: ({ cleanRemainingTokens }): ParsedCommand => {
-    if (cleanRemainingTokens.length === 0) {
-      return { type: "telemetry-help" };
+    if (cleanRemainingTokens.length > 0) {
+      return { type: "unknown-command", command: "plan", subcommand: cleanRemainingTokens[0] };
     }
-
-    if (cleanRemainingTokens.length === 1) {
-      const arg = cleanRemainingTokens[0].toLowerCase();
-      if (arg === "on" || arg === "off") {
-        return { type: "telemetry-set", enabled: arg === "on" };
-      }
-    }
-
-    return {
-      type: "unknown-command",
-      command: "telemetry",
-      subcommand: cleanRemainingTokens[0],
-    };
+    return { type: "plan-show" };
   },
-  suggestions: ({ stage, partialToken }) => {
-    if (stage === 1) {
-      const options = [
-        { key: "on", description: "Enable telemetry" },
-        { key: "off", description: "Disable telemetry" },
-      ];
-
-      return filterAndMapSuggestions(options, partialToken, (definition) => ({
-        id: `command:telemetry:${definition.key}`,
-        display: definition.key,
-        description: definition.description,
-        replacement: `/telemetry ${definition.key}`,
-      }));
-    }
-
-    return null;
-  },
+  children: [planOpenCommandDefinition],
 };
 
 const forkCommandDefinition: SlashCommandDefinition = {
@@ -615,16 +605,67 @@ const newCommandDefinition: SlashCommandDefinition = {
   },
 };
 
+/**
+ * Parse MCP subcommand that takes name + command (add/edit).
+ * Returns { name, command } or null if invalid.
+ */
+function parseMCPNameCommand(
+  subcommand: string,
+  tokens: string[],
+  rawInput: string
+): { name: string; command: string } | null {
+  const name = tokens[1];
+  // Extract command text after "subcommand name"
+  const command = rawInput
+    .trim()
+    .replace(new RegExp(`^${subcommand}\\s+[^\\s]+\\s*`, "i"), "")
+    .trim();
+  if (!name || !command) return null;
+  return { name, command };
+}
+
+const mcpCommandDefinition: SlashCommandDefinition = {
+  key: "mcp",
+  description: "Manage MCP servers for this project",
+  handler: ({ cleanRemainingTokens, rawInput }) => {
+    if (cleanRemainingTokens.length === 0) {
+      return { type: "mcp-open" };
+    }
+
+    const sub = cleanRemainingTokens[0];
+
+    if (sub === "add" || sub === "edit") {
+      const parsed = parseMCPNameCommand(sub, cleanRemainingTokens, rawInput);
+      if (!parsed) {
+        return { type: "unknown-command", command: "mcp", subcommand: sub };
+      }
+      return { type: sub === "add" ? "mcp-add" : "mcp-edit", ...parsed };
+    }
+
+    if (sub === "remove") {
+      const name = cleanRemainingTokens[1];
+      if (!name) {
+        return { type: "unknown-command", command: "mcp", subcommand: "remove" };
+      }
+      return { type: "mcp-remove", name };
+    }
+
+    return { type: "unknown-command", command: "mcp", subcommand: sub };
+  },
+};
+
 export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   clearCommandDefinition,
   truncateCommandDefinition,
   compactCommandDefinition,
   modelCommandDefinition,
   providersCommandDefinition,
-  telemetryCommandDefinition,
+  planCommandDefinition,
+
   forkCommandDefinition,
   newCommandDefinition,
   vimCommandDefinition,
+  mcpCommandDefinition,
 ];
 
 export const SLASH_COMMAND_DEFINITION_MAP = new Map(

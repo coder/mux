@@ -1,15 +1,5 @@
 {
   "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Edit|MultiEdit|Write|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bunx prettier --write \"$1\" 1>/dev/null 2>/dev/null || true"
-          }
-        ]
-      }
-    ]
+    "PostToolUse": []
   }
 }

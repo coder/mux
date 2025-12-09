@@ -29,6 +29,9 @@ export interface ChatUsageDisplay {
 
   // Optional model field for display purposes (context window calculation, etc.)
   model?: string;
+
+  // True if any model in the sum had unknown pricing (costs are partial/incomplete)
+  hasUnknownCosts?: boolean;
 }
 
 /**
@@ -68,13 +71,9 @@ export function sumUsageHistory(usageHistory: ChatUsageDisplay[]): ChatUsageDisp
     }
   }
 
-  // If any costs were undefined, set all to undefined
+  // Flag if any costs were undefined (partial/incomplete total)
   if (hasUndefinedCosts) {
-    sum.input.cost_usd = undefined;
-    sum.cached.cost_usd = undefined;
-    sum.cacheCreate.cost_usd = undefined;
-    sum.output.cost_usd = undefined;
-    sum.reasoning.cost_usd = undefined;
+    sum.hasUnknownCosts = true;
   }
 
   return sum;

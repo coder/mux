@@ -41,44 +41,10 @@ describe("cacheStrategy", () => {
       expect(result).toEqual(messages);
     });
 
-    it("should not modify messages if less than 2 messages", () => {
+    it("should add cache control to single message for Anthropic models", () => {
       const messages: ModelMessage[] = [{ role: "user", content: "Hello" }];
       const result = applyCacheControl(messages, "anthropic:claude-3-5-sonnet");
-      expect(result).toEqual(messages);
-    });
-
-    it("should add cache control to second-to-last message for Anthropic models", () => {
-      const messages: ModelMessage[] = [
-        { role: "user", content: "Hello" },
-        { role: "assistant", content: "Hi there!" },
-        { role: "user", content: "How are you?" },
-      ];
-      const result = applyCacheControl(messages, "anthropic:claude-3-5-sonnet");
-
-      expect(result[0]).toEqual(messages[0]); // First message unchanged
-      expect(result[1]).toEqual({
-        // Second message has cache control
-        ...messages[1],
-        providerOptions: {
-          anthropic: {
-            cacheControl: {
-              type: "ephemeral",
-            },
-          },
-        },
-      });
-      expect(result[2]).toEqual(messages[2]); // Last message unchanged
-    });
-
-    it("should work with exactly 2 messages", () => {
-      const messages: ModelMessage[] = [
-        { role: "user", content: "Hello" },
-        { role: "assistant", content: "Hi there!" },
-      ];
-      const result = applyCacheControl(messages, "anthropic:claude-3-5-sonnet");
-
       expect(result[0]).toEqual({
-        // First message gets cache control
         ...messages[0],
         providerOptions: {
           anthropic: {
@@ -88,7 +54,50 @@ describe("cacheStrategy", () => {
           },
         },
       });
-      expect(result[1]).toEqual(messages[1]); // Last message unchanged
+    });
+
+    it("should add cache control to last message for Anthropic models", () => {
+      const messages: ModelMessage[] = [
+        { role: "user", content: "Hello" },
+        { role: "assistant", content: "Hi there!" },
+        { role: "user", content: "How are you?" },
+      ];
+      const result = applyCacheControl(messages, "anthropic:claude-3-5-sonnet");
+
+      expect(result[0]).toEqual(messages[0]); // First message unchanged
+      expect(result[1]).toEqual(messages[1]); // Second message unchanged
+      expect(result[2]).toEqual({
+        // Last message has cache control
+        ...messages[2],
+        providerOptions: {
+          anthropic: {
+            cacheControl: {
+              type: "ephemeral",
+            },
+          },
+        },
+      });
+    });
+
+    it("should work with exactly 2 messages", () => {
+      const messages: ModelMessage[] = [
+        { role: "user", content: "Hello" },
+        { role: "assistant", content: "Hi there!" },
+      ];
+      const result = applyCacheControl(messages, "anthropic:claude-3-5-sonnet");
+
+      expect(result[0]).toEqual(messages[0]); // First message unchanged
+      expect(result[1]).toEqual({
+        // Last message gets cache control
+        ...messages[1],
+        providerOptions: {
+          anthropic: {
+            cacheControl: {
+              type: "ephemeral",
+            },
+          },
+        },
+      });
     });
 
     it("should add cache control to last content part for array content", () => {
@@ -108,17 +117,24 @@ describe("cacheStrategy", () => {
             { type: "text", text: "How can I help?" },
           ],
         },
-        { role: "user", content: "Final question" },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Final" },
+            { type: "text", text: "question" },
+          ],
+        },
       ];
       const result = applyCacheControl(messages, "anthropic:claude-3-5-sonnet");
 
       expect(result[0]).toEqual(messages[0]); // First message unchanged
+      expect(result[1]).toEqual(messages[1]); // Second message unchanged
 
-      // Second message (array content): cache control on LAST content part only
-      const secondMsg = result[1];
-      expect(secondMsg.role).toBe("assistant");
-      expect(Array.isArray(secondMsg.content)).toBe(true);
-      const content = secondMsg.content as Array<{
+      // Last message (array content): cache control on LAST content part only
+      const lastMsg = result[2];
+      expect(lastMsg.role).toBe("user");
+      expect(Array.isArray(lastMsg.content)).toBe(true);
+      const content = lastMsg.content as Array<{
         type: string;
         text: string;
         providerOptions?: unknown;
@@ -127,8 +143,6 @@ describe("cacheStrategy", () => {
       expect(content[1].providerOptions).toEqual({
         anthropic: { cacheControl: { type: "ephemeral" } },
       }); // Last part has cache control
-
-      expect(result[2]).toEqual(messages[2]); // Last message unchanged
     });
   });
 

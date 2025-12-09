@@ -36,7 +36,7 @@ async function tokenizeWithMockModel(text: string, context: string): Promise<num
   assert(typeof text === "string", `Mock scenario ${context} expects string input`);
   const approximateTokens = approximateTokenCount(text);
   let fallbackUsed = false;
-  let timeoutId: NodeJS.Timeout | undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
   const fallbackPromise = new Promise<number>((resolve) => {
     timeoutId = setTimeout(() => {
@@ -111,7 +111,7 @@ interface MockPlayerDeps {
 }
 
 interface ActiveStream {
-  timers: NodeJS.Timeout[];
+  timers: Array<ReturnType<typeof setTimeout>>;
   messageId: string;
   eventQueue: Array<() => Promise<void>>;
   isProcessing: boolean;
@@ -212,7 +212,7 @@ export class MockScenarioPlayer {
   }
 
   private scheduleEvents(workspaceId: string, turn: ScenarioTurn, historySequence: number): void {
-    const timers: NodeJS.Timeout[] = [];
+    const timers: Array<ReturnType<typeof setTimeout>> = [];
     this.activeStreams.set(workspaceId, {
       timers,
       messageId: turn.assistant.messageId,
@@ -251,7 +251,7 @@ export class MockScenarioPlayer {
       try {
         await handler();
       } catch (error) {
-        console.error(`[MockScenarioPlayer] Event handler error for ${workspaceId}:`, error);
+        log.error(`Event handler error for ${workspaceId}:`, error);
       }
     }
 
@@ -315,6 +315,7 @@ export class MockScenarioPlayer {
           toolCallId: event.toolCallId,
           toolName: event.toolName,
           result: event.result,
+          timestamp: Date.now(),
         };
         this.deps.aiService.emit("tool-call-end", payload);
         break;
@@ -325,7 +326,7 @@ export class MockScenarioPlayer {
         try {
           tokens = await tokenizeWithMockModel(event.text, "stream-delta text");
         } catch (error) {
-          console.error("[MockScenarioPlayer] tokenize failed for stream-delta", error);
+          log.error("tokenize failed for stream-delta", error);
           throw error;
         }
         const payload: StreamDeltaEvent = {
@@ -385,7 +386,7 @@ export class MockScenarioPlayer {
             );
 
             if (!updateResult.success) {
-              console.error(`Failed to update history for ${messageId}: ${updateResult.error}`);
+              log.error(`Failed to update history for ${messageId}: ${updateResult.error}`);
             }
           }
         }

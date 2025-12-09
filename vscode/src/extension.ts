@@ -4,15 +4,34 @@ import { openWorkspace } from "./workspaceOpener";
 import { formatRelativeTime } from "mux/browser/utils/ui/dateTime";
 
 /**
+ * Get the icon for a runtime type
+ * - local (project-dir): $(folder) - simple folder, uses project directly
+ * - worktree: $(git-branch) - git worktree isolation
+ * - legacy local with srcBaseDir: $(git-branch) - treated as worktree
+ * - ssh: $(remote) - remote execution
+ */
+function getRuntimeIcon(runtimeConfig: WorkspaceWithContext["runtimeConfig"]): string {
+  if (runtimeConfig.type === "ssh") {
+    return "$(remote)";
+  }
+  if (runtimeConfig.type === "worktree") {
+    return "$(git-branch)";
+  }
+  // type === "local": check if it has srcBaseDir (legacy worktree) or not (project-dir)
+  if ("srcBaseDir" in runtimeConfig && runtimeConfig.srcBaseDir) {
+    return "$(git-branch)"; // Legacy worktree
+  }
+  return "$(folder)"; // Project-dir local
+}
+
+/**
  * Format workspace for display in QuickPick
  */
 function formatWorkspaceLabel(workspace: WorkspaceWithContext): string {
   // Choose icon based on streaming status and runtime type
   const icon = workspace.extensionMetadata?.streaming
     ? "$(sync~spin)" // Spinning icon for active streaming
-    : workspace.runtimeConfig.type === "ssh"
-      ? "$(remote)"
-      : "$(folder)";
+    : getRuntimeIcon(workspace.runtimeConfig);
 
   const baseName = `${icon} [${workspace.projectName}] ${workspace.name}`;
 
@@ -61,9 +80,7 @@ async function openWorkspaceCommand() {
 
     // User can't easily open mux from VS Code, so just inform them
     if (selection === "Open mux") {
-      vscode.window.showInformationMessage(
-        "Please open the mux application to create workspaces."
-      );
+      vscode.window.showInformationMessage("Please open the mux application to create workspaces.");
     }
     return;
   }

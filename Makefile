@@ -47,12 +47,12 @@ include fmt.mk
 .PHONY: build-renderer version build-icons build-static
 .PHONY: lint lint-fix typecheck typecheck-react-native static-check
 .PHONY: test test-unit test-integration test-watch test-coverage test-e2e smoke-test
-.PHONY: dist dist-mac dist-win dist-linux
+.PHONY: dist dist-mac dist-win dist-linux install-mac-arm64
 .PHONY: vscode-ext vscode-ext-install
-.PHONY: docs docs-build docs-watch
+.PHONY: docs-server check-docs-links
 .PHONY: storybook storybook-build test-storybook chromatic
 .PHONY: benchmark-terminal
-.PHONY: ensure-deps rebuild-native
+.PHONY: ensure-deps rebuild-native mux
 .PHONY: check-eager-imports check-bundle-size check-startup
 
 # Build tools
@@ -107,6 +107,17 @@ rebuild-native: node_modules/.installed ## Rebuild native modules (node-pty) for
 	@npx @electron/rebuild -f -m node_modules/node-pty
 	@echo "Native modules rebuilt successfully"
 
+# Run compiled CLI with trailing arguments (builds only if missing)
+mux: ## Run the compiled mux CLI (e.g., make mux server --port 3000)
+	@test -f dist/cli/index.js -a -f dist/cli/api.mjs || $(MAKE) build-main
+	@node dist/cli/index.js $(filter-out $@,$(MAKECMDGOALS))
+
+# Catch unknown targets passed to mux (prevents "No rule to make target" errors)
+ifneq ($(filter mux,$(MAKECMDGOALS)),)
+%:
+	@:
+endif
+
 ## Help
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -117,16 +128,18 @@ help: ## Show this help message
 ## Development
 ifeq ($(OS),Windows_NT)
 dev: node_modules/.installed build-main ## Start development server (Vite + nodemon watcher for Windows compatibility)
-	@echo "Starting dev mode (2 watchers: nodemon for main process, vite for renderer)..."
+	@echo "Starting dev mode (3 watchers: nodemon for main process, esbuild for api, vite for renderer)..."
 	# On Windows, use npm run because bunx doesn't correctly pass arguments to concurrently
 	# https://github.com/oven-sh/bun/issues/18275
 	@NODE_OPTIONS="--max-old-space-size=4096" npm x concurrently -k --raw \
 		"bun x nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules --exec node scripts/build-main-watch.js" \
+		"npx esbuild src/cli/api.ts --bundle --format=esm --platform=node --outfile=dist/cli/api.mjs --external:zod --external:commander --external:@trpc/server --watch" \
 		"vite"
 else
 dev: node_modules/.installed build-main build-preload ## Start development server (Vite + tsgo watcher for 10x faster type checking)
 	@bun x concurrently -k \
 		"bun x concurrently \"$(TSGO) -w -p tsconfig.main.json\" \"bun x tsc-alias -w -p tsconfig.main.json\"" \
+		"bun x esbuild src/cli/api.ts --bundle --format=esm --platform=node --outfile=dist/cli/api.mjs --external:zod --external:commander --external:@trpc/server --watch" \
 		"vite"
 endif
 
@@ -140,6 +153,7 @@ dev-server: node_modules/.installed build-main ## Start server mode with hot rel
 	@# On Windows, use npm run because bunx doesn't correctly pass arguments
 	@npmx concurrently -k \
 		"npmx nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules --exec node scripts/build-main-watch.js" \
+		"npx esbuild src/cli/api.ts --bundle --format=esm --platform=node --outfile=dist/cli/api.mjs --external:zod --external:commander --external:@trpc/server --watch" \
 		"npmx nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms --exec \"node dist/cli/index.js server --host $(or $(BACKEND_HOST),localhost) --port $(or $(BACKEND_PORT),3000)\"" \
 		"$(SHELL) -lc \"MUX_VITE_HOST=$(or $(VITE_HOST),127.0.0.1) MUX_VITE_PORT=$(or $(VITE_PORT),5173) VITE_BACKEND_URL=http://$(or $(BACKEND_HOST),localhost):$(or $(BACKEND_PORT),3000) vite\""
 else
@@ -151,6 +165,7 @@ dev-server: node_modules/.installed build-main ## Start server mode with hot rel
 	@echo "For remote access: make dev-server VITE_HOST=0.0.0.0 BACKEND_HOST=0.0.0.0"
 	@bun x concurrently -k \
 		"bun x concurrently \"$(TSGO) -w -p tsconfig.main.json\" \"bun x tsc-alias -w -p tsconfig.main.json\"" \
+		"bun x esbuild src/cli/api.ts --bundle --format=esm --platform=node --outfile=dist/cli/api.mjs --external:zod --external:commander --external:@trpc/server --watch" \
 		"bun x nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms --exec 'NODE_ENV=development node dist/cli/index.js server --host $(or $(BACKEND_HOST),localhost) --port $(or $(BACKEND_PORT),3000)'" \
 		"MUX_VITE_HOST=$(or $(VITE_HOST),127.0.0.1) MUX_VITE_PORT=$(or $(VITE_PORT),5173) VITE_BACKEND_URL=http://$(or $(BACKEND_HOST),localhost):$(or $(BACKEND_PORT),3000) vite"
 endif
@@ -158,17 +173,29 @@ endif
 
 
 start: node_modules/.installed build-main build-preload build-static ## Build and start Electron app
-	@NODE_ENV=development bun x electron --remote-debugging-port=9222 .
+	@NODE_ENV=development bunx electron --remote-debugging-port=9222 .
 
 ## Build targets (can run in parallel)
 build: node_modules/.installed src/version.ts build-renderer build-main build-preload build-icons build-static ## Build all targets
 
-build-main: node_modules/.installed dist/cli/index.js ## Build main process
+build-main: node_modules/.installed dist/cli/index.js dist/cli/api.mjs ## Build main process
 
 dist/cli/index.js: src/cli/index.ts src/desktop/main.ts src/cli/server.ts src/version.ts tsconfig.main.json tsconfig.json $(TS_SOURCES)
 	@echo "Building main process..."
 	@NODE_ENV=production $(TSGO) -p tsconfig.main.json
 	@NODE_ENV=production bun x tsc-alias -p tsconfig.main.json
+
+# Build API CLI as ESM bundle (trpc-cli requires ESM with top-level await)
+dist/cli/api.mjs: src/cli/api.ts src/cli/proxifyOrpc.ts $(TS_SOURCES)
+	@echo "Building API CLI (ESM)..."
+	@bun x esbuild src/cli/api.ts \
+		--bundle \
+		--format=esm \
+		--platform=node \
+		--outfile=dist/cli/api.mjs \
+		--external:zod \
+		--external:commander \
+		--external:@trpc/server
 
 build-preload: node_modules/.installed dist/preload.js ## Build preload script
 
@@ -213,7 +240,7 @@ build/icon.png: docs/img/logo.webp scripts/generate-icons.ts
 	@bun scripts/generate-icons.ts png
 
 ## Quality checks (can run in parallel)
-static-check: lint typecheck fmt-check check-eager-imports check-bench-agent ## Run all static checks (includes startup performance checks)
+static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links ## Run all static checks
 
 check-bench-agent: ## Verify terminal-bench agent configuration and imports
 	@./scripts/check-bench-agent.sh
@@ -224,7 +251,7 @@ lint: node_modules/.installed ## Run ESLint (typecheck runs in separate target)
 lint-fix: node_modules/.installed ## Run linter with --fix
 	@./scripts/lint.sh --fix
 
-ifeq ($(OS),Windows_NT) 
+ifeq ($(OS),Windows_NT)
 typecheck: node_modules/.installed src/version.ts ## Run TypeScript type checking (uses tsgo for 10x speedup)
 	@# On Windows, use npm run because bun x doesn't correctly pass arguments
 	@npmx concurrently -g \
@@ -322,6 +349,12 @@ dist-mac-arm64: build ## Build macOS arm64 distributable only
 	@echo "Building macOS arm64..."
 	@bun x electron-builder --mac --arm64 --publish never
 
+install-mac-arm64: dist-mac-arm64 ## Build and install macOS arm64 app to /Applications
+	@echo "Installing mux.app to /Applications..."
+	@rm -rf /Applications/mux.app
+	@cp -R release/mac-arm64/mux.app /Applications/
+	@echo "Installed mux.app to /Applications"
+
 dist-win: build ## Build Windows distributable
 	@bun x electron-builder --win --publish never
 
@@ -337,14 +370,12 @@ vscode-ext-install: ## Build and install VS Code extension locally
 	@$(MAKE) -C vscode install
 
 ## Documentation
-docs: ## Serve documentation locally
-	@./scripts/docs.sh
+docs-server: node_modules/.installed ## Serve documentation locally (Mintlify dev server)
+	@cd docs && npx mintlify dev
 
-docs-build: ## Build documentation
-	@./scripts/docs_build.sh
-
-docs-watch: ## Watch and rebuild documentation
-	@cd docs && mdbook watch
+check-docs-links: ## Check documentation for broken links
+	@echo "🔗 Checking documentation links..."
+	@cd docs && npx mintlify broken-links
 
 ## Storybook
 storybook: node_modules/.installed ## Start Storybook development server

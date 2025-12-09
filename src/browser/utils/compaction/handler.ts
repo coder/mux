@@ -6,6 +6,7 @@
  */
 
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
+import type { APIClient } from "@/browser/contexts/API";
 
 /**
  * Check if the workspace is currently in a compaction stream
@@ -58,6 +59,7 @@ export function getCompactionCommand(aggregator: StreamingMessageAggregator): st
  * 2. Enter edit mode on compaction-request message with original command
  */
 export async function cancelCompaction(
+  client: APIClient,
   workspaceId: string,
   aggregator: StreamingMessageAggregator,
   startEditingMessage: (messageId: string, initialText: string) => void
@@ -76,7 +78,7 @@ export async function cancelCompaction(
 
   // Interrupt stream with abandonPartial flag
   // Backend detects this and skips compaction (Ctrl+C flow)
-  await window.api.workspace.interruptStream(workspaceId, { abandonPartial: true });
+  await client.workspace.interruptStream({ workspaceId, options: { abandonPartial: true } });
 
   // Enter edit mode on the compaction-request message with original command
   // This lets user immediately edit the message or delete it

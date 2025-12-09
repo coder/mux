@@ -1,8 +1,13 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import { ChevronDown, ChevronRight, Check, X } from "lucide-react";
-import type { ProvidersConfigMap } from "../types";
-import { SUPPORTED_PROVIDERS, PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
+import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
+import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
 import type { ProviderName } from "@/common/constants/providers";
+import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
+import { useAPI } from "@/browser/contexts/API";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
+import { useGateway } from "@/browser/hooks/useGatewayModels";
+import { Button } from "@/browser/components/ui/button";
 
 interface FieldConfig {
   key: string;
@@ -65,22 +70,15 @@ function getProviderFields(provider: ProviderName): FieldConfig[] {
 }
 
 export function ProvidersSection() {
-  const [config, setConfig] = useState<ProvidersConfigMap>({});
+  const { api } = useAPI();
+  const { config, updateOptimistically } = useProvidersConfig();
+  const gateway = useGateway();
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
   const [editingField, setEditingField] = useState<{
     provider: string;
     field: string;
   } | null>(null);
   const [editValue, setEditValue] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  // Load config on mount
-  useEffect(() => {
-    void (async () => {
-      const cfg = await window.api.providers.getConfig();
-      setConfig(cfg);
-    })();
-  }, []);
 
   const handleToggleProvider = (provider: string) => {
     setExpandedProvider((prev) => (prev === provider ? null : provider));
@@ -91,10 +89,8 @@ export function ProvidersSection() {
     setEditingField({ provider, field });
     // For secrets, start empty since we only show masked value
     // For text fields, show current value
-    const currentValue = (config[provider] as Record<string, unknown> | undefined)?.[field];
-    setEditValue(
-      fieldConfig.type === "text" && typeof currentValue === "string" ? currentValue : ""
-    );
+    const currentValue = getFieldValue(provider, field);
+    setEditValue(fieldConfig.type === "text" && currentValue ? currentValue : "");
   };
 
   const handleCancelEdit = () => {
@@ -102,47 +98,54 @@ export function ProvidersSection() {
     setEditValue("");
   };
 
-  const handleSaveEdit = useCallback(async () => {
-    if (!editingField) return;
+  const handleSaveEdit = useCallback(() => {
+    if (!editingField || !api) return;
 
-    setSaving(true);
-    try {
-      const { provider, field } = editingField;
-      await window.api.providers.setProviderConfig(provider, [field], editValue);
+    const { provider, field } = editingField;
 
-      // Refresh config
-      const cfg = await window.api.providers.getConfig();
-      setConfig(cfg);
-      setEditingField(null);
-      setEditValue("");
-    } finally {
-      setSaving(false);
+    // Optimistic update for instant feedback
+    if (field === "apiKey") {
+      updateOptimistically(provider, { apiKeySet: editValue !== "" });
+    } else if (field === "baseUrl") {
+      updateOptimistically(provider, { baseUrl: editValue || undefined });
+    } else if (field === "couponCode") {
+      updateOptimistically(provider, { couponCodeSet: editValue !== "" });
     }
-  }, [editingField, editValue]);
 
-  const handleClearField = useCallback(async (provider: string, field: string) => {
-    setSaving(true);
-    try {
-      await window.api.providers.setProviderConfig(provider, [field], "");
-      const cfg = await window.api.providers.getConfig();
-      setConfig(cfg);
-    } finally {
-      setSaving(false);
-    }
-  }, []);
+    setEditingField(null);
+    setEditValue("");
+
+    // Save in background
+    void api.providers.setProviderConfig({ provider, keyPath: [field], value: editValue });
+  }, [api, editingField, editValue, updateOptimistically]);
+
+  const handleClearField = useCallback(
+    (provider: string, field: string) => {
+      if (!api) return;
+
+      // Optimistic update for instant feedback
+      if (field === "apiKey") {
+        updateOptimistically(provider, { apiKeySet: false });
+      } else if (field === "baseUrl") {
+        updateOptimistically(provider, { baseUrl: undefined });
+      } else if (field === "couponCode") {
+        updateOptimistically(provider, { couponCodeSet: false });
+      }
+
+      // Save in background
+      void api.providers.setProviderConfig({ provider, keyPath: [field], value: "" });
+    },
+    [api, updateOptimistically]
+  );
 
   const isConfigured = (provider: string): boolean => {
-    const providerConfig = config[provider];
+    const providerConfig = config?.[provider];
     if (!providerConfig) return false;
 
-    // For Bedrock, check if any credential field is set
-    if (provider === "bedrock") {
-      return !!(
-        providerConfig.region ??
-        providerConfig.bearerTokenSet ??
-        providerConfig.accessKeyIdSet ??
-        providerConfig.secretAccessKeySet
-      );
+    // For Bedrock, check if any AWS credential field is set
+    if (provider === "bedrock" && providerConfig.aws) {
+      const { aws } = providerConfig;
+      return !!(aws.region ?? aws.bearerTokenSet ?? aws.accessKeyIdSet ?? aws.secretAccessKeySet);
     }
 
     // For Mux Gateway, check couponCodeSet
@@ -155,22 +158,42 @@ export function ProvidersSection() {
   };
 
   const getFieldValue = (provider: string, field: string): string | undefined => {
-    const providerConfig = config[provider] as Record<string, unknown> | undefined;
+    const providerConfig = config?.[provider];
     if (!providerConfig) return undefined;
-    const value = providerConfig[field];
+
+    // For bedrock, check aws nested object for region
+    if (provider === "bedrock" && field === "region") {
+      return providerConfig.aws?.region;
+    }
+
+    // For standard fields like baseUrl
+    const value = providerConfig[field as keyof typeof providerConfig];
     return typeof value === "string" ? value : undefined;
   };
 
   const isFieldSet = (provider: string, field: string, fieldConfig: FieldConfig): boolean => {
+    const providerConfig = config?.[provider];
+    if (!providerConfig) return false;
+
     if (fieldConfig.type === "secret") {
       // For apiKey, we have apiKeySet from the sanitized config
-      if (field === "apiKey") return config[provider]?.apiKeySet ?? false;
+      if (field === "apiKey") return providerConfig.apiKeySet ?? false;
       // For couponCode (mux-gateway), check couponCodeSet
-      if (field === "couponCode") return config[provider]?.couponCodeSet ?? false;
-      // For other secrets, check if the field exists in the raw config
-      // Since we don't expose secret values, we assume they're not set if undefined
-      const providerConfig = config[provider] as Record<string, unknown> | undefined;
-      return providerConfig?.[`${field}Set`] === true;
+      if (field === "couponCode") return providerConfig.couponCodeSet ?? false;
+
+      // For AWS secrets, check the aws nested object
+      if (provider === "bedrock" && providerConfig.aws) {
+        const { aws } = providerConfig;
+        switch (field) {
+          case "bearerToken":
+            return aws.bearerTokenSet ?? false;
+          case "accessKeyId":
+            return aws.accessKeyIdSet ?? false;
+          case "secretAccessKey":
+            return aws.secretAccessKeySet ?? false;
+        }
+      }
+      return false;
     }
     return !!getFieldValue(provider, field);
   };
@@ -193,10 +216,10 @@ export function ProvidersSection() {
             className="border-border-medium bg-background-secondary overflow-hidden rounded-md border"
           >
             {/* Provider header */}
-            <button
-              type="button"
+            <Button
+              variant="ghost"
               onClick={() => handleToggleProvider(provider)}
-              className="hover:bg-hover flex w-full items-center justify-between px-4 py-3 text-left transition-colors"
+              className="flex h-auto w-full items-center justify-between rounded-none px-4 py-3 text-left"
             >
               <div className="flex items-center gap-3">
                 {isExpanded ? (
@@ -204,15 +227,17 @@ export function ProvidersSection() {
                 ) : (
                   <ChevronRight className="text-muted h-4 w-4" />
                 )}
-                <span className="text-foreground text-sm font-medium">
-                  {PROVIDER_DISPLAY_NAMES[provider]}
-                </span>
+                <ProviderWithIcon
+                  provider={provider}
+                  displayName
+                  className="text-foreground text-sm font-medium"
+                />
               </div>
               <div
                 className={`h-2 w-2 rounded-full ${configured ? "bg-green-500" : "bg-border-medium"}`}
                 title={configured ? "Configured" : "Not configured"}
               />
-            </button>
+            </Button>
 
             {/* Provider settings */}
             {isExpanded && (
@@ -238,26 +263,27 @@ export function ProvidersSection() {
                             placeholder={fieldConfig.placeholder}
                             className="bg-modal-bg border-border-medium focus:border-accent flex-1 rounded border px-2 py-1.5 font-mono text-xs focus:outline-none"
                             autoFocus
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") void handleSaveEdit();
-                              if (e.key === "Escape") handleCancelEdit();
-                            }}
+                            onKeyDown={createEditKeyHandler({
+                              onSave: handleSaveEdit,
+                              onCancel: handleCancelEdit,
+                            })}
                           />
-                          <button
-                            type="button"
-                            onClick={() => void handleSaveEdit()}
-                            disabled={saving}
-                            className="p-1 text-green-500 hover:text-green-400"
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={handleSaveEdit}
+                            className="h-6 w-6 text-green-500 hover:text-green-400"
                           >
                             <Check className="h-4 w-4" />
-                          </button>
-                          <button
-                            type="button"
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
                             onClick={handleCancelEdit}
-                            className="text-muted hover:text-foreground p-1"
+                            className="text-muted hover:text-foreground h-6 w-6"
                           >
                             <X className="h-4 w-4" />
-                          </button>
+                          </Button>
                         </div>
                       ) : (
                         <div className="flex items-center justify-between">
@@ -272,30 +298,56 @@ export function ProvidersSection() {
                             {(fieldConfig.type === "text"
                               ? !!fieldValue
                               : fieldConfig.type === "secret" && fieldIsSet) && (
-                              <button
-                                type="button"
-                                onClick={() => void handleClearField(provider, fieldConfig.key)}
-                                disabled={saving}
-                                className="text-muted hover:text-error text-xs"
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleClearField(provider, fieldConfig.key)}
+                                className="text-muted hover:text-error h-auto px-1 py-0 text-xs"
                               >
                                 Clear
-                              </button>
+                              </Button>
                             )}
-                            <button
-                              type="button"
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               onClick={() =>
                                 handleStartEdit(provider, fieldConfig.key, fieldConfig)
                               }
-                              className="text-accent hover:text-accent-light text-xs"
+                              className="text-accent hover:text-accent-light h-auto px-1 py-0 text-xs"
                             >
                               {fieldIsSet || fieldValue ? "Change" : "Set"}
-                            </button>
+                            </Button>
                           </div>
                         </div>
                       )}
                     </div>
                   );
                 })}
+
+                {/* Gateway enabled toggle - only for mux-gateway when configured */}
+                {provider === "mux-gateway" && gateway.isConfigured && (
+                  <div className="border-border-light flex items-center justify-between border-t pt-3">
+                    <div>
+                      <label className="text-foreground block text-xs font-medium">Enabled</label>
+                      <span className="text-muted text-xs">Route requests through Mux Gateway</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={gateway.toggleEnabled}
+                      className={`relative h-5 w-9 rounded-full transition-colors ${
+                        gateway.isEnabled ? "bg-accent" : "bg-border-medium"
+                      }`}
+                      role="switch"
+                      aria-checked={gateway.isEnabled}
+                    >
+                      <span
+                        className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
+                          gateway.isEnabled ? "translate-x-4" : "translate-x-0"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>

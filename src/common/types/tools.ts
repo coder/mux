@@ -3,10 +3,15 @@
  * These types are used by both the tool implementations and UI components
  */
 
+import type { z } from "zod";
+import type { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+
 // Bash Tool Types
 export interface BashToolArgs {
   script: string;
   timeout_secs?: number; // Optional: defaults to 3 seconds for interactivity
+  run_in_background?: boolean; // Run without blocking (for long-running processes)
+  display_name?: string; // Human-readable name for background processes
 }
 
 interface CommonBashFields {
@@ -25,6 +30,14 @@ export type BashToolResult =
         reason: string;
         totalLines: number;
       };
+    })
+  | (CommonBashFields & {
+      success: true;
+      output: string;
+      exitCode: 0;
+      backgroundProcessId: string; // Background spawn succeeded
+      stdout_path: string; // Path to stdout log file
+      stderr_path: string; // Path to stderr log file
     })
   | (CommonBashFields & {
       success: false;
@@ -156,12 +169,36 @@ export type FileEditToolArgs =
   | FileEditInsertToolArgs;
 
 // Propose Plan Tool Types
-export interface ProposePlanToolArgs {
+// Args derived from schema
+export type ProposePlanToolArgs = z.infer<typeof TOOL_DEFINITIONS.propose_plan.schema>;
+
+// Result type for new file-based propose_plan tool
+export interface ProposePlanToolResult {
+  success: true;
+  planPath: string;
+  planContent: string;
+  message: string;
+}
+
+// Error result when plan file not found
+export interface ProposePlanToolError {
+  success: false;
+  error: string;
+}
+
+/**
+ * @deprecated Legacy args type for backwards compatibility with old propose_plan tool calls.
+ * Old sessions may have tool calls with title + plan args stored in chat history.
+ */
+export interface LegacyProposePlanToolArgs {
   title: string;
   plan: string;
 }
 
-export interface ProposePlanToolResult {
+/**
+ * @deprecated Legacy result type for backwards compatibility.
+ */
+export interface LegacyProposePlanToolResult {
   success: true;
   title: string;
   plan: string;
@@ -189,6 +226,33 @@ export interface StatusSetToolArgs {
   message: string;
   url?: string;
 }
+
+// Bash Background Tool Types
+export interface BashBackgroundTerminateArgs {
+  process_id: string;
+}
+
+export type BashBackgroundTerminateResult =
+  | { success: true; message: string; display_name?: string }
+  | { success: false; error: string };
+
+// Bash Background List Tool Types
+export type BashBackgroundListArgs = Record<string, never>;
+
+export interface BashBackgroundListProcess {
+  process_id: string;
+  status: "running" | "exited" | "killed" | "failed";
+  script: string;
+  uptime_ms: number;
+  exitCode?: number;
+  stdout_path: string; // Path to stdout log file
+  stderr_path: string; // Path to stderr log file
+  display_name?: string; // Human-readable name (e.g., "Dev Server")
+}
+
+export type BashBackgroundListResult =
+  | { success: true; processes: BashBackgroundListProcess[] }
+  | { success: false; error: string };
 
 export type StatusSetToolResult =
   | {

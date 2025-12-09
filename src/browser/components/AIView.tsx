@@ -1,11 +1,23 @@
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import React, {
+  useState,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useDeferredValue,
+  useMemo,
+} from "react";
 import { cn } from "@/common/lib/utils";
 import { MessageRenderer } from "./Messages/MessageRenderer";
 import { InterruptedBarrier } from "./Messages/ChatBarrier/InterruptedBarrier";
 import { StreamingBarrier } from "./Messages/ChatBarrier/StreamingBarrier";
 import { RetryBarrier } from "./Messages/ChatBarrier/RetryBarrier";
 import { PinnedTodoList } from "./PinnedTodoList";
-import { getAutoRetryKey, VIM_ENABLED_KEY } from "@/common/constants/storage";
+import {
+  getAutoRetryKey,
+  VIM_ENABLED_KEY,
+  RIGHT_SIDEBAR_TAB_KEY,
+} from "@/common/constants/storage";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { ChatInput, type ChatInputAPI } from "./ChatInput/index";
 import { RightSidebar, type TabType } from "./RightSidebar";
@@ -21,7 +33,8 @@ import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsConte
 
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
+import { readPersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useThinking } from "@/browser/contexts/ThinkingContext";
 import {
   useWorkspaceState,
@@ -32,37 +45,56 @@ import { WorkspaceHeader } from "./WorkspaceHeader";
 import { getModelName } from "@/common/utils/ai/models";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
+import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
 import { useAIViewKeybinds } from "@/browser/hooks/useAIViewKeybinds";
 import { evictModelFromLRU } from "@/browser/hooks/useModelLRU";
 import { QueuedMessage } from "./Messages/QueuedMessage";
 import { CompactionWarning } from "./CompactionWarning";
+import { ConcurrentLocalWarning } from "./ConcurrentLocalWarning";
 import { checkAutoCompaction } from "@/browser/utils/compaction/autoCompactionCheck";
+import { executeCompaction } from "@/browser/utils/chatCommands";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useAutoCompactionSettings } from "../hooks/useAutoCompactionSettings";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
+import { useForceCompaction } from "@/browser/hooks/useForceCompaction";
+import { useAPI } from "@/browser/contexts/API";
+import { useReviews } from "@/browser/hooks/useReviews";
+import { ReviewsBanner } from "./ReviewsBanner";
+import type { ReviewNoteData } from "@/common/types/review";
 
 interface AIViewProps {
   workspaceId: string;
+  projectPath: string;
   projectName: string;
   branch: string;
   namedWorkspacePath: string; // User-friendly path for display and terminal
   runtimeConfig?: RuntimeConfig;
   className?: string;
+  /** If set, workspace is incompatible (from newer mux version) and this error should be displayed */
+  incompatibleRuntime?: string;
+  /** If 'creating', workspace is still being set up (git operations in progress) */
+  status?: "creating";
 }
 
 const AIViewInner: React.FC<AIViewProps> = ({
   workspaceId,
+  projectPath,
   projectName,
   branch,
   namedWorkspacePath,
   runtimeConfig,
   className,
+  status,
 }) => {
+  const { api } = useAPI();
   const chatAreaRef = useRef<HTMLDivElement>(null);
 
   // Track active tab to conditionally enable resize functionality
-  // RightSidebar notifies us of tab changes via onTabChange callback
-  const [activeTab, setActiveTab] = useState<TabType>("costs");
+  // Initialize from persisted value to avoid layout flash; RightSidebar owns the state
+  // and notifies us of changes via onTabChange callback
+  const [activeTab, setActiveTab] = useState<TabType>(() =>
+    readPersistedState<TabType>(RIGHT_SIDEBAR_TAB_KEY, "costs")
+  );
 
   const isReviewTabActive = activeTab === "review";
 
@@ -84,10 +116,19 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const workspaceState = useWorkspaceState(workspaceId);
   const aggregator = useWorkspaceAggregator(workspaceId);
   const workspaceUsage = useWorkspaceUsage(workspaceId);
+
+  // Reviews state
+  const reviews = useReviews(workspaceId);
   const { options } = useProviderOptions();
   const use1M = options.anthropic?.use1MContext ?? false;
-  const { enabled: autoCompactionEnabled, threshold: autoCompactionThreshold } =
-    useAutoCompactionSettings(workspaceId);
+  // Get pending model for auto-compaction settings (threshold is per-model)
+  const pendingSendOptions = useSendMessageOptions(workspaceId);
+  const pendingModel = pendingSendOptions.model;
+
+  const { threshold: autoCompactionThreshold } = useAutoCompactionSettings(
+    workspaceId,
+    pendingModel
+  );
   const handledModelErrorsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -120,6 +161,48 @@ const AIViewInner: React.FC<AIViewProps> = ({
     undefined
   );
 
+  // Extract state from workspace state
+  const { messages, canInterrupt, isCompacting, loading, currentModel } = workspaceState;
+
+  // Merge consecutive identical stream errors.
+  // Use useDeferredValue to allow React to defer the heavy message list rendering
+  // during rapid updates (streaming), keeping the UI responsive.
+  // Must be defined before any early returns to satisfy React Hooks rules.
+  const mergedMessages = useMemo(() => mergeConsecutiveStreamErrors(messages), [messages]);
+  const deferredMessages = useDeferredValue(mergedMessages);
+
+  // Get active stream message ID for token counting
+  const activeStreamMessageId = aggregator?.getActiveStreamMessageId();
+
+  const autoCompactionResult = checkAutoCompaction(
+    workspaceUsage,
+    pendingModel,
+    use1M,
+    autoCompactionThreshold / 100
+  );
+
+  // Show warning when: shouldShowWarning flag is true AND not currently compacting
+  const shouldShowCompactionWarning = !isCompacting && autoCompactionResult.shouldShowWarning;
+
+  // Handle force compaction callback - memoized to avoid effect re-runs
+  const handleForceCompaction = useCallback(() => {
+    if (!api) return;
+    void executeCompaction({
+      api,
+      workspaceId,
+      sendMessageOptions: pendingSendOptions,
+      continueMessage: { text: "Continue with the current task" },
+    });
+  }, [api, workspaceId, pendingSendOptions]);
+
+  // Force compaction when live usage shows we're about to hit context limit
+  useForceCompaction({
+    shouldForceCompact: autoCompactionResult.shouldForceCompact,
+    canInterrupt,
+    isCompacting,
+    onTrigger: handleForceCompaction,
+  });
+
   // Auto-retry state - minimal setter for keybinds and message sent handler
   // RetryBarrier manages its own state, but we need this for interrupt keybind
   const [, setAutoRetry] = usePersistedState<boolean>(
@@ -136,6 +219,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Use auto-scroll hook for scroll management
   const {
     contentRef,
+    innerRef,
     autoScroll,
     setAutoScroll,
     performAutoScroll,
@@ -144,18 +228,26 @@ const AIViewInner: React.FC<AIViewProps> = ({
     markUserInteraction,
   } = useAutoScroll();
 
-  // Use send options for auto-compaction check
-  const pendingSendOptions = useSendMessageOptions(workspaceId);
-
   // ChatInput API for focus management
   const chatInputAPI = useRef<ChatInputAPI | null>(null);
   const handleChatInputReady = useCallback((api: ChatInputAPI) => {
     chatInputAPI.current = api;
   }, []);
 
-  // Handler for review notes from Code Review tab
-  const handleReviewNote = useCallback((note: string) => {
-    chatInputAPI.current?.appendText(note);
+  // Handler for review notes from Code Review tab - adds review (starts attached)
+  // Depend only on addReview (not whole reviews object) to keep callback stable
+  const { addReview } = reviews;
+  const handleReviewNote = useCallback(
+    (data: ReviewNoteData) => {
+      addReview(data);
+      // New reviews start with status "attached" so they appear in chat input immediately
+    },
+    [addReview]
+  );
+
+  // Handler for manual compaction from CompactionWarning click
+  const handleCompactClick = useCallback(() => {
+    chatInputAPI.current?.prependText("/compact\n");
   }, []);
 
   // Thinking level state from context
@@ -170,14 +262,23 @@ const AIViewInner: React.FC<AIViewProps> = ({
     const queuedMessage = workspaceState?.queuedMessage;
     if (!queuedMessage) return;
 
-    await window.api.workspace.clearQueue(workspaceId);
+    await api?.workspace.clearQueue({ workspaceId });
     chatInputAPI.current?.restoreText(queuedMessage.content);
 
     // Restore images if present
     if (queuedMessage.imageParts && queuedMessage.imageParts.length > 0) {
       chatInputAPI.current?.restoreImages(queuedMessage.imageParts);
     }
-  }, [workspaceId, workspaceState?.queuedMessage, chatInputAPI]);
+  }, [api, workspaceId, workspaceState?.queuedMessage, chatInputAPI]);
+
+  // Handler for sending queued message immediately (interrupt + send)
+  const handleSendQueuedImmediately = useCallback(async () => {
+    if (!workspaceState?.queuedMessage || !workspaceState.canInterrupt) return;
+    await api?.workspace.interruptStream({
+      workspaceId,
+      options: { sendQueuedImmediately: true },
+    });
+  }, [api, workspaceId, workspaceState?.queuedMessage, workspaceState?.canInterrupt]);
 
   const handleEditLastUserMessage = useCallback(async () => {
     if (!workspaceState) return;
@@ -225,24 +326,26 @@ const AIViewInner: React.FC<AIViewProps> = ({
       setAutoScroll(true);
 
       // Truncate history in backend
-      await window.api.workspace.truncateHistory(workspaceId, percentage);
+      await api?.workspace.truncateHistory({ workspaceId, percentage });
     },
-    [workspaceId, setAutoScroll]
+    [workspaceId, setAutoScroll, api]
   );
 
   const handleProviderConfig = useCallback(
     async (provider: string, keyPath: string[], value: string) => {
-      const result = await window.api.providers.setProviderConfig(provider, keyPath, value);
+      if (!api) throw new Error("API not connected");
+      const result = await api.providers.setProviderConfig({ provider, keyPath, value });
       if (!result.success) {
         throw new Error(result.error);
       }
     },
-    []
+    [api]
   );
 
+  const openTerminal = useOpenTerminal();
   const handleOpenTerminal = useCallback(() => {
-    void window.api.terminal.openWindow(workspaceId);
-  }, [workspaceId]);
+    openTerminal(workspaceId, runtimeConfig);
+  }, [workspaceId, openTerminal, runtimeConfig]);
 
   // Auto-scroll when messages or todos update (during streaming)
   useEffect(() => {
@@ -258,12 +361,11 @@ const AIViewInner: React.FC<AIViewProps> = ({
   ]);
 
   // Scroll to bottom when workspace loads or changes
-  useEffect(() => {
+  // useLayoutEffect ensures scroll happens synchronously after DOM mutations
+  // but before browser paint - critical for Chromatic snapshot consistency
+  useLayoutEffect(() => {
     if (workspaceState && !workspaceState.loading && workspaceState.messages.length > 0) {
-      // Give React time to render messages before scrolling
-      requestAnimationFrame(() => {
-        jumpToBottom();
-      });
+      jumpToBottom();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, workspaceState?.loading]);
@@ -329,34 +431,9 @@ const AIViewInner: React.FC<AIViewProps> = ({
     );
   }
 
-  // Extract state from workspace state
-  const { messages, canInterrupt, isCompacting, loading, currentModel } = workspaceState;
-
-  // Get active stream message ID for token counting
-  const activeStreamMessageId = aggregator.getActiveStreamMessageId();
-
-  // Use pending send model for auto-compaction check, not the last stream's model.
-  // This ensures the threshold is based on the model the user will actually send with,
-  // preventing context-length errors when switching from a large-context to smaller model.
-  const pendingModel = pendingSendOptions.model;
-
-  const autoCompactionResult = checkAutoCompaction(
-    workspaceUsage,
-    pendingModel,
-    use1M,
-    autoCompactionEnabled,
-    autoCompactionThreshold / 100
-  );
-
-  // Show warning when: shouldShowWarning flag is true AND not currently compacting
-  const shouldShowCompactionWarning = !isCompacting && autoCompactionResult.shouldShowWarning;
-
   // Note: We intentionally do NOT reset autoRetry when streams start.
   // If user pressed the interrupt key, autoRetry stays false until they manually retry.
   // This makes state transitions explicit and predictable.
-
-  // Merge consecutive identical stream errors
-  const mergedMessages = mergeConsecutiveStreamErrors(messages);
 
   // When editing, find the cutoff point
   const editCutoffHistoryId = editingMessage
@@ -367,6 +444,17 @@ const AIViewInner: React.FC<AIViewProps> = ({
           msg.historyId === editingMessage.id
       )?.historyId
     : undefined;
+
+  // Find the ID of the latest propose_plan tool call for external edit detection
+  // Only the latest plan should fetch fresh content from disk
+  let latestProposePlanId: string | null = null;
+  for (let i = mergedMessages.length - 1; i >= 0; i--) {
+    const msg = mergedMessages[i];
+    if (msg.type === "tool" && msg.toolName === "propose_plan") {
+      latestProposePlanId = msg.id;
+      break;
+    }
+  }
 
   if (loading) {
     return (
@@ -434,10 +522,14 @@ const AIViewInner: React.FC<AIViewProps> = ({
             aria-busy={canInterrupt}
             aria-label="Conversation transcript"
             tabIndex={0}
+            data-testid="message-window"
             className="h-full overflow-y-auto p-[15px] leading-[1.5] break-words whitespace-pre-wrap"
           >
-            <div className={cn("max-w-4xl mx-auto", mergedMessages.length === 0 && "h-full")}>
-              {mergedMessages.length === 0 ? (
+            <div
+              ref={innerRef}
+              className={cn("max-w-4xl mx-auto", deferredMessages.length === 0 && "h-full")}
+            >
+              {deferredMessages.length === 0 ? (
                 <div className="text-placeholder flex h-full flex-1 flex-col items-center justify-center text-center [&_h3]:m-0 [&_h3]:mb-2.5 [&_h3]:text-base [&_h3]:font-medium [&_p]:m-0 [&_p]:text-[13px]">
                   <h3>No Messages Yet</h3>
                   <p>Send a message below to begin</p>
@@ -453,7 +545,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
                 </div>
               ) : (
                 <>
-                  {mergedMessages.map((msg) => {
+                  {deferredMessages.map((msg) => {
                     const isAtCutoff =
                       editCutoffHistoryId !== undefined &&
                       msg.type !== "history-hidden" &&
@@ -463,6 +555,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
                     return (
                       <React.Fragment key={msg.id}>
                         <div
+                          data-testid="chat-message"
                           data-message-id={
                             msg.type !== "history-hidden" && msg.type !== "workspace-init"
                               ? msg.historyId
@@ -474,6 +567,12 @@ const AIViewInner: React.FC<AIViewProps> = ({
                             onEditUserMessage={handleEditUserMessage}
                             workspaceId={workspaceId}
                             isCompacting={isCompacting}
+                            onReviewNote={handleReviewNote}
+                            isLatestProposePlan={
+                              msg.type === "tool" &&
+                              msg.toolName === "propose_plan" &&
+                              msg.id === latestProposePlanId
+                            }
                           />
                         </div>
                         {isAtCutoff && (
@@ -504,12 +603,12 @@ const AIViewInner: React.FC<AIViewProps> = ({
                   cancelText={`hit ${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} to cancel`}
                   tokenCount={
                     activeStreamMessageId
-                      ? aggregator.getStreamingTokenCount(activeStreamMessageId)
+                      ? aggregator?.getStreamingTokenCount(activeStreamMessageId)
                       : undefined
                   }
                   tps={
                     activeStreamMessageId
-                      ? aggregator.getStreamingTPS(activeStreamMessageId)
+                      ? aggregator?.getStreamingTPS(activeStreamMessageId)
                       : undefined
                   }
                 />
@@ -518,15 +617,23 @@ const AIViewInner: React.FC<AIViewProps> = ({
                 <QueuedMessage
                   message={workspaceState.queuedMessage}
                   onEdit={() => void handleEditQueuedMessage()}
+                  onSendImmediately={
+                    workspaceState.canInterrupt ? handleSendQueuedImmediately : undefined
+                  }
                 />
               )}
+              <ConcurrentLocalWarning
+                workspaceId={workspaceId}
+                projectPath={projectPath}
+                runtimeConfig={runtimeConfig}
+              />
             </div>
           </div>
           {!autoScroll && (
             <button
               onClick={jumpToBottom}
               type="button"
-              className="assistant-chip font-primary text-foreground hover:assistant-chip-hover absolute bottom-2 left-1/2 z-[100] -translate-x-1/2 cursor-pointer rounded-[20px] px-2 py-1 text-xs font-medium shadow-[0_4px_12px_rgba(0,0,0,0.3)] backdrop-blur-[1px] transition-all duration-200 hover:scale-105 active:scale-95"
+              className="assistant-chip font-primary text-foreground hover:assistant-chip-hover absolute bottom-2 left-1/2 z-20 -translate-x-1/2 cursor-pointer rounded-[20px] px-2 py-1 text-xs font-medium shadow-[0_4px_12px_rgba(0,0,0,0.3)] backdrop-blur-[1px] transition-all duration-200 hover:scale-105 active:scale-95"
             >
               Press {formatKeybind(KEYBINDS.JUMP_TO_BOTTOM)} to jump to bottom
             </button>
@@ -536,11 +643,15 @@ const AIViewInner: React.FC<AIViewProps> = ({
           <CompactionWarning
             usagePercentage={autoCompactionResult.usagePercentage}
             thresholdPercentage={autoCompactionResult.thresholdPercentage}
+            isStreaming={canInterrupt}
+            onCompactClick={handleCompactClick}
           />
         )}
+        <ReviewsBanner workspaceId={workspaceId} />
         <ChatInput
           variant="workspace"
           workspaceId={workspaceId}
+          runtimeType={getRuntimeTypeForTelemetry(runtimeConfig)}
           onMessageSent={handleMessageSent}
           onTruncateHistory={handleClearHistory}
           onProviderConfig={handleProviderConfig}
@@ -552,6 +663,10 @@ const AIViewInner: React.FC<AIViewProps> = ({
           canInterrupt={canInterrupt}
           onReady={handleChatInputReady}
           autoCompactionCheck={autoCompactionResult}
+          attachedReviews={reviews.attachedReviews}
+          onDetachReview={reviews.detachReview}
+          onCheckReviews={(ids) => ids.forEach((id) => reviews.checkReview(id))}
+          onUpdateReviewNote={reviews.updateReviewNote}
         />
       </div>
 
@@ -565,13 +680,43 @@ const AIViewInner: React.FC<AIViewProps> = ({
         onStartResize={isReviewTabActive ? startResize : undefined} // Pass resize handler when Review active
         isResizing={isResizing} // Pass resizing state
         onReviewNote={handleReviewNote} // Pass review note handler to append to chat
+        isCreating={status === "creating"} // Workspace still being set up
       />
     </div>
   );
 };
 
+/**
+ * Incompatible workspace error display.
+ * Shown when a workspace was created with a newer version of mux.
+ */
+const IncompatibleWorkspaceView: React.FC<{ message: string; className?: string }> = ({
+  message,
+  className,
+}) => (
+  <div className={cn("flex h-full w-full flex-col items-center justify-center p-8", className)}>
+    <div className="max-w-md text-center">
+      <div className="mb-4 text-4xl">⚠️</div>
+      <h2 className="mb-2 text-xl font-semibold text-[var(--color-text-primary)]">
+        Incompatible Workspace
+      </h2>
+      <p className="mb-4 text-[var(--color-text-secondary)]">{message}</p>
+      <p className="text-sm text-[var(--color-text-tertiary)]">
+        You can delete this workspace and create a new one, or upgrade mux to use it.
+      </p>
+    </div>
+  </div>
+);
+
 // Wrapper component that provides the mode and thinking contexts
 export const AIView: React.FC<AIViewProps> = (props) => {
+  // Early return for incompatible workspaces - no hooks called in this path
+  if (props.incompatibleRuntime) {
+    return (
+      <IncompatibleWorkspaceView message={props.incompatibleRuntime} className={props.className} />
+    );
+  }
+
   return (
     <ModeProvider workspaceId={props.workspaceId}>
       <ProviderOptionsProvider>

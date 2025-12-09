@@ -5,6 +5,7 @@ import {
   validateFileSize,
   validatePathInCwd,
   validateAndCorrectPath,
+  isPlanFileAccess,
 } from "./fileCommon";
 import { RuntimeError } from "@/node/runtime/Runtime";
 import { readFileString, writeFileString } from "@/node/utils/runtime/helpers";
@@ -51,22 +52,47 @@ export async function executeFileEditOperation<TMetadata>({
     );
     filePath = validatedPath;
 
-    const pathValidation = validatePathInCwd(filePath, config.cwd, config.runtime);
-    if (pathValidation) {
-      return {
-        success: false,
-        error: pathValidation.error,
-      };
-    }
-
     // Use runtime's normalizePath method to resolve paths correctly for both local and SSH runtimes
     // This ensures path resolution uses runtime-specific semantics instead of Node.js path module
     const resolvedPath = config.runtime.normalizePath(filePath, config.cwd);
 
+    // Determine if this is a plan file access - plan files always use local filesystem
+    const isPlanFile = isPlanFileAccess(resolvedPath, config);
+
+    // Select runtime: plan files use localRuntime (always local), others use workspace runtime
+    const effectiveRuntime =
+      isPlanFile && config.localRuntime ? config.localRuntime : config.runtime;
+
+    // For plan files, resolve path using local runtime since plan files are always local
+    const effectiveResolvedPath =
+      isPlanFile && config.localRuntime
+        ? config.localRuntime.normalizePath(filePath, config.cwd)
+        : resolvedPath;
+
+    // Plan mode restriction: only allow editing the plan file
+    if (config.mode === "plan" && config.planFilePath) {
+      if (!isPlanFile) {
+        return {
+          success: false,
+          error: `In plan mode, only the plan file can be edited. Attempted to edit: ${filePath}`,
+        };
+      }
+      // Skip cwd validation for plan file - it's intentionally outside workspace
+    } else {
+      // Standard cwd validation for non-plan-mode edits
+      const pathValidation = validatePathInCwd(filePath, config.cwd, config.runtime);
+      if (pathValidation) {
+        return {
+          success: false,
+          error: pathValidation.error,
+        };
+      }
+    }
+
     // Check if file exists and get stats using runtime
     let fileStat;
     try {
-      fileStat = await config.runtime.stat(resolvedPath, abortSignal);
+      fileStat = await effectiveRuntime.stat(effectiveResolvedPath, abortSignal);
     } catch (err) {
       if (err instanceof RuntimeError) {
         return {
@@ -80,7 +106,7 @@ export async function executeFileEditOperation<TMetadata>({
     if (fileStat.isDirectory) {
       return {
         success: false,
-        error: `Path is a directory, not a file: ${resolvedPath}`,
+        error: `Path is a directory, not a file: ${effectiveResolvedPath}`,
       };
     }
 
@@ -95,7 +121,7 @@ export async function executeFileEditOperation<TMetadata>({
     // Read file content using runtime helper
     let originalContent: string;
     try {
-      originalContent = await readFileString(config.runtime, resolvedPath, abortSignal);
+      originalContent = await readFileString(effectiveRuntime, effectiveResolvedPath, abortSignal);
     } catch (err) {
       if (err instanceof RuntimeError) {
         return {
@@ -117,7 +143,12 @@ export async function executeFileEditOperation<TMetadata>({
 
     // Write file using runtime helper
     try {
-      await writeFileString(config.runtime, resolvedPath, operationResult.newContent, abortSignal);
+      await writeFileString(
+        effectiveRuntime,
+        effectiveResolvedPath,
+        operationResult.newContent,
+        abortSignal
+      );
     } catch (err) {
       if (err instanceof RuntimeError) {
         return {
@@ -128,7 +159,7 @@ export async function executeFileEditOperation<TMetadata>({
       throw err;
     }
 
-    const diff = generateDiff(resolvedPath, originalContent, operationResult.newContent);
+    const diff = generateDiff(effectiveResolvedPath, originalContent, operationResult.newContent);
 
     return {
       success: true,

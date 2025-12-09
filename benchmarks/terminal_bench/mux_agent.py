@@ -62,6 +62,7 @@ class MuxAgent(AbstractInstalledAgent):
         "MUX_APP_ROOT",
         "MUX_WORKSPACE_ID",
         "MUX_MODE",
+        "MUX_RUNTIME",
     )
 
     def __init__(

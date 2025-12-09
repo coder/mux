@@ -41,6 +41,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId,
       toolName: "status_set",
       result: { success: true, emoji: "🔍", message: "Analyzing code" },
+      timestamp: Date.now(),
     });
 
     const status = aggregator.getAgentStatus();
@@ -81,6 +82,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool1",
       toolName: "status_set",
       result: { success: true, emoji: "🔍", message: "Analyzing" },
+      timestamp: Date.now(),
     });
 
     expect(aggregator.getAgentStatus()?.emoji).toBe("🔍");
@@ -104,6 +106,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool2",
       toolName: "status_set",
       result: { success: true, emoji: "📝", message: "Writing" },
+      timestamp: Date.now(),
     });
 
     expect(aggregator.getAgentStatus()?.emoji).toBe("📝");
@@ -142,6 +145,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool1",
       toolName: "status_set",
       result: { success: true, emoji: "🔍", message: "Working" },
+      timestamp: Date.now(),
     });
 
     expect(aggregator.getAgentStatus()).toBeDefined();
@@ -193,6 +197,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool1",
       toolName: "status_set",
       result: { success: false, error: "Something went wrong" },
+      timestamp: Date.now(),
     });
 
     // Status should remain undefined
@@ -229,6 +234,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool1",
       toolName: "status_set",
       result: { success: true, emoji: "🔍", message: "First task" },
+      timestamp: Date.now(),
     });
 
     expect(aggregator.getAgentStatus()?.message).toBe("First task");
@@ -247,6 +253,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
 
     // User sends a NEW message - status should be cleared
     const newUserMessage = {
+      type: "message" as const,
       id: "msg2",
       role: "user" as const,
       parts: [{ type: "text" as const, text: "What's next?" }],
@@ -291,6 +298,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool1",
       toolName: "status_set",
       result: { success: false, error: "emoji must be a single emoji character" },
+      timestamp: Date.now(),
     });
 
     // End the stream to finalize message
@@ -349,6 +357,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool1",
       toolName: "status_set",
       result: { success: true, emoji: "🔍", message: "Analyzing code" },
+      timestamp: Date.now(),
     });
 
     // End the stream to finalize message
@@ -532,6 +541,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId,
       toolName: "status_set",
       result: { success: true, emoji: "✅", message: truncatedMessage },
+      timestamp: Date.now(),
     });
 
     // Should use truncated message from output, not the original input
@@ -575,6 +585,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId,
       toolName: "status_set",
       result: { success: true, emoji: "🔗", message: "PR submitted", url: testUrl },
+      timestamp: Date.now(),
     });
 
     const status = aggregator.getAgentStatus();
@@ -617,6 +628,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool1",
       toolName: "status_set",
       result: { success: true, emoji: "🔗", message: "PR submitted", url: testUrl },
+      timestamp: Date.now(),
     });
 
     expect(aggregator.getAgentStatus()?.url).toBe(testUrl);
@@ -640,6 +652,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool2",
       toolName: "status_set",
       result: { success: true, emoji: "✅", message: "Done" },
+      timestamp: Date.now(),
     });
 
     const statusAfterUpdate = aggregator.getAgentStatus();
@@ -667,6 +680,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool3",
       toolName: "status_set",
       result: { success: true, emoji: "🔄", message: "New PR", url: newUrl },
+      timestamp: Date.now(),
     });
 
     const finalStatus = aggregator.getAgentStatus();
@@ -708,12 +722,14 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool1",
       toolName: "status_set",
       result: { success: true, emoji: "🔗", message: "PR submitted", url: testUrl },
+      timestamp: Date.now(),
     });
 
     expect(aggregator.getAgentStatus()?.url).toBe(testUrl);
 
     // User sends a new message, which clears the status
     const userMessage = {
+      type: "message" as const,
       id: "user1",
       role: "user" as const,
       parts: [{ type: "text" as const, text: "Continue" }],
@@ -752,6 +768,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       toolCallId: "tool2",
       toolName: "status_set",
       result: { success: true, emoji: "✅", message: "Tests passed" },
+      timestamp: Date.now(),
     });
 
     const finalStatus = aggregator.getAgentStatus();
@@ -759,4 +776,73 @@ describe("StreamingMessageAggregator - Agent Status", () => {
     expect(finalStatus?.message).toBe("Tests passed");
     expect(finalStatus?.url).toBe(testUrl); // URL from previous stream persists!
   });
+
+  it("should persist URL across multiple assistant messages when loading from history", () => {
+    // Regression test: URL should persist even when only the most recent assistant message
+    // has a status_set without a URL - the URL from an earlier message should be used
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+    const testUrl = "https://github.com/owner/repo/pull/123";
+
+    // Historical messages: first assistant sets URL, second assistant updates status without URL
+    const historicalMessages = [
+      {
+        id: "user1",
+        role: "user" as const,
+        parts: [{ type: "text" as const, text: "Make a PR" }],
+        metadata: { timestamp: 1000, historySequence: 1 },
+      },
+      {
+        id: "assistant1",
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "dynamic-tool" as const,
+            toolName: "status_set",
+            toolCallId: "tool1",
+            state: "output-available" as const,
+            input: { emoji: "🔗", message: "PR submitted", url: testUrl },
+            output: { success: true, emoji: "🔗", message: "PR submitted", url: testUrl },
+            timestamp: 1001,
+            tokens: 10,
+          },
+        ],
+        metadata: { timestamp: 1001, historySequence: 2 },
+      },
+      {
+        id: "user2",
+        role: "user" as const,
+        parts: [{ type: "text" as const, text: "Continue" }],
+        metadata: { timestamp: 2000, historySequence: 3 },
+      },
+      {
+        id: "assistant2",
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "dynamic-tool" as const,
+            toolName: "status_set",
+            toolCallId: "tool2",
+            state: "output-available" as const,
+            input: { emoji: "✅", message: "Tests passed" },
+            output: { success: true, emoji: "✅", message: "Tests passed" }, // No URL!
+            timestamp: 2001,
+            tokens: 10,
+          },
+        ],
+        metadata: { timestamp: 2001, historySequence: 4 },
+      },
+    ];
+
+    aggregator.loadHistoricalMessages(historicalMessages);
+
+    const status = aggregator.getAgentStatus();
+    expect(status?.emoji).toBe("✅");
+    expect(status?.message).toBe("Tests passed");
+    // URL from the first assistant message should persist!
+    expect(status?.url).toBe(testUrl);
+  });
+
+  // Note: URL persistence through compaction is handled via localStorage,
+  // which is tested in integration tests. The aggregator saves lastStatusUrl
+  // to localStorage when it changes, and loads it on construction.
 });

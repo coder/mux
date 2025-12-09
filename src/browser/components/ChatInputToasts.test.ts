@@ -69,5 +69,18 @@ describe("ChatInputToasts", () => {
       expect(toast.title).toBe("Message Send Failed");
       expect(toast.message).toContain("unexpected error");
     });
+
+    test("should create toast for incompatible_workspace error", () => {
+      const error: SendMessageError = {
+        type: "incompatible_workspace",
+        message: "This workspace uses a runtime configuration from a newer version of mux.",
+      };
+
+      const toast = createErrorToast(error);
+
+      expect(toast.type).toBe("error");
+      expect(toast.title).toBe("Incompatible Workspace");
+      expect(toast.message).toContain("newer version");
+    });
   });
 });

@@ -9,7 +9,8 @@
     <meta name="description" content="Parallel agentic development with Electron + React" />
     <meta name="theme-color" content="#1e1e1e" />
     <link rel="manifest" href="/manifest.json" />
-    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <link rel="icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" href="/icon.png" />
     <title>mux - coder multiplexer</title>
     <style>
       body {
@@ -33,7 +34,8 @@
           const prefersLight = window.matchMedia
             ? window.matchMedia("(prefers-color-scheme: light)").matches
             : false;
-          const theme = parsed === "light" || parsed === "dark" ? parsed : prefersLight ? "light" : "dark";
+          const theme =
+            parsed === "light" || parsed === "dark" ? parsed : prefersLight ? "light" : "dark";
 
           document.documentElement.dataset.theme = theme;
           document.documentElement.style.colorScheme = theme;

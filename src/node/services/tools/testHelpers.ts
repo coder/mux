@@ -5,6 +5,7 @@ import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { InitStateManager } from "@/node/services/initStateManager";
 import { Config } from "@/node/config";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
+import { log } from "@/node/services/log";
 
 /**
  * Disposable test temp directory that auto-cleans when disposed
@@ -24,7 +25,7 @@ export class TestTempDir implements Disposable {
       try {
         fs.rmSync(this.path, { recursive: true, force: true });
       } catch (error) {
-        console.error(`Failed to cleanup test temp dir ${this.path}:`, error);
+        log.warn(`Failed to cleanup test temp dir ${this.path}:`, error);
       }
     }
   }
@@ -47,16 +48,18 @@ function getTestInitStateManager(): InitStateManager {
 /**
  * Create basic tool configuration for testing.
  * Returns a config object with default values that can be overridden.
+ * Uses tempDir for both cwd and sessionsDir to isolate tests.
  */
 export function createTestToolConfig(
   tempDir: string,
-  options?: { niceness?: number }
+  options?: { niceness?: number; workspaceId?: string; sessionsDir?: string }
 ): ToolConfiguration {
   return {
     cwd: tempDir,
-    runtime: new LocalRuntime(tempDir),
+    runtime: new LocalRuntime(tempDir, options?.sessionsDir ?? tempDir),
     runtimeTempDir: tempDir,
     niceness: options?.niceness,
+    workspaceId: options?.workspaceId ?? "test-workspace",
   };
 }
 

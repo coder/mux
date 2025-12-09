@@ -23,14 +23,21 @@
     ".expo/types/**/*.ts",
     "expo-env.d.ts",
     "../src/types/**/*.ts",
-    "../src/utils/messages/**/*.ts"
+    "../src/browser/utils/messages/**/*.ts",
+    "../src/browser/utils/slashCommands/**/*.ts"
   ],
   "exclude": [
     "node_modules",
     "**/*.test.ts",
     "**/*.test.tsx",
     "../src/**/*.test.ts",
-    "../src/**/*.test.tsx"
+    "../src/**/*.test.tsx",
+    "../src/desktop/**",
+    "../src/browser/**",
+    "../src/node/**",
+    "../src/cli/**",
+    "../src/main.ts",
+    "../src/preload.ts"
   ],
   "extends": "expo/tsconfig.base"
 }

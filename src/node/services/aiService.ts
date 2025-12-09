@@ -3,13 +3,17 @@ import * as os from "os";
 import { EventEmitter } from "events";
 import type { XaiProviderOptions } from "@ai-sdk/xai";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
-import { convertToModelMessages, type LanguageModel } from "ai";
+import { convertToModelMessages, type LanguageModel, type Tool } from "ai";
 import { applyToolOutputRedaction } from "@/browser/utils/messages/applyToolOutputRedaction";
 import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
-import { PROVIDER_REGISTRY } from "@/common/constants/providers";
+import {
+  PROVIDER_REGISTRY,
+  PROVIDER_DEFINITIONS,
+  type ProviderName,
+} from "@/common/constants/providers";
 
 import type { MuxMessage, MuxTextPart } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
@@ -19,8 +23,12 @@ import type { InitStateManager } from "./initStateManager";
 import type { SendMessageError } from "@/common/types/errors";
 import { getToolsForModel } from "@/common/utils/tools/tools";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
+import { LocalRuntime } from "@/node/runtime/LocalRuntime";
+import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import { secretsToRecord } from "@/common/types/secrets";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
+import type { FileState, EditedFileAttachment } from "@/node/services/agentSession";
 import { log } from "./log";
 import {
   transformModelMessages,
@@ -28,12 +36,14 @@ import {
   addInterruptedSentinel,
   filterEmptyAssistantMessages,
   injectModeTransition,
+  injectFileChangeNotifications,
 } from "@/browser/utils/messages/modelMessageTransform";
 import { applyCacheControl } from "@/common/utils/ai/cacheStrategy";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
 import { buildSystemMessage, readToolInstructions } from "./systemMessage";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
+import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type {
@@ -44,16 +54,24 @@ import type {
 } from "@/common/types/stream";
 import { applyToolPolicy, type ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { MockScenarioPlayer } from "./mock/mockScenarioPlayer";
-import { Agent } from "undici";
+import { EnvHttpProxyAgent, type Dispatcher } from "undici";
+import { getPlanFilePath, planFileExists } from "@/common/utils/planStorage";
+import { getPlanModeInstruction } from "@/common/utils/ui/modeUtils";
+import type { UIMode } from "@/common/types/mode";
 
 // Export a standalone version of getToolsForModel for use in backend
 
 // Create undici agent with unlimited timeouts for AI streaming requests.
 // Safe because users control cancellation via AbortSignal from the UI.
-const unlimitedTimeoutAgent = new Agent({
+// Uses EnvHttpProxyAgent to automatically respect HTTP_PROXY, HTTPS_PROXY,
+// and NO_PROXY environment variables for debugging/corporate network support.
+const unlimitedTimeoutAgent = new EnvHttpProxyAgent({
   bodyTimeout: 0, // No timeout - prevents BodyTimeoutError on long reasoning pauses
   headersTimeout: 0, // No timeout for headers
 });
+
+// Extend RequestInit with undici-specific dispatcher property (Node.js only)
+type RequestInitWithDispatcher = RequestInit & { dispatcher?: Dispatcher };
 
 /**
  * Default fetch function with unlimited timeouts for AI streaming.
@@ -70,7 +88,8 @@ const defaultFetchWithUnlimitedTimeout = (async (
   input: RequestInfo | URL,
   init?: RequestInit
 ): Promise<Response> => {
-  const requestInit: RequestInit = {
+  // dispatcher is a Node.js undici-specific property for custom HTTP agents
+  const requestInit: RequestInitWithDispatcher = {
     ...(init ?? {}),
     dispatcher: unlimitedTimeoutAgent,
   };
@@ -102,7 +121,7 @@ if (typeof globalFetchWithExtras.certificate === "function") {
  *
  * Injects cache_control on:
  * 1. Last tool (caches all tool definitions)
- * 2. Second-to-last message's last content part (caches conversation history)
+ * 2. Last message's last content part (caches entire conversation)
  */
 function wrapFetchWithAnthropicCacheControl(baseFetch: typeof fetch): typeof fetch {
   const cachingFetch = async (
@@ -123,18 +142,36 @@ function wrapFetchWithAnthropicCacheControl(baseFetch: typeof fetch): typeof fet
         lastTool.cache_control ??= { type: "ephemeral" };
       }
 
-      // Inject cache_control on second-to-last message's last content part
-      // This caches conversation history up to (but not including) the current user message
-      if (Array.isArray(json.messages) && json.messages.length >= 2) {
-        const secondToLastMsg = json.messages[json.messages.length - 2] as Record<string, unknown>;
-        const content = secondToLastMsg.content;
+      // Inject cache_control on last message's last content part
+      // This caches the entire conversation
+      // Handle both formats:
+      // - Direct Anthropic provider: json.messages (Anthropic API format)
+      // - Gateway provider: json.prompt (AI SDK internal format)
+      const messages = Array.isArray(json.messages)
+        ? json.messages
+        : Array.isArray(json.prompt)
+          ? json.prompt
+          : null;
 
+      if (messages && messages.length >= 1) {
+        const lastMsg = messages[messages.length - 1] as Record<string, unknown>;
+
+        // For gateway: add providerOptions.anthropic.cacheControl at message level
+        // (gateway validates schema strictly, doesn't allow raw cache_control on messages)
+        if (Array.isArray(json.prompt)) {
+          const providerOpts = (lastMsg.providerOptions ?? {}) as Record<string, unknown>;
+          const anthropicOpts = (providerOpts.anthropic ?? {}) as Record<string, unknown>;
+          anthropicOpts.cacheControl ??= { type: "ephemeral" };
+          providerOpts.anthropic = anthropicOpts;
+          lastMsg.providerOptions = providerOpts;
+        }
+
+        // For direct Anthropic: add cache_control to last content part
+        const content = lastMsg.content;
         if (Array.isArray(content) && content.length > 0) {
-          // Array content: add cache_control to last part
           const lastPart = content[content.length - 1] as Record<string, unknown>;
           lastPart.cache_control ??= { type: "ephemeral" };
         }
-        // Note: String content messages are rare after SDK conversion; skip for now
       }
 
       // Update body with modified JSON
@@ -214,15 +251,18 @@ export class AIService extends EventEmitter {
   private readonly historyService: HistoryService;
   private readonly partialService: PartialService;
   private readonly config: Config;
+  private mcpServerManager?: MCPServerManager;
   private readonly initStateManager: InitStateManager;
   private readonly mockModeEnabled: boolean;
   private readonly mockScenarioPlayer?: MockScenarioPlayer;
+  private readonly backgroundProcessManager?: BackgroundProcessManager;
 
   constructor(
     config: Config,
     historyService: HistoryService,
     partialService: PartialService,
-    initStateManager: InitStateManager
+    initStateManager: InitStateManager,
+    backgroundProcessManager?: BackgroundProcessManager
   ) {
     super();
     // Increase max listeners to accommodate multiple concurrent workspace listeners
@@ -232,6 +272,7 @@ export class AIService extends EventEmitter {
     this.historyService = historyService;
     this.partialService = partialService;
     this.initStateManager = initStateManager;
+    this.backgroundProcessManager = backgroundProcessManager;
     this.streamManager = new StreamManager(historyService, partialService);
     void this.ensureSessionsDir();
     this.setupStreamEventForwarding();
@@ -245,6 +286,10 @@ export class AIService extends EventEmitter {
     }
   }
 
+  setMCPServerManager(manager: MCPServerManager): void {
+    this.mcpServerManager = manager;
+  }
+
   /**
    * Forward all stream events from StreamManager to AIService consumers
    */
@@ -253,17 +298,20 @@ export class AIService extends EventEmitter {
     this.streamManager.on("stream-delta", (data) => this.emit("stream-delta", data));
     this.streamManager.on("stream-end", (data) => this.emit("stream-end", data));
 
-    // Handle stream-abort: commit partial to history before forwarding
-    // Note: If abandonPartial option was used, partial is already deleted by IPC handler
+    // Handle stream-abort: dispose of partial based on abandonPartial flag
     this.streamManager.on("stream-abort", (data: StreamAbortEvent) => {
       void (async () => {
-        // Check if partial still exists (not abandoned)
-        const partial = await this.partialService.readPartial(data.workspaceId);
-        if (partial) {
+        if (data.abandonPartial) {
+          // Caller requested discarding partial - delete without committing
+          await this.partialService.deletePartial(data.workspaceId);
+        } else {
           // Commit interrupted message to history with partial:true metadata
           // This ensures /clear and /truncate can clean up interrupted messages
-          await this.partialService.commitToHistory(data.workspaceId);
-          await this.partialService.deletePartial(data.workspaceId);
+          const partial = await this.partialService.readPartial(data.workspaceId);
+          if (partial) {
+            await this.partialService.commitToHistory(data.workspaceId);
+            await this.partialService.deletePartial(data.workspaceId);
+          }
         }
 
         // Forward abort event to consumers
@@ -520,24 +568,6 @@ export class AIService extends EventEmitter {
         return Ok(model);
       }
 
-      // Handle Google provider
-      if (providerName === "google") {
-        if (!providerConfig.apiKey) {
-          return Err({
-            type: "api_key_not_found",
-            provider: providerName,
-          });
-        }
-
-        // Lazy-load Google provider to reduce startup time
-        const { createGoogleGenerativeAI } = await PROVIDER_REGISTRY.google();
-        const provider = createGoogleGenerativeAI({
-          ...providerConfig,
-          fetch: getProviderFetch(providerConfig),
-        });
-        return Ok(provider(modelId));
-      }
-
       // Handle xAI provider
       if (providerName === "xai") {
         if (!providerConfig.apiKey) {
@@ -724,8 +754,8 @@ export class AIService extends EventEmitter {
 
       // Handle Mux Gateway provider
       if (providerName === "mux-gateway") {
-        // Mux Gateway uses couponCode as the API key
-        const couponCode = providerConfig.couponCode;
+        // Mux Gateway uses couponCode as the API key (fallback to legacy voucher)
+        const couponCode = providerConfig.couponCode ?? providerConfig.voucher;
         if (typeof couponCode !== "string" || !couponCode) {
           return Err({
             type: "api_key_not_found",
@@ -753,6 +783,40 @@ export class AIService extends EventEmitter {
         return Ok(gateway(modelId));
       }
 
+      // Generic handler for simple providers (standard API key + factory pattern)
+      // Providers with custom logic (anthropic, openai, xai, ollama, openrouter, bedrock, mux-gateway)
+      // are handled explicitly above. New providers using the standard pattern need only be
+      // added to PROVIDER_DEFINITIONS - no code changes required here.
+      const providerDef = PROVIDER_DEFINITIONS[providerName as ProviderName];
+      if (providerDef) {
+        // Check API key requirement
+        if (providerDef.requiresApiKey && !providerConfig.apiKey) {
+          return Err({
+            type: "api_key_not_found",
+            provider: providerName,
+          });
+        }
+
+        // Lazy-load and create provider using factoryName from definition
+        const providerModule = (await providerDef.import()) as unknown as Record<
+          string,
+          (config: Record<string, unknown>) => (modelId: string) => LanguageModel
+        >;
+        const factory = providerModule[providerDef.factoryName];
+        if (!factory) {
+          return Err({
+            type: "provider_not_supported",
+            provider: providerName,
+          });
+        }
+
+        const provider = factory({
+          ...providerConfig,
+          fetch: getProviderFetch(providerConfig),
+        });
+        return Ok(provider(modelId));
+      }
+
       return Err({
         type: "provider_not_supported",
         provider: providerName,
@@ -775,6 +839,8 @@ export class AIService extends EventEmitter {
    * @param maxOutputTokens Optional maximum tokens for model output
    * @param muxProviderOptions Optional provider-specific options
    * @param mode Optional mode name - affects system message via Mode: sections in AGENTS.md
+   * @param recordFileState Optional callback to record file state for external edit detection
+   * @param changedFileAttachments Optional attachments for files that were edited externally
    * @returns Promise that resolves when streaming completes or fails
    */
   async streamMessage(
@@ -787,7 +853,9 @@ export class AIService extends EventEmitter {
     additionalSystemInstructions?: string,
     maxOutputTokens?: number,
     muxProviderOptions?: MuxProviderOptions,
-    mode?: string
+    mode?: string,
+    recordFileState?: (filePath: string, state: FileState) => void,
+    changedFileAttachments?: EditedFileAttachment[]
   ): Promise<Result<void, SendMessageError>> {
     try {
       if (this.mockModeEnabled && this.mockScenarioPlayer) {
@@ -847,7 +915,9 @@ export class AIService extends EventEmitter {
           secrets: {},
         },
         "", // Empty workspace ID for early stub config
-        this.initStateManager
+        this.initStateManager,
+        undefined,
+        undefined
       );
       const earlyTools = applyToolPolicy(earlyAllTools, toolPolicy);
       const toolNamesForSentinel = Object.keys(earlyTools);
@@ -877,9 +947,15 @@ export class AIService extends EventEmitter {
         toolNamesForSentinel
       );
 
+      // Inject file change notifications as user messages (preserves system message cache)
+      const messagesWithFileChanges = injectFileChangeNotifications(
+        messagesWithModeContext,
+        changedFileAttachments
+      );
+
       // Apply centralized tool-output redaction BEFORE converting to provider ModelMessages
       // This keeps the persisted/UI history intact while trimming heavy fields for the request
-      const redactedForProvider = applyToolOutputRedaction(messagesWithModeContext);
+      const redactedForProvider = applyToolOutputRedaction(messagesWithFileChanges);
       log.debug_obj(`${workspaceId}/2a_redacted_messages.json`, redactedForProvider);
 
       // Sanitize tool inputs to ensure they are valid objects (not strings or arrays)
@@ -932,7 +1008,8 @@ export class AIService extends EventEmitter {
 
       // Get workspace path - handle both worktree and in-place modes
       const runtime = createRuntime(
-        metadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir }
+        metadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
+        { projectPath: metadata.projectPath }
       );
       // In-place workspaces (CLI/benchmarks) have projectPath === name
       // Use path directly instead of reconstructing via getWorkspacePath
@@ -941,14 +1018,32 @@ export class AIService extends EventEmitter {
         ? metadata.projectPath
         : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
 
+      // Fetch MCP server config for system prompt (before building message)
+      const mcpServers = this.mcpServerManager
+        ? await this.mcpServerManager.listServers(metadata.projectPath)
+        : undefined;
+
+      // Construct plan mode instruction if in plan mode
+      // This is done backend-side because we have access to the plan file path
+      let effectiveAdditionalInstructions = additionalSystemInstructions;
+      if (mode === "plan") {
+        const planFilePath = getPlanFilePath(workspaceId);
+        const planExists = planFileExists(workspaceId);
+        const planModeInstruction = getPlanModeInstruction(planFilePath, planExists);
+        effectiveAdditionalInstructions = additionalSystemInstructions
+          ? `${planModeInstruction}\n\n${additionalSystemInstructions}`
+          : planModeInstruction;
+      }
+
       // Build system message from workspace metadata
       const systemMessage = await buildSystemMessage(
         metadata,
         runtime,
         workspacePath,
         mode,
-        additionalSystemInstructions,
-        modelString
+        effectiveAdditionalInstructions,
+        modelString,
+        mcpServers
       );
 
       // Count system message tokens for cost tracking
@@ -960,6 +1055,20 @@ export class AIService extends EventEmitter {
 
       // Generate stream token and create temp directory for tools
       const streamToken = this.streamManager.generateStreamToken();
+      let mcpTools: Record<string, Tool> | undefined;
+      if (this.mcpServerManager) {
+        try {
+          mcpTools = await this.mcpServerManager.getToolsForWorkspace({
+            workspaceId,
+            projectPath: metadata.projectPath,
+            runtime,
+            workspacePath,
+          });
+        } catch (error) {
+          log.error("Failed to start MCP servers", { workspaceId, error });
+        }
+      }
+
       const runtimeTempDir = await this.streamManager.createTempDirForStream(streamToken, runtime);
 
       // Extract tool-specific instructions from AGENTS.md files
@@ -976,12 +1085,29 @@ export class AIService extends EventEmitter {
         {
           cwd: workspacePath,
           runtime,
+          // Plan files are always local - create a local runtime for plan file I/O
+          // even when the workspace uses SSH runtime
+          localRuntime:
+            mode === "plan" ? new LocalRuntime(workspacePath, runtimeTempDir) : undefined,
           secrets: secretsToRecord(projectSecrets),
+          muxEnv: getMuxEnv(
+            metadata.projectPath,
+            getRuntimeType(metadata.runtimeConfig),
+            metadata.name
+          ),
           runtimeTempDir,
+          backgroundProcessManager: this.backgroundProcessManager,
+          // Plan mode configuration for path enforcement
+          mode: mode as UIMode | undefined,
+          planFilePath: mode === "plan" ? getPlanFilePath(workspaceId) : undefined,
+          workspaceId,
+          // External edit detection callback
+          recordFileState,
         },
         workspaceId,
         this.initStateManager,
-        toolInstructions
+        toolInstructions,
+        mcpTools
       );
 
       // Apply tool policy to filter tools (if policy provided)
@@ -1142,6 +1268,34 @@ export class AIService extends EventEmitter {
         effectiveMuxProviderOptions
       );
 
+      // Debug dump: Log the complete LLM request when MUX_DEBUG_LLM_REQUEST is set
+      // This helps diagnose issues with system prompts, messages, tools, etc.
+      if (process.env.MUX_DEBUG_LLM_REQUEST === "1") {
+        const llmRequest = {
+          workspaceId,
+          model: modelString,
+          systemMessage,
+          messages: finalMessages,
+          tools: Object.fromEntries(
+            Object.entries(tools).map(([name, tool]) => [
+              name,
+              {
+                description: tool.description,
+                inputSchema: tool.inputSchema,
+              },
+            ])
+          ),
+          providerOptions,
+          thinkingLevel,
+          maxOutputTokens,
+          mode,
+          toolPolicy,
+        };
+        log.info(
+          `[MUX_DEBUG_LLM_REQUEST] Full LLM request:\n${JSON.stringify(llmRequest, null, 2)}`
+        );
+      }
+
       // Delegate to StreamManager with model instance, system message, tools, historySequence, and initial metadata
       const streamResult = await this.streamManager.startStream(
         workspaceId,
@@ -1180,12 +1334,15 @@ export class AIService extends EventEmitter {
     }
   }
 
-  async stopStream(workspaceId: string, abandonPartial?: boolean): Promise<Result<void>> {
+  async stopStream(
+    workspaceId: string,
+    options?: { soft?: boolean; abandonPartial?: boolean }
+  ): Promise<Result<void>> {
     if (this.mockModeEnabled && this.mockScenarioPlayer) {
       this.mockScenarioPlayer.stop(workspaceId);
       return Ok(undefined);
     }
-    return this.streamManager.stopStream(workspaceId, abandonPartial);
+    return this.streamManager.stopStream(workspaceId, options);
   }
 
   /**
@@ -1229,6 +1386,18 @@ export class AIService extends EventEmitter {
       return;
     }
     await this.streamManager.replayStream(workspaceId);
+  }
+
+  /**
+   * DEBUG ONLY: Trigger an artificial stream error for testing.
+   * This is used by integration tests to simulate network errors mid-stream.
+   * @returns true if an active stream was found and error was triggered
+   */
+  debugTriggerStreamError(
+    workspaceId: string,
+    errorMessage = "Test-triggered stream error"
+  ): Promise<boolean> {
+    return this.streamManager.debugTriggerStreamError(workspaceId, errorMessage);
   }
 
   async deleteWorkspace(workspaceId: string): Promise<Result<void>> {

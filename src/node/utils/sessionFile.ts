@@ -1,9 +1,11 @@
 import * as fs from "fs/promises";
 import * as path from "path";
+import writeFileAtomic from "write-file-atomic";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { Config } from "@/node/config";
 import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
+import { log } from "@/node/services/log";
 
 /**
  * Shared utility for managing JSON files in workspace session directories.
@@ -40,7 +42,7 @@ export class SessionFileManager<T> {
         return null; // File doesn't exist
       }
       // Log other errors but don't fail
-      console.error(`Error reading ${this.fileName}:`, error);
+      log.error(`Error reading ${this.fileName}:`, error);
       return null;
     }
   }
@@ -55,7 +57,8 @@ export class SessionFileManager<T> {
         const sessionDir = this.config.getSessionDir(workspaceId);
         await fs.mkdir(sessionDir, { recursive: true });
         const filePath = this.getFilePath(workspaceId);
-        await fs.writeFile(filePath, JSON.stringify(data, null, 2));
+        // Atomic write prevents corruption if app crashes mid-write
+        await writeFileAtomic(filePath, JSON.stringify(data, null, 2));
         return Ok(undefined);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

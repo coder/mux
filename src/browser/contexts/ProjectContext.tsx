@@ -8,8 +8,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useAPI } from "@/browser/contexts/API";
 import type { ProjectConfig } from "@/node/config";
-import type { BranchListResult } from "@/common/types/ipc";
+import type { BranchListResult } from "@/common/orpc/types";
 import type { Secret } from "@/common/types/secrets";
 
 interface WorkspaceModalState {
@@ -24,9 +25,11 @@ interface WorkspaceModalState {
 
 export interface ProjectContext {
   projects: Map<string, ProjectConfig>;
+  /** True while initial project list is loading */
+  loading: boolean;
   refreshProjects: () => Promise<void>;
   addProject: (normalizedPath: string, projectConfig: ProjectConfig) => void;
-  removeProject: (path: string) => Promise<void>;
+  removeProject: (path: string) => Promise<{ success: boolean; error?: string }>;
 
   // Project creation modal
   isProjectCreateModalOpen: boolean;
@@ -37,11 +40,6 @@ export interface ProjectContext {
   workspaceModalState: WorkspaceModalState;
   openWorkspaceModal: (projectPath: string, options?: { projectName?: string }) => Promise<void>;
   closeWorkspaceModal: () => void;
-
-  // Workspace creation flow
-  pendingNewWorkspaceProject: string | null;
-  beginWorkspaceCreation: (projectPath: string) => void;
-  clearPendingWorkspaceCreation: () => void;
 
   // Helpers
   getBranchesForProject: (projectPath: string) => Promise<BranchListResult>;
@@ -60,7 +58,9 @@ function deriveProjectName(projectPath: string): string {
 }
 
 export function ProjectProvider(props: { children: ReactNode }) {
+  const { api } = useAPI();
   const [projects, setProjects] = useState<Map<string, ProjectConfig>>(new Map());
+  const [loading, setLoading] = useState(true);
   const [isProjectCreateModalOpen, setProjectCreateModalOpen] = useState(false);
   const [workspaceModalState, setWorkspaceModalState] = useState<WorkspaceModalState>({
     isOpen: false,
@@ -72,20 +72,23 @@ export function ProjectProvider(props: { children: ReactNode }) {
     isLoading: false,
   });
   const workspaceModalProjectRef = useRef<string | null>(null);
-  const [pendingNewWorkspaceProject, setPendingNewWorkspaceProject] = useState<string | null>(null);
 
   const refreshProjects = useCallback(async () => {
+    if (!api) return;
     try {
-      const projectsList = await window.api.projects.list();
+      const projectsList = await api.projects.list();
       setProjects(new Map(projectsList));
     } catch (error) {
       console.error("Failed to load projects:", error);
       setProjects(new Map());
     }
-  }, []);
+  }, [api]);
 
   useEffect(() => {
-    void refreshProjects();
+    void (async () => {
+      await refreshProjects();
+      setLoading(false);
+    })();
   }, [refreshProjects]);
 
   const addProject = useCallback((normalizedPath: string, projectConfig: ProjectConfig) => {
@@ -96,28 +99,40 @@ export function ProjectProvider(props: { children: ReactNode }) {
     });
   }, []);
 
-  const removeProject = useCallback(async (path: string) => {
-    try {
-      const result = await window.api.projects.remove(path);
-      if (result.success) {
-        setProjects((prev) => {
-          const next = new Map(prev);
-          next.delete(path);
-          return next;
-        });
-      } else {
-        console.error("Failed to remove project:", result.error);
+  const removeProject = useCallback(
+    async (path: string): Promise<{ success: boolean; error?: string }> => {
+      if (!api) return { success: false, error: "API not connected" };
+      try {
+        const result = await api.projects.remove({ projectPath: path });
+        if (result.success) {
+          setProjects((prev) => {
+            const next = new Map(prev);
+            next.delete(path);
+            return next;
+          });
+          return { success: true };
+        } else {
+          console.error("Failed to remove project:", result.error);
+          return { success: false, error: result.error };
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error("Failed to remove project:", errorMessage);
+        return { success: false, error: errorMessage };
       }
-    } catch (error) {
-      console.error("Failed to remove project:", error);
-    }
-  }, []);
+    },
+    [api]
+  );
 
   const getBranchesForProject = useCallback(
     async (projectPath: string): Promise<BranchListResult> => {
-      const branchResult = await window.api.projects.listBranches(projectPath);
-      const sanitizedBranches = Array.isArray(branchResult?.branches)
-        ? branchResult.branches.filter((branch): branch is string => typeof branch === "string")
+      if (!api) {
+        return { branches: [], recommendedTrunk: "" };
+      }
+      const branchResult = await api.projects.listBranches({ projectPath });
+      const branches = branchResult.branches;
+      const sanitizedBranches = Array.isArray(branches)
+        ? branches.filter((branch): branch is string => typeof branch === "string")
         : [];
 
       const recommended =
@@ -131,7 +146,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
         recommendedTrunk: recommended,
       };
     },
-    []
+    [api]
   );
 
   const openWorkspaceModal = useCallback(
@@ -193,28 +208,29 @@ export function ProjectProvider(props: { children: ReactNode }) {
     });
   }, []);
 
-  const beginWorkspaceCreation = useCallback((projectPath: string) => {
-    setPendingNewWorkspaceProject(projectPath);
-  }, []);
+  const getSecrets = useCallback(
+    async (projectPath: string): Promise<Secret[]> => {
+      if (!api) return [];
+      return await api.projects.secrets.get({ projectPath });
+    },
+    [api]
+  );
 
-  const clearPendingWorkspaceCreation = useCallback(() => {
-    setPendingNewWorkspaceProject(null);
-  }, []);
-
-  const getSecrets = useCallback(async (projectPath: string) => {
-    return await window.api.projects.secrets.get(projectPath);
-  }, []);
-
-  const updateSecrets = useCallback(async (projectPath: string, secrets: Secret[]) => {
-    const result = await window.api.projects.secrets.update(projectPath, secrets);
-    if (!result.success) {
-      console.error("Failed to update secrets:", result.error);
-    }
-  }, []);
+  const updateSecrets = useCallback(
+    async (projectPath: string, secrets: Secret[]) => {
+      if (!api) return;
+      const result = await api.projects.secrets.update({ projectPath, secrets });
+      if (!result.success) {
+        console.error("Failed to update secrets:", result.error);
+      }
+    },
+    [api]
+  );
 
   const value = useMemo<ProjectContext>(
     () => ({
       projects,
+      loading,
       refreshProjects,
       addProject,
       removeProject,
@@ -224,15 +240,13 @@ export function ProjectProvider(props: { children: ReactNode }) {
       workspaceModalState,
       openWorkspaceModal,
       closeWorkspaceModal,
-      pendingNewWorkspaceProject,
-      beginWorkspaceCreation,
-      clearPendingWorkspaceCreation,
       getBranchesForProject,
       getSecrets,
       updateSecrets,
     }),
     [
       projects,
+      loading,
       refreshProjects,
       addProject,
       removeProject,
@@ -240,9 +254,6 @@ export function ProjectProvider(props: { children: ReactNode }) {
       workspaceModalState,
       openWorkspaceModal,
       closeWorkspaceModal,
-      pendingNewWorkspaceProject,
-      beginWorkspaceCreation,
-      clearPendingWorkspaceCreation,
       getBranchesForProject,
       getSecrets,
       updateSecrets,

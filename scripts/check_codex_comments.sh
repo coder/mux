@@ -55,8 +55,10 @@ RESULT=$(gh api graphql \
   -F repo="$REPO" \
   -F pr="$PR_NUMBER")
 
-# Filter regular comments from bot that aren't minimized and don't say "Didn't find any major issues"
-REGULAR_COMMENTS=$(echo "$RESULT" | jq "[.data.repository.pullRequest.comments.nodes[] | select(.author.login == \"${BOT_LOGIN_GRAPHQL}\" and .isMinimized == false and (.body | test(\"Didn't find any major issues\") | not))]")
+# Filter regular comments from bot that aren't minimized, excluding:
+# - "Didn't find any major issues" (no issues found)
+# - "usage limits have been reached" (rate limit error, not a real review)
+REGULAR_COMMENTS=$(echo "$RESULT" | jq "[.data.repository.pullRequest.comments.nodes[] | select(.author.login == \"${BOT_LOGIN_GRAPHQL}\" and .isMinimized == false and (.body | test(\"Didn't find any major issues|usage limits have been reached\") | not))]")
 REGULAR_COUNT=$(echo "$REGULAR_COMMENTS" | jq 'length')
 
 # Filter unresolved review threads from bot

@@ -16,12 +16,30 @@
  */
 
 import type { WorkspaceUsageState } from "@/browser/stores/WorkspaceStore";
+import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { getModelStats } from "@/common/utils/tokens/modelStats";
 import { supports1MContext } from "@/common/utils/ai/models";
-import { DEFAULT_AUTO_COMPACTION_THRESHOLD } from "@/common/constants/ui";
+import {
+  DEFAULT_AUTO_COMPACTION_THRESHOLD,
+  FORCE_COMPACTION_BUFFER_PERCENT,
+} from "@/common/constants/ui";
+
+/** Sum all token components from a ChatUsageDisplay */
+function getTotalTokens(usage: ChatUsageDisplay): number {
+  return (
+    usage.input.tokens +
+    usage.cached.tokens +
+    usage.cacheCreate.tokens +
+    usage.output.tokens +
+    usage.reasoning.tokens
+  );
+}
 
 export interface AutoCompactionCheckResult {
   shouldShowWarning: boolean;
+  /** True when usage exceeds threshold + buffer (gives user control before force-compact) */
+  shouldForceCompact: boolean;
+  /** Current usage percentage - live when streaming, otherwise last completed */
   usagePercentage: number;
   thresholdPercentage: number;
 }
@@ -39,8 +57,7 @@ const WARNING_ADVANCE_PERCENT = 10;
  * @param usage - Current workspace usage state (from useWorkspaceUsage)
  * @param model - Current model string (optional - returns safe default if not provided)
  * @param use1M - Whether 1M context is enabled
- * @param enabled - Whether auto-compaction is enabled for this workspace
- * @param threshold - Usage percentage threshold (0.0-1.0, default 0.7 = 70%)
+ * @param threshold - Usage percentage threshold (0.0-1.0, default 0.7 = 70%). If >= 1.0, auto-compaction is considered disabled.
  * @param warningAdvancePercent - Show warning this many percentage points before threshold (default 10)
  * @returns Check result with warning flag and usage percentage
  */
@@ -48,17 +65,17 @@ export function checkAutoCompaction(
   usage: WorkspaceUsageState | undefined,
   model: string | null,
   use1M: boolean,
-  enabled: boolean,
   threshold: number = DEFAULT_AUTO_COMPACTION_THRESHOLD,
   warningAdvancePercent: number = WARNING_ADVANCE_PERCENT
 ): AutoCompactionCheckResult {
   const thresholdPercentage = threshold * 100;
+  const isEnabled = threshold < 1.0;
 
-  // Short-circuit if auto-compaction is disabled
-  // Or if no usage data yet
-  if (!enabled || !model || !usage || usage.usageHistory.length === 0) {
+  // Short-circuit if auto-compaction is disabled or missing required data
+  if (!isEnabled || !model || !usage) {
     return {
       shouldShowWarning: false,
+      shouldForceCompact: false,
       usagePercentage: 0,
       thresholdPercentage,
     };
@@ -67,31 +84,37 @@ export function checkAutoCompaction(
   // Determine max tokens for this model
   const modelStats = getModelStats(model);
   const maxTokens = use1M && supports1MContext(model) ? 1_000_000 : modelStats?.max_input_tokens;
-  const lastUsage = usage.usageHistory[usage.usageHistory.length - 1];
 
   // No max tokens known - safe default (can't calculate percentage)
   if (!maxTokens) {
     return {
       shouldShowWarning: false,
+      shouldForceCompact: false,
       usagePercentage: 0,
       thresholdPercentage,
     };
   }
 
-  const currentContextTokens =
-    lastUsage.input.tokens +
-    lastUsage.cached.tokens +
-    lastUsage.cacheCreate.tokens +
-    lastUsage.output.tokens +
-    lastUsage.reasoning.tokens;
+  // Current usage: live when streaming, else last completed
+  const lastUsage = usage.lastContextUsage;
+  const currentUsage = usage.liveUsage ?? lastUsage;
 
-  const usagePercentage = (currentContextTokens / maxTokens) * 100;
+  // Usage percentage from current context (live when streaming, otherwise last completed)
+  const usagePercentage = currentUsage ? (getTotalTokens(currentUsage) / maxTokens) * 100 : 0;
 
-  // Show warning if within advance window (e.g., 60% for 70% threshold with 10% advance)
-  const shouldShowWarning = usagePercentage >= thresholdPercentage - warningAdvancePercent;
+  // Force-compact when usage exceeds threshold + buffer
+  const forceCompactThreshold = thresholdPercentage + FORCE_COMPACTION_BUFFER_PERCENT;
+  const shouldForceCompact = usagePercentage >= forceCompactThreshold;
+
+  // Warning uses max of last completed and current (live when streaming)
+  // This ensures warning shows when live usage spikes above threshold mid-stream
+  const lastUsagePercentage = lastUsage ? (getTotalTokens(lastUsage) / maxTokens) * 100 : 0;
+  const shouldShowWarning =
+    Math.max(lastUsagePercentage, usagePercentage) >= thresholdPercentage - warningAdvancePercent;
 
   return {
     shouldShowWarning,
+    shouldForceCompact,
     usagePercentage,
     thresholdPercentage,
   };

@@ -1,4 +1,7 @@
-# AGENT INSTRUCTIONS
+---
+title: AGENTS.md
+description: Agent instructions for AI assistants working on the mux codebase
+---
 
 **Prime directive:** keep edits minimal and token-efficient—say only what conveys actionable signal.
 
@@ -33,7 +36,7 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 
 ## Documentation Rules
 
-- No free-floating Markdown. User docs live in `docs/` (read `docs/README.md`, update `docs/SUMMARY.md`, use standard Markdown + mermaid). Developer/test notes belong inline as comments.
+- No free-floating Markdown. User docs live in `docs/` (read `docs/README.md`, add pages to `docs.json` navigation, use standard Markdown + mermaid). Developer/test notes belong inline as comments.
 - For planning artifacts, use the `propose_plan` tool or inline comments instead of ad-hoc docs.
 - Do not add new root-level docs without explicit request; during feature work rely on code + tests + inline comments.
 - Test documentation stays inside the relevant test file as commentary explaining setup/edge cases.
@@ -49,6 +52,7 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 - Package manager: bun only. Use `bun install`, `bun add`, `bun run` (which proxies to Make when relevant). Run `bun install` if modules/types go missing.
 - Makefile is source of truth (new commands land there, not `package.json`).
 - Primary targets: `make dev|start|build|lint|lint-fix|fmt|fmt-check|typecheck|test|test-integration|clean|help`.
+- Full `static-check` includes docs link checking via `mintlify broken-links`.
 
 ## Refactoring & Runtime Etiquette
 
@@ -66,7 +70,8 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 
 ### Storybook
 
-- Prefer full-app stories (`App.stories.tsx`) to isolated components.
+- Prefer full-app stories (`App.stories.tsx`) to isolated component stories. This tests components in their real context with proper providers, state management, and styling.
+- Use play functions with `@storybook/test` utilities (`within`, `userEvent`, `waitFor`) to interact with the UI and set up the desired visual state. Do not add props to production components solely for storybook convenience.
 
 ### TDD Expectations
 
@@ -84,9 +89,9 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 ### Integration Testing
 
 - Use `bun x jest` (optionally `TEST_INTEGRATION=1`). Examples:
-  - `TEST_INTEGRATION=1 bun x jest tests/ipcMain/sendMessage.test.ts -t "pattern"`
+  - `TEST_INTEGRATION=1 bun x jest tests/integration/sendMessage.test.ts -t "pattern"`
   - `TEST_INTEGRATION=1 bun x jest tests`
-- `tests/ipcMain` is slow; filter with `-t` when possible. Tests use `test.concurrent()`.
+- `tests/integration` is slow; filter with `-t` when possible. Tests use `test.concurrent()`.
 - Never bypass IPC: do not call `env.config.saveConfig`, `env.historyService`, etc., directly. Use `env.mockIpcRenderer.invoke(IPC_CHANNELS.CONFIG_SAVE|HISTORY_GET|WORKSPACE_CREATE, ...)` instead.
 - Acceptable exceptions: reading config to craft IPC args, verifying filesystem after IPC completes, or loading existing data to avoid redundant API calls.
 
@@ -107,11 +112,14 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 - Let types drive design: prefer discriminated unions for state, minimize runtime checks, and simplify when types feel unwieldy.
 - Use `using` declarations (or equivalent disposables) for processes, file handles, etc., to ensure cleanup even on errors.
 - Centralize magic constants under `src/constants/`; share them instead of duplicating values across layers.
+- Never repeat constant values (like keybinds) in comments—they become stale when the constant changes.
 
 ## Component State & Storage
 
 - Parent components own localStorage interactions; children announce intent only.
 - Use `usePersistedState`/`readPersistedState`/`updatePersistedState` helpers—never call `localStorage` directly.
+- When a component needs to read persisted state it doesn't own (to avoid layout flash), use `readPersistedState` in `useState` initializer: `useState(() => readPersistedState(key, default))`.
+- When multiple components need the same persisted value, use `usePersistedState` with identical keys and `{ listener: true }` for automatic cross-component sync.
 - Avoid destructuring props in function signatures; access via `props.field` to keep rename-friendly code.
 
 ## Module Imports
@@ -150,8 +158,6 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 
 - Prefer fixes that simplify existing code; such simplifications often do not need new tests.
 - When adding complexity, add or extend tests. If coverage requires new infrastructure, propose the harness and then add the tests there.
-
-<!-- IMPORTANT: Do not rename these Mode headings; the parser extracts them verbatim. -->
 
 ## Mode: Exec
 

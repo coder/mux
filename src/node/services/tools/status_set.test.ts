@@ -10,6 +10,7 @@ describe("status_set tool validation", () => {
     cwd: "/test",
     runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
     runtimeTempDir: "/tmp",
+    workspaceId: "test-workspace",
   };
 
   const mockToolCallOptions: ToolCallOptions = {

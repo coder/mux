@@ -9,9 +9,15 @@ import { ProposePlanToolCall } from "../tools/ProposePlanToolCall";
 import { TodoToolCall } from "../tools/TodoToolCall";
 import { StatusSetToolCall } from "../tools/StatusSetToolCall";
 import { WebFetchToolCall } from "../tools/WebFetchToolCall";
+import { BashBackgroundListToolCall } from "../tools/BashBackgroundListToolCall";
+import { BashBackgroundTerminateToolCall } from "../tools/BashBackgroundTerminateToolCall";
 import type {
   BashToolArgs,
   BashToolResult,
+  BashBackgroundListArgs,
+  BashBackgroundListResult,
+  BashBackgroundTerminateArgs,
+  BashBackgroundTerminateResult,
   FileReadToolArgs,
   FileReadToolResult,
   FileEditReplaceStringToolArgs,
@@ -29,11 +35,16 @@ import type {
   WebFetchToolArgs,
   WebFetchToolResult,
 } from "@/common/types/tools";
+import type { ReviewNoteData } from "@/common/types/review";
 
 interface ToolMessageProps {
   message: DisplayedMessage & { type: "tool" };
   className?: string;
   workspaceId?: string;
+  /** Handler for adding review notes from inline diffs */
+  onReviewNote?: (data: ReviewNoteData) => void;
+  /** Whether this is the latest propose_plan in the conversation */
+  isLatestProposePlan?: boolean;
 }
 
 // Type guards using Zod schemas for single source of truth
@@ -89,7 +100,26 @@ function isWebFetchTool(toolName: string, args: unknown): args is WebFetchToolAr
   return TOOL_DEFINITIONS.web_fetch.schema.safeParse(args).success;
 }
 
-export const ToolMessage: React.FC<ToolMessageProps> = ({ message, className, workspaceId }) => {
+function isBashBackgroundListTool(toolName: string, args: unknown): args is BashBackgroundListArgs {
+  if (toolName !== "bash_background_list") return false;
+  return TOOL_DEFINITIONS.bash_background_list.schema.safeParse(args).success;
+}
+
+function isBashBackgroundTerminateTool(
+  toolName: string,
+  args: unknown
+): args is BashBackgroundTerminateArgs {
+  if (toolName !== "bash_background_terminate") return false;
+  return TOOL_DEFINITIONS.bash_background_terminate.schema.safeParse(args).success;
+}
+
+export const ToolMessage: React.FC<ToolMessageProps> = ({
+  message,
+  className,
+  workspaceId,
+  onReviewNote,
+  isLatestProposePlan,
+}) => {
   // Route to specialized components based on tool name
   if (isBashTool(message.toolName, message.args)) {
     return (
@@ -124,6 +154,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({ message, className, wo
           args={message.args}
           result={message.result as FileEditReplaceStringToolResult | undefined}
           status={message.status}
+          onReviewNote={onReviewNote}
         />
       </div>
     );
@@ -137,6 +168,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({ message, className, wo
           args={message.args}
           result={message.result as FileEditInsertToolResult | undefined}
           status={message.status}
+          onReviewNote={onReviewNote}
         />
       </div>
     );
@@ -150,6 +182,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({ message, className, wo
           args={message.args}
           result={message.result as FileEditReplaceLinesToolResult | undefined}
           status={message.status}
+          onReviewNote={onReviewNote}
         />
       </div>
     );
@@ -163,6 +196,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({ message, className, wo
           result={message.result as ProposePlanToolResult | undefined}
           status={message.status}
           workspaceId={workspaceId}
+          isLatest={isLatestProposePlan}
         />
       </div>
     );
@@ -198,6 +232,30 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({ message, className, wo
         <WebFetchToolCall
           args={message.args}
           result={message.result as WebFetchToolResult | undefined}
+          status={message.status}
+        />
+      </div>
+    );
+  }
+
+  if (isBashBackgroundListTool(message.toolName, message.args)) {
+    return (
+      <div className={className}>
+        <BashBackgroundListToolCall
+          args={message.args}
+          result={message.result as BashBackgroundListResult | undefined}
+          status={message.status}
+        />
+      </div>
+    );
+  }
+
+  if (isBashBackgroundTerminateTool(message.toolName, message.args)) {
+    return (
+      <div className={className}>
+        <BashBackgroundTerminateToolCall
+          args={message.args}
+          result={message.result as BashBackgroundTerminateResult | undefined}
           status={message.status}
         />
       </div>

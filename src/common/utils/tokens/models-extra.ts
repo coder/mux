@@ -88,4 +88,21 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_reasoning: true,
     supports_response_schema: true,
   },
+
+  // GPT-5.1-Codex-Max - Extended reasoning model with xhigh support
+  // Same pricing as gpt-5.1-codex: $1.25/M input, $10/M output
+  // Supports 5 reasoning levels: off, low, medium, high, xhigh
+  "gpt-5.1-codex-max": {
+    max_input_tokens: 272000, // Same as gpt-5.1-codex
+    max_output_tokens: 128000, // Same as gpt-5.1-codex
+    input_cost_per_token: 0.00000125, // $1.25 per million input tokens
+    output_cost_per_token: 0.00001, // $10 per million output tokens
+    litellm_provider: "openai",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+    supported_endpoints: ["/v1/responses"],
+  },
 };
