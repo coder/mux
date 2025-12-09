@@ -1231,6 +1231,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     if (matchesKeybind(e, KEYBINDS.CANCEL_EDIT)) {
       if (variant === "workspace" && editingMessage && props.onCancelEdit && !vimEnabled) {
         e.preventDefault();
+        e.stopPropagation(); // Prevent global handler from interrupting stream
         setDraft(preEditDraftRef.current);
         props.onCancelEdit();
         const isFocused = document.activeElement === inputRef.current;

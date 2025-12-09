@@ -166,6 +166,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
         return;
       }
       if (result.action === "escapeInNormalMode") {
+        e.stopPropagation(); // Prevent global handler from interrupting stream
         onEscapeInNormalMode?.();
         return;
       }
