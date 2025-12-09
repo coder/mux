@@ -104,7 +104,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
     <React.Fragment>
       <div
         className={cn(
-          "py-1.5 pl-4 pr-2 border-l-[3px] border-transparent transition-all duration-150 text-[13px] relative flex gap-2",
+          "py-1.5 pl-[9px] pr-2 border-l-[3px] border-transparent transition-all duration-150 text-[13px] relative flex gap-2",
           isDisabled
             ? "cursor-default opacity-70"
             : "cursor-pointer hover:bg-hover [&:hover_button]:opacity-100",
@@ -147,7 +147,25 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
         data-workspace-id={workspaceId}
       >
         <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <div className="grid min-w-0 grid-cols-[auto_1fr_auto] items-center gap-1.5">
+          <div className="grid min-w-0 grid-cols-[auto_auto_1fr_auto] items-center gap-1.5">
+            {!isCreating && !isEditing && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    className="text-muted hover:text-foreground cursor-pointer border-none bg-transparent p-0 text-base opacity-0 transition-colors duration-200"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void onRemoveWorkspace(workspaceId, e.currentTarget);
+                    }}
+                    aria-label={`Remove workspace ${displayName}`}
+                    data-workspace-id={workspaceId}
+                  >
+                    ×
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent align="start">Remove workspace</TooltipContent>
+              </Tooltip>
+            )}
             <RuntimeBadge runtimeConfig={metadata.runtimeConfig} isWorking={canInterrupt} />
             {isEditing ? (
               <input
@@ -189,35 +207,14 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
               </Tooltip>
             )}
 
-            <div className="flex items-center gap-1">
-              {!isCreating && !isEditing && (
-                <>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        className="text-muted hover:text-foreground flex h-5 w-5 cursor-pointer items-center justify-center border-none bg-transparent p-0 text-base opacity-0 transition-all duration-200 hover:rounded-sm hover:bg-white/10"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void onRemoveWorkspace(workspaceId, e.currentTarget);
-                        }}
-                        aria-label={`Remove workspace ${displayName}`}
-                        data-workspace-id={workspaceId}
-                      >
-                        ×
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent align="end">Remove workspace</TooltipContent>
-                  </Tooltip>
-
-                  <GitStatusIndicator
-                    gitStatus={gitStatus}
-                    workspaceId={workspaceId}
-                    tooltipPosition="right"
-                    isWorking={canInterrupt}
-                  />
-                </>
-              )}
-            </div>
+            {!isCreating && !isEditing && (
+              <GitStatusIndicator
+                gitStatus={gitStatus}
+                workspaceId={workspaceId}
+                tooltipPosition="right"
+                isWorking={canInterrupt}
+              />
+            )}
           </div>
           {!isCreating && (
             <div className="min-w-0">
