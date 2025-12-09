@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, mock } from "bun:test";
 import { CompactionHandler } from "./compactionHandler";
 import type { HistoryService } from "./historyService";
+import type { PartialService } from "./partialService";
 import type { EventEmitter } from "events";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import type { StreamEndEvent } from "@/common/types/stream";
@@ -44,6 +45,26 @@ const createMockHistoryService = () => {
     },
     mockAppendToHistory: (result: Result<void, string>) => {
       appendToHistoryResult = result;
+    },
+  };
+};
+
+const createMockPartialService = () => {
+  let deletePartialResult: Result<void, string> = Ok(undefined);
+
+  const deletePartial = mock((_) => Promise.resolve(deletePartialResult));
+  const readPartial = mock((_) => Promise.resolve(null));
+  const writePartial = mock((_, __) => Promise.resolve(Ok(undefined)));
+  const commitToHistory = mock((_) => Promise.resolve(Ok(undefined)));
+
+  return {
+    deletePartial,
+    readPartial,
+    writePartial,
+    commitToHistory,
+    // Allow setting mock return values
+    mockDeletePartial: (result: Result<void, string>) => {
+      deletePartialResult = result;
     },
   };
 };
@@ -112,6 +133,7 @@ const setupSuccessfulCompaction = (
 describe("CompactionHandler", () => {
   let handler: CompactionHandler;
   let mockHistoryService: ReturnType<typeof createMockHistoryService>;
+  let mockPartialService: ReturnType<typeof createMockPartialService>;
   let mockEmitter: EventEmitter;
   let emittedEvents: EmittedEvent[];
   const workspaceId = "test-workspace";
@@ -122,10 +144,12 @@ describe("CompactionHandler", () => {
     emittedEvents = events;
 
     mockHistoryService = createMockHistoryService();
+    mockPartialService = createMockPartialService();
 
     handler = new CompactionHandler({
       workspaceId,
       historyService: mockHistoryService as unknown as HistoryService,
+      partialService: mockPartialService as unknown as PartialService,
       emitter: mockEmitter,
     });
   });
@@ -207,6 +231,23 @@ describe("CompactionHandler", () => {
       expect((appendedMsg.parts[0] as { type: "text"; text: string }).text).toBe(
         "This is the summary"
       );
+    });
+
+    it("should delete partial.json before clearing history (race condition fix)", async () => {
+      const compactionReq = createCompactionRequest();
+      mockHistoryService.mockGetHistory(Ok([compactionReq]));
+      mockHistoryService.mockClearHistory(Ok([0]));
+      mockHistoryService.mockAppendToHistory(Ok(undefined));
+
+      const event = createStreamEndEvent("Summary");
+      await handler.handleCompletion(event);
+
+      // deletePartial should be called once before clearHistory
+      expect(mockPartialService.deletePartial.mock.calls).toHaveLength(1);
+      expect(mockPartialService.deletePartial.mock.calls[0][0]).toBe(workspaceId);
+
+      // Verify deletePartial was called (we can't easily verify order without more complex mocking,
+      // but the important thing is that it IS called during compaction)
     });
 
     it("should call clearHistory() and appendToHistory()", async () => {

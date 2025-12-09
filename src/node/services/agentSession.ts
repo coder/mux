@@ -110,6 +110,7 @@ export class AgentSession {
     this.compactionHandler = new CompactionHandler({
       workspaceId: this.workspaceId,
       historyService: this.historyService,
+      partialService: this.partialService,
       emitter: this.emitter,
     });
 

@@ -1,5 +1,6 @@
 import type { EventEmitter } from "events";
 import type { HistoryService } from "./historyService";
+import type { PartialService } from "./partialService";
 import type { StreamEndEvent } from "@/common/types/stream";
 import type { WorkspaceChatMessage, DeleteMessage } from "@/common/orpc/types";
 import type { Result } from "@/common/types/result";
@@ -13,6 +14,7 @@ import { log } from "@/node/services/log";
 interface CompactionHandlerOptions {
   workspaceId: string;
   historyService: HistoryService;
+  partialService: PartialService;
   emitter: EventEmitter;
 }
 
@@ -27,12 +29,14 @@ interface CompactionHandlerOptions {
 export class CompactionHandler {
   private readonly workspaceId: string;
   private readonly historyService: HistoryService;
+  private readonly partialService: PartialService;
   private readonly emitter: EventEmitter;
   private readonly processedCompactionRequestIds: Set<string> = new Set<string>();
 
   constructor(options: CompactionHandlerOptions) {
     this.workspaceId = options.workspaceId;
     this.historyService = options.historyService;
+    this.partialService = options.partialService;
     this.emitter = options.emitter;
   }
 
@@ -105,6 +109,18 @@ export class CompactionHandler {
     const usageHistory = collectUsageHistory(messages, undefined);
 
     const historicalUsage = usageHistory.length > 0 ? sumUsageHistory(usageHistory) : undefined;
+
+    // CRITICAL: Delete partial.json BEFORE clearing history
+    // This prevents a race condition where:
+    // 1. CompactionHandler clears history and appends summary
+    // 2. sendQueuedMessages triggers commitToHistory
+    // 3. commitToHistory finds stale partial.json and appends it to history
+    // By deleting partial first, commitToHistory becomes a no-op
+    const deletePartialResult = await this.partialService.deletePartial(this.workspaceId);
+    if (!deletePartialResult.success) {
+      log.warn(`Failed to delete partial before compaction: ${deletePartialResult.error}`);
+      // Continue anyway - the partial may not exist, which is fine
+    }
 
     // Clear entire history and get deleted sequences
     const clearResult = await this.historyService.clearHistory(this.workspaceId);
