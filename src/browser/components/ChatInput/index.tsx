@@ -411,10 +411,10 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
 
   // Watch input for slash commands
   useEffect(() => {
-    const suggestions = getSlashCommandSuggestions(input, { providerNames });
+    const suggestions = getSlashCommandSuggestions(input, { providerNames, variant });
     setCommandSuggestions(suggestions);
     setShowCommandSuggestions(suggestions.length > 0);
-  }, [input, providerNames]);
+  }, [input, providerNames, variant]);
 
   // Load provider names for suggestions
   useEffect(() => {
@@ -1335,18 +1335,16 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         data-component="ChatInputSection"
       >
         <div className="mx-auto w-full max-w-4xl">
-          {/* Creation toast */}
-          {variant === "creation" && (
-            <ChatInputToast
-              toast={creationState.toast}
-              onDismiss={() => creationState.setToast(null)}
-            />
-          )}
-
-          {/* Workspace toast */}
-          {variant === "workspace" && (
-            <ChatInputToast toast={toast} onDismiss={handleToastDismiss} />
-          )}
+          {/* Toast - show shared toast (slash commands) or variant-specific toast */}
+          <ChatInputToast
+            toast={toast ?? (variant === "creation" ? creationState.toast : null)}
+            onDismiss={() => {
+              handleToastDismiss();
+              if (variant === "creation") {
+                creationState.setToast(null);
+              }
+            }}
+          />
 
           {/* Attached reviews preview - show styled blocks with remove/edit buttons */}
           {/* Hide during send to avoid duplicate display with the sent message */}
@@ -1369,17 +1367,17 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             </div>
           )}
 
-          {/* Command suggestions - workspace only */}
-          {variant === "workspace" && (
-            <CommandSuggestions
-              suggestions={commandSuggestions}
-              onSelectSuggestion={handleCommandSelect}
-              onDismiss={() => setShowCommandSuggestions(false)}
-              isVisible={showCommandSuggestions}
-              ariaLabel="Slash command suggestions"
-              listId={commandListId}
-            />
-          )}
+          {/* Command suggestions - available in both variants */}
+          {/* In creation mode, use portal (anchorRef) to escape overflow:hidden containers */}
+          <CommandSuggestions
+            suggestions={commandSuggestions}
+            onSelectSuggestion={handleCommandSelect}
+            onDismiss={() => setShowCommandSuggestions(false)}
+            isVisible={showCommandSuggestions}
+            ariaLabel="Slash command suggestions"
+            listId={commandListId}
+            anchorRef={variant === "creation" ? inputRef : undefined}
+          />
 
           <div className="relative flex items-end" data-component="ChatInputControls">
             {/* Recording/transcribing overlay - replaces textarea when active */}

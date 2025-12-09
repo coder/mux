@@ -13,33 +13,48 @@ import type {
 
 export type { SlashSuggestion } from "./types";
 
+import { WORKSPACE_ONLY_COMMANDS } from "@/constants/slashCommands";
+
 const COMMAND_DEFINITIONS = getSlashCommandDefinitions();
 
 function filterAndMapSuggestions<T extends SuggestionDefinition>(
   definitions: readonly T[],
   partial: string,
-  build: (definition: T) => SlashSuggestion
+  build: (definition: T) => SlashSuggestion,
+  filter?: (definition: T) => boolean
 ): SlashSuggestion[] {
   const normalizedPartial = partial.trim().toLowerCase();
 
   return definitions
-    .filter((definition) =>
-      normalizedPartial ? definition.key.toLowerCase().startsWith(normalizedPartial) : true
-    )
+    .filter((definition) => {
+      if (filter && !filter(definition)) return false;
+      return normalizedPartial ? definition.key.toLowerCase().startsWith(normalizedPartial) : true;
+    })
     .map((definition) => build(definition));
 }
 
-function buildTopLevelSuggestions(partial: string): SlashSuggestion[] {
-  return filterAndMapSuggestions(COMMAND_DEFINITIONS, partial, (definition) => {
-    const appendSpace = definition.appendSpace ?? true;
-    const replacement = `/${definition.key}${appendSpace ? " " : ""}`;
-    return {
-      id: `command:${definition.key}`,
-      display: `/${definition.key}`,
-      description: definition.description,
-      replacement,
-    };
-  });
+function buildTopLevelSuggestions(
+  partial: string,
+  context: SlashSuggestionContext
+): SlashSuggestion[] {
+  const isCreation = context.variant === "creation";
+
+  return filterAndMapSuggestions(
+    COMMAND_DEFINITIONS,
+    partial,
+    (definition) => {
+      const appendSpace = definition.appendSpace ?? true;
+      const replacement = `/${definition.key}${appendSpace ? " " : ""}`;
+      return {
+        id: `command:${definition.key}`,
+        display: `/${definition.key}`,
+        description: definition.description,
+        replacement,
+      };
+    },
+    // In creation mode, filter out workspace-only commands
+    isCreation ? (definition) => !WORKSPACE_ONLY_COMMANDS.has(definition.key) : undefined
+  );
 }
 
 function buildSubcommandSuggestions(
@@ -83,7 +98,7 @@ export function getSlashCommandSuggestions(
   const stage = completedTokens.length;
 
   if (stage === 0) {
-    return buildTopLevelSuggestions(partialToken);
+    return buildTopLevelSuggestions(partialToken, context);
   }
 
   const rootKey = completedTokens[0] ?? tokens[0];
@@ -93,6 +108,11 @@ export function getSlashCommandSuggestions(
 
   const rootDefinition = SLASH_COMMAND_DEFINITION_MAP.get(rootKey);
   if (!rootDefinition) {
+    return [];
+  }
+
+  // In creation mode, don't show subcommand suggestions for workspace-only commands
+  if (context.variant === "creation" && WORKSPACE_ONLY_COMMANDS.has(rootKey)) {
     return [];
   }
 

@@ -18,6 +18,7 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { RUNTIME_MODE, SSH_RUNTIME_PREFIX } from "@/common/types/runtime";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
+import { WORKSPACE_ONLY_COMMANDS } from "@/constants/slashCommands";
 import type { Toast } from "@/browser/components/ChatInputToast";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
@@ -237,8 +238,7 @@ export async function processSlashCommand(
   }
 
   // 2. Workspace Commands
-  const workspaceCommands = ["clear", "truncate", "compact", "fork", "new"];
-  const isWorkspaceCommand = workspaceCommands.includes(parsed.type);
+  const isWorkspaceCommand = WORKSPACE_ONLY_COMMANDS.has(parsed.type);
 
   if (isWorkspaceCommand) {
     if (variant !== "workspace") {

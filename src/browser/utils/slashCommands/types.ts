@@ -74,6 +74,8 @@ export interface SlashSuggestion {
 
 export interface SlashSuggestionContext {
   providerNames?: string[];
+  /** Variant determines which commands are available */
+  variant?: "workspace" | "creation";
 }
 
 export interface SuggestionDefinition {
