@@ -5,6 +5,7 @@ import type { ProjectService } from "@/node/services/projectService";
 import type { WorkspaceService } from "@/node/services/workspaceService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { TerminalService } from "@/node/services/terminalService";
+import type { EditorService } from "@/node/services/editorService";
 import type { WindowService } from "@/node/services/windowService";
 import type { UpdateService } from "@/node/services/updateService";
 import type { TokenizerService } from "@/node/services/tokenizerService";
@@ -22,6 +23,7 @@ export interface ORPCContext {
   workspaceService: WorkspaceService;
   providerService: ProviderService;
   terminalService: TerminalService;
+  editorService: EditorService;
   windowService: WindowService;
   updateService: UpdateService;
   tokenizerService: TokenizerService;

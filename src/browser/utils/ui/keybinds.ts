@@ -244,6 +244,10 @@ export const KEYBINDS = {
   // macOS: Cmd+T, Win/Linux: Ctrl+T
   OPEN_TERMINAL: { key: "T", ctrl: true },
 
+  /** Open workspace in editor */
+  // macOS: Cmd+Shift+E, Win/Linux: Ctrl+Shift+E
+  OPEN_IN_EDITOR: { key: "E", ctrl: true, shift: true },
+
   /** Open Command Palette */
   // VS Code-style palette
   // macOS: Cmd+Shift+P, Win/Linux: Ctrl+Shift+P
