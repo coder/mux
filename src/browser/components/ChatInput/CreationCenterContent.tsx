@@ -138,7 +138,7 @@ export function CreationCenterContent(props: CreationCenterContentProps) {
               "text-foreground h-auto border-0 border-b border-transparent bg-transparent p-0 pr-6 text-xl font-semibold focus:border-b-border-light focus:outline-none disabled:opacity-50",
               nameState.error && "border-b-red-500"
             )}
-            style={{ width: `${Math.max(nameState.name.length, 12)}ch` }}
+            style={{ width: `${Math.max(nameState.name.length, 24)}ch` }}
           />
           {/* Magic wand / loading indicator */}
           <div className="absolute right-0 flex items-center">
