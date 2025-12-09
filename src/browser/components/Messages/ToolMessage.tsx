@@ -48,10 +48,10 @@ interface ToolMessageProps {
   onReviewNote?: (data: ReviewNoteData) => void;
   /** Whether this is the latest propose_plan in the conversation */
   isLatestProposePlan?: boolean;
-  /** Tool call ID of the foreground bash (null if none running) */
-  foregroundBashToolCallId?: string | null;
-  /** Callback to send the foreground bash to background */
-  onSendBashToBackground?: () => void;
+  /** Set of tool call IDs of foreground bashes */
+  foregroundBashToolCallIds?: Set<string>;
+  /** Callback to send a foreground bash to background */
+  onSendBashToBackground?: (toolCallId: string) => void;
 }
 
 // Type guards using Zod schemas for single source of truth
@@ -131,13 +131,14 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
   workspaceId,
   onReviewNote,
   isLatestProposePlan,
-  foregroundBashToolCallId,
+  foregroundBashToolCallIds,
   onSendBashToBackground,
 }) => {
   // Route to specialized components based on tool name
   if (isBashTool(message.toolName, message.args)) {
-    // Only show "Background" button if this specific tool call is the foreground process
-    const canSendToBackground = foregroundBashToolCallId === message.toolCallId;
+    // Only show "Background" button if this specific tool call is a foreground process
+    const canSendToBackground = foregroundBashToolCallIds?.has(message.toolCallId) ?? false;
+    const toolCallId = message.toolCallId;
     return (
       <div className={className}>
         <BashToolCall
@@ -146,7 +147,9 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
           status={message.status}
           startedAt={message.timestamp}
           canSendToBackground={canSendToBackground}
-          onSendToBackground={onSendBashToBackground}
+          onSendToBackground={
+            onSendBashToBackground ? () => onSendBashToBackground(toolCallId) : undefined
+          }
         />
       </div>
     );

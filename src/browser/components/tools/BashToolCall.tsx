@@ -14,6 +14,7 @@ import {
   LoadingDots,
   ToolIcon,
   ErrorBox,
+  ExitCodeBadge,
 } from "./shared/ToolPrimitives";
 import {
   useToolExpansion,
@@ -93,16 +94,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
               {result && ` • took ${formatDuration(result.wall_duration_ms)}`}
               {!result && isPending && elapsedTime > 0 && ` • ${Math.round(elapsedTime / 1000)}s`}
             </span>
-            {result && (
-              <span
-                className={cn(
-                  "ml-2 inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
-                  result.exitCode === 0 ? "bg-success text-on-success" : "bg-danger text-on-danger"
-                )}
-              >
-                {result.exitCode}
-              </span>
-            )}
+            {result && <ExitCodeBadge exitCode={result.exitCode} className="ml-2" />}
           </>
         )}
         <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>

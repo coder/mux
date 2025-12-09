@@ -331,19 +331,19 @@ export const workspace = {
       output: ResultSchema(z.void(), z.string()),
     },
     /**
-     * Get the tool call ID of the foreground bash process (if any).
-     * Returns null if no foreground bash is running.
+     * Get tool call IDs of all foreground bash processes.
+     * Returns empty array if no foreground bashes are running.
      */
-    getForegroundToolCallId: {
+    getForegroundToolCallIds: {
       input: z.object({ workspaceId: z.string() }),
-      output: z.string().nullable(),
+      output: z.array(z.string()),
     },
     /**
-     * Send the current foreground bash process to background.
+     * Send a foreground bash process to background.
      * The process continues running but the agent stops waiting for it.
      */
     sendToBackground: {
-      input: z.object({ workspaceId: z.string() }),
+      input: z.object({ workspaceId: z.string(), toolCallId: z.string() }),
       output: ResultSchema(z.void(), z.string()),
     },
   },

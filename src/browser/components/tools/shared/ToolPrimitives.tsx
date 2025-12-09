@@ -191,3 +191,99 @@ export const ErrorBox: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
     {...props}
   />
 );
+
+/**
+ * Badge for displaying exit codes or process status
+ */
+interface ExitCodeBadgeProps {
+  exitCode: number;
+  className?: string;
+}
+
+export const ExitCodeBadge: React.FC<ExitCodeBadgeProps> = ({ exitCode, className }) => (
+  <span
+    className={cn(
+      "inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
+      exitCode === 0 ? "bg-success text-on-success" : "bg-danger text-on-danger",
+      className
+    )}
+  >
+    {exitCode}
+  </span>
+);
+
+/**
+ * Badge for displaying process status (exited, killed, failed)
+ */
+interface ProcessStatusBadgeProps {
+  status: "exited" | "killed" | "failed";
+  exitCode?: number;
+  className?: string;
+}
+
+export const ProcessStatusBadge: React.FC<ProcessStatusBadgeProps> = ({
+  status,
+  exitCode,
+  className,
+}) => (
+  <span
+    className={cn(
+      "inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
+      status === "exited" && exitCode === 0
+        ? "bg-success text-on-success"
+        : "bg-danger text-on-danger",
+      className
+    )}
+  >
+    {status}
+    {exitCode !== undefined && ` (${exitCode})`}
+  </span>
+);
+
+/**
+ * Badge for output availability status
+ */
+interface OutputStatusBadgeProps {
+  hasOutput: boolean;
+  className?: string;
+}
+
+export const OutputStatusBadge: React.FC<OutputStatusBadgeProps> = ({ hasOutput, className }) => (
+  <span
+    className={cn(
+      "inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
+      hasOutput ? "bg-pending/20 text-pending" : "bg-muted-foreground/20 text-muted-foreground",
+      className
+    )}
+  >
+    {hasOutput ? "new output" : "no output"}
+  </span>
+);
+
+/**
+ * Output display section for bash-like tools
+ */
+interface OutputSectionProps {
+  output?: string;
+  emptyMessage?: string;
+}
+
+export const OutputSection: React.FC<OutputSectionProps> = ({
+  output,
+  emptyMessage = "No output",
+}) => {
+  if (output) {
+    return (
+      <DetailSection>
+        <DetailLabel>Output</DetailLabel>
+        <DetailContent className="px-2 py-1.5">{output}</DetailContent>
+      </DetailSection>
+    );
+  }
+
+  return (
+    <DetailSection>
+      <DetailContent className="text-muted px-2 py-1.5 italic">{emptyMessage}</DetailContent>
+    </DetailSection>
+  );
+};

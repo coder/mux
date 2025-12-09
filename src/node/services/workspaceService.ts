@@ -1070,18 +1070,18 @@ export class WorkspaceService extends EventEmitter {
 
   /**
    * Get the tool call ID of the foreground bash process for a workspace.
-   * Returns null if no foreground bash is running.
+   * Returns empty array if no foreground bashes are running.
    */
-  getForegroundToolCallId(workspaceId: string): string | null {
-    return this.backgroundProcessManager.getForegroundToolCallId(workspaceId);
+  getForegroundToolCallIds(workspaceId: string): string[] {
+    return this.backgroundProcessManager.getForegroundToolCallIds(workspaceId);
   }
 
   /**
-   * Send the current foreground bash process to background.
+   * Send a foreground bash process to background by its tool call ID.
    * The process continues running but the agent stops waiting for it.
    */
-  sendToBackground(workspaceId: string): Result<void> {
-    const result = this.backgroundProcessManager.sendToBackground(workspaceId);
+  sendToBackground(toolCallId: string): Result<void> {
+    const result = this.backgroundProcessManager.sendToBackground(toolCallId);
     if (!result.success) {
       return Err(result.error);
     }

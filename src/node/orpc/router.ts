@@ -711,17 +711,17 @@ export const router = (authToken?: string) => {
             }
             return { success: true, data: undefined };
           }),
-        getForegroundToolCallId: t
-          .input(schemas.workspace.backgroundBashes.getForegroundToolCallId.input)
-          .output(schemas.workspace.backgroundBashes.getForegroundToolCallId.output)
+        getForegroundToolCallIds: t
+          .input(schemas.workspace.backgroundBashes.getForegroundToolCallIds.input)
+          .output(schemas.workspace.backgroundBashes.getForegroundToolCallIds.output)
           .handler(({ context, input }) => {
-            return context.workspaceService.getForegroundToolCallId(input.workspaceId);
+            return context.workspaceService.getForegroundToolCallIds(input.workspaceId);
           }),
         sendToBackground: t
           .input(schemas.workspace.backgroundBashes.sendToBackground.input)
           .output(schemas.workspace.backgroundBashes.sendToBackground.output)
           .handler(({ context, input }) => {
-            const result = context.workspaceService.sendToBackground(input.workspaceId);
+            const result = context.workspaceService.sendToBackground(input.toolCallId);
             if (!result.success) {
               return { success: false, error: result.error };
             }

@@ -1510,7 +1510,8 @@ describe("bash tool - background execution", () => {
     expect(result.success).toBe(true);
     if (result.success && "backgroundProcessId" in result) {
       expect(result.backgroundProcessId).toBeDefined();
-      expect(result.backgroundProcessId).toMatch(/^bash_\d+$/);
+      // Process ID is now the display name directly
+      expect(result.backgroundProcessId).toBe("test");
     } else {
       throw new Error("Expected background process ID in result");
     }

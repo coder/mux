@@ -36,14 +36,16 @@ describe("BackgroundProcessManager", () => {
 
   describe("spawn", () => {
     it("should spawn a background process and return process ID and outputDir", async () => {
+      const displayName = `test-${Date.now()}`;
       const result = await manager.spawn(runtime, testWorkspaceId, "echo hello", {
         cwd: process.cwd(),
-        displayName: "test",
+        displayName,
       });
 
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.processId).toMatch(/^bash_\d+$/);
+        // Process ID is now the display name directly
+        expect(result.processId).toBe(displayName);
         expect(result.outputDir).toContain(bgOutputDir);
         expect(result.outputDir).toContain(testWorkspaceId);
         expect(result.outputDir).toContain(result.processId);
@@ -125,13 +127,14 @@ describe("BackgroundProcessManager", () => {
 
   describe("list", () => {
     it("should list all processes", async () => {
+      // Use unique display names since they're now used as process IDs
       await manager.spawn(runtime, testWorkspaceId, "sleep 1", {
         cwd: process.cwd(),
-        displayName: "test",
+        displayName: "test-list-1",
       });
       await manager.spawn(runtime, testWorkspaceId, "sleep 1", {
         cwd: process.cwd(),
-        displayName: "test",
+        displayName: "test-list-2",
       });
 
       const processes = await manager.list();
@@ -139,13 +142,14 @@ describe("BackgroundProcessManager", () => {
     });
 
     it("should filter by workspace ID", async () => {
+      // Use unique display names since they're now used as process IDs
       await manager.spawn(runtime, testWorkspaceId, "sleep 1", {
         cwd: process.cwd(),
-        displayName: "test",
+        displayName: "test-filter-ws1",
       });
       await manager.spawn(runtime, testWorkspaceId2, "sleep 1", {
         cwd: process.cwd(),
-        displayName: "test",
+        displayName: "test-filter-ws2",
       });
 
       const ws1Processes = await manager.list(testWorkspaceId);
@@ -224,14 +228,14 @@ describe("BackgroundProcessManager", () => {
 
   describe("terminateAll", () => {
     it("should kill all processes across all workspaces", async () => {
-      // Spawn processes in multiple workspaces
+      // Spawn processes in multiple workspaces (unique display names since they're process IDs)
       await manager.spawn(runtime, testWorkspaceId, "sleep 10", {
         cwd: process.cwd(),
-        displayName: "test",
+        displayName: "test-termall-ws1",
       });
       await manager.spawn(runtime, testWorkspaceId2, "sleep 10", {
         cwd: process.cwd(),
-        displayName: "test",
+        displayName: "test-termall-ws2",
       });
 
       // Verify both workspaces have running processes

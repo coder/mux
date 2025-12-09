@@ -126,7 +126,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const {
     processes: backgroundBashes,
     handleTerminate: handleTerminateBackgroundBash,
-    foregroundToolCallId,
+    foregroundToolCallIds,
     handleSendToBackground: handleSendBashToBackground,
     handleMessageSentBackground,
     error: backgroundBashError,
@@ -589,7 +589,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
                               msg.toolName === "propose_plan" &&
                               msg.id === latestProposePlanId
                             }
-                            foregroundBashToolCallId={foregroundToolCallId}
+                            foregroundBashToolCallIds={foregroundToolCallIds}
                             onSendBashToBackground={handleSendBashToBackground}
                           />
                         </div>

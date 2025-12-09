@@ -23,7 +23,7 @@ export interface BackgroundProcessMeta {
  * Represents a background process with file-based output
  */
 export interface BackgroundProcess {
-  id: string; // Sequential ID (e.g., "bash_1", "bash_2")
+  id: string; // Process ID (display_name from the bash tool call)
   pid: number; // OS process ID
   workspaceId: string; // Owning workspace
   outputDir: string; // Directory containing stdout.log, stderr.log, meta.json
@@ -87,13 +87,10 @@ export class BackgroundProcessManager extends EventEmitter {
   // Tracks read positions for incremental output retrieval
   private readPositions = new Map<string, OutputReadPosition>();
 
-
-
   // Base directory for process output files
   private readonly bgOutputDir: string;
-
   // Tracks foreground processes (started via runtime.exec) that can be backgrounded
-  // Key is workspaceId since only one foreground process runs at a time per workspace
+  // Key is toolCallId to support multiple parallel foreground processes per workspace
   private foregroundProcesses = new Map<string, ForegroundProcess>();
 
   constructor(bgOutputDir: string) {
@@ -108,12 +105,6 @@ export class BackgroundProcessManager extends EventEmitter {
     return this.bgOutputDir;
   }
 
-  /**
-   * Use the display name directly as the process ID.
-   */
-  generateProcessId(displayName: string): string {
-    return displayName;
-  }
 
   /**
    * Spawn a new process with background-style infrastructure.
@@ -145,8 +136,8 @@ export class BackgroundProcessManager extends EventEmitter {
   > {
     log.debug(`BackgroundProcessManager.spawn() called for workspace ${workspaceId}`);
 
-    // Generate process ID from display name (e.g., "Dev Server" → "bash_Dev-Server")
-    const processId = this.generateProcessId(config.displayName);
+    // Process ID is the display name directly
+    const processId = config.displayName;
 
     // Spawn via executor with background infrastructure
     const result = await spawnProcess(
@@ -228,15 +219,15 @@ export class BackgroundProcessManager extends EventEmitter {
       onBackground,
       output: [],
     };
-    this.foregroundProcesses.set(workspaceId, proc);
+    this.foregroundProcesses.set(toolCallId, proc);
     log.debug(
       `Registered foreground process for workspace ${workspaceId}, toolCallId ${toolCallId}`
     );
 
     return {
       unregister: () => {
-        this.foregroundProcesses.delete(workspaceId);
-        log.debug(`Unregistered foreground process for workspace ${workspaceId}`);
+        this.foregroundProcesses.delete(toolCallId);
+        log.debug(`Unregistered foreground process toolCallId ${toolCallId}`);
       },
       addOutput: (line: string) => {
         proc.output.push(line);
@@ -306,49 +297,35 @@ export class BackgroundProcessManager extends EventEmitter {
    * For processes started via runtime.exec (tracked via registerForegroundProcess):
    * - Invokes the onBackground callback to trigger early return
    *
-   * @param workspaceId Workspace to find the foreground process in
+   * @param toolCallId The tool call ID of the bash to background
    * @returns Success status
    */
-  sendToBackground(workspaceId: string): { success: true } | { success: false; error: string } {
-    log.debug(`BackgroundProcessManager.sendToBackground(${workspaceId}) called`);
+  sendToBackground(toolCallId: string): { success: true } | { success: false; error: string } {
+    log.debug(`BackgroundProcessManager.sendToBackground(${toolCallId}) called`);
 
-    // First check for background-infrastructure processes (spawned via this.spawn)
-    const bgProc = Array.from(this.processes.values()).find(
-      (p) => p.workspaceId === workspaceId && p.isForeground && p.status === "running"
-    );
-
-    if (bgProc) {
-      // Mark as background
-      bgProc.isForeground = false;
-      // Emit event to signal the waiter to return
-      this.emit("backgrounded", bgProc.id);
-      log.debug(`Background-infrastructure process ${bgProc.id} sent to background`);
-      return { success: true };
-    }
-
-    // Check for foreground processes (started via runtime.exec)
-    const fgProc = this.foregroundProcesses.get(workspaceId);
+    const fgProc = this.foregroundProcesses.get(toolCallId);
     if (fgProc) {
-      // Invoke callback to trigger early return
       fgProc.onBackground();
-      log.debug(`Foreground process for workspace ${workspaceId} sent to background`);
+      log.debug(`Foreground process toolCallId ${toolCallId} sent to background`);
       return { success: true };
     }
 
-    return { success: false, error: "No foreground process found for this workspace" };
+    return { success: false, error: "No foreground process found with that tool call ID" };
   }
 
   /**
-   * Get the tool call ID of the foreground process for a workspace.
-   * Returns null if no foreground process is running.
+   * Get all foreground tool call IDs for a workspace.
+   * Returns empty array if no foreground processes are running.
    */
-  getForegroundToolCallId(workspaceId: string): string | null {
+  getForegroundToolCallIds(workspaceId: string): string[] {
+    const ids: string[] = [];
     // Check exec-based foreground processes
-    const fgProc = this.foregroundProcesses.get(workspaceId);
-    if (fgProc) {
-      return fgProc.toolCallId;
+    for (const [toolCallId, proc] of this.foregroundProcesses) {
+      if (proc.workspaceId === workspaceId) {
+        ids.push(toolCallId);
+      }
     }
-    return null;
+    return ids;
   }
 
   /**

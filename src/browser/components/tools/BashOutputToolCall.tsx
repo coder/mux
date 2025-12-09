@@ -13,9 +13,11 @@ import {
   LoadingDots,
   ToolIcon,
   ErrorBox,
+  OutputStatusBadge,
+  ProcessStatusBadge,
+  OutputSection,
 } from "./shared/ToolPrimitives";
 import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./shared/toolUtils";
-import { cn } from "@/common/lib/utils";
 
 interface BashOutputToolCallProps {
   args: BashOutputToolArgs;
@@ -48,30 +50,9 @@ export const BashOutputToolCall: React.FC<BashOutputToolCallProps> = ({
           output
           {args.filter && ` (filter: ${args.filter})`}
         </span>
-        {result?.success && (
-          <span
-            className={cn(
-              "ml-2 inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
-              result.output
-                ? "bg-pending/20 text-pending"
-                : "bg-muted-foreground/20 text-muted-foreground"
-            )}
-          >
-            {result.output ? "new output" : "no output"}
-          </span>
-        )}
+        {result?.success && <OutputStatusBadge hasOutput={!!result.output} className="ml-2" />}
         {result?.success && processStatus && processStatus !== "running" && (
-          <span
-            className={cn(
-              "ml-2 inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
-              processStatus === "exited" && result.exitCode === 0
-                ? "bg-success text-on-success"
-                : "bg-danger text-on-danger"
-            )}
-          >
-            {processStatus}
-            {result.exitCode !== undefined && ` (${result.exitCode})`}
-          </span>
+          <ProcessStatusBadge status={processStatus} exitCode={result.exitCode} className="ml-2" />
         )}
         <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
       </ToolHeader>
@@ -87,19 +68,8 @@ export const BashOutputToolCall: React.FC<BashOutputToolCallProps> = ({
                 </DetailSection>
               )}
 
-              {result.success && result.output && (
-                <DetailSection>
-                  <DetailLabel>Output</DetailLabel>
-                  <DetailContent className="px-2 py-1.5">{result.output}</DetailContent>
-                </DetailSection>
-              )}
-
-              {result.success && !result.output && (
-                <DetailSection>
-                  <DetailContent className="text-muted px-2 py-1.5 italic">
-                    No new output
-                  </DetailContent>
-                </DetailSection>
+              {result.success && (
+                <OutputSection output={result.output} emptyMessage="No new output" />
               )}
             </>
           )}
