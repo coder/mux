@@ -19,33 +19,34 @@ export const BashOutputCollapsedIndicator: React.FC<BashOutputCollapsedIndicator
   onToggle,
 }) => {
   return (
-    <button
-      onClick={onToggle}
-      className="text-muted hover:bg-background-highlight flex w-full cursor-pointer items-center gap-2 rounded px-3 py-1 transition-colors"
-      title={isExpanded ? "Click to collapse" : "Click to expand"}
-    >
-      {/* Squiggly line SVG - rotates when expanded */}
-      <svg
-        className={`text-border shrink-0 transition-transform ${isExpanded ? "rotate-90" : ""}`}
-        width="16"
-        height="24"
-        viewBox="0 0 16 24"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
+    <div className="px-3 py-1">
+      <button
+        onClick={onToggle}
+        className="text-muted hover:bg-background-highlight inline-flex cursor-pointer items-center gap-2 rounded px-2 py-0.5 transition-colors"
       >
-        <path
-          d="M8 0 Q12 4, 8 8 Q4 12, 8 16 Q12 20, 8 24"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
+        {/* Squiggly line SVG - rotates when expanded */}
+        <svg
+          className={`text-border shrink-0 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+          width="16"
+          height="24"
+          viewBox="0 0 16 24"
           fill="none"
-        />
-      </svg>
-      <span className="text-[10px] font-medium">
-        {isExpanded ? "Hide" : "Show"} {collapsedCount} more output check
-        {collapsedCount === 1 ? "" : "s"} for{" "}
-        <code className="font-monospace text-text-muted">{processId}</code>
-      </span>
-    </button>
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            d="M8 0 Q12 4, 8 8 Q4 12, 8 16 Q12 20, 8 24"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            fill="none"
+          />
+        </svg>
+        <span className="text-[10px] font-medium">
+          {isExpanded ? "Hide" : "Show"} {collapsedCount} more output check
+          {collapsedCount === 1 ? "" : "s"} for{" "}
+          <code className="font-monospace text-text-muted">{processId}</code>
+        </span>
+      </button>
+    </div>
   );
 };
