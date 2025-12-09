@@ -134,7 +134,7 @@ describe("bash_background_list tool", () => {
     });
 
     if (!spawnResult.success) {
-      throw new Error("Failed to spawn process");
+      throw new Error(`Failed to spawn process: ${spawnResult.error}`);
     }
 
     const tool = createBashBackgroundListTool(config);
