@@ -545,6 +545,9 @@ const AIViewInner: React.FC<AIViewProps> = ({
               style={{ height: "100%" }}
               // Start at the bottom of the list
               initialTopMostItemIndex={deferredMessages.length - 1}
+              // Render extra content above/below viewport for smooth scrolling
+              // Large overscan prevents jank when scrolling through variable-height messages
+              overscan={{ main: 2000, reverse: 2000 }}
               // followOutput automatically scrolls to bottom when new items arrive
               // Use our autoScroll state (not just isAtBottom) to respect user intent
               followOutput={() => (autoScroll ? "smooth" : false)}
