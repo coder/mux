@@ -11,7 +11,7 @@ export interface BashToolArgs {
   script: string;
   timeout_secs?: number; // Optional: defaults to 3 seconds for interactivity
   run_in_background?: boolean; // Run without blocking (for long-running processes)
-  display_name?: string; // Human-readable name for background processes
+  display_name: string; // Required - used as process identifier if sent to background
 }
 
 interface CommonBashFields {

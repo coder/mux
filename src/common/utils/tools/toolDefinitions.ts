@@ -60,17 +60,16 @@ export const TOOL_DEFINITIONS = {
             "Use for processes running >5s (dev servers, builds, file watchers). " +
             "Do NOT use for quick commands (<5s), interactive processes (no stdin support), " +
             "or processes requiring real-time output (use foreground with larger timeout instead). " +
-            "Returns immediately with process_id (e.g., bash_1). " +
+            "Returns immediately with process_id. " +
             "Read output with bash_output (returns only new output since last check). " +
             "Terminate with bash_background_terminate using the process_id. " +
             "Process persists until terminated or workspace is removed."
         ),
       display_name: z
         .string()
-        .optional()
         .describe(
-          "Human-readable name for background processes (e.g., 'Dev Server', 'TypeCheck Watch'). " +
-            "Only used when run_in_background=true."
+          "Human-readable name for the process (e.g., 'Dev Server', 'TypeCheck Watch'). " +
+            "Required for all bash invocations since any process can be sent to background."
         ),
     }),
   },
@@ -244,10 +243,7 @@ export const TOOL_DEFINITIONS = {
       "Supports optional regex filtering to show only lines matching a pattern. " +
       "WARNING: When using filter, non-matching lines are permanently discarded.",
     schema: z.object({
-      process_id: z
-        .string()
-        .regex(/^bash_\d+$/, "Invalid process ID format (expected bash_N)")
-        .describe("The ID of the background process to retrieve output from"),
+      process_id: z.string().describe("The ID of the background process to retrieve output from"),
       filter: z
         .string()
         .optional()
@@ -271,10 +267,7 @@ export const TOOL_DEFINITIONS = {
       "Sends SIGTERM, waits briefly, then SIGKILL if needed. " +
       "Output remains available via bash_output after termination.",
     schema: z.object({
-      process_id: z
-        .string()
-        .regex(/^bash_\d+$/, "Invalid process ID format (expected bash_N)")
-        .describe("Background process ID to terminate"),
+      process_id: z.string().describe("Background process ID to terminate"),
     }),
   },
   web_fetch: {

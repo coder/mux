@@ -150,6 +150,7 @@ describe("Background Bash Direct Integration", () => {
 
     const spawnResult = await manager.spawn(runtime, workspaceId, `echo "${marker}"`, {
       cwd: workspacePath,
+      displayName: "test",
     });
     expect(spawnResult.success).toBe(true);
     if (!spawnResult.success) return;
@@ -173,7 +174,7 @@ describe("Background Bash Direct Integration", () => {
       runtime,
       workspaceId,
       `echo "${marker1}"; sleep 1; echo "${marker2}"`,
-      { cwd: workspacePath }
+      { cwd: workspacePath, displayName: "test" }
     );
     expect(spawnResult.success).toBe(true);
     if (!spawnResult.success) return;
@@ -226,9 +227,11 @@ describe("Background Bash Direct Integration", () => {
       // Spawn in each workspace
       const spawn1 = await manager.spawn(runtime, workspaceId, "echo ws1", {
         cwd: workspacePath,
+        displayName: "test-1",
       });
       const spawn2 = await manager.spawn(runtime, workspaceId2, "echo ws2", {
         cwd: workspacePath,
+        displayName: "test-2",
       });
 
       expect(spawn1.success).toBe(true);
@@ -295,6 +298,7 @@ describe("Background Bash Output Capture", () => {
     const marker = `ERROR_${Date.now()}`;
     const spawnResult = await manager.spawn(runtime, workspaceId, `echo "${marker}" >&2; exit 1`, {
       cwd: workspacePath,
+      displayName: "test",
     });
     expect(spawnResult.success).toBe(true);
     if (!spawnResult.success) return;
@@ -320,7 +324,7 @@ describe("Background Bash Output Capture", () => {
       runtime,
       workspaceId,
       `echo "${marker1}"; echo "${marker2}" >&2; false; echo "NEVER_SEEN"`,
-      { cwd: workspacePath }
+      { cwd: workspacePath, displayName: "test" }
     );
     expect(spawnResult.success).toBe(true);
     if (!spawnResult.success) return;
@@ -346,7 +350,7 @@ describe("Background Bash Output Capture", () => {
       runtime,
       workspaceId,
       `for i in 1 2 3; do echo "${outMarker}_$i"; echo "${errMarker}_$i" >&2; done`,
-      { cwd: workspacePath }
+      { cwd: workspacePath, displayName: "test" }
     );
     expect(spawnResult.success).toBe(true);
     if (!spawnResult.success) return;

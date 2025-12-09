@@ -40,6 +40,7 @@ describe("bash tool", () => {
       script: "echo hello",
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -58,6 +59,7 @@ describe("bash tool", () => {
       script: "echo line1 && echo line2 && echo line3",
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -75,6 +77,7 @@ describe("bash tool", () => {
       run_in_background: false,
       script: "for i in {1..400}; do echo line$i; done", // Exceeds 300 line hard cap
       timeout_secs: 5,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -94,6 +97,7 @@ describe("bash tool", () => {
       run_in_background: false,
       script: "for i in {1..400}; do echo line$i; done", // Exceeds 300 line hard cap
       timeout_secs: 5,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -147,6 +151,7 @@ describe("bash tool", () => {
       run_in_background: false,
       script: "for i in {1..500}; do echo line$i; done",
       timeout_secs: 5,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -174,6 +179,7 @@ describe("bash tool", () => {
       script: 'perl -e \'for (1..1700) { print "A" x 900 . "\\n" }\'',
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -217,6 +223,7 @@ describe("bash tool", () => {
       script: 'perl -e \'print "A" x 2000000 . "\\n"\'',
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -254,6 +261,7 @@ describe("bash tool", () => {
       script: 'perl -e \'print "A" x 500000 . "\\n"; print "B" x 600000 . "\\n"\'',
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -292,6 +300,7 @@ describe("bash tool", () => {
       run_in_background: false,
       script: "for i in {1..400}; do echo line$i; done",
       timeout_secs: 5,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -329,6 +338,7 @@ describe("bash tool", () => {
       run_in_background: false,
       script: "for i in {1..1300}; do printf 'line%04d with some padding text here\\n' $i; done",
       timeout_secs: 5,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -383,6 +393,7 @@ describe("bash tool", () => {
       run_in_background: false,
       script: "for i in {1..1600}; do printf 'line%04d: '; printf 'x%.0s' {1..80}; echo; done",
       timeout_secs: 10,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -428,6 +439,7 @@ describe("bash tool", () => {
         "for i in {1..500}; do printf 'line%04d with padding text\\n' $i; done; echo 'COMPLETION_MARKER'",
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -470,6 +482,7 @@ describe("bash tool", () => {
       run_in_background: false,
       script: "printf 'x%.0s' {1..2000}; echo; echo 'SHOULD_NOT_APPEAR'",
       timeout_secs: 5,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -513,6 +526,7 @@ describe("bash tool", () => {
       run_in_background: false,
       script: "for i in {1..299}; do printf 'line%04d with some padding text here now\\n' $i; done",
       timeout_secs: 5,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -544,6 +558,7 @@ describe("bash tool", () => {
       run_in_background: false,
       script: "for i in {1..300}; do printf 'line%04d\\n' $i; done",
       timeout_secs: 5,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -565,6 +580,7 @@ describe("bash tool", () => {
       script: "echo stdout1 && echo stderr1 >&2 && echo stdout2 && echo stderr2 >&2",
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -586,6 +602,7 @@ describe("bash tool", () => {
       script: "exit 42",
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -604,6 +621,7 @@ describe("bash tool", () => {
       script: "while true; do sleep 0.1; done",
       timeout_secs: 1,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -622,6 +640,7 @@ describe("bash tool", () => {
       script: "true",
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -644,6 +663,7 @@ describe("bash tool", () => {
       script: "echo 'test:first-child' | grep ':first-child'",
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -670,6 +690,7 @@ describe("bash tool", () => {
       script: "echo test | cat",
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -695,6 +716,7 @@ describe("bash tool", () => {
         'python3 -c "import os,stat;mode=os.fstat(0).st_mode;print(stat.S_IFMT(mode)==stat.S_IFIFO)"',
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -740,6 +762,7 @@ describe("bash tool", () => {
       script: "echo test",
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -758,6 +781,7 @@ describe("bash tool", () => {
       script: "echo 'cd' && echo test",
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -779,6 +803,7 @@ describe("bash tool", () => {
       script: "while true; do sleep 1; done > /dev/null 2>&1 &",
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -800,6 +825,7 @@ describe("bash tool", () => {
       script: "while true; do sleep 1; done > /dev/null 2>&1 & echo $!",
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -824,6 +850,7 @@ describe("bash tool", () => {
       script: "while true; do sleep 0.1; done & wait",
       timeout_secs: 1,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -844,6 +871,7 @@ describe("bash tool", () => {
       script: `echo '${longLine}'`,
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -864,6 +892,7 @@ describe("bash tool", () => {
       script: `for i in {1..${numLines}}; do echo '${lineContent}'; done`,
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -882,6 +911,7 @@ describe("bash tool", () => {
       run_in_background: false,
       script: `for i in {1..1000}; do echo 'This is line number '$i' with some content'; done`,
       timeout_secs: 5,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -900,6 +930,7 @@ describe("bash tool", () => {
       script: "",
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -920,6 +951,7 @@ describe("bash tool", () => {
       script: "   \n\t  ",
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -939,6 +971,7 @@ describe("bash tool", () => {
       script: "sleep 5",
       timeout_secs: 10,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -960,6 +993,7 @@ describe("bash tool", () => {
       script: "for i in 1 2 3; do echo $i; sleep 0.1; done",
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -1039,6 +1073,7 @@ echo "$RESULT"
 `,
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -1067,6 +1102,7 @@ fi
 `,
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -1086,6 +1122,7 @@ fi
       script: "echo hello",
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -1109,6 +1146,7 @@ fi
       script: `echo "${marker}"; sleep 100 & echo $!`,
       timeout_secs: 1,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -1164,6 +1202,7 @@ fi
       `,
       timeout_secs: 10,
       run_in_background: false,
+      display_name: "test",
     };
 
     // Start the command
@@ -1234,6 +1273,7 @@ fi
       `,
       timeout_secs: 120,
       run_in_background: false,
+      display_name: "test",
     };
 
     // Start the command
@@ -1292,6 +1332,7 @@ describe("muxEnv environment variables", () => {
     const args: BashToolArgs = {
       script: 'echo "PROJECT:$MUX_PROJECT_PATH RUNTIME:$MUX_RUNTIME WORKSPACE:$MUX_WORKSPACE_NAME"',
       timeout_secs: 5,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -1320,6 +1361,7 @@ describe("muxEnv environment variables", () => {
     const args: BashToolArgs = {
       script: 'echo "MUX:$MUX_PROJECT_PATH CUSTOM:$CUSTOM_VAR"',
       timeout_secs: 5,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -1369,6 +1411,7 @@ describe("SSH runtime redundant cd detection", () => {
       script: "cd /remote/workspace/project/branch && echo test",
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -1391,6 +1434,7 @@ describe("SSH runtime redundant cd detection", () => {
       script: "cd /tmp && echo test",
       timeout_secs: 5,
       run_in_background: false,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -1411,6 +1455,7 @@ describe("bash tool - background execution", () => {
     const args: BashToolArgs = {
       script: "echo test",
       run_in_background: true,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -1433,6 +1478,7 @@ describe("bash tool - background execution", () => {
       script: "echo test",
       timeout_secs: 5,
       run_in_background: true,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
@@ -1456,6 +1502,7 @@ describe("bash tool - background execution", () => {
     const args: BashToolArgs = {
       script: "echo hello",
       run_in_background: true,
+      display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;

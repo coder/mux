@@ -75,6 +75,7 @@ describe("bash_background_terminate tool", () => {
     // Spawn a long-running process
     const spawnResult = await manager.spawn(runtime, "test-workspace", "sleep 10", {
       cwd: process.cwd(),
+      displayName: "test",
     });
 
     if (!spawnResult.success) {
@@ -115,6 +116,7 @@ describe("bash_background_terminate tool", () => {
     // Spawn a process
     const spawnResult = await manager.spawn(runtime, "test-workspace", "sleep 10", {
       cwd: process.cwd(),
+      displayName: "test",
     });
 
     if (!spawnResult.success) {
@@ -160,6 +162,7 @@ describe("bash_background_terminate tool", () => {
     // Spawn process in workspace-b
     const spawnResult = await manager.spawn(runtime, "workspace-b", "sleep 10", {
       cwd: process.cwd(),
+      displayName: "test",
     });
 
     if (!spawnResult.success) {

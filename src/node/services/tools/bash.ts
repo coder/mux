@@ -310,6 +310,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
               config.workspaceId,
               toolCallId,
               script,
+              display_name,
               () => {
                 backgrounded = true;
                 // Resolve the background promise to unblock the wait
@@ -480,7 +481,7 @@ ${script}`;
 
           // Migrate to background tracking if manager is available
           if (config.backgroundProcessManager && config.workspaceId) {
-            const processId = config.backgroundProcessManager.generateProcessId();
+            const processId = config.backgroundProcessManager.generateProcessId(display_name);
 
             // Create a synthetic ExecStream for the migration streams
             // The UI streams are still being consumed, migration streams continue to files

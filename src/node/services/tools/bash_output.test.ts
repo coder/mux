@@ -96,7 +96,7 @@ describe("bash_output tool", () => {
       runtime,
       "test-workspace",
       "echo 'line1'; sleep 0.5; echo 'line2'",
-      { cwd: process.cwd() }
+      { cwd: process.cwd(), displayName: "test" }
     );
 
     if (!spawnResult.success) {
@@ -154,7 +154,7 @@ describe("bash_output tool", () => {
       runtime,
       "test-workspace",
       "echo 'ERROR: something failed'; echo 'INFO: everything ok'; echo 'ERROR: another error'",
-      { cwd: process.cwd() }
+      { cwd: process.cwd(), displayName: "test" }
     );
 
     if (!spawnResult.success) {
@@ -193,6 +193,7 @@ describe("bash_output tool", () => {
 
     const spawnResult = await manager.spawn(runtime, "test-workspace", "echo 'test'", {
       cwd: process.cwd(),
+      displayName: "test",
     });
 
     if (!spawnResult.success) {
@@ -234,6 +235,7 @@ describe("bash_output tool", () => {
     // Spawn process in different workspace
     const spawnResult = await manager.spawn(runtime, "workspace-b", "echo 'test'", {
       cwd: process.cwd(),
+      displayName: "test",
     });
 
     if (!spawnResult.success) {
@@ -268,6 +270,7 @@ describe("bash_output tool", () => {
     // Spawn a process that exits quickly
     const spawnResult = await manager.spawn(runtime, "test-workspace", "echo 'done'", {
       cwd: process.cwd(),
+      displayName: "test",
     });
 
     if (!spawnResult.success) {

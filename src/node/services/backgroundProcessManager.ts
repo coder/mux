@@ -59,6 +59,8 @@ export interface ForegroundProcess {
   toolCallId: string;
   /** Script being executed */
   script: string;
+  /** Display name for the process (used as ID if sent to background) */
+  displayName: string;
   /** Callback to invoke when user requests backgrounding */
   onBackground: () => void;
   /** Current accumulated output (for saving to files on background) */
@@ -85,8 +87,7 @@ export class BackgroundProcessManager extends EventEmitter {
   // Tracks read positions for incremental output retrieval
   private readPositions = new Map<string, OutputReadPosition>();
 
-  // Counter for generating sequential process IDs (bash_1, bash_2, etc.)
-  private nextProcessNumber = 1;
+
 
   // Base directory for process output files
   private readonly bgOutputDir: string;
@@ -108,11 +109,10 @@ export class BackgroundProcessManager extends EventEmitter {
   }
 
   /**
-   * Generate a unique sequential process ID (bash_1, bash_2, etc.)
-   * Follows Claude Code's ID format for consistency.
+   * Use the display name directly as the process ID.
    */
-  generateProcessId(): string {
-    return `bash_${this.nextProcessNumber++}`;
+  generateProcessId(displayName: string): string {
+    return displayName;
   }
 
   /**
@@ -134,7 +134,8 @@ export class BackgroundProcessManager extends EventEmitter {
       cwd: string;
       env?: Record<string, string>;
       niceness?: number;
-      displayName?: string;
+      /** Human-readable name for the process - used to generate the process ID */
+      displayName: string;
       /** If true, process is foreground (being waited on). Default: false (background) */
       isForeground?: boolean;
     }
@@ -144,8 +145,8 @@ export class BackgroundProcessManager extends EventEmitter {
   > {
     log.debug(`BackgroundProcessManager.spawn() called for workspace ${workspaceId}`);
 
-    // Generate sequential process ID (bash_1, bash_2, etc.)
-    const processId = this.generateProcessId();
+    // Generate process ID from display name (e.g., "Dev Server" → "bash_Dev-Server")
+    const processId = this.generateProcessId(config.displayName);
 
     // Spawn via executor with background infrastructure
     const result = await spawnProcess(
@@ -216,12 +217,14 @@ export class BackgroundProcessManager extends EventEmitter {
     workspaceId: string,
     toolCallId: string,
     script: string,
+    displayName: string,
     onBackground: () => void
   ): { unregister: () => void; addOutput: (line: string) => void } {
     const proc: ForegroundProcess = {
       workspaceId,
       toolCallId,
       script,
+      displayName,
       onBackground,
       output: [],
     };
