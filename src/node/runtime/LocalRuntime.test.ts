@@ -164,52 +164,8 @@ describe("LocalRuntime", () => {
     });
   });
 
-  describe("inherited LocalBaseRuntime methods", () => {
-    it("exec runs commands in projectPath", async () => {
-      const runtime = new LocalRuntime(testDir);
-
-      const stream = await runtime.exec("pwd", {
-        cwd: testDir,
-        timeout: 10,
-      });
-
-      const reader = stream.stdout.getReader();
-      let output = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        output += new TextDecoder().decode(value);
-      }
-
-      const exitCode = await stream.exitCode;
-      expect(exitCode).toBe(0);
-      expect(output.trim()).toBe(testDir);
-    });
-
-    it("stat works on projectPath", async () => {
-      const runtime = new LocalRuntime(testDir);
-
-      const stat = await runtime.stat(testDir);
-
-      expect(stat.isDirectory).toBe(true);
-    });
-
-    it("resolvePath expands tilde", async () => {
-      const runtime = new LocalRuntime(testDir);
-
-      const resolved = await runtime.resolvePath("~");
-
-      expect(resolved).toBe(os.homedir());
-    });
-
-    it("normalizePath resolves relative paths", () => {
-      const runtime = new LocalRuntime(testDir);
-
-      const result = runtime.normalizePath(".", testDir);
-
-      expect(result).toBe(testDir);
-    });
-  });
+  // Note: exec, stat, resolvePath, normalizePath are tested in the shared Runtime
+  // interface tests (tests/runtime/runtime.test.ts matrix)
 
   describe("tilde expansion in file operations", () => {
     it("stat expands tilde paths", async () => {

@@ -12,7 +12,7 @@ import * as crypto from "crypto";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
-import { spawn, type ChildProcess } from "child_process";
+import { spawn } from "child_process";
 
 export interface SSHServerConfig {
   /** Container ID */
@@ -103,7 +103,8 @@ export async function startSSHServer(): Promise<SSHServerConfig> {
     const portResult = await execCommand("docker", ["port", containerId, "22"]);
 
     // Port output format: "0.0.0.0:XXXXX" or "[::]:XXXXX"
-    const portMatch = portResult.stdout.match(/:(\d+)/);
+    const portRegex = /:([0-9]+)/;
+    const portMatch = portRegex.exec(portResult.stdout);
     if (!portMatch) {
       throw new Error(`Failed to parse port from: ${portResult.stdout}`);
     }
@@ -248,11 +249,11 @@ function execCommand(
         }, options.timeout)
       : undefined;
 
-    child.stdout.on("data", (data) => {
+    child.stdout.on("data", (data: Buffer) => {
       stdout += data.toString();
     });
 
-    child.stderr.on("data", (data) => {
+    child.stderr.on("data", (data: Buffer) => {
       stderr += data.toString();
     });
 
@@ -265,7 +266,7 @@ function execCommand(
       } else {
         reject(
           new Error(
-            `Command failed with exit code ${code}: ${command} ${args.join(" ")}\nstderr: ${stderr}`
+            `Command failed with exit code ${String(code)}: ${command} ${args.join(" ")}\nstderr: ${stderr}`
           )
         );
       }

@@ -29,7 +29,7 @@ import {
   startSSHServer,
   stopSSHServer,
   type SSHServerConfig,
-} from "../runtime/ssh-fixture";
+} from "../runtime/test-fixtures/ssh-fixture";
 import type { RuntimeConfig } from "../../src/common/types/runtime";
 import { getSrcBaseDir } from "../../src/common/types/runtime";
 import type { FrontendWorkspaceMetadata } from "../../src/common/types/workspace";

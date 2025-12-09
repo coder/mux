@@ -26,12 +26,13 @@ export function createTestRuntime(
   sshConfig?: SSHServerConfig
 ): Runtime {
   switch (type) {
-    case "local":
+    case "local": {
       // Resolve symlinks (e.g., /tmp -> /private/tmp on macOS) to match git worktree paths
       // Note: "local" in tests means WorktreeRuntime (isolated git worktrees)
       const resolvedWorkdir = realpathSync(workdir);
       return new WorktreeRuntime(resolvedWorkdir);
-    case "ssh":
+    }
+    case "ssh": {
       if (!sshConfig) {
         throw new Error("SSH config required for SSH runtime");
       }
@@ -41,6 +42,7 @@ export function createTestRuntime(
         identityFile: sshConfig.privateKeyPath,
         port: sshConfig.port,
       });
+    }
   }
 }
 
@@ -131,24 +133,10 @@ export class TestWorkspace {
  * Configure SSH client to use test key
  *
  * Returns environment variables to pass to SSH commands
+ * Note: sshConfig is used to document the connection params but the actual
+ * SSH connection is handled by SSHRuntime with identityFile.
  */
-export function getSSHEnv(sshConfig: SSHServerConfig): Record<string, string> {
-  // Create SSH config content
-  const sshConfigContent = `
-Host ${sshConfig.host}
-  HostName localhost
-  Port ${sshConfig.port}
-  User testuser
-  IdentityFile ${sshConfig.privateKeyPath}
-  StrictHostKeyChecking no
-  UserKnownHostsFile /dev/null
-  LogLevel ERROR
-`;
-
-  // For SSH commands, we need to write this to a temp file and use -F
-  // But for our SSHRuntime, we can configure ~/.ssh/config or use environment
-  // For now, we'll rely on ssh command finding the key via standard paths
-
+export function getSSHEnv(_sshConfig: SSHServerConfig): Record<string, string> {
   // Filter out undefined values from process.env
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
