@@ -353,9 +353,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           await loadWorkspaceMetadata();
 
           // Clear selected workspace if it was removed
-          if (selectedWorkspace?.workspaceId === workspaceId) {
-            setSelectedWorkspace(null);
-          }
+          // Use functional update to check *current* selection, not stale closure value
+          setSelectedWorkspace((current) =>
+            current?.workspaceId === workspaceId ? null : current
+          );
           return { success: true };
         } else {
           console.error("Failed to remove workspace:", result.error);
@@ -367,7 +368,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         return { success: false, error: errorMessage };
       }
     },
-    [loadWorkspaceMetadata, refreshProjects, selectedWorkspace, setSelectedWorkspace, api]
+    [loadWorkspaceMetadata, refreshProjects, setSelectedWorkspace, api]
   );
 
   const renameWorkspace = useCallback(
