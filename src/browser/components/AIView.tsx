@@ -219,6 +219,9 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Virtuoso ref and auto-scroll state
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+  // Track if user is actively scrolling (to distinguish user vs programmatic scrolls)
+  const isUserScrollingRef = useRef(false);
+  const userScrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Jump to bottom handler for Virtuoso
   const jumpToBottom = useCallback(() => {
@@ -226,9 +229,29 @@ const AIViewInner: React.FC<AIViewProps> = ({
     virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "smooth" });
   }, []);
 
-  // Handle Virtuoso's atBottomStateChange - updates autoScroll state
+  // Mark user interaction for scroll detection
+  const markUserScrolling = useCallback(() => {
+    isUserScrollingRef.current = true;
+    if (userScrollTimeoutRef.current) {
+      clearTimeout(userScrollTimeoutRef.current);
+    }
+    userScrollTimeoutRef.current = setTimeout(() => {
+      isUserScrollingRef.current = false;
+    }, 150);
+  }, []);
+
+  // Handle Virtuoso's atBottomStateChange
+  // Only re-enable autoScroll when user actively scrolls to bottom
   const handleAtBottomChange = useCallback((atBottom: boolean) => {
-    setAutoScroll(atBottom);
+    if (!atBottom) {
+      // User scrolled away from bottom - disable autoScroll
+      setAutoScroll(false);
+    } else if (isUserScrollingRef.current) {
+      // User actively scrolled to bottom - re-enable autoScroll
+      setAutoScroll(true);
+    }
+    // If atBottom but not user-initiated, don't change autoScroll
+    // (prevents programmatic scrolls from re-enabling it)
   }, []);
 
   // ChatInput API for focus management
@@ -543,6 +566,9 @@ const AIViewInner: React.FC<AIViewProps> = ({
               data-testid="message-window"
               className="h-full leading-[1.5] break-words whitespace-pre-wrap"
               style={{ height: "100%" }}
+              // Track user scroll interactions to distinguish from programmatic scrolls
+              onWheel={markUserScrolling}
+              onTouchMove={markUserScrolling}
               // Start at the bottom of the list
               initialTopMostItemIndex={deferredMessages.length - 1}
               // Render extra content above/below viewport for smooth scrolling
