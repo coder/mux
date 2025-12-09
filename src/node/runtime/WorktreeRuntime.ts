@@ -9,7 +9,7 @@ import type {
   WorkspaceForkResult,
   InitLogger,
 } from "./Runtime";
-import { listLocalBranches } from "@/node/git";
+import { listLocalBranches, cleanStaleLock } from "@/node/git";
 import { checkInitHookExists, getMuxEnv } from "./initHook";
 import { execAsync } from "@/node/utils/disposableExec";
 import { getBashPath } from "@/node/utils/main/bashPath";
@@ -43,6 +43,9 @@ export class WorktreeRuntime extends LocalBaseRuntime {
 
   async createWorkspace(params: WorkspaceCreationParams): Promise<WorkspaceCreationResult> {
     const { projectPath, branchName, trunkBranch, initLogger } = params;
+
+    // Clean up stale lock before git operations on main repo
+    cleanStaleLock(projectPath);
 
     try {
       // Compute workspace path using the canonical method
@@ -175,6 +178,9 @@ export class WorktreeRuntime extends LocalBaseRuntime {
     { success: true; oldPath: string; newPath: string } | { success: false; error: string }
   > {
     // Note: _abortSignal ignored for local operations (fast, no need for cancellation)
+    // Clean up stale lock before git operations on main repo
+    cleanStaleLock(projectPath);
+
     // Compute workspace paths using canonical method
     const oldPath = this.getWorkspacePath(projectPath, oldName);
     const newPath = this.getWorkspacePath(projectPath, newName);
@@ -209,6 +215,8 @@ export class WorktreeRuntime extends LocalBaseRuntime {
     _abortSignal?: AbortSignal
   ): Promise<{ success: true; deletedPath: string } | { success: false; error: string }> {
     // Note: _abortSignal ignored for local operations (fast, no need for cancellation)
+    // Clean up stale lock before git operations on main repo
+    cleanStaleLock(projectPath);
 
     // In-place workspaces are identified by projectPath === workspaceName
     // These are direct workspace directories (e.g., CLI/benchmark sessions), not git worktrees
