@@ -57,7 +57,8 @@ export function buildWrapperScript(options: WrapperScriptOptions): string {
   const parts: string[] = [];
 
   // Set up trap first to capture exit code
-  parts.push(`trap 'echo $? > ${shellQuote(options.exitCodePath)}' EXIT`);
+  // Use double quotes for the trap command to allow nested single-quoted paths
+  parts.push(`trap "echo \\$? > ${shellQuote(options.exitCodePath)}" EXIT`);
 
   // Change to working directory
   parts.push(`cd ${shellQuote(options.cwd)}`);

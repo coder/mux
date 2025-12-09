@@ -17,10 +17,7 @@ function createTestRuntime(): Runtime {
   return new LocalRuntime(process.cwd());
 }
 
-// Background process tests require Unix features (nohup, process groups, etc.)
-const isWindows = process.platform === "win32";
-
-describe.skipIf(isWindows)("bash_output tool", () => {
+describe("bash_output tool", () => {
   it("should return error when manager not available", async () => {
     const tempDir = new TestTempDir("test-bash-output");
     const config = createTestToolConfig(process.cwd());
@@ -391,6 +388,96 @@ describe.skipIf(isWindows)("bash_output tool", () => {
     }
 
     // Cleanup
+    await manager.cleanup("test-workspace");
+    tempDir[Symbol.dispose]();
+  });
+
+  it("should wait full timeout duration when no output and process running", async () => {
+    const tempDir = new TestTempDir("test-bash-output");
+    const manager = new BackgroundProcessManager(tempDir.path);
+
+    const runtime = createTestRuntime();
+    const config = createTestToolConfig(process.cwd(), { sessionsDir: tempDir.path });
+    config.runtimeTempDir = tempDir.path;
+    config.backgroundProcessManager = manager;
+
+    const processId = `long-sleep-${Date.now()}`;
+
+    // Spawn a process that sleeps for a long time with no output
+    const spawnResult = await manager.spawn(runtime, "test-workspace", "sleep 30", {
+      cwd: process.cwd(),
+      displayName: processId,
+    });
+
+    if (!spawnResult.success) {
+      throw new Error("Failed to spawn process");
+    }
+
+    const tool = createBashOutputTool(config);
+
+    // Call with short timeout - should wait full duration then return empty
+    const start = Date.now();
+    const result = (await tool.execute!(
+      { process_id: spawnResult.processId, timeout_secs: 1 },
+      mockToolCallOptions
+    )) as BashOutputToolResult;
+    const elapsed = Date.now() - start;
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.output).toBe(""); // No output
+      expect(result.status).toBe("running"); // Process still running
+      // Should have waited close to 1 second
+      expect(elapsed).toBeGreaterThan(900);
+      expect(elapsed).toBeLessThan(1500);
+    }
+
+    // Cleanup
+    await manager.terminate(spawnResult.processId);
+    await manager.cleanup("test-workspace");
+    tempDir[Symbol.dispose]();
+  });
+
+  it("should return immediately with timeout_secs: 0 even when no output", async () => {
+    const tempDir = new TestTempDir("test-bash-output");
+    const manager = new BackgroundProcessManager(tempDir.path);
+
+    const runtime = createTestRuntime();
+    const config = createTestToolConfig(process.cwd(), { sessionsDir: tempDir.path });
+    config.runtimeTempDir = tempDir.path;
+    config.backgroundProcessManager = manager;
+
+    const processId = `no-wait-${Date.now()}`;
+
+    // Spawn a process that sleeps (no immediate output)
+    const spawnResult = await manager.spawn(runtime, "test-workspace", "sleep 30", {
+      cwd: process.cwd(),
+      displayName: processId,
+    });
+
+    if (!spawnResult.success) {
+      throw new Error("Failed to spawn process");
+    }
+
+    const tool = createBashOutputTool(config);
+
+    // Call with timeout=0 - should return immediately
+    const start = Date.now();
+    const result = (await tool.execute!(
+      { process_id: spawnResult.processId, timeout_secs: 0 },
+      mockToolCallOptions
+    )) as BashOutputToolResult;
+    const elapsed = Date.now() - start;
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.output).toBe("");
+      expect(result.status).toBe("running");
+      expect(elapsed).toBeLessThan(200); // Should return almost immediately
+    }
+
+    // Cleanup
+    await manager.terminate(spawnResult.processId);
     await manager.cleanup("test-workspace");
     tempDir[Symbol.dispose]();
   });

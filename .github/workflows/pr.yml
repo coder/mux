@@ -80,30 +80,16 @@ jobs:
       - run: make -j static-check
 
   test-unit:
-    name: Test / Unit (${{ matrix.os }})
+    name: Test / Unit
     needs: [changes]
     if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: linux
-            runner: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
-            test_path: src
-          - os: windows
-            runner: windows-latest
-            # Windows: only run bash tool tests (background bash uses Unix-only features)
-            test_path: src/node/services/tools/bash.test.ts src/node/services/tools/bash_output.test.ts src/node/services/tools/bash_background_list.test.ts src/node/services/tools/bash_background_terminate.test.ts
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-mux
       - run: make build-main
-        shell: bash
-      - run: bun test --coverage --coverage-reporter=lcov ${{ github.event.inputs.test_filter || matrix.test_path }}
-        shell: bash
+      - run: bun test --coverage --coverage-reporter=lcov ${{ github.event.inputs.test_filter || 'src' }}
       - uses: codecov/codecov-action@v5
-        if: matrix.os == 'linux'
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/lcov.info

@@ -24,10 +24,7 @@ function createTestRuntime(): Runtime {
 // Workspace IDs used in tests - need cleanup after each test
 const TEST_WORKSPACES = ["test-workspace", "workspace-a", "workspace-b"];
 
-// Background process tests require Unix features (nohup, process groups, etc.)
-const isWindows = process.platform === "win32";
-
-describe.skipIf(isWindows)("bash_background_terminate tool", () => {
+describe("bash_background_terminate tool", () => {
   afterEach(async () => {
     // Clean up output directories from /tmp/mux-bashes/ to prevent test pollution
     for (const ws of TEST_WORKSPACES) {

@@ -38,8 +38,13 @@ function quotePathForShell(p: string): string {
   return shellQuote(posixPath);
 }
 
-const isWindows = process.platform === "win32";
-const rootDir = isWindows ? "C:\\" : "/";
+/** Safe fallback cwd for exec calls - /tmp exists on all POSIX systems (including WSL/Git Bash) */
+const FALLBACK_CWD = "/tmp";
+
+/** Helper to extract error message for logging */
+function errorMsg(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 /** Subdirectory under temp for background process output */
 export const BG_OUTPUT_SUBDIR = "mux-bashes";
@@ -122,7 +127,7 @@ export async function spawnProcess(
 
   // Verify working directory exists
   const cwdCheck = await execBuffered(runtime, `cd ${quotePath(options.cwd)}`, {
-    cwd: rootDir,
+    cwd: FALLBACK_CWD,
     timeout: 10,
   });
   if (cwdCheck.exitCode !== 0) {
@@ -140,7 +145,7 @@ export async function spawnProcess(
   const mkdirResult = await execBuffered(
     runtime,
     `mkdir -p ${quotePath(outputDir)} && touch ${quotePath(outputPath)}`,
-    { cwd: rootDir, timeout: 30 }
+    { cwd: FALLBACK_CWD, timeout: 30 }
   );
   if (mkdirResult.exitCode !== 0) {
     return {
@@ -168,7 +173,7 @@ export async function spawnProcess(
   try {
     // No timeout - the spawn command backgrounds the process and returns immediately
     const result = await execBuffered(runtime, spawnCommand, {
-      cwd: rootDir,
+      cwd: FALLBACK_CWD,
     });
 
     if (result.exitCode !== 0) {
@@ -192,7 +197,7 @@ export async function spawnProcess(
     const handle = new RuntimeBackgroundHandle(runtime, pid, outputDir, quotePath);
     return { success: true, handle, pid, outputDir };
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = errorMsg(error);
     log.debug(`BackgroundProcessExecutor.spawnProcess: Error: ${errorMessage}`);
     return {
       success: false,
@@ -228,12 +233,12 @@ class RuntimeBackgroundHandle implements BackgroundHandle {
       const result = await execBuffered(
         this.runtime,
         `cat ${exitCodePath} 2>/dev/null || echo ""`,
-        { cwd: rootDir, timeout: 10 }
+        { cwd: FALLBACK_CWD, timeout: 10 }
       );
       return parseExitCode(result.stdout);
     } catch (error) {
       log.debug(
-        `RuntimeBackgroundHandle.getExitCode: Error: ${error instanceof Error ? error.message : String(error)}`
+        `RuntimeBackgroundHandle.getExitCode: Error: ${errorMsg(error)}`
       );
       return null;
     }
@@ -250,14 +255,14 @@ class RuntimeBackgroundHandle implements BackgroundHandle {
       const exitCodePath = `${this.outputDir}/${EXIT_CODE_FILENAME}`;
       const terminateCmd = buildTerminateCommand(this.pid, exitCodePath, this.quotePath);
       await execBuffered(this.runtime, terminateCmd, {
-        cwd: rootDir,
+        cwd: FALLBACK_CWD,
         timeout: 15,
       });
       log.debug(`RuntimeBackgroundHandle: Terminated process group ${this.pid}`);
     } catch (error) {
       // Process may already be dead - that's fine
       log.debug(
-        `RuntimeBackgroundHandle.terminate: Error: ${error instanceof Error ? error.message : String(error)}`
+        `RuntimeBackgroundHandle.terminate: Error: ${errorMsg(error)}`
       );
     }
 
@@ -279,29 +284,29 @@ class RuntimeBackgroundHandle implements BackgroundHandle {
     try {
       const metaPath = this.quotePath(`${this.outputDir}/meta.json`);
       await execBuffered(this.runtime, `cat > ${metaPath} << 'METAEOF'\n${metaJson}\nMETAEOF`, {
-        cwd: rootDir,
+        cwd: FALLBACK_CWD,
         timeout: 10,
       });
     } catch (error) {
       log.debug(
-        `RuntimeBackgroundHandle.writeMeta: Error: ${error instanceof Error ? error.message : String(error)}`
+        `RuntimeBackgroundHandle.writeMeta: Error: ${errorMsg(error)}`
       );
     }
   }
 
   /**
    * Read output from output.log at the given byte offset.
-   * Uses dd to skip bytes and read remaining content - works on both local and SSH.
+   * Uses tail -c to read from offset - works on both Linux and macOS.
    */
   async readOutput(offset: number): Promise<{ content: string; newOffset: number }> {
     try {
       const filePath = this.quotePath(`${this.outputDir}/${OUTPUT_FILENAME}`);
-      // Use dd to skip bytes and cat the rest. dd with bs=1 skip=N reads from byte N.
-      // We get file size first to know how much we read.
+      // Get file size first to know how much we read
+      // Use wc -c - works on both Linux and macOS (unlike stat flags which differ)
       const sizeResult = await execBuffered(
         this.runtime,
-        `stat -c%s ${filePath} 2>/dev/null || echo 0`,
-        { cwd: rootDir, timeout: 10 }
+        `wc -c < ${filePath} 2>/dev/null || echo 0`,
+        { cwd: FALLBACK_CWD, timeout: 10 }
       );
       const fileSize = parseInt(sizeResult.stdout.trim(), 10) || 0;
 
@@ -309,12 +314,12 @@ class RuntimeBackgroundHandle implements BackgroundHandle {
         return { content: "", newOffset: offset };
       }
 
-      // Read from offset to end of file
-      const bytesToRead = fileSize - offset;
+      // Read from offset to end of file using tail -c (faster than dd bs=1)
+      // tail -c +N means "start at byte N" (1-indexed)
       const readResult = await execBuffered(
         this.runtime,
-        `dd if=${filePath} bs=1 skip=${offset} count=${bytesToRead} 2>/dev/null`,
-        { cwd: rootDir, timeout: 30 }
+        `tail -c +${offset + 1} ${filePath} 2>/dev/null`,
+        { cwd: FALLBACK_CWD, timeout: 30 }
       );
 
       return {
@@ -323,7 +328,7 @@ class RuntimeBackgroundHandle implements BackgroundHandle {
       };
     } catch (error) {
       log.debug(
-        `RuntimeBackgroundHandle.readOutput: Error: ${error instanceof Error ? error.message : String(error)}`
+        `RuntimeBackgroundHandle.readOutput: Error: ${errorMsg(error)}`
       );
       return { content: "", newOffset: offset };
     }
@@ -399,7 +404,7 @@ export async function migrateToBackground(
 
     return { success: true, handle, outputDir };
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = errorMsg(error);
     log.debug(`migrateToBackground: Error: ${errorMessage}`);
     return { success: false, error: `Failed to migrate process: ${errorMessage}` };
   }
@@ -458,7 +463,7 @@ class MigratedBackgroundHandle implements BackgroundHandle {
       ]);
     } catch (error) {
       log.debug(
-        `MigratedBackgroundHandle.consumeStreams: ${error instanceof Error ? error.message : String(error)}`
+        `MigratedBackgroundHandle.consumeStreams: ${errorMsg(error)}`
       );
     } finally {
       if (this.outputFd) {
@@ -489,7 +494,7 @@ class MigratedBackgroundHandle implements BackgroundHandle {
     } catch (error) {
       // Stream may have been cancelled or process killed - that's fine
       log.debug(
-        `MigratedBackgroundHandle.consumeStream: ${error instanceof Error ? error.message : String(error)}`
+        `MigratedBackgroundHandle.consumeStream: ${errorMsg(error)}`
       );
     }
   }
@@ -503,7 +508,7 @@ class MigratedBackgroundHandle implements BackgroundHandle {
       await fs.writeFile(exitCodePath, String(code));
     } catch (error) {
       log.debug(
-        `MigratedBackgroundHandle.writeExitCode: ${error instanceof Error ? error.message : String(error)}`
+        `MigratedBackgroundHandle.writeExitCode: ${errorMsg(error)}`
       );
     }
   }
@@ -536,7 +541,7 @@ class MigratedBackgroundHandle implements BackgroundHandle {
       await fs.writeFile(metaPath, metaJson);
     } catch (error) {
       log.debug(
-        `MigratedBackgroundHandle.writeMeta: ${error instanceof Error ? error.message : String(error)}`
+        `MigratedBackgroundHandle.writeMeta: ${errorMsg(error)}`
       );
     }
   }
@@ -564,7 +569,7 @@ class MigratedBackgroundHandle implements BackgroundHandle {
       }
     } catch (error) {
       log.debug(
-        `MigratedBackgroundHandle.readOutput: ${error instanceof Error ? error.message : String(error)}`
+        `MigratedBackgroundHandle.readOutput: ${errorMsg(error)}`
       );
       return { content: "", newOffset: offset };
     }

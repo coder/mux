@@ -1406,37 +1406,7 @@ describe("SSH runtime redundant cd detection", () => {
     }
   });
 });
-const isWindows = process.platform === "win32";
-
 describe("bash tool - background execution", () => {
-  it("should reject background mode on Windows", async () => {
-    if (!isWindows) {
-      // This test only runs on Windows
-      return;
-    }
-
-    const manager = new BackgroundProcessManager("/tmp/mux-test-bg");
-    const tempDir = new TestTempDir("test-bash-bg-win");
-    const config = createTestToolConfig(tempDir.path);
-    config.backgroundProcessManager = manager;
-
-    const tool = createBashTool(config);
-    const args: BashToolArgs = {
-      script: "echo test",
-      run_in_background: true,
-      display_name: "test-windows",
-    };
-
-    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain("Background processes are not supported on Windows");
-    }
-
-    tempDir[Symbol.dispose]();
-  });
-
   it("should reject background mode when manager not available", async () => {
     using testEnv = createTestBashTool();
     const tool = testEnv.tool;
@@ -1454,38 +1424,34 @@ describe("bash tool - background execution", () => {
     }
   });
 
-  // Skip Unix-only background tests on Windows
-  it.skipIf(isWindows)(
-    "should accept timeout with background mode for auto-termination",
-    async () => {
-      const manager = new BackgroundProcessManager("/tmp/mux-test-bg");
+  it("should accept timeout with background mode for auto-termination", async () => {
+    const manager = new BackgroundProcessManager("/tmp/mux-test-bg");
 
-      const tempDir = new TestTempDir("test-bash-bg");
-      const config = createTestToolConfig(tempDir.path);
-      config.backgroundProcessManager = manager;
+    const tempDir = new TestTempDir("test-bash-bg");
+    const config = createTestToolConfig(tempDir.path);
+    config.backgroundProcessManager = manager;
 
-      const tool = createBashTool(config);
-      const args: BashToolArgs = {
-        script: "echo test",
-        timeout_secs: 5,
-        run_in_background: true,
-        display_name: "test-timeout-bg",
-      };
+    const tool = createBashTool(config);
+    const args: BashToolArgs = {
+      script: "echo test",
+      timeout_secs: 5,
+      run_in_background: true,
+      display_name: "test-timeout-bg",
+    };
 
-      const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
 
-      // Background with timeout should succeed - timeout is used for auto-termination
-      expect(result.success).toBe(true);
-      if (result.success && "backgroundProcessId" in result) {
-        expect(result.backgroundProcessId).toBe("test-timeout-bg");
-      }
-
-      await manager.terminateAll();
-      tempDir[Symbol.dispose]();
+    // Background with timeout should succeed - timeout is used for auto-termination
+    expect(result.success).toBe(true);
+    if (result.success && "backgroundProcessId" in result) {
+      expect(result.backgroundProcessId).toBe("test-timeout-bg");
     }
-  );
 
-  it.skipIf(isWindows)("should start background process and return process ID", async () => {
+    await manager.terminateAll();
+    tempDir[Symbol.dispose]();
+  });
+
+  it("should start background process and return process ID", async () => {
     const manager = new BackgroundProcessManager("/tmp/mux-test-bg");
 
     const tempDir = new TestTempDir("test-bash-bg");

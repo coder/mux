@@ -39,8 +39,9 @@ describe("backgroundCommands", () => {
         script: "echo hello",
       });
 
+      // Double quotes around trap command allow nested single-quoted paths
       expect(result).toBe(
-        "trap 'echo $? > '/tmp/exit_code'' EXIT && cd '/home/user/project' && echo hello"
+        `trap "echo \\$? > '/tmp/exit_code'" EXIT && cd '/home/user/project' && echo hello`
       );
     });
 
@@ -65,6 +66,39 @@ describe("backgroundCommands", () => {
 
       expect(result).toContain("'/tmp/my dir/exit_code'");
       expect(result).toContain("'/home/user/my project'");
+    });
+
+    it("produces valid bash when exit code path contains spaces", async () => {
+      // Regression test: spaces in process ID (display_name) caused invalid trap syntax
+      // The trap command needs to properly nest quoted paths
+      const testDir = `/tmp/PR Checks ${Date.now()}`;
+      const exitCodePath = `${testDir}/exit_code`;
+
+      const result = buildWrapperScript({
+        exitCodePath,
+        cwd: "/tmp",
+        script: "exit 42",
+      });
+
+      // The wrapper script should be valid bash - execute it and verify exit code is captured
+      const { execSync } = await import("child_process");
+      const fs = await import("fs/promises");
+
+      await fs.mkdir(testDir, { recursive: true });
+      // Ensure no stale file
+      await fs.rm(exitCodePath, { force: true });
+
+      try {
+        execSync(`bash -c ${shellQuote(result)}`, { stdio: "pipe" });
+      } catch {
+        // Expected - script exits with 42
+      }
+
+      // The exit code file MUST exist if the trap worked correctly
+      const exitCode = await fs.readFile(exitCodePath, "utf-8");
+      expect(exitCode.trim()).toBe("42");
+
+      await fs.rm(testDir, { recursive: true });
     });
 
     it("escapes single quotes in env values", () => {
