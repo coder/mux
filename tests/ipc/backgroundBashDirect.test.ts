@@ -56,6 +56,200 @@ interface ToolExecuteResult {
 }
 
 /**
+ * BUG REPRODUCTION: SSH Runtime reads from wrong filesystem
+ * 
+ * ROOT CAUSE: BackgroundProcessManager.getOutput() uses local fs.open() to read
+ * output files, but on SSH runtime the files are on the REMOTE host.
+ * 
+ * The bug manifests as:
+ * - bash_output returns success:true (process IS in memory)
+ * - stdout is empty (local file doesn't exist or has different content)
+ * - But the file on the REMOTE host has the actual output
+ */
+describe("BUG: SSH runtime - getOutput reads local fs instead of remote", () => {
+  it("should read output files via runtime, not local fs", async () => {
+    const env = await createTestEnvironment();
+    const tempGitRepo = await createTempGitRepo();
+
+    try {
+      const branchName = generateBranchName("ssh-bug-repro");
+      const trunkBranch = await detectDefaultTrunkBranch(tempGitRepo);
+      const result = await env.orpc.workspace.create({
+        projectPath: tempGitRepo,
+        branchName,
+        trunkBranch,
+      });
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const workspaceId = result.metadata.id;
+      const workspacePath = result.metadata.namedWorkspacePath ?? tempGitRepo;
+      const manager = getBackgroundProcessManager(env);
+      const runtime = new LocalRuntime(workspacePath);
+
+      const marker = `SSH_BUG_${Date.now()}`;
+
+      // Spawn a background process
+      const spawnResult = await manager.spawn(runtime, workspaceId, `echo "${marker}"`, {
+        cwd: workspacePath,
+      });
+      expect(spawnResult.success).toBe(true);
+      if (!spawnResult.success) return;
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Get the process to check its outputDir
+      const proc = await manager.getProcess(spawnResult.processId);
+      expect(proc).toBeDefined();
+
+      // THE BUG: getOutput() uses local fs.open() but outputDir may be on remote
+      // For local runtime this works, but for SSH runtime it fails silently
+      const output = await manager.getOutput(spawnResult.processId);
+
+      // Verify by reading the file directly (same method getOutput uses internally)
+      const stdoutPath = path.join(proc!.outputDir, "stdout.log");
+      let localFileContent = "";
+      try {
+        localFileContent = await fs.readFile(stdoutPath, "utf-8");
+      } catch {
+        localFileContent = "<file not found on local fs>";
+      }
+
+      console.log("outputDir:", proc!.outputDir);
+      console.log("getOutput stdout:", JSON.stringify(output.success ? output.stdout : output.error));
+      console.log("Local fs content:", JSON.stringify(localFileContent));
+
+      // For local runtime, these should match
+      // For SSH runtime, getOutput returns empty but file exists on remote
+      expect(output.success).toBe(true);
+      if (output.success) {
+        expect(output.stdout).toContain(marker);
+      }
+
+      await env.orpc.workspace.remove({ workspaceId });
+    } finally {
+      await cleanupTempGitRepo(tempGitRepo);
+      await cleanupTestEnvironment(env);
+    }
+  });
+
+  it("DEMONSTRATES BUG: manager does not store runtime reference for reading", async () => {
+    // The BackgroundProcessManager stores:
+    // - processId, pid, workspaceId, outputDir, script, status, handle
+    // 
+    // But it does NOT store the runtime that was used to spawn.
+    // So getOutput() has no way to read from remote filesystem.
+    //
+    // The fix: Either store runtime reference in BackgroundProcess,
+    // or have getOutput() accept a runtime parameter.
+
+    const env = await createTestEnvironment();
+    const manager = getBackgroundProcessManager(env);
+
+    // Check that BackgroundProcess interface doesn't include runtime
+    // by examining what getProcess returns
+    const tempGitRepo = await createTempGitRepo();
+    const runtime = new LocalRuntime(tempGitRepo);
+
+    const spawnResult = await manager.spawn(runtime, "test-ws", "echo test", {
+      cwd: tempGitRepo,
+    });
+    expect(spawnResult.success).toBe(true);
+    if (!spawnResult.success) {
+      await cleanupTempGitRepo(tempGitRepo);
+      await cleanupTestEnvironment(env);
+      return;
+    }
+
+    const proc = await manager.getProcess(spawnResult.processId);
+    expect(proc).toBeDefined();
+
+    // Verify runtime is NOT stored in the process object
+    // This is the root cause - without runtime, can't read remote files
+    const procKeys = Object.keys(proc!);
+    console.log("BackgroundProcess keys:", procKeys);
+    expect(procKeys).not.toContain("runtime");
+
+    // The handle is stored, but it's a BackgroundHandle, not a Runtime
+    expect(procKeys).toContain("handle");
+
+    await manager.cleanup("test-ws");
+    await cleanupTempGitRepo(tempGitRepo);
+    await cleanupTestEnvironment(env);
+  });
+
+  it("FAILS: getOutput returns empty when outputDir is on remote (simulated)", async () => {
+    // This test simulates the SSH bug by:
+    // 1. Spawning a process normally (creates files on local fs)
+    // 2. Manually modifying the stored outputDir to a non-existent path
+    // 3. Calling getOutput() - it should fail to read because path doesn't exist locally
+    //
+    // This simulates what happens with SSH: outputDir points to remote path
+    // but getOutput() reads from local fs where that path doesn't exist
+
+    const env = await createTestEnvironment();
+    const manager = getBackgroundProcessManager(env);
+    const tempGitRepo = await createTempGitRepo();
+    const runtime = new LocalRuntime(tempGitRepo);
+
+    const marker = `SIMULATED_SSH_${Date.now()}`;
+
+    const spawnResult = await manager.spawn(runtime, "sim-ssh-ws", `echo "${marker}"`, {
+      cwd: tempGitRepo,
+    });
+    expect(spawnResult.success).toBe(true);
+    if (!spawnResult.success) {
+      await cleanupTempGitRepo(tempGitRepo);
+      await cleanupTestEnvironment(env);
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Verify normal read works
+    const normalOutput = await manager.getOutput(spawnResult.processId);
+    expect(normalOutput.success).toBe(true);
+    if (normalOutput.success) {
+      expect(normalOutput.stdout).toContain(marker);
+    }
+
+    // Now simulate SSH scenario: modify the stored process's outputDir
+    // to point to a path that doesn't exist locally (simulating remote path)
+    const proc = await manager.getProcess(spawnResult.processId);
+    const originalOutputDir = proc!.outputDir;
+    const fakeRemotePath = "/remote/ssh/host/tmp/mux-bashes/fake-workspace/bash_1";
+
+    // Directly modify the process object (hack for testing)
+    (proc as { outputDir: string }).outputDir = fakeRemotePath;
+
+    // Reset read position so we try to read from offset 0
+    // Access private field for testing
+    const readPositions = (manager as unknown as { readPositions: Map<string, unknown> })
+      .readPositions;
+    readPositions.delete(spawnResult.processId);
+
+    // Now getOutput should return empty (file doesn't exist at fake path)
+    const sshSimOutput = await manager.getOutput(spawnResult.processId);
+
+    console.log("Original outputDir:", originalOutputDir);
+    console.log("Fake remote outputDir:", fakeRemotePath);
+    console.log("getOutput result:", JSON.stringify(sshSimOutput));
+
+    // THE BUG: getOutput returns success:true with empty stdout
+    // because readNewContent silently returns "" on file not found
+    expect(sshSimOutput.success).toBe(true);
+    if (sshSimOutput.success) {
+      // This demonstrates the bug - stdout is empty even though process ran successfully
+      expect(sshSimOutput.stdout).toBe("");
+    }
+
+    await manager.cleanup("sim-ssh-ws");
+    await cleanupTempGitRepo(tempGitRepo);
+    await cleanupTestEnvironment(env);
+  });
+});
+
+/**
  * Test that simulates what happens when processes exist on disk but not in memory.
  * This can happen after app restart, or if processes were spawned by a different
  * manager instance.
