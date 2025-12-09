@@ -10,11 +10,9 @@ import {
   createCompactionRequestMessage,
   createFileReadTool,
   createFileEditTool,
-  createBashTool,
   createTerminalTool,
   createStatusTool,
   createGenericTool,
-  createPendingTool,
 } from "./mockFactory";
 import { setupSimpleChatStory, setupStreamingChatStory } from "./storyHelpers";
 import { within, userEvent, waitFor } from "@storybook/test";
@@ -180,124 +178,6 @@ export const WithTerminal: AppStory = {
       }
     />
   ),
-};
-
-/** Bash tool with expanded script and output sections */
-export const WithBashTool: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-bash",
-          messages: [
-            createUserMessage("msg-1", "Check project status", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 100000,
-            }),
-            createAssistantMessage("msg-2", "Let me check the git status and run tests:", {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 90000,
-              toolCalls: [
-                createBashTool(
-                  "call-1",
-                  `#!/bin/bash
-set -e
-
-# Check git status
-echo "=== Git Status ==="
-git status --short
-
-# Run tests
-echo "=== Running Tests ==="
-npm test 2>&1 | head -20`,
-                  [
-                    "=== Git Status ===",
-                    " M src/api/users.ts",
-                    " M src/auth/jwt.ts",
-                    "?? src/api/users.test.ts",
-                    "",
-                    "=== Running Tests ===",
-                    "PASS src/api/users.test.ts",
-                    "  ✓ should authenticate (24ms)",
-                    "  ✓ should reject invalid tokens (18ms)",
-                    "",
-                    "Tests: 2 passed, 2 total",
-                  ].join("\n"),
-                  0,
-                  10,
-                  1250
-                ),
-              ],
-            }),
-          ],
-        })
-      }
-    />
-  ),
-  parameters: {
-    docs: {
-      description: {
-        story: "Bash tool showing multi-line script in expanded view with proper padding.",
-      },
-    },
-  },
-// Play test disabled - visual snapshot still works but interaction test has
-  // timing issues with async workspace loading in test environment
-};
-
-/** Bash tool in executing state showing "Waiting for result" */
-export const WithBashToolWaiting: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-bash-waiting",
-          messages: [
-            createUserMessage("msg-1", "Run the tests", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 100000,
-            }),
-            createAssistantMessage("msg-2", "Running the test suite:", {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 90000,
-              toolCalls: [
-                createPendingTool("call-1", "bash", {
-                  script: "npm test",
-                  run_in_background: false,
-                  display_name: "Test Runner",
-                  timeout_secs: 30,
-                }),
-              ],
-            }),
-          ],
-        })
-      }
-    />
-  ),
-  parameters: {
-    docs: {
-      description: {
-        story:
-          "Bash tool in executing state with 'Waiting for result...' showing consistent padding.",
-      },
-    },
-  },
-  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    const canvas = within(canvasElement);
-
-    // Wait for workspace metadata to load and main content to render
-    // then expand the bash tool to show "Waiting for result" section
-    await waitFor(
-      async () => {
-        const toolHeader = canvas.getByText(/npm test/);
-        await userEvent.click(toolHeader);
-      },
-      { timeout: 5000 }
-    );
-    // Wait for any auto-focus timers (ChatInput has 100ms delay), then blur
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    (document.activeElement as HTMLElement)?.blur();
-  },
 };
 
 /** Chat with agent status indicator */

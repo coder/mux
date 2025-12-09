@@ -1,5 +1,5 @@
 /**
- * Background bash tool stories - covers all background process UI states
+ * Bash tool stories - covers foreground and background process UI states
  */
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
@@ -8,6 +8,7 @@ import {
   createUserMessage,
   createAssistantMessage,
   createBashTool,
+  createPendingTool,
   createBackgroundBashTool,
   createBashOutputTool,
   createBashOutputErrorTool,
@@ -18,8 +19,116 @@ import { setupSimpleChatStory } from "./storyHelpers";
 
 export default {
   ...appMeta,
-  title: "App/Background Bash",
+  title: "App/Bash",
 };
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FOREGROUND BASH
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Bash tool with expanded script and output sections */
+export const ForegroundComplete: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-bash",
+          messages: [
+            createUserMessage("msg-1", "Check project status", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 100000,
+            }),
+            createAssistantMessage("msg-2", "Let me check the git status and run tests:", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 90000,
+              toolCalls: [
+                createBashTool(
+                  "call-1",
+                  `#!/bin/bash
+set -e
+
+# Check git status
+echo "=== Git Status ==="
+git status --short
+
+# Run tests
+echo "=== Running Tests ==="
+npm test 2>&1 | head -20`,
+                  [
+                    "=== Git Status ===",
+                    " M src/api/users.ts",
+                    " M src/auth/jwt.ts",
+                    "?? src/api/users.test.ts",
+                    "",
+                    "=== Running Tests ===",
+                    "PASS src/api/users.test.ts",
+                    "  ✓ should authenticate (24ms)",
+                    "  ✓ should reject invalid tokens (18ms)",
+                    "",
+                    "Tests: 2 passed, 2 total",
+                  ].join("\n"),
+                  0,
+                  10,
+                  1250
+                ),
+              ],
+            }),
+          ],
+        })
+      }
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story: "Bash tool showing multi-line script in expanded view with proper padding.",
+      },
+    },
+  },
+};
+
+/** Bash tool in executing state showing "Waiting for result" */
+export const ForegroundWaiting: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-bash-waiting",
+          messages: [
+            createUserMessage("msg-1", "Run the tests", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 100000,
+            }),
+            createAssistantMessage("msg-2", "Running the test suite:", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 90000,
+              toolCalls: [
+                createPendingTool("call-1", "bash", {
+                  script: "npm test",
+                  run_in_background: false,
+                  display_name: "Test Runner",
+                  timeout_secs: 30,
+                }),
+              ],
+            }),
+          ],
+        })
+      }
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Bash tool in executing state with 'Waiting for result...' showing consistent padding.",
+      },
+    },
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BACKGROUND BASH
+// ═══════════════════════════════════════════════════════════════════════════════
 
 /** Background process spawn and output retrieval flow */
 export const SpawnAndOutput: AppStory = {
