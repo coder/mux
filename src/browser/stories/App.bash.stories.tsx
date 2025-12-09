@@ -1,5 +1,5 @@
 /**
- * Bash tool stories - covers foreground and background process UI states
+ * Bash tool stories - consolidated to 3 stories covering full UI complexity
  */
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
@@ -22,25 +22,24 @@ export default {
   title: "App/Bash",
 };
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// FOREGROUND BASH
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/** Bash tool with expanded script and output sections */
-export const ForegroundComplete: AppStory = {
+/**
+ * Foreground bash: complete execution with multi-line script + waiting state
+ */
+export const Foreground: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() =>
         setupSimpleChatStory({
           workspaceId: "ws-bash",
           messages: [
+            // Completed foreground bash with multi-line script
             createUserMessage("msg-1", "Check project status", {
               historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 100000,
+              timestamp: STABLE_TIMESTAMP - 200000,
             }),
             createAssistantMessage("msg-2", "Let me check the git status and run tests:", {
               historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 90000,
+              timestamp: STABLE_TIMESTAMP - 190000,
               toolCalls: [
                 createBashTool(
                   "call-1",
@@ -73,41 +72,20 @@ npm test 2>&1 | head -20`,
                 ),
               ],
             }),
-          ],
-        })
-      }
-    />
-  ),
-  parameters: {
-    docs: {
-      description: {
-        story: "Bash tool showing multi-line script in expanded view with proper padding.",
-      },
-    },
-  },
-};
-
-/** Bash tool in executing state showing "Waiting for result" */
-export const ForegroundWaiting: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-bash-waiting",
-          messages: [
-            createUserMessage("msg-1", "Run the tests", {
-              historySequence: 1,
+            // Pending foreground bash (waiting state)
+            createUserMessage("msg-3", "Run the build", {
+              historySequence: 3,
               timestamp: STABLE_TIMESTAMP - 100000,
             }),
-            createAssistantMessage("msg-2", "Running the test suite:", {
-              historySequence: 2,
+            createAssistantMessage("msg-4", "Running the build:", {
+              historySequence: 4,
               timestamp: STABLE_TIMESTAMP - 90000,
               toolCalls: [
-                createPendingTool("call-1", "bash", {
-                  script: "npm test",
+                createPendingTool("call-2", "bash", {
+                  script: "npm run build",
                   run_in_background: false,
-                  display_name: "Test Runner",
-                  timeout_secs: 30,
+                  display_name: "Build",
+                  timeout_secs: 60,
                 }),
               ],
             }),
@@ -116,263 +94,124 @@ export const ForegroundWaiting: AppStory = {
       }
     />
   ),
-  parameters: {
-    docs: {
-      description: {
-        story:
-          "Bash tool in executing state with 'Waiting for result...' showing consistent padding.",
-      },
-    },
-  },
 };
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// BACKGROUND BASH
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/** Background process spawn and output retrieval flow */
-export const SpawnAndOutput: AppStory = {
+/**
+ * Background bash workflow: spawn, output states (running/exited/error/filtered/empty),
+ * process list, and terminate
+ */
+export const BackgroundWorkflow: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() =>
         setupSimpleChatStory({
           messages: [
-            createUserMessage("msg-1", "Run the dev server in the background", {
+            // 1. Spawn background process
+            createUserMessage("msg-1", "Start a dev server and run build", {
               historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 300000,
+              timestamp: STABLE_TIMESTAMP - 600000,
             }),
-            createAssistantMessage(
-              "msg-2",
-              "I'll start the dev server in the background so it keeps running.",
-              {
-                historySequence: 2,
-                timestamp: STABLE_TIMESTAMP - 290000,
-                toolCalls: [
-                  createBackgroundBashTool("call-1", "npm run dev", "bash_1", "Dev Server"),
-                ],
-              }
-            ),
-            createUserMessage("msg-3", "Check if it's running", {
+            createAssistantMessage("msg-2", "Starting both in background.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 590000,
+              toolCalls: [
+                createBackgroundBashTool("call-1", "npm run dev", "bash_1", "Dev Server"),
+                createBackgroundBashTool("call-2", "npm run build", "bash_2", "Build"),
+              ],
+            }),
+            // 2. Output: running process
+            createUserMessage("msg-3", "Check dev server", {
               historySequence: 3,
-              timestamp: STABLE_TIMESTAMP - 280000,
+              timestamp: STABLE_TIMESTAMP - 500000,
             }),
-            createAssistantMessage("msg-4", "Let me check the dev server output.", {
+            createAssistantMessage("msg-4", "Dev server output:", {
               historySequence: 4,
-              timestamp: STABLE_TIMESTAMP - 270000,
+              timestamp: STABLE_TIMESTAMP - 490000,
               toolCalls: [
                 createBashOutputTool(
-                  "call-2",
+                  "call-3",
                   "bash_1",
                   "  VITE v5.0.0  ready in 320 ms\n\n  ➜  Local:   http://localhost:5173/\n  ➜  Network: use --host to expose",
                   "running"
                 ),
               ],
             }),
-          ],
-        })
-      }
-    />
-  ),
-};
-
-/** Process that exits successfully */
-export const ProcessExitedSuccess: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          messages: [
-            createUserMessage("msg-1", "Run the build in background", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 200000,
+            // 3. Output: exited successfully
+            createUserMessage("msg-5", "Check build", {
+              historySequence: 5,
+              timestamp: STABLE_TIMESTAMP - 400000,
             }),
-            createAssistantMessage("msg-2", "Starting the build process.", {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 190000,
-              toolCalls: [createBackgroundBashTool("call-1", "npm run build", "bash_2")],
-            }),
-            createUserMessage("msg-3", "Check the build status", {
-              historySequence: 3,
-              timestamp: STABLE_TIMESTAMP - 100000,
-            }),
-            createAssistantMessage("msg-4", "The build completed successfully.", {
-              historySequence: 4,
-              timestamp: STABLE_TIMESTAMP - 90000,
+            createAssistantMessage("msg-6", "Build completed:", {
+              historySequence: 6,
+              timestamp: STABLE_TIMESTAMP - 390000,
               toolCalls: [
                 createBashOutputTool(
-                  "call-2",
+                  "call-4",
                   "bash_2",
-                  "vite v5.0.0 building for production...\n✓ 1423 modules transformed.\ndist/index.html                  0.46 kB │ gzip:  0.30 kB\ndist/assets/index-DiwrgTda.css  15.23 kB │ gzip:  3.45 kB\ndist/assets/index-BqeWHuN2.js  142.67 kB │ gzip: 45.23 kB\n✓ built in 2.34s",
+                  "vite v5.0.0 building for production...\n✓ 1423 modules transformed.\ndist/index.html   0.46 kB │ gzip:  0.30 kB\n✓ built in 2.34s",
                   "exited",
                   0
                 ),
               ],
             }),
-          ],
-        })
-      }
-    />
-  ),
-};
-
-/** Process that exits with error */
-export const ProcessExitedError: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          messages: [
-            createUserMessage("msg-1", "Run the tests in background", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 200000,
+            // 4. Output: filtered + no new output
+            createUserMessage("msg-7", "Show errors from dev server, then check for updates", {
+              historySequence: 7,
+              timestamp: STABLE_TIMESTAMP - 300000,
             }),
-            createAssistantMessage("msg-2", "Running tests in background.", {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 190000,
-              toolCalls: [createBackgroundBashTool("call-1", "npm test", "bash_3")],
-            }),
-            createUserMessage("msg-3", "How did the tests go?", {
-              historySequence: 3,
-              timestamp: STABLE_TIMESTAMP - 100000,
-            }),
-            createAssistantMessage("msg-4", "The tests failed with some errors.", {
-              historySequence: 4,
-              timestamp: STABLE_TIMESTAMP - 90000,
+            createAssistantMessage("msg-8", "Filtered errors and checking for updates:", {
+              historySequence: 8,
+              timestamp: STABLE_TIMESTAMP - 290000,
               toolCalls: [
                 createBashOutputTool(
-                  "call-2",
-                  "bash_3",
-                  "FAIL src/utils.test.ts\n  ✕ should parse dates correctly (5 ms)\n  ✕ should handle edge cases (3 ms)\n\nTest Suites: 1 failed, 1 total\nTests:       2 failed, 2 total",
-                  "exited",
-                  1
-                ),
-              ],
-            }),
-          ],
-        })
-      }
-    />
-  ),
-};
-
-/** Process not found error */
-export const ProcessNotFound: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          messages: [
-            createUserMessage("msg-1", "Check bash_99", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 100000,
-            }),
-            createAssistantMessage("msg-2", "Let me check that process.", {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 90000,
-              toolCalls: [
-                createBashOutputErrorTool("call-1", "bash_99", "Process not found: bash_99"),
-              ],
-            }),
-          ],
-        })
-      }
-    />
-  ),
-};
-
-/** Output with filter applied */
-export const FilteredOutput: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          messages: [
-            createUserMessage("msg-1", "Show only error lines from the server", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 100000,
-            }),
-            createAssistantMessage("msg-2", "Filtering for error lines.", {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 90000,
-              toolCalls: [
-                createBashOutputTool(
-                  "call-1",
+                  "call-5",
                   "bash_1",
-                  "[ERROR] Failed to connect to database\n[ERROR] Retry attempt 1 failed\n[ERROR] Retry attempt 2 failed",
+                  "[ERROR] Failed to connect to database\n[ERROR] Retry attempt 1 failed",
                   "running",
                   undefined,
                   "ERROR"
                 ),
+                createBashOutputTool("call-6", "bash_1", "", "running"),
               ],
             }),
-          ],
-        })
-      }
-    />
-  ),
-};
-
-/** No new output available */
-export const NoNewOutput: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          messages: [
-            createUserMessage("msg-1", "Any new output?", {
-              historySequence: 1,
+            // 5. Output: process not found error
+            createUserMessage("msg-9", "Check bash_99", {
+              historySequence: 9,
+              timestamp: STABLE_TIMESTAMP - 200000,
+            }),
+            createAssistantMessage("msg-10", "Checking that process:", {
+              historySequence: 10,
+              timestamp: STABLE_TIMESTAMP - 190000,
+              toolCalls: [
+                createBashOutputErrorTool("call-7", "bash_99", "Process not found: bash_99"),
+              ],
+            }),
+            // 6. List all processes (shows various states)
+            createUserMessage("msg-11", "List all processes", {
+              historySequence: 11,
               timestamp: STABLE_TIMESTAMP - 100000,
             }),
-            createAssistantMessage("msg-2", "No new output since last check.", {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 90000,
-              toolCalls: [createBashOutputTool("call-1", "bash_1", "", "running")],
-            }),
-          ],
-        })
-      }
-    />
-  ),
-};
-
-/** List multiple background processes */
-export const ListProcesses: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          messages: [
-            createUserMessage("msg-1", "List all background processes", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 100000,
-            }),
-            createAssistantMessage("msg-2", "Here are the running background processes.", {
-              historySequence: 2,
+            createAssistantMessage("msg-12", "Background processes:", {
+              historySequence: 12,
               timestamp: STABLE_TIMESTAMP - 90000,
               toolCalls: [
-                createBashBackgroundListTool("call-1", [
+                createBashBackgroundListTool("call-8", [
                   {
                     process_id: "bash_1",
                     status: "running",
                     script: "npm run dev",
-                    uptime_ms: 3600000,
+                    uptime_ms: 500000,
                     display_name: "Dev Server",
                   },
                   {
                     process_id: "bash_2",
-                    status: "running",
-                    script: "npm run watch:tests",
-                    uptime_ms: 1800000,
-                  },
-                  {
-                    process_id: "bash_3",
                     status: "exited",
                     script: "npm run build",
                     uptime_ms: 120000,
                     exitCode: 0,
                   },
                   {
-                    process_id: "bash_4",
+                    process_id: "bash_3",
                     status: "killed",
                     script: "npm run long-task",
                     uptime_ms: 45000,
@@ -381,28 +220,15 @@ export const ListProcesses: AppStory = {
                 ]),
               ],
             }),
-          ],
-        })
-      }
-    />
-  ),
-};
-
-/** Terminate a background process */
-export const TerminateProcess: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          messages: [
-            createUserMessage("msg-1", "Stop the dev server", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 100000,
+            // 7. Terminate
+            createUserMessage("msg-13", "Stop the dev server", {
+              historySequence: 13,
+              timestamp: STABLE_TIMESTAMP - 50000,
             }),
-            createAssistantMessage("msg-2", "Terminating the dev server.", {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 90000,
-              toolCalls: [createBashBackgroundTerminateTool("call-1", "bash_1", "Dev Server")],
+            createAssistantMessage("msg-14", "Terminating:", {
+              historySequence: 14,
+              timestamp: STABLE_TIMESTAMP - 40000,
+              toolCalls: [createBashBackgroundTerminateTool("call-9", "bash_1", "Dev Server")],
             }),
           ],
         })
@@ -411,82 +237,10 @@ export const TerminateProcess: AppStory = {
   ),
 };
 
-/** Complete workflow: spawn, check, terminate */
-export const CompleteWorkflow: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          messages: [
-            createUserMessage("msg-1", "Start a long-running task", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 400000,
-            }),
-            createAssistantMessage("msg-2", "Starting the task in background.", {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 390000,
-              toolCalls: [
-                createBackgroundBashTool(
-                  "call-1",
-                  "./scripts/process_data.sh",
-                  "bash_5",
-                  "Data Processing"
-                ),
-              ],
-            }),
-            createUserMessage("msg-3", "Check progress", {
-              historySequence: 3,
-              timestamp: STABLE_TIMESTAMP - 300000,
-            }),
-            createAssistantMessage("msg-4", "Here's the current progress.", {
-              historySequence: 4,
-              timestamp: STABLE_TIMESTAMP - 290000,
-              toolCalls: [
-                createBashOutputTool(
-                  "call-2",
-                  "bash_5",
-                  "Processing file 1/100...\nProcessing file 2/100...\nProcessing file 3/100...",
-                  "running"
-                ),
-              ],
-            }),
-            createUserMessage("msg-5", "What processes are running?", {
-              historySequence: 5,
-              timestamp: STABLE_TIMESTAMP - 200000,
-            }),
-            createAssistantMessage("msg-6", "Here's the list.", {
-              historySequence: 6,
-              timestamp: STABLE_TIMESTAMP - 190000,
-              toolCalls: [
-                createBashBackgroundListTool("call-3", [
-                  {
-                    process_id: "bash_5",
-                    status: "running",
-                    script: "./scripts/process_data.sh",
-                    uptime_ms: 200000,
-                    display_name: "Data Processing",
-                  },
-                ]),
-              ],
-            }),
-            createUserMessage("msg-7", "Stop it, I found an issue", {
-              historySequence: 7,
-              timestamp: STABLE_TIMESTAMP - 100000,
-            }),
-            createAssistantMessage("msg-8", "Terminating the process.", {
-              historySequence: 8,
-              timestamp: STABLE_TIMESTAMP - 90000,
-              toolCalls: [createBashBackgroundTerminateTool("call-4", "bash_5", "Data Processing")],
-            }),
-          ],
-        })
-      }
-    />
-  ),
-};
-
-/** Regular bash vs background bash comparison */
-export const RegularVsBackground: AppStory = {
+/**
+ * Mixed: foreground and background bash side-by-side comparison
+ */
+export const Mixed: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() =>
@@ -503,11 +257,31 @@ export const RegularVsBackground: AppStory = {
                 historySequence: 2,
                 timestamp: STABLE_TIMESTAMP - 190000,
                 toolCalls: [
+                  // Foreground: quick command
                   createBashTool("call-1", "echo 'Hello World'", "Hello World", 0, 3, 12),
+                  // Background: long-running
                   createBackgroundBashTool("call-2", "npm run build && npm run test", "bash_6"),
                 ],
               }
             ),
+            // Check background output (exited with error to show that state too)
+            createUserMessage("msg-3", "How did the build go?", {
+              historySequence: 3,
+              timestamp: STABLE_TIMESTAMP - 100000,
+            }),
+            createAssistantMessage("msg-4", "The build failed:", {
+              historySequence: 4,
+              timestamp: STABLE_TIMESTAMP - 90000,
+              toolCalls: [
+                createBashOutputTool(
+                  "call-3",
+                  "bash_6",
+                  "FAIL src/utils.test.ts\n  ✕ should parse dates correctly (5 ms)\n\nTests: 1 failed, 1 total",
+                  "exited",
+                  1
+                ),
+              ],
+            }),
           ],
         })
       }
