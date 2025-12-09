@@ -11,6 +11,7 @@ import { StatusSetToolCall } from "../tools/StatusSetToolCall";
 import { WebFetchToolCall } from "../tools/WebFetchToolCall";
 import { BashBackgroundListToolCall } from "../tools/BashBackgroundListToolCall";
 import { BashBackgroundTerminateToolCall } from "../tools/BashBackgroundTerminateToolCall";
+import { BashOutputToolCall } from "../tools/BashOutputToolCall";
 import type {
   BashToolArgs,
   BashToolResult,
@@ -18,6 +19,8 @@ import type {
   BashBackgroundListResult,
   BashBackgroundTerminateArgs,
   BashBackgroundTerminateResult,
+  BashOutputToolArgs,
+  BashOutputToolResult,
   FileReadToolArgs,
   FileReadToolResult,
   FileEditReplaceStringToolArgs,
@@ -115,6 +118,11 @@ function isBashBackgroundTerminateTool(
 ): args is BashBackgroundTerminateArgs {
   if (toolName !== "bash_background_terminate") return false;
   return TOOL_DEFINITIONS.bash_background_terminate.schema.safeParse(args).success;
+}
+
+function isBashOutputTool(toolName: string, args: unknown): args is BashOutputToolArgs {
+  if (toolName !== "bash_output") return false;
+  return TOOL_DEFINITIONS.bash_output.schema.safeParse(args).success;
 }
 
 export const ToolMessage: React.FC<ToolMessageProps> = ({
@@ -266,6 +274,18 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
         <BashBackgroundTerminateToolCall
           args={message.args}
           result={message.result as BashBackgroundTerminateResult | undefined}
+          status={message.status}
+        />
+      </div>
+    );
+  }
+
+  if (isBashOutputTool(message.toolName, message.args)) {
+    return (
+      <div className={className}>
+        <BashOutputToolCall
+          args={message.args}
+          result={message.result as BashOutputToolResult | undefined}
           status={message.status}
         />
       </div>

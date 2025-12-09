@@ -293,12 +293,9 @@ describe("Background Bash Output Capture", () => {
 
     // Script that writes to stderr and exits with error
     const marker = `ERROR_${Date.now()}`;
-    const spawnResult = await manager.spawn(
-      runtime,
-      workspaceId,
-      `echo "${marker}" >&2; exit 1`,
-      { cwd: workspacePath }
-    );
+    const spawnResult = await manager.spawn(runtime, workspaceId, `echo "${marker}" >&2; exit 1`, {
+      cwd: workspacePath,
+    });
     expect(spawnResult.success).toBe(true);
     if (!spawnResult.success) return;
 

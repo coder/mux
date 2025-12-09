@@ -76,8 +76,9 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
         <span className="text-text font-monospace max-w-96 truncate">{args.script}</span>
         {isBackground ? (
           // Background mode: show background badge and optional display name
-          <span className="text-text-secondary ml-2 text-[10px] whitespace-nowrap">
-            ⚡ background{args.display_name && ` • ${args.display_name}`}
+          <span className="text-muted ml-2 flex items-center gap-1 text-[10px] whitespace-nowrap">
+            <Layers size={10} />
+            background{args.display_name && ` • ${args.display_name}`}
           </span>
         ) : (
           // Normal mode: show timeout and duration
@@ -151,11 +152,14 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
               )}
 
               {"backgroundProcessId" in result ? (
-                // Background process: show process ID
+                // Background process: show process ID inline with icon
                 <DetailSection>
-                  <DetailContent>
-                    Running in background as{" "}
-                    <code className="font-mono">{result.backgroundProcessId}</code>
+                  <DetailContent className="flex items-center gap-2 px-2 py-1.5">
+                    <Layers size={14} className="text-muted shrink-0" />
+                    <span className="text-muted">Background process</span>
+                    <code className="bg-[var(--color-bg-tertiary)] rounded px-1.5 py-0.5 font-mono text-xs">
+                      {result.backgroundProcessId}
+                    </code>
                   </DetailContent>
                 </DetailSection>
               ) : (
