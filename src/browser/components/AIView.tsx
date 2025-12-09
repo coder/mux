@@ -235,12 +235,14 @@ const AIViewInner: React.FC<AIViewProps> = ({
   }, []);
 
   // Handler for review notes from Code Review tab - adds review (starts attached)
+  // Depend only on addReview (not whole reviews object) to keep callback stable
+  const { addReview } = reviews;
   const handleReviewNote = useCallback(
     (data: ReviewNoteData) => {
-      reviews.addReview(data);
+      addReview(data);
       // New reviews start with status "attached" so they appear in chat input immediately
     },
-    [reviews]
+    [addReview]
   );
 
   // Handler for manual compaction from CompactionWarning click

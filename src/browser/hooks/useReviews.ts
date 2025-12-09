@@ -266,21 +266,40 @@ export function useReviews(workspaceId: string): UseReviewsReturn {
     [state.reviews]
   );
 
-  return {
-    reviews,
-    pendingCount,
-    attachedCount,
-    checkedCount,
-    attachedReviews,
-    addReview,
-    attachReview,
-    detachReview,
-    checkReview,
-    uncheckReview,
-    removeReview,
-    updateReviewNote,
-    clearChecked,
-    clearAll,
-    getReview,
-  };
+  return useMemo(
+    () => ({
+      reviews,
+      pendingCount,
+      attachedCount,
+      checkedCount,
+      attachedReviews,
+      addReview,
+      attachReview,
+      detachReview,
+      checkReview,
+      uncheckReview,
+      removeReview,
+      updateReviewNote,
+      clearChecked,
+      clearAll,
+      getReview,
+    }),
+    [
+      reviews,
+      pendingCount,
+      attachedCount,
+      checkedCount,
+      attachedReviews,
+      addReview,
+      attachReview,
+      detachReview,
+      checkReview,
+      uncheckReview,
+      removeReview,
+      updateReviewNote,
+      clearChecked,
+      clearAll,
+      getReview,
+    ]
+  );
 }
