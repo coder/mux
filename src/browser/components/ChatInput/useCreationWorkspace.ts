@@ -69,10 +69,10 @@ interface UseCreationWorkspaceReturn {
   setToast: (toast: Toast | null) => void;
   isSending: boolean;
   handleSend: (message: string, imageParts?: ImagePart[]) => Promise<boolean>;
-  /** Workspace name generation state and actions (for CreationControls) */
+  /** Workspace name/title generation state and actions (for CreationControls) */
   nameState: WorkspaceNameState;
-  /** The confirmed name being used for creation (null until name generation resolves) */
-  creatingWithName: string | null;
+  /** The confirmed title being used for creation (null until generation resolves) */
+  creatingWithTitle: string | null;
 }
 
 /**
@@ -93,8 +93,8 @@ export function useCreationWorkspace({
   const [recommendedTrunk, setRecommendedTrunk] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [isSending, setIsSending] = useState(false);
-  // The confirmed name being used for workspace creation (set after waitForGeneration resolves)
-  const [creatingWithName, setCreatingWithName] = useState<string | null>(null);
+  // The confirmed title being used for workspace creation (set after waitForGeneration resolves)
+  const [creatingWithTitle, setCreatingWithTitle] = useState<string | null>(null);
 
   // Centralized draft workspace settings with automatic persistence
   const {
@@ -147,19 +147,19 @@ export function useCreationWorkspace({
 
       setIsSending(true);
       setToast(null);
-      setCreatingWithName(null);
+      setCreatingWithTitle(null);
 
       try {
-        // Wait for name generation to complete (blocks if still in progress)
-        // Returns empty string if generation failed or manual name is empty (error already set in hook)
-        const workspaceName = await waitForGeneration();
-        if (!workspaceName) {
+        // Wait for identity generation to complete (blocks if still in progress)
+        // Returns null if generation failed or manual title is empty (error already set in hook)
+        const identity = await waitForGeneration();
+        if (!identity) {
           setIsSending(false);
           return false;
         }
 
-        // Set the confirmed name for UI display
-        setCreatingWithName(workspaceName);
+        // Set the confirmed title for UI display
+        setCreatingWithTitle(identity.title);
 
         // Get runtime config from options
         const runtimeString = getRuntimeString();
@@ -172,11 +172,12 @@ export function useCreationWorkspace({
         // in usePersistedState can delay state updates after model selection)
         const sendMessageOptions = getSendOptionsFromStorage(projectScopeId);
 
-        // Create the workspace with the generated/manual name first
+        // Create the workspace with the generated name and title
         const createResult = await api.workspace.create({
           projectPath,
-          branchName: workspaceName,
+          branchName: identity.name,
           trunkBranch: settings.trunkBranch,
+          title: identity.title,
           runtimeConfig,
         });
 
@@ -256,9 +257,9 @@ export function useCreationWorkspace({
     setToast,
     isSending,
     handleSend,
-    // Workspace name state (for CreationControls)
+    // Workspace name/title state (for CreationControls)
     nameState: workspaceNameState,
-    // The confirmed name being used for creation (null until waitForGeneration resolves)
-    creatingWithName,
+    // The confirmed title being used for creation (null until generation resolves)
+    creatingWithTitle,
   };
 }

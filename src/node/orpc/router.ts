@@ -3,7 +3,7 @@ import * as schemas from "@/common/orpc/schemas";
 import type { ORPCContext } from "./context";
 import {
   getPreferredNameModel,
-  generateWorkspaceName,
+  generateWorkspaceIdentity,
 } from "@/node/services/workspaceTitleGenerator";
 import type {
   UpdateStatus,
@@ -223,11 +223,14 @@ export const router = (authToken?: string) => {
               },
             };
           }
-          const result = await generateWorkspaceName(input.message, model, context.aiService);
+          const result = await generateWorkspaceIdentity(input.message, model, context.aiService);
           if (!result.success) {
             return result;
           }
-          return { success: true, data: { name: result.data, modelUsed: model } };
+          return {
+            success: true,
+            data: { name: result.data.name, title: result.data.title, modelUsed: model },
+          };
         }),
     },
     workspace: {
@@ -245,6 +248,7 @@ export const router = (authToken?: string) => {
             input.projectPath,
             input.branchName,
             input.trunkBranch,
+            input.title,
             input.runtimeConfig
           );
           if (!result.success) {
@@ -270,6 +274,12 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.rename.output)
         .handler(async ({ context, input }) => {
           return context.workspaceService.rename(input.workspaceId, input.newName);
+        }),
+      updateTitle: t
+        .input(schemas.workspace.updateTitle.input)
+        .output(schemas.workspace.updateTitle.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.updateTitle(input.workspaceId, input.title);
         }),
       fork: t
         .input(schemas.workspace.fork.input)

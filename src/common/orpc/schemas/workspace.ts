@@ -7,7 +7,11 @@ export const WorkspaceMetadataSchema = z.object({
       "Stable unique identifier (10 hex chars for new workspaces, legacy format for old)",
   }),
   name: z.string().meta({
-    description: 'Git branch / directory name (e.g., "feature-branch") - used for path computation',
+    description: 'Git branch / directory name (e.g., "plan-a1b2") - used for path computation',
+  }),
+  title: z.string().optional().meta({
+    description:
+      'Human-readable workspace title (e.g., "Fix plan mode over SSH") - optional for legacy workspaces',
   }),
   projectName: z
     .string()

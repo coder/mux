@@ -6,18 +6,32 @@ import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { SendMessageError } from "@/common/types/errors";
 import { getKnownModel } from "@/common/constants/knownModels";
+import crypto from "crypto";
 
 /** Models to try in order of preference for name generation (small, fast models) */
 const PREFERRED_MODELS = [getKnownModel("HAIKU").id, getKnownModel("GPT_MINI").id] as const;
 
-const workspaceNameSchema = z.object({
+/** Schema for AI-generated workspace identity (short name + descriptive title) */
+const workspaceIdentitySchema = z.object({
   name: z
     .string()
     .regex(/^[a-z0-9-]+$/)
-    .min(3)
-    .max(50)
-    .describe("Git-safe branch/workspace name: lowercase, hyphens only"),
+    .min(2)
+    .max(20)
+    .describe("Short git-safe noun (1-2 words): lowercase, hyphens only"),
+  title: z
+    .string()
+    .min(5)
+    .max(60)
+    .describe("Human-readable title (2-5 words): verb-noun format like 'Fix plan mode'"),
 });
+
+export interface WorkspaceIdentity {
+  /** Short git-safe name with 4-char suffix (e.g., "plan-a1b2") */
+  name: string;
+  /** Human-readable title (e.g., "Fix plan mode over SSH") */
+  title: string;
+}
 
 /**
  * Get the preferred model for name generation by testing which models the AIService
@@ -36,15 +50,25 @@ export async function getPreferredNameModel(aiService: AIService): Promise<strin
 }
 
 /**
- * Generate workspace name using AI.
+ * Generate a 4-character random hex suffix for workspace names.
+ */
+function generateNameSuffix(): string {
+  return crypto.randomBytes(2).toString("hex");
+}
+
+/**
+ * Generate workspace identity (name + title) using AI.
+ * - name: Short noun with 4-char suffix (e.g., "plan-a1b2")
+ * - title: Human-readable description (e.g., "Fix plan mode over SSH")
+ *
  * If AI cannot be used (e.g. missing credentials, unsupported provider, invalid model),
  * returns a SendMessageError so callers can surface the standard provider error UX.
  */
-export async function generateWorkspaceName(
+export async function generateWorkspaceIdentity(
   message: string,
   modelString: string,
   aiService: AIService
-): Promise<Result<string, SendMessageError>> {
+): Promise<Result<WorkspaceIdentity, SendMessageError>> {
   try {
     const modelResult = await aiService.createModel(modelString);
     if (!modelResult.success) {
@@ -53,17 +77,46 @@ export async function generateWorkspaceName(
 
     const result = await generateObject({
       model: modelResult.data,
-      schema: workspaceNameSchema,
+      schema: workspaceIdentitySchema,
       mode: "json",
-      prompt: `Generate a git-safe branch/workspace name for this development task:\n\n"${message}"\n\nRequirements:\n- Git-safe identifier (e.g., "automatic-title-generation")\n- Lowercase, hyphens only, no spaces\n- Concise (2-5 words) and descriptive of the task`,
+      prompt: `Generate a workspace name and title for this development task:
+
+"${message}"
+
+Requirements:
+- name: A short 1-2 word noun (git-safe: lowercase, hyphens only). Examples: "plan", "auth-fix", "sidebar"
+- title: A 2-5 word description in verb-noun format. Examples: "Fix plan mode", "Add user authentication", "Refactor sidebar layout"`,
     });
 
-    return Ok(validateBranchName(result.object.name));
+    const suffix = generateNameSuffix();
+    const sanitizedName = sanitizeBranchName(result.object.name, 20);
+    const nameWithSuffix = `${sanitizedName}-${suffix}`;
+
+    return Ok({
+      name: nameWithSuffix,
+      title: result.object.title.trim(),
+    });
   } catch (error) {
     const messageText = error instanceof Error ? error.message : String(error);
-    log.error("Failed to generate workspace name with AI", error);
-    return Err({ type: "unknown", raw: `Failed to generate workspace name: ${messageText}` });
+    log.error("Failed to generate workspace identity with AI", error);
+    return Err({ type: "unknown", raw: `Failed to generate workspace identity: ${messageText}` });
   }
+}
+
+/**
+ * @deprecated Use generateWorkspaceIdentity instead
+ * Generate workspace name using AI (legacy function for backwards compatibility).
+ */
+export async function generateWorkspaceName(
+  message: string,
+  modelString: string,
+  aiService: AIService
+): Promise<Result<string, SendMessageError>> {
+  const result = await generateWorkspaceIdentity(message, modelString, aiService);
+  if (!result.success) {
+    return result;
+  }
+  return Ok(result.data.name);
 }
 
 /**
@@ -76,11 +129,4 @@ function sanitizeBranchName(name: string, maxLength: number): string {
     .replace(/^-+|-+$/g, "")
     .replace(/-+/g, "-")
     .substring(0, maxLength);
-}
-
-/**
- * Validate and sanitize branch name to be git-safe
- */
-function validateBranchName(name: string): string {
-  return sanitizeBranchName(name, 50);
 }

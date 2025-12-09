@@ -137,10 +137,10 @@ function AppInner() {
         window.history.replaceState(null, "", newHash);
       }
 
-      // Update window title with workspace name
+      // Update window title with workspace title (or name for legacy workspaces)
       const metadata = workspaceMetadata.get(selectedWorkspace.workspaceId);
-      const workspaceName = metadata?.name ?? selectedWorkspace.workspaceId;
-      const title = `${workspaceName} - ${selectedWorkspace.projectName} - mux`;
+      const workspaceTitle = metadata?.title ?? metadata?.name ?? selectedWorkspace.workspaceId;
+      const title = `${workspaceTitle} - ${selectedWorkspace.projectName} - mux`;
       // Set document.title locally for browser mode, call backend for Electron
       document.title = title;
       void api?.window.setTitle({ title });

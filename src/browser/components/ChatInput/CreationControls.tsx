@@ -18,7 +18,7 @@ interface CreationControlsProps {
   onSetDefaultRuntime: (mode: RuntimeMode) => void;
   onSshHostChange: (host: string) => void;
   disabled: boolean;
-  /** Workspace name generation state and actions */
+  /** Workspace name/title generation state and actions */
   nameState: WorkspaceNameState;
 }
 
@@ -26,7 +26,7 @@ interface CreationControlsProps {
  * Additional controls shown only during workspace creation
  * - Trunk branch selector (which branch to fork from) - hidden for Local runtime
  * - Runtime mode (Local, Worktree, SSH)
- * - Workspace name (auto-generated with manual override)
+ * - Workspace title (auto-generated with manual override)
  */
 export function CreationControls(props: CreationControlsProps) {
   // Local runtime doesn't need a trunk branch selector (uses project dir as-is)
@@ -35,9 +35,9 @@ export function CreationControls(props: CreationControlsProps) {
 
   const { nameState } = props;
 
-  const handleNameChange = useCallback(
+  const handleTitleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      nameState.setName(e.target.value);
+      nameState.setTitle(e.target.value);
     },
     [nameState]
   );
@@ -56,19 +56,19 @@ export function CreationControls(props: CreationControlsProps) {
 
   return (
     <div className="flex flex-col gap-2">
-      {/* First row: Workspace name with magic wand toggle */}
-      <div className="flex items-center gap-2" data-component="WorkspaceNameGroup">
-        <label htmlFor="workspace-name" className="text-muted text-xs whitespace-nowrap">
-          Name:
+      {/* First row: Workspace title with magic wand toggle */}
+      <div className="flex items-center gap-2" data-component="WorkspaceTitleGroup">
+        <label htmlFor="workspace-title" className="text-muted text-xs whitespace-nowrap">
+          Title:
         </label>
         <div className="relative max-w-xs flex-1">
           <input
-            id="workspace-name"
+            id="workspace-title"
             type="text"
-            value={nameState.name}
-            onChange={handleNameChange}
+            value={nameState.title}
+            onChange={handleTitleChange}
             onFocus={handleInputFocus}
-            placeholder={nameState.isGenerating ? "Generating..." : "workspace-name"}
+            placeholder={nameState.isGenerating ? "Generating..." : "Fix plan mode"}
             disabled={props.disabled}
             className={cn(
               "bg-separator text-foreground border-border-medium focus:border-accent h-6 w-full rounded border px-2 pr-6 text-xs focus:outline-none disabled:opacity-50",
@@ -88,7 +88,7 @@ export function CreationControls(props: CreationControlsProps) {
                     disabled={props.disabled}
                     className="flex h-full items-center disabled:opacity-50"
                     aria-label={
-                      nameState.autoGenerate ? "Disable auto-naming" : "Enable auto-naming"
+                      nameState.autoGenerate ? "Disable auto-titling" : "Enable auto-titling"
                     }
                   >
                     <Wand2
@@ -102,7 +102,7 @@ export function CreationControls(props: CreationControlsProps) {
                   </button>
                 </TooltipTrigger>
                 <TooltipContent align="center">
-                  {nameState.autoGenerate ? "Auto-naming enabled" : "Click to enable auto-naming"}
+                  {nameState.autoGenerate ? "Auto-titling enabled" : "Click to enable auto-titling"}
                 </TooltipContent>
               </Tooltip>
             )}

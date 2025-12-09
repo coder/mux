@@ -11,11 +11,7 @@ import {
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
 import type { RuntimeConfig } from "@/common/types/runtime";
-import {
-  deleteWorkspaceStorage,
-  migrateWorkspaceStorage,
-  SELECTED_WORKSPACE_KEY,
-} from "@/common/constants/storage";
+import { deleteWorkspaceStorage, SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
 import { useAPI } from "@/browser/contexts/API";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
@@ -371,49 +367,34 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     [loadWorkspaceMetadata, refreshProjects, setSelectedWorkspace, api]
   );
 
+  /**
+   * Update workspace title (formerly "rename").
+   * Unlike the old rename which changed the git branch/directory name,
+   * this only updates the display title and can be called during streaming.
+   */
   const renameWorkspace = useCallback(
-    async (workspaceId: string, newName: string): Promise<{ success: boolean; error?: string }> => {
+    async (
+      workspaceId: string,
+      newTitle: string
+    ): Promise<{ success: boolean; error?: string }> => {
       if (!api) return { success: false, error: "API not connected" };
       try {
-        const result = await api.workspace.rename({ workspaceId, newName });
+        const result = await api.workspace.updateTitle({ workspaceId, title: newTitle });
         if (result.success) {
-          const newWorkspaceId = result.data.newWorkspaceId;
-
-          // Migrate localStorage keys from old to new workspace ID
-          migrateWorkspaceStorage(workspaceId, newWorkspaceId);
-
-          // Backend has already updated the config - reload projects to get updated state
-          await refreshProjects();
-
-          // Reload workspace metadata
+          // Reload workspace metadata to get the updated title
           await loadWorkspaceMetadata();
-
-          // Update selected workspace if it was renamed
-          if (selectedWorkspace?.workspaceId === workspaceId) {
-            // Get updated workspace metadata from backend
-            const newMetadata = await api.workspace.getInfo({ workspaceId: newWorkspaceId });
-            if (newMetadata) {
-              ensureCreatedAt(newMetadata);
-              setSelectedWorkspace({
-                projectPath: selectedWorkspace.projectPath,
-                projectName: newMetadata.projectName,
-                namedWorkspacePath: newMetadata.namedWorkspacePath,
-                workspaceId: newWorkspaceId,
-              });
-            }
-          }
           return { success: true };
         } else {
-          console.error("Failed to rename workspace:", result.error);
+          console.error("Failed to update workspace title:", result.error);
           return { success: false, error: result.error };
         }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        console.error("Failed to rename workspace:", errorMessage);
+        console.error("Failed to update workspace title:", errorMessage);
         return { success: false, error: errorMessage };
       }
     },
-    [loadWorkspaceMetadata, refreshProjects, selectedWorkspace, setSelectedWorkspace, api]
+    [loadWorkspaceMetadata, api]
   );
 
   const refreshWorkspaceMetadata = useCallback(async () => {

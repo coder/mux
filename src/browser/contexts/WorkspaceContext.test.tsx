@@ -233,14 +233,14 @@ describe("WorkspaceContext", () => {
     expect(result.error).toBe("Failed");
   });
 
-  test("renameWorkspace renames workspace and updates selection if active", async () => {
+  test("renameWorkspace updates workspace title (now uses updateTitle API)", async () => {
     const initialWorkspaces = [
       createWorkspaceMetadata({
-        id: "ws-rename",
-        projectPath: "/rename",
-        projectName: "rename",
-        name: "old",
-        namedWorkspacePath: "/rename-old",
+        id: "ws-title-edit",
+        projectPath: "/project",
+        projectName: "project",
+        name: "branch-a1b2",
+        namedWorkspacePath: "/project-branch",
       }),
     ];
 
@@ -248,49 +248,33 @@ describe("WorkspaceContext", () => {
       workspace: {
         list: () => Promise.resolve(initialWorkspaces),
       },
-      localStorage: {
-        selectedWorkspace: JSON.stringify({
-          workspaceId: "ws-rename",
-          projectPath: "/rename",
-          projectName: "rename",
-          namedWorkspacePath: "/rename-old",
-        }),
-      },
     });
 
     const ctx = await setup();
 
-    await waitFor(() => expect(ctx().selectedWorkspace?.namedWorkspacePath).toBe("/rename-old"));
-
-    workspaceApi.rename.mockResolvedValue({
+    workspaceApi.updateTitle.mockResolvedValue({
       success: true as const,
-      data: { newWorkspaceId: "ws-rename-new" },
+      data: undefined,
     });
 
-    // Mock list to return updated workspace after rename
+    // Mock list to return workspace with updated title after update
     workspaceApi.list.mockResolvedValue([
       createWorkspaceMetadata({
-        id: "ws-rename-new",
-        projectPath: "/rename",
-        projectName: "rename",
-        name: "new",
-        namedWorkspacePath: "/rename-new",
+        id: "ws-title-edit",
+        projectPath: "/project",
+        projectName: "project",
+        name: "branch-a1b2",
+        title: "New Title",
+        namedWorkspacePath: "/project-branch",
       }),
     ]);
-    workspaceApi.getInfo.mockResolvedValue(
-      createWorkspaceMetadata({
-        id: "ws-rename-new",
-        projectPath: "/rename",
-        projectName: "rename",
-        name: "new",
-        namedWorkspacePath: "/rename-new",
-      })
-    );
 
-    await ctx().renameWorkspace("ws-rename", "new");
+    await ctx().renameWorkspace("ws-title-edit", "New Title");
 
-    expect(workspaceApi.rename).toHaveBeenCalled();
-    await waitFor(() => expect(ctx().selectedWorkspace?.namedWorkspacePath).toBe("/rename-new"));
+    expect(workspaceApi.updateTitle).toHaveBeenCalledWith({
+      workspaceId: "ws-title-edit",
+      title: "New Title",
+    });
   });
 
   test("renameWorkspace handles failure gracefully", async () => {
@@ -298,7 +282,7 @@ describe("WorkspaceContext", () => {
 
     const ctx = await setup();
 
-    workspaceApi.rename.mockResolvedValue({
+    workspaceApi.updateTitle.mockResolvedValue({
       success: false,
       error: "Failed",
     });
@@ -602,6 +586,10 @@ function createMockAPI(options: MockAPIOptions = {}) {
     rename: mock(
       options.workspace?.rename ??
         (() => Promise.resolve({ success: true as const, data: { newWorkspaceId: "ws-1" } }))
+    ),
+    updateTitle: mock(
+      options.workspace?.updateTitle ??
+        (() => Promise.resolve({ success: true as const, data: undefined }))
     ),
     getInfo: mock(options.workspace?.getInfo ?? (() => Promise.resolve(null))),
     // Async generators for subscriptions

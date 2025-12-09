@@ -9,7 +9,11 @@ export const WorkspaceConfigSchema = z.object({
     description: "Stable workspace ID (10 hex chars for new workspaces) - optional for legacy",
   }),
   name: z.string().optional().meta({
-    description: 'Git branch / directory name (e.g., "feature-branch") - optional for legacy',
+    description: 'Git branch / directory name (e.g., "plan-a1b2") - optional for legacy',
+  }),
+  title: z.string().optional().meta({
+    description:
+      'Human-readable workspace title (e.g., "Fix plan mode over SSH") - optional for legacy',
   }),
   createdAt: z
     .string()

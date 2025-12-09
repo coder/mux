@@ -44,57 +44,58 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   onToggleUnread: _onToggleUnread,
 }) => {
   // Destructure metadata for convenience
-  const { id: workspaceId, name: workspaceName, namedWorkspacePath, status } = metadata;
+  const { id: workspaceId, namedWorkspacePath, status } = metadata;
   const isCreating = status === "creating";
   const isDisabled = isCreating || isDeleting;
   const gitStatus = useGitStatus(workspaceId);
 
-  // Get rename context
+  // Get title edit context (renamed from rename context since we now edit titles, not names)
   const { editingWorkspaceId, requestRename, confirmRename, cancelRename } = useRename();
 
-  // Local state for rename
-  const [editingName, setEditingName] = useState<string>("");
-  const [renameError, setRenameError] = useState<string | null>(null);
+  // Local state for title editing
+  const [editingTitle, setEditingTitle] = useState<string>("");
+  const [titleError, setTitleError] = useState<string | null>(null);
 
-  const displayName = workspaceName;
+  // Display title (fallback to name for legacy workspaces without title)
+  const displayTitle = metadata.title ?? metadata.name;
   const isEditing = editingWorkspaceId === workspaceId;
 
-  const startRenaming = () => {
-    if (requestRename(workspaceId, displayName)) {
-      setEditingName(displayName);
-      setRenameError(null);
+  const startEditing = () => {
+    if (requestRename(workspaceId, displayTitle)) {
+      setEditingTitle(displayTitle);
+      setTitleError(null);
     }
   };
 
-  const handleConfirmRename = async () => {
-    if (!editingName.trim()) {
-      setRenameError("Name cannot be empty");
+  const handleConfirmEdit = async () => {
+    if (!editingTitle.trim()) {
+      setTitleError("Title cannot be empty");
       return;
     }
 
-    const result = await confirmRename(workspaceId, editingName);
+    const result = await confirmRename(workspaceId, editingTitle);
     if (!result.success) {
-      setRenameError(result.error ?? "Failed to rename workspace");
+      setTitleError(result.error ?? "Failed to update title");
     } else {
-      setRenameError(null);
+      setTitleError(null);
     }
   };
 
-  const handleCancelRename = () => {
+  const handleCancelEdit = () => {
     cancelRename();
-    setEditingName("");
-    setRenameError(null);
+    setEditingTitle("");
+    setTitleError(null);
   };
 
-  const handleRenameKeyDown = (e: React.KeyboardEvent) => {
+  const handleEditKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
       e.preventDefault();
-      void handleConfirmRename();
+      void handleConfirmEdit();
     } else if (e.key === "Escape") {
       // Stop propagation to prevent global Escape handler from interrupting stream
       e.preventDefault();
       e.stopPropagation();
-      handleCancelRename();
+      handleCancelEdit();
     }
   };
 
@@ -137,10 +138,10 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
         aria-current={isSelected ? "true" : undefined}
         aria-label={
           isCreating
-            ? `Creating workspace ${displayName}`
+            ? `Creating workspace ${displayTitle}`
             : isDeleting
-              ? `Deleting workspace ${displayName}`
-              : `Select workspace ${displayName}`
+              ? `Deleting workspace ${displayTitle}`
+              : `Select workspace ${displayTitle}`
         }
         aria-disabled={isDisabled}
         data-workspace-path={namedWorkspacePath}
@@ -157,7 +158,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                       e.stopPropagation();
                       void onRemoveWorkspace(workspaceId, e.currentTarget);
                     }}
-                    aria-label={`Remove workspace ${displayName}`}
+                    aria-label={`Remove workspace ${displayTitle}`}
                     data-workspace-id={workspaceId}
                   >
                     ×
@@ -170,13 +171,13 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
             {isEditing ? (
               <input
                 className="bg-input-bg text-input-text border-input-border font-inherit focus:border-input-border-focus min-w-0 rounded-sm border px-1 text-left text-[13px] outline-none"
-                value={editingName}
-                onChange={(e) => setEditingName(e.target.value)}
-                onKeyDown={handleRenameKeyDown}
-                onBlur={() => void handleConfirmRename()}
+                value={editingTitle}
+                onChange={(e) => setEditingTitle(e.target.value)}
+                onKeyDown={handleEditKeyDown}
+                onBlur={() => void handleConfirmEdit()}
                 autoFocus
                 onClick={(e) => e.stopPropagation()}
-                aria-label={`Rename workspace ${displayName}`}
+                aria-label={`Edit title for workspace ${displayTitle}`}
                 data-workspace-id={workspaceId}
               />
             ) : (
@@ -190,20 +191,20 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                     onDoubleClick={(e) => {
                       if (isDisabled) return;
                       e.stopPropagation();
-                      startRenaming();
+                      startEditing();
                     }}
-                    title={isDisabled ? undefined : "Double-click to rename"}
+                    title={isDisabled ? undefined : "Double-click to edit title"}
                   >
                     {canInterrupt || isCreating ? (
                       <Shimmer className="w-full truncate" colorClass="var(--color-foreground)">
-                        {displayName}
+                        {displayTitle}
                       </Shimmer>
                     ) : (
-                      displayName
+                      displayTitle
                     )}
                   </span>
                 </TooltipTrigger>
-                <TooltipContent align="start">Double-click to rename</TooltipContent>
+                <TooltipContent align="start">Double-click to edit title</TooltipContent>
               </Tooltip>
             )}
 
@@ -230,9 +231,9 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
           )}
         </div>
       </div>
-      {renameError && isEditing && (
+      {titleError && isEditing && (
         <div className="bg-error-bg border-error text-error absolute top-full right-8 left-8 z-10 mt-1 rounded-sm border px-2 py-1.5 text-xs">
-          {renameError}
+          {titleError}
         </div>
       )}
     </React.Fragment>

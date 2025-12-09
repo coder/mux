@@ -180,6 +180,8 @@ export const workspace = {
       projectPath: z.string(),
       branchName: z.string(),
       trunkBranch: z.string(),
+      /** Human-readable title (e.g., "Fix plan mode over SSH") - optional for backwards compat */
+      title: z.string().optional(),
       runtimeConfig: RuntimeConfigSchema.optional(),
     }),
     output: z.discriminatedUnion("success", [
@@ -197,6 +199,10 @@ export const workspace = {
   rename: {
     input: z.object({ workspaceId: z.string(), newName: z.string() }),
     output: ResultSchema(z.object({ newWorkspaceId: z.string() }), z.string()),
+  },
+  updateTitle: {
+    input: z.object({ workspaceId: z.string(), title: z.string() }),
+    output: ResultSchema(z.void(), z.string()),
   },
   fork: {
     input: z.object({ sourceWorkspaceId: z.string(), newName: z.string() }),
@@ -364,7 +370,10 @@ export const nameGeneration = {
     }),
     output: ResultSchema(
       z.object({
+        /** Short git-safe name with suffix (e.g., "plan-a1b2") */
         name: z.string(),
+        /** Human-readable title (e.g., "Fix plan mode over SSH") */
+        title: z.string(),
         modelUsed: z.string(),
       }),
       SendMessageErrorSchema

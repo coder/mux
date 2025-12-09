@@ -265,6 +265,7 @@ export class Config {
             const metadata: WorkspaceMetadata = {
               id: workspace.id,
               name: workspace.name,
+              title: workspace.title,
               projectName,
               projectPath,
               // GUARANTEE: All workspaces must have createdAt (assign now if missing)

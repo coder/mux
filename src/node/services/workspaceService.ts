@@ -275,6 +275,7 @@ export class WorkspaceService extends EventEmitter {
     projectPath: string,
     branchName: string,
     trunkBranch: string,
+    title?: string,
     runtimeConfig?: RuntimeConfig
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata }>> {
     // Validate workspace name
@@ -361,6 +362,7 @@ export class WorkspaceService extends EventEmitter {
       const metadata = {
         id: workspaceId,
         name: finalBranchName,
+        title,
         projectName,
         projectPath,
         createdAt: new Date().toISOString(),
@@ -376,6 +378,7 @@ export class WorkspaceService extends EventEmitter {
           path: createResult!.workspacePath!,
           id: workspaceId,
           name: finalBranchName,
+          title,
           createdAt: metadata.createdAt,
           runtimeConfig: finalRuntimeConfig,
         });
@@ -576,6 +579,48 @@ export class WorkspaceService extends EventEmitter {
     } finally {
       // Always clear renaming flag, even on error
       this.renamingWorkspaces.delete(workspaceId);
+    }
+  }
+
+  /**
+   * Update workspace title without affecting the filesystem name.
+   * Unlike rename(), this can be called even while streaming is active.
+   */
+  async updateTitle(workspaceId: string, title: string): Promise<Result<void>> {
+    try {
+      const workspace = this.config.findWorkspace(workspaceId);
+      if (!workspace) {
+        return Err("Workspace not found");
+      }
+      const { projectPath, workspacePath } = workspace;
+
+      await this.config.editConfig((config) => {
+        const projectConfig = config.projects.get(projectPath);
+        if (projectConfig) {
+          const workspaceEntry = projectConfig.workspaces.find((w) => w.path === workspacePath);
+          if (workspaceEntry) {
+            workspaceEntry.title = title;
+          }
+        }
+        return config;
+      });
+
+      // Emit updated metadata
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const updatedMetadata = allMetadata.find((m) => m.id === workspaceId);
+      if (updatedMetadata) {
+        const session = this.sessions.get(workspaceId);
+        if (session) {
+          session.emitMetadata(updatedMetadata);
+        } else {
+          this.emit("metadata", { workspaceId, metadata: updatedMetadata });
+        }
+      }
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to update workspace title: ${message}`);
     }
   }
 
