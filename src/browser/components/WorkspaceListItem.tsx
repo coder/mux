@@ -192,13 +192,6 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
             <div className="flex items-center gap-1">
               {!isCreating && !isEditing && (
                 <>
-                  <GitStatusIndicator
-                    gitStatus={gitStatus}
-                    workspaceId={workspaceId}
-                    tooltipPosition="right"
-                    isWorking={canInterrupt}
-                  />
-
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
@@ -215,6 +208,13 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                     </TooltipTrigger>
                     <TooltipContent align="end">Remove workspace</TooltipContent>
                   </Tooltip>
+
+                  <GitStatusIndicator
+                    gitStatus={gitStatus}
+                    workspaceId={workspaceId}
+                    tooltipPosition="right"
+                    isWorking={canInterrupt}
+                  />
                 </>
               )}
             </div>
