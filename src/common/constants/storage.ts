@@ -168,12 +168,10 @@ export type EditorType = "vscode" | "cursor" | "zed" | "custom";
 export interface EditorConfig {
   editor: EditorType;
   customCommand?: string; // Only when editor='custom'
-  useRemoteExtension: boolean; // For SSH workspaces, use Remote-SSH
 }
 
 export const DEFAULT_EDITOR_CONFIG: EditorConfig = {
   editor: "vscode",
-  useRemoteExtension: true,
 };
 
 /**

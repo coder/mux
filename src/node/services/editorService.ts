@@ -6,7 +6,6 @@ import { log } from "@/node/services/log";
 export interface EditorConfig {
   editor: string;
   customCommand?: string;
-  useRemoteExtension: boolean;
 }
 
 /**
@@ -29,7 +28,7 @@ export class EditorService {
 
   /**
    * Open the workspace in the user's configured code editor.
-   * For SSH workspaces with Remote-SSH extension enabled, opens directly in the editor.
+   * For SSH workspaces, opens via Remote-SSH extension (VS Code/Cursor only).
    */
   async openWorkspaceInEditor(
     workspaceId: string,
@@ -63,15 +62,7 @@ export class EditorService {
       }
 
       if (isSSH) {
-        // SSH workspace handling
-        if (!editorConfig.useRemoteExtension) {
-          return {
-            success: false,
-            error: "Cannot open SSH workspace without Remote-SSH extension enabled",
-          };
-        }
-
-        // Only VS Code and Cursor support Remote-SSH
+        // SSH workspace handling - only VS Code and Cursor support Remote-SSH
         if (editorConfig.editor !== "vscode" && editorConfig.editor !== "cursor") {
           return {
             success: false,

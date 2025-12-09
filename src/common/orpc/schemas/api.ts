@@ -416,7 +416,6 @@ const EditorTypeSchema = z.enum(["vscode", "cursor", "zed", "custom"]);
 const EditorConfigSchema = z.object({
   editor: EditorTypeSchema,
   customCommand: z.string().optional(),
-  useRemoteExtension: z.boolean(),
 });
 
 // General
@@ -491,7 +490,7 @@ export const general = {
   },
   /**
    * Open the workspace in the user's configured editor.
-   * For SSH workspaces with useRemoteExtension enabled, uses Remote-SSH extension.
+   * For SSH workspaces, uses Remote-SSH extension (VS Code/Cursor only).
    */
   openWorkspaceInEditor: {
     input: z.object({

@@ -8,8 +8,6 @@ import {
   SelectValue,
 } from "@/browser/components/ui/select";
 import { Input } from "@/browser/components/ui/input";
-import { Checkbox } from "@/browser/components/ui/checkbox";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import {
   EDITOR_CONFIG_KEY,
@@ -40,13 +38,6 @@ export function GeneralSection() {
     setEditorConfig((prev) => ({ ...prev, customCommand }));
   };
 
-  const handleRemoteExtensionChange = (useRemoteExtension: boolean) => {
-    setEditorConfig((prev) => ({ ...prev, useRemoteExtension }));
-  };
-
-  // Remote-SSH is only supported for VS Code and Cursor
-  const supportsRemote = editorConfig.editor === "vscode" || editorConfig.editor === "cursor";
-
   return (
     <div className="space-y-6">
       <div>
@@ -71,67 +62,41 @@ export function GeneralSection() {
         </div>
       </div>
 
-      <div>
-        <h3 className="text-foreground mb-4 text-sm font-medium">Editor</h3>
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-foreground text-sm">Default Editor</div>
-              <div className="text-muted text-xs">Editor to open workspaces in</div>
-            </div>
-            <Select value={editorConfig.editor} onValueChange={handleEditorChange}>
-              <SelectTrigger className="border-border-medium bg-background-secondary hover:bg-hover h-9 w-auto cursor-pointer rounded-md border px-3 text-sm transition-colors">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {EDITOR_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {editorConfig.editor === "custom" && (
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-foreground text-sm">Custom Command</div>
-                <div className="text-muted text-xs">Command to run (path will be appended)</div>
-              </div>
-              <Input
-                value={editorConfig.customCommand ?? ""}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                  handleCustomCommandChange(e.target.value)
-                }
-                placeholder="e.g., nvim"
-                className="border-border-medium bg-background-secondary h-9 w-40"
-              />
-            </div>
-          )}
-
-          {supportsRemote && (
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="text-foreground text-sm">Use Remote-SSH for SSH workspaces</div>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="text-muted cursor-help text-xs">(?)</span>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="max-w-xs">
-                    When enabled, opens SSH workspaces directly in the editor using the Remote-SSH
-                    extension. Requires the Remote-SSH extension to be installed.
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-              <Checkbox
-                checked={editorConfig.useRemoteExtension}
-                onCheckedChange={handleRemoteExtensionChange}
-              />
-            </div>
-          )}
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-foreground text-sm">Editor</div>
+          <div className="text-muted text-xs">Editor to open workspaces in</div>
         </div>
+        <Select value={editorConfig.editor} onValueChange={handleEditorChange}>
+          <SelectTrigger className="border-border-medium bg-background-secondary hover:bg-hover h-9 w-auto cursor-pointer rounded-md border px-3 text-sm transition-colors">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {EDITOR_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
+
+      {editorConfig.editor === "custom" && (
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-foreground text-sm">Custom Command</div>
+            <div className="text-muted text-xs">Command to run (path will be appended)</div>
+          </div>
+          <Input
+            value={editorConfig.customCommand ?? ""}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              handleCustomCommandChange(e.target.value)
+            }
+            placeholder="e.g., nvim"
+            className="border-border-medium bg-background-secondary h-9 w-40"
+          />
+        </div>
+      )}
     </div>
   );
 }

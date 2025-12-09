@@ -44,8 +44,8 @@ export function useOpenInEditor() {
         return { success: false, error: "Please configure a custom editor command in Settings" };
       }
 
-      // For SSH workspaces, validate the editor supports remote
-      if (isSSH && editorConfig.useRemoteExtension) {
+      // For SSH workspaces, validate the editor supports Remote-SSH
+      if (isSSH) {
         if (editorConfig.editor === "zed") {
           return { success: false, error: "Zed does not support Remote-SSH for SSH workspaces" };
         }
@@ -55,14 +55,6 @@ export function useOpenInEditor() {
             error: "Custom editors do not support Remote-SSH for SSH workspaces",
           };
         }
-      }
-
-      // For SSH workspaces without remote extension, we can't open
-      if (isSSH && !editorConfig.useRemoteExtension) {
-        return {
-          success: false,
-          error: "Enable 'Use Remote-SSH' in Settings to open SSH workspaces in editor",
-        };
       }
 
       // Call the backend API
