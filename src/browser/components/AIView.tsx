@@ -169,7 +169,15 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // during rapid updates (streaming), keeping the UI responsive.
   // Must be defined before any early returns to satisfy React Hooks rules.
   const mergedMessages = useMemo(() => mergeConsecutiveStreamErrors(messages), [messages]);
-  const deferredMessages = useDeferredValue(mergedMessages);
+  const deferredMergedMessages = useDeferredValue(mergedMessages);
+
+  // CRITICAL: When message count changes (new message sent/received), show immediately.
+  // Only defer content changes within existing messages (streaming deltas).
+  // This ensures user messages appear instantly while keeping streaming performant.
+  const deferredMessages =
+    mergedMessages.length !== deferredMergedMessages.length
+      ? mergedMessages
+      : deferredMergedMessages;
 
   // Get active stream message ID for token counting
   const activeStreamMessageId = aggregator?.getActiveStreamMessageId();
