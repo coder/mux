@@ -249,6 +249,8 @@ npm test 2>&1 | head -20`,
       const toolHeader = canvas.getByText(/set -e/);
       await userEvent.click(toolHeader);
     });
+    // Remove unintended focus state for deterministic visual snapshot
+    (document.activeElement as HTMLElement)?.blur();
   },
 };
 
@@ -297,6 +299,8 @@ export const WithBashToolWaiting: AppStory = {
       const toolHeader = canvas.getByText(/npm test/);
       await userEvent.click(toolHeader);
     });
+    // Remove unintended focus state for deterministic visual snapshot
+    (document.activeElement as HTMLElement)?.blur();
   },
 };
 
@@ -444,6 +448,8 @@ export const GenericTool: AppStory = {
       const toolHeader = canvas.getByText("fetch_data");
       await userEvent.click(toolHeader);
     });
+    // Remove unintended focus state for deterministic visual snapshot
+    (document.activeElement as HTMLElement)?.blur();
   },
 };
 
