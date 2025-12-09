@@ -59,7 +59,7 @@ export function CreationToolbar(props: CreationToolbarProps) {
 
   return (
     <div
-      className="bg-dark border-border-medium inline-flex min-w-[320px] items-center justify-between gap-4 rounded-lg border px-5 py-2.5"
+      className="bg-dark border-border-medium inline-flex min-w-[400px] items-center justify-between gap-4 rounded-lg border px-5 py-2.5"
       data-component="CreationToolbar"
     >
       {/* Add file button */}
@@ -111,7 +111,7 @@ export function CreationToolbar(props: CreationToolbarProps) {
         onValueChange={(value) => props.onModeChange(value as UIMode)}
         disabled={props.disabled}
       >
-        <SelectTrigger className="text-muted hover:text-foreground h-auto gap-1 border-0 bg-transparent p-1 text-xs font-medium focus:ring-0">
+        <SelectTrigger className="text-muted hover:text-foreground h-auto w-auto gap-1 border-0 bg-transparent p-1 text-sm font-medium focus:ring-0">
           <span>{getModeDisplayName(props.mode)}</span>
         </SelectTrigger>
         <SelectContent>
