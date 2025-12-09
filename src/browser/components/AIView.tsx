@@ -1,4 +1,12 @@
-import React, { useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import React, {
+  useState,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useDeferredValue,
+  useMemo,
+} from "react";
 import { cn } from "@/common/lib/utils";
 import { MessageRenderer } from "./Messages/MessageRenderer";
 import { InterruptedBarrier } from "./Messages/ChatBarrier/InterruptedBarrier";
@@ -155,6 +163,13 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
   // Extract state from workspace state
   const { messages, canInterrupt, isCompacting, loading, currentModel } = workspaceState;
+
+  // Merge consecutive identical stream errors.
+  // Use useDeferredValue to allow React to defer the heavy message list rendering
+  // during rapid updates (streaming), keeping the UI responsive.
+  // Must be defined before any early returns to satisfy React Hooks rules.
+  const mergedMessages = useMemo(() => mergeConsecutiveStreamErrors(messages), [messages]);
+  const deferredMessages = useDeferredValue(mergedMessages);
 
   // Get active stream message ID for token counting
   const activeStreamMessageId = aggregator?.getActiveStreamMessageId();
@@ -418,9 +433,6 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // If user pressed the interrupt key, autoRetry stays false until they manually retry.
   // This makes state transitions explicit and predictable.
 
-  // Merge consecutive identical stream errors
-  const mergedMessages = mergeConsecutiveStreamErrors(messages);
-
   // When editing, find the cutoff point
   const editCutoffHistoryId = editingMessage
     ? mergedMessages.find(
@@ -502,9 +514,9 @@ const AIViewInner: React.FC<AIViewProps> = ({
           >
             <div
               ref={innerRef}
-              className={cn("max-w-4xl mx-auto", mergedMessages.length === 0 && "h-full")}
+              className={cn("max-w-4xl mx-auto", deferredMessages.length === 0 && "h-full")}
             >
-              {mergedMessages.length === 0 ? (
+              {deferredMessages.length === 0 ? (
                 <div className="text-placeholder flex h-full flex-1 flex-col items-center justify-center text-center [&_h3]:m-0 [&_h3]:mb-2.5 [&_h3]:text-base [&_h3]:font-medium [&_p]:m-0 [&_p]:text-[13px]">
                   <h3>No Messages Yet</h3>
                   <p>Send a message below to begin</p>
@@ -520,7 +532,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
                 </div>
               ) : (
                 <>
-                  {mergedMessages.map((msg) => {
+                  {deferredMessages.map((msg) => {
                     const isAtCutoff =
                       editCutoffHistoryId !== undefined &&
                       msg.type !== "history-hidden" &&

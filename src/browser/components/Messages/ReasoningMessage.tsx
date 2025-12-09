@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
 import type { DisplayedMessage } from "@/common/types/message";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { TypewriterMarkdown } from "./TypewriterMarkdown";
@@ -15,6 +15,9 @@ const REASONING_FONT_CLASSES = "font-primary text-[12px] leading-[18px]";
 
 export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, className }) => {
   const [isExpanded, setIsExpanded] = useState(true);
+  // Track the height when expanded to reserve space during collapse transitions
+  const [expandedHeight, setExpandedHeight] = useState<number | null>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   const content = message.content;
   const isStreaming = message.isStreaming;
@@ -26,6 +29,14 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
   const isSingleLineTrace = !isStreaming && hasContent && !hasAdditionalLines;
   const isCollapsible = !isStreaming && hasContent && hasAdditionalLines;
   const showEllipsis = isCollapsible && !isExpanded;
+  const showExpandedContent = isExpanded && !isSingleLineTrace;
+
+  // Capture expanded height before collapsing to enable smooth transitions
+  useLayoutEffect(() => {
+    if (contentRef.current && isExpanded && !isSingleLineTrace) {
+      setExpandedHeight(contentRef.current.scrollHeight);
+    }
+  }, [isExpanded, isSingleLineTrace, content]);
 
   // Auto-collapse when streaming ends
   useEffect(() => {
@@ -118,16 +129,23 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
         )}
       </div>
 
-      {isExpanded && !isSingleLineTrace && (
-        <div
-          className={cn(
-            REASONING_FONT_CLASSES,
-            "italic opacity-85 [&_p]:mt-0 [&_p]:mb-1 [&_p:last-child]:mb-0"
-          )}
-        >
-          {renderContent()}
-        </div>
-      )}
+      {/* Always render the content container to prevent layout shifts.
+          Use CSS transitions for smooth height changes instead of conditional rendering. */}
+      <div
+        ref={contentRef}
+        className={cn(
+          REASONING_FONT_CLASSES,
+          "italic opacity-85 [&_p]:mt-0 [&_p]:mb-1 [&_p:last-child]:mb-0",
+          "overflow-hidden transition-[height,opacity] duration-200 ease-in-out"
+        )}
+        style={{
+          height: showExpandedContent ? (expandedHeight ?? "auto") : 0,
+          opacity: showExpandedContent ? 1 : 0,
+        }}
+        aria-hidden={!showExpandedContent}
+      >
+        {renderContent()}
+      </div>
     </div>
   );
 };
