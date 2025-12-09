@@ -1,4 +1,6 @@
 import { describe, it, expect } from "bun:test";
+import { execSync } from "child_process";
+import * as fs from "fs/promises";
 import {
   shellQuote,
   buildWrapperScript,
@@ -39,8 +41,9 @@ describe("backgroundCommands", () => {
         script: "echo hello",
       });
 
+      // Double quotes around trap command allow nested single-quoted paths
       expect(result).toBe(
-        "trap 'echo $? > '/tmp/exit_code'' EXIT && cd '/home/user/project' && echo hello"
+        `trap "echo \\$? > '/tmp/exit_code'" EXIT && cd '/home/user/project' && echo hello`
       );
     });
 
@@ -67,6 +70,36 @@ describe("backgroundCommands", () => {
       expect(result).toContain("'/home/user/my project'");
     });
 
+    it("produces valid bash when exit code path contains spaces", async () => {
+      // Regression test: spaces in process ID (display_name) caused invalid trap syntax
+      // The trap command needs to properly nest quoted paths
+      const testDir = `/tmp/PR Checks ${Date.now()}`;
+      const exitCodePath = `${testDir}/exit_code`;
+
+      const result = buildWrapperScript({
+        exitCodePath,
+        cwd: "/tmp",
+        script: "exit 42",
+      });
+
+      // The wrapper script should be valid bash - execute it and verify exit code is captured
+      await fs.mkdir(testDir, { recursive: true });
+      // Ensure no stale file
+      await fs.rm(exitCodePath, { force: true });
+
+      try {
+        execSync(`bash -c ${shellQuote(result)}`, { stdio: "pipe" });
+      } catch {
+        // Expected - script exits with 42
+      }
+
+      // The exit code file MUST exist if the trap worked correctly
+      const exitCode = await fs.readFile(exitCodePath, "utf-8");
+      expect(exitCode.trim()).toBe("42");
+
+      await fs.rm(testDir, { recursive: true });
+    });
+
     it("escapes single quotes in env values", () => {
       const result = buildWrapperScript({
         exitCodePath: "/tmp/exit_code",
@@ -80,16 +113,14 @@ describe("backgroundCommands", () => {
   });
 
   describe("buildSpawnCommand", () => {
-    it("uses set -m, nohup, redirections, and echoes PID", () => {
+    it("uses set -m, nohup, unified output with 2>&1, and echoes PID", () => {
       const result = buildSpawnCommand({
         wrapperScript: "echo hello",
-        stdoutPath: "/tmp/out.log",
-        stderrPath: "/tmp/err.log",
+        outputPath: "/tmp/output.log",
       });
 
       expect(result).toMatch(/^\(set -m; nohup 'bash' -c /);
-      expect(result).toContain("> '/tmp/out.log'");
-      expect(result).toContain("2> '/tmp/err.log'");
+      expect(result).toContain("> '/tmp/output.log' 2>&1");
       expect(result).toContain("< /dev/null");
       expect(result).toContain("& echo $!)");
     });
@@ -97,8 +128,7 @@ describe("backgroundCommands", () => {
     it("includes niceness prefix when provided", () => {
       const result = buildSpawnCommand({
         wrapperScript: "echo hello",
-        stdoutPath: "/tmp/out",
-        stderrPath: "/tmp/err",
+        outputPath: "/tmp/output.log",
         niceness: 10,
       });
 
@@ -108,8 +138,7 @@ describe("backgroundCommands", () => {
     it("uses custom bash path (including paths with spaces)", () => {
       const result = buildSpawnCommand({
         wrapperScript: "echo hello",
-        stdoutPath: "/tmp/out",
-        stderrPath: "/tmp/err",
+        outputPath: "/tmp/output.log",
         bashPath: "/c/Program Files/Git/bin/bash.exe",
       });
 
@@ -119,8 +148,7 @@ describe("backgroundCommands", () => {
     it("quotes the wrapper script", () => {
       const result = buildSpawnCommand({
         wrapperScript: "echo 'hello world'",
-        stdoutPath: "/tmp/out",
-        stderrPath: "/tmp/err",
+        outputPath: "/tmp/output.log",
       });
 
       expect(result).toContain("-c 'echo '\"'\"'hello world'\"'\"''");

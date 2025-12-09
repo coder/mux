@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { Layers } from "lucide-react";
 import type { BashToolArgs, BashToolResult } from "@/common/types/tools";
 import { BASH_DEFAULT_TIMEOUT_SECS } from "@/common/constants/toolLimits";
 import {
@@ -13,7 +14,7 @@ import {
   LoadingDots,
   ToolIcon,
   ErrorBox,
-  OutputPaths,
+  ExitCodeBadge,
 } from "./shared/ToolPrimitives";
 import {
   useToolExpansion,
@@ -22,12 +23,17 @@ import {
   type ToolStatus,
 } from "./shared/toolUtils";
 import { cn } from "@/common/lib/utils";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 
 interface BashToolCallProps {
   args: BashToolArgs;
   result?: BashToolResult;
   status?: ToolStatus;
   startedAt?: number;
+  /** Whether there's a foreground bash that can be sent to background */
+  canSendToBackground?: boolean;
+  /** Callback to send the current foreground bash to background */
+  onSendToBackground?: () => void;
 }
 
 export const BashToolCall: React.FC<BashToolCallProps> = ({
@@ -35,6 +41,8 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   result,
   status = "pending",
   startedAt,
+  canSendToBackground,
+  onSendToBackground,
 }) => {
   const { expanded, toggleExpanded } = useToolExpansion();
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -61,18 +69,25 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   const isPending = status === "executing" || status === "pending";
   const isBackground = args.run_in_background ?? (result && "backgroundProcessId" in result);
 
+  // Override status for backgrounded processes: the aggregator sees success=true and marks "completed",
+  // but for a foreground→background migration we want to show "backgrounded"
+  const effectiveStatus: ToolStatus =
+    status === "completed" && result && "backgroundProcessId" in result ? "backgrounded" : status;
+
   return (
     <ToolContainer expanded={expanded}>
       <ToolHeader onClick={toggleExpanded}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
         <ToolIcon emoji="🔧" toolName="bash" />
         <span className="text-text font-monospace max-w-96 truncate">{args.script}</span>
-        {isBackground ? (
-          // Background mode: show background badge and optional display name
-          <span className="text-text-secondary ml-2 text-[10px] whitespace-nowrap">
-            ⚡ background{args.display_name && ` • ${args.display_name}`}
+        {isBackground && (
+          // Background mode: show icon and display name
+          <span className="text-muted ml-2 flex items-center gap-1 text-[10px] whitespace-nowrap">
+            <Layers size={10} />
+            {args.display_name}
           </span>
-        ) : (
+        )}
+        {!isBackground && (
           // Normal mode: show timeout and duration
           <>
             <span
@@ -85,19 +100,39 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
               {result && ` • took ${formatDuration(result.wall_duration_ms)}`}
               {!result && isPending && elapsedTime > 0 && ` • ${Math.round(elapsedTime / 1000)}s`}
             </span>
-            {result && (
-              <span
-                className={cn(
-                  "ml-2 inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
-                  result.exitCode === 0 ? "bg-success text-on-success" : "bg-danger text-on-danger"
-                )}
-              >
-                {result.exitCode}
-              </span>
-            )}
+            {result && <ExitCodeBadge exitCode={result.exitCode} className="ml-2" />}
           </>
         )}
-        <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
+        <StatusIndicator status={effectiveStatus}>
+          {getStatusDisplay(effectiveStatus)}
+        </StatusIndicator>
+        {/* Show "Background" button when bash is executing and can be sent to background.
+            Use invisible when executing but not yet confirmed as foreground to avoid layout flash. */}
+        {status === "executing" && !isBackground && onSendToBackground && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation(); // Don't toggle expand
+                  onSendToBackground();
+                }}
+                disabled={!canSendToBackground}
+                className={cn(
+                  "ml-2 flex cursor-pointer items-center gap-1 rounded p-1 text-[10px] font-medium transition-colors",
+                  "bg-[var(--color-pending)]/20 text-[var(--color-pending)]",
+                  "hover:bg-[var(--color-pending)]/30",
+                  "disabled:pointer-events-none disabled:invisible"
+                )}
+              >
+                <Layers size={12} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              Send to background — process continues but agent stops waiting
+            </TooltipContent>
+          </Tooltip>
+        )}
       </ToolHeader>
 
       {expanded && (
@@ -117,11 +152,14 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
               )}
 
               {"backgroundProcessId" in result ? (
-                // Background process: show file paths
-                <DetailSection>
-                  <DetailLabel>Output Files</DetailLabel>
-                  <OutputPaths stdout={result.stdout_path} stderr={result.stderr_path} />
-                </DetailSection>
+                // Background process: show process ID inline with icon (compact, no section wrapper)
+                <div className="flex items-center gap-2 text-[11px]">
+                  <Layers size={12} className="text-muted shrink-0" />
+                  <span className="text-muted">Background process</span>
+                  <code className="rounded bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 font-mono text-[10px]">
+                    {result.backgroundProcessId}
+                  </code>
+                </div>
               ) : (
                 // Normal process: show output
                 result.output && (

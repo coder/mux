@@ -38,7 +38,8 @@ const BACKGROUND_TOOLS: ToolPolicy = [
 const BACKGROUND_TEST_TIMEOUT_MS = 75000;
 
 /**
- * Extract process ID from bash tool output containing "Background process started with ID: bg-xxx"
+ * Extract process ID from bash tool output containing "Background process started with ID: xxx"
+ * The process ID is now the display_name, which can be any string like "Sleep Process" or "bash_123"
  */
 function extractProcessId(events: WorkspaceChatMessage[]): string | null {
   for (const event of events) {
@@ -50,8 +51,9 @@ function extractProcessId(events: WorkspaceChatMessage[]): string | null {
     ) {
       const result = (event as { result?: { output?: string } }).result?.output;
       if (typeof result === "string") {
-        const match = result.match(/Background process started with ID: (bg-[a-z0-9]+)/);
-        if (match) return match[1];
+        // Match any non-empty process ID after "Background process started with ID: "
+        const match = result.match(/Background process started with ID: (.+)$/);
+        if (match) return match[1].trim();
       }
     }
   }
@@ -127,10 +129,10 @@ describeIntegration("Background Bash Execution", () => {
             30000
           );
 
-          // Extract process ID from tool output
+          // Extract process ID from tool output (now uses display_name)
           const processId = extractProcessId(startEvents);
           expect(processId).not.toBeNull();
-          expect(processId).toMatch(/^bg-[a-z0-9]+$/);
+          expect(processId!.length).toBeGreaterThan(0);
 
           // List background processes to verify it's tracked
           const listEvents = await sendMessageAndWait(

@@ -68,28 +68,14 @@ export interface ExecOptions {
 }
 
 /**
- * Options for spawning a background process
- */
-export interface BackgroundSpawnOptions {
-  /** Working directory for command execution */
-  cwd: string;
-  /** Workspace ID for output directory organization */
-  workspaceId: string;
-  /** Environment variables to inject */
-  env?: Record<string, string>;
-  /** Process niceness level (-20 to 19, lower = higher priority) */
-  niceness?: number;
-}
-
-/**
  * Handle to a background process.
  * Abstracts away whether process is local or remote.
  *
- * Output is written directly to files by the runtime.
+ * Output is written directly to a unified output.log file by shell redirection.
  * This handle is for lifecycle management and output directory operations.
  */
 export interface BackgroundHandle {
-  /** Output directory containing stdout.log, stderr.log, meta.json */
+  /** Output directory containing output.log, meta.json, exit_code */
   readonly outputDir: string;
 
   /**
@@ -113,14 +99,14 @@ export interface BackgroundHandle {
    * Write meta.json to the output directory.
    */
   writeMeta(metaJson: string): Promise<void>;
-}
 
-/**
- * Result of spawning a background process
- */
-export type BackgroundSpawnResult =
-  | { success: true; handle: BackgroundHandle; pid: number }
-  | { success: false; error: string };
+  /**
+   * Read output from output.log at the given byte offset.
+   * Returns the content read and the new offset (for incremental reads).
+   * Works on both local and SSH runtimes by using runtime.exec() internally.
+   */
+  readOutput(offset: number): Promise<{ content: string; newOffset: number }>;
+}
 
 /**
  * Streaming result from executing a command
@@ -268,21 +254,6 @@ export interface Runtime {
    * @throws RuntimeError if execution fails in an unrecoverable way
    */
   exec(command: string, options: ExecOptions): Promise<ExecStream>;
-
-  /**
-   * Spawn a detached background process.
-   * Returns a handle for monitoring output and terminating the process.
-   * Unlike exec(), background processes have no timeout and run until terminated.
-   *
-   * Output directory is determined by runtime implementation:
-   * - LocalRuntime: {bgOutputDir}/{workspaceId}/{processId}/ (default: /tmp/mux-bashes)
-   * - SSHRuntime: {bgOutputDir}/{workspaceId}/{processId}/ (default: /tmp/mux-bashes)
-   *
-   * @param script Bash script to execute
-   * @param options Execution options (cwd, workspaceId, processId, env, niceness)
-   * @returns BackgroundHandle on success, or error
-   */
-  spawnBackground(script: string, options: BackgroundSpawnOptions): Promise<BackgroundSpawnResult>;
 
   /**
    * Read file contents as a stream
@@ -437,6 +408,15 @@ export interface Runtime {
    * @returns Result with new workspace path and source branch, or error
    */
   forkWorkspace(params: WorkspaceForkParams): Promise<WorkspaceForkResult>;
+
+  /**
+   * Get the runtime's temp directory (absolute path, resolved).
+   * - LocalRuntime: /tmp (or OS temp dir)
+   * - SSHRuntime: Resolved remote temp dir (e.g., /tmp)
+   *
+   * Used for background process output, temporary files, etc.
+   */
+  tempDir(): Promise<string>;
 }
 
 /**

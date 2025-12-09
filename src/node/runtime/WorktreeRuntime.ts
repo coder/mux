@@ -30,8 +30,8 @@ import { toPosixPath } from "@/node/utils/paths";
 export class WorktreeRuntime extends LocalBaseRuntime {
   private readonly srcBaseDir: string;
 
-  constructor(srcBaseDir: string, bgOutputDir: string) {
-    super(bgOutputDir);
+  constructor(srcBaseDir: string) {
+    super();
     // Expand tilde to actual home directory path for local file system operations
     this.srcBaseDir = expandTilde(srcBaseDir);
   }

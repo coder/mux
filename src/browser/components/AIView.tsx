@@ -51,6 +51,8 @@ import { evictModelFromLRU } from "@/browser/hooks/useModelLRU";
 import { QueuedMessage } from "./Messages/QueuedMessage";
 import { CompactionWarning } from "./CompactionWarning";
 import { ConcurrentLocalWarning } from "./ConcurrentLocalWarning";
+import { BackgroundProcessesBanner } from "./BackgroundProcessesBanner";
+import { useBackgroundBashHandlers } from "@/browser/hooks/useBackgroundBashHandlers";
 import { checkAutoCompaction } from "@/browser/utils/compaction/autoCompactionCheck";
 import { executeCompaction } from "@/browser/utils/chatCommands";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
@@ -61,6 +63,7 @@ import { useAPI } from "@/browser/contexts/API";
 import { useReviews } from "@/browser/hooks/useReviews";
 import { ReviewsBanner } from "./ReviewsBanner";
 import type { ReviewNoteData } from "@/common/types/review";
+import { PopoverError } from "./PopoverError";
 
 interface AIViewProps {
   workspaceId: string;
@@ -119,6 +122,15 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
   // Reviews state
   const reviews = useReviews(workspaceId);
+
+  const {
+    processes: backgroundBashes,
+    handleTerminate: handleTerminateBackgroundBash,
+    foregroundToolCallIds,
+    handleSendToBackground: handleSendBashToBackground,
+    handleMessageSentBackground,
+    error: backgroundBashError,
+  } = useBackgroundBashHandlers(api, workspaceId);
   const { options } = useProviderOptions();
   const use1M = options.anthropic?.use1MContext ?? false;
   // Get pending model for auto-compaction settings (threshold is per-model)
@@ -320,13 +332,17 @@ const AIViewInner: React.FC<AIViewProps> = ({
   }, []);
 
   const handleMessageSent = useCallback(() => {
+    // Auto-background any running foreground bash when user sends a new message
+    // This prevents the user from waiting for the bash to complete before their message is processed
+    handleMessageSentBackground();
+
     // Enable auto-scroll when user sends a message
     setAutoScroll(true);
 
     // Reset autoRetry when user sends a message
     // User action = clear intent: "I'm actively using this workspace"
     setAutoRetry(true);
-  }, [setAutoScroll, setAutoRetry]);
+  }, [setAutoScroll, setAutoRetry, handleMessageSentBackground]);
 
   const handleClearHistory = useCallback(
     async (percentage = 1.0) => {
@@ -581,6 +597,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
                               msg.toolName === "propose_plan" &&
                               msg.id === latestProposePlanId
                             }
+                            foregroundBashToolCallIds={foregroundToolCallIds}
+                            onSendBashToBackground={handleSendBashToBackground}
                           />
                         </div>
                         {isAtCutoff && (
@@ -655,6 +673,10 @@ const AIViewInner: React.FC<AIViewProps> = ({
             onCompactClick={handleCompactClick}
           />
         )}
+        <BackgroundProcessesBanner
+          processes={backgroundBashes}
+          onTerminate={handleTerminateBackgroundBash}
+        />
         <ReviewsBanner workspaceId={workspaceId} />
         <ChatInput
           variant="workspace"
@@ -690,6 +712,12 @@ const AIViewInner: React.FC<AIViewProps> = ({
         isResizing={isResizing} // Pass resizing state
         onReviewNote={handleReviewNote} // Pass review note handler to append to chat
         isCreating={status === "creating"} // Workspace still being set up
+      />
+
+      <PopoverError
+        error={backgroundBashError.error}
+        prefix="Failed to terminate:"
+        onDismiss={backgroundBashError.clearError}
       />
     </div>
   );

@@ -14,7 +14,6 @@ import {
   LoadingDots,
   ToolIcon,
   ErrorBox,
-  OutputPaths,
 } from "./shared/ToolPrimitives";
 import {
   useToolExpansion,
@@ -100,7 +99,6 @@ export const BashBackgroundListToolCall: React.FC<BashBackgroundListToolCallProp
                     <div className="text-text-secondary truncate font-mono" title={proc.script}>
                       {proc.script}
                     </div>
-                    <OutputPaths stdout={proc.stdout_path} stderr={proc.stderr_path} compact />
                   </div>
                 ))}
               </div>

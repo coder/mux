@@ -5,6 +5,10 @@ import type { Runtime } from "@/node/runtime/Runtime";
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
+import { createBashTool } from "@/node/services/tools/bash";
+import { createBashOutputTool } from "@/node/services/tools/bash_output";
+import { TestTempDir, createTestToolConfig } from "@/node/services/tools/testHelpers";
+import type { BashToolResult, BashOutputToolResult } from "@/common/types/tools";
 
 describe("BackgroundProcessManager", () => {
   let manager: BackgroundProcessManager;
@@ -16,30 +20,41 @@ describe("BackgroundProcessManager", () => {
   const testWorkspaceId2 = `test-ws2-${testRunId}`;
 
   beforeEach(async () => {
-    manager = new BackgroundProcessManager();
-    // Create isolated temp directory for sessions
+    // Create isolated temp directory for each test to avoid cross-test pollution
     bgOutputDir = await fs.mkdtemp(path.join(os.tmpdir(), "bg-proc-test-"));
-    runtime = new LocalRuntime(process.cwd(), bgOutputDir);
+    manager = new BackgroundProcessManager(bgOutputDir);
+    runtime = new LocalRuntime(process.cwd());
   });
 
   afterEach(async () => {
     // Cleanup: terminate all processes
     await manager.cleanup(testWorkspaceId);
     await manager.cleanup(testWorkspaceId2);
-    // Remove temp sessions directory
+    // Remove temp sessions directory (legacy)
     await fs.rm(bgOutputDir, { recursive: true, force: true }).catch(() => undefined);
+    // Remove actual output directories from /tmp/mux-bashes (where executor writes)
+    await fs
+      .rm(`/tmp/mux-bashes/${testWorkspaceId}`, { recursive: true, force: true })
+      .catch(() => undefined);
+    await fs
+      .rm(`/tmp/mux-bashes/${testWorkspaceId2}`, { recursive: true, force: true })
+      .catch(() => undefined);
   });
 
   describe("spawn", () => {
     it("should spawn a background process and return process ID and outputDir", async () => {
+      const displayName = `test-${Date.now()}`;
       const result = await manager.spawn(runtime, testWorkspaceId, "echo hello", {
         cwd: process.cwd(),
+        displayName,
       });
 
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.processId).toMatch(/^bg-/);
-        expect(result.outputDir).toContain(bgOutputDir);
+        // Process ID is now the display name directly
+        expect(result.processId).toBe(displayName);
+        // outputDir is now under runtime.tempDir()/mux-bashes/<workspaceId>/<processId>
+        expect(result.outputDir).toContain("mux-bashes");
         expect(result.outputDir).toContain(testWorkspaceId);
         expect(result.outputDir).toContain(result.processId);
       }
@@ -48,14 +63,16 @@ describe("BackgroundProcessManager", () => {
     it("should return error on spawn failure", async () => {
       const result = await manager.spawn(runtime, testWorkspaceId, "echo test", {
         cwd: "/nonexistent/path/that/does/not/exist",
+        displayName: "test",
       });
 
       expect(result.success).toBe(false);
     });
 
-    it("should write stdout and stderr to files", async () => {
+    it("should write stdout and stderr to unified output file", async () => {
       const result = await manager.spawn(runtime, testWorkspaceId, "echo hello; echo world >&2", {
         cwd: process.cwd(),
+        displayName: "test",
       });
 
       expect(result.success).toBe(true);
@@ -63,20 +80,19 @@ describe("BackgroundProcessManager", () => {
         // Wait a moment for output to be written
         await new Promise((resolve) => setTimeout(resolve, 100));
 
-        const stdoutPath = path.join(result.outputDir, "stdout.log");
-        const stderrPath = path.join(result.outputDir, "stderr.log");
+        const outputPath = path.join(result.outputDir, "output.log");
+        const output = await fs.readFile(outputPath, "utf-8");
 
-        const stdout = await fs.readFile(stdoutPath, "utf-8");
-        const stderr = await fs.readFile(stderrPath, "utf-8");
-
-        expect(stdout).toContain("hello");
-        expect(stderr).toContain("world");
+        // Both stdout and stderr go to the same file
+        expect(output).toContain("hello");
+        expect(output).toContain("world");
       }
     });
 
     it("should write meta.json with process info", async () => {
       const result = await manager.spawn(runtime, testWorkspaceId, "echo test", {
         cwd: process.cwd(),
+        displayName: "test",
       });
 
       expect(result.success).toBe(true);
@@ -98,6 +114,7 @@ describe("BackgroundProcessManager", () => {
     it("should return process by ID", async () => {
       const spawnResult = await manager.spawn(runtime, testWorkspaceId, "sleep 1", {
         cwd: process.cwd(),
+        displayName: "test",
       });
 
       if (spawnResult.success) {
@@ -116,16 +133,30 @@ describe("BackgroundProcessManager", () => {
 
   describe("list", () => {
     it("should list all processes", async () => {
-      await manager.spawn(runtime, testWorkspaceId, "sleep 1", { cwd: process.cwd() });
-      await manager.spawn(runtime, testWorkspaceId, "sleep 1", { cwd: process.cwd() });
+      // Use unique display names since they're now used as process IDs
+      await manager.spawn(runtime, testWorkspaceId, "sleep 1", {
+        cwd: process.cwd(),
+        displayName: "test-list-1",
+      });
+      await manager.spawn(runtime, testWorkspaceId, "sleep 1", {
+        cwd: process.cwd(),
+        displayName: "test-list-2",
+      });
 
       const processes = await manager.list();
       expect(processes.length).toBeGreaterThanOrEqual(2);
     });
 
     it("should filter by workspace ID", async () => {
-      await manager.spawn(runtime, testWorkspaceId, "sleep 1", { cwd: process.cwd() });
-      await manager.spawn(runtime, testWorkspaceId2, "sleep 1", { cwd: process.cwd() });
+      // Use unique display names since they're now used as process IDs
+      await manager.spawn(runtime, testWorkspaceId, "sleep 1", {
+        cwd: process.cwd(),
+        displayName: "test-filter-ws1",
+      });
+      await manager.spawn(runtime, testWorkspaceId2, "sleep 1", {
+        cwd: process.cwd(),
+        displayName: "test-filter-ws2",
+      });
 
       const ws1Processes = await manager.list(testWorkspaceId);
       const ws2Processes = await manager.list(testWorkspaceId2);
@@ -141,6 +172,7 @@ describe("BackgroundProcessManager", () => {
     it("should terminate a running process", async () => {
       const spawnResult = await manager.spawn(runtime, testWorkspaceId, "sleep 10", {
         cwd: process.cwd(),
+        displayName: "test",
       });
 
       if (spawnResult.success) {
@@ -160,6 +192,7 @@ describe("BackgroundProcessManager", () => {
     it("should be idempotent (double-terminate succeeds)", async () => {
       const spawnResult = await manager.spawn(runtime, testWorkspaceId, "sleep 10", {
         cwd: process.cwd(),
+        displayName: "test",
       });
 
       if (spawnResult.success) {
@@ -176,11 +209,16 @@ describe("BackgroundProcessManager", () => {
     it("should kill all processes for a workspace and remove from memory", async () => {
       await manager.spawn(runtime, testWorkspaceId, "sleep 10", {
         cwd: process.cwd(),
+        displayName: "test",
       });
       await manager.spawn(runtime, testWorkspaceId, "sleep 10", {
         cwd: process.cwd(),
+        displayName: "test",
       });
-      await manager.spawn(runtime, testWorkspaceId2, "sleep 10", { cwd: process.cwd() });
+      await manager.spawn(runtime, testWorkspaceId2, "sleep 10", {
+        cwd: process.cwd(),
+        displayName: "test",
+      });
 
       await manager.cleanup(testWorkspaceId);
 
@@ -196,12 +234,14 @@ describe("BackgroundProcessManager", () => {
 
   describe("terminateAll", () => {
     it("should kill all processes across all workspaces", async () => {
-      // Spawn processes in multiple workspaces
+      // Spawn processes in multiple workspaces (unique display names since they're process IDs)
       await manager.spawn(runtime, testWorkspaceId, "sleep 10", {
         cwd: process.cwd(),
+        displayName: "test-termall-ws1",
       });
       await manager.spawn(runtime, testWorkspaceId2, "sleep 10", {
         cwd: process.cwd(),
+        displayName: "test-termall-ws2",
       });
 
       // Verify both workspaces have running processes
@@ -236,6 +276,7 @@ describe("BackgroundProcessManager", () => {
     it("should track process exit and update meta.json", async () => {
       const result = await manager.spawn(runtime, testWorkspaceId, "exit 42", {
         cwd: process.cwd(),
+        displayName: "test",
       });
 
       if (result.success) {
@@ -259,6 +300,7 @@ describe("BackgroundProcessManager", () => {
     it("should keep output files after process exits", async () => {
       const result = await manager.spawn(runtime, testWorkspaceId, "echo test; exit 0", {
         cwd: process.cwd(),
+        displayName: "test",
       });
 
       if (result.success) {
@@ -267,10 +309,10 @@ describe("BackgroundProcessManager", () => {
         const proc = await manager.getProcess(result.processId);
         expect(proc?.status).toBe("exited");
 
-        // Verify stdout file still contains output
-        const stdoutPath = path.join(result.outputDir, "stdout.log");
-        const stdout = await fs.readFile(stdoutPath, "utf-8");
-        expect(stdout).toContain("test");
+        // Verify output file still contains output
+        const outputPath = path.join(result.outputDir, "output.log");
+        const output = await fs.readFile(outputPath, "utf-8");
+        expect(output).toContain("test");
       }
     });
 
@@ -278,6 +320,7 @@ describe("BackgroundProcessManager", () => {
       // Spawn a long-running process
       const result = await manager.spawn(runtime, testWorkspaceId, "sleep 60", {
         cwd: process.cwd(),
+        displayName: "test",
       });
 
       if (result.success) {
@@ -294,6 +337,7 @@ describe("BackgroundProcessManager", () => {
       // Spawn a long-running process
       const result = await manager.spawn(runtime, testWorkspaceId, "sleep 60", {
         cwd: process.cwd(),
+        displayName: "test",
       });
 
       if (result.success) {
@@ -319,6 +363,7 @@ describe("BackgroundProcessManager", () => {
       // This creates: parent bash -> child sleep
       const result = await manager.spawn(runtime, testWorkspaceId, "bash -c 'sleep 60 & wait'", {
         cwd: process.cwd(),
+        displayName: "test",
       });
 
       expect(result.success).toBe(true);
@@ -350,10 +395,291 @@ describe("BackgroundProcessManager", () => {
     });
   });
 
+  describe("getOutput", () => {
+    it("should return stdout from a running process", async () => {
+      // Spawn a process that writes output over time
+      // Use longer sleep and explicit flush to ensure output is written to file
+      const result = await manager.spawn(
+        runtime,
+        testWorkspaceId,
+        "echo 'line 1'; sleep 0.3; echo 'line 2'",
+        { cwd: process.cwd(), displayName: "test" }
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Wait for first line to be written and flushed (increased for CI reliability)
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      // Get output - should have at least the first line
+      const output1 = await manager.getOutput(result.processId);
+      expect(output1.success).toBe(true);
+      if (!output1.success) return;
+
+      expect(output1.output).toContain("line 1");
+
+      // Wait for second line (sleep 0.3s + buffer for CI)
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // Get output again - should have incremental output (line 2)
+      const output2 = await manager.getOutput(result.processId);
+      expect(output2.success).toBe(true);
+      if (!output2.success) return;
+
+      // Second call should only return new content (line 2)
+      expect(output2.output).toContain("line 2");
+      // And should NOT contain line 1 again (incremental reads)
+      expect(output2.output).not.toContain("line 1");
+    });
+
+    it("should return stderr from a running process", async () => {
+      const result = await manager.spawn(runtime, testWorkspaceId, "echo 'error message' >&2", {
+        cwd: process.cwd(),
+        displayName: "test",
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const output = await manager.getOutput(result.processId);
+      expect(output.success).toBe(true);
+      if (!output.success) return;
+
+      expect(output.output).toContain("error message");
+    });
+
+    it("should return error for non-existent process", async () => {
+      const output = await manager.getOutput("bash_nonexistent");
+      expect(output.success).toBe(false);
+      if (output.success) return;
+      expect(output.error).toContain("not found");
+    });
+
+    it("should return correct status for running vs exited process", async () => {
+      const result = await manager.spawn(runtime, testWorkspaceId, "echo done; exit 0", {
+        cwd: process.cwd(),
+        displayName: "test",
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Immediately should be running
+      const output1 = await manager.getOutput(result.processId);
+      expect(output1.success).toBe(true);
+      if (!output1.success) return;
+      // Status could be running or already exited depending on timing
+
+      // Wait for exit
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      const output2 = await manager.getOutput(result.processId);
+      expect(output2.success).toBe(true);
+      if (!output2.success) return;
+      expect(output2.status).toBe("exited");
+      expect(output2.exitCode).toBe(0);
+    });
+
+    it("should filter output with regex when provided", async () => {
+      const result = await manager.spawn(
+        runtime,
+        testWorkspaceId,
+        "echo 'INFO: message'; echo 'DEBUG: noise'; echo 'INFO: another'",
+        { cwd: process.cwd(), displayName: "test" }
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Filter for INFO lines only
+      const output = await manager.getOutput(result.processId, "INFO");
+      expect(output.success).toBe(true);
+      if (!output.success) return;
+
+      expect(output.output).toContain("INFO: message");
+      expect(output.output).toContain("INFO: another");
+      expect(output.output).not.toContain("DEBUG");
+    });
+  });
+
+  describe("integration: spawn and getOutput", () => {
+    it("should retrieve output after spawn using same manager instance", async () => {
+      // This test verifies the core workflow: spawn -> getOutput
+      // Both must use the SAME manager instance
+
+      // Spawn process that produces output
+      const result = await manager.spawn(runtime, testWorkspaceId, "echo 'hello from bg'", {
+        cwd: process.cwd(),
+        displayName: "test",
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Wait for output
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Verify we can read output using the SAME manager
+      const output = await manager.getOutput(result.processId);
+      expect(output.success).toBe(true);
+      if (!output.success) return;
+
+      expect(output.output).toContain("hello from bg");
+    });
+
+    it("should read from offset 0 on first call even if file already has content", async () => {
+      // Spawn a process that writes output immediately
+      const result = await manager.spawn(runtime, testWorkspaceId, "echo 'initial output'", {
+        cwd: process.cwd(),
+        displayName: "test",
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Wait longer to ensure output is definitely written
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // Verify the file has content
+      const outputPath = path.join(result.outputDir, "output.log");
+      const fileContent = await fs.readFile(outputPath, "utf-8");
+      expect(fileContent).toContain("initial output");
+
+      // Now call getOutput - first call should read from offset 0
+      const output = await manager.getOutput(result.processId);
+      expect(output.success).toBe(true);
+      if (!output.success) return;
+
+      // Should have the output even though some time has passed
+      expect(output.output).toContain("initial output");
+    });
+
+    it("DEBUG: verifies outputDir from spawn matches getProcess", async () => {
+      // Verify that outputDir returned from spawn is the same as what getProcess returns
+      const result = await manager.spawn(runtime, testWorkspaceId, "echo 'verify test'", {
+        cwd: process.cwd(),
+        displayName: "test",
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const proc = await manager.getProcess(result.processId);
+      expect(proc).not.toBeNull();
+
+      // CRITICAL: outputDir from spawn MUST match outputDir from getProcess
+      expect(proc!.outputDir).toBe(result.outputDir);
+
+      // Wait for output to be written
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Verify file exists at the expected path
+      const outputPath = path.join(result.outputDir, "output.log");
+      const content = await fs.readFile(outputPath, "utf-8");
+      expect(content).toContain("verify test");
+
+      // Now getOutput should return the content
+      const output = await manager.getOutput(result.processId);
+      expect(output.success).toBe(true);
+      if (output.success) {
+        expect(output.output).toContain("verify test");
+      }
+    });
+
+    it("should work when spawned via bash tool and read via bash_output tool", async () => {
+      // This simulates the exact flow in the real system:
+      // 1. bash tool with run_in_background=true spawns process
+      // 2. bash_output tool reads output
+
+      const tempDir = new TestTempDir("test-bg-integration");
+
+      // Create shared config with the SAME manager instance
+      const config = createTestToolConfig(tempDir.path, {
+        workspaceId: testWorkspaceId,
+        sessionsDir: tempDir.path,
+      });
+      config.backgroundProcessManager = manager;
+      config.runtime = runtime;
+
+      // Create bash tool and spawn background process
+      const bashTool = createBashTool(config);
+      const spawnResult = (await bashTool.execute!(
+        { script: "echo 'hello from integration test'", run_in_background: true },
+        { toolCallId: "test", messages: [] }
+      )) as BashToolResult;
+
+      expect(spawnResult).toBeDefined();
+      expect(spawnResult.success).toBe(true);
+      expect("backgroundProcessId" in spawnResult).toBe(true);
+
+      // Type narrowing for background process result
+      if (!("backgroundProcessId" in spawnResult)) {
+        throw new Error("Expected background process result");
+      }
+      const processId: string = spawnResult.backgroundProcessId;
+
+      // Wait for output
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      // Create bash_output tool and read output
+      const outputTool = createBashOutputTool(config);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      const rawOutputResult = await outputTool.execute!(
+        { process_id: processId },
+        { toolCallId: "test2", messages: [] }
+      );
+
+      const outputResult = rawOutputResult as BashOutputToolResult;
+
+      expect(outputResult).toBeDefined();
+
+      // This is the key assertion - should succeed AND have content
+      expect(outputResult.success).toBe(true);
+      if (outputResult.success) {
+        expect(outputResult.output).toContain("hello from integration test");
+      } else {
+        throw new Error(`bash_output failed: ${outputResult.error}`);
+      }
+
+      tempDir[Symbol.dispose]();
+    });
+
+    it("should fail to get output if using different manager instance", async () => {
+      // This test documents what happens if manager instances differ
+      // (which would be a bug in the real system)
+
+      // Spawn with first manager
+      const result = await manager.spawn(runtime, testWorkspaceId, "echo 'test'", {
+        cwd: process.cwd(),
+        displayName: "test",
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Create a DIFFERENT manager instance
+      const otherManager = new BackgroundProcessManager(bgOutputDir);
+
+      // Trying to get output from different manager should fail
+      // because the process isn't in its internal map
+      const output = await otherManager.getOutput(result.processId);
+      expect(output.success).toBe(false);
+      if (!output.success) {
+        expect(output.error).toContain("Process not found");
+      }
+    });
+  });
+
   describe("exit_code file", () => {
     it("should write exit_code file when process exits", async () => {
       const result = await manager.spawn(runtime, testWorkspaceId, "exit 42", {
         cwd: process.cwd(),
+        displayName: "test",
       });
 
       expect(result.success).toBe(true);

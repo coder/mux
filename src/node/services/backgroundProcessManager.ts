@@ -1,7 +1,9 @@
 import type { Runtime, BackgroundHandle } from "@/node/runtime/Runtime";
+import { spawnProcess } from "./backgroundProcessExecutor";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "./log";
-import * as path from "path";
+
+import { EventEmitter } from "events";
 
 /**
  * Metadata written to meta.json for bookkeeping
@@ -21,7 +23,7 @@ export interface BackgroundProcessMeta {
  * Represents a background process with file-based output
  */
 export interface BackgroundProcess {
-  id: string; // Short unique ID (e.g., "bg-abc123")
+  id: string; // Process ID (display_name from the bash tool call)
   pid: number; // OS process ID
   workspaceId: string; // Owning workspace
   outputDir: string; // Directory containing stdout.log, stderr.log, meta.json
@@ -32,22 +34,95 @@ export interface BackgroundProcess {
   status: "running" | "exited" | "killed" | "failed";
   handle: BackgroundHandle; // For process interaction
   displayName?: string; // Human-readable name (e.g., "Dev Server")
+  /** True if this process is being waited on (foreground mode) */
+  isForeground: boolean;
 }
 
 /**
- * Manages background bash processes for workspaces.
- *
- * Processes are spawned via Runtime.spawnBackground() and tracked by ID.
- * Output is stored in circular buffers for later retrieval.
+ * Tracks read position for incremental output retrieval.
+ * Each call to getOutput() returns only new content since the last read.
  */
-export class BackgroundProcessManager {
+interface OutputReadPosition {
+  outputBytes: number;
+}
+
+/**
+ * Represents a foreground process that can be sent to background.
+ * These are processes started via runtime.exec() (not nohup) that we track
+ * so users can click "Background" to stop waiting for them.
+ */
+export interface ForegroundProcess {
+  /** Workspace ID */
+  workspaceId: string;
+  /** Tool call ID that started this process (for UI to match) */
+  toolCallId: string;
+  /** Script being executed */
+  script: string;
+  /** Display name for the process (used as ID if sent to background) */
+  displayName: string;
+  /** Callback to invoke when user requests backgrounding */
+  onBackground: () => void;
+  /** Current accumulated output (for saving to files on background) */
+  output: string[];
+}
+
+/**
+ * Manages bash processes for workspaces.
+ *
+ * ALL bash commands are spawned through this manager with background-style
+ * infrastructure (nohup, file output, exit code trap). This enables:
+ * - Uniform code path for all bash commands
+ * - Crash resilience (output always persisted to files)
+ * - Seamless fg→bg transition via sendToBackground()
+ *
+ * Supports incremental output retrieval via getOutput().
+ */
+/**
+ * Event types emitted by BackgroundProcessManager.
+ * The 'change' event is emitted whenever the state changes for a workspace.
+ */
+export interface BackgroundProcessManagerEvents {
+  change: [workspaceId: string];
+}
+
+export class BackgroundProcessManager extends EventEmitter<BackgroundProcessManagerEvents> {
   // NOTE: This map is in-memory only. Background processes use nohup/setsid so they
   // could survive app restarts, but we kill all tracked processes on shutdown via
   // dispose(). Rehydrating from meta.json on startup is out of scope for now.
   private processes = new Map<string, BackgroundProcess>();
 
+  // Tracks read positions for incremental output retrieval
+  private readPositions = new Map<string, OutputReadPosition>();
+
+  // Base directory for process output files
+  private readonly bgOutputDir: string;
+  // Tracks foreground processes (started via runtime.exec) that can be backgrounded
+  // Key is toolCallId to support multiple parallel foreground processes per workspace
+  private foregroundProcesses = new Map<string, ForegroundProcess>();
+
+  constructor(bgOutputDir: string) {
+    super();
+    this.bgOutputDir = bgOutputDir;
+  }
+
+  /** Emit a change event for a workspace */
+  private emitChange(workspaceId: string): void {
+    this.emit("change", workspaceId);
+  }
+
   /**
-   * Spawn a new background process.
+   * Get the base directory for background process output files.
+   */
+  getBgOutputDir(): string {
+    return this.bgOutputDir;
+  }
+
+  /**
+   * Spawn a new process with background-style infrastructure.
+   *
+   * All processes are spawned with nohup/setsid and file-based output,
+   * enabling seamless fg→bg transition via sendToBackground().
+   *
    * @param runtime Runtime to spawn the process on
    * @param workspaceId Workspace ID for tracking/filtering
    * @param script Bash script to execute
@@ -59,20 +134,31 @@ export class BackgroundProcessManager {
     script: string,
     config: {
       cwd: string;
-      secrets?: Record<string, string>;
+      env?: Record<string, string>;
       niceness?: number;
-      displayName?: string;
+      /** Human-readable name for the process - used to generate the process ID */
+      displayName: string;
+      /** If true, process is foreground (being waited on). Default: false (background) */
+      isForeground?: boolean;
+      /** Auto-terminate after this many seconds (background processes only) */
+      timeoutSecs?: number;
     }
   ): Promise<
-    { success: true; processId: string; outputDir: string } | { success: false; error: string }
+    | { success: true; processId: string; outputDir: string; pid: number }
+    | { success: false; error: string }
   > {
     log.debug(`BackgroundProcessManager.spawn() called for workspace ${workspaceId}`);
 
-    // Spawn via runtime - it generates processId and creates outputDir
-    const result = await runtime.spawnBackground(script, {
+    // Process ID is the display name directly
+    const processId = config.displayName;
+
+    // Spawn via executor with background infrastructure
+    // spawnProcess uses runtime.tempDir() internally for output directory
+    const result = await spawnProcess(runtime, script, {
       cwd: config.cwd,
       workspaceId,
-      env: config.secrets,
+      processId,
+      env: config.env,
       niceness: config.niceness,
     });
 
@@ -81,10 +167,7 @@ export class BackgroundProcessManager {
       return { success: false, error: result.error };
     }
 
-    const { handle, pid } = result;
-    const outputDir = handle.outputDir;
-    // Extract processId from outputDir (last path segment)
-    const processId = path.basename(outputDir);
+    const { handle, pid, outputDir } = result;
     const startTime = Date.now();
 
     // Write meta.json with process info
@@ -108,13 +191,171 @@ export class BackgroundProcessManager {
       status: "running",
       handle,
       displayName: config.displayName,
+      isForeground: config.isForeground ?? false,
     };
 
     // Store process in map
     this.processes.set(processId, proc);
 
-    log.debug(`Background process ${processId} spawned successfully with PID ${pid}`);
-    return { success: true, processId, outputDir };
+    log.debug(
+      `Process ${processId} spawned successfully with PID ${pid} (foreground: ${proc.isForeground})`
+    );
+
+    // Schedule auto-termination for background processes with timeout
+    const timeoutSecs = config.timeoutSecs;
+    if (!config.isForeground && timeoutSecs !== undefined && timeoutSecs > 0) {
+      setTimeout(() => {
+        void this.terminate(processId).then((result) => {
+          if (result.success) {
+            log.debug(`Process ${processId} auto-terminated after ${timeoutSecs}s timeout`);
+          }
+        });
+      }, timeoutSecs * 1000);
+    }
+
+    // Emit change event (only if background - foreground processes don't show in list)
+    if (!proc.isForeground) {
+      this.emitChange(workspaceId);
+    }
+
+    return { success: true, processId, outputDir, pid };
+  }
+
+  /**
+   * Register a foreground process that can be sent to background.
+   * Called by bash tool when starting foreground execution.
+   *
+   * @param workspaceId Workspace the process belongs to
+   * @param toolCallId Tool call ID (for UI to identify which bash row)
+   * @param script Script being executed
+   * @param onBackground Callback invoked when user requests backgrounding
+   * @returns Cleanup function to call when process completes
+   */
+  registerForegroundProcess(
+    workspaceId: string,
+    toolCallId: string,
+    script: string,
+    displayName: string,
+    onBackground: () => void
+  ): { unregister: () => void; addOutput: (line: string) => void } {
+    const proc: ForegroundProcess = {
+      workspaceId,
+      toolCallId,
+      script,
+      displayName,
+      onBackground,
+      output: [],
+    };
+    this.foregroundProcesses.set(toolCallId, proc);
+    log.debug(
+      `Registered foreground process for workspace ${workspaceId}, toolCallId ${toolCallId}`
+    );
+    this.emitChange(workspaceId);
+
+    return {
+      unregister: () => {
+        this.foregroundProcesses.delete(toolCallId);
+        log.debug(`Unregistered foreground process toolCallId ${toolCallId}`);
+        this.emitChange(workspaceId);
+      },
+      addOutput: (line: string) => {
+        proc.output.push(line);
+      },
+    };
+  }
+
+  /**
+   * Register a migrated foreground process as a tracked background process.
+   *
+   * Called by bash tool when migration completes, after migrateToBackground()
+   * has created the output directory and started file writing.
+   *
+   * @param handle The BackgroundHandle from migrateToBackground()
+   * @param processId The generated process ID
+   * @param workspaceId Workspace the process belongs to
+   * @param script Original script being executed
+   * @param outputDir Directory containing output files
+   * @param displayName Optional human-readable name
+   */
+  registerMigratedProcess(
+    handle: BackgroundHandle,
+    processId: string,
+    workspaceId: string,
+    script: string,
+    outputDir: string,
+    displayName?: string
+  ): void {
+    const startTime = Date.now();
+
+    const proc: BackgroundProcess = {
+      id: processId,
+      pid: 0, // Unknown for migrated processes (could be remote)
+      workspaceId,
+      outputDir,
+      script,
+      startTime,
+      status: "running",
+      handle,
+      displayName,
+      isForeground: false, // Now in background
+    };
+
+    // Store process in map
+    this.processes.set(processId, proc);
+
+    // Write meta.json
+    const meta: BackgroundProcessMeta = {
+      id: processId,
+      pid: 0,
+      script,
+      startTime,
+      status: "running",
+      displayName,
+    };
+    void handle.writeMeta(JSON.stringify(meta, null, 2));
+
+    log.debug(`Migrated process ${processId} registered for workspace ${workspaceId}`);
+    this.emitChange(workspaceId);
+  }
+
+  /**
+   * Send a foreground process to background.
+   *
+   * For processes started with background infrastructure (isForeground=true in spawn):
+   * - Marks as background and emits 'backgrounded' event
+   *
+   * For processes started via runtime.exec (tracked via registerForegroundProcess):
+   * - Invokes the onBackground callback to trigger early return
+   *
+   * @param toolCallId The tool call ID of the bash to background
+   * @returns Success status
+   */
+  sendToBackground(toolCallId: string): { success: true } | { success: false; error: string } {
+    log.debug(`BackgroundProcessManager.sendToBackground(${toolCallId}) called`);
+
+    const fgProc = this.foregroundProcesses.get(toolCallId);
+    if (fgProc) {
+      fgProc.onBackground();
+      log.debug(`Foreground process toolCallId ${toolCallId} sent to background`);
+      return { success: true };
+    }
+
+    return { success: false, error: "No foreground process found with that tool call ID" };
+  }
+
+  /**
+   * Get all foreground tool call IDs for a workspace.
+   * Returns empty array if no foreground processes are running.
+   */
+  getForegroundToolCallIds(workspaceId: string): string[] {
+    const ids: string[] = [];
+    // Check exec-based foreground processes
+    for (const [toolCallId, proc] of this.foregroundProcesses) {
+      if (proc.workspaceId === workspaceId) {
+        ids.push(toolCallId);
+      }
+    }
+    return ids;
   }
 
   /**
@@ -164,14 +405,124 @@ export class BackgroundProcessManager {
   }
 
   /**
-   * List all background processes, optionally filtered by workspace.
+   * Get incremental output from a background process.
+   * Returns only NEW output since the last call (tracked per process).
+   * @param processId Process ID to get output from
+   * @param filter Optional regex pattern to filter output lines (non-matching lines are discarded permanently)
+   * @param timeout Seconds to wait for output if none available (0-15, default 0 = non-blocking)
+   */
+  async getOutput(
+    processId: string,
+    filter?: string,
+    timeout?: number
+  ): Promise<
+    | {
+        success: true;
+        status: "running" | "exited" | "killed" | "failed";
+        output: string;
+        exitCode?: number;
+      }
+    | { success: false; error: string }
+  > {
+    const timeoutSecs = Math.min(Math.max(timeout ?? 0, 0), 15); // Clamp to 0-15
+    log.debug(
+      `BackgroundProcessManager.getOutput(${processId}, filter=${filter ?? "none"}, timeout=${timeoutSecs}s) called`
+    );
+
+    const proc = await this.getProcess(processId);
+    if (!proc) {
+      return { success: false, error: `Process not found: ${processId}` };
+    }
+
+    // Get or initialize read position
+    let pos = this.readPositions.get(processId);
+    if (!pos) {
+      pos = { outputBytes: 0 };
+      this.readPositions.set(processId, pos);
+    }
+
+    log.debug(
+      `BackgroundProcessManager.getOutput: proc.outputDir=${proc.outputDir}, offset=${pos.outputBytes}`
+    );
+
+    // Blocking wait loop: poll for output up to timeout seconds
+    const startTime = Date.now();
+    const timeoutMs = timeoutSecs * 1000;
+    const pollIntervalMs = 100;
+    let output = "";
+    let currentStatus = proc.status;
+
+    while (true) {
+      // Read new content via the handle (works for both local and SSH runtimes)
+      // Output is already unified in output.log (stdout + stderr via 2>&1)
+      const result = await proc.handle.readOutput(pos.outputBytes);
+      output = result.content;
+
+      // Update read position
+      pos.outputBytes = result.newOffset;
+
+      // Refresh process status
+      const refreshedProc = await this.getProcess(processId);
+      currentStatus = refreshedProc?.status ?? proc.status;
+
+      // Return immediately if:
+      // 1. We have output
+      // 2. Process is no longer running (exited/killed/failed)
+      // 3. Timeout elapsed
+      if (output.length > 0 || currentStatus !== "running") {
+        break;
+      }
+
+      const elapsed = Date.now() - startTime;
+      if (elapsed >= timeoutMs) {
+        break;
+      }
+
+      // Sleep before next poll
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+
+    log.debug(`BackgroundProcessManager.getOutput: read outputLen=${output.length}`);
+
+    let filteredOutput = output;
+
+    // Apply filter if provided (permanently discards non-matching lines)
+    if (filter) {
+      try {
+        const regex = new RegExp(filter);
+        filteredOutput = output
+          .split("\n")
+          .filter((line) => regex.test(line))
+          .join("\n");
+      } catch (e) {
+        return { success: false, error: `Invalid filter regex: ${getErrorMessage(e)}` };
+      }
+    }
+
+    return {
+      success: true,
+      status: currentStatus,
+      output: filteredOutput,
+      exitCode:
+        currentStatus !== "running"
+          ? ((await this.getProcess(processId))?.exitCode ?? undefined)
+          : undefined,
+    };
+  }
+
+  /**
+   * List background processes (not including foreground ones being waited on).
+   * Optionally filtered by workspace.
    * Refreshes status of running processes before returning.
    */
   async list(workspaceId?: string): Promise<BackgroundProcess[]> {
     log.debug(`BackgroundProcessManager.list(${workspaceId ?? "all"}) called`);
     await this.refreshRunningStatuses();
-    const allProcesses = Array.from(this.processes.values());
-    return workspaceId ? allProcesses.filter((p) => p.workspaceId === workspaceId) : allProcesses;
+    // Only return background processes (not foreground ones being waited on)
+    const backgroundProcesses = Array.from(this.processes.values()).filter((p) => !p.isForeground);
+    return workspaceId
+      ? backgroundProcesses.filter((p) => p.workspaceId === workspaceId)
+      : backgroundProcesses;
   }
 
   /**
@@ -236,6 +587,7 @@ export class BackgroundProcessManager {
       await proc.handle.dispose();
 
       log.debug(`Process ${processId} terminated successfully`);
+      this.emitChange(proc.workspaceId);
       return { success: true };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -249,6 +601,7 @@ export class BackgroundProcessManager {
       });
       // Ensure handle is cleaned up even on error
       await proc.handle.dispose();
+      this.emitChange(proc.workspaceId);
       return { success: true };
     }
   }

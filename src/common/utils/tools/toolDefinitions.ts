@@ -7,7 +7,6 @@
 
 import { z } from "zod";
 import {
-  BASH_DEFAULT_TIMEOUT_SECS,
   BASH_HARD_MAX_LINES,
   BASH_MAX_LINE_BYTES,
   BASH_MAX_TOTAL_BYTES,
@@ -48,9 +47,10 @@ export const TOOL_DEFINITIONS = {
       timeout_secs: z
         .number()
         .positive()
-        .optional()
         .describe(
-          `Timeout (seconds, default: ${BASH_DEFAULT_TIMEOUT_SECS}). Start small and increase on retry; avoid large initial values to keep UX responsive`
+          "Timeout in seconds. For foreground: max execution time before kill. " +
+            "For background: max lifetime before auto-termination. " +
+            "Start small and increase on retry; avoid large initial values to keep UX responsive"
         ),
       run_in_background: z
         .boolean()
@@ -60,17 +60,18 @@ export const TOOL_DEFINITIONS = {
             "Use for processes running >5s (dev servers, builds, file watchers). " +
             "Do NOT use for quick commands (<5s), interactive processes (no stdin support), " +
             "or processes requiring real-time output (use foreground with larger timeout instead). " +
-            "Returns immediately with process_id (e.g., bg-a1b2c3d4), stdout_path, and stderr_path. " +
-            "Read output with bash (e.g., tail -50 <stdout_path>). " +
+            "Returns immediately with process_id. " +
+            "Read output with bash_output (returns only new output since last check). " +
             "Terminate with bash_background_terminate using the process_id. " +
-            "Process persists until terminated or workspace is removed."
+            "Process persists until timeout_secs expires, terminated, or workspace is removed." +
+            "\\n\\nFor long-running tasks like builds or compilations, prefer background mode to continue productive work in parallel. " +
+            "Check back periodically with bash_output rather than blocking on completion."
         ),
       display_name: z
         .string()
-        .optional()
         .describe(
-          "Human-readable name for background processes (e.g., 'Dev Server', 'TypeCheck Watch'). " +
-            "Only used when run_in_background=true."
+          "Human-readable name for the process (e.g., 'Dev Server', 'TypeCheck Watch'). " +
+            "Required for all bash invocations since any process can be sent to background."
         ),
     }),
   },
@@ -236,11 +237,40 @@ export const TOOL_DEFINITIONS = {
       })
       .strict(),
   },
+  bash_output: {
+    description:
+      "Retrieve output from a running or completed background bash process. " +
+      "Returns only NEW output since the last check (incremental). " +
+      "Returns stdout and stderr output along with process status. " +
+      "Supports optional regex filtering to show only lines matching a pattern. " +
+      "WARNING: When using filter, non-matching lines are permanently discarded. " +
+      "Use timeout to wait for output instead of polling repeatedly.",
+    schema: z.object({
+      process_id: z.string().describe("The ID of the background process to retrieve output from"),
+      filter: z
+        .string()
+        .optional()
+        .describe(
+          "Optional regex to filter output lines. Only matching lines are returned. " +
+            "Non-matching lines are permanently discarded and cannot be retrieved later."
+        ),
+      timeout_secs: z
+        .number()
+        .min(0)
+        .max(15)
+        .describe(
+          "Seconds to wait for new output (0-15). " +
+            "If no output is immediately available and process is still running, " +
+            "blocks up to this duration. Returns early when output arrives or process exits. " +
+            "Use this instead of polling in a loop."
+        ),
+    }),
+  },
   bash_background_list: {
     description:
       "List all background processes started with bash(run_in_background=true). " +
-      "Returns process_id, status, script, stdout_path, stderr_path for each process. " +
-      "Use to find process_id for termination or check output file paths.",
+      "Returns process_id, status, script for each process. " +
+      "Use to find process_id for termination or check output with bash_output.",
     schema: z.object({}),
   },
   bash_background_terminate: {
@@ -248,12 +278,9 @@ export const TOOL_DEFINITIONS = {
       "Terminate a background process started with bash(run_in_background=true). " +
       "Use process_id from the original bash response or from bash_background_list. " +
       "Sends SIGTERM, waits briefly, then SIGKILL if needed. " +
-      "Output files remain available after termination.",
+      "Output remains available via bash_output after termination.",
     schema: z.object({
-      process_id: z
-        .string()
-        .regex(/^bg-[0-9a-f]{8}$/, "Invalid process ID format")
-        .describe("Background process ID to terminate"),
+      process_id: z.string().describe("Background process ID to terminate"),
     }),
   },
   web_fetch: {
@@ -299,6 +326,7 @@ export function getAvailableTools(modelString: string): string[] {
   // Base tools available for all models
   const baseTools = [
     "bash",
+    "bash_output",
     "bash_background_list",
     "bash_background_terminate",
     "file_read",

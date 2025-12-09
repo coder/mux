@@ -334,6 +334,140 @@ export function createGenericTool(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// BACKGROUND BASH TOOL FACTORIES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Create a bash tool that spawns a background process */
+export function createBackgroundBashTool(
+  toolCallId: string,
+  script: string,
+  processId: string,
+  displayName?: string
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "bash",
+    state: "output-available",
+    input: { script, run_in_background: true, display_name: displayName },
+    output: {
+      success: true,
+      output: `Background process started with ID: ${processId}`,
+      exitCode: 0,
+      wall_duration_ms: 50,
+      backgroundProcessId: processId,
+    },
+  };
+}
+
+/** Create a foreground bash that was migrated to background (user clicked "Background" button) */
+export function createMigratedBashTool(
+  toolCallId: string,
+  script: string,
+  processId: string,
+  displayName?: string,
+  capturedOutput?: string
+): MuxPart {
+  const outputLines = capturedOutput?.split("\n") ?? [];
+  const outputSummary =
+    outputLines.length > 20
+      ? `${outputLines.slice(-20).join("\n")}\n...(showing last 20 lines)`
+      : (capturedOutput ?? "");
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "bash",
+    state: "output-available",
+    // No run_in_background flag - this started as foreground
+    input: { script, run_in_background: false, display_name: displayName, timeout_secs: 30 },
+    output: {
+      success: true,
+      output: `Process sent to background with ID: ${processId}\n\nOutput so far (${outputLines.length} lines):\n${outputSummary}`,
+      exitCode: 0,
+      wall_duration_ms: 5000,
+      backgroundProcessId: processId, // This triggers the "backgrounded" status
+    },
+  };
+}
+
+/** Create a bash_output tool call showing process output */
+export function createBashOutputTool(
+  toolCallId: string,
+  processId: string,
+  output: string,
+  status: "running" | "exited" | "killed" | "failed" = "running",
+  exitCode?: number,
+  filter?: string
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "bash_output",
+    state: "output-available",
+    input: { process_id: processId, filter },
+    output: { success: true, status, output, exitCode },
+  };
+}
+
+/** Create a bash_output tool call with error */
+export function createBashOutputErrorTool(
+  toolCallId: string,
+  processId: string,
+  error: string
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "bash_output",
+    state: "output-available",
+    input: { process_id: processId },
+    output: { success: false, error },
+  };
+}
+
+/** Create a bash_background_list tool call */
+export function createBashBackgroundListTool(
+  toolCallId: string,
+  processes: Array<{
+    process_id: string;
+    status: "running" | "exited" | "killed" | "failed";
+    script: string;
+    uptime_ms: number;
+    exitCode?: number;
+    display_name?: string;
+  }>
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "bash_background_list",
+    state: "output-available",
+    input: {},
+    output: { success: true, processes },
+  };
+}
+
+/** Create a bash_background_terminate tool call */
+export function createBashBackgroundTerminateTool(
+  toolCallId: string,
+  processId: string,
+  displayName?: string
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "bash_background_terminate",
+    state: "output-available",
+    input: { process_id: processId },
+    output: {
+      success: true,
+      message: `Process ${processId} terminated`,
+      display_name: displayName,
+    },
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // GIT STATUS MOCKS
 // ═══════════════════════════════════════════════════════════════════════════════
 

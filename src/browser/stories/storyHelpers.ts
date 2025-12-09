@@ -136,6 +136,16 @@ function createOnChatAdapter(chatHandlers: Map<string, ChatHandler>) {
 // SIMPLE CHAT STORY SETUP
 // ═══════════════════════════════════════════════════════════════════════════════
 
+export interface BackgroundProcessFixture {
+  id: string;
+  pid: number;
+  script: string;
+  displayName?: string;
+  startTime: number;
+  status: "running" | "exited" | "killed" | "failed";
+  exitCode?: number;
+}
+
 export interface SimpleChatSetupOptions {
   workspaceId?: string;
   workspaceName?: string;
@@ -143,6 +153,7 @@ export interface SimpleChatSetupOptions {
   messages: ChatMuxMessage[];
   gitStatus?: GitStatusFixture;
   providersConfig?: Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>;
+  backgroundProcesses?: BackgroundProcessFixture[];
 }
 
 /**
@@ -167,6 +178,11 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
   // Set localStorage for workspace selection
   selectWorkspace(workspaces[0]);
 
+  // Set up background processes map
+  const bgProcesses = opts.backgroundProcesses
+    ? new Map([[workspaceId, opts.backgroundProcesses]])
+    : undefined;
+
   // Return ORPC client
   return createMockORPCClient({
     projects: groupWorkspacesByProject(workspaces),
@@ -174,6 +190,7 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
     onChat: createOnChatAdapter(chatHandlers),
     executeBash: createGitStatusExecutor(gitStatus),
     providersConfig: opts.providersConfig,
+    backgroundProcesses: bgProcesses,
   });
 }
 

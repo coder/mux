@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export interface PopoverErrorState {
   id: string;
@@ -75,5 +75,5 @@ export function usePopoverError(autoDismissMs = 5000): UsePopoverErrorResult {
     };
   }, [error, clearError]);
 
-  return { error, showError, clearError };
+  return useMemo(() => ({ error, showError, clearError }), [error, showError, clearError]);
 }

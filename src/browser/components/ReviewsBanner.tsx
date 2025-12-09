@@ -367,15 +367,17 @@ const ReviewsBannerInner: React.FC<ReviewsBannerInnerProps> = ({ workspaceId }) 
       <button
         type="button"
         onClick={handleToggle}
-        className="hover:bg-hover mx-auto flex w-full max-w-4xl items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors"
+        className="group mx-auto flex w-full max-w-4xl items-center gap-2 px-2 py-1 text-xs transition-colors"
       >
         <MessageSquare
           className={cn(
-            "size-3.5",
-            reviewsHook.pendingCount > 0 ? "text-[var(--color-review-accent)]" : "text-muted"
+            "size-3.5 transition-colors",
+            reviewsHook.pendingCount > 0
+              ? "text-[var(--color-review-accent)]"
+              : "text-muted group-hover:text-secondary"
           )}
         />
-        <span className="text-secondary">
+        <span className="text-muted group-hover:text-secondary transition-colors">
           {reviewsHook.pendingCount > 0 ? (
             <>
               <span className="font-medium text-[var(--color-review-accent)]">
@@ -385,17 +387,15 @@ const ReviewsBannerInner: React.FC<ReviewsBannerInnerProps> = ({ workspaceId }) 
               {reviewsHook.pendingCount !== 1 && "s"}
             </>
           ) : (
-            <span className="text-muted">No pending reviews</span>
+            <>No pending reviews</>
           )}
-          {reviewsHook.checkedCount > 0 && (
-            <span className="text-muted"> · {reviewsHook.checkedCount} completed</span>
-          )}
+          {reviewsHook.checkedCount > 0 && <> · {reviewsHook.checkedCount} completed</>}
         </span>
         <div className="ml-auto">
           {isExpanded ? (
-            <ChevronDown className="text-muted size-3.5" />
+            <ChevronDown className="text-muted group-hover:text-secondary size-3.5 transition-colors" />
           ) : (
-            <ChevronRight className="text-muted size-3.5" />
+            <ChevronRight className="text-muted group-hover:text-secondary size-3.5 transition-colors" />
           )}
         </div>
       </button>

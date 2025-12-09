@@ -70,6 +70,8 @@ const getStatusColor = (status: string) => {
       return "text-danger";
     case "interrupted":
       return "text-interrupted";
+    case "backgrounded":
+      return "text-backgrounded";
     default:
       return "text-foreground-secondary";
   }
@@ -193,34 +195,97 @@ export const ErrorBox: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
 );
 
 /**
- * Output file paths display (stdout/stderr)
- * @param compact - Use smaller text without background (for inline use in cards)
+ * Badge for displaying exit codes or process status
  */
-interface OutputPathsProps {
-  stdout: string;
-  stderr: string;
-  compact?: boolean;
+interface ExitCodeBadgeProps {
+  exitCode: number;
+  className?: string;
 }
 
-export const OutputPaths: React.FC<OutputPathsProps> = ({ stdout, stderr, compact }) =>
-  compact ? (
-    <div className="text-text-secondary mt-1 space-y-0.5 text-[10px]">
-      <div>
-        <span className="opacity-60">stdout:</span> {stdout}
-      </div>
-      <div>
-        <span className="opacity-60">stderr:</span> {stderr}
-      </div>
-    </div>
-  ) : (
-    <div className="bg-code-bg space-y-1 rounded px-2 py-1.5 font-mono text-[11px]">
-      <div>
-        <span className="text-text-secondary">stdout:</span>{" "}
-        <span className="text-text">{stdout}</span>
-      </div>
-      <div>
-        <span className="text-text-secondary">stderr:</span>{" "}
-        <span className="text-text">{stderr}</span>
-      </div>
-    </div>
+export const ExitCodeBadge: React.FC<ExitCodeBadgeProps> = ({ exitCode, className }) => (
+  <span
+    className={cn(
+      "inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
+      exitCode === 0 ? "bg-success text-on-success" : "bg-danger text-on-danger",
+      className
+    )}
+  >
+    {exitCode}
+  </span>
+);
+
+/**
+ * Badge for displaying process status (exited, killed, failed)
+ */
+interface ProcessStatusBadgeProps {
+  status: "exited" | "killed" | "failed";
+  exitCode?: number;
+  className?: string;
+}
+
+export const ProcessStatusBadge: React.FC<ProcessStatusBadgeProps> = ({
+  status,
+  exitCode,
+  className,
+}) => (
+  <span
+    className={cn(
+      "inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
+      status === "exited" && exitCode === 0
+        ? "bg-success text-on-success"
+        : "bg-danger text-on-danger",
+      className
+    )}
+  >
+    {status}
+    {exitCode !== undefined && ` (${exitCode})`}
+  </span>
+);
+
+/**
+ * Badge for output availability status
+ */
+interface OutputStatusBadgeProps {
+  hasOutput: boolean;
+  className?: string;
+}
+
+export const OutputStatusBadge: React.FC<OutputStatusBadgeProps> = ({ hasOutput, className }) => (
+  <span
+    className={cn(
+      "inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
+      hasOutput ? "bg-pending/20 text-pending" : "bg-muted-foreground/20 text-muted-foreground",
+      className
+    )}
+  >
+    {hasOutput ? "new output" : "no output"}
+  </span>
+);
+
+/**
+ * Output display section for bash-like tools
+ */
+interface OutputSectionProps {
+  output?: string;
+  emptyMessage?: string;
+}
+
+export const OutputSection: React.FC<OutputSectionProps> = ({
+  output,
+  emptyMessage = "No output",
+}) => {
+  if (output) {
+    return (
+      <DetailSection>
+        <DetailLabel>Output</DetailLabel>
+        <DetailContent className="px-2 py-1.5">{output}</DetailContent>
+      </DetailSection>
+    );
+  }
+
+  return (
+    <DetailSection>
+      <DetailContent className="text-muted px-2 py-1.5 italic">{emptyMessage}</DetailContent>
+    </DetailSection>
   );
+};

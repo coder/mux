@@ -1019,4 +1019,86 @@ export class WorkspaceService extends EventEmitter {
       return Err(`Failed to execute bash command: ${message}`);
     }
   }
+
+  /**
+   * List background processes for a workspace.
+   * Returns process info suitable for UI display (excludes handle).
+   */
+  async listBackgroundProcesses(workspaceId: string): Promise<
+    Array<{
+      id: string;
+      pid: number;
+      script: string;
+      displayName?: string;
+      startTime: number;
+      status: "running" | "exited" | "killed" | "failed";
+      exitCode?: number;
+    }>
+  > {
+    const processes = await this.backgroundProcessManager.list(workspaceId);
+    return processes.map((p) => ({
+      id: p.id,
+      pid: p.pid,
+      script: p.script,
+      displayName: p.displayName,
+      startTime: p.startTime,
+      status: p.status,
+      exitCode: p.exitCode,
+    }));
+  }
+
+  /**
+   * Terminate a background process by ID.
+   * Verifies the process belongs to the specified workspace.
+   */
+  async terminateBackgroundProcess(workspaceId: string, processId: string): Promise<Result<void>> {
+    // Get process to verify workspace ownership
+    const proc = await this.backgroundProcessManager.getProcess(processId);
+    if (!proc) {
+      return Err(`Process not found: ${processId}`);
+    }
+    if (proc.workspaceId !== workspaceId) {
+      return Err(`Process ${processId} does not belong to workspace ${workspaceId}`);
+    }
+
+    const result = await this.backgroundProcessManager.terminate(processId);
+    if (!result.success) {
+      return Err(result.error);
+    }
+    return Ok(undefined);
+  }
+
+  /**
+   * Get the tool call IDs of foreground bash processes for a workspace.
+   * Returns empty array if no foreground bashes are running.
+   */
+  getForegroundToolCallIds(workspaceId: string): string[] {
+    return this.backgroundProcessManager.getForegroundToolCallIds(workspaceId);
+  }
+
+  /**
+   * Send a foreground bash process to background by its tool call ID.
+   * The process continues running but the agent stops waiting for it.
+   */
+  sendToBackground(toolCallId: string): Result<void> {
+    const result = this.backgroundProcessManager.sendToBackground(toolCallId);
+    if (!result.success) {
+      return Err(result.error);
+    }
+    return Ok(undefined);
+  }
+
+  /**
+   * Subscribe to background bash state changes.
+   */
+  onBackgroundBashChange(callback: (workspaceId: string) => void): void {
+    this.backgroundProcessManager.on("change", callback);
+  }
+
+  /**
+   * Unsubscribe from background bash state changes.
+   */
+  offBackgroundBashChange(callback: (workspaceId: string) => void): void {
+    this.backgroundProcessManager.off("change", callback);
+  }
 }

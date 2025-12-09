@@ -1,6 +1,7 @@
 import { type Tool } from "ai";
 import { createFileReadTool } from "@/node/services/tools/file_read";
 import { createBashTool } from "@/node/services/tools/bash";
+import { createBashOutputTool } from "@/node/services/tools/bash_output";
 import { createBashBackgroundListTool } from "@/node/services/tools/bash_background_list";
 import { createBashBackgroundTerminateTool } from "@/node/services/tools/bash_background_terminate";
 import { createFileEditReplaceStringTool } from "@/node/services/tools/file_edit_replace_string";
@@ -119,6 +120,7 @@ export async function getToolsForModel(
     // and line number miscalculations. Use file_edit_replace_string instead.
     // file_edit_replace_lines: wrap(createFileEditReplaceLinesTool(config)),
     bash: wrap(createBashTool(config)),
+    bash_output: wrap(createBashOutputTool(config)),
     bash_background_list: wrap(createBashBackgroundListTool(config)),
     bash_background_terminate: wrap(createBashBackgroundTerminateTool(config)),
     web_fetch: wrap(createWebFetchTool(config)),

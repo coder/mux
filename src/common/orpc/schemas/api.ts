@@ -28,6 +28,19 @@ export { telemetry, TelemetryEventSchema } from "./telemetry";
 
 // --- API Router Schemas ---
 
+// Background process info (for UI display)
+export const BackgroundProcessInfoSchema = z.object({
+  id: z.string(),
+  pid: z.number(),
+  script: z.string(),
+  displayName: z.string().optional(),
+  startTime: z.number(),
+  status: z.enum(["running", "exited", "killed", "failed"]),
+  exitCode: z.number().optional(),
+});
+
+export type BackgroundProcessInfo = z.infer<typeof BackgroundProcessInfoSchema>;
+
 // Tokenizer
 export const tokenizer = {
   countTokens: {
@@ -307,6 +320,35 @@ export const workspace = {
       }),
       z.string()
     ),
+  },
+  backgroundBashes: {
+    /**
+     * Subscribe to background bash state changes for a workspace.
+     * Emits full state on connect, then incremental updates.
+     */
+    subscribe: {
+      input: z.object({ workspaceId: z.string() }),
+      output: eventIterator(
+        z.object({
+          /** Background processes (not including foreground ones being waited on) */
+          processes: z.array(BackgroundProcessInfoSchema),
+          /** Tool call IDs of foreground bashes that can be sent to background */
+          foregroundToolCallIds: z.array(z.string()),
+        })
+      ),
+    },
+    terminate: {
+      input: z.object({ workspaceId: z.string(), processId: z.string() }),
+      output: ResultSchema(z.void(), z.string()),
+    },
+    /**
+     * Send a foreground bash process to background.
+     * The process continues running but the agent stops waiting for it.
+     */
+    sendToBackground: {
+      input: z.object({ workspaceId: z.string(), toolCallId: z.string() }),
+      output: ResultSchema(z.void(), z.string()),
+    },
   },
 };
 

@@ -15,6 +15,7 @@ import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCod
 import type { BashToolResult } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+import { migrateToBackground } from "@/node/services/backgroundProcessExecutor";
 
 /**
  * Validates bash script input for common issues
@@ -231,28 +232,19 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
     inputSchema: TOOL_DEFINITIONS.bash.schema,
     execute: async (
       { script, timeout_secs, run_in_background, display_name },
-      { abortSignal }
+      { abortSignal, toolCallId }
     ): Promise<BashToolResult> => {
       // Validate script input
       const validationError = validateScript(script, config);
       if (validationError) return validationError;
 
-      // Handle background execution
+      // Handle explicit background execution (run_in_background=true)
       if (run_in_background) {
         if (!config.workspaceId || !config.backgroundProcessManager || !config.runtime) {
           return {
             success: false,
             error:
               "Background execution is only available for AI tool calls, not direct IPC invocation",
-            exitCode: -1,
-            wall_duration_ms: 0,
-          };
-        }
-
-        if (timeout_secs !== undefined) {
-          return {
-            success: false,
-            error: "Cannot specify timeout with run_in_background",
             exitCode: -1,
             wall_duration_ms: 0,
           };
@@ -265,9 +257,11 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
           script,
           {
             cwd: config.cwd,
-            secrets: config.secrets,
+            env: config.secrets,
             niceness: config.niceness,
             displayName: display_name,
+            isForeground: false, // Explicit background
+            timeoutSecs: timeout_secs, // Auto-terminate after this duration
           }
         );
 
@@ -280,17 +274,12 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
           };
         }
 
-        const stdoutPath = `${spawnResult.outputDir}/stdout.log`;
-        const stderrPath = `${spawnResult.outputDir}/stderr.log`;
-
         return {
           success: true,
           output: `Background process started with ID: ${spawnResult.processId}`,
           exitCode: 0,
           wall_duration_ms: Math.round(performance.now() - startTime),
           backgroundProcessId: spawnResult.processId,
-          stdout_path: stdoutPath,
-          stderr_path: stderrPath,
         };
       }
 
@@ -301,6 +290,39 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
       let overflowReason: string | null = null;
       const truncationState = { displayTruncated: false, fileTruncated: false };
 
+      // Track backgrounding state
+      let backgrounded = false;
+      let backgroundResolve: (() => void) | null = null;
+
+      // Wrap abort signal so we can detach when migrating to background.
+      // When detached, the original stream abort won't kill the process.
+      const wrappedAbortController = new AbortController();
+      let abortDetached = false;
+      if (abortSignal) {
+        abortSignal.addEventListener("abort", () => {
+          if (!abortDetached) {
+            wrappedAbortController.abort();
+          }
+        });
+      }
+
+      // Register foreground process for "send to background" feature
+      // Only if manager is available (AI tool calls, not IPC)
+      const fgRegistration =
+        config.backgroundProcessManager && config.workspaceId && toolCallId
+          ? config.backgroundProcessManager.registerForegroundProcess(
+              config.workspaceId,
+              toolCallId,
+              script,
+              display_name,
+              () => {
+                backgrounded = true;
+                // Resolve the background promise to unblock the wait
+                if (backgroundResolve) backgroundResolve();
+              }
+            )
+          : null;
+
       // Execute using runtime interface (works for both local and SSH)
       const scriptWithClosedStdin = `exec </dev/null
 ${script}`;
@@ -309,7 +331,7 @@ ${script}`;
         env: { ...config.muxEnv, ...config.secrets },
         timeout: effectiveTimeout,
         niceness: config.niceness,
-        abortSignal,
+        abortSignal: wrappedAbortController.signal,
       });
 
       // Force-close stdin immediately - we don't need to send any input
@@ -319,6 +341,11 @@ ${script}`;
       execStream.stdin.abort().catch(() => {
         /* ignore */ return;
       });
+
+      // Tee streams so we can migrate to background if needed
+      // One branch goes to line handler (UI), other is held for potential migration
+      const [stdoutForUI, stdoutForMigration] = execStream.stdout.tee();
+      const [stderrForUI, stderrForMigration] = execStream.stderr.tee();
 
       // Collect output concurrently from Web Streams to avoid readline race conditions.
       const lines: string[] = [];
@@ -338,11 +365,17 @@ ${script}`;
         truncationState.displayTruncated = true;
         truncated = true;
         overflowReason = reason;
-        // Cancel the streams to stop the process and unblock readers
-        execStream.stdout.cancel().catch(() => {
+        // Cancel all stream branches to stop the process and unblock readers
+        stdoutForUI.cancel().catch(() => {
           /* ignore */ return;
         });
-        execStream.stderr.cancel().catch(() => {
+        stderrForUI.cancel().catch(() => {
+          /* ignore */ return;
+        });
+        stdoutForMigration.cancel().catch(() => {
+          /* ignore */ return;
+        });
+        stderrForMigration.cancel().catch(() => {
           /* ignore */ return;
         });
       };
@@ -425,15 +458,97 @@ ${script}`;
         }
       };
 
-      // Start consuming stdout and stderr concurrently
-      const consumeStdout = consumeStream(execStream.stdout);
-      const consumeStderr = consumeStream(execStream.stderr);
+      // Start consuming stdout and stderr concurrently (using UI branches)
+      const consumeStdout = consumeStream(stdoutForUI);
+      const consumeStderr = consumeStream(stderrForUI);
+
+      // Create a promise that resolves when user clicks "Background"
+      const backgroundPromise = new Promise<void>((resolve) => {
+        backgroundResolve = resolve;
+      });
 
       // Wait for process exit and stream consumption concurrently
+      // Also race with the background promise to detect early return request
       let exitCode: number;
       try {
-        [exitCode] = await Promise.all([execStream.exitCode, consumeStdout, consumeStderr]);
+        const result = await Promise.race([
+          Promise.all([execStream.exitCode, consumeStdout, consumeStderr]),
+          backgroundPromise.then(() => "backgrounded" as const),
+        ]);
+
+        // Check if we were backgrounded
+        if (result === "backgrounded" || backgrounded) {
+          // Unregister foreground process
+          fgRegistration?.unregister();
+
+          // Detach from abort signal - process should continue running
+          // even when the stream ends and fires abort
+          abortDetached = true;
+
+          const wall_duration_ms = Math.round(performance.now() - startTime);
+
+          // Migrate to background tracking if manager is available
+          if (config.backgroundProcessManager && config.workspaceId) {
+            const processId = display_name;
+
+            // Create a synthetic ExecStream for the migration streams
+            // The UI streams are still being consumed, migration streams continue to files
+            const migrationStream = {
+              stdout: stdoutForMigration,
+              stderr: stderrForMigration,
+              stdin: execStream.stdin,
+              exitCode: execStream.exitCode,
+              duration: execStream.duration,
+            };
+
+            const migrateResult = await migrateToBackground(
+              migrationStream,
+              {
+                cwd: config.cwd,
+                workspaceId: config.workspaceId,
+                processId,
+                script,
+                existingOutput: lines,
+              },
+              config.backgroundProcessManager.getBgOutputDir()
+            );
+
+            if (migrateResult.success) {
+              // Register the migrated process with the manager
+              config.backgroundProcessManager.registerMigratedProcess(
+                migrateResult.handle,
+                processId,
+                config.workspaceId,
+                script,
+                migrateResult.outputDir
+              );
+
+              return {
+                success: true,
+                output: `Process sent to background with ID: ${processId}\n\nOutput so far (${lines.length} lines):\n${lines.slice(-20).join("\n")}${lines.length > 20 ? "\n...(showing last 20 lines)" : ""}`,
+                exitCode: 0,
+                wall_duration_ms,
+                backgroundProcessId: processId,
+              };
+            }
+            // Migration failed, fall through to simple return
+          }
+
+          // Fallback: return without process ID (no manager or migration failed)
+          return {
+            success: true,
+            output: `Process sent to background. It will continue running.\n\nOutput so far (${lines.length} lines):\n${lines.slice(-20).join("\n")}${lines.length > 20 ? "\n...(showing last 20 lines)" : ""}`,
+            exitCode: 0,
+            wall_duration_ms,
+          };
+        }
+
+        // Normal completion - extract exit code
+        exitCode = result[0];
       } catch (err: unknown) {
+        // Unregister on error
+        fgRegistration?.unregister();
+
         // Check if this was an abort
         if (abortSignal?.aborted) {
           return {
@@ -450,6 +565,9 @@ ${script}`;
           wall_duration_ms: Math.round(performance.now() - startTime),
         };
       }
+
+      // Unregister foreground process on normal completion
+      fgRegistration?.unregister();
 
       // Check if command was aborted (exitCode will be EXIT_CODE_ABORTED = -997)
       // This can happen if abort signal fired after Promise.all resolved but before we check

@@ -16,6 +16,7 @@ import { createAuthMiddleware } from "./authMiddleware";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 import { getPlanFilePath, readPlanFile } from "@/common/utils/planStorage";
 import { findAvailableCommand, GUI_EDITORS, TERMINAL_EDITORS } from "@/node/utils/commandDiscovery";
+import { createAsyncEventQueue } from "@/common/utils/asyncEventIterator";
 
 export const router = (authToken?: string) => {
   const t = os.$context<ORPCContext>().use(createAuthMiddleware(authToken));
@@ -691,6 +692,62 @@ export const router = (authToken?: string) => {
           }
           return { success: true as const, data: { content, path: planPath } };
         }),
+      backgroundBashes: {
+        subscribe: t
+          .input(schemas.workspace.backgroundBashes.subscribe.input)
+          .output(schemas.workspace.backgroundBashes.subscribe.output)
+          .handler(async function* ({ context, input }) {
+            const service = context.workspaceService;
+            const { workspaceId } = input;
+
+            const getState = async () => ({
+              processes: await service.listBackgroundProcesses(workspaceId),
+              foregroundToolCallIds: service.getForegroundToolCallIds(workspaceId),
+            });
+
+            const queue = createAsyncEventQueue<Awaited<ReturnType<typeof getState>>>();
+
+            const onChange = (changedWorkspaceId: string) => {
+              if (changedWorkspaceId === workspaceId) {
+                void getState().then(queue.push);
+              }
+            };
+
+            service.onBackgroundBashChange(onChange);
+
+            try {
+              // Emit initial state immediately
+              yield await getState();
+              yield* queue.iterate();
+            } finally {
+              queue.end();
+              service.offBackgroundBashChange(onChange);
+            }
+          }),
+        terminate: t
+          .input(schemas.workspace.backgroundBashes.terminate.input)
+          .output(schemas.workspace.backgroundBashes.terminate.output)
+          .handler(async ({ context, input }) => {
+            const result = await context.workspaceService.terminateBackgroundProcess(
+              input.workspaceId,
+              input.processId
+            );
+            if (!result.success) {
+              return { success: false, error: result.error };
+            }
+            return { success: true, data: undefined };
+          }),
+        sendToBackground: t
+          .input(schemas.workspace.backgroundBashes.sendToBackground.input)
+          .output(schemas.workspace.backgroundBashes.sendToBackground.output)
+          .handler(({ context, input }) => {
+            const result = context.workspaceService.sendToBackground(input.toolCallId);
+            if (!result.success) {
+              return { success: false, error: result.error };
+            }
+            return { success: true, data: undefined };
+          }),
+      },
     },
     window: {
       setTitle: t
@@ -844,36 +901,13 @@ export const router = (authToken?: string) => {
         .input(schemas.update.onStatus.input)
         .output(schemas.update.onStatus.output)
         .handler(async function* ({ context }) {
-          let resolveNext: ((value: UpdateStatus) => void) | null = null;
-          const queue: UpdateStatus[] = [];
-          let ended = false;
-
-          const push = (status: UpdateStatus) => {
-            if (ended) return;
-            if (resolveNext) {
-              const resolve = resolveNext;
-              resolveNext = null;
-              resolve(status);
-            } else {
-              queue.push(status);
-            }
-          };
-
-          const unsubscribe = context.updateService.onStatus(push);
+          const queue = createAsyncEventQueue<UpdateStatus>();
+          const unsubscribe = context.updateService.onStatus(queue.push);
 
           try {
-            while (!ended) {
-              if (queue.length > 0) {
-                yield queue.shift()!;
-              } else {
-                const status = await new Promise<UpdateStatus>((resolve) => {
-                  resolveNext = resolve;
-                });
-                yield status;
-              }
-            }
+            yield* queue.iterate();
           } finally {
-            ended = true;
+            queue.end();
             unsubscribe();
           }
         }),
@@ -883,29 +917,16 @@ export const router = (authToken?: string) => {
         .input(schemas.menu.onOpenSettings.input)
         .output(schemas.menu.onOpenSettings.output)
         .handler(async function* ({ context }) {
-          let resolveNext: (() => void) | null = null;
-          let ended = false;
-
-          const push = () => {
-            if (ended) return;
-            if (resolveNext) {
-              const resolve = resolveNext;
-              resolveNext = null;
-              resolve();
-            }
-          };
-
-          const unsubscribe = context.menuEventService.onOpenSettings(push);
+          // Use a sentinel value to signal events since void/undefined can't be queued
+          const queue = createAsyncEventQueue<true>();
+          const unsubscribe = context.menuEventService.onOpenSettings(() => queue.push(true));
 
           try {
-            while (!ended) {
-              await new Promise<void>((resolve) => {
-                resolveNext = resolve;
-              });
+            for await (const _ of queue.iterate()) {
               yield undefined;
             }
           } finally {
-            ended = true;
+            queue.end();
             unsubscribe();
           }
         }),

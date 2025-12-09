@@ -10,11 +10,9 @@ import {
   createCompactionRequestMessage,
   createFileReadTool,
   createFileEditTool,
-  createBashTool,
   createTerminalTool,
   createStatusTool,
   createGenericTool,
-  createPendingTool,
 } from "./mockFactory";
 import { setupSimpleChatStory, setupStreamingChatStory } from "./storyHelpers";
 import { within, userEvent, waitFor } from "@storybook/test";
@@ -182,130 +180,6 @@ export const WithTerminal: AppStory = {
   ),
 };
 
-/** Bash tool with expanded script and output sections */
-export const WithBashTool: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-bash",
-          messages: [
-            createUserMessage("msg-1", "Check project status", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 100000,
-            }),
-            createAssistantMessage("msg-2", "Let me check the git status and run tests:", {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 90000,
-              toolCalls: [
-                createBashTool(
-                  "call-1",
-                  `#!/bin/bash
-set -e
-
-# Check git status
-echo "=== Git Status ==="
-git status --short
-
-# Run tests
-echo "=== Running Tests ==="
-npm test 2>&1 | head -20`,
-                  [
-                    "=== Git Status ===",
-                    " M src/api/users.ts",
-                    " M src/auth/jwt.ts",
-                    "?? src/api/users.test.ts",
-                    "",
-                    "=== Running Tests ===",
-                    "PASS src/api/users.test.ts",
-                    "  ✓ should authenticate (24ms)",
-                    "  ✓ should reject invalid tokens (18ms)",
-                    "",
-                    "Tests: 2 passed, 2 total",
-                  ].join("\n"),
-                  0,
-                  10,
-                  1250
-                ),
-              ],
-            }),
-          ],
-        })
-      }
-    />
-  ),
-  parameters: {
-    docs: {
-      description: {
-        story: "Bash tool showing multi-line script in expanded view with proper padding.",
-      },
-    },
-  },
-  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    const canvas = within(canvasElement);
-
-    // Expand the bash tool to show Script section with padding
-    await waitFor(async () => {
-      const toolHeader = canvas.getByText(/set -e/);
-      await userEvent.click(toolHeader);
-    });
-    // Wait for any auto-focus timers (ChatInput has 100ms delay), then blur
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    (document.activeElement as HTMLElement)?.blur();
-  },
-};
-
-/** Bash tool in executing state showing "Waiting for result" */
-export const WithBashToolWaiting: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-bash-waiting",
-          messages: [
-            createUserMessage("msg-1", "Run the tests", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 100000,
-            }),
-            createAssistantMessage("msg-2", "Running the test suite:", {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 90000,
-              toolCalls: [
-                createPendingTool("call-1", "bash", {
-                  script: "npm test",
-                  run_in_background: false,
-                  display_name: "Test Runner",
-                  timeout_secs: 30,
-                }),
-              ],
-            }),
-          ],
-        })
-      }
-    />
-  ),
-  parameters: {
-    docs: {
-      description: {
-        story:
-          "Bash tool in executing state with 'Waiting for result...' showing consistent padding.",
-      },
-    },
-  },
-  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    const canvas = within(canvasElement);
-
-    // Expand the bash tool to show "Waiting for result" section
-    await waitFor(async () => {
-      const toolHeader = canvas.getByText(/npm test/);
-      await userEvent.click(toolHeader);
-    });
-    // Wait for any auto-focus timers (ChatInput has 100ms delay), then blur
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    (document.activeElement as HTMLElement)?.blur();
-  },
-};
-
 /** Chat with agent status indicator */
 export const WithAgentStatus: AppStory = {
   render: () => (
@@ -446,10 +320,14 @@ export const GenericTool: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const canvas = within(canvasElement);
 
-    await waitFor(async () => {
-      const toolHeader = canvas.getByText("fetch_data");
-      await userEvent.click(toolHeader);
-    });
+    // Wait for workspace metadata to load and main content to render
+    await waitFor(
+      async () => {
+        const toolHeader = canvas.getByText("fetch_data");
+        await userEvent.click(toolHeader);
+      },
+      { timeout: 5000 }
+    );
     // Wait for any auto-focus timers (ChatInput has 100ms delay), then blur
     await new Promise((resolve) => setTimeout(resolve, 150));
     (document.activeElement as HTMLElement)?.blur();
@@ -494,6 +372,73 @@ export const StreamingCompaction: AppStory = {
       description: {
         story:
           "Shows the compaction shimmer effect during streaming. The shimmer uses GPU-accelerated CSS transforms instead of background-position animations to prevent frame drops.",
+      },
+    },
+  },
+};
+
+/** Chat with running background processes banner */
+export const BackgroundProcesses: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          messages: [
+            createUserMessage("msg-1", "Start the dev server and run tests in background", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 60000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "I've started the dev server and test runner in the background. You can continue working while they run.",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 50000,
+                toolCalls: [
+                  createTerminalTool(
+                    "call-1",
+                    "npm run dev &",
+                    "Starting dev server on port 3000..."
+                  ),
+                  createTerminalTool("call-2", "npm test -- --watch &", "Running test suite..."),
+                ],
+              }
+            ),
+          ],
+          backgroundProcesses: [
+            {
+              id: "bash_1",
+              pid: 12345,
+              script: "npm run dev",
+              displayName: "Dev Server",
+              startTime: Date.now() - 45000, // 45 seconds ago
+              status: "running",
+            },
+            {
+              id: "bash_2",
+              pid: 12346,
+              script: "npm test -- --watch",
+              displayName: "Test Runner",
+              startTime: Date.now() - 30000, // 30 seconds ago
+              status: "running",
+            },
+            {
+              id: "bash_3",
+              pid: 12347,
+              script: "tail -f /var/log/app.log",
+              startTime: Date.now() - 120000, // 2 minutes ago
+              status: "running",
+            },
+          ],
+        })
+      }
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Shows the background processes banner when there are running background bash processes. Click the banner to expand and see process details or terminate them.",
       },
     },
   },
