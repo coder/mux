@@ -11,7 +11,7 @@ export const createBashOutputTool: ToolFactory = (config: ToolConfiguration) => 
   return tool({
     description: TOOL_DEFINITIONS.bash_output.description,
     inputSchema: TOOL_DEFINITIONS.bash_output.schema,
-    execute: async ({ process_id, filter }): Promise<BashOutputToolResult> => {
+    execute: async ({ process_id, filter, timeout_secs }): Promise<BashOutputToolResult> => {
       if (!config.backgroundProcessManager) {
         return {
           success: false,
@@ -35,8 +35,8 @@ export const createBashOutputTool: ToolFactory = (config: ToolConfiguration) => 
         };
       }
 
-      // Get incremental output
-      return await config.backgroundProcessManager.getOutput(process_id, filter);
+      // Get incremental output with blocking wait
+      return await config.backgroundProcessManager.getOutput(process_id, filter, timeout_secs);
     },
   });
 };

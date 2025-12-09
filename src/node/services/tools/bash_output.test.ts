@@ -25,7 +25,7 @@ describe("bash_output tool", () => {
 
     const tool = createBashOutputTool(config);
     const result = (await tool.execute!(
-      { process_id: "bash_1" },
+      { process_id: "bash_1", timeout_secs: 0 },
       mockToolCallOptions
     )) as BashOutputToolResult;
 
@@ -48,7 +48,7 @@ describe("bash_output tool", () => {
 
     const tool = createBashOutputTool(config);
     const result = (await tool.execute!(
-      { process_id: "bash_1" },
+      { process_id: "bash_1", timeout_secs: 0 },
       mockToolCallOptions
     )) as BashOutputToolResult;
 
@@ -70,7 +70,7 @@ describe("bash_output tool", () => {
 
     const tool = createBashOutputTool(config);
     const result = (await tool.execute!(
-      { process_id: "bash_1" },
+      { process_id: "bash_1", timeout_secs: 0 },
       mockToolCallOptions
     )) as BashOutputToolResult;
 
@@ -110,7 +110,7 @@ describe("bash_output tool", () => {
 
     // First call - should get some output
     const result1 = (await tool.execute!(
-      { process_id: spawnResult.processId },
+      { process_id: spawnResult.processId, timeout_secs: 0 },
       mockToolCallOptions
     )) as BashOutputToolResult;
 
@@ -124,7 +124,7 @@ describe("bash_output tool", () => {
 
     // Second call - should ONLY get new output (incremental)
     const result2 = (await tool.execute!(
-      { process_id: spawnResult.processId },
+      { process_id: spawnResult.processId, timeout_secs: 0 },
       mockToolCallOptions
     )) as BashOutputToolResult;
 
@@ -166,7 +166,7 @@ describe("bash_output tool", () => {
 
     const tool = createBashOutputTool(config);
     const result = (await tool.execute!(
-      { process_id: spawnResult.processId, filter: "ERROR" },
+      { process_id: spawnResult.processId, filter: "ERROR", timeout_secs: 0 },
       mockToolCallOptions
     )) as BashOutputToolResult;
 
@@ -205,7 +205,7 @@ describe("bash_output tool", () => {
 
     const tool = createBashOutputTool(config);
     const result = (await tool.execute!(
-      { process_id: spawnResult.processId, filter: "[invalid(" },
+      { process_id: spawnResult.processId, filter: "[invalid(", timeout_secs: 0 },
       mockToolCallOptions
     )) as BashOutputToolResult;
 
@@ -244,7 +244,7 @@ describe("bash_output tool", () => {
 
     const tool = createBashOutputTool(config);
     const result = (await tool.execute!(
-      { process_id: spawnResult.processId },
+      { process_id: spawnResult.processId, timeout_secs: 0 },
       mockToolCallOptions
     )) as BashOutputToolResult;
 
@@ -282,7 +282,7 @@ describe("bash_output tool", () => {
 
     const tool = createBashOutputTool(config);
     const result = (await tool.execute!(
-      { process_id: spawnResult.processId },
+      { process_id: spawnResult.processId, timeout_secs: 0 },
       mockToolCallOptions
     )) as BashOutputToolResult;
 
@@ -290,6 +290,101 @@ describe("bash_output tool", () => {
     if (result.success) {
       expect(result.status).toBe("exited");
       expect(result.exitCode).toBe(0);
+    }
+
+    // Cleanup
+    await manager.cleanup("test-workspace");
+    tempDir[Symbol.dispose]();
+  });
+
+  it("should block and wait for output when timeout_secs > 0", async () => {
+    const tempDir = new TestTempDir("test-bash-output");
+    const manager = new BackgroundProcessManager(tempDir.path);
+
+    const runtime = createTestRuntime();
+    const config = createTestToolConfig(process.cwd(), { sessionsDir: tempDir.path });
+    config.runtimeTempDir = tempDir.path;
+    config.backgroundProcessManager = manager;
+
+    // Use unique process ID to avoid leftover state from previous runs
+    const processId = `delayed-output-${Date.now()}`;
+
+    // Spawn a process that outputs after a delay (use longer sleep to avoid race)
+    const spawnResult = await manager.spawn(
+      runtime,
+      "test-workspace",
+      "sleep 1; echo 'delayed output'",
+      { cwd: process.cwd(), displayName: processId }
+    );
+
+    if (!spawnResult.success) {
+      throw new Error("Failed to spawn process");
+    }
+
+    const tool = createBashOutputTool(config);
+
+    // Call with timeout=3 should wait and return output (waiting for the sleep to complete)
+    const start = Date.now();
+    const result = (await tool.execute!(
+      { process_id: spawnResult.processId, timeout_secs: 3 },
+      mockToolCallOptions
+    )) as BashOutputToolResult;
+    const elapsed = Date.now() - start;
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.output).toContain("delayed output");
+      // Should have waited at least ~1 second for the sleep
+      expect(elapsed).toBeGreaterThan(800);
+      // But not the full 3s timeout
+      expect(elapsed).toBeLessThan(2500);
+    }
+
+    // Cleanup
+    await manager.cleanup("test-workspace");
+    tempDir[Symbol.dispose]();
+  });
+
+  it("should return early when process exits during wait", async () => {
+    const tempDir = new TestTempDir("test-bash-output");
+    const manager = new BackgroundProcessManager(tempDir.path);
+
+    const runtime = createTestRuntime();
+    const config = createTestToolConfig(process.cwd(), { sessionsDir: tempDir.path });
+    config.runtimeTempDir = tempDir.path;
+    config.backgroundProcessManager = manager;
+
+    // Use unique process ID to avoid leftover state from previous runs
+    const processId = `quick-exit-${Date.now()}`;
+
+    // Spawn a process that exits quickly
+    const spawnResult = await manager.spawn(runtime, "test-workspace", "echo 'quick exit'", {
+      cwd: process.cwd(),
+      displayName: processId,
+    });
+
+    if (!spawnResult.success) {
+      throw new Error("Failed to spawn process");
+    }
+
+    // Wait for process to exit
+    await new Promise((r) => setTimeout(r, 200));
+
+    const tool = createBashOutputTool(config);
+
+    // Call with long timeout - should return quickly since process already exited
+    const start = Date.now();
+    const result = (await tool.execute!(
+      { process_id: spawnResult.processId, timeout_secs: 10 },
+      mockToolCallOptions
+    )) as BashOutputToolResult;
+    const elapsed = Date.now() - start;
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.output).toContain("quick exit");
+      expect(result.status).toBe("exited");
+      expect(elapsed).toBeLessThan(500); // Should return quickly, not wait full 10s
     }
 
     // Cleanup

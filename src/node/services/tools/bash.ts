@@ -239,15 +239,6 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
           };
         }
 
-        if (timeout_secs !== undefined) {
-          return {
-            success: false,
-            error: "Cannot specify timeout with run_in_background",
-            exitCode: -1,
-            wall_duration_ms: 0,
-          };
-        }
-
         const startTime = performance.now();
         const spawnResult = await config.backgroundProcessManager.spawn(
           config.runtime,
@@ -259,6 +250,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
             niceness: config.niceness,
             displayName: display_name,
             isForeground: false, // Explicit background
+            timeoutSecs: timeout_secs, // Auto-terminate after this duration
           }
         );
 

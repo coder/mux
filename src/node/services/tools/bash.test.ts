@@ -1424,7 +1424,7 @@ describe("bash tool - background execution", () => {
     }
   });
 
-  it("should reject timeout with background mode", async () => {
+  it("should accept timeout with background mode for auto-termination", async () => {
     const manager = new BackgroundProcessManager("/tmp/mux-test-bg");
 
     const tempDir = new TestTempDir("test-bash-bg");
@@ -1436,16 +1436,18 @@ describe("bash tool - background execution", () => {
       script: "echo test",
       timeout_secs: 5,
       run_in_background: true,
-      display_name: "test",
+      display_name: "test-timeout-bg",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
 
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain("Cannot specify timeout with run_in_background");
+    // Background with timeout should succeed - timeout is used for auto-termination
+    expect(result.success).toBe(true);
+    if (result.success && "backgroundProcessId" in result) {
+      expect(result.backgroundProcessId).toBe("test-timeout-bg");
     }
 
+    await manager.terminateAll();
     tempDir[Symbol.dispose]();
   });
 

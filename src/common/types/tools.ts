@@ -229,6 +229,7 @@ export interface StatusSetToolArgs {
 export interface BashOutputToolArgs {
   process_id: string;
   filter?: string;
+  timeout_secs: number;
 }
 
 export type BashOutputToolResult =

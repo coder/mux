@@ -7,7 +7,6 @@
 
 import { z } from "zod";
 import {
-  BASH_DEFAULT_TIMEOUT_SECS,
   BASH_HARD_MAX_LINES,
   BASH_MAX_LINE_BYTES,
   BASH_MAX_TOTAL_BYTES,
@@ -48,9 +47,10 @@ export const TOOL_DEFINITIONS = {
       timeout_secs: z
         .number()
         .positive()
-        .optional()
         .describe(
-          `Timeout (seconds, default: ${BASH_DEFAULT_TIMEOUT_SECS}). Start small and increase on retry; avoid large initial values to keep UX responsive`
+          "Timeout in seconds. For foreground: max execution time before kill. " +
+            "For background: max lifetime before auto-termination. " +
+            "Start small and increase on retry; avoid large initial values to keep UX responsive"
         ),
       run_in_background: z
         .boolean()
@@ -63,7 +63,7 @@ export const TOOL_DEFINITIONS = {
             "Returns immediately with process_id. " +
             "Read output with bash_output (returns only new output since last check). " +
             "Terminate with bash_background_terminate using the process_id. " +
-            "Process persists until terminated or workspace is removed." +
+            "Process persists until timeout_secs expires, terminated, or workspace is removed." +
             "\\n\\nFor long-running tasks like builds or compilations, prefer background mode to continue productive work in parallel. " +
             "Check back periodically with bash_output rather than blocking on completion."
         ),
@@ -243,7 +243,8 @@ export const TOOL_DEFINITIONS = {
       "Returns only NEW output since the last check (incremental). " +
       "Returns stdout and stderr output along with process status. " +
       "Supports optional regex filtering to show only lines matching a pattern. " +
-      "WARNING: When using filter, non-matching lines are permanently discarded.",
+      "WARNING: When using filter, non-matching lines are permanently discarded. " +
+      "Use timeout to wait for output instead of polling repeatedly.",
     schema: z.object({
       process_id: z.string().describe("The ID of the background process to retrieve output from"),
       filter: z
@@ -252,6 +253,16 @@ export const TOOL_DEFINITIONS = {
         .describe(
           "Optional regex to filter output lines. Only matching lines are returned. " +
             "Non-matching lines are permanently discarded and cannot be retrieved later."
+        ),
+      timeout_secs: z
+        .number()
+        .min(0)
+        .max(15)
+        .describe(
+          "Seconds to wait for new output (0-15). " +
+            "If no output is immediately available and process is still running, " +
+            "blocks up to this duration. Returns early when output arrives or process exits. " +
+            "Use this instead of polling in a loop."
         ),
     }),
   },

@@ -140,6 +140,8 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       displayName: string;
       /** If true, process is foreground (being waited on). Default: false (background) */
       isForeground?: boolean;
+      /** Auto-terminate after this many seconds (background processes only) */
+      timeoutSecs?: number;
     }
   ): Promise<
     | { success: true; processId: string; outputDir: string; pid: number }
@@ -198,6 +200,18 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     log.debug(
       `Process ${processId} spawned successfully with PID ${pid} (foreground: ${proc.isForeground})`
     );
+
+    // Schedule auto-termination for background processes with timeout
+    const timeoutSecs = config.timeoutSecs;
+    if (!config.isForeground && timeoutSecs !== undefined && timeoutSecs > 0) {
+      setTimeout(() => {
+        void this.terminate(processId).then((result) => {
+          if (result.success) {
+            log.debug(`Process ${processId} auto-terminated after ${timeoutSecs}s timeout`);
+          }
+        });
+      }, timeoutSecs * 1000);
+    }
 
     // Emit change event (only if background - foreground processes don't show in list)
     if (!proc.isForeground) {
@@ -395,10 +409,12 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
    * Returns only NEW output since the last call (tracked per process).
    * @param processId Process ID to get output from
    * @param filter Optional regex pattern to filter output lines (non-matching lines are discarded permanently)
+   * @param timeout Seconds to wait for output if none available (0-15, default 0 = non-blocking)
    */
   async getOutput(
     processId: string,
-    filter?: string
+    filter?: string,
+    timeout?: number
   ): Promise<
     | {
         success: true;
@@ -408,8 +424,9 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       }
     | { success: false; error: string }
   > {
+    const timeoutSecs = Math.min(Math.max(timeout ?? 0, 0), 15); // Clamp to 0-15
     log.debug(
-      `BackgroundProcessManager.getOutput(${processId}, filter=${filter ?? "none"}) called`
+      `BackgroundProcessManager.getOutput(${processId}, filter=${filter ?? "none"}, timeout=${timeoutSecs}s) called`
     );
 
     const proc = await this.getProcess(processId);
@@ -428,15 +445,44 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       `BackgroundProcessManager.getOutput: proc.outputDir=${proc.outputDir}, offset=${pos.outputBytes}`
     );
 
-    // Read new content via the handle (works for both local and SSH runtimes)
-    // Output is already unified in output.log (stdout + stderr via 2>&1)
-    const result = await proc.handle.readOutput(pos.outputBytes);
-    const output = result.content;
+    // Blocking wait loop: poll for output up to timeout seconds
+    const startTime = Date.now();
+    const timeoutMs = timeoutSecs * 1000;
+    const pollIntervalMs = 100;
+    let output = "";
+    let currentStatus = proc.status;
+
+    while (true) {
+      // Read new content via the handle (works for both local and SSH runtimes)
+      // Output is already unified in output.log (stdout + stderr via 2>&1)
+      const result = await proc.handle.readOutput(pos.outputBytes);
+      output = result.content;
+
+      // Update read position
+      pos.outputBytes = result.newOffset;
+
+      // Refresh process status
+      const refreshedProc = await this.getProcess(processId);
+      currentStatus = refreshedProc?.status ?? proc.status;
+
+      // Return immediately if:
+      // 1. We have output
+      // 2. Process is no longer running (exited/killed/failed)
+      // 3. Timeout elapsed
+      if (output.length > 0 || currentStatus !== "running") {
+        break;
+      }
+
+      const elapsed = Date.now() - startTime;
+      if (elapsed >= timeoutMs) {
+        break;
+      }
+
+      // Sleep before next poll
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
 
     log.debug(`BackgroundProcessManager.getOutput: read outputLen=${output.length}`);
-
-    // Update read position
-    pos.outputBytes = result.newOffset;
 
     let filteredOutput = output;
 
@@ -455,14 +501,12 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
 
     return {
       success: true,
-      status: proc.status,
+      status: currentStatus,
       output: filteredOutput,
-      exitCode: proc.exitCode,
-      // Hint to agent when there's no new output to avoid busy-waiting
-      ...(output === "" &&
-        proc.status === "running" && {
-          note: "No new output. Do other useful work and check again later.",
-        }),
+      exitCode:
+        currentStatus !== "running"
+          ? ((await this.getProcess(processId))?.exitCode ?? undefined)
+          : undefined,
     };
   }
 
