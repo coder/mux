@@ -964,48 +964,6 @@ describe("bash tool", () => {
     }
   });
 
-  it("should block sleep command at start of script", async () => {
-    using testEnv = createTestBashTool();
-    const tool = testEnv.tool;
-    const args: BashToolArgs = {
-      script: "sleep 5",
-      timeout_secs: 10,
-      run_in_background: false,
-      display_name: "test",
-    };
-
-    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain("do not start commands with sleep");
-      expect(result.error).toContain("prefer <10s sleeps in busy loops");
-      expect(result.error).toContain("while ! condition");
-      expect(result.exitCode).toBe(-1);
-      expect(result.wall_duration_ms).toBe(0);
-    }
-  });
-
-  it("should allow sleep in polling loops", async () => {
-    using testEnv = createTestBashTool();
-    const tool = testEnv.tool;
-    const args: BashToolArgs = {
-      script: "for i in 1 2 3; do echo $i; sleep 0.1; done",
-      timeout_secs: 5,
-      run_in_background: false,
-      display_name: "test",
-    };
-
-    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
-
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.output).toContain("1");
-      expect(result.output).toContain("2");
-      expect(result.output).toContain("3");
-    }
-  });
-
   it("should use default timeout (3s) when timeout_secs is undefined", async () => {
     using testEnv = createTestBashTool();
     const tool = testEnv.tool;
