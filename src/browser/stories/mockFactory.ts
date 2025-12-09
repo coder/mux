@@ -397,14 +397,15 @@ export function createBashOutputTool(
   output: string,
   status: "running" | "exited" | "killed" | "failed" = "running",
   exitCode?: number,
-  filter?: string
+  filter?: string,
+  timeoutSecs = 5
 ): MuxPart {
   return {
     type: "dynamic-tool",
     toolCallId,
     toolName: "bash_output",
     state: "output-available",
-    input: { process_id: processId, filter },
+    input: { process_id: processId, timeout_secs: timeoutSecs, filter },
     output: { success: true, status, output, exitCode },
   };
 }
@@ -413,14 +414,15 @@ export function createBashOutputTool(
 export function createBashOutputErrorTool(
   toolCallId: string,
   processId: string,
-  error: string
+  error: string,
+  timeoutSecs = 5
 ): MuxPart {
   return {
     type: "dynamic-tool",
     toolCallId,
     toolName: "bash_output",
     state: "output-available",
-    input: { process_id: processId },
+    input: { process_id: processId, timeout_secs: timeoutSecs },
     output: { success: false, error },
   };
 }
