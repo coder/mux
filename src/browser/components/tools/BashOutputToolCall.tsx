@@ -48,7 +48,8 @@ export const BashOutputToolCall: React.FC<BashOutputToolCallProps> = ({
         <span className="text-muted ml-2 flex items-center gap-1 text-[10px] whitespace-nowrap">
           <Layers size={10} />
           output
-          {args.filter && ` (filter: ${args.filter})`}
+          {args.timeout_secs > 0 && ` • wait ${args.timeout_secs}s`}
+          {args.filter && ` • filter: ${args.filter}`}
         </span>
         {result?.success && <OutputStatusBadge hasOutput={!!result.output} className="ml-2" />}
         {result?.success && processStatus && processStatus !== "running" && (
