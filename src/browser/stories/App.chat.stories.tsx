@@ -244,11 +244,15 @@ npm test 2>&1 | head -20`,
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const canvas = within(canvasElement);
 
-    // Expand the bash tool to show Script section with padding
-    await waitFor(async () => {
-      const toolHeader = canvas.getByText(/#!/);
-      await userEvent.click(toolHeader);
-    });
+    // Wait for workspace metadata to load and main content to render
+    // then expand the bash tool to show Script section with padding
+    await waitFor(
+      async () => {
+        const toolHeader = canvas.getByText(/#!/);
+        await userEvent.click(toolHeader);
+      },
+      { timeout: 5000 }
+    );
     // Wait for any auto-focus timers (ChatInput has 100ms delay), then blur
     await new Promise((resolve) => setTimeout(resolve, 150));
     (document.activeElement as HTMLElement)?.blur();
@@ -295,11 +299,15 @@ export const WithBashToolWaiting: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const canvas = within(canvasElement);
 
-    // Expand the bash tool to show "Waiting for result" section
-    await waitFor(async () => {
-      const toolHeader = canvas.getByText(/npm test/);
-      await userEvent.click(toolHeader);
-    });
+    // Wait for workspace metadata to load and main content to render
+    // then expand the bash tool to show "Waiting for result" section
+    await waitFor(
+      async () => {
+        const toolHeader = canvas.getByText(/npm test/);
+        await userEvent.click(toolHeader);
+      },
+      { timeout: 5000 }
+    );
     // Wait for any auto-focus timers (ChatInput has 100ms delay), then blur
     await new Promise((resolve) => setTimeout(resolve, 150));
     (document.activeElement as HTMLElement)?.blur();
@@ -446,10 +454,14 @@ export const GenericTool: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const canvas = within(canvasElement);
 
-    await waitFor(async () => {
-      const toolHeader = canvas.getByText("fetch_data");
-      await userEvent.click(toolHeader);
-    });
+    // Wait for workspace metadata to load and main content to render
+    await waitFor(
+      async () => {
+        const toolHeader = canvas.getByText("fetch_data");
+        await userEvent.click(toolHeader);
+      },
+      { timeout: 5000 }
+    );
     // Wait for any auto-focus timers (ChatInput has 100ms delay), then blur
     await new Promise((resolve) => setTimeout(resolve, 150));
     (document.activeElement as HTMLElement)?.blur();

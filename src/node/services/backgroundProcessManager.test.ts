@@ -398,18 +398,19 @@ describe("BackgroundProcessManager", () => {
   describe("getOutput", () => {
     it("should return stdout from a running process", async () => {
       // Spawn a process that writes output over time
+      // Use longer sleep and explicit flush to ensure output is written to file
       const result = await manager.spawn(
         runtime,
         testWorkspaceId,
-        "echo 'line 1'; sleep 0.1; echo 'line 2'",
+        "echo 'line 1'; sleep 0.3; echo 'line 2'",
         { cwd: process.cwd(), displayName: "test" }
       );
 
       expect(result.success).toBe(true);
       if (!result.success) return;
 
-      // Wait for some output to be written (increased for CI reliability)
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      // Wait for first line to be written and flushed (increased for CI reliability)
+      await new Promise((resolve) => setTimeout(resolve, 200));
 
       // Get output - should have at least the first line
       const output1 = await manager.getOutput(result.processId);
@@ -418,8 +419,8 @@ describe("BackgroundProcessManager", () => {
 
       expect(output1.output).toContain("line 1");
 
-      // Wait for more output (increased for CI reliability)
-      await new Promise((resolve) => setTimeout(resolve, 400));
+      // Wait for second line (sleep 0.3s + buffer for CI)
+      await new Promise((resolve) => setTimeout(resolve, 500));
 
       // Get output again - should have incremental output (line 2)
       const output2 = await manager.getOutput(result.processId);
