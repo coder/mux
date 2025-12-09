@@ -254,3 +254,118 @@ describe("Background Bash Direct Integration", () => {
     }
   });
 });
+
+describe("Background Bash Output Capture", () => {
+  let env: TestEnvironment;
+  let tempGitRepo: string;
+  let workspaceId: string;
+  let workspacePath: string;
+
+  beforeAll(async () => {
+    env = await createTestEnvironment();
+    tempGitRepo = await createTempGitRepo();
+
+    const branchName = generateBranchName("bg-output-test");
+    const trunkBranch = await detectDefaultTrunkBranch(tempGitRepo);
+    const result = await env.orpc.workspace.create({
+      projectPath: tempGitRepo,
+      branchName,
+      trunkBranch,
+    });
+
+    if (!result.success) {
+      throw new Error(`Failed to create workspace: ${result.error}`);
+    }
+    workspaceId = result.metadata.id;
+    workspacePath = result.metadata.namedWorkspacePath ?? tempGitRepo;
+  });
+
+  afterAll(async () => {
+    if (workspaceId) {
+      await env.orpc.workspace.remove({ workspaceId }).catch(() => {});
+    }
+    await cleanupTempGitRepo(tempGitRepo);
+    await cleanupTestEnvironment(env);
+  });
+
+  it("should capture stderr output when process exits with error", async () => {
+    // This reproduces the bug where error output is lost
+    const manager = getBackgroundProcessManager(env);
+    const runtime = new LocalRuntime(workspacePath);
+
+    // Script that writes to stderr and exits with error
+    const marker = `ERROR_${Date.now()}`;
+    const spawnResult = await manager.spawn(
+      runtime,
+      workspaceId,
+      `echo "${marker}" >&2; exit 1`,
+      { cwd: workspacePath }
+    );
+    expect(spawnResult.success).toBe(true);
+    if (!spawnResult.success) return;
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const output = await manager.getOutput(spawnResult.processId);
+    expect(output.success).toBe(true);
+    if (output.success) {
+      expect(output.exitCode).toBe(1);
+      expect(output.stderr).toContain(marker);
+    }
+  });
+
+  it("should capture output when script fails mid-execution", async () => {
+    const manager = getBackgroundProcessManager(env);
+    const runtime = new LocalRuntime(workspacePath);
+
+    const marker1 = `BEFORE_${Date.now()}`;
+    const marker2 = `ERROR_${Date.now()}`;
+    // Script that outputs, then fails, then would output more (but won't reach it)
+    const spawnResult = await manager.spawn(
+      runtime,
+      workspaceId,
+      `echo "${marker1}"; echo "${marker2}" >&2; false; echo "NEVER_SEEN"`,
+      { cwd: workspacePath }
+    );
+    expect(spawnResult.success).toBe(true);
+    if (!spawnResult.success) return;
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const output = await manager.getOutput(spawnResult.processId);
+    expect(output.success).toBe(true);
+    if (output.success) {
+      expect(output.stdout).toContain(marker1);
+      expect(output.stderr).toContain(marker2);
+      // The script doesn't have set -e, so "NEVER_SEEN" might still appear
+      // But if it does have set -e behavior from the wrapper, it won't
+    }
+  });
+
+  it("should handle long-running script that outputs to both streams", async () => {
+    const manager = getBackgroundProcessManager(env);
+    const runtime = new LocalRuntime(workspacePath);
+
+    const outMarker = `OUT_${Date.now()}`;
+    const errMarker = `ERR_${Date.now()}`;
+    const spawnResult = await manager.spawn(
+      runtime,
+      workspaceId,
+      `for i in 1 2 3; do echo "${outMarker}_$i"; echo "${errMarker}_$i" >&2; done`,
+      { cwd: workspacePath }
+    );
+    expect(spawnResult.success).toBe(true);
+    if (!spawnResult.success) return;
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    const output = await manager.getOutput(spawnResult.processId);
+    expect(output.success).toBe(true);
+    if (output.success) {
+      expect(output.stdout).toContain(`${outMarker}_1`);
+      expect(output.stdout).toContain(`${outMarker}_3`);
+      expect(output.stderr).toContain(`${errMarker}_1`);
+      expect(output.stderr).toContain(`${errMarker}_3`);
+    }
+  });
+});
