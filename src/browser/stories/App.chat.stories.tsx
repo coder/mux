@@ -549,11 +549,34 @@ export const AutoCompactWarning: AppStory = {
       canvas.getByText(/access token expires in 15 minutes/);
     });
 
-    // Wait a bit for auto-scroll to settle, then scroll up
-    await new Promise((r) => setTimeout(r, 100));
-    const messageWindow = canvasElement.querySelector('[data-testid="message-window"]');
+    // Wait for initial auto-scroll and all ResizeObserver callbacks to complete
+    await new Promise((r) => setTimeout(r, 500));
+
+    const messageWindow = canvasElement.querySelector(
+      '[data-testid="message-window"]'
+    ) as HTMLElement | null;
     if (messageWindow) {
-      messageWindow.scrollTop = messageWindow.scrollHeight - messageWindow.clientHeight - 150;
+      // Simulate user scroll interaction multiple times to ensure auto-scroll is disabled.
+      // The useAutoScroll hook only processes scroll as "user-initiated" if it happens
+      // within 100ms of a wheel/touch event. We need to:
+      // 1. Mark user interaction via wheel event
+      // 2. Scroll up (which disables auto-scroll)
+      // 3. Wait and repeat to ensure the state sticks
+      for (let i = 0; i < 3; i++) {
+        messageWindow.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -100 }));
+        // Scroll to show ~200px of content above the input area
+        const targetScroll = Math.max(0, messageWindow.scrollHeight - messageWindow.clientHeight - 200);
+        messageWindow.scrollTop = targetScroll;
+        messageWindow.dispatchEvent(new Event("scroll", { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 50));
+      }
+
+      // Final wait to let any pending ResizeObserver callbacks fire and see disabled auto-scroll
+      await new Promise((r) => setTimeout(r, 200));
+
+      // Set final scroll position
+      const finalScroll = Math.max(0, messageWindow.scrollHeight - messageWindow.clientHeight - 200);
+      messageWindow.scrollTop = finalScroll;
     }
   },
   parameters: {
