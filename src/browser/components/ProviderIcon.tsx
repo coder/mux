@@ -6,9 +6,17 @@ import XAIIcon from "@/browser/assets/icons/xai.svg?react";
 import DeepSeekIcon from "@/browser/assets/icons/deepseek.svg?react";
 import AWSIcon from "@/browser/assets/icons/aws.svg?react";
 import { GatewayIcon } from "@/browser/components/icons/GatewayIcon";
-import { PROVIDER_DISPLAY_NAMES, type ProviderName } from "@/common/constants/providers";
+import {
+  PROVIDER_DEFINITIONS,
+  PROVIDER_DISPLAY_NAMES,
+  type ProviderName,
+} from "@/common/constants/providers";
 import { cn } from "@/common/lib/utils";
 
+/**
+ * Provider icons mapped by provider name.
+ * When adding a new provider, add its icon import above and entry here.
+ */
 const PROVIDER_ICONS: Partial<Record<ProviderName, React.FC>> = {
   anthropic: AnthropicIcon,
   openai: OpenAIIcon,
@@ -18,9 +26,6 @@ const PROVIDER_ICONS: Partial<Record<ProviderName, React.FC>> = {
   bedrock: AWSIcon,
   "mux-gateway": GatewayIcon,
 };
-
-// Icons that use stroke instead of fill for their styling
-const STROKE_BASED_ICONS = new Set<string>(["mux-gateway"]);
 
 export interface ProviderIconProps {
   provider: string;
@@ -32,10 +37,13 @@ export interface ProviderIconProps {
  * Icons are sized to 1em by default to match surrounding text.
  */
 export function ProviderIcon(props: ProviderIconProps) {
-  const IconComponent = PROVIDER_ICONS[props.provider as keyof typeof PROVIDER_ICONS];
+  const providerName = props.provider as ProviderName;
+  const IconComponent = PROVIDER_ICONS[providerName];
   if (!IconComponent) return null;
 
-  const isStrokeBased = STROKE_BASED_ICONS.has(props.provider);
+  // Check if this provider uses stroke-based icon styling (from PROVIDER_DEFINITIONS)
+  const def = PROVIDER_DEFINITIONS[providerName] as { strokeBasedIcon?: boolean } | undefined;
+  const isStrokeBased = def?.strokeBasedIcon ?? false;
 
   return (
     <span

@@ -9,7 +9,11 @@ import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
-import { PROVIDER_REGISTRY } from "@/common/constants/providers";
+import {
+  PROVIDER_REGISTRY,
+  PROVIDER_DEFINITIONS,
+  type ProviderName,
+} from "@/common/constants/providers";
 
 import type { MuxMessage, MuxTextPart } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
@@ -558,24 +562,6 @@ export class AIService extends EventEmitter {
         return Ok(model);
       }
 
-      // Handle Google provider
-      if (providerName === "google") {
-        if (!providerConfig.apiKey) {
-          return Err({
-            type: "api_key_not_found",
-            provider: providerName,
-          });
-        }
-
-        // Lazy-load Google provider to reduce startup time
-        const { createGoogleGenerativeAI } = await PROVIDER_REGISTRY.google();
-        const provider = createGoogleGenerativeAI({
-          ...providerConfig,
-          fetch: getProviderFetch(providerConfig),
-        });
-        return Ok(provider(modelId));
-      }
-
       // Handle xAI provider
       if (providerName === "xai") {
         if (!providerConfig.apiKey) {
@@ -608,25 +594,6 @@ export class AIService extends EventEmitter {
           baseURL,
           headers,
           ...restOptions,
-          fetch: baseFetch,
-        });
-        return Ok(provider(modelId));
-      }
-
-      // Handle DeepSeek provider
-      if (providerName === "deepseek") {
-        if (!providerConfig.apiKey) {
-          return Err({
-            type: "api_key_not_found",
-            provider: providerName,
-          });
-        }
-        const baseFetch = getProviderFetch(providerConfig);
-
-        // Lazy-load DeepSeek provider to reduce startup time
-        const { createDeepSeek } = await PROVIDER_REGISTRY.deepseek();
-        const provider = createDeepSeek({
-          ...providerConfig,
           fetch: baseFetch,
         });
         return Ok(provider(modelId));
@@ -808,6 +775,40 @@ export class AIService extends EventEmitter {
           fetch: fetchWithCacheControl,
         });
         return Ok(gateway(modelId));
+      }
+
+      // Generic handler for simple providers (standard API key + factory pattern)
+      // Providers with custom logic (anthropic, openai, xai, ollama, openrouter, bedrock, mux-gateway)
+      // are handled explicitly above. New providers using the standard pattern need only be
+      // added to PROVIDER_DEFINITIONS - no code changes required here.
+      const providerDef = PROVIDER_DEFINITIONS[providerName as ProviderName];
+      if (providerDef) {
+        // Check API key requirement
+        if (providerDef.requiresApiKey && !providerConfig.apiKey) {
+          return Err({
+            type: "api_key_not_found",
+            provider: providerName,
+          });
+        }
+
+        // Lazy-load and create provider using factoryName from definition
+        const providerModule = (await providerDef.import()) as unknown as Record<
+          string,
+          (config: Record<string, unknown>) => (modelId: string) => LanguageModel
+        >;
+        const factory = providerModule[providerDef.factoryName];
+        if (!factory) {
+          return Err({
+            type: "provider_not_supported",
+            provider: providerName,
+          });
+        }
+
+        const provider = factory({
+          ...providerConfig,
+          fetch: getProviderFetch(providerConfig),
+        });
+        return Ok(provider(modelId));
       }
 
       return Err({
