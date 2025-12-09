@@ -4,14 +4,15 @@ import type { BashOutputToolArgs } from "@/common/types/tools";
 /**
  * Type guard to check if a message is a bash_output tool call
  */
-function isBashOutputTool(
+export function isBashOutputTool(
   msg: DisplayedMessage
 ): msg is DisplayedMessage & { type: "tool"; toolName: "bash_output"; args: BashOutputToolArgs } {
   return msg.type === "tool" && msg.toolName === "bash_output";
 }
 
 /**
- * Information about a group of bash_output calls to the same process
+ * Information about a bash_output message's position in a consecutive group.
+ * Used at render-time to determine how to display the message.
  */
 export interface BashOutputGroupInfo {
   /** Position in the group: 'first', 'last', or 'middle' (collapsed) */
@@ -20,16 +21,9 @@ export interface BashOutputGroupInfo {
   totalCount: number;
   /** Number of collapsed (hidden) calls between first and last */
   collapsedCount: number;
-  /** Unique group identifier (for React keys) */
-  groupId: string;
+  /** Process ID for the collapsed indicator */
+  processId: string;
 }
-
-/**
- * Extended DisplayedMessage with optional bash_output grouping info
- */
-export type GroupedDisplayedMessage = DisplayedMessage & {
-  bashOutputGroup?: BashOutputGroupInfo;
-};
 
 /**
  * Determines if the interrupted barrier should be shown for a DisplayedMessage.
@@ -125,98 +119,69 @@ export function mergeConsecutiveStreamErrors(messages: DisplayedMessage[]): Disp
 }
 
 /**
- * Groups consecutive bash_output tool calls to the same process_id.
- * When 3+ consecutive calls target the same process:
- * - Shows first call with group info (position: 'first')
- * - Shows collapsed indicator (position: 'middle') representing hidden calls
- * - Shows last call with group info (position: 'last')
+ * Computes the bash_output group info for a message at a given index.
+ * Used at render-time to determine how to display bash_output messages.
  *
- * Groups of 1-2 calls are unchanged (no grouping applied).
+ * Returns:
+ * - undefined if not a bash_output tool or group size < 3
+ * - { position: 'first', ... } for the first item in a 3+ group
+ * - { position: 'middle', ... } for middle items that should be collapsed
+ * - { position: 'last', ... } for the last item in a 3+ group
  *
- * @param messages - Array of DisplayedMessages (already processed by mergeConsecutiveStreamErrors)
- * @returns Array with bash_output groups collapsed, preserving first/last calls
+ * @param messages - The full array of DisplayedMessages
+ * @param index - The index of the message to check
+ * @returns Group info if in a 3+ group, undefined otherwise
  */
-export function groupConsecutiveBashOutput(
-  messages: DisplayedMessage[]
-): GroupedDisplayedMessage[] {
-  if (messages.length === 0) return [];
+export function computeBashOutputGroupInfo(
+  messages: DisplayedMessage[],
+  index: number
+): BashOutputGroupInfo | undefined {
+  const msg = messages[index];
 
-  const result: GroupedDisplayedMessage[] = [];
-  let i = 0;
-
-  while (i < messages.length) {
-    const msg = messages[i];
-
-    // If not a bash_output tool, pass through unchanged
-    if (!isBashOutputTool(msg)) {
-      result.push(msg);
-      i++;
-      continue;
-    }
-
-    // Find all consecutive bash_output calls with the same process_id
-    const processId = msg.args.process_id;
-    const groupStart = i;
-    let j = i + 1;
-
-    while (j < messages.length) {
-      const nextMsg = messages[j];
-      if (isBashOutputTool(nextMsg) && nextMsg.args.process_id === processId) {
-        j++;
-      } else {
-        break;
-      }
-    }
-
-    const groupSize = j - groupStart;
-    const groupId = `bash-output-group-${msg.id}`;
-
-    if (groupSize < 3) {
-      // Small groups (1-2 items) - no collapsing needed
-      for (let k = groupStart; k < j; k++) {
-        result.push(messages[k]);
-      }
-    } else {
-      // Large groups (3+) - collapse middle items
-      const collapsedCount = groupSize - 2;
-
-      // First item
-      result.push({
-        ...messages[groupStart],
-        bashOutputGroup: {
-          position: "first",
-          totalCount: groupSize,
-          collapsedCount,
-          groupId,
-        },
-      });
-
-      // Collapsed middle indicator (uses first middle message as base)
-      result.push({
-        ...messages[groupStart + 1],
-        id: `${messages[groupStart + 1].id}-collapsed`,
-        bashOutputGroup: {
-          position: "middle",
-          totalCount: groupSize,
-          collapsedCount,
-          groupId,
-        },
-      });
-
-      // Last item
-      result.push({
-        ...messages[j - 1],
-        bashOutputGroup: {
-          position: "last",
-          totalCount: groupSize,
-          collapsedCount,
-          groupId,
-        },
-      });
-    }
-
-    i = j;
+  // Not a bash_output tool
+  if (!isBashOutputTool(msg)) {
+    return undefined;
   }
 
-  return result;
+  const processId = msg.args.process_id;
+
+  // Find the start of the consecutive group (walk backwards)
+  let groupStart = index;
+  while (groupStart > 0) {
+    const prevMsg = messages[groupStart - 1];
+    if (isBashOutputTool(prevMsg) && prevMsg.args.process_id === processId) {
+      groupStart--;
+    } else {
+      break;
+    }
+  }
+
+  // Find the end of the consecutive group (walk forwards)
+  let groupEnd = index;
+  while (groupEnd < messages.length - 1) {
+    const nextMsg = messages[groupEnd + 1];
+    if (isBashOutputTool(nextMsg) && nextMsg.args.process_id === processId) {
+      groupEnd++;
+    } else {
+      break;
+    }
+  }
+
+  const groupSize = groupEnd - groupStart + 1;
+
+  // Groups of 1-2 don't need special handling
+  if (groupSize < 3) {
+    return undefined;
+  }
+
+  const collapsedCount = groupSize - 2;
+
+  // Determine position
+  if (index === groupStart) {
+    return { position: "first", totalCount: groupSize, collapsedCount, processId };
+  } else if (index === groupEnd) {
+    return { position: "last", totalCount: groupSize, collapsedCount, processId };
+  } else {
+    return { position: "middle", totalCount: groupSize, collapsedCount, processId };
+  }
 }

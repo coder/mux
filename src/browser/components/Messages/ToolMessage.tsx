@@ -40,7 +40,6 @@ import type {
 } from "@/common/types/tools";
 import type { ReviewNoteData } from "@/common/types/review";
 import type { BashOutputGroupInfo } from "@/browser/utils/messages/messageUtils";
-import { BashOutputCollapsedIndicator } from "../tools/BashOutputCollapsedIndicator";
 
 interface ToolMessageProps {
   message: DisplayedMessage & { type: "tool" };
@@ -289,17 +288,12 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
   }
 
   if (isBashOutputTool(message.toolName, message.args)) {
-    // Handle grouped bash_output calls - show collapsed indicator for middle position
-    if (bashOutputGroup?.position === "middle") {
-      return (
-        <div className={className}>
-          <BashOutputCollapsedIndicator
-            processId={message.args.process_id}
-            collapsedCount={bashOutputGroup.collapsedCount}
-          />
-        </div>
-      );
-    }
+    // Note: "middle" position items are filtered out in AIView.tsx render loop,
+    // and the collapsed indicator is rendered there. ToolMessage only sees first/last.
+    const groupPosition =
+      bashOutputGroup?.position === "first" || bashOutputGroup?.position === "last"
+        ? bashOutputGroup.position
+        : undefined;
 
     return (
       <div className={className}>
@@ -307,7 +301,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
           args={message.args}
           result={message.result as BashOutputToolResult | undefined}
           status={message.status}
-          groupPosition={bashOutputGroup?.position}
+          groupPosition={groupPosition}
         />
       </div>
     );

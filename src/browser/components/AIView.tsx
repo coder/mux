@@ -25,8 +25,9 @@ import { useResizableSidebar } from "@/browser/hooks/useResizableSidebar";
 import {
   shouldShowInterruptedBarrier,
   mergeConsecutiveStreamErrors,
-  groupConsecutiveBashOutput,
+  computeBashOutputGroupInfo,
 } from "@/browser/utils/messages/messageUtils";
+import { BashOutputCollapsedIndicator } from "./tools/BashOutputCollapsedIndicator";
 import { hasInterruptedStream } from "@/browser/utils/messages/retryEligibility";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
 import { ModeProvider } from "@/browser/contexts/ModeContext";
@@ -179,14 +180,11 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
   // Apply message transformations:
   // 1. Merge consecutive identical stream errors
-  // 2. Group consecutive bash_output calls to same process
+  // (bash_output grouping is done at render-time, not as a transformation)
   // Use useDeferredValue to allow React to defer the heavy message list rendering
   // during rapid updates (streaming), keeping the UI responsive.
   // Must be defined before any early returns to satisfy React Hooks rules.
-  const transformedMessages = useMemo(
-    () => groupConsecutiveBashOutput(mergeConsecutiveStreamErrors(messages)),
-    [messages]
-  );
+  const transformedMessages = useMemo(() => mergeConsecutiveStreamErrors(messages), [messages]);
   const deferredTransformedMessages = useDeferredValue(transformedMessages);
 
   // CRITICAL: When message count changes (new message sent/received), show immediately.
@@ -315,9 +313,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
     }
 
     // Otherwise, edit last user message
-    const transformedMessages = groupConsecutiveBashOutput(
-      mergeConsecutiveStreamErrors(workspaceState.messages)
-    );
+    const transformedMessages = mergeConsecutiveStreamErrors(workspaceState.messages);
     const lastUserMessage = [...transformedMessages]
       .reverse()
       .find((msg): msg is Extract<DisplayedMessage, { type: "user" }> => msg.type === "user");
@@ -432,9 +428,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
   useEffect(() => {
     if (!workspaceState || !editingMessage) return;
 
-    const transformedMessages = groupConsecutiveBashOutput(
-      mergeConsecutiveStreamErrors(workspaceState.messages)
-    );
+    const transformedMessages = mergeConsecutiveStreamErrors(workspaceState.messages);
     const editCutoffHistoryId = transformedMessages.find(
       (msg): msg is Exclude<DisplayedMessage, { type: "history-hidden" | "workspace-init" }> =>
         msg.type !== "history-hidden" &&
@@ -579,7 +573,15 @@ const AIViewInner: React.FC<AIViewProps> = ({
                 </div>
               ) : (
                 <>
-                  {deferredMessages.map((msg) => {
+                  {deferredMessages.map((msg, index) => {
+                    // Compute bash_output grouping at render-time
+                    const bashOutputGroup = computeBashOutputGroupInfo(deferredMessages, index);
+
+                    // Skip rendering middle items in a bash_output group (they're collapsed)
+                    if (bashOutputGroup?.position === "middle") {
+                      return null;
+                    }
+
                     const isAtCutoff =
                       editCutoffHistoryId !== undefined &&
                       msg.type !== "history-hidden" &&
@@ -609,8 +611,16 @@ const AIViewInner: React.FC<AIViewProps> = ({
                             }
                             foregroundBashToolCallIds={foregroundToolCallIds}
                             onSendBashToBackground={handleSendBashToBackground}
+                            bashOutputGroup={bashOutputGroup}
                           />
                         </div>
+                        {/* Show collapsed indicator after the first item in a bash_output group */}
+                        {bashOutputGroup?.position === "first" && (
+                          <BashOutputCollapsedIndicator
+                            processId={bashOutputGroup.processId}
+                            collapsedCount={bashOutputGroup.collapsedCount}
+                          />
+                        )}
                         {isAtCutoff && (
                           <div className="edit-cutoff-divider text-edit-mode bg-edit-mode/10 my-5 px-[15px] py-3 text-center text-xs font-medium">
                             ⚠️ Messages below this line will be removed when you submit the edit

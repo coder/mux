@@ -1,5 +1,5 @@
 import { describe, it, expect } from "@jest/globals";
-import { mergeConsecutiveStreamErrors, groupConsecutiveBashOutput } from "./messageUtils";
+import { mergeConsecutiveStreamErrors, computeBashOutputGroupInfo } from "./messageUtils";
 import type { DisplayedMessage } from "@/common/types/message";
 
 describe("mergeConsecutiveStreamErrors", () => {
@@ -289,7 +289,7 @@ describe("mergeConsecutiveStreamErrors", () => {
   });
 });
 
-describe("groupConsecutiveBashOutput", () => {
+describe("computeBashOutputGroupInfo", () => {
   // Helper to create a bash_output tool message
   function createBashOutputMessage(
     id: string,
@@ -310,12 +310,7 @@ describe("groupConsecutiveBashOutput", () => {
     };
   }
 
-  it("returns empty array for empty input", () => {
-    const result = groupConsecutiveBashOutput([]);
-    expect(result).toEqual([]);
-  });
-
-  it("leaves non-bash_output messages unchanged", () => {
+  it("returns undefined for non-bash_output messages", () => {
     const messages: DisplayedMessage[] = [
       {
         type: "user",
@@ -337,23 +332,22 @@ describe("groupConsecutiveBashOutput", () => {
       },
     ];
 
-    const result = groupConsecutiveBashOutput(messages);
-    expect(result).toEqual(messages);
+    expect(computeBashOutputGroupInfo(messages, 0)).toBeUndefined();
+    expect(computeBashOutputGroupInfo(messages, 1)).toBeUndefined();
   });
 
-  it("does not group 1-2 consecutive bash_output calls", () => {
+  it("returns undefined for 1-2 consecutive bash_output calls", () => {
     const messages: DisplayedMessage[] = [
       createBashOutputMessage("1", "bash_1", 1),
       createBashOutputMessage("2", "bash_1", 2),
     ];
 
-    const result = groupConsecutiveBashOutput(messages);
-    expect(result).toHaveLength(2);
-    expect(result[0]).not.toHaveProperty("bashOutputGroup");
-    expect(result[1]).not.toHaveProperty("bashOutputGroup");
+    // Groups of 1-2 don't need grouping
+    expect(computeBashOutputGroupInfo(messages, 0)).toBeUndefined();
+    expect(computeBashOutputGroupInfo(messages, 1)).toBeUndefined();
   });
 
-  it("groups 3+ consecutive bash_output calls to same process", () => {
+  it("returns correct group info for 3+ consecutive bash_output calls", () => {
     const messages: DisplayedMessage[] = [
       createBashOutputMessage("1", "bash_1", 1),
       createBashOutputMessage("2", "bash_1", 2),
@@ -361,32 +355,34 @@ describe("groupConsecutiveBashOutput", () => {
       createBashOutputMessage("4", "bash_1", 4),
     ];
 
-    const result = groupConsecutiveBashOutput(messages);
-
-    // Should collapse to: first, middle (collapsed), last
-    expect(result).toHaveLength(3);
-
-    // First
-    expect(result[0].id).toBe("1");
-    expect(result[0].bashOutputGroup).toMatchObject({
+    // First position
+    expect(computeBashOutputGroupInfo(messages, 0)).toMatchObject({
       position: "first",
       totalCount: 4,
       collapsedCount: 2,
+      processId: "bash_1",
     });
 
-    // Middle (collapsed indicator)
-    expect(result[1].bashOutputGroup).toMatchObject({
+    // Middle positions
+    expect(computeBashOutputGroupInfo(messages, 1)).toMatchObject({
       position: "middle",
       totalCount: 4,
       collapsedCount: 2,
+      processId: "bash_1",
+    });
+    expect(computeBashOutputGroupInfo(messages, 2)).toMatchObject({
+      position: "middle",
+      totalCount: 4,
+      collapsedCount: 2,
+      processId: "bash_1",
     });
 
-    // Last
-    expect(result[2].id).toBe("4");
-    expect(result[2].bashOutputGroup).toMatchObject({
+    // Last position
+    expect(computeBashOutputGroupInfo(messages, 3)).toMatchObject({
       position: "last",
       totalCount: 4,
       collapsedCount: 2,
+      processId: "bash_1",
     });
   });
 
@@ -398,11 +394,11 @@ describe("groupConsecutiveBashOutput", () => {
       createBashOutputMessage("4", "bash_1", 4),
     ];
 
-    const result = groupConsecutiveBashOutput(messages);
-
     // No grouping should occur (max consecutive same-process is 2)
-    expect(result).toHaveLength(4);
-    expect(result[0]).not.toHaveProperty("bashOutputGroup");
+    expect(computeBashOutputGroupInfo(messages, 0)).toBeUndefined();
+    expect(computeBashOutputGroupInfo(messages, 1)).toBeUndefined();
+    expect(computeBashOutputGroupInfo(messages, 2)).toBeUndefined();
+    expect(computeBashOutputGroupInfo(messages, 3)).toBeUndefined();
   });
 
   it("handles multiple separate groups", () => {
@@ -422,52 +418,19 @@ describe("groupConsecutiveBashOutput", () => {
       createBashOutputMessage("6", "bash_2", 7),
     ];
 
-    const result = groupConsecutiveBashOutput(messages);
-
-    // First group (3 items -> 3 output), user message, second group (3 items -> 3 output)
-    expect(result).toHaveLength(7);
-
     // First group
-    expect(result[0].bashOutputGroup?.position).toBe("first");
-    expect(result[1].bashOutputGroup?.position).toBe("middle");
-    expect(result[2].bashOutputGroup?.position).toBe("last");
+    expect(computeBashOutputGroupInfo(messages, 0)?.position).toBe("first");
+    expect(computeBashOutputGroupInfo(messages, 1)?.position).toBe("middle");
+    expect(computeBashOutputGroupInfo(messages, 2)?.position).toBe("last");
 
-    // User message (unchanged)
-    expect(result[3].type).toBe("user");
+    // User message (not grouped)
+    expect(computeBashOutputGroupInfo(messages, 3)).toBeUndefined();
 
     // Second group
-    expect(result[4].bashOutputGroup?.position).toBe("first");
-    expect(result[5].bashOutputGroup?.position).toBe("middle");
-    expect(result[6].bashOutputGroup?.position).toBe("last");
-  });
-
-  it("preserves message properties when grouping", () => {
-    const messages: DisplayedMessage[] = [
-      createBashOutputMessage("1", "bash_1", 1),
-      createBashOutputMessage("2", "bash_1", 2),
-      createBashOutputMessage("3", "bash_1", 3),
-    ];
-
-    const result = groupConsecutiveBashOutput(messages);
-
-    // First message should preserve all original properties
-    expect(result[0]).toMatchObject({
-      type: "tool",
-      id: "1",
-      historyId: "h-1",
-      toolCallId: "tc-1",
-      toolName: "bash_output",
-      args: { process_id: "bash_1", timeout_secs: 0 },
-    });
-
-    // Last message should preserve all original properties
-    expect(result[2]).toMatchObject({
-      type: "tool",
-      id: "3",
-      historyId: "h-3",
-      toolCallId: "tc-3",
-      toolName: "bash_output",
-    });
+    expect(computeBashOutputGroupInfo(messages, 4)?.position).toBe("first");
+    expect(computeBashOutputGroupInfo(messages, 4)?.processId).toBe("bash_2");
+    expect(computeBashOutputGroupInfo(messages, 5)?.position).toBe("middle");
+    expect(computeBashOutputGroupInfo(messages, 6)?.position).toBe("last");
   });
 
   it("handles exactly 3 consecutive calls (minimum for grouping)", () => {
@@ -477,11 +440,28 @@ describe("groupConsecutiveBashOutput", () => {
       createBashOutputMessage("3", "bash_1", 3),
     ];
 
-    const result = groupConsecutiveBashOutput(messages);
+    expect(computeBashOutputGroupInfo(messages, 0)).toMatchObject({
+      position: "first",
+      collapsedCount: 1,
+    });
+    expect(computeBashOutputGroupInfo(messages, 1)).toMatchObject({
+      position: "middle",
+      collapsedCount: 1,
+    });
+    expect(computeBashOutputGroupInfo(messages, 2)).toMatchObject({
+      position: "last",
+      collapsedCount: 1,
+    });
+  });
 
-    expect(result).toHaveLength(3);
-    expect(result[0].bashOutputGroup?.collapsedCount).toBe(1);
-    expect(result[1].bashOutputGroup?.position).toBe("middle");
-    expect(result[2].bashOutputGroup?.position).toBe("last");
+  it("correctly identifies process_id in group info", () => {
+    const messages: DisplayedMessage[] = [
+      createBashOutputMessage("1", "my-special-process", 1),
+      createBashOutputMessage("2", "my-special-process", 2),
+      createBashOutputMessage("3", "my-special-process", 3),
+    ];
+
+    const groupInfo = computeBashOutputGroupInfo(messages, 0);
+    expect(groupInfo?.processId).toBe("my-special-process");
   });
 });

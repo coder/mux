@@ -352,10 +352,12 @@ export const Mixed: AppStory = {
 /**
  * Story: Grouped Bash Output
  * Demonstrates the collapsing of consecutive bash_output calls to the same process.
+ * Grouping is computed at render-time (not as a message transformation).
  * Shows:
- * - 5+ consecutive output calls collapsed to: first, squiggly indicator, last
- * - Group position labels (start/end) on first and last items
- * - Non-grouped bash_output calls for comparison
+ * - 5 consecutive output calls to same process: first, collapsed indicator, last
+ * - Group position labels (🔗 start/end) on first and last items
+ * - Non-grouped bash_output calls for comparison (groups of 1-2)
+ * - Mixed process IDs are not grouped together
  */
 export const GroupedOutput: AppStory = {
   render: () => (
