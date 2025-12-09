@@ -14,11 +14,14 @@
 const { execSync } = require("child_process");
 const path = require("path");
 
+console.log("🔐 sign-windows.js loaded");
+
 /**
  * @param {import("electron-builder").CustomWindowsSignTaskConfiguration} configuration
  * @returns {Promise<void>}
  */
 exports.default = async function sign(configuration) {
+  console.log("🔐 sign() function called for:", configuration.path);
   const filePath = configuration.path;
 
   // Check if signing is configured
