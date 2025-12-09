@@ -680,7 +680,10 @@ function AppInner() {
         <ProjectCreateModal
           isOpen={isProjectCreateModalOpen}
           onClose={closeProjectCreateModal}
-          onSuccess={addProject}
+          onSuccess={(normalizedPath, projectConfig) => {
+            addProject(normalizedPath, projectConfig);
+            beginWorkspaceCreation(normalizedPath);
+          }}
         />
         <SettingsModal />
       </div>
