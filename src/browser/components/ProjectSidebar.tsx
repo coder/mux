@@ -521,7 +521,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     const abbrevPath = PlatformPaths.abbreviate(projectPath);
                                     const { basename } = PlatformPaths.splitAbbreviated(abbrevPath);
                                     return (
-                                      <span className="text-foreground font-medium">
+                                      <span className="text-foreground truncate font-medium">
                                         {basename}
                                       </span>
                                     );
