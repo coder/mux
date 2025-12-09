@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { Layers } from "lucide-react";
 import type { BashToolArgs, BashToolResult } from "@/common/types/tools";
 import { BASH_DEFAULT_TIMEOUT_SECS } from "@/common/constants/toolLimits";
 import {
@@ -21,6 +22,7 @@ import {
   type ToolStatus,
 } from "./shared/toolUtils";
 import { cn } from "@/common/lib/utils";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 
 interface BashToolCallProps {
   args: BashToolArgs;
@@ -105,17 +107,28 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
         <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
         {/* Show "Background" button when bash is executing and can be sent to background */}
         {status === "executing" && !isBackground && canSendToBackground && onSendToBackground && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation(); // Don't toggle expand
-              onSendToBackground();
-            }}
-            className="text-muted hover:text-light bg-surface hover:bg-surface-hover ml-2 cursor-pointer rounded px-2 py-0.5 text-[10px] transition-colors"
-            title="Send to background - process continues but agent stops waiting"
-          >
-            Background
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation(); // Don't toggle expand
+                  onSendToBackground();
+                }}
+                className={cn(
+                  "ml-2 flex cursor-pointer items-center gap-1 rounded px-2 py-0.5 text-[10px] font-medium transition-colors",
+                  "bg-[var(--color-pending)]/20 text-[var(--color-pending)]",
+                  "hover:bg-[var(--color-pending)]/30"
+                )}
+              >
+                <Layers size={10} />
+                Background
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              Send to background — process continues but agent stops waiting
+            </TooltipContent>
+          </Tooltip>
         )}
       </ToolHeader>
 

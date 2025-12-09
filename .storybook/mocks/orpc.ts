@@ -197,7 +197,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           return backgroundProcesses.get(input.workspaceId) ?? [];
         },
         terminate: async () => ({ success: true, data: undefined }),
-        hasForeground: async () => false,
         sendToBackground: async () => ({ success: true, data: undefined }),
       },
     },

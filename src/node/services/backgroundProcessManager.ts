@@ -329,19 +329,6 @@ export class BackgroundProcessManager extends EventEmitter {
   }
 
   /**
-   * Check if a workspace has a foreground process running.
-   */
-  hasForegroundProcess(workspaceId: string): boolean {
-    // Check background-infrastructure processes
-    const hasBgProc = Array.from(this.processes.values()).some(
-      (p) => p.workspaceId === workspaceId && p.isForeground && p.status === "running"
-    );
-    // Check exec-based foreground processes
-    const hasFgProc = this.foregroundProcesses.has(workspaceId);
-    return hasBgProc || hasFgProc;
-  }
-
-  /**
    * Write/update meta.json for a process
    */
   private async updateMetaFile(proc: BackgroundProcess): Promise<void> {

@@ -20,10 +20,6 @@ function truncateScript(script: string, maxLength = 60): string {
 interface BackgroundProcessesBannerProps {
   processes: BackgroundProcessInfo[];
   onTerminate: (processId: string) => void;
-  /** Whether there's a foreground bash that can be sent to background */
-  hasForegroundBash?: boolean;
-  /** Callback to send foreground bash to background */
-  onSendToBackground?: () => void;
 }
 
 /**
@@ -38,7 +34,6 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
   // Filter to only running processes
   const runningProcesses = props.processes.filter((p) => p.status === "running");
   const count = runningProcesses.length;
-  const hasForeground = props.hasForegroundBash ?? false;
 
   // Update duration display every second when expanded
   useEffect(() => {
@@ -70,20 +65,10 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
     [onTerminate]
   );
 
-  // Don't render if no running processes and no foreground bash
-  if (count === 0 && !hasForeground) {
+  // Don't render if no running processes
+  if (count === 0) {
     return null;
   }
-
-  // Build summary text
-  const parts: string[] = [];
-  if (hasForeground) {
-    parts.push("1 pending");
-  }
-  if (count > 0) {
-    parts.push(`${count} background`);
-  }
-  const summaryText = parts.join(", ");
 
   return (
     <div className="relative mt-2 mb-1 px-[15px]" ref={panelRef}>
@@ -100,7 +85,7 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
         <span className="flex items-center gap-2">
           <Terminal size={14} className="text-[var(--color-text-tertiary)]" />
           <span>
-            {summaryText} bash{count + (hasForeground ? 1 : 0) !== 1 ? "es" : ""}
+            {count} background bash{count !== 1 ? "es" : ""}
           </span>
         </span>
         {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -116,40 +101,6 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
           )}
         >
           <div className="max-h-48 overflow-y-auto">
-            {/* Foreground bash (pending) - show first */}
-            {hasForeground && props.onSendToBackground && (
-              <div
-                className={cn(
-                  "flex items-center justify-between gap-3 px-3 py-2",
-                  "border-b border-[var(--color-border)]",
-                  "bg-[var(--color-pending)]/10"
-                )}
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="text-foreground text-xs font-medium">
-                    <span className="text-pending mr-2">●</span>
-                    Foreground bash running...
-                  </div>
-                  <div className="text-muted text-[10px]">Agent is waiting for completion</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    props.onSendToBackground?.();
-                  }}
-                  className={cn(
-                    "rounded px-2 py-1 text-[10px] font-medium transition-colors",
-                    "bg-[var(--color-bg-quaternary)] text-[var(--color-text-secondary)]",
-                    "hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text-primary)]"
-                  )}
-                >
-                  Send to Background
-                </button>
-              </div>
-            )}
-
-            {/* Background processes */}
             {runningProcesses.map((proc) => (
               <div
                 key={proc.id}

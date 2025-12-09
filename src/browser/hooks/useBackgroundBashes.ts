@@ -14,28 +14,20 @@ export function useBackgroundBashes(
   processes: BackgroundProcessInfo[];
   terminate: (processId: string) => Promise<void>;
   refresh: () => Promise<void>;
-  /** Whether there's a foreground bash process that can be sent to background */
-  hasForeground: boolean;
   /** Send the current foreground bash process to background */
   sendToBackground: () => Promise<void>;
 } {
   const [processes, setProcesses] = useState<BackgroundProcessInfo[]>([]);
-  const [hasForeground, setHasForeground] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!api || !workspaceId) {
       setProcesses([]);
-      setHasForeground(false);
       return;
     }
 
     try {
-      const [result, hasFg] = await Promise.all([
-        api.workspace.backgroundBashes.list({ workspaceId }),
-        api.workspace.backgroundBashes.hasForeground({ workspaceId }),
-      ]);
+      const result = await api.workspace.backgroundBashes.list({ workspaceId });
       setProcesses(result);
-      setHasForeground(hasFg);
     } catch {
       // Keep existing state on error - polling will retry
     }
@@ -79,7 +71,6 @@ export function useBackgroundBashes(
   useEffect(() => {
     if (!api || !workspaceId) {
       setProcesses([]);
-      setHasForeground(false);
       return;
     }
 
@@ -94,5 +85,5 @@ export function useBackgroundBashes(
     return () => clearInterval(interval);
   }, [api, workspaceId, pollingIntervalMs, refresh]);
 
-  return { processes, terminate, refresh, hasForeground, sendToBackground };
+  return { processes, terminate, refresh, sendToBackground };
 }

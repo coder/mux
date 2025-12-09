@@ -127,7 +127,6 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const {
     processes: backgroundBashes,
     terminate: terminateBackgroundBash,
-    hasForeground: hasForegroundBash,
     sendToBackground: sendBashToBackground,
   } = useBackgroundBashes(api, workspaceId);
   const backgroundBashError = usePopoverError();
@@ -144,6 +143,16 @@ const AIViewInner: React.FC<AIViewProps> = ({
       backgroundBashError.showError("send-to-background", error.message);
     });
   }, [sendBashToBackground, backgroundBashError]);
+
+  // Compute whether there's a foreground bash from messages (executing bash tool)
+  const hasForegroundBash =
+    workspaceState?.messages.some(
+      (m) =>
+        m.type === "tool" &&
+        m.toolName === "bash" &&
+        m.status === "executing" &&
+        !(m.args as { run_in_background?: boolean })?.run_in_background
+    ) ?? false;
   const { options } = useProviderOptions();
   const use1M = options.anthropic?.use1MContext ?? false;
   // Get pending model for auto-compaction settings (threshold is per-model)
@@ -337,13 +346,21 @@ const AIViewInner: React.FC<AIViewProps> = ({
   }, []);
 
   const handleMessageSent = useCallback(() => {
+    // Auto-background any running foreground bash when user sends a new message
+    // This prevents the user from waiting for the bash to complete before their message is processed
+    if (hasForegroundBash) {
+      sendBashToBackground().catch(() => {
+        // Ignore errors - the bash might have finished just before we tried to background it
+      });
+    }
+
     // Enable auto-scroll when user sends a message
     setAutoScroll(true);
 
     // Reset autoRetry when user sends a message
     // User action = clear intent: "I'm actively using this workspace"
     setAutoRetry(true);
-  }, [setAutoScroll, setAutoRetry]);
+  }, [setAutoScroll, setAutoRetry, hasForegroundBash, sendBashToBackground]);
 
   const handleClearHistory = useCallback(
     async (percentage = 1.0) => {
@@ -677,8 +694,6 @@ const AIViewInner: React.FC<AIViewProps> = ({
         <BackgroundProcessesBanner
           processes={backgroundBashes}
           onTerminate={handleTerminateBackgroundBash}
-          hasForegroundBash={hasForegroundBash}
-          onSendToBackground={handleSendBashToBackground}
         />
         <ReviewsBanner workspaceId={workspaceId} />
         <ChatInput

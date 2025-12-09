@@ -331,13 +331,6 @@ export const workspace = {
       output: ResultSchema(z.void(), z.string()),
     },
     /**
-     * Check if a workspace has a foreground bash process that can be sent to background.
-     */
-    hasForeground: {
-      input: z.object({ workspaceId: z.string() }),
-      output: z.boolean(),
-    },
-    /**
      * Send the current foreground bash process to background.
      * The process continues running but the agent stops waiting for it.
      */
