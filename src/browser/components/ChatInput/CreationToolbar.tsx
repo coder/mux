@@ -59,7 +59,7 @@ export function CreationToolbar(props: CreationToolbarProps) {
 
   return (
     <div
-      className="bg-dark border-border-medium inline-flex items-center gap-3 rounded-lg border px-4 py-2"
+      className="bg-dark border-border-medium inline-flex min-w-[320px] items-center justify-between gap-4 rounded-lg border px-5 py-2.5"
       data-component="CreationToolbar"
     >
       {/* Add file button */}
@@ -85,16 +85,20 @@ export function CreationToolbar(props: CreationToolbarProps) {
 
       {/* Model selector */}
       <Select value={props.model} onValueChange={props.onModelChange} disabled={props.disabled}>
-        <SelectTrigger className="text-muted hover:text-foreground h-auto gap-1.5 border-0 bg-transparent p-1 text-sm font-medium focus:ring-0">
-          <ProviderIcon provider={provider} className="h-6 w-6" />
+        <SelectTrigger className="text-muted hover:text-foreground h-auto gap-2 border-0 bg-transparent p-1 text-sm font-medium focus:ring-0">
+          <ProviderIcon provider={provider} className="h-5 w-5" />
           <span>{displayName}</span>
         </SelectTrigger>
         <SelectContent>
           {props.recentModels.map((m) => {
+            const mProvider = getProvider(m);
             const mDisplayName = formatModelDisplayName(getModelName(m));
             return (
               <SelectItem key={m} value={m} textValue={mDisplayName}>
-                {mDisplayName}
+                <span className="flex items-center gap-2">
+                  <ProviderIcon provider={mProvider} className="h-4 w-4" />
+                  {mDisplayName}
+                </span>
               </SelectItem>
             );
           })}
@@ -107,7 +111,7 @@ export function CreationToolbar(props: CreationToolbarProps) {
         onValueChange={(value) => props.onModeChange(value as UIMode)}
         disabled={props.disabled}
       >
-        <SelectTrigger className="text-muted hover:text-foreground h-auto gap-1 border-0 bg-transparent p-1 text-sm font-medium focus:ring-0">
+        <SelectTrigger className="text-muted hover:text-foreground h-auto gap-1 border-0 bg-transparent p-1 text-xs font-medium focus:ring-0">
           <span>{getModeDisplayName(props.mode)}</span>
         </SelectTrigger>
         <SelectContent>
