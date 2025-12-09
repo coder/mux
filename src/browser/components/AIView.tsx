@@ -7,6 +7,7 @@ import React, {
   useDeferredValue,
   useMemo,
 } from "react";
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { cn } from "@/common/lib/utils";
 import { MessageRenderer } from "./Messages/MessageRenderer";
 import { InterruptedBarrier } from "./Messages/ChatBarrier/InterruptedBarrier";
@@ -32,7 +33,6 @@ import { ModeProvider } from "@/browser/contexts/ModeContext";
 import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsContext";
 
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { readPersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useThinking } from "@/browser/contexts/ThinkingContext";
@@ -216,17 +216,20 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Vim mode state - needed for keybind selection (Ctrl+C in vim, Esc otherwise)
   const [vimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, { listener: true });
 
-  // Use auto-scroll hook for scroll management
-  const {
-    contentRef,
-    innerRef,
-    autoScroll,
-    setAutoScroll,
-    performAutoScroll,
-    jumpToBottom,
-    handleScroll,
-    markUserInteraction,
-  } = useAutoScroll();
+  // Virtuoso ref and auto-scroll state
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+
+  // Jump to bottom handler for Virtuoso
+  const jumpToBottom = useCallback(() => {
+    setAutoScroll(true);
+    virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "smooth" });
+  }, []);
+
+  // Handle Virtuoso's atBottomStateChange - updates autoScroll state
+  const handleAtBottomChange = useCallback((atBottom: boolean) => {
+    setAutoScroll(atBottom);
+  }, []);
 
   // ChatInput API for focus management
   const chatInputAPI = useRef<ChatInputAPI | null>(null);
@@ -288,22 +291,30 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
     // Otherwise, edit last user message
     const mergedMessages = mergeConsecutiveStreamErrors(workspaceState.messages);
-    const lastUserMessage = [...mergedMessages]
+    const lastUserMessageIndex = [...mergedMessages]
       .reverse()
-      .find((msg): msg is Extract<DisplayedMessage, { type: "user" }> => msg.type === "user");
+      .findIndex((msg): msg is Extract<DisplayedMessage, { type: "user" }> => msg.type === "user");
+    const lastUserMessage =
+      lastUserMessageIndex >= 0
+        ? (mergedMessages[mergedMessages.length - 1 - lastUserMessageIndex] as Extract<
+            DisplayedMessage,
+            { type: "user" }
+          >)
+        : undefined;
+
     if (lastUserMessage) {
       setEditingMessage({ id: lastUserMessage.historyId, content: lastUserMessage.content });
       setAutoScroll(false); // Show jump-to-bottom indicator
 
-      // Scroll to the message being edited
-      requestAnimationFrame(() => {
-        const element = contentRef.current?.querySelector(
-          `[data-message-id="${lastUserMessage.historyId}"]`
-        );
-        element?.scrollIntoView({ behavior: "smooth", block: "center" });
+      // Scroll to the message being edited using Virtuoso
+      const messageIndex = mergedMessages.length - 1 - lastUserMessageIndex;
+      virtuosoRef.current?.scrollToIndex({
+        index: messageIndex,
+        align: "center",
+        behavior: "smooth",
       });
     }
-  }, [workspaceState, contentRef, setAutoScroll, handleEditQueuedMessage]);
+  }, [workspaceState, handleEditQueuedMessage]);
 
   const handleCancelEdit = useCallback(() => {
     setEditingMessage(undefined);
@@ -345,28 +356,17 @@ const AIViewInner: React.FC<AIViewProps> = ({
     openTerminal(workspaceId, runtimeConfig);
   }, [workspaceId, openTerminal, runtimeConfig]);
 
-  // Auto-scroll when messages or todos update (during streaming)
-  useEffect(() => {
-    if (workspaceState && autoScroll) {
-      performAutoScroll();
-    }
-  }, [
-    workspaceState?.messages,
-    workspaceState?.todos,
-    autoScroll,
-    performAutoScroll,
-    workspaceState,
-  ]);
-
-  // Scroll to bottom when workspace loads or changes
-  // useLayoutEffect ensures scroll happens synchronously after DOM mutations
-  // but before browser paint - critical for Chromatic snapshot consistency
+  // Scroll to bottom when workspace changes (initial load)
+  // Virtuoso's followOutput handles streaming updates automatically
   useLayoutEffect(() => {
     if (workspaceState && !workspaceState.loading && workspaceState.messages.length > 0) {
-      jumpToBottom();
+      // Use setTimeout to ensure Virtuoso has finished initializing
+      const timer = setTimeout(() => {
+        virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "auto" });
+      }, 0);
+      return () => clearTimeout(timer);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId, workspaceState?.loading]);
+  }, [workspaceId, workspaceState?.loading, workspaceState?.messages.length, workspaceState]);
 
   // Compute showRetryBarrier once for both keybinds and UI
   // Track if last message was interrupted or errored (for RetryBarrier)
@@ -499,24 +499,14 @@ const AIViewInner: React.FC<AIViewProps> = ({
         />
 
         <div className="relative flex-1 overflow-hidden">
-          <div
-            ref={contentRef}
-            onWheel={markUserInteraction}
-            onTouchMove={markUserInteraction}
-            onScroll={handleScroll}
-            role="log"
-            aria-live={canInterrupt ? "polite" : "off"}
-            aria-busy={canInterrupt}
-            aria-label="Conversation transcript"
-            tabIndex={0}
-            data-testid="message-window"
-            className="h-full overflow-y-auto p-[15px] leading-[1.5] break-words whitespace-pre-wrap"
-          >
+          {deferredMessages.length === 0 ? (
             <div
-              ref={innerRef}
-              className={cn("max-w-4xl mx-auto", deferredMessages.length === 0 && "h-full")}
+              role="log"
+              aria-label="Conversation transcript"
+              data-testid="message-window"
+              className="h-full p-[15px] leading-[1.5] break-words whitespace-pre-wrap"
             >
-              {deferredMessages.length === 0 ? (
+              <div className="mx-auto h-full max-w-4xl">
                 <div className="text-placeholder flex h-full flex-1 flex-col items-center justify-center text-center [&_h3]:m-0 [&_h3]:mb-2.5 [&_h3]:text-base [&_h3]:font-medium [&_p]:m-0 [&_p]:text-[13px]">
                   <h3>No Messages Yet</h3>
                   <p>Send a message below to begin</p>
@@ -530,87 +520,111 @@ const AIViewInner: React.FC<AIViewProps> = ({
                     (e.g., install dependencies, build) when creating new workspaces
                   </p>
                 </div>
-              ) : (
-                <>
-                  {deferredMessages.map((msg) => {
-                    const isAtCutoff =
-                      editCutoffHistoryId !== undefined &&
-                      msg.type !== "history-hidden" &&
-                      msg.type !== "workspace-init" &&
-                      msg.historyId === editCutoffHistoryId;
-
-                    return (
-                      <React.Fragment key={msg.id}>
-                        <div
-                          data-testid="chat-message"
-                          data-message-id={
-                            msg.type !== "history-hidden" && msg.type !== "workspace-init"
-                              ? msg.historyId
-                              : undefined
-                          }
-                        >
-                          <MessageRenderer
-                            message={msg}
-                            onEditUserMessage={handleEditUserMessage}
-                            workspaceId={workspaceId}
-                            isCompacting={isCompacting}
-                            onReviewNote={handleReviewNote}
-                          />
-                        </div>
-                        {isAtCutoff && (
-                          <div className="edit-cutoff-divider text-edit-mode bg-edit-mode/10 my-5 px-[15px] py-3 text-center text-xs font-medium">
-                            ⚠️ Messages below this line will be removed when you submit the edit
-                          </div>
-                        )}
-                        {shouldShowInterruptedBarrier(msg) && <InterruptedBarrier />}
-                      </React.Fragment>
-                    );
-                  })}
-                  {/* Show RetryBarrier after the last message if needed */}
-                  {showRetryBarrier && <RetryBarrier workspaceId={workspaceId} />}
-                </>
-              )}
-              <PinnedTodoList workspaceId={workspaceId} />
-              {canInterrupt && (
-                <StreamingBarrier
-                  statusText={
-                    isCompacting
-                      ? currentModel
-                        ? `${getModelName(currentModel)} compacting...`
-                        : "compacting..."
-                      : currentModel
-                        ? `${getModelName(currentModel)} streaming...`
-                        : "streaming..."
-                  }
-                  cancelText={`hit ${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} to cancel`}
-                  tokenCount={
-                    activeStreamMessageId
-                      ? aggregator?.getStreamingTokenCount(activeStreamMessageId)
-                      : undefined
-                  }
-                  tps={
-                    activeStreamMessageId
-                      ? aggregator?.getStreamingTPS(activeStreamMessageId)
-                      : undefined
-                  }
-                />
-              )}
-              {workspaceState?.queuedMessage && (
-                <QueuedMessage
-                  message={workspaceState.queuedMessage}
-                  onEdit={() => void handleEditQueuedMessage()}
-                  onSendImmediately={
-                    workspaceState.canInterrupt ? handleSendQueuedImmediately : undefined
-                  }
-                />
-              )}
-              <ConcurrentLocalWarning
-                workspaceId={workspaceId}
-                projectPath={projectPath}
-                runtimeConfig={runtimeConfig}
-              />
+              </div>
             </div>
-          </div>
+          ) : (
+            <Virtuoso
+              ref={virtuosoRef}
+              data={deferredMessages}
+              role="log"
+              aria-live={canInterrupt ? "polite" : "off"}
+              aria-busy={canInterrupt}
+              aria-label="Conversation transcript"
+              tabIndex={0}
+              data-testid="message-window"
+              className="h-full leading-[1.5] break-words whitespace-pre-wrap"
+              style={{ height: "100%" }}
+              // followOutput automatically scrolls to bottom when new items arrive
+              // Only scroll if we're already at the bottom (autoScroll is true)
+              followOutput={(isAtBottom) => (isAtBottom ? "smooth" : false)}
+              // Update autoScroll state when user scrolls
+              atBottomStateChange={handleAtBottomChange}
+              // Threshold for "at bottom" detection (pixels from bottom)
+              atBottomThreshold={100}
+              // Render each message item
+              itemContent={(index, msg) => {
+                const isAtCutoff =
+                  editCutoffHistoryId !== undefined &&
+                  msg.type !== "history-hidden" &&
+                  msg.type !== "workspace-init" &&
+                  msg.historyId === editCutoffHistoryId;
+
+                return (
+                  <div className="mx-auto max-w-4xl px-[15px]">
+                    <div
+                      data-testid="chat-message"
+                      data-message-id={
+                        msg.type !== "history-hidden" && msg.type !== "workspace-init"
+                          ? msg.historyId
+                          : undefined
+                      }
+                    >
+                      <MessageRenderer
+                        message={msg}
+                        onEditUserMessage={handleEditUserMessage}
+                        workspaceId={workspaceId}
+                        isCompacting={isCompacting}
+                        onReviewNote={handleReviewNote}
+                      />
+                    </div>
+                    {isAtCutoff && (
+                      <div className="edit-cutoff-divider text-edit-mode bg-edit-mode/10 my-5 px-[15px] py-3 text-center text-xs font-medium">
+                        ⚠️ Messages below this line will be removed when you submit the edit
+                      </div>
+                    )}
+                    {shouldShowInterruptedBarrier(msg) && <InterruptedBarrier />}
+                  </div>
+                );
+              }}
+              // Footer renders after all messages - contains barriers and other UI
+              components={{
+                Footer: () => (
+                  <div className="mx-auto max-w-4xl px-[15px] pb-[15px]">
+                    {showRetryBarrier && <RetryBarrier workspaceId={workspaceId} />}
+                    <PinnedTodoList workspaceId={workspaceId} />
+                    {canInterrupt && (
+                      <StreamingBarrier
+                        statusText={
+                          isCompacting
+                            ? currentModel
+                              ? `${getModelName(currentModel)} compacting...`
+                              : "compacting..."
+                            : currentModel
+                              ? `${getModelName(currentModel)} streaming...`
+                              : "streaming..."
+                        }
+                        cancelText={`hit ${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} to cancel`}
+                        tokenCount={
+                          activeStreamMessageId
+                            ? aggregator?.getStreamingTokenCount(activeStreamMessageId)
+                            : undefined
+                        }
+                        tps={
+                          activeStreamMessageId
+                            ? aggregator?.getStreamingTPS(activeStreamMessageId)
+                            : undefined
+                        }
+                      />
+                    )}
+                    {workspaceState?.queuedMessage && (
+                      <QueuedMessage
+                        message={workspaceState.queuedMessage}
+                        onEdit={() => void handleEditQueuedMessage()}
+                        onSendImmediately={
+                          workspaceState.canInterrupt ? handleSendQueuedImmediately : undefined
+                        }
+                      />
+                    )}
+                    <ConcurrentLocalWarning
+                      workspaceId={workspaceId}
+                      projectPath={projectPath}
+                      runtimeConfig={runtimeConfig}
+                    />
+                  </div>
+                ),
+              }}
+            />
+          )}
           {!autoScroll && (
             <button
               onClick={jumpToBottom}

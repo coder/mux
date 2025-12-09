@@ -97,6 +97,7 @@
     "openai": "^6.9.1",
     "parse-duration": "^2.1.4",
     "posthog-node": "^5.17.0",
+    "react-virtuoso": "^4.17.0",
     "rehype-harden": "^1.1.5",
     "shescape": "^2.1.6",
     "source-map-support": "^0.5.21",
