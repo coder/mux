@@ -229,6 +229,17 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
 
       // Handle explicit background execution (run_in_background=true)
       if (run_in_background) {
+        // Background processes require Unix features (nohup, process groups, etc.)
+        if (process.platform === "win32") {
+          return {
+            success: false,
+            error:
+              "Background processes are not supported on Windows. Use foreground execution instead.",
+            exitCode: -1,
+            wall_duration_ms: 0,
+          };
+        }
+
         if (!config.workspaceId || !config.backgroundProcessManager || !config.runtime) {
           return {
             success: false,

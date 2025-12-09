@@ -17,7 +17,10 @@ function createTestRuntime(): Runtime {
   return new LocalRuntime(process.cwd());
 }
 
-describe("bash_output tool", () => {
+// Background process tests require Unix features (nohup, process groups, etc.)
+const isWindows = process.platform === "win32";
+
+describe.skipIf(isWindows)("bash_output tool", () => {
   it("should return error when manager not available", async () => {
     const tempDir = new TestTempDir("test-bash-output");
     const config = createTestToolConfig(process.cwd());
