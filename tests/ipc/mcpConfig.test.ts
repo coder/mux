@@ -276,7 +276,7 @@ describeIntegration("MCP server integration with model", () => {
         const result = await sendMessageWithModel(
           env,
           workspaceId,
-          "Navigate to https://example.com and take a screenshot in JPEG format (use format: \"jpeg\"). Describe what you see in the screenshot.",
+          'Navigate to https://example.com and take a screenshot in JPEG format (use format: "jpeg"). Describe what you see in the screenshot.',
           HAIKU_MODEL
         );
         console.log("[MCP JPEG Image Test] Message sent, result:", result.success);
@@ -302,7 +302,9 @@ describeIntegration("MCP server integration with model", () => {
         const screenshotResult = toolCallEnds.find((e) => e.toolName === "chrome_take_screenshot");
         expect(screenshotResult).toBeDefined();
 
-        const result_output = screenshotResult!.result as { type: string; value: unknown[] } | unknown;
+        const result_output = screenshotResult!.result as
+          | { type: string; value: unknown[] }
+          | unknown;
 
         if (
           typeof result_output === "object" &&
