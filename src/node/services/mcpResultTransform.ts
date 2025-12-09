@@ -1,12 +1,14 @@
 import { log } from "@/node/services/log";
 
 /**
- * Maximum size of base64 image data in bytes before truncation.
- * Large images can overflow the model's context window. 256KB of base64
- * represents roughly 192KB of actual image data, which is sufficient for
- * screenshots while preventing context overflow.
+ * Maximum size of base64 image data in bytes before we drop it.
+ *
+ * Rationale: providers already accept multi‑megabyte images, but a single
+ * 20–30MB screenshot can still blow up request sizes or hit provider limits
+ * (e.g., Anthropic ~32MB total request). We keep a generous per‑image guard to
+ * pass normal screenshots while preventing pathological payloads.
  */
-export const MAX_IMAGE_DATA_BYTES = 256 * 1024; // 256KB of base64 data
+export const MAX_IMAGE_DATA_BYTES = 8 * 1024 * 1024; // 8MB guard per image
 
 /**
  * MCP CallToolResult content types (from @ai-sdk/mcp)
@@ -92,14 +94,14 @@ export function transformMCPResult(result: MCPCallToolResult): unknown {
       // Check if image data exceeds the limit
       const dataLength = imageItem.data?.length ?? 0;
       if (dataLength > MAX_IMAGE_DATA_BYTES) {
-        log.warn("[MCP] Image data too large, truncating", {
+        log.warn("[MCP] Image data too large, omitting from context", {
           mimeType: imageItem.mimeType,
           dataLength,
           maxAllowed: MAX_IMAGE_DATA_BYTES,
         });
         return {
           type: "text" as const,
-          text: `[Image data too large to include in context: ${formatBytes(dataLength)} (${dataLength} bytes). The image was captured but cannot be displayed inline. Consider using a smaller viewport or requesting a specific region.]`,
+          text: `[Image omitted: ${formatBytes(dataLength)} exceeds per-image guard of ${formatBytes(MAX_IMAGE_DATA_BYTES)}. Reduce resolution or quality and retry.]`,
         };
       }
       // Ensure mediaType is present - default to image/png if missing

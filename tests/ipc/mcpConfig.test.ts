@@ -186,22 +186,49 @@ describeIntegration("MCP server integration with model", () => {
               (item as { type: string }).type === "media"
           );
 
+          const textItems = typedResult.value.filter(
+            (item): item is { type: "text"; text: string } =>
+              typeof item === "object" &&
+              item !== null &&
+              "type" in item &&
+              (item as { type: string }).type === "text"
+          );
+
+          const hasOmittedImageText = textItems.some((t) => t.text.includes("Image omitted"));
+
+          expect(hasOmittedImageText).toBe(false);
           expect(mediaItems.length).toBeGreaterThan(0);
-          // Verify mediaType is present and is a valid image type
+
+          // Ensure no text part contains a data URI or a large base64 blob
+          const longBase64Pattern = /[A-Za-z0-9+/]{10000,}/;
+          textItems.forEach((t) => {
+            expect(t.text.startsWith("data:image")).toBe(false);
+            expect(longBase64Pattern.test(t.text)).toBe(false);
+          });
+
+          // Verify media format and size
           for (const media of mediaItems) {
             expect(media.mediaType).toBeDefined();
             expect(media.mediaType).toMatch(/^image\//);
             expect(media.data).toBeDefined();
-            expect(media.data.length).toBeGreaterThan(100); // Should have actual image data
+            expect(media.data.length).toBeGreaterThan(1000); // Should have actual image data
           }
+
+          // Log which path we took for debugging
+          console.log("[MCP Image Test] Result:", {
+            mediaCount: mediaItems.length,
+            textCount: textItems.length,
+          });
         }
 
-        // Verify model's response mentions seeing something (proves it understood the image)
+        // Verify model's response - should describe the screenshot content
         const deltas = collector.getDeltas();
         const responseText = extractTextFromEvents(deltas).toLowerCase();
         console.log("[MCP Image Test] Response text preview:", responseText.slice(0, 200));
-        // Model should describe something it sees - domain name, content, or visual elements
-        expect(responseText).toMatch(/example|domain|website|page|text|heading|title/i);
+        const expectedKeywords = ["example domain"];
+        const matchedKeyword = expectedKeywords.some((k) => responseText.includes(k));
+        expect(matchedKeyword).toBe(true);
+        expect(responseText.length).toBeGreaterThan(20); // Model should say something non-trivial
 
         collector.stop();
       } finally {
@@ -210,7 +237,139 @@ describeIntegration("MCP server integration with model", () => {
         console.log("[MCP Image Test] Done");
       }
     },
-    180000 // 3 minutes - Chrome operations can be slow
+    180000
+  );
+
+  test.concurrent(
+    "MCP JPEG image content is correctly transformed to AI SDK format",
+    async () => {
+      console.log("[MCP JPEG Image Test] Setting up workspace...");
+      // Setup workspace with Anthropic provider
+      const { env, workspaceId, tempGitRepo, cleanup } = await setupWorkspace(
+        "anthropic",
+        "mcp-chrome-jpeg"
+      );
+      const client = resolveOrpcClient(env);
+      console.log("[MCP JPEG Image Test] Workspace created:", { workspaceId, tempGitRepo });
+
+      try {
+        // Add the Chrome DevTools MCP server to the project with same settings
+        console.log("[MCP JPEG Image Test] Adding Chrome DevTools MCP server...");
+        const addResult = await client.projects.mcp.add({
+          projectPath: tempGitRepo,
+          name: "chrome",
+          command:
+            "npx -y chrome-devtools-mcp@latest --headless --isolated --chromeArg='--no-sandbox'",
+        });
+        expect(addResult.success).toBe(true);
+        console.log("[MCP JPEG Image Test] MCP server added");
+
+        // Create stream collector to capture events
+        console.log("[MCP JPEG Image Test] Creating stream collector...");
+        const collector = createStreamCollector(env.orpc, workspaceId);
+        collector.start();
+        await collector.waitForSubscription();
+        console.log("[MCP JPEG Image Test] Stream collector ready");
+
+        // Send a message that should trigger JPEG screenshot
+        console.log("[MCP JPEG Image Test] Sending message...");
+        const result = await sendMessageWithModel(
+          env,
+          workspaceId,
+          "Navigate to https://example.com and take a screenshot in JPEG format (use format: \"jpeg\"). Describe what you see in the screenshot.",
+          HAIKU_MODEL
+        );
+        console.log("[MCP JPEG Image Test] Message sent, result:", result.success);
+
+        expect(result.success).toBe(true);
+
+        // Wait for stream to complete (Chrome may take time)
+        console.log("[MCP JPEG Image Test] Waiting for stream-end...");
+        await collector.waitForEvent("stream-end", 120000);
+        console.log("[MCP JPEG Image Test] Stream ended");
+        assertStreamSuccess(collector);
+
+        // Find the screenshot tool call and its result
+        const events = collector.getEvents();
+        const toolCallEnds = events.filter(
+          (e): e is Extract<typeof e, { type: "tool-call-end" }> => e.type === "tool-call-end"
+        );
+        console.log(
+          "[MCP JPEG Image Test] Tool call ends:",
+          toolCallEnds.map((e) => ({ toolName: e.toolName, resultType: typeof e.result }))
+        );
+
+        const screenshotResult = toolCallEnds.find((e) => e.toolName === "chrome_take_screenshot");
+        expect(screenshotResult).toBeDefined();
+
+        const result_output = screenshotResult!.result as { type: string; value: unknown[] } | unknown;
+
+        if (
+          typeof result_output === "object" &&
+          result_output !== null &&
+          "value" in result_output
+        ) {
+          const value = (result_output as { value: unknown[] }).value;
+          const mediaItems = value.filter(
+            (item): item is { type: "media"; data: string; mediaType: string } =>
+              typeof item === "object" &&
+              item !== null &&
+              "type" in item &&
+              (item as { type: string }).type === "media"
+          );
+
+          const textItems = value.filter(
+            (item): item is { type: "text"; text: string } =>
+              typeof item === "object" &&
+              item !== null &&
+              "type" in item &&
+              (item as { type: string }).type === "text"
+          );
+
+          const hasOmittedImageText = textItems.some((t) => t.text.includes("Image omitted"));
+          expect(hasOmittedImageText).toBe(false);
+          expect(mediaItems.length).toBeGreaterThan(0);
+
+          // Ensure no text part contains a data URI or a large base64 blob
+          const longBase64Pattern = /[A-Za-z0-9+/]{10000,}/;
+          textItems.forEach((t) => {
+            expect(t.text.startsWith("data:image")).toBe(false);
+            expect(longBase64Pattern.test(t.text)).toBe(false);
+          });
+
+          for (const media of mediaItems) {
+            expect(media.mediaType).toBeDefined();
+            expect(media.mediaType).toMatch(/^image\//);
+            // Prefer JPEG, but allow WebP if the server re-encodes; still verify presence
+            expect(["image/jpeg", "image/jpg", "image/webp"]).toContain(media.mediaType);
+            expect(media.data).toBeDefined();
+            expect(media.data.length).toBeGreaterThan(1000);
+          }
+
+          console.log("[MCP JPEG Image Test] Result:", {
+            mediaCount: mediaItems.length,
+            textCount: textItems.length,
+            mediaTypes: mediaItems.map((m) => m.mediaType),
+          });
+        }
+
+        // Verify model response is non-trivial and reflects the screenshot
+        const deltas = collector.getDeltas();
+        const responseText = extractTextFromEvents(deltas).toLowerCase();
+        console.log("[MCP JPEG Image Test] Response text preview:", responseText.slice(0, 200));
+        const expectedKeywords = ["example domain"];
+        const matchedKeyword = expectedKeywords.some((k) => responseText.includes(k));
+        expect(matchedKeyword).toBe(true);
+        expect(responseText.length).toBeGreaterThan(20);
+
+        collector.stop();
+      } finally {
+        console.log("[MCP JPEG Image Test] Cleaning up...");
+        await cleanup();
+        console.log("[MCP JPEG Image Test] Done");
+      }
+    },
+    180000
   );
 
   test.concurrent(

@@ -21,10 +21,10 @@ describe("transformMCPResult", () => {
       });
     });
 
-    it("should truncate large image data to prevent context overflow", () => {
-      // Create a large base64 string that simulates a big screenshot
-      // A typical screenshot could be 500KB-2MB of base64 data
-      const largeImageData = "x".repeat(MAX_IMAGE_DATA_BYTES + 100_000);
+    it("should omit large image data to prevent context overflow", () => {
+      // Create a large base64 string that simulates a screenshot
+      // Even 50KB of base64 would be ~12,500 tokens when treated as text
+      const largeImageData = "x".repeat(MAX_IMAGE_DATA_BYTES + 10_000);
       const result = transformMCPResult({
         content: [
           { type: "text", text: "Screenshot taken" },
@@ -41,16 +41,16 @@ describe("transformMCPResult", () => {
       expect(transformed.value).toHaveLength(2);
       expect(transformed.value[0]).toEqual({ type: "text", text: "Screenshot taken" });
 
-      // The image should be replaced with a text message explaining the truncation
+      // The image should be replaced with a text message explaining why it was omitted
       const imageResult = transformed.value[1];
       expect(imageResult.type).toBe("text");
-      expect(imageResult.text).toContain("Image data too large");
-      expect(imageResult.text).toContain(String(largeImageData.length));
+      expect(imageResult.text).toContain("Image omitted");
+      expect(imageResult.text).toContain("per-image guard");
     });
 
-    it("should handle multiple images, truncating only the oversized ones", () => {
+    it("should handle multiple images, omitting only the oversized ones", () => {
       const smallImageData = "small".repeat(100);
-      const largeImageData = "x".repeat(MAX_IMAGE_DATA_BYTES + 50_000);
+      const largeImageData = "x".repeat(MAX_IMAGE_DATA_BYTES + 5_000);
 
       const result = transformMCPResult({
         content: [
@@ -71,14 +71,14 @@ describe("transformMCPResult", () => {
         data: smallImageData,
         mediaType: "image/png",
       });
-      // Large image gets truncated with explanation
+      // Large image gets omitted with explanation
       expect(transformed.value[1].type).toBe("text");
-      expect(transformed.value[1].text).toContain("Image data too large");
+      expect(transformed.value[1].text).toContain("Image omitted");
     });
 
-    it("should report approximate file size in KB/MB in truncation message", () => {
-      // ~1.5MB of base64 data
-      const largeImageData = "y".repeat(1_500_000);
+    it("should mention size and guard limit in omission message", () => {
+      // 100KB of base64 data should trigger the guard if limit is smaller, but we keep it big here
+      const largeImageData = "y".repeat(MAX_IMAGE_DATA_BYTES + 1_000);
       const result = transformMCPResult({
         content: [{ type: "image", data: largeImageData, mimeType: "image/png" }],
       });
@@ -89,8 +89,10 @@ describe("transformMCPResult", () => {
       };
 
       expect(transformed.value[0].type).toBe("text");
-      // Should mention MB since it's over 1MB
-      expect(transformed.value[0].text).toMatch(/\d+(\.\d+)?\s*MB/i);
+      // Should mention size and guard
+      expect(transformed.value[0].text).toMatch(/Image omitted/);
+      expect(transformed.value[0].text).toMatch(/per-image guard/i);
+      expect(transformed.value[0].text).toMatch(/MB|KB/);
     });
   });
 
