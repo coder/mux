@@ -358,13 +358,16 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
   // Scroll to bottom when workspace changes (initial load)
   // Virtuoso's followOutput handles streaming updates automatically
+  // Use a longer delay to ensure Virtuoso has measured all items
   useLayoutEffect(() => {
     if (workspaceState && !workspaceState.loading && workspaceState.messages.length > 0) {
-      // Use setTimeout to ensure Virtuoso has finished initializing
-      const timer = setTimeout(() => {
-        virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "auto" });
-      }, 0);
-      return () => clearTimeout(timer);
+      // Multiple attempts with increasing delays to handle dynamic content measurement
+      const timers = [0, 50, 150].map((delay) =>
+        setTimeout(() => {
+          virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "auto" });
+        }, delay)
+      );
+      return () => timers.forEach(clearTimeout);
     }
   }, [workspaceId, workspaceState?.loading, workspaceState?.messages.length, workspaceState]);
 
@@ -530,10 +533,12 @@ const AIViewInner: React.FC<AIViewProps> = ({
               aria-live={canInterrupt ? "polite" : "off"}
               aria-busy={canInterrupt}
               aria-label="Conversation transcript"
-              tabIndex={0}
+              tabIndex={-1}
               data-testid="message-window"
               className="h-full leading-[1.5] break-words whitespace-pre-wrap"
               style={{ height: "100%" }}
+              // Start at the bottom of the list
+              initialTopMostItemIndex={deferredMessages.length - 1}
               // followOutput automatically scrolls to bottom when new items arrive
               // Only scroll if we're already at the bottom (autoScroll is true)
               followOutput={(isAtBottom) => (isAtBottom ? "smooth" : false)}
