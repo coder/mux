@@ -7,7 +7,7 @@ import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
  */
 export function getPlanModeInstruction(planFilePath: string, planExists: boolean): string {
   const fileStatus = planExists
-    ? `A plan file already exists at ${planFilePath}. You can read it and make incremental edits using the file_edit_* tools.`
+    ? `A plan file already exists at ${planFilePath}. First, read it to determine if it's relevant to the current request. If the current request is unrelated to the existing plan, delete the file and start fresh. If relevant, make incremental edits using the file_edit_* tools.`
     : `No plan file exists yet. You should create your plan at ${planFilePath} using the file_edit_* tools.`;
 
   return `You are in Plan Mode. ${fileStatus}
