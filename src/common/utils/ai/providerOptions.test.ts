@@ -4,7 +4,6 @@
 
 import { describe, test, expect, mock } from "bun:test";
 import { buildProviderOptions } from "./providerOptions";
-import type { ThinkingLevel } from "@/common/types/thinking";
 
 // Mock the log module to avoid console noise
 void mock.module("@/node/services/log", () => ({
@@ -14,11 +13,6 @@ void mock.module("@/node/services/log", () => ({
     warn: (): void => undefined,
     error: (): void => undefined,
   },
-}));
-
-// Mock enforceThinkingPolicy to pass through
-void mock.module("@/browser/utils/thinking/policy", () => ({
-  enforceThinkingPolicy: (_model: string, level: ThinkingLevel) => level,
 }));
 
 describe("buildProviderOptions - Anthropic", () => {
