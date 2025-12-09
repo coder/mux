@@ -37,6 +37,7 @@ local.properties
 .cxx/
 
 # node.js
+.log/*
 node_modules/
 npm-debug.log
 yarn-error.log
