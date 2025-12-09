@@ -421,6 +421,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
         status: "running" | "exited" | "killed" | "failed";
         output: string;
         exitCode?: number;
+        elapsed_ms: number;
       }
     | { success: false; error: string }
   > {
@@ -507,6 +508,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
         currentStatus !== "running"
           ? ((await this.getProcess(processId))?.exitCode ?? undefined)
           : undefined,
+      elapsed_ms: Date.now() - startTime,
     };
   }
 

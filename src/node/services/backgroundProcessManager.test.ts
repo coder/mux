@@ -451,6 +451,25 @@ describe("BackgroundProcessManager", () => {
       expect(output.output).toContain("error message");
     });
 
+    it("should include elapsed_ms in response", async () => {
+      const result = await manager.spawn(runtime, testWorkspaceId, "sleep 0.2; echo done", {
+        cwd: process.cwd(),
+        displayName: "test",
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Wait with timeout to ensure blocking
+      const output = await manager.getOutput(result.processId, undefined, 1);
+      expect(output.success).toBe(true);
+      if (!output.success) return;
+
+      // elapsed_ms should be present and reflect the wait time
+      expect(typeof output.elapsed_ms).toBe("number");
+      expect(output.elapsed_ms).toBeGreaterThanOrEqual(0);
+    });
+
     it("should return error for non-existent process", async () => {
       const output = await manager.getOutput("bash_nonexistent");
       expect(output.success).toBe(false);

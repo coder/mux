@@ -239,6 +239,8 @@ export type BashOutputToolResult =
       output: string;
       exitCode?: number;
       note?: string; // Agent-only message (not displayed in UI)
+      // Time spent waiting for output (helps agent detect/avoid busy loops)
+      elapsed_ms: number;
     }
   | { success: false; error: string };
 
