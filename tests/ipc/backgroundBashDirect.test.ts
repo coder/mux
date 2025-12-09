@@ -146,11 +146,12 @@ describe("Background Bash Direct Integration", () => {
     // local and SSH runtimes, not direct local fs access
     const manager = getBackgroundProcessManager(env);
     const runtime = new LocalRuntime(workspacePath);
-    const marker = `HANDLE_READ_${Date.now()}`;
+    const testId = `handleread_${Date.now()}`;
+    const marker = `HANDLE_READ_${testId}`;
 
     const spawnResult = await manager.spawn(runtime, workspaceId, `echo "${marker}"`, {
       cwd: workspacePath,
-      displayName: "test",
+      displayName: testId,
     });
     expect(spawnResult.success).toBe(true);
     if (!spawnResult.success) return;
@@ -167,14 +168,15 @@ describe("Background Bash Direct Integration", () => {
   it("should support incremental reads", async () => {
     const manager = getBackgroundProcessManager(env);
     const runtime = new LocalRuntime(workspacePath);
-    const marker1 = `INCR_1_${Date.now()}`;
-    const marker2 = `INCR_2_${Date.now()}`;
+    const testId = `incrread_${Date.now()}`;
+    const marker1 = `INCR_1_${testId}`;
+    const marker2 = `INCR_2_${testId}`;
 
     const spawnResult = await manager.spawn(
       runtime,
       workspaceId,
       `echo "${marker1}"; sleep 1; echo "${marker2}"`,
-      { cwd: workspacePath, displayName: "test" }
+      { cwd: workspacePath, displayName: testId }
     );
     expect(spawnResult.success).toBe(true);
     if (!spawnResult.success) return;
@@ -296,10 +298,11 @@ describe("Background Bash Output Capture", () => {
     const runtime = new LocalRuntime(workspacePath);
 
     // Script that writes to stderr and exits with error
-    const marker = `ERROR_${Date.now()}`;
+    const testId = `stderrerr_${Date.now()}`;
+    const marker = `ERROR_${testId}`;
     const spawnResult = await manager.spawn(runtime, workspaceId, `echo "${marker}" >&2; exit 1`, {
       cwd: workspacePath,
-      displayName: "test",
+      displayName: testId,
     });
     expect(spawnResult.success).toBe(true);
     if (!spawnResult.success) return;
@@ -318,14 +321,15 @@ describe("Background Bash Output Capture", () => {
     const manager = getBackgroundProcessManager(env);
     const runtime = new LocalRuntime(workspacePath);
 
-    const marker1 = `BEFORE_${Date.now()}`;
-    const marker2 = `ERROR_${Date.now()}`;
+    const testId = `failmid_${Date.now()}`;
+    const marker1 = `BEFORE_${testId}`;
+    const marker2 = `ERROR_${testId}`;
     // Script that outputs to stdout, then stderr, then continues
     const spawnResult = await manager.spawn(
       runtime,
       workspaceId,
       `echo "${marker1}"; echo "${marker2}" >&2; false; echo "NEVER_SEEN"`,
-      { cwd: workspacePath, displayName: "test" }
+      { cwd: workspacePath, displayName: testId }
     );
     expect(spawnResult.success).toBe(true);
     if (!spawnResult.success) return;
@@ -345,13 +349,14 @@ describe("Background Bash Output Capture", () => {
     const manager = getBackgroundProcessManager(env);
     const runtime = new LocalRuntime(workspacePath);
 
-    const outMarker = `OUT_${Date.now()}`;
-    const errMarker = `ERR_${Date.now()}`;
+    const testId = `longrun_${Date.now()}`;
+    const outMarker = `OUT_${testId}`;
+    const errMarker = `ERR_${testId}`;
     const spawnResult = await manager.spawn(
       runtime,
       workspaceId,
       `for i in 1 2 3; do echo "${outMarker}_$i"; echo "${errMarker}_$i" >&2; done`,
-      { cwd: workspacePath, displayName: "test" }
+      { cwd: workspacePath, displayName: testId }
     );
     expect(spawnResult.success).toBe(true);
     if (!spawnResult.success) return;
