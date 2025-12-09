@@ -39,6 +39,8 @@ import type {
   WebFetchToolResult,
 } from "@/common/types/tools";
 import type { ReviewNoteData } from "@/common/types/review";
+import type { BashOutputGroupInfo } from "@/browser/utils/messages/messageUtils";
+import { BashOutputCollapsedIndicator } from "../tools/BashOutputCollapsedIndicator";
 
 interface ToolMessageProps {
   message: DisplayedMessage & { type: "tool" };
@@ -52,6 +54,8 @@ interface ToolMessageProps {
   foregroundBashToolCallIds?: Set<string>;
   /** Callback to send a foreground bash to background */
   onSendBashToBackground?: (toolCallId: string) => void;
+  /** Optional bash_output grouping info */
+  bashOutputGroup?: BashOutputGroupInfo;
 }
 
 // Type guards using Zod schemas for single source of truth
@@ -133,6 +137,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
   isLatestProposePlan,
   foregroundBashToolCallIds,
   onSendBashToBackground,
+  bashOutputGroup,
 }) => {
   // Route to specialized components based on tool name
   if (isBashTool(message.toolName, message.args)) {
@@ -284,12 +289,25 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
   }
 
   if (isBashOutputTool(message.toolName, message.args)) {
+    // Handle grouped bash_output calls - show collapsed indicator for middle position
+    if (bashOutputGroup?.position === "middle") {
+      return (
+        <div className={className}>
+          <BashOutputCollapsedIndicator
+            processId={message.args.process_id}
+            collapsedCount={bashOutputGroup.collapsedCount}
+          />
+        </div>
+      );
+    }
+
     return (
       <div className={className}>
         <BashOutputToolCall
           args={message.args}
           result={message.result as BashOutputToolResult | undefined}
           status={message.status}
+          groupPosition={bashOutputGroup?.position}
         />
       </div>
     );

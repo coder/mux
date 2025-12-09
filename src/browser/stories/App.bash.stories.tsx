@@ -348,3 +348,87 @@ export const Mixed: AppStory = {
     await expandAllBashTools(canvasElement);
   },
 };
+
+/**
+ * Story: Grouped Bash Output
+ * Demonstrates the collapsing of consecutive bash_output calls to the same process.
+ * Shows:
+ * - 5+ consecutive output calls collapsed to: first, squiggly indicator, last
+ * - Group position labels (start/end) on first and last items
+ * - Non-grouped bash_output calls for comparison
+ */
+export const GroupedOutput: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-grouped-output",
+          messages: [
+            // Background process started
+            createUserMessage("msg-1", "Start a dev server and monitor it", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 800000,
+            }),
+            createAssistantMessage("msg-2", "Starting dev server:", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 790000,
+              toolCalls: [
+                createBackgroundBashTool("call-1", "npm run dev", "bash_1", "Dev Server"),
+              ],
+            }),
+            // Multiple consecutive output checks (will be grouped)
+            createUserMessage("msg-3", "Keep checking the server output", {
+              historySequence: 3,
+              timestamp: STABLE_TIMESTAMP - 700000,
+            }),
+            createAssistantMessage("msg-4", "Monitoring server output:", {
+              historySequence: 4,
+              timestamp: STABLE_TIMESTAMP - 690000,
+              toolCalls: [
+                // These 5 consecutive calls will be collapsed to 3 items
+                createBashOutputTool("call-2", "bash_1", "Starting compilation...", "running"),
+                createBashOutputTool("call-3", "bash_1", "Compiling src/index.ts...", "running"),
+                createBashOutputTool("call-4", "bash_1", "Compiling src/utils.ts...", "running"),
+                createBashOutputTool("call-5", "bash_1", "Compiling src/components/...", "running"),
+                createBashOutputTool(
+                  "call-6",
+                  "bash_1",
+                  "  VITE v5.0.0  ready in 320 ms\n\n  ➜  Local:   http://localhost:5173/",
+                  "running"
+                ),
+              ],
+            }),
+            // Non-grouped output (only 2 consecutive calls - no grouping)
+            createUserMessage("msg-5", "Check both servers briefly", {
+              historySequence: 5,
+              timestamp: STABLE_TIMESTAMP - 500000,
+            }),
+            createAssistantMessage("msg-6", "Checking servers:", {
+              historySequence: 6,
+              timestamp: STABLE_TIMESTAMP - 490000,
+              toolCalls: [
+                // Only 2 calls - no grouping
+                createBashOutputTool("call-7", "bash_1", "Server healthy", "running"),
+                createBashOutputTool("call-8", "bash_1", "", "running"),
+              ],
+            }),
+            // Mixed: different process IDs (no grouping across processes)
+            createUserMessage("msg-7", "Check dev server and build process", {
+              historySequence: 7,
+              timestamp: STABLE_TIMESTAMP - 300000,
+            }),
+            createAssistantMessage("msg-8", "Status of both processes:", {
+              historySequence: 8,
+              timestamp: STABLE_TIMESTAMP - 290000,
+              toolCalls: [
+                createBashOutputTool("call-9", "bash_1", "Server running", "running"),
+                createBashOutputTool("call-10", "bash_2", "Build in progress", "running"),
+                createBashOutputTool("call-11", "bash_1", "New request received", "running"),
+              ],
+            }),
+          ],
+        })
+      }
+    />
+  ),
+};

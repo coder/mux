@@ -1,5 +1,5 @@
 import React from "react";
-import type { DisplayedMessage } from "@/common/types/message";
+import type { GroupedDisplayedMessage } from "@/browser/utils/messages/messageUtils";
 import type { ReviewNoteData } from "@/common/types/review";
 import { UserMessage } from "./UserMessage";
 import { AssistantMessage } from "./AssistantMessage";
@@ -12,7 +12,7 @@ import { ProposePlanToolCall } from "../tools/ProposePlanToolCall";
 import { removeEphemeralMessage } from "@/browser/stores/WorkspaceStore";
 
 interface MessageRendererProps {
-  message: DisplayedMessage;
+  message: GroupedDisplayedMessage;
   className?: string;
   onEditUserMessage?: (messageId: string, content: string) => void;
   onEditQueuedMessage?: () => void;
@@ -71,6 +71,7 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
             isLatestProposePlan={isLatestProposePlan}
             foregroundBashToolCallIds={foregroundBashToolCallIds}
             onSendBashToBackground={onSendBashToBackground}
+            bashOutputGroup={message.bashOutputGroup}
           />
         );
       case "reasoning":

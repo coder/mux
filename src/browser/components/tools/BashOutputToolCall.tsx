@@ -1,5 +1,5 @@
 import React from "react";
-import { Layers } from "lucide-react";
+import { Layers, Link } from "lucide-react";
 import type { BashOutputToolArgs, BashOutputToolResult } from "@/common/types/tools";
 import {
   ToolContainer,
@@ -23,6 +23,8 @@ interface BashOutputToolCallProps {
   args: BashOutputToolArgs;
   result?: BashOutputToolResult;
   status?: ToolStatus;
+  /** Position in a group of consecutive bash_output calls (undefined if not grouped) */
+  groupPosition?: "first" | "last";
 }
 
 /**
@@ -33,6 +35,7 @@ export const BashOutputToolCall: React.FC<BashOutputToolCallProps> = ({
   args,
   result,
   status = "pending",
+  groupPosition,
 }) => {
   const { expanded, toggleExpanded } = useToolExpansion();
 
@@ -50,6 +53,11 @@ export const BashOutputToolCall: React.FC<BashOutputToolCallProps> = ({
           output
           {args.timeout_secs > 0 && ` • wait ${args.timeout_secs}s`}
           {args.filter && ` • filter: ${args.filter}`}
+          {groupPosition && (
+            <span className="text-muted ml-1 flex items-center gap-0.5">
+              • <Link size={8} /> {groupPosition === "first" ? "start" : "end"}
+            </span>
+          )}
         </span>
         {result?.success && <OutputStatusBadge hasOutput={!!result.output} className="ml-2" />}
         {result?.success && processStatus && processStatus !== "running" && (

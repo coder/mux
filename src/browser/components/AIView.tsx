@@ -25,6 +25,7 @@ import { useResizableSidebar } from "@/browser/hooks/useResizableSidebar";
 import {
   shouldShowInterruptedBarrier,
   mergeConsecutiveStreamErrors,
+  groupConsecutiveBashOutput,
 } from "@/browser/utils/messages/messageUtils";
 import { hasInterruptedStream } from "@/browser/utils/messages/retryEligibility";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
@@ -176,20 +177,25 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Extract state from workspace state
   const { messages, canInterrupt, isCompacting, loading, currentModel } = workspaceState;
 
-  // Merge consecutive identical stream errors.
+  // Apply message transformations:
+  // 1. Merge consecutive identical stream errors
+  // 2. Group consecutive bash_output calls to same process
   // Use useDeferredValue to allow React to defer the heavy message list rendering
   // during rapid updates (streaming), keeping the UI responsive.
   // Must be defined before any early returns to satisfy React Hooks rules.
-  const mergedMessages = useMemo(() => mergeConsecutiveStreamErrors(messages), [messages]);
-  const deferredMergedMessages = useDeferredValue(mergedMessages);
+  const transformedMessages = useMemo(
+    () => groupConsecutiveBashOutput(mergeConsecutiveStreamErrors(messages)),
+    [messages]
+  );
+  const deferredTransformedMessages = useDeferredValue(transformedMessages);
 
   // CRITICAL: When message count changes (new message sent/received), show immediately.
   // Only defer content changes within existing messages (streaming deltas).
   // This ensures user messages appear instantly while keeping streaming performant.
   const deferredMessages =
-    mergedMessages.length !== deferredMergedMessages.length
-      ? mergedMessages
-      : deferredMergedMessages;
+    transformedMessages.length !== deferredTransformedMessages.length
+      ? transformedMessages
+      : deferredTransformedMessages;
 
   // Get active stream message ID for token counting
   const activeStreamMessageId = aggregator?.getActiveStreamMessageId();
@@ -309,8 +315,10 @@ const AIViewInner: React.FC<AIViewProps> = ({
     }
 
     // Otherwise, edit last user message
-    const mergedMessages = mergeConsecutiveStreamErrors(workspaceState.messages);
-    const lastUserMessage = [...mergedMessages]
+    const transformedMessages = groupConsecutiveBashOutput(
+      mergeConsecutiveStreamErrors(workspaceState.messages)
+    );
+    const lastUserMessage = [...transformedMessages]
       .reverse()
       .find((msg): msg is Extract<DisplayedMessage, { type: "user" }> => msg.type === "user");
     if (lastUserMessage) {
@@ -424,8 +432,10 @@ const AIViewInner: React.FC<AIViewProps> = ({
   useEffect(() => {
     if (!workspaceState || !editingMessage) return;
 
-    const mergedMessages = mergeConsecutiveStreamErrors(workspaceState.messages);
-    const editCutoffHistoryId = mergedMessages.find(
+    const transformedMessages = groupConsecutiveBashOutput(
+      mergeConsecutiveStreamErrors(workspaceState.messages)
+    );
+    const editCutoffHistoryId = transformedMessages.find(
       (msg): msg is Exclude<DisplayedMessage, { type: "history-hidden" | "workspace-init" }> =>
         msg.type !== "history-hidden" &&
         msg.type !== "workspace-init" &&
@@ -461,7 +471,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
   // When editing, find the cutoff point
   const editCutoffHistoryId = editingMessage
-    ? mergedMessages.find(
+    ? transformedMessages.find(
         (msg): msg is Exclude<DisplayedMessage, { type: "history-hidden" | "workspace-init" }> =>
           msg.type !== "history-hidden" &&
           msg.type !== "workspace-init" &&
@@ -472,8 +482,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Find the ID of the latest propose_plan tool call for external edit detection
   // Only the latest plan should fetch fresh content from disk
   let latestProposePlanId: string | null = null;
-  for (let i = mergedMessages.length - 1; i >= 0; i--) {
-    const msg = mergedMessages[i];
+  for (let i = transformedMessages.length - 1; i >= 0; i--) {
+    const msg = transformedMessages[i];
     if (msg.type === "tool" && msg.toolName === "propose_plan") {
       latestProposePlanId = msg.id;
       break;
