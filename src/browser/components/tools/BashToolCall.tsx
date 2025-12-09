@@ -69,6 +69,11 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   const isPending = status === "executing" || status === "pending";
   const isBackground = args.run_in_background ?? (result && "backgroundProcessId" in result);
 
+  // Override status for backgrounded processes: the aggregator sees success=true and marks "completed",
+  // but for a foreground→background migration we want to show "backgrounded"
+  const effectiveStatus: ToolStatus =
+    status === "completed" && result && "backgroundProcessId" in result ? "backgrounded" : status;
+
   return (
     <ToolContainer expanded={expanded}>
       <ToolHeader onClick={toggleExpanded}>
@@ -98,7 +103,9 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
             {result && <ExitCodeBadge exitCode={result.exitCode} className="ml-2" />}
           </>
         )}
-        <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
+        <StatusIndicator status={effectiveStatus}>
+          {getStatusDisplay(effectiveStatus)}
+        </StatusIndicator>
         {/* Show "Background" button when bash is executing and can be sent to background.
             Use invisible when executing but not yet confirmed as foreground to avoid layout flash. */}
         {status === "executing" && !isBackground && onSendToBackground && (

@@ -5,7 +5,13 @@ import { LoadingDots } from "./ToolPrimitives";
  * Shared utilities and hooks for tool components
  */
 
-export type ToolStatus = "pending" | "executing" | "completed" | "failed" | "interrupted";
+export type ToolStatus =
+  | "pending"
+  | "executing"
+  | "completed"
+  | "failed"
+  | "interrupted"
+  | "backgrounded";
 
 /**
  * Hook for managing tool expansion state
@@ -43,6 +49,12 @@ export function getStatusDisplay(status: ToolStatus): React.ReactNode {
       return (
         <>
           ⚠<span className="status-text"> interrupted</span>
+        </>
+      );
+    case "backgrounded":
+      return (
+        <>
+          ◎<span className="status-text"> backgrounded</span>
         </>
       );
     default:

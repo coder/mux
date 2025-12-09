@@ -70,6 +70,8 @@ const getStatusColor = (status: string) => {
       return "text-danger";
     case "interrupted":
       return "text-interrupted";
+    case "backgrounded":
+      return "text-backgrounded";
     default:
       return "text-foreground-secondary";
   }

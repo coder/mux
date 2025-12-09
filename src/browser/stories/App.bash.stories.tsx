@@ -10,12 +10,44 @@ import {
   createBashTool,
   createPendingTool,
   createBackgroundBashTool,
+  createMigratedBashTool,
   createBashOutputTool,
   createBashOutputErrorTool,
   createBashBackgroundListTool,
   createBashBackgroundTerminateTool,
 } from "./mockFactory";
 import { setupSimpleChatStory } from "./storyHelpers";
+import { userEvent, waitFor } from "@storybook/test";
+
+/**
+ * Helper to expand all bash tool calls in a story.
+ * Clicks on the ▶ expand icons to expand tool details.
+ */
+async function expandAllBashTools(canvasElement: HTMLElement) {
+  await waitFor(
+    async () => {
+      // Find all ▶ expand icons (they contain the triangle character)
+      // The icon parent div is clickable and triggers expansion
+      const allSpans = canvasElement.querySelectorAll("span");
+      const expandIcons = Array.from(allSpans).filter((span) => span.textContent?.trim() === "▶");
+      if (expandIcons.length === 0) {
+        throw new Error("No expand icons found");
+      }
+      for (const icon of expandIcons) {
+        // Click the parent element (the tool header row)
+        const header = icon.closest("[class*='cursor-pointer']");
+        if (header) {
+          await userEvent.click(header as HTMLElement);
+        }
+      }
+    },
+    { timeout: 5000 }
+  );
+
+  // Wait for any auto-focus timers, then blur
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  (document.activeElement as HTMLElement)?.blur();
+}
 
 export default {
   ...appMeta,
@@ -94,6 +126,9 @@ npm test 2>&1 | head -20`,
       }
     />
   ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await expandAllBashTools(canvasElement);
+  },
 };
 
 /**
@@ -235,6 +270,9 @@ export const BackgroundWorkflow: AppStory = {
       }
     />
   ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await expandAllBashTools(canvasElement);
+  },
 };
 
 /**
@@ -248,33 +286,52 @@ export const Mixed: AppStory = {
           messages: [
             createUserMessage("msg-1", "Run a quick command and a long one", {
               historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 200000,
+              timestamp: STABLE_TIMESTAMP - 300000,
             }),
             createAssistantMessage(
               "msg-2",
               "I'll run the quick one normally and the long one in background.",
               {
                 historySequence: 2,
-                timestamp: STABLE_TIMESTAMP - 190000,
+                timestamp: STABLE_TIMESTAMP - 290000,
                 toolCalls: [
                   // Foreground: quick command
                   createBashTool("call-1", "echo 'Hello World'", "Hello World", 0, 3, 12),
-                  // Background: long-running
+                  // Background: long-running (explicit run_in_background=true)
                   createBackgroundBashTool("call-2", "npm run build && npm run test", "bash_6"),
                 ],
               }
             ),
-            // Check background output (exited with error to show that state too)
-            createUserMessage("msg-3", "How did the build go?", {
+            // Migrated foreground→background (user clicked "Background" button)
+            createUserMessage("msg-3", "Run a long test suite", {
               historySequence: 3,
+              timestamp: STABLE_TIMESTAMP - 200000,
+            }),
+            createAssistantMessage("msg-4", "Running tests:", {
+              historySequence: 4,
+              timestamp: STABLE_TIMESTAMP - 190000,
+              toolCalls: [
+                // Shows "backgrounded" status (cyan) because it started as foreground
+                createMigratedBashTool(
+                  "call-3",
+                  "npm run test:integration",
+                  "test-suite",
+                  "Integration Tests",
+                  "Running integration tests...\nTest 1: PASS\nTest 2: PASS\nTest 3: Running..."
+                ),
+              ],
+            }),
+            // Check background output
+            createUserMessage("msg-5", "How did the build go?", {
+              historySequence: 5,
               timestamp: STABLE_TIMESTAMP - 100000,
             }),
-            createAssistantMessage("msg-4", "The build failed:", {
-              historySequence: 4,
+            createAssistantMessage("msg-6", "The build failed:", {
+              historySequence: 6,
               timestamp: STABLE_TIMESTAMP - 90000,
               toolCalls: [
                 createBashOutputTool(
-                  "call-3",
+                  "call-4",
                   "bash_6",
                   "FAIL src/utils.test.ts\n  ✕ should parse dates correctly (5 ms)\n\nTests: 1 failed, 1 total",
                   "exited",
@@ -287,4 +344,7 @@ export const Mixed: AppStory = {
       }
     />
   ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await expandAllBashTools(canvasElement);
+  },
 };

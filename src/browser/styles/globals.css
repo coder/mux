@@ -158,6 +158,7 @@
 
     /* Status */
     --color-interrupted: hsl(38 92% 50%);
+    --color-backgrounded: hsl(200 70% 55%); /* cyan-ish blue for backgrounded processes */
     --color-review-accent: hsl(48 70% 50%);
     --color-git-dirty: hsl(38 92% 50%);
     --color-error: hsl(0 70% 50%);
@@ -394,6 +395,7 @@
   --color-toggle-text-hover: hsl(210 20% 26%);
 
   --color-interrupted: hsl(38 92% 50%);
+  --color-backgrounded: hsl(200 70% 50%);
   --color-review-accent: hsl(48 70% 52%);
   --color-git-dirty: hsl(38 92% 50%);
   --color-error: hsl(0 68% 46%);
@@ -622,6 +624,7 @@
   --color-toggle-text-hover: #657b83;
 
   --color-interrupted: #cb4b16; /* orange */
+  --color-backgrounded: #2aa198; /* cyan - solarized cyan */
   --color-review-accent: #b58900; /* yellow */
   --color-git-dirty: #cb4b16;
   --color-error: #dc322f; /* red */
@@ -842,6 +845,7 @@
   --color-toggle-text-hover: #839496;
 
   --color-interrupted: #cb4b16; /* orange */
+  --color-backgrounded: #2aa198; /* cyan - solarized cyan */
   --color-review-accent: #b58900; /* yellow */
   --color-git-dirty: #cb4b16;
   --color-error: #dc322f; /* red */
