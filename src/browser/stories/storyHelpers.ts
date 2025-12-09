@@ -76,7 +76,7 @@ export function createReview(
   filePath: string,
   lineRange: string,
   note: string,
-  status: "pending" | "checked" = "pending"
+  status: "pending" | "attached" | "checked" = "pending"
 ): Review {
   return {
     id,

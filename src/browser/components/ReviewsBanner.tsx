@@ -414,9 +414,10 @@ const ReviewsBannerInner: React.FC<ReviewsBannerInnerProps> = ({ workspaceId }) 
                   <button
                     type="button"
                     onClick={reviewsHook.attachAllPending}
-                    className="text-muted text-[10px] transition-colors hover:text-[var(--color-review-accent)]"
+                    className="text-muted flex items-center gap-1 text-[10px] transition-colors hover:text-[var(--color-review-accent)]"
                   >
-                    Attach all to chat
+                    <Send className="size-3" />
+                    Attach all
                   </button>
                 )}
               </div>
