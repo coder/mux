@@ -19,8 +19,6 @@ export type ParsedCommand =
   | { type: "clear" }
   | { type: "truncate"; percentage: number }
   | { type: "compact"; maxOutputTokens?: number; continueMessage?: string; model?: string }
-  | { type: "telemetry-set"; enabled: boolean }
-  | { type: "telemetry-help" }
   | { type: "fork"; newName: string; startMessage?: string }
   | { type: "fork-help" }
   | {
@@ -31,6 +29,12 @@ export type ParsedCommand =
       startMessage?: string;
     }
   | { type: "vim-toggle" }
+  | { type: "mcp-add"; name: string; command: string }
+  | { type: "mcp-edit"; name: string; command: string }
+  | { type: "mcp-remove"; name: string }
+  | { type: "mcp-open" }
+  | { type: "plan-show" }
+  | { type: "plan-open" }
   | { type: "unknown-command"; command: string; subcommand?: string }
   | null;
 
@@ -72,6 +76,8 @@ export interface SlashSuggestion {
 
 export interface SlashSuggestionContext {
   providerNames?: string[];
+  /** Variant determines which commands are available */
+  variant?: "workspace" | "creation";
 }
 
 export interface SuggestionDefinition {

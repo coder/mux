@@ -19,7 +19,8 @@ const ChatMetaSidebarComponent: React.FC<ChatMetaSidebarProps> = ({ workspaceId,
   const use1M = options.anthropic?.use1MContext ?? false;
   const chatAreaSize = useResizeObserver(chatAreaRef);
 
-  const lastUsage = usage?.usageHistory[usage.usageHistory.length - 1];
+  // Use lastContextUsage for context window display (last step = actual context size)
+  const lastUsage = usage?.liveUsage ?? usage?.lastContextUsage;
 
   // Memoize vertical meter data calculation to prevent unnecessary re-renders
   const verticalMeterData = React.useMemo(() => {
@@ -60,7 +61,7 @@ const ChatMetaSidebarComponent: React.FC<ChatMetaSidebarProps> = ({ workspaceId,
   return (
     <div
       className={cn(
-        "bg-separator border-l border-border-light flex flex-col overflow-hidden transition-[width] duration-200 flex-shrink-0",
+        "bg-sidebar border-l border-border-light flex flex-col overflow-hidden transition-[width] duration-200 flex-shrink-0",
         showCollapsed ? "w-5 sticky right-0 z-10 shadow-[-2px_0_4px_rgba(0,0,0,0.2)]" : "w-80"
       )}
       role="complementary"

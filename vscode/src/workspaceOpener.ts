@@ -16,7 +16,8 @@ function isRemoteSshInstalled(): boolean {
  * Open an SSH workspace in a new VS Code window
  */
 export async function openWorkspace(workspace: WorkspaceWithContext) {
-  if (workspace.runtimeConfig.type === "local") {
+  // Handle local runtimes: "local", "worktree", or legacy "local" with srcBaseDir
+  if (workspace.runtimeConfig.type === "local" || workspace.runtimeConfig.type === "worktree") {
     const workspacePath = getWorkspacePath(workspace);
     const uri = vscode.Uri.file(workspacePath);
 
@@ -44,8 +45,10 @@ export async function openWorkspace(workspace: WorkspaceWithContext) {
     return;
   }
 
+  // At this point, it must be SSH (we handled local/worktree above)
   if (workspace.runtimeConfig.type !== "ssh") {
-    vscode.window.showErrorMessage("mux: Workspace is not configured for SSH.");
+    // This should never happen given the early return above
+    vscode.window.showErrorMessage("mux: Unknown workspace runtime type.");
     return;
   }
 

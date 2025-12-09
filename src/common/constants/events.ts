@@ -6,7 +6,7 @@
  */
 
 import type { ThinkingLevel } from "@/common/types/thinking";
-import type { ImagePart } from "../types/ipc";
+import type { ImagePart } from "@/common/orpc/schemas";
 
 export const CUSTOM_EVENTS = {
   /**
@@ -56,6 +56,12 @@ export const CUSTOM_EVENTS = {
    * Detail: { projectPath: string, startMessage?: string, model?: string, trunkBranch?: string, runtime?: string }
    */
   START_WORKSPACE_CREATION: "mux:startWorkspaceCreation",
+
+  /**
+   * Event to toggle voice input (dictation) mode
+   * No detail
+   */
+  TOGGLE_VOICE_INPUT: "mux:toggleVoiceInput",
 } as const;
 
 /**
@@ -94,6 +100,7 @@ export interface CustomEventPayloads {
     trunkBranch?: string;
     runtime?: string;
   };
+  [CUSTOM_EVENTS.TOGGLE_VOICE_INPUT]: never; // No payload
 }
 
 /**

@@ -7,13 +7,19 @@ import React, {
   forwardRef,
 } from "react";
 import { cn } from "@/common/lib/utils";
+import { Settings, Star } from "lucide-react";
+import { GatewayIcon } from "./icons/GatewayIcon";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
+import { useSettings } from "@/browser/contexts/SettingsContext";
+import { useGateway } from "@/browser/hooks/useGatewayModels";
 
 interface ModelSelectorProps {
   value: string;
   onChange: (value: string) => void;
   recentModels: string[];
-  onRemoveModel?: (model: string) => void;
   onComplete?: () => void;
+  defaultModel?: string | null;
+  onSetDefaultModel?: (model: string) => void;
 }
 
 export interface ModelSelectorRef {
@@ -21,7 +27,9 @@ export interface ModelSelectorRef {
 }
 
 export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
-  ({ value, onChange, recentModels, onRemoveModel, onComplete }, ref) => {
+  ({ value, onChange, recentModels, onComplete, defaultModel, onSetDefaultModel }, ref) => {
+    const { open: openSettings } = useSettings();
+    const gateway = useGateway();
     const [isEditing, setIsEditing] = useState(false);
     const [inputValue, setInputValue] = useState(value);
     const [error, setError] = useState<string | null>(null);
@@ -76,22 +84,14 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     ).sort();
 
     const handleSave = () => {
-      // If an item is highlighted, use that instead of inputValue
-      const valueToSave =
-        highlightedIndex >= 0 && highlightedIndex < filteredModels.length
-          ? filteredModels[highlightedIndex]
-          : inputValue.trim();
-
-      if (!valueToSave) {
-        setError("Model cannot be empty");
+      // No matches - do nothing, let user keep typing or cancel
+      if (filteredModels.length === 0) {
         return;
       }
 
-      // Basic validation: should have format "provider:model" or be an abbreviation
-      if (!valueToSave.includes(":") && valueToSave.length < 3) {
-        setError("Invalid model format");
-        return;
-      }
+      // Use highlighted item, or first item if none highlighted
+      const selectedIndex = highlightedIndex >= 0 ? highlightedIndex : 0;
+      const valueToSave = filteredModels[selectedIndex];
 
       onChange(valueToSave);
       setIsEditing(false);
@@ -106,9 +106,11 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
         handleCancel();
       } else if (e.key === "Enter") {
         e.preventDefault();
-        handleSave();
-        // Focus the main ChatInput after selecting a model
-        onComplete?.();
+        // Only call onComplete if save succeeded (had matches)
+        if (filteredModels.length > 0) {
+          handleSave();
+          onComplete?.();
+        }
       } else if (e.key === "Tab") {
         e.preventDefault();
         // Tab auto-completes the highlighted item without closing
@@ -152,22 +154,6 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       setShowDropdown(false);
     };
 
-    const handleRemoveModel = useCallback(
-      (model: string, event: React.MouseEvent<HTMLButtonElement>) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!onRemoveModel) {
-          return;
-        }
-        onRemoveModel(model);
-        setHighlightedIndex(-1);
-        if (inputValue === model) {
-          setInputValue("");
-        }
-      },
-      [inputValue, onRemoveModel]
-    );
-
     const handleClick = useCallback(() => {
       setIsEditing(true);
       setInputValue(""); // Clear input to show all models
@@ -178,6 +164,14 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       const currentIndex = sortedModels.indexOf(value);
       setHighlightedIndex(currentIndex);
     }, [recentModels, value]);
+
+    const handleSetDefault = (e: React.MouseEvent, model: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (defaultModel !== model && onSetDefaultModel) {
+        onSetDefaultModel(model);
+      }
+    };
 
     // Expose open method to parent via ref
     useImperativeHandle(
@@ -199,14 +193,36 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     }, [highlightedIndex]);
 
     if (!isEditing) {
+      const gatewayActive = gateway.isModelRoutingThroughGateway(value);
       return (
         <div ref={containerRef} className="relative flex items-center gap-1">
+          {gatewayActive && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <GatewayIcon className="text-accent h-3 w-3 shrink-0" active />
+              </TooltipTrigger>
+              <TooltipContent align="center">Using Mux Gateway</TooltipContent>
+            </Tooltip>
+          )}
           <div
             className="text-muted-light font-monospace dir-rtl hover:bg-hover max-w-36 cursor-pointer truncate rounded-sm px-1 py-0.5 text-left font-mono text-[10px] leading-[11px] transition-colors duration-200"
             onClick={handleClick}
           >
             {value}
           </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={() => openSettings("models")}
+                className="text-muted-light hover:text-foreground flex items-center justify-center rounded-sm p-0.5 transition-colors duration-150"
+                aria-label="Manage models"
+              >
+                <Settings className="h-3 w-3" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent align="center">Manage models</TooltipContent>
+          </Tooltip>
         </div>
       );
     }
@@ -226,36 +242,102 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
             <div className="text-danger-soft font-monospace mt-0.5 text-[9px]">{error}</div>
           )}
         </div>
-        {showDropdown && filteredModels.length > 0 && (
+        {showDropdown && (
           <div className="bg-separator border-border-light absolute bottom-full left-0 z-[1000] mb-1 max-h-[200px] min-w-80 overflow-y-auto rounded border shadow-[0_4px_12px_rgba(0,0,0,0.3)]">
-            {filteredModels.map((model, index) => (
-              <div
-                key={model}
-                ref={(el) => (dropdownItemRefs.current[index] = el)}
-                className={cn(
-                  "text-[11px] font-monospace py-1.5 px-2.5 cursor-pointer transition-colors duration-100",
-                  "first:rounded-t last:rounded-b",
-                  index === highlightedIndex
-                    ? "text-white bg-hover"
-                    : "text-light bg-transparent hover:bg-hover hover:text-white"
-                )}
-                onClick={() => handleSelectModel(model)}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate">{model}</span>
-                  {onRemoveModel && (
-                    <button
-                      type="button"
-                      onClick={(event) => handleRemoveModel(model, event)}
-                      className="text-muted-light border-border-light/40 hover:border-danger-soft/60 hover:text-danger-soft rounded-sm border px-1 py-0.5 text-[9px] font-semibold tracking-wide uppercase transition-colors duration-150"
-                      aria-label={`Remove ${model} from recent models`}
-                    >
-                      ×
-                    </button>
-                  )}
-                </div>
+            {filteredModels.length === 0 ? (
+              <div className="text-muted-light font-monospace px-2.5 py-1.5 text-[11px]">
+                No matching models
               </div>
-            ))}
+            ) : (
+              filteredModels.map((model, index) => (
+                <div
+                  key={model}
+                  ref={(el) => (dropdownItemRefs.current[index] = el)}
+                  className={cn(
+                    "text-[11px] font-monospace py-1.5 px-2.5 cursor-pointer transition-colors duration-100",
+                    "first:rounded-t last:rounded-b",
+                    index === highlightedIndex
+                      ? "text-foreground bg-hover"
+                      : "text-light bg-transparent hover:bg-hover hover:text-foreground"
+                  )}
+                  onClick={() => handleSelectModel(model)}
+                >
+                  <div className="grid w-full grid-cols-[1fr_auto] items-center gap-2">
+                    <span className="min-w-0 truncate">{model}</span>
+                    <div className="flex items-center gap-0.5">
+                      {/* Gateway toggle */}
+                      {gateway.canToggleModel(model) && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                gateway.toggleModelGateway(model);
+                              }}
+                              className={cn(
+                                "flex items-center justify-center rounded-sm border px-1 py-0.5 transition-colors duration-150",
+                                gateway.modelUsesGateway(model)
+                                  ? "text-accent border-accent/40"
+                                  : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
+                              )}
+                              aria-label={
+                                gateway.modelUsesGateway(model)
+                                  ? "Disable Mux Gateway"
+                                  : "Enable Mux Gateway"
+                              }
+                            >
+                              <GatewayIcon
+                                className="h-3 w-3"
+                                active={gateway.modelUsesGateway(model)}
+                              />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent align="center">
+                            {gateway.modelUsesGateway(model)
+                              ? "Using Mux Gateway"
+                              : "Use Mux Gateway"}
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                      {/* Default model toggle */}
+                      {onSetDefaultModel && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={(e) => handleSetDefault(e, model)}
+                              className={cn(
+                                "flex items-center justify-center rounded-sm border px-1 py-0.5 transition-colors duration-150",
+                                defaultModel === model
+                                  ? "text-yellow-400 border-yellow-400/40 cursor-default"
+                                  : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
+                              )}
+                              aria-label={
+                                defaultModel === model
+                                  ? "Current default model"
+                                  : "Set as default model"
+                              }
+                              disabled={defaultModel === model}
+                            >
+                              <Star className="h-3 w-3" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent align="center">
+                            {defaultModel === model
+                              ? "Current default model"
+                              : "Set as default model"}
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         )}
       </div>

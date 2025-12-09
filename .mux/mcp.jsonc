@@ -1,0 +1,6 @@
+{
+  "servers": {
+    "memory": "npx -y @modelcontextprotocol/server-memory",
+    "chrome": "npx -y chrome-devtools-mcp@latest --headless --isolated --chromeArg='--no-sandbox'"
+  }
+}

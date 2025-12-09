@@ -93,3 +93,65 @@ export interface ReviewStats {
   /** Number of unread hunks */
   unread: number;
 }
+
+/**
+ * Status of a review
+ * - pending: In banner, not attached to chat input
+ * - attached: Currently attached to chat input draft
+ * - checked: Marked as done (after being sent)
+ */
+export type ReviewStatus = "pending" | "attached" | "checked";
+
+/**
+ * Structured data for a review note.
+ * Passed from DiffRenderer when user creates a review.
+ * Stored as-is for rich UI display, formatted to message only when sending to chat.
+ */
+export interface ReviewNoteData {
+  /** File path being reviewed */
+  filePath: string;
+  /** Line range (e.g., "42" or "42-45") */
+  lineRange: string;
+  /** Selected code lines with line numbers and +/-/space indicators */
+  selectedCode: string;
+  /** User's review comment */
+  userNote: string;
+}
+
+/**
+ * A single review note
+ * Created when user adds a review note from the diff viewer
+ */
+export interface Review {
+  /** Unique identifier */
+  id: string;
+  /** Structured review data for rich UI display */
+  data: ReviewNoteData;
+  /** Current status */
+  status: ReviewStatus;
+  /** Timestamp when created */
+  createdAt: number;
+  /** Timestamp when status changed (checked/unchecked) */
+  statusChangedAt?: number;
+}
+
+/**
+ * Persisted state for reviews (per workspace)
+ * Contains reviews in all states: pending, attached, and checked
+ */
+export interface ReviewsState {
+  /** Workspace ID */
+  workspaceId: string;
+  /** All reviews keyed by ID */
+  reviews: Record<string, Review>;
+  /** Last update timestamp */
+  lastUpdated: number;
+}
+
+/**
+ * Format a ReviewNoteData into the message format for the model.
+ * Used when preparing reviews for sending to chat.
+ */
+export function formatReviewForModel(data: ReviewNoteData): string {
+  return `<review>\nRe ${data.filePath}:${data.lineRange}\n\`\`\`\n${data.selectedCode}\n\`\`\`\n> ${data.userNote.trim()}\n</review>`;
+}

@@ -175,6 +175,7 @@ describe("StreamingMessageAggregator", () => {
         toolCallId: "tool1",
         toolName: "todo_write",
         result: { success: true },
+        timestamp: Date.now(),
       });
 
       // Verify todos are set
@@ -230,6 +231,7 @@ describe("StreamingMessageAggregator", () => {
         toolCallId: "tool1",
         toolName: "todo_write",
         result: { success: true },
+        timestamp: Date.now(),
       });
 
       expect(aggregator.getCurrentTodos()).toHaveLength(1);
@@ -291,6 +293,7 @@ describe("StreamingMessageAggregator", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
       const historicalMessage = {
+        type: "message" as const,
         id: "msg1",
         role: "assistant" as const,
         parts: [
@@ -362,6 +365,7 @@ describe("StreamingMessageAggregator", () => {
         toolCallId: "tool1",
         toolName: "todo_write",
         result: { success: true },
+        timestamp: Date.now(),
       });
 
       // TODOs should be set
@@ -369,6 +373,7 @@ describe("StreamingMessageAggregator", () => {
 
       // Add new user message (simulating user sending a new message)
       aggregator.handleMessage({
+        type: "message",
         id: "msg2",
         role: "user",
         parts: [{ type: "text", text: "Hello" }],
@@ -377,6 +382,260 @@ describe("StreamingMessageAggregator", () => {
 
       // Todos should be cleared when new user message arrives
       expect(aggregator.getCurrentTodos()).toHaveLength(0);
+    });
+  });
+
+  describe("usage-delta handling", () => {
+    test("handleUsageDelta stores usage by messageId", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-1",
+        usage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+        cumulativeUsage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+      });
+
+      expect(aggregator.getActiveStreamUsage("msg-1")).toEqual({
+        inputTokens: 1000,
+        outputTokens: 50,
+        totalTokens: 1050,
+      });
+    });
+
+    test("clearTokenState removes usage", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-1",
+        usage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+        cumulativeUsage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+      });
+
+      expect(aggregator.getActiveStreamUsage("msg-1")).toBeDefined();
+
+      aggregator.clearTokenState("msg-1");
+
+      expect(aggregator.getActiveStreamUsage("msg-1")).toBeUndefined();
+    });
+
+    test("latest usage-delta replaces previous for same messageId", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      // First step usage
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-1",
+        usage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+        cumulativeUsage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+      });
+
+      // Second step usage (larger context after tool result added)
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-1",
+        usage: { inputTokens: 1500, outputTokens: 100, totalTokens: 1600 },
+        cumulativeUsage: { inputTokens: 2500, outputTokens: 150, totalTokens: 2650 },
+      });
+
+      // Should have latest step's values (for context window display)
+      expect(aggregator.getActiveStreamUsage("msg-1")).toEqual({
+        inputTokens: 1500,
+        outputTokens: 100,
+        totalTokens: 1600,
+      });
+      // Cumulative should be sum of all steps (for cost display)
+      expect(aggregator.getActiveStreamCumulativeUsage("msg-1")).toEqual({
+        inputTokens: 2500,
+        outputTokens: 150,
+        totalTokens: 2650,
+      });
+    });
+
+    test("tracks usage independently per messageId", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-1",
+        usage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+        cumulativeUsage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+      });
+
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-2",
+        usage: { inputTokens: 2000, outputTokens: 100, totalTokens: 2100 },
+        cumulativeUsage: { inputTokens: 2000, outputTokens: 100, totalTokens: 2100 },
+      });
+
+      expect(aggregator.getActiveStreamUsage("msg-1")).toEqual({
+        inputTokens: 1000,
+        outputTokens: 50,
+        totalTokens: 1050,
+      });
+      expect(aggregator.getActiveStreamUsage("msg-2")).toEqual({
+        inputTokens: 2000,
+        outputTokens: 100,
+        totalTokens: 2100,
+      });
+    });
+
+    test("stores and retrieves cumulativeProviderMetadata", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-1",
+        usage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+        cumulativeUsage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+        cumulativeProviderMetadata: {
+          anthropic: { cacheCreationInputTokens: 500, cacheReadInputTokens: 200 },
+        },
+      });
+
+      expect(aggregator.getActiveStreamCumulativeProviderMetadata("msg-1")).toEqual({
+        anthropic: { cacheCreationInputTokens: 500, cacheReadInputTokens: 200 },
+      });
+    });
+
+    test("cumulativeProviderMetadata is undefined when not provided", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-1",
+        usage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+        cumulativeUsage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+        // No cumulativeProviderMetadata
+      });
+
+      expect(aggregator.getActiveStreamCumulativeProviderMetadata("msg-1")).toBeUndefined();
+    });
+
+    test("stores and retrieves step providerMetadata for cache creation display", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-1",
+        usage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+        cumulativeUsage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+        providerMetadata: {
+          anthropic: { cacheCreationInputTokens: 800 },
+        },
+      });
+
+      expect(aggregator.getActiveStreamStepProviderMetadata("msg-1")).toEqual({
+        anthropic: { cacheCreationInputTokens: 800 },
+      });
+    });
+
+    test("step providerMetadata is undefined when not provided", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-1",
+        usage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+        cumulativeUsage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+        // No providerMetadata
+      });
+
+      expect(aggregator.getActiveStreamStepProviderMetadata("msg-1")).toBeUndefined();
+    });
+
+    test("clearTokenState clears all usage tracking (step, cumulative, metadata)", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-1",
+        usage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+        cumulativeUsage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+        providerMetadata: { anthropic: { cacheCreationInputTokens: 300 } },
+        cumulativeProviderMetadata: { anthropic: { cacheCreationInputTokens: 500 } },
+      });
+
+      // All should be defined
+      expect(aggregator.getActiveStreamUsage("msg-1")).toBeDefined();
+      expect(aggregator.getActiveStreamStepProviderMetadata("msg-1")).toBeDefined();
+      expect(aggregator.getActiveStreamCumulativeUsage("msg-1")).toBeDefined();
+      expect(aggregator.getActiveStreamCumulativeProviderMetadata("msg-1")).toBeDefined();
+
+      aggregator.clearTokenState("msg-1");
+
+      // All should be cleared
+      expect(aggregator.getActiveStreamUsage("msg-1")).toBeUndefined();
+      expect(aggregator.getActiveStreamStepProviderMetadata("msg-1")).toBeUndefined();
+      expect(aggregator.getActiveStreamCumulativeUsage("msg-1")).toBeUndefined();
+      expect(aggregator.getActiveStreamCumulativeProviderMetadata("msg-1")).toBeUndefined();
+    });
+
+    test("multi-step scenario: step usage replaced, cumulative accumulated", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      // Step 1: Initial request with cache creation
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-1",
+        usage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+        cumulativeUsage: { inputTokens: 1000, outputTokens: 50, totalTokens: 1050 },
+        cumulativeProviderMetadata: { anthropic: { cacheCreationInputTokens: 800 } },
+      });
+
+      // Verify step 1 state
+      expect(aggregator.getActiveStreamUsage("msg-1")?.inputTokens).toBe(1000);
+      expect(aggregator.getActiveStreamCumulativeUsage("msg-1")?.inputTokens).toBe(1000);
+      expect(
+        (
+          aggregator.getActiveStreamCumulativeProviderMetadata("msg-1")?.anthropic as {
+            cacheCreationInputTokens: number;
+          }
+        ).cacheCreationInputTokens
+      ).toBe(800);
+
+      // Step 2: After tool call, larger context, more cache creation
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId: "ws-1",
+        messageId: "msg-1",
+        usage: { inputTokens: 1500, outputTokens: 100, totalTokens: 1600 }, // Last step only
+        cumulativeUsage: { inputTokens: 2500, outputTokens: 150, totalTokens: 2650 }, // Sum of all
+        cumulativeProviderMetadata: { anthropic: { cacheCreationInputTokens: 1200 } }, // Sum of all
+      });
+
+      // Step usage should be REPLACED (last step only)
+      expect(aggregator.getActiveStreamUsage("msg-1")).toEqual({
+        inputTokens: 1500,
+        outputTokens: 100,
+        totalTokens: 1600,
+      });
+
+      // Cumulative usage should show SUM of all steps
+      expect(aggregator.getActiveStreamCumulativeUsage("msg-1")).toEqual({
+        inputTokens: 2500,
+        outputTokens: 150,
+        totalTokens: 2650,
+      });
+
+      // Cumulative metadata should show SUM of cache creation tokens
+      expect(aggregator.getActiveStreamCumulativeProviderMetadata("msg-1")).toEqual({
+        anthropic: { cacheCreationInputTokens: 1200 },
+      });
     });
   });
 });

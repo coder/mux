@@ -4,34 +4,34 @@ on:
   workflow_call:
     inputs:
       model_name:
-        description: 'Model to use (e.g., anthropic:claude-sonnet-4-5)'
+        description: "Model to use (e.g., anthropic:claude-sonnet-4-5)"
         required: false
         type: string
       thinking_level:
-        description: 'Thinking level (off, low, medium, high)'
+        description: "Thinking level (off, low, medium, high)"
         required: false
         type: string
       dataset:
-        description: 'Terminal-Bench dataset to use'
+        description: "Terminal-Bench dataset to use"
         required: false
         type: string
-        default: 'terminal-bench-core==0.1.1'
+        default: "terminal-bench-core==0.1.1"
       concurrency:
-        description: 'Number of concurrent tasks (--n-concurrent)'
+        description: "Number of concurrent tasks (--n-concurrent)"
         required: false
         type: string
-        default: '4'
+        default: "4"
       livestream:
-        description: 'Enable livestream mode (verbose output to console)'
+        description: "Enable livestream mode (verbose output to console)"
         required: false
         type: boolean
         default: false
       sample_size:
-        description: 'Number of random tasks to run (empty = all tasks)'
+        description: "Number of random tasks to run (empty = all tasks)"
         required: false
         type: string
       extra_args:
-        description: 'Additional arguments to pass to terminal-bench'
+        description: "Additional arguments to pass to terminal-bench"
         required: false
         type: string
     secrets:
@@ -42,34 +42,34 @@ on:
   workflow_dispatch:
     inputs:
       dataset:
-        description: 'Terminal-Bench dataset to use'
+        description: "Terminal-Bench dataset to use"
         required: false
-        default: 'terminal-bench-core==0.1.1'
+        default: "terminal-bench-core==0.1.1"
         type: string
       concurrency:
-        description: 'Number of concurrent tasks (--n-concurrent)'
+        description: "Number of concurrent tasks (--n-concurrent)"
         required: false
-        default: '4'
+        default: "4"
         type: string
       livestream:
-        description: 'Enable livestream mode (verbose output to console)'
+        description: "Enable livestream mode (verbose output to console)"
         required: false
         default: false
         type: boolean
       sample_size:
-        description: 'Number of random tasks to run (empty = all tasks)'
+        description: "Number of random tasks to run (empty = all tasks)"
         required: false
         type: string
       model_name:
-        description: 'Model to use (e.g., anthropic:claude-sonnet-4-5, openai:gpt-5.1-codex)'
+        description: "Model to use (e.g., anthropic:claude-sonnet-4-5, openai:gpt-5.1-codex)"
         required: false
         type: string
       thinking_level:
-        description: 'Thinking level (off, low, medium, high)'
+        description: "Thinking level (off, low, medium, high)"
         required: false
         type: string
       extra_args:
-        description: 'Additional arguments to pass to terminal-bench'
+        description: "Additional arguments to pass to terminal-bench"
         required: false
         type: string
 
@@ -147,4 +147,3 @@ jobs:
             benchmark.log
           if-no-files-found: warn
           retention-days: 30
-

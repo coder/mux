@@ -31,6 +31,33 @@ export function getPendingScopeId(projectPath: string): string {
 export const GLOBAL_SCOPE_ID = "__global__";
 
 /**
+ * Get the localStorage key for the UI theme preference (global)
+ * Format: "uiTheme"
+ */
+export const UI_THEME_KEY = "uiTheme";
+
+/**
+ * Get the localStorage key for the currently selected workspace (global)
+ * Format: "selectedWorkspace"
+ */
+export const SELECTED_WORKSPACE_KEY = "selectedWorkspace";
+
+/**
+ * Get the localStorage key for expanded projects in sidebar (global)
+ * Format: "expandedProjects"
+ */
+export const EXPANDED_PROJECTS_KEY = "expandedProjects";
+
+/**
+ * Get the localStorage key for cached MCP server test results (per project)
+ * Format: "mcpTestResults:{projectPath}"
+ * Stores: Record<serverName, CachedMCPTestResult>
+ */
+export function getMCPTestResultsKey(projectPath: string): string {
+  return `mcpTestResults:${projectPath}`;
+}
+
+/**
  * Helper to create a thinking level storage key for a workspace
  * Format: "thinkingLevel:{workspaceId}"
  */
@@ -92,7 +119,7 @@ export function getModeKey(workspaceId: string): string {
 
 /**
  * Get the localStorage key for the default runtime for a project
- * Stores the last successfully used runtime config when creating a workspace
+ * Defaults to worktree if not set; can only be changed via the "Default for project" checkbox.
  * Format: "runtime:{projectPath}"
  */
 export function getRuntimeKey(projectPath: string): string {
@@ -109,6 +136,16 @@ export function getTrunkBranchKey(projectPath: string): string {
 }
 
 /**
+ * Get the localStorage key for last SSH host preference for a project
+ * Stores the last entered SSH host separately from runtime mode
+ * so it persists when switching between runtime modes
+ * Format: "lastSshHost:{projectPath}"
+ */
+export function getLastSshHostKey(projectPath: string): string {
+  return `lastSshHost:${projectPath}`;
+}
+
+/**
  * Get the localStorage key for the preferred compaction model (global)
  * Format: "preferredCompactionModel"
  */
@@ -121,13 +158,22 @@ export const PREFERRED_COMPACTION_MODEL_KEY = "preferredCompactionModel";
 export const VIM_ENABLED_KEY = "vimEnabled";
 
 /**
- * Get the localStorage key for the compact continue message for a workspace
- * Temporarily stores the continuation prompt for the current compaction
- * Should be deleted immediately after use to prevent bugs
+ * Tutorial state storage key (global)
+ * Stores: { disabled: boolean, completed: { settings?: true, creation?: true, workspace?: true } }
  */
-export function getCompactContinueMessageKey(workspaceId: string): string {
-  return `compactContinueMessage:${workspaceId}`;
+export const TUTORIAL_STATE_KEY = "tutorialState";
+
+export type TutorialSequence = "settings" | "creation" | "workspace";
+
+export interface TutorialState {
+  disabled: boolean;
+  completed: Partial<Record<TutorialSequence, true>>;
 }
+
+export const DEFAULT_TUTORIAL_STATE: TutorialState = {
+  disabled: false,
+  completed: {},
+};
 
 /**
  * Get the localStorage key for hunk expand/collapse state in Review tab
@@ -148,6 +194,27 @@ export function getFileTreeExpandStateKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for persisted status URL for a workspace
+ * Stores the last URL set via status_set tool (survives compaction)
+ * Format: "statusUrl:{workspaceId}"
+ */
+export function getStatusUrlKey(workspaceId: string): string {
+  return `statusUrl:${workspaceId}`;
+}
+
+/**
+ * Right sidebar tab selection (global)
+ * Format: "right-sidebar-tab"
+ */
+export const RIGHT_SIDEBAR_TAB_KEY = "right-sidebar-tab";
+
+/**
+ * Right sidebar collapsed state (global)
+ * Format: "right-sidebar:collapsed"
+ */
+export const RIGHT_SIDEBAR_COLLAPSED_KEY = "right-sidebar:collapsed";
+
+/**
  * Get the localStorage key for unified Review search state per workspace
  * Stores: { input: string, useRegex: boolean, matchCase: boolean }
  * Format: "reviewSearchState:{workspaceId}"
@@ -157,8 +224,33 @@ export function getReviewSearchStateKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for reviews per workspace
+ * Stores: ReviewsState (reviews created from diff viewer - pending, attached, or checked)
+ * Format: "reviews:{workspaceId}"
+ */
+export function getReviewsKey(workspaceId: string): string {
+  return `reviews:${workspaceId}`;
+}
+
+/**
+ * Get the localStorage key for auto-compaction enabled preference per workspace
+ * Format: "autoCompaction:enabled:{workspaceId}"
+ */
+export function getAutoCompactionEnabledKey(workspaceId: string): string {
+  return `autoCompaction:enabled:${workspaceId}`;
+}
+
+/**
+ * Get the localStorage key for auto-compaction threshold percentage per model
+ * Format: "autoCompaction:threshold:{model}"
+ * Stored per-model because different models have different context windows
+ */
+export function getAutoCompactionThresholdKey(model: string): string {
+  return `autoCompaction:threshold:${model}`;
+}
+
+/**
  * List of workspace-scoped key functions that should be copied on fork and deleted on removal
- * Note: Excludes ephemeral keys like getCompactContinueMessageKey
  */
 const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> = [
   getModelKey,
@@ -170,6 +262,10 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getReviewExpandStateKey,
   getFileTreeExpandStateKey,
   getReviewSearchStateKey,
+  getReviewsKey,
+  getAutoCompactionEnabledKey,
+  getStatusUrlKey,
+  // Note: getAutoCompactionThresholdKey is per-model, not per-workspace
 ];
 
 /**
@@ -177,7 +273,6 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
  */
 const EPHEMERAL_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> = [
   getCancelledCompactionKey,
-  getCompactContinueMessageKey,
 ];
 
 /**
@@ -209,4 +304,13 @@ export function deleteWorkspaceStorage(workspaceId: string): void {
     const key = getKey(workspaceId);
     localStorage.removeItem(key);
   }
+}
+
+/**
+ * Migrate all workspace-specific localStorage keys from old to new workspace ID
+ * Should be called when a workspace is renamed to preserve settings
+ */
+export function migrateWorkspaceStorage(oldWorkspaceId: string, newWorkspaceId: string): void {
+  copyWorkspaceStorage(oldWorkspaceId, newWorkspaceId);
+  deleteWorkspaceStorage(oldWorkspaceId);
 }

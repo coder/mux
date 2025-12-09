@@ -49,6 +49,7 @@ export async function isDockerAvailable(): Promise<boolean> {
 export async function startSSHServer(): Promise<SSHServerConfig> {
   // Create temp directory for SSH keys
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-ssh-test-"));
+  let containerId: string | undefined;
 
   try {
     // Generate ephemeral SSH key pair
@@ -93,7 +94,7 @@ export async function startSSHServer(): Promise<SSHServerConfig> {
       "mux-ssh-test",
     ]);
 
-    const containerId = runResult.stdout.trim();
+    containerId = runResult.stdout.trim();
 
     // Wait for container to be ready
     await waitForContainer(containerId);
@@ -121,6 +122,14 @@ export async function startSSHServer(): Promise<SSHServerConfig> {
       tempDir,
     };
   } catch (error) {
+    // Cleanup container on failure if it was started
+    if (containerId) {
+      try {
+        await execCommand("docker", ["stop", containerId], { timeout: 10000 });
+      } catch (cleanupError) {
+        console.error("Error stopping container during cleanup:", cleanupError);
+      }
+    }
     // Cleanup temp directory on failure
     await fs.rm(tempDir, { recursive: true, force: true });
     throw error;

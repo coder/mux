@@ -1,5 +1,6 @@
 import React from "react";
 import { cn } from "@/common/lib/utils";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../../ui/tooltip";
 
 /**
  * Shared styled components for tool UI
@@ -121,7 +122,7 @@ export const DetailContent: React.FC<React.HTMLAttributes<HTMLPreElement>> = ({
 }) => (
   <pre
     className={cn(
-      "m-0 px-2 py-1.5 bg-code-bg rounded-sm text-[11px] leading-relaxed whitespace-pre-wrap break-words max-h-[200px] overflow-y-auto",
+      "m-0 bg-code-bg rounded-sm text-[11px] leading-relaxed whitespace-pre-wrap break-words max-h-[200px] overflow-y-auto",
       className
     )}
     {...props}
@@ -157,3 +158,69 @@ export const HeaderButton: React.FC<HeaderButtonProps> = ({ active, className, .
     {...props}
   />
 );
+
+/**
+ * Tool icon with tooltip showing tool name
+ */
+interface ToolIconProps {
+  emoji: string;
+  toolName: string;
+}
+
+export const ToolIcon: React.FC<ToolIconProps> = ({ emoji, toolName }) => (
+  <Tooltip>
+    <TooltipTrigger asChild>
+      <span>{emoji}</span>
+    </TooltipTrigger>
+    <TooltipContent>{toolName}</TooltipContent>
+  </Tooltip>
+);
+
+/**
+ * Error display box with danger styling
+ */
+export const ErrorBox: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
+  className,
+  ...props
+}) => (
+  <div
+    className={cn(
+      "text-danger bg-danger-overlay border-danger rounded border-l-2 px-2 py-1.5 text-[11px]",
+      className
+    )}
+    {...props}
+  />
+);
+
+/**
+ * Output file paths display (stdout/stderr)
+ * @param compact - Use smaller text without background (for inline use in cards)
+ */
+interface OutputPathsProps {
+  stdout: string;
+  stderr: string;
+  compact?: boolean;
+}
+
+export const OutputPaths: React.FC<OutputPathsProps> = ({ stdout, stderr, compact }) =>
+  compact ? (
+    <div className="text-text-secondary mt-1 space-y-0.5 text-[10px]">
+      <div>
+        <span className="opacity-60">stdout:</span> {stdout}
+      </div>
+      <div>
+        <span className="opacity-60">stderr:</span> {stderr}
+      </div>
+    </div>
+  ) : (
+    <div className="bg-code-bg space-y-1 rounded px-2 py-1.5 font-mono text-[11px]">
+      <div>
+        <span className="text-text-secondary">stdout:</span>{" "}
+        <span className="text-text">{stdout}</span>
+      </div>
+      <div>
+        <span className="text-text-secondary">stderr:</span>{" "}
+        <span className="text-text">{stderr}</span>
+      </div>
+    </div>
+  );

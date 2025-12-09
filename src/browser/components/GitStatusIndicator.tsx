@@ -7,6 +7,8 @@ interface GitStatusIndicatorProps {
   gitStatus: GitStatus | null;
   workspaceId: string;
   tooltipPosition?: "right" | "bottom";
+  /** When true, shows blue pulsing styling to indicate agent is working */
+  isWorking?: boolean;
 }
 
 /**
@@ -18,6 +20,7 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
   gitStatus,
   workspaceId,
   tooltipPosition = "right",
+  isWorking = false,
 }) => {
   const [showTooltip, setShowTooltip] = useState(false);
   const [tooltipCoords, setTooltipCoords] = useState<{ top: number; left: number }>({
@@ -118,6 +121,7 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
       onTooltipMouseEnter={handleTooltipMouseEnter}
       onTooltipMouseLeave={handleTooltipMouseLeave}
       onContainerRef={handleContainerRef}
+      isWorking={isWorking}
     />
   );
 };

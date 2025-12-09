@@ -3,11 +3,13 @@ import type {
   MuxMetadata,
   MuxImagePart,
   DisplayedMessage,
+  CompactionRequestData,
 } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type {
   StreamStartEvent,
   StreamDeltaEvent,
+  UsageDeltaEvent,
   StreamEndEvent,
   StreamAbortEvent,
   ToolCallStartEvent,
@@ -16,10 +18,11 @@ import type {
   ReasoningDeltaEvent,
   ReasoningEndEvent,
 } from "@/common/types/stream";
+import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { TodoItem, StatusSetToolResult } from "@/common/types/tools";
 
-import type { WorkspaceChatMessage, StreamErrorMessage, DeleteMessage } from "@/common/types/ipc";
-import { isInitStart, isInitOutput, isInitEnd, isMuxMessage } from "@/common/types/ipc";
+import type { WorkspaceChatMessage, StreamErrorMessage, DeleteMessage } from "@/common/orpc/types";
+import { isInitStart, isInitOutput, isInitEnd, isMuxMessage } from "@/common/orpc/types";
 import type {
   DynamicToolPart,
   DynamicToolPartPending,
@@ -28,6 +31,7 @@ import type {
 import { isDynamicToolPart } from "@/common/types/toolParts";
 import { createDeltaStorage, type DeltaRecordStorage } from "./StreamingTPSCalculator";
 import { computeRecencyTimestamp } from "./recency";
+import { getStatusUrlKey } from "@/common/constants/storage";
 
 // Maximum number of messages to display in the DOM for performance
 // Full history is still maintained internally for token counting and stats
@@ -50,18 +54,21 @@ function hasSuccessResult(result: unknown): boolean {
 }
 
 /**
- * Check if a tool result indicates failure (for tools that return { success: boolean })
+ * Check if a tool result indicates failure.
+ * Handles both explicit failure ({ success: false }) and implicit failure ({ error: "..." })
  */
 function hasFailureResult(result: unknown): boolean {
-  return (
-    typeof result === "object" && result !== null && "success" in result && result.success === false
-  );
+  if (typeof result !== "object" || result === null) return false;
+  // Explicit failure
+  if ("success" in result && result.success === false) return true;
+  // Implicit failure - error field present
+  if ("error" in result && result.error) return true;
+  return false;
 }
 
 export class StreamingMessageAggregator {
   private messages = new Map<string, MuxMessage>();
   private activeStreams = new Map<string, StreamingContext>();
-  private streamSequenceCounter = 0; // For ordering parts within a streaming message
 
   // Simple cache for derived values (invalidated on every mutation)
   private cachedAllMessages: MuxMessage[] | null = null;
@@ -70,6 +77,18 @@ export class StreamingMessageAggregator {
 
   // Delta history for token counting and TPS calculation
   private deltaHistory = new Map<string, DeltaRecordStorage>();
+
+  // Active stream usage tracking (updated on each usage-delta event)
+  // Consolidates step-level (context window) and cumulative (cost) usage by messageId
+  private activeStreamUsage = new Map<
+    string,
+    {
+      // Step-level: this step only (for context window display)
+      step: { usage: LanguageModelV2Usage; providerMetadata?: Record<string, unknown> };
+      // Cumulative: sum across all steps (for live cost display)
+      cumulative: { usage: LanguageModelV2Usage; providerMetadata?: Record<string, unknown> };
+    }
+  >();
 
   // Current TODO list (updated when todo_write succeeds, cleared on stream end)
   // Stream-scoped: automatically reset when stream completes
@@ -81,8 +100,12 @@ export class StreamingMessageAggregator {
   private agentStatus: { emoji: string; message: string; url?: string } | undefined = undefined;
 
   // Last URL set via status_set - persists even when agentStatus is cleared
-  // This ensures URL stays available across stream boundaries
+  // This ensures URL stays available across stream boundaries and through compaction
+  // Persisted to localStorage keyed by workspaceId
   private lastStatusUrl: string | undefined = undefined;
+
+  // Workspace ID for localStorage persistence
+  private readonly workspaceId: string | undefined;
 
   // Workspace init hook state (ephemeral, not persisted to history)
   private initState: {
@@ -104,9 +127,38 @@ export class StreamingMessageAggregator {
   // REQUIRED: Backend guarantees every workspace has createdAt via config.ts
   private readonly createdAt: string;
 
-  constructor(createdAt: string) {
+  constructor(createdAt: string, workspaceId?: string) {
     this.createdAt = createdAt;
+    this.workspaceId = workspaceId;
+    // Load persisted lastStatusUrl from localStorage
+    if (workspaceId) {
+      this.lastStatusUrl = this.loadLastStatusUrl();
+    }
     this.updateRecency();
+  }
+
+  /** Load lastStatusUrl from localStorage */
+  private loadLastStatusUrl(): string | undefined {
+    if (!this.workspaceId) return undefined;
+    try {
+      const stored = localStorage.getItem(getStatusUrlKey(this.workspaceId));
+      return stored ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Persist lastStatusUrl to localStorage.
+   * Once set, the URL can only be replaced with a new URL, never deleted.
+   */
+  private saveLastStatusUrl(url: string): void {
+    if (!this.workspaceId) return;
+    try {
+      localStorage.setItem(getStatusUrlKey(this.workspaceId), url);
+    } catch {
+      // Ignore localStorage errors
+    }
   }
   private invalidateCache(): void {
     this.cachedAllMessages = null;
@@ -213,6 +265,16 @@ export class StreamingMessageAggregator {
   }
 
   /**
+   * Remove a message from the aggregator.
+   * Used for dismissing ephemeral messages like /plan output.
+   */
+  removeMessage(messageId: string): void {
+    if (this.messages.delete(messageId)) {
+      this.invalidateCache();
+    }
+  }
+
+  /**
    * Load historical messages in batch, preserving their historySequence numbers.
    * This is more efficient than calling addMessage() repeatedly.
    *
@@ -225,16 +287,39 @@ export class StreamingMessageAggregator {
       this.messages.set(message.id, message);
     }
 
-    // Then, reconstruct derived state from the most recent assistant message
     // Use "streaming" context if there's an active stream (reconnection), otherwise "historical"
     const context = hasActiveStream ? "streaming" : "historical";
 
-    const sortedMessages = [...messages].sort(
-      (a, b) => (b.metadata?.historySequence ?? 0) - (a.metadata?.historySequence ?? 0)
+    // Sort messages in chronological order for processing
+    const chronologicalMessages = [...messages].sort(
+      (a, b) => (a.metadata?.historySequence ?? 0) - (b.metadata?.historySequence ?? 0)
     );
 
-    // Find the most recent assistant message
-    const lastAssistantMessage = sortedMessages.find((msg) => msg.role === "assistant");
+    // First pass: scan all messages to build up lastStatusUrl from tool calls
+    // This ensures URL persistence works even if the URL was set in an earlier message
+    // Also persists to localStorage for future loads (survives compaction)
+    for (const message of chronologicalMessages) {
+      if (message.role === "assistant") {
+        for (const part of message.parts) {
+          if (
+            isDynamicToolPart(part) &&
+            part.state === "output-available" &&
+            part.toolName === "status_set" &&
+            hasSuccessResult(part.output)
+          ) {
+            const result = part.output as Extract<StatusSetToolResult, { success: true }>;
+            if (result.url) {
+              this.lastStatusUrl = result.url;
+              this.saveLastStatusUrl(result.url);
+            }
+          }
+        }
+      }
+    }
+
+    // Second pass: reconstruct derived state from the most recent assistant message only
+    // (TODOs and agentStatus should reflect only the latest state)
+    const lastAssistantMessage = chronologicalMessages.findLast((msg) => msg.role === "assistant");
 
     if (lastAssistantMessage) {
       // Process all tool results from the most recent assistant message
@@ -319,7 +404,6 @@ export class StreamingMessageAggregator {
   clear(): void {
     this.messages.clear();
     this.activeStreams.clear();
-    this.streamSequenceCounter = 0;
     this.invalidateCache();
   }
 
@@ -414,12 +498,11 @@ export class StreamingMessageAggregator {
         if (data.parts) {
           // Sync up the tool results from the backend's parts array
           for (const backendPart of data.parts) {
-            if (backendPart.type === "dynamic-tool") {
+            if (backendPart.type === "dynamic-tool" && backendPart.state === "output-available") {
               // Find and update existing tool part
               const toolPart = message.parts.find(
                 (part): part is DynamicToolPart =>
-                  part.type === "dynamic-tool" &&
-                  (part as DynamicToolPart).toolCallId === backendPart.toolCallId
+                  part.type === "dynamic-tool" && part.toolCallId === backendPart.toolCallId
               );
               if (toolPart) {
                 // Update with result from backend
@@ -495,6 +578,28 @@ export class StreamingMessageAggregator {
       // Clean up stream-scoped state (active stream tracking, TODOs)
       this.cleanupStreamState(data.messageId);
       this.invalidateCache();
+    } else {
+      // Pre-stream error (e.g., API key not configured before streaming starts)
+      // Create a synthetic error message since there's no active stream to attach to
+      // Get the highest historySequence from existing messages so this appears at the end
+      const maxSequence = Math.max(
+        0,
+        ...Array.from(this.messages.values()).map((m) => m.metadata?.historySequence ?? 0)
+      );
+      const errorMessage: MuxMessage = {
+        id: data.messageId,
+        role: "assistant",
+        parts: [],
+        metadata: {
+          partial: true,
+          error: data.error,
+          errorType: data.errorType,
+          timestamp: Date.now(),
+          historySequence: maxSequence + 1,
+        },
+      };
+      this.messages.set(data.messageId, errorMessage);
+      this.invalidateCache();
     }
   }
 
@@ -505,7 +610,7 @@ export class StreamingMessageAggregator {
     // Check if this tool call already exists to prevent duplicates
     const existingToolPart = message.parts.find(
       (part): part is DynamicToolPart =>
-        part.type === "dynamic-tool" && (part as DynamicToolPart).toolCallId === data.toolCallId
+        part.type === "dynamic-tool" && part.toolCallId === data.toolCallId
     );
 
     if (existingToolPart) {
@@ -570,9 +675,10 @@ export class StreamingMessageAggregator {
     if (toolName === "status_set" && hasSuccessResult(output)) {
       const result = output as Extract<StatusSetToolResult, { success: true }>;
 
-      // Update lastStatusUrl if a new URL is provided
+      // Update lastStatusUrl if a new URL is provided, and persist to localStorage
       if (result.url) {
         this.lastStatusUrl = result.url;
+        this.saveLastStatusUrl(result.url);
       }
 
       // Use the provided URL, or fall back to the last URL ever set
@@ -732,11 +838,35 @@ export class StreamingMessageAggregator {
   getDisplayedMessages(): DisplayedMessage[] {
     if (!this.cachedDisplayedMessages) {
       const displayedMessages: DisplayedMessage[] = [];
+      const allMessages = this.getAllMessages();
 
-      for (const message of this.getAllMessages()) {
+      for (const message of allMessages) {
+        // Skip synthetic messages - they're for model context only, not UI display
+        if (message.metadata?.synthetic) {
+          continue;
+        }
+
         const baseTimestamp = message.metadata?.timestamp;
         // Get historySequence from backend (required field)
         const historySequence = message.metadata?.historySequence ?? 0;
+
+        // Check for plan-display messages (ephemeral /plan output)
+        const muxMeta = message.metadata?.muxMetadata;
+        if (muxMeta?.type === "plan-display") {
+          const content = message.parts
+            .filter((p) => p.type === "text")
+            .map((p) => p.text)
+            .join("");
+          displayedMessages.push({
+            type: "plan-display",
+            id: message.id,
+            historyId: message.id,
+            content,
+            path: muxMeta.path,
+            historySequence,
+          });
+          continue;
+        }
 
         if (message.role === "user") {
           // User messages: combine all text parts into single block, extract images
@@ -762,9 +892,16 @@ export class StreamingMessageAggregator {
             muxMeta?.type === "compaction-request"
               ? {
                   rawCommand: muxMeta.rawCommand,
-                  parsed: muxMeta.parsed,
+                  parsed: {
+                    model: muxMeta.parsed.model,
+                    maxOutputTokens: muxMeta.parsed.maxOutputTokens,
+                    continueMessage: muxMeta.parsed.continueMessage,
+                  } satisfies CompactionRequestData,
                 }
               : undefined;
+
+          // Extract reviews from muxMetadata for rich UI display (orthogonal to message type)
+          const reviews = muxMeta?.reviews;
 
           displayedMessages.push({
             type: "user",
@@ -775,6 +912,7 @@ export class StreamingMessageAggregator {
             historySequence,
             timestamp: baseTimestamp,
             compactionRequest,
+            reviews,
           });
         } else if (message.role === "assistant") {
           // Assistant messages: each part becomes a separate DisplayedMessage
@@ -987,5 +1125,49 @@ export class StreamingMessageAggregator {
    */
   clearTokenState(messageId: string): void {
     this.deltaHistory.delete(messageId);
+    this.activeStreamUsage.delete(messageId);
+  }
+
+  /**
+   * Handle usage-delta event: update usage tracking for active stream
+   */
+  handleUsageDelta(data: UsageDeltaEvent): void {
+    this.activeStreamUsage.set(data.messageId, {
+      step: { usage: data.usage, providerMetadata: data.providerMetadata },
+      cumulative: {
+        usage: data.cumulativeUsage,
+        providerMetadata: data.cumulativeProviderMetadata,
+      },
+    });
+  }
+
+  /**
+   * Get active stream usage for context window display (last step's inputTokens = context size)
+   */
+  getActiveStreamUsage(messageId: string): LanguageModelV2Usage | undefined {
+    return this.activeStreamUsage.get(messageId)?.step.usage;
+  }
+
+  /**
+   * Get step provider metadata for context window cache display
+   */
+  getActiveStreamStepProviderMetadata(messageId: string): Record<string, unknown> | undefined {
+    return this.activeStreamUsage.get(messageId)?.step.providerMetadata;
+  }
+
+  /**
+   * Get active stream cumulative usage for cost display (sum of all steps)
+   */
+  getActiveStreamCumulativeUsage(messageId: string): LanguageModelV2Usage | undefined {
+    return this.activeStreamUsage.get(messageId)?.cumulative.usage;
+  }
+
+  /**
+   * Get cumulative provider metadata for cost display (with accumulated cache creation tokens)
+   */
+  getActiveStreamCumulativeProviderMetadata(
+    messageId: string
+  ): Record<string, unknown> | undefined {
+    return this.activeStreamUsage.get(messageId)?.cumulative.providerMetadata;
   }
 }

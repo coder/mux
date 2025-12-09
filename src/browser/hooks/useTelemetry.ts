@@ -1,82 +1,96 @@
 import { useCallback } from "react";
-import { trackEvent, getBaseTelemetryProperties, roundToBase2 } from "@/common/telemetry";
-import type { ErrorContext } from "@/common/telemetry/payload";
+import {
+  trackWorkspaceCreated,
+  trackWorkspaceSwitched,
+  trackMessageSent,
+  trackStreamCompleted,
+  trackProviderConfigured,
+  trackCommandUsed,
+  trackVoiceTranscription,
+  trackErrorOccurred,
+} from "@/common/telemetry";
+import type {
+  ErrorContext,
+  TelemetryRuntimeType,
+  TelemetryThinkingLevel,
+  TelemetryCommandType,
+} from "@/common/telemetry/payload";
 
 /**
  * Hook for clean telemetry integration in React components
  *
- * Provides type-safe telemetry tracking with base properties automatically included.
+ * Provides stable callback references for telemetry tracking.
+ * All numeric values are automatically rounded for privacy.
+ *
  * Usage:
  *
  * ```tsx
  * const telemetry = useTelemetry();
  *
- * // Track workspace switch
  * telemetry.workspaceSwitched(fromId, toId);
- *
- * // Track workspace creation
- * telemetry.workspaceCreated(workspaceId);
- *
- * // Track message sent
- * telemetry.messageSent(model, mode, messageLength);
- *
- * // Track error
+ * telemetry.workspaceCreated(workspaceId, runtimeType);
+ * telemetry.messageSent(workspaceId, model, mode, messageLength, runtimeType, thinkingLevel);
+ * telemetry.streamCompleted(model, wasInterrupted, durationSecs, outputTokens);
+ * telemetry.providerConfigured(provider, keyType);
+ * telemetry.commandUsed(commandType);
+ * telemetry.voiceTranscription(audioDurationSecs, success);
  * telemetry.errorOccurred(errorType, context);
  * ```
  */
 export function useTelemetry() {
   const workspaceSwitched = useCallback((fromWorkspaceId: string, toWorkspaceId: string) => {
-    console.debug("[useTelemetry] workspaceSwitched called", { fromWorkspaceId, toWorkspaceId });
-    trackEvent({
-      event: "workspace_switched",
-      properties: {
-        ...getBaseTelemetryProperties(),
-        fromWorkspaceId,
-        toWorkspaceId,
-      },
-    });
+    trackWorkspaceSwitched(fromWorkspaceId, toWorkspaceId);
   }, []);
 
-  const workspaceCreated = useCallback((workspaceId: string) => {
-    console.debug("[useTelemetry] workspaceCreated called", { workspaceId });
-    trackEvent({
-      event: "workspace_created",
-      properties: {
-        ...getBaseTelemetryProperties(),
-        workspaceId,
-      },
-    });
+  const workspaceCreated = useCallback((workspaceId: string, runtimeType: TelemetryRuntimeType) => {
+    trackWorkspaceCreated(workspaceId, runtimeType);
   }, []);
 
-  const messageSent = useCallback((model: string, mode: string, messageLength: number) => {
-    console.debug("[useTelemetry] messageSent called", { model, mode, messageLength });
-    trackEvent({
-      event: "message_sent",
-      properties: {
-        ...getBaseTelemetryProperties(),
-        model,
-        mode,
-        message_length_b2: roundToBase2(messageLength),
-      },
-    });
+  const messageSent = useCallback(
+    (
+      workspaceId: string,
+      model: string,
+      mode: string,
+      messageLength: number,
+      runtimeType: TelemetryRuntimeType,
+      thinkingLevel: TelemetryThinkingLevel
+    ) => {
+      trackMessageSent(workspaceId, model, mode, messageLength, runtimeType, thinkingLevel);
+    },
+    []
+  );
+
+  const streamCompleted = useCallback(
+    (model: string, wasInterrupted: boolean, durationSecs: number, outputTokens: number) => {
+      trackStreamCompleted(model, wasInterrupted, durationSecs, outputTokens);
+    },
+    []
+  );
+
+  const providerConfigured = useCallback((provider: string, keyType: string) => {
+    trackProviderConfigured(provider, keyType);
+  }, []);
+
+  const commandUsed = useCallback((command: TelemetryCommandType) => {
+    trackCommandUsed(command);
+  }, []);
+
+  const voiceTranscription = useCallback((audioDurationSecs: number, success: boolean) => {
+    trackVoiceTranscription(audioDurationSecs, success);
   }, []);
 
   const errorOccurred = useCallback((errorType: string, context: ErrorContext) => {
-    console.debug("[useTelemetry] errorOccurred called", { errorType, context });
-    trackEvent({
-      event: "error_occurred",
-      properties: {
-        ...getBaseTelemetryProperties(),
-        errorType,
-        context,
-      },
-    });
+    trackErrorOccurred(errorType, context);
   }, []);
 
   return {
     workspaceSwitched,
     workspaceCreated,
     messageSent,
+    streamCompleted,
+    providerConfigured,
+    commandUsed,
+    voiceTranscription,
     errorOccurred,
   };
 }

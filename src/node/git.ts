@@ -4,6 +4,33 @@ import type { Config } from "@/node/config";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { execAsync } from "@/node/utils/disposableExec";
 import { createRuntime } from "./runtime/runtimeFactory";
+import { log } from "./services/log";
+
+/**
+ * Remove stale .git/index.lock file if it exists and is old.
+ *
+ * Git creates index.lock during operations that modify the index. If a process
+ * is killed mid-operation (user cancel, crash, terminal closed), the lock file
+ * gets orphaned. This is common in Mux when git operations are interrupted.
+ *
+ * We only remove locks older than STALE_LOCK_AGE_MS to avoid removing locks
+ * from legitimately running processes.
+ */
+const STALE_LOCK_AGE_MS = 5000; // 5 seconds
+
+export function cleanStaleLock(repoPath: string): void {
+  const lockPath = path.join(repoPath, ".git", "index.lock");
+  try {
+    const stat = fs.statSync(lockPath);
+    const ageMs = Date.now() - stat.mtimeMs;
+    if (ageMs > STALE_LOCK_AGE_MS) {
+      fs.unlinkSync(lockPath);
+      log.info(`Removed stale git index.lock (age: ${Math.round(ageMs / 1000)}s) at ${lockPath}`);
+    }
+  } catch {
+    // Lock doesn't exist or can't be accessed - this is fine
+  }
+}
 
 export interface WorktreeResult {
   success: boolean;
@@ -79,12 +106,16 @@ export async function createWorktree(
   branchName: string,
   options: CreateWorktreeOptions
 ): Promise<WorktreeResult> {
+  // Clean up stale lock before git operations on main repo
+  cleanStaleLock(projectPath);
+
   try {
     // Use directoryName if provided, otherwise fall back to branchName (legacy)
     const dirName = options.directoryName ?? branchName;
     // Compute workspace path using Runtime (single source of truth)
     const runtime = createRuntime(
-      options.runtimeConfig ?? { type: "local", srcBaseDir: config.srcDir }
+      options.runtimeConfig ?? { type: "local", srcBaseDir: config.srcDir },
+      { projectPath }
     );
     const workspacePath = runtime.getWorkspacePath(projectPath, dirName);
     const { trunkBranch } = options;
@@ -191,6 +222,9 @@ export async function removeWorktree(
   workspacePath: string,
   options: { force: boolean } = { force: false }
 ): Promise<WorktreeResult> {
+  // Clean up stale lock before git operations on main repo
+  cleanStaleLock(projectPath);
+
   try {
     // Remove the worktree (from the main repository context)
     using proc = execAsync(
@@ -205,6 +239,9 @@ export async function removeWorktree(
 }
 
 export async function pruneWorktrees(projectPath: string): Promise<WorktreeResult> {
+  // Clean up stale lock before git operations on main repo
+  cleanStaleLock(projectPath);
+
   try {
     using proc = execAsync(`git -C "${projectPath}" worktree prune`);
     await proc.result;

@@ -1,5 +1,6 @@
 import React from "react";
 import type { DisplayedMessage } from "@/common/types/message";
+import type { ReviewNoteData } from "@/common/types/review";
 import { UserMessage } from "./UserMessage";
 import { AssistantMessage } from "./AssistantMessage";
 import { ToolMessage } from "./ToolMessage";
@@ -7,6 +8,8 @@ import { ReasoningMessage } from "./ReasoningMessage";
 import { StreamErrorMessage } from "./StreamErrorMessage";
 import { HistoryHiddenMessage } from "./HistoryHiddenMessage";
 import { InitMessage } from "./InitMessage";
+import { ProposePlanToolCall } from "../tools/ProposePlanToolCall";
+import { removeEphemeralMessage } from "@/browser/stores/WorkspaceStore";
 
 interface MessageRendererProps {
   message: DisplayedMessage;
@@ -15,11 +18,23 @@ interface MessageRendererProps {
   onEditQueuedMessage?: () => void;
   workspaceId?: string;
   isCompacting?: boolean;
+  /** Handler for adding review notes from inline diffs */
+  onReviewNote?: (data: ReviewNoteData) => void;
+  /** Whether this message is the latest propose_plan tool call (for external edit detection) */
+  isLatestProposePlan?: boolean;
 }
 
 // Memoized to prevent unnecessary re-renders when parent (AIView) updates
 export const MessageRenderer = React.memo<MessageRendererProps>(
-  ({ message, className, onEditUserMessage, workspaceId, isCompacting }) => {
+  ({
+    message,
+    className,
+    onEditUserMessage,
+    workspaceId,
+    isCompacting,
+    onReviewNote,
+    isLatestProposePlan,
+  }) => {
     // Route based on message type
     switch (message.type) {
       case "user":
@@ -41,7 +56,15 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
           />
         );
       case "tool":
-        return <ToolMessage message={message} className={className} workspaceId={workspaceId} />;
+        return (
+          <ToolMessage
+            message={message}
+            className={className}
+            workspaceId={workspaceId}
+            onReviewNote={onReviewNote}
+            isLatestProposePlan={isLatestProposePlan}
+          />
+        );
       case "reasoning":
         return <ReasoningMessage message={message} className={className} />;
       case "stream-error":
@@ -50,6 +73,22 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
         return <HistoryHiddenMessage message={message} className={className} />;
       case "workspace-init":
         return <InitMessage message={message} className={className} />;
+      case "plan-display":
+        return (
+          <ProposePlanToolCall
+            args={{}}
+            isEphemeralPreview={true}
+            content={message.content}
+            path={message.path}
+            workspaceId={workspaceId}
+            onClose={() => {
+              if (workspaceId) {
+                removeEphemeralMessage(workspaceId, message.historyId);
+              }
+            }}
+            className={className}
+          />
+        );
       default:
         console.error("don't know how to render message", message);
         return null;

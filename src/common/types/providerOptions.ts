@@ -1,3 +1,6 @@
+import type z from "zod";
+import type { MuxProviderOptionsSchema } from "../orpc/schemas";
+
 /**
  * Mux provider-specific options that get passed through the stack.
  * Used by both frontend and backend to configure provider-specific features
@@ -9,56 +12,4 @@
  * configuration level (e.g., custom headers, beta features).
  */
 
-/**
- * Anthropic-specific options
- */
-export interface AnthropicProviderOptions {
-  /** Enable 1M context window (requires beta header) */
-  use1MContext?: boolean;
-}
-
-/**
- * OpenAI-specific options
- */
-export interface OpenAIProviderOptions {
-  /** Disable automatic context truncation (useful for testing) */
-  disableAutoTruncation?: boolean;
-  /** Force context limit error (used in integration tests to simulate overflow) */
-  forceContextLimitError?: boolean;
-  /** Simulate successful response without executing tools (used in tool policy tests) */
-  simulateToolPolicyNoop?: boolean;
-}
-
-/**
- * Google-specific options
- */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface GoogleProviderOptions {}
-
-/**
- * Ollama-specific options
- * Currently empty - Ollama is a local service and doesn't require special options.
- * This interface is provided for future extensibility.
- */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface OllamaProviderOptions {}
-
-/**
- * OpenRouter-specific options
- * Transparently passes through options to the OpenRouter provider
- * @see https://openrouter.ai/docs
- */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface OpenRouterProviderOptions {}
-
-/**
- * Mux provider options - used by both frontend and backend
- */
-export interface MuxProviderOptions {
-  /** Provider-specific options */
-  anthropic?: AnthropicProviderOptions;
-  openai?: OpenAIProviderOptions;
-  google?: GoogleProviderOptions;
-  ollama?: OllamaProviderOptions;
-  openrouter?: OpenRouterProviderOptions;
-}
+export type MuxProviderOptions = z.infer<typeof MuxProviderOptionsSchema>;

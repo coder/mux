@@ -32,6 +32,7 @@ export interface WorkspaceUI {
     expectActionButtonVisible(label: string): Promise<void>;
     clickActionButton(label: string): Promise<void>;
     expectStatusMessageContains(text: string): Promise<void>;
+    sendCommandAndExpectStatus(command: string, expectedStatus: string): Promise<void>;
     captureStreamTimeline(
       action: () => Promise<void>,
       options?: { timeoutMs?: number }
@@ -40,6 +41,14 @@ export interface WorkspaceUI {
   readonly metaSidebar: {
     expectVisible(): Promise<void>;
     selectTab(label: string): Promise<void>;
+  };
+  readonly settings: {
+    open(): Promise<void>;
+    close(): Promise<void>;
+    expectOpen(): Promise<void>;
+    expectClosed(): Promise<void>;
+    selectSection(section: "General" | "Providers" | "Models"): Promise<void>;
+    expandProvider(providerName: string): Promise<void>;
   };
   readonly context: DemoProjectConfig;
 }
@@ -83,7 +92,9 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
       const workspaceItem = workspaceItems.first();
       const isVisible = await workspaceItem.isVisible().catch(() => false);
       if (!isVisible) {
-        await projectItem.click();
+        // Click the expand/collapse button within the project item
+        const expandButton = projectItem.getByRole("button", { name: /expand project/i });
+        await expandButton.click();
         await workspaceItem.waitFor({ state: "visible" });
       }
 
@@ -161,6 +172,40 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
       await expect(status).toBeVisible();
     },
 
+    /**
+     * Send a slash command and wait for a status toast concurrently.
+     * This avoids the race condition where the toast can auto-dismiss (after 3s)
+     * before a sequential assertion has a chance to observe it.
+     *
+     * Uses waitForSelector which polls more aggressively than expect().toBeVisible()
+     * to catch transient elements like auto-dismissing toasts.
+     */
+    async sendCommandAndExpectStatus(command: string, expectedStatus: string): Promise<void> {
+      if (!command.startsWith("/")) {
+        throw new Error("sendCommandAndExpectStatus expects a slash command");
+      }
+      const input = page.getByRole("textbox", {
+        name: /Message Claude|Edit your last message/,
+      });
+      await expect(input).toBeVisible();
+
+      // Use page.waitForSelector which polls aggressively for transient elements.
+      // Start the wait BEFORE triggering the action to catch the toast immediately.
+      // Use longer timeout since slash commands involve async ORPC calls under the hood.
+      const toastSelector = `[role="status"]:has-text("${expectedStatus}")`;
+      const toastPromise = page.waitForSelector(toastSelector, {
+        state: "attached",
+        timeout: 30_000,
+      });
+
+      // Send the command
+      await input.fill(command);
+      await page.keyboard.press("Enter");
+
+      // Wait for the toast we started watching for
+      await toastPromise;
+    },
+
     async captureStreamTimeline(
       action: () => Promise<void>,
       options?: { timeoutMs?: number }
@@ -185,7 +230,6 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
         };
 
         const win = window as unknown as {
-          api: typeof window.api;
           __muxStreamCapture?: Record<string, StreamCapture>;
         };
 
@@ -199,60 +243,94 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
         }
 
         const events: StreamCaptureEvent[] = [];
-        const unsubscribe = win.api.workspace.onChat(id, (message) => {
-          if (!message || typeof message !== "object") {
-            return;
-          }
-          if (!("type" in message) || typeof (message as { type?: unknown }).type !== "string") {
-            return;
-          }
-          const eventType = (message as { type: string }).type;
-          const isStreamEvent = eventType.startsWith("stream-");
-          const isToolEvent = eventType.startsWith("tool-call-");
-          const isReasoningEvent = eventType.startsWith("reasoning-");
-          if (!isStreamEvent && !isToolEvent && !isReasoningEvent) {
-            return;
-          }
-          const entry: StreamCaptureEvent = {
-            type: eventType,
-            timestamp: Date.now(),
-          };
-          if ("delta" in message && typeof (message as { delta?: unknown }).delta === "string") {
-            entry.delta = (message as { delta: string }).delta;
-          }
-          if (
-            "messageId" in message &&
-            typeof (message as { messageId?: unknown }).messageId === "string"
-          ) {
-            entry.messageId = (message as { messageId: string }).messageId;
-          }
-          if ("model" in message && typeof (message as { model?: unknown }).model === "string") {
-            entry.model = (message as { model: string }).model;
-          }
-          if (
-            isToolEvent &&
-            "toolName" in message &&
-            typeof (message as { toolName?: unknown }).toolName === "string"
-          ) {
-            entry.toolName = (message as { toolName: string }).toolName;
-          }
-          if (
-            isToolEvent &&
-            "toolCallId" in message &&
-            typeof (message as { toolCallId?: unknown }).toolCallId === "string"
-          ) {
-            entry.toolCallId = (message as { toolCallId: string }).toolCallId;
-          }
-          if (isToolEvent && "args" in message) {
-            entry.args = (message as { args?: unknown }).args;
-          }
-          if (isToolEvent && "result" in message) {
-            entry.result = (message as { result?: unknown }).result;
-          }
-          events.push(entry);
-        });
+        const controller = new AbortController();
+        const signal = controller.signal;
 
-        store[id] = { events, unsubscribe };
+        // Start processing in background
+        void (async () => {
+          try {
+            if (!window.__ORPC_CLIENT__) {
+              throw new Error("ORPC client not initialized");
+            }
+            const iterator = await window.__ORPC_CLIENT__.workspace.onChat(
+              { workspaceId: id },
+              { signal }
+            );
+
+            for await (const message of iterator) {
+              if (signal.aborted) break;
+
+              if (!message || typeof message !== "object") {
+                continue;
+              }
+              if (
+                !("type" in message) ||
+                typeof (message as { type?: unknown }).type !== "string"
+              ) {
+                continue;
+              }
+              const eventType = (message as { type: string }).type;
+              const isStreamEvent = eventType.startsWith("stream-");
+              const isToolEvent = eventType.startsWith("tool-call-");
+              const isReasoningEvent = eventType.startsWith("reasoning-");
+              if (!isStreamEvent && !isToolEvent && !isReasoningEvent) {
+                continue;
+              }
+              const entry: StreamCaptureEvent = {
+                type: eventType,
+                timestamp: Date.now(),
+              };
+              if (
+                "delta" in message &&
+                typeof (message as { delta?: unknown }).delta === "string"
+              ) {
+                entry.delta = (message as { delta: string }).delta;
+              }
+              if (
+                "messageId" in message &&
+                typeof (message as { messageId?: unknown }).messageId === "string"
+              ) {
+                entry.messageId = (message as { messageId: string }).messageId;
+              }
+              if (
+                "model" in message &&
+                typeof (message as { model?: unknown }).model === "string"
+              ) {
+                entry.model = (message as { model: string }).model;
+              }
+              if (
+                isToolEvent &&
+                "toolName" in message &&
+                typeof (message as { toolName?: unknown }).toolName === "string"
+              ) {
+                entry.toolName = (message as { toolName: string }).toolName;
+              }
+              if (
+                isToolEvent &&
+                "toolCallId" in message &&
+                typeof (message as { toolCallId?: unknown }).toolCallId === "string"
+              ) {
+                entry.toolCallId = (message as { toolCallId: string }).toolCallId;
+              }
+              if (isToolEvent && "args" in message) {
+                entry.args = (message as { args?: unknown }).args;
+              }
+              if (isToolEvent && "result" in message) {
+                entry.result = (message as { result?: unknown }).result;
+              }
+              events.push(entry);
+            }
+          } catch (err) {
+            if (!signal.aborted) {
+              console.error("[E2E] Stream capture error:", err);
+            }
+          }
+        })();
+
+        store[id] = {
+          events,
+          unsubscribe: () => controller.abort(),
+        };
       }, workspaceId);
 
       let actionError: unknown;
@@ -269,7 +347,10 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
             if (!capture) {
               return false;
             }
-            return capture.events.some((event) => event.type === "stream-end");
+            // Wait for either stream-end or stream-error to complete the capture
+            return capture.events.some(
+              (event) => event.type === "stream-end" || event.type === "stream-error"
+            );
           },
           workspaceId,
           { timeout: timeoutMs }
@@ -333,10 +414,51 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
     },
   };
 
+  const settings = {
+    async open(): Promise<void> {
+      // Click the settings gear button in the title bar
+      const settingsButton = page.getByRole("button", { name: /settings/i });
+      await expect(settingsButton).toBeVisible();
+      await settingsButton.click();
+      await settings.expectOpen();
+    },
+
+    async close(): Promise<void> {
+      // Press Escape to close
+      await page.keyboard.press("Escape");
+      await settings.expectClosed();
+    },
+
+    async expectOpen(): Promise<void> {
+      const dialog = page.getByRole("dialog", { name: "Settings" });
+      await expect(dialog).toBeVisible({ timeout: 5000 });
+    },
+
+    async expectClosed(): Promise<void> {
+      const dialog = page.getByRole("dialog", { name: "Settings" });
+      await expect(dialog).not.toBeVisible({ timeout: 5000 });
+    },
+
+    async selectSection(section: "General" | "Providers" | "Models"): Promise<void> {
+      const sectionButton = page.getByRole("button", { name: section, exact: true });
+      await expect(sectionButton).toBeVisible();
+      await sectionButton.click();
+    },
+
+    async expandProvider(providerName: string): Promise<void> {
+      const providerButton = page.getByRole("button", { name: new RegExp(providerName, "i") });
+      await expect(providerButton).toBeVisible();
+      await providerButton.click();
+      // Wait for expansion - look for the "Base URL" label which is more unique
+      await expect(page.getByText(/Base URL/)).toBeVisible({ timeout: 5000 });
+    },
+  };
+
   return {
     projects,
     chat,
     metaSidebar,
+    settings,
     context,
   };
 }

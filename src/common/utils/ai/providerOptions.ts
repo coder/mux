@@ -7,8 +7,11 @@
 import type { AnthropicProviderOptions } from "@ai-sdk/anthropic";
 import type { OpenAIResponsesProviderOptions } from "@ai-sdk/openai";
 import type { GoogleGenerativeAIProviderOptions } from "@ai-sdk/google";
+import type { XaiProviderOptions } from "@ai-sdk/xai";
+import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import {
+  ANTHROPIC_EFFORT,
   ANTHROPIC_THINKING_BUDGETS,
   GEMINI_THINKING_BUDGETS,
   OPENAI_REASONING_EFFORT,
@@ -17,6 +20,7 @@ import {
 import { log } from "@/node/services/log";
 import type { MuxMessage } from "@/common/types/message";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
+import { normalizeGatewayModel } from "./models";
 
 /**
  * OpenRouter reasoning options
@@ -38,6 +42,7 @@ type ProviderOptions =
   | { openai: OpenAIResponsesProviderOptions }
   | { google: GoogleGenerativeAIProviderOptions }
   | { openrouter: OpenRouterReasoningOptions }
+  | { xai: XaiProviderOptions }
   | Record<string, never>; // Empty object for unsupported providers
 
 /**
@@ -59,26 +64,69 @@ export function buildProviderOptions(
   modelString: string,
   thinkingLevel: ThinkingLevel,
   messages?: MuxMessage[],
-  lostResponseIds?: (id: string) => boolean
+  lostResponseIds?: (id: string) => boolean,
+  muxProviderOptions?: MuxProviderOptions
 ): ProviderOptions {
   // Always clamp to the model's supported thinking policy (e.g., gpt-5-pro = HIGH only)
   const effectiveThinking = enforceThinkingPolicy(modelString, thinkingLevel);
-  // Parse provider from model string
-  const [provider] = modelString.split(":");
+  // Parse provider from normalized model string
+  const [provider, modelName] = normalizeGatewayModel(modelString).split(":", 2);
 
   log.debug("buildProviderOptions", {
     modelString,
     provider,
+    modelName,
     thinkingLevel,
   });
 
-  if (!provider) {
-    log.debug("buildProviderOptions: No provider found, returning empty");
+  if (!provider || !modelName) {
+    log.debug("buildProviderOptions: No provider or model name found, returning empty");
     return {};
   }
 
   // Build Anthropic-specific options
   if (provider === "anthropic") {
+    // Check if this is Opus 4.5 (supports effort parameter)
+    // Opus 4.5 uses the new "effort" parameter for reasoning control
+    // All other Anthropic models use the "thinking" parameter with budgetTokens
+    const isOpus45 = modelName?.includes("opus-4-5") ?? false;
+
+    if (isOpus45) {
+      // Opus 4.5: Use effort parameter AND optionally thinking for visible reasoning
+      // - "off" or "low" → effort: "low", no thinking (fast, no visible reasoning for off)
+      // - "low" → effort: "low", thinking enabled (visible reasoning)
+      // - "medium" → effort: "medium", thinking enabled
+      // - "high" → effort: "high", thinking enabled
+      const effortLevel = ANTHROPIC_EFFORT[effectiveThinking];
+      const budgetTokens = ANTHROPIC_THINKING_BUDGETS[effectiveThinking];
+      log.debug("buildProviderOptions: Anthropic Opus 4.5 config", {
+        effort: effortLevel,
+        budgetTokens,
+        thinkingLevel: effectiveThinking,
+      });
+
+      const options: ProviderOptions = {
+        anthropic: {
+          disableParallelToolUse: false, // Always enable concurrent tool execution
+          sendReasoning: true, // Include reasoning traces in requests sent to the model
+          // Enable thinking to get visible reasoning traces (only when not "off")
+          // budgetTokens sets the ceiling; effort controls how eagerly tokens are spent
+          ...(budgetTokens > 0 && {
+            thinking: {
+              type: "enabled",
+              budgetTokens,
+            },
+          }),
+          // Use effort parameter (Opus 4.5 only) to control token spend
+          // SDK auto-adds beta header "effort-2025-11-24" when effort is set
+          effort: effortLevel,
+        },
+      };
+      log.debug("buildProviderOptions: Returning Anthropic Opus 4.5 options", options);
+      return options;
+    }
+
+    // Other Anthropic models: Use thinking parameter with budgetTokens
     const budgetTokens = ANTHROPIC_THINKING_BUDGETS[effectiveThinking];
     log.debug("buildProviderOptions: Anthropic config", {
       budgetTokens,
@@ -89,7 +137,7 @@ export function buildProviderOptions(
       anthropic: {
         disableParallelToolUse: false, // Always enable concurrent tool execution
         sendReasoning: true, // Include reasoning traces in requests sent to the model
-        // Conditionally add thinking configuration
+        // Conditionally add thinking configuration (non-Opus 4.5 models)
         ...(budgetTokens > 0 && {
           thinking: {
             type: "enabled",
@@ -159,18 +207,23 @@ export function buildProviderOptions(
       }
     }
 
+    // Check if auto-truncation should be disabled (for testing context limit errors)
+    const disableAutoTruncation = muxProviderOptions?.openai?.disableAutoTruncation ?? false;
+
     log.debug("buildProviderOptions: OpenAI config", {
       reasoningEffort,
       thinkingLevel: effectiveThinking,
       previousResponseId,
+      disableAutoTruncation,
     });
 
     const options: ProviderOptions = {
       openai: {
         parallelToolCalls: true, // Always enable concurrent tool execution
         // TODO: allow this to be configured
-        serviceTier: "priority", // Always use priority tier for best performance
-        truncation: "auto", // Automatically truncate conversation to fit context window
+        serviceTier: "auto", // Use "auto" to automatically select the best service tier
+        // Automatically truncate conversation to fit context window, unless disabled for testing
+        truncation: disableAutoTruncation ? "disabled" : "auto",
         // Conditionally add reasoning configuration
         ...(reasoningEffort && {
           reasoningEffort,
@@ -200,8 +253,11 @@ export function buildProviderOptions(
       };
 
       if (isGemini3) {
-        // Gemini 3 uses thinkingLevel (low/high)
-        thinkingConfig.thinkingLevel = effectiveThinking === "medium" ? "low" : effectiveThinking;
+        // Gemini 3 uses thinkingLevel (low/high) - map medium/xhigh to supported values
+        thinkingConfig.thinkingLevel =
+          effectiveThinking === "medium" || effectiveThinking === "xhigh"
+            ? "high"
+            : effectiveThinking;
       } else {
         // Gemini 2.5 uses thinkingBudget
         const budget = GEMINI_THINKING_BUDGETS[effectiveThinking];
@@ -248,6 +304,25 @@ export function buildProviderOptions(
     // No reasoning config needed when thinking is off
     log.debug("buildProviderOptions: OpenRouter (thinking off, no provider options)");
     return {};
+  }
+
+  // Build xAI-specific options
+  if (provider === "xai") {
+    const overrides = muxProviderOptions?.xai ?? {};
+
+    const defaultSearchParameters: XaiProviderOptions["searchParameters"] = {
+      mode: "auto",
+      returnCitations: true,
+    };
+
+    const options: ProviderOptions = {
+      xai: {
+        ...overrides,
+        searchParameters: overrides.searchParameters ?? defaultSearchParameters,
+      },
+    };
+    log.debug("buildProviderOptions: Returning xAI options", options);
+    return options;
   }
 
   // No provider-specific options for unsupported providers

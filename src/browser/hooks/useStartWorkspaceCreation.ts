@@ -8,40 +8,11 @@ import {
   getModelKey,
   getPendingScopeId,
   getProjectScopeId,
-  getRuntimeKey,
   getTrunkBranchKey,
 } from "@/common/constants/storage";
-import { RUNTIME_MODE, SSH_RUNTIME_PREFIX } from "@/common/types/runtime";
 
 export type StartWorkspaceCreationDetail =
   CustomEventPayloads[typeof CUSTOM_EVENTS.START_WORKSPACE_CREATION];
-
-export function normalizeRuntimePreference(runtime: string | undefined): string | undefined {
-  if (!runtime) {
-    return undefined;
-  }
-
-  const trimmed = runtime.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-
-  const lower = trimmed.toLowerCase();
-  if (lower === RUNTIME_MODE.LOCAL) {
-    return undefined;
-  }
-
-  if (lower === RUNTIME_MODE.SSH) {
-    return RUNTIME_MODE.SSH;
-  }
-
-  if (lower.startsWith(SSH_RUNTIME_PREFIX)) {
-    const host = trimmed.slice(SSH_RUNTIME_PREFIX.length).trim();
-    return host ? `${RUNTIME_MODE.SSH} ${host}` : RUNTIME_MODE.SSH;
-  }
-
-  return trimmed;
-}
 
 export function getFirstProjectPath(projects: Map<string, ProjectConfig>): string | null {
   const iterator = projects.keys().next();
@@ -75,10 +46,8 @@ export function persistWorkspaceCreationPrefill(
     );
   }
 
-  if (detail.runtime !== undefined) {
-    const normalizedRuntime = normalizeRuntimePreference(detail.runtime);
-    persist(getRuntimeKey(projectPath), normalizedRuntime);
-  }
+  // Note: runtime is intentionally NOT persisted here - it's a one-time override.
+  // The default runtime can only be changed via the icon selector.
 }
 
 interface UseStartWorkspaceCreationOptions {

@@ -5,7 +5,7 @@
  * Each workspace can have multiple terminal windows open simultaneously.
  */
 
-import { BrowserWindow } from "electron";
+import { app, BrowserWindow } from "electron";
 import * as path from "path";
 import { log } from "@/node/services/log";
 import type { Config } from "@/node/config";
@@ -71,16 +71,18 @@ export class TerminalWindowManager {
     });
 
     // Load the terminal page
-    const isDev = !process.env.NODE_ENV || process.env.NODE_ENV === "development";
+    // Match main window logic: use dev server unless packaged or MUX_E2E_LOAD_DIST=1
+    const forceDistLoad = process.env.MUX_E2E_LOAD_DIST === "1";
+    const useDevServer = !app.isPackaged && !forceDistLoad;
 
-    if (isDev) {
+    if (useDevServer) {
       // Development mode - load from Vite dev server
       await terminalWindow.loadURL(
         `http://localhost:5173/terminal.html?workspaceId=${encodeURIComponent(workspaceId)}`
       );
       terminalWindow.webContents.openDevTools();
     } else {
-      // Production mode - load from built files
+      // Production mode (or E2E dist mode) - load from built files
       await terminalWindow.loadFile(path.join(__dirname, "../terminal.html"), {
         query: { workspaceId },
       });

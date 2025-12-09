@@ -2,6 +2,8 @@ import * as fs from "fs";
 import * as fsPromises from "fs/promises";
 import * as path from "path";
 import type { InitLogger } from "./Runtime";
+import type { RuntimeConfig } from "@/common/types/runtime";
+import { isWorktreeRuntime, isSSHRuntime } from "@/common/types/runtime";
 
 /**
  * Check if .mux/init hook exists and is executable
@@ -27,19 +29,33 @@ export function getInitHookPath(projectPath: string): string {
 }
 
 /**
- * Get environment variables for init hook execution
- * Centralizes env var injection to avoid duplication across runtimes
+ * Get MUX_ environment variables for bash execution.
+ * Used by both init hook and regular bash tool calls.
  * @param projectPath - Path to project root (local path for LocalRuntime, remote path for SSHRuntime)
- * @param runtime - Runtime type: "local" or "ssh"
+ * @param runtime - Runtime type: "local", "worktree", or "ssh"
+ * @param workspaceName - Name of the workspace (branch name or custom name)
  */
-export function getInitHookEnv(
+export function getMuxEnv(
   projectPath: string,
-  runtime: "local" | "ssh"
+  runtime: "local" | "worktree" | "ssh",
+  workspaceName: string
 ): Record<string, string> {
   return {
     MUX_PROJECT_PATH: projectPath,
     MUX_RUNTIME: runtime,
+    MUX_WORKSPACE_NAME: workspaceName,
   };
+}
+
+/**
+ * Get the effective runtime type from a RuntimeConfig.
+ * Handles legacy "local" with srcBaseDir → "worktree" mapping.
+ */
+export function getRuntimeType(config: RuntimeConfig | undefined): "local" | "worktree" | "ssh" {
+  if (!config) return "worktree"; // Default to worktree for undefined config
+  if (isSSHRuntime(config)) return "ssh";
+  if (isWorktreeRuntime(config)) return "worktree";
+  return "local";
 }
 
 /**

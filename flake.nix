@@ -134,6 +134,7 @@
             mdbook
             mdbook-mermaid
             mdbook-linkcheck
+            mdbook-pagetoc
 
             # Terminal bench
             uv

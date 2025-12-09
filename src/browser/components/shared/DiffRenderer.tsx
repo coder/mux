@@ -7,8 +7,9 @@
 import React, { useEffect, useState } from "react";
 import { cn } from "@/common/lib/utils";
 import { getLanguageFromPath } from "@/common/utils/git/languageDetector";
-import { Tooltip, TooltipWrapper } from "../Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { groupDiffLines } from "@/browser/utils/highlighting/diffChunking";
+import { useTheme, type ThemeMode } from "@/browser/contexts/ThemeContext";
 import {
   highlightDiffChunk,
   type HighlightedChunk,
@@ -17,6 +18,7 @@ import {
   highlightSearchMatches,
   type SearchHighlightConfig,
 } from "@/browser/utils/highlighting/highlightSearchTerms";
+import type { ReviewNoteData } from "@/common/types/review";
 
 // Shared type for diff line types
 export type DiffLineType = "add" | "remove" | "context" | "header";
@@ -163,6 +165,8 @@ interface DiffRendererProps {
   fontSize?: string;
   /** Max height for diff container (default: "400px", use "none" for no limit) */
   maxHeight?: string;
+  /** Additional className for container (e.g., "rounded-none" to remove rounding) */
+  className?: string;
 }
 
 /**
@@ -176,7 +180,8 @@ function useHighlightedDiff(
   content: string,
   language: string,
   oldStart: number,
-  newStart: number
+  newStart: number,
+  themeMode: ThemeMode
 ): HighlightedChunk[] | null {
   const [chunks, setChunks] = useState<HighlightedChunk[] | null>(null);
   // Track if we've already highlighted with real syntax (to prevent downgrading)
@@ -199,7 +204,7 @@ function useHighlightedDiff(
 
       // Highlight each chunk (without search decorations - those are applied later)
       const highlighted = await Promise.all(
-        diffChunks.map((chunk) => highlightDiffChunk(chunk, language))
+        diffChunks.map((chunk) => highlightDiffChunk(chunk, language, themeMode))
       );
 
       if (!cancelled) {
@@ -216,7 +221,7 @@ function useHighlightedDiff(
     return () => {
       cancelled = true;
     };
-  }, [content, language, oldStart, newStart]);
+  }, [content, language, oldStart, newStart, themeMode]);
 
   return chunks;
 }
@@ -238,26 +243,28 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
   filePath,
   fontSize,
   maxHeight,
+  className,
 }) => {
   // Detect language for syntax highlighting (memoized to prevent repeated detection)
+  const { theme } = useTheme();
   const language = React.useMemo(
     () => (filePath ? getLanguageFromPath(filePath) : "text"),
     [filePath]
   );
 
-  const highlightedChunks = useHighlightedDiff(content, language, oldStart, newStart);
+  const highlightedChunks = useHighlightedDiff(content, language, oldStart, newStart, theme);
 
   // Show loading state while highlighting
   if (!highlightedChunks) {
     return (
-      <DiffContainer fontSize={fontSize} maxHeight={maxHeight}>
+      <DiffContainer fontSize={fontSize} maxHeight={maxHeight} className={className}>
         <div style={{ opacity: 0.5, padding: "8px" }}>Processing...</div>
       </DiffContainer>
     );
   }
 
   return (
-    <DiffContainer fontSize={fontSize} maxHeight={maxHeight}>
+    <DiffContainer fontSize={fontSize} maxHeight={maxHeight} className={className}>
       {highlightedChunks.flatMap((chunk) =>
         chunk.lines.map((line) => {
           const indicator = chunk.type === "add" ? "+" : chunk.type === "remove" ? "-" : " ";
@@ -310,8 +317,8 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
 interface SelectableDiffRendererProps extends Omit<DiffRendererProps, "filePath"> {
   /** File path for generating review notes */
   filePath: string;
-  /** Callback when user submits a review note */
-  onReviewNote?: (note: string) => void;
+  /** Callback when user submits a review note with structured data */
+  onReviewNote?: (data: ReviewNoteData) => void;
   /** Callback when user clicks on a line (to activate parent hunk) */
   onLineClick?: () => void;
   /** Search highlight configuration (optional) */
@@ -336,7 +343,7 @@ interface ReviewNoteInputProps {
   lineData: Array<{ index: number; type: DiffLineType; lineNum: number }>;
   lines: string[]; // Original diff lines with +/- prefix
   filePath: string;
-  onSubmit: (note: string) => void;
+  onSubmit: (data: ReviewNoteData) => void;
   onCancel: () => void;
 }
 
@@ -375,34 +382,37 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
         return `${lineInfo.lineNum} ${indicator} ${content}`;
       });
 
-      // Elide middle lines if more than 3 lines selected
-      let selectedLines: string;
-      if (allLines.length <= 3) {
-        selectedLines = allLines.join("\n");
+      // Elide middle lines if more than 20 lines selected (show 10 at start, 10 at end)
+      let selectedCode: string;
+      const CONTEXT_LINES = 10;
+      const MAX_FULL_LINES = CONTEXT_LINES * 2;
+      if (allLines.length <= MAX_FULL_LINES) {
+        selectedCode = allLines.join("\n");
       } else {
-        const omittedCount = allLines.length - 2;
-        selectedLines = [
-          allLines[0],
+        const omittedCount = allLines.length - MAX_FULL_LINES;
+        selectedCode = [
+          ...allLines.slice(0, CONTEXT_LINES),
           `    (${omittedCount} lines omitted)`,
-          allLines[allLines.length - 1],
+          ...allLines.slice(-CONTEXT_LINES),
         ].join("\n");
       }
 
-      const reviewNote = `<review>\nRe ${filePath}:${lineRange}\n\`\`\`\n${selectedLines}\n\`\`\`\n> ${noteText.trim()}\n</review>`;
-      onSubmit(reviewNote);
+      // Pass structured data instead of formatted message
+      onSubmit({
+        filePath,
+        lineRange,
+        selectedCode,
+        userNote: noteText.trim(),
+      });
     };
 
     return (
-      <div
-        className="bg-dark m-0 border-t px-2 py-1.5"
-        style={{ borderColor: "hsl(from var(--color-review-accent) h s l / 0.3)" }}
-      >
+      <div className="m-0 border-t border-[var(--color-review-accent)]/30 bg-[var(--color-review-accent)]/5 px-2 py-1.5">
         <textarea
           ref={textareaRef}
-          className="bg-dark text-text placeholder:text-muted w-full resize-none overflow-y-hidden rounded-sm border px-2 py-1.5 font-mono text-xs leading-[1.4] focus:border-[hsl(from_var(--color-review-accent)_h_s_l_/_0.6)] focus:outline-none"
+          className="text-primary placeholder:text-muted w-full resize-none overflow-y-hidden rounded border border-[var(--color-review-accent)]/40 bg-[var(--color-review-accent)]/10 px-2 py-1.5 text-xs leading-[1.4] focus:border-[var(--color-review-accent)]/60 focus:outline-none"
           style={{
             minHeight: "calc(12px * 1.4 * 3 + 12px)",
-            borderColor: "hsl(from var(--color-review-accent) h s l / 0.4)",
           }}
           placeholder="Add a review note to chat (Shift-click + button to select range, Enter to submit, Shift+Enter for newline, Esc to cancel)&#10;j, k to iterate through hunks, m to toggle as read"
           value={noteText}
@@ -446,6 +456,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     searchConfig,
     enableHighlighting = true,
   }) => {
+    const { theme } = useTheme();
     const [selection, setSelection] = React.useState<LineSelection | null>(null);
 
     // Detect language for syntax highlighting (memoized to prevent repeated detection)
@@ -459,7 +470,8 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       content,
       enableHighlighting ? language : "text",
       oldStart,
-      newStart
+      newStart,
+      theme
     );
 
     // Build lineData from highlighted chunks (memoized to prevent repeated parsing)
@@ -525,9 +537,9 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       });
     };
 
-    const handleSubmitNote = (reviewNote: string) => {
+    const handleSubmitNote = (data: ReviewNoteData) => {
       if (!onReviewNote) return;
-      onReviewNote(reviewNote);
+      onReviewNote(data);
       setSelection(null);
     };
 
@@ -573,35 +585,37 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                 }}
               >
                 <span className="absolute top-1/2 left-1 z-[1] -translate-y-1/2">
-                  <TooltipWrapper inline>
-                    <button
-                      className="bg-review-accent flex h-3.5 w-3.5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-none p-0 font-bold text-white opacity-0 transition-opacity duration-150 group-hover:opacity-70 hover:!opacity-100 active:scale-90"
-                      style={{
-                        background: "var(--color-review-accent)",
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleCommentButtonClick(displayIndex, e.shiftKey);
-                      }}
-                      onMouseEnter={(e) => {
-                        const target = e.currentTarget;
-                        target.style.background =
-                          "hsl(from var(--color-review-accent) h s calc(l * 1.2))";
-                      }}
-                      onMouseLeave={(e) => {
-                        const target = e.currentTarget;
-                        target.style.background = "var(--color-review-accent)";
-                      }}
-                      aria-label="Add review comment"
-                    >
-                      +
-                    </button>
-                    <Tooltip position="bottom" align="left">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        className="bg-review-accent flex h-3.5 w-3.5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-none p-0 font-bold text-white opacity-0 transition-opacity duration-150 group-hover:opacity-70 hover:!opacity-100 active:scale-90"
+                        style={{
+                          background: "var(--color-review-accent)",
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCommentButtonClick(displayIndex, e.shiftKey);
+                        }}
+                        onMouseEnter={(e) => {
+                          const target = e.currentTarget;
+                          target.style.background =
+                            "hsl(from var(--color-review-accent) h s calc(l * 1.2))";
+                        }}
+                        onMouseLeave={(e) => {
+                          const target = e.currentTarget;
+                          target.style.background = "var(--color-review-accent)";
+                        }}
+                        aria-label="Add review comment"
+                      >
+                        +
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" align="start">
                       Add review comment
                       <br />
                       (Shift-click to select range)
-                    </Tooltip>
-                  </TooltipWrapper>
+                    </TooltipContent>
+                  </Tooltip>
                 </span>
                 <div
                   className="flex px-2 font-mono whitespace-pre"

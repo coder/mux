@@ -1,8 +1,8 @@
 "use client";
 
 import { cn } from "@/common/lib/utils";
-import { motion } from "motion/react";
-import { type CSSProperties, type ElementType, type JSX, memo, useMemo } from "react";
+import type { ElementType } from "react";
+import { memo } from "react";
 
 export interface TextShimmerProps {
   children: string;
@@ -13,42 +13,41 @@ export interface TextShimmerProps {
   colorClass?: string;
 }
 
+/**
+ * Shimmer text effect using CSS background-clip: text.
+ *
+ * Uses a gradient background clipped to text shape, animated via
+ * background-position. This is much lighter than the previous
+ * canvas + Web Worker approach:
+ * - No JS animation loop
+ * - No canvas rendering
+ * - No worker message passing
+ * - Browser handles animation natively
+ *
+ * Note: background-position isn't compositor-only, but for small text
+ * elements like "Thinking..." the repaint cost is negligible compared
+ * to the overhead of canvas/worker solutions.
+ */
 const ShimmerComponent = ({
   children,
-  as: Component = "p",
+  as: Component = "span",
   className,
   duration = 2,
-  spread = 2,
   colorClass = "var(--color-muted-foreground)",
 }: TextShimmerProps) => {
-  const MotionComponent = motion.create(Component as keyof JSX.IntrinsicElements);
-
-  const dynamicSpread = useMemo(() => (children?.length ?? 0) * spread, [children, spread]);
-
   return (
-    <MotionComponent
-      animate={{ backgroundPosition: "0% center" }}
-      className={cn(
-        "relative bg-[length:250%_100%,auto] bg-clip-text text-transparent",
-        "[--bg:linear-gradient(90deg,#0000_calc(50%-var(--spread)),var(--color-background),#0000_calc(50%+var(--spread)))] [background-repeat:no-repeat,padding-box]",
-        className
-      )}
+    <Component
+      className={cn("shimmer-text", className)}
       data-chromatic="ignore"
-      initial={{ backgroundPosition: "100% center" }}
       style={
         {
-          "--spread": `${dynamicSpread}px`,
-          backgroundImage: `var(--bg), linear-gradient(${colorClass}, ${colorClass})`,
-        } as CSSProperties
+          "--shimmer-duration": `${duration}s`,
+          "--shimmer-color": colorClass,
+        } as React.CSSProperties
       }
-      transition={{
-        repeat: Number.POSITIVE_INFINITY,
-        duration,
-        ease: "linear",
-      }}
     >
       {children}
-    </MotionComponent>
+    </Component>
   );
 };
 

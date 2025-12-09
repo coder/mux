@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { log } from "@/node/services/log";
 
 /**
  * Disposable temporary directory that auto-cleans when disposed
@@ -22,7 +23,7 @@ export class DisposableTempDir implements Disposable {
       try {
         fs.rmSync(this.path, { recursive: true, force: true });
       } catch (error) {
-        console.error(`Failed to cleanup temp dir ${this.path}:`, error);
+        log.warn(`Failed to cleanup temp dir ${this.path}:`, error);
         // Don't throw - cleanup is best-effort
       }
     }

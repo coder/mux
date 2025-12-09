@@ -1,7 +1,9 @@
+import { expect, test, mock } from "bun:test";
 import { buildCoreSources } from "./sources";
 import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
+import type { APIClient } from "@/browser/contexts/API";
 
 const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
   const projects = new Map<string, ProjectConfig>();
@@ -27,6 +29,7 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
   });
   const params: Parameters<typeof buildCoreSources>[0] = {
     projects,
+    theme: "dark",
     workspaceMetadata,
     selectedWorkspace: {
       projectPath: "/repo/a",
@@ -46,6 +49,14 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
     onToggleSidebar: () => undefined,
     onNavigateWorkspace: () => undefined,
     onOpenWorkspaceInTerminal: () => undefined,
+    onToggleTheme: () => undefined,
+    onSetTheme: () => undefined,
+    api: {
+      workspace: {
+        truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
+        interruptStream: () => Promise.resolve({ success: true, data: undefined }),
+      },
+    } as unknown as APIClient,
     getBranchesForProject: () =>
       Promise.resolve({
         branches: ["main"],
@@ -76,7 +87,7 @@ test("buildCoreSources adds thinking effort command", () => {
 });
 
 test("thinking effort command submits selected level", async () => {
-  const onSetThinkingLevel = jest.fn();
+  const onSetThinkingLevel = mock();
   const sources = mk({ onSetThinkingLevel, getThinkingLevel: () => "low" });
   const actions = sources.flatMap((s) => s());
   const thinkingAction = actions.find((a) => a.id === "thinking:set-level");

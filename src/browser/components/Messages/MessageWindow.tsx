@@ -4,7 +4,7 @@ import { formatTimestamp } from "@/browser/utils/ui/dateTime";
 import { Code2Icon } from "lucide-react";
 import type { ReactNode } from "react";
 import React, { useMemo, useState } from "react";
-import { Tooltip, TooltipWrapper } from "../Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { Button } from "../ui/button";
 
 export interface ButtonConfig {
@@ -66,7 +66,7 @@ export const MessageWindow: React.FC<MessageWindowProps> = ({
       className={cn(
         "mt-4 mb-1 flex w-full flex-col relative isolate w-fit",
         variant === "user" && "ml-auto",
-        variant === "assistant" && "text-white",
+        variant === "assistant" && "text-foreground",
         isLastPartOfMessage && "mb-4"
       )}
       data-message-block
@@ -74,7 +74,7 @@ export const MessageWindow: React.FC<MessageWindowProps> = ({
       <div
         className={cn(
           variant === "user" &&
-            "bg-neutral-700/50 border border-user-border/20 rounded-lg px-3 py-2 overflow-hidden",
+            "bg-[var(--color-user-surface)] border border-[var(--color-user-border)] rounded-lg px-3 py-2 overflow-hidden shadow-sm",
           variant === "assistant" && "px-1 py-1"
         )}
       >
@@ -82,7 +82,7 @@ export const MessageWindow: React.FC<MessageWindowProps> = ({
         <div className="relative z-10 flex flex-col gap-2">
           <div data-message-content>
             {showJson ? (
-              <pre className="m-0 overflow-x-auto rounded-xl border border-white/10 bg-black/30 p-3 text-[12px] leading-snug whitespace-pre-wrap text-white/80">
+              <pre className="m-0 overflow-x-auto rounded-xl border border-[var(--color-message-debug-border)] bg-[var(--color-message-debug-bg)] p-3 text-[12px] leading-snug whitespace-pre-wrap text-[var(--color-message-debug-text)]">
                 {JSON.stringify(message, null, 2)}
               </pre>
             ) : (
@@ -95,7 +95,7 @@ export const MessageWindow: React.FC<MessageWindowProps> = ({
         <div
           className={cn(
             "mt-2 flex flex-wrap items-center justify-between gap-3 text-[11px]",
-            variant === "user" ? "ml-auto text-white/60" : "text-white/60"
+            variant === "user" ? "ml-auto text-muted" : "text-muted"
           )}
           data-message-meta
         >
@@ -153,10 +153,10 @@ const IconActionButton: React.FC<IconActionButtonProps> = ({ button }) => {
 
   if (button.tooltip || button.label) {
     return (
-      <TooltipWrapper inline>
-        {content}
-        <Tooltip align="center">{button.tooltip ?? button.label}</Tooltip>
-      </TooltipWrapper>
+      <Tooltip>
+        <TooltipTrigger asChild>{content}</TooltipTrigger>
+        <TooltipContent align="center">{button.tooltip ?? button.label}</TooltipContent>
+      </Tooltip>
     );
   }
 

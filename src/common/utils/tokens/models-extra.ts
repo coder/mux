@@ -22,6 +22,24 @@ interface ModelData {
 }
 
 export const modelsExtra: Record<string, ModelData> = {
+  // Claude Opus 4.5 - Released November 24, 2025
+  // $5/M input, $25/M output (price drop from Opus 4.1's $15/$75)
+  // 64K max output tokens (matches Sonnet 4.5)
+  "claude-opus-4-5": {
+    max_input_tokens: 200000,
+    max_output_tokens: 64000,
+    input_cost_per_token: 0.000005, // $5 per million input tokens
+    output_cost_per_token: 0.000025, // $25 per million output tokens
+    cache_creation_input_token_cost: 0.00000625, // $6.25 per million tokens (estimated)
+    cache_read_input_token_cost: 0.0000005, // $0.50 per million tokens (estimated)
+    litellm_provider: "anthropic",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+
   // GPT-5 Pro - Released October 6, 2025 at DevDay
   // $15/M input, $120/M output
   // Only available via OpenAI's Responses API
@@ -69,5 +87,22 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_function_calling: true,
     supports_reasoning: true,
     supports_response_schema: true,
+  },
+
+  // GPT-5.1-Codex-Max - Extended reasoning model with xhigh support
+  // Same pricing as gpt-5.1-codex: $1.25/M input, $10/M output
+  // Supports 5 reasoning levels: off, low, medium, high, xhigh
+  "gpt-5.1-codex-max": {
+    max_input_tokens: 272000, // Same as gpt-5.1-codex
+    max_output_tokens: 128000, // Same as gpt-5.1-codex
+    input_cost_per_token: 0.00000125, // $1.25 per million input tokens
+    output_cost_per_token: 0.00001, // $10 per million output tokens
+    litellm_provider: "openai",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+    supported_endpoints: ["/v1/responses"],
   },
 };

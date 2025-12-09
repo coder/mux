@@ -6,9 +6,10 @@ import { updatePersistedState, readPersistedState } from "@/browser/hooks/usePer
 import type { ThinkingLevel, ThinkingLevelOn } from "@/common/types/thinking";
 import { DEFAULT_THINKING_LEVEL } from "@/common/types/thinking";
 import { getThinkingPolicyForModel } from "@/browser/utils/thinking/policy";
-import { getDefaultModelFromLRU } from "@/browser/hooks/useModelLRU";
+import { getDefaultModel } from "@/browser/hooks/useModelLRU";
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
-import { isCompactingStream, cancelCompaction } from "@/common/utils/compaction/handler";
+import { isCompactingStream, cancelCompaction } from "@/browser/utils/compaction/handler";
+import { useAPI } from "@/browser/contexts/API";
 
 interface UseAIViewKeybindsParams {
   workspaceId: string;
@@ -21,7 +22,7 @@ interface UseAIViewKeybindsParams {
   chatInputAPI: React.RefObject<ChatInputAPI | null>;
   jumpToBottom: () => void;
   handleOpenTerminal: () => void;
-  aggregator: StreamingMessageAggregator; // For compaction detection
+  aggregator: StreamingMessageAggregator | undefined; // For compaction detection
   setEditingMessage: (editing: { id: string; content: string } | undefined) => void;
   vimEnabled: boolean; // For vim-aware interrupt keybind
 }
@@ -34,7 +35,6 @@ interface UseAIViewKeybindsParams {
  * - Ctrl+G: Jump to bottom
  * - Ctrl+T: Open terminal
  * - Ctrl+C (during compaction in vim mode): Cancel compaction, restore command
- * - Ctrl+A (during compaction): Accept early with [truncated]
  *
  * Note: In vim mode, Ctrl+C always interrupts streams. Use vim yank (y) commands for copying.
  */
@@ -53,6 +53,8 @@ export function useAIViewKeybinds({
   setEditingMessage,
   vimEnabled,
 }: UseAIViewKeybindsParams): void {
+  const { api } = useAPI();
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Check vim-aware interrupt keybind
@@ -61,16 +63,17 @@ export function useAIViewKeybinds({
         : KEYBINDS.INTERRUPT_STREAM_NORMAL;
 
       // Interrupt stream: Ctrl+C in vim mode, Esc in normal mode
-      // (different from Ctrl+A which accepts early with [truncated])
       // Only intercept if actively compacting (otherwise allow browser default for copy in vim mode)
       if (matchesKeybind(e, interruptKeybind)) {
-        if (canInterrupt && isCompactingStream(aggregator)) {
+        if (canInterrupt && aggregator && isCompactingStream(aggregator)) {
           // Ctrl+C during compaction: restore original state and enter edit mode
           // Stores cancellation marker in localStorage (persists across reloads)
           e.preventDefault();
-          void cancelCompaction(workspaceId, aggregator, (messageId, command) => {
-            setEditingMessage({ id: messageId, content: command });
-          });
+          if (api) {
+            void cancelCompaction(api, workspaceId, aggregator, (messageId, command) => {
+              setEditingMessage({ id: messageId, content: command });
+            });
+          }
           setAutoRetry(false);
           return;
         }
@@ -81,24 +84,9 @@ export function useAIViewKeybinds({
         if (canInterrupt || showRetryBarrier) {
           e.preventDefault();
           setAutoRetry(false); // User explicitly stopped - don't auto-retry
-          void window.api.workspace.interruptStream(workspaceId);
+          void api?.workspace.interruptStream({ workspaceId });
           return;
         }
-      }
-
-      // Ctrl+A during compaction: accept early with [truncated] sentinel
-      // (different from Ctrl+C which cancels and restores original state)
-      // Only intercept if actively compacting (otherwise allow browser default for select all)
-      if (matchesKeybind(e, KEYBINDS.ACCEPT_EARLY_COMPACTION)) {
-        if (canInterrupt && isCompactingStream(aggregator)) {
-          // Ctrl+A during compaction: perform compaction with partial summary
-          // No flag set - handleCompactionAbort will perform compaction with [truncated]
-          e.preventDefault();
-          setAutoRetry(false);
-          void window.api.workspace.interruptStream(workspaceId);
-        }
-        // Let browser handle Ctrl+A (select all) when not compacting
-        return;
       }
 
       // Focus chat input works anywhere (even in input fields)
@@ -116,7 +104,7 @@ export function useAIViewKeybinds({
         // Fall back to message history model, then to most recent model from LRU
         // This matches the same logic as useSendMessageOptions
         const selectedModel = readPersistedState<string | null>(getModelKey(workspaceId), null);
-        const modelToUse = selectedModel ?? currentModel ?? getDefaultModelFromLRU();
+        const modelToUse = selectedModel ?? currentModel ?? getDefaultModel();
 
         // Storage key for remembering this model's last-used active thinking level
         const lastThinkingKey = getLastThinkingByModelKey(modelToUse);
@@ -175,5 +163,6 @@ export function useAIViewKeybinds({
     aggregator,
     setEditingMessage,
     vimEnabled,
+    api,
   ]);
 }

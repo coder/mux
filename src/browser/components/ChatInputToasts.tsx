@@ -88,26 +88,6 @@ export const createCommandToast = (parsed: ParsedCommand): Toast | null => {
         ),
       };
 
-    case "telemetry-help":
-      return {
-        id: Date.now().toString(),
-        type: "error",
-        title: "Telemetry Command",
-        message: "Enable or disable usage telemetry",
-        solution: (
-          <>
-            <SolutionLabel>Usage:</SolutionLabel>
-            /telemetry &lt;on|off&gt;
-            <br />
-            <br />
-            <SolutionLabel>Examples:</SolutionLabel>
-            /telemetry off
-            <br />
-            /telemetry on
-          </>
-        ),
-      };
-
     case "fork-help":
       return {
         id: Date.now().toString(),
@@ -190,6 +170,21 @@ export const createErrorToast = (error: SendMessageErrorType): Toast => {
           <>
             <SolutionLabel>Expected Format:</SolutionLabel>
             provider:model-name (e.g., anthropic:claude-opus-4-1)
+          </>
+        ),
+      };
+    }
+
+    case "incompatible_workspace": {
+      return {
+        id: Date.now().toString(),
+        type: "error",
+        title: "Incompatible Workspace",
+        message: error.message,
+        solution: (
+          <>
+            <SolutionLabel>Solution:</SolutionLabel>
+            Upgrade mux to use this workspace, or delete it and create a new one.
           </>
         ),
       };

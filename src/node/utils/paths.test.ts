@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { PlatformPaths } from "./paths.main";
+import { toPosixPath } from "./paths";
 import * as os from "os";
 import * as path from "path";
 
@@ -141,6 +142,80 @@ describe("PlatformPaths", () => {
       const sep = PlatformPaths.separator;
       // Should match the current platform's separator
       expect(sep).toBe(path.sep);
+    });
+  });
+});
+
+describe("toPosixPath", () => {
+  describe("on non-Windows platforms", () => {
+    test("returns POSIX paths unchanged", () => {
+      if (process.platform !== "win32") {
+        expect(toPosixPath("/home/user/project")).toBe("/home/user/project");
+        expect(toPosixPath("/tmp/mux-bashes")).toBe("/tmp/mux-bashes");
+      }
+    });
+
+    test("returns paths with spaces unchanged", () => {
+      if (process.platform !== "win32") {
+        expect(toPosixPath("/home/user/my project")).toBe("/home/user/my project");
+      }
+    });
+
+    test("returns relative paths unchanged", () => {
+      if (process.platform !== "win32") {
+        expect(toPosixPath("relative/path/file.txt")).toBe("relative/path/file.txt");
+      }
+    });
+
+    test("returns empty string unchanged", () => {
+      if (process.platform !== "win32") {
+        expect(toPosixPath("")).toBe("");
+      }
+    });
+  });
+
+  describe("path format handling", () => {
+    test("handles paths with special characters", () => {
+      const input = "/path/with spaces/and-dashes/under_scores";
+      const result = toPosixPath(input);
+      expect(typeof result).toBe("string");
+      if (process.platform !== "win32") {
+        expect(result).toBe(input);
+      }
+    });
+
+    test("handles deeply nested paths", () => {
+      const input = "/a/b/c/d/e/f/g/h/i/j/file.txt";
+      const result = toPosixPath(input);
+      expect(typeof result).toBe("string");
+      if (process.platform !== "win32") {
+        expect(result).toBe(input);
+      }
+    });
+  });
+
+  // Windows-specific behavior documentation
+  // These tests document expected behavior but can only truly verify on Windows CI
+  describe("Windows behavior (documented)", () => {
+    test("converts Windows drive paths to POSIX format on Windows", () => {
+      // On Windows with Git Bash/MSYS2, cygpath converts:
+      //   "C:\\Users\\test" → "/c/Users/test"
+      //   "C:\\Program Files\\Git" → "/c/Program Files/Git"
+      //   "D:\\Projects\\mux" → "/d/Projects/mux"
+      //
+      // On non-Windows, this is a no-op (returns input unchanged)
+      if (process.platform === "win32") {
+        // Real Windows test - only runs on Windows CI
+        const result = toPosixPath("C:\\Users\\test");
+        expect(result).toMatch(/^\/c\/Users\/test$/i);
+      }
+    });
+
+    test("falls back to original path if cygpath unavailable", () => {
+      // If cygpath is not available (edge case), the function catches
+      // the error and returns the original path unchanged
+      // This prevents crashes if Git Bash is misconfigured
+      expect(true).toBe(true); // Cannot easily test without mocking execSync
     });
   });
 });

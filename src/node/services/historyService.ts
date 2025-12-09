@@ -1,5 +1,6 @@
 import * as fs from "fs/promises";
 import * as path from "path";
+import writeFileAtomic from "write-file-atomic";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { MuxMessage } from "@/common/types/message";
@@ -53,8 +54,8 @@ export class HistoryService {
           messages.push(normalizeLegacyMuxMetadata(message));
         } catch (parseError) {
           // Skip malformed lines but log error for debugging
-          console.error(
-            `[HistoryService] Skipping malformed JSON at line ${i + 1} in ${workspaceId}/chat.jsonl:`,
+          log.warn(
+            `Skipping malformed JSON at line ${i + 1} in ${workspaceId}/chat.jsonl:`,
             parseError instanceof Error ? parseError.message : String(parseError),
             "\nLine content:",
             lines[i].substring(0, 100) + (lines[i].length > 100 ? "..." : "")
@@ -235,7 +236,8 @@ export class HistoryService {
           .map((msg) => JSON.stringify({ ...msg, workspaceId }) + "\n")
           .join("");
 
-        await fs.writeFile(historyPath, historyEntries);
+        // Atomic write prevents corruption if app crashes mid-write
+        await writeFileAtomic(historyPath, historyEntries);
         return Ok(undefined);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -272,7 +274,8 @@ export class HistoryService {
           .map((msg) => JSON.stringify({ ...msg, workspaceId }) + "\n")
           .join("");
 
-        await fs.writeFile(historyPath, historyEntries);
+        // Atomic write prevents corruption if app crashes mid-write
+        await writeFileAtomic(historyPath, historyEntries);
 
         // Update sequence counter to continue from where we truncated
         if (truncatedMessages.length > 0) {
@@ -399,7 +402,8 @@ export class HistoryService {
           .map((msg) => JSON.stringify({ ...msg, workspaceId }) + "\n")
           .join("");
 
-        await fs.writeFile(historyPath, historyEntries);
+        // Atomic write prevents corruption if app crashes mid-write
+        await writeFileAtomic(historyPath, historyEntries);
 
         // Update sequence counter to continue from where we are
         if (remainingMessages.length > 0) {
@@ -418,12 +422,12 @@ export class HistoryService {
     });
   }
 
-  async clearHistory(workspaceId: string): Promise<Result<void>> {
+  async clearHistory(workspaceId: string): Promise<Result<number[], string>> {
     const result = await this.truncateHistory(workspaceId, 1.0);
     if (!result.success) {
       return Err(result.error);
     }
-    return Ok(undefined);
+    return Ok(result.data);
   }
 
   /**
@@ -455,7 +459,8 @@ export class HistoryService {
           .map((msg) => JSON.stringify({ ...msg, workspaceId: newWorkspaceId }) + "\n")
           .join("");
 
-        await fs.writeFile(newHistoryPath, historyEntries);
+        // Atomic write prevents corruption if app crashes mid-write
+        await writeFileAtomic(newHistoryPath, historyEntries);
 
         // Transfer sequence counter to new workspace ID
         const oldCounter = this.sequenceCounters.get(oldWorkspaceId) ?? 0;

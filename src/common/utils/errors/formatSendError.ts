@@ -32,6 +32,11 @@ export function formatSendMessageError(error: SendMessageError): FormattedError 
         message: error.message,
       };
 
+    case "incompatible_workspace":
+      return {
+        message: error.message,
+      };
+
     case "unknown":
       return {
         message: error.raw || "An unexpected error occurred",

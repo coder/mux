@@ -8,5 +8,13 @@
   "printWidth": 100,
   "bracketSpacing": true,
   "arrowParens": "always",
-  "endOfLine": "lf"
+  "endOfLine": "lf",
+  "overrides": [
+    {
+      "files": "docs/**/*.mdx",
+      "options": {
+        "parser": "mdx"
+      }
+    }
+  ]
 }

@@ -1,12 +1,9 @@
 import type { ReactNode } from "react";
 import React, { useState, useEffect } from "react";
 import { Mermaid } from "./Mermaid";
-import {
-  getShikiHighlighter,
-  mapToShikiLang,
-  SHIKI_THEME,
-} from "@/browser/utils/highlighting/shikiHighlighter";
+import { highlightCode } from "@/browser/utils/highlighting/highlightWorkerClient";
 import { extractShikiLines } from "@/browser/utils/highlighting/shiki-shared";
+import { useTheme } from "@/browser/contexts/ThemeContext";
 import { CopyButton } from "@/browser/components/ui/CopyButton";
 
 interface CodeProps {
@@ -45,6 +42,7 @@ interface CodeBlockProps {
  */
 const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
   const [highlightedLines, setHighlightedLines] = useState<string[] | null>(null);
+  const { theme: themeMode } = useTheme();
 
   // Split code into lines, removing trailing empty line
   const plainLines = code
@@ -53,34 +51,14 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
 
   useEffect(() => {
     let cancelled = false;
+    const isLight = themeMode === "light" || themeMode === "solarized-light";
+    const theme = isLight ? "light" : "dark";
+
+    setHighlightedLines(null);
 
     async function highlight() {
       try {
-        const highlighter = await getShikiHighlighter();
-        const shikiLang = mapToShikiLang(language);
-
-        // Load language on-demand if not already loaded
-        // This is race-safe: concurrent loads of the same language are idempotent
-        const loadedLangs = highlighter.getLoadedLanguages();
-        if (!loadedLangs.includes(shikiLang)) {
-          try {
-            // TypeScript doesn't know shikiLang is valid, but we handle errors gracefully
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
-            await highlighter.loadLanguage(shikiLang as any);
-          } catch {
-            // Language not available in Shiki bundle - fall back to plain text
-            console.warn(`Language '${shikiLang}' not available in Shiki, using plain text`);
-            if (!cancelled) {
-              setHighlightedLines(null);
-            }
-            return;
-          }
-        }
-
-        const html = highlighter.codeToHtml(code, {
-          lang: shikiLang,
-          theme: SHIKI_THEME,
-        });
+        const html = await highlightCode(code, language, theme);
 
         if (!cancelled) {
           const lines = extractShikiLines(html);
@@ -100,7 +78,7 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
     return () => {
       cancelled = true;
     };
-  }, [code, language]);
+  }, [code, language, themeMode]);
 
   const lines = highlightedLines ?? plainLines;
 

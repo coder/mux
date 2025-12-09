@@ -19,7 +19,7 @@ export interface VimState {
   pendingOp: null | { op: "d" | "y" | "c"; at: number; args?: string[] };
 }
 
-export type VimAction = "undo" | "redo";
+export type VimAction = "undo" | "redo" | "escapeInNormalMode";
 
 export type VimKeyResult =
   | { handled: false } // Browser should handle this key
@@ -457,9 +457,9 @@ function handleNormalModeKey(state: VimState, key: string, modifiers: KeyModifie
   const opResult = tryHandleOperator(state, key, now);
   if (opResult) return opResult;
 
-  // Stay in normal mode for ESC
+  // Escape in normal mode - signal to parent (e.g., to cancel edit mode)
   if (key === "Escape" || (key === "[" && modifiers.ctrl)) {
-    return { handled: true, newState: state };
+    return { handled: true, newState: state, action: "escapeInNormalMode" };
   }
 
   // Swallow all other single-character keys in normal mode (don't type letters)

@@ -1,8 +1,13 @@
 // Enable source map support for better error stack traces in production
 import "source-map-support/register";
+import { randomBytes } from "crypto";
+import { RPCHandler } from "@orpc/server/message-port";
+import { onError } from "@orpc/server";
+import { router } from "@/node/orpc/router";
+import { ServerLockfile } from "@/node/services/serverLockfile";
 import "disposablestack/auto";
 
-import type { IpcMainInvokeEvent, MenuItemConstructorOptions } from "electron";
+import type { MenuItemConstructorOptions } from "electron";
 import {
   app,
   BrowserWindow,
@@ -15,43 +20,16 @@ import {
 import * as fs from "fs";
 import * as path from "path";
 import type { Config } from "@/node/config";
-import type { IpcMain } from "@/node/services/ipcMain";
+import type { ServiceContainer } from "@/node/services/serviceContainer";
 import { VERSION } from "@/version";
-import { IPC_CHANNELS } from "@/common/constants/ipc-constants";
 import { getMuxHome, migrateLegacyMuxHome } from "@/common/constants/paths";
-import { log } from "@/node/services/log";
-import { parseDebugUpdater } from "@/common/utils/env";
+
 import assert from "@/common/utils/assert";
 import { loadTokenizerModules } from "@/node/utils/main/tokenizer";
+import windowStateKeeper from "electron-window-state";
 
 // React DevTools for development profiling
-// Using require() instead of import since it's dev-only and conditionally loaded
-interface Extension {
-  name: string;
-  id: string;
-}
-
-type ExtensionInstaller = (
-  ext: { id: string },
-  options?: { loadExtensionOptions?: { allowFileAccess?: boolean } }
-) => Promise<Extension>;
-
-let installExtension: ExtensionInstaller | null = null;
-let REACT_DEVELOPER_TOOLS: { id: string } | null = null;
-
-if (!app.isPackaged) {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const devtools = require("electron-devtools-installer") as {
-      default: ExtensionInstaller;
-      REACT_DEVELOPER_TOOLS: { id: string };
-    };
-    installExtension = devtools.default;
-    REACT_DEVELOPER_TOOLS = devtools.REACT_DEVELOPER_TOOLS;
-  } catch (error) {
-    console.log("React DevTools not available:", error);
-  }
-}
+// Using dynamic import() to avoid loading electron-devtools-installer at module init time
 
 // IMPORTANT: Lazy-load heavy dependencies to maintain fast startup time
 //
@@ -64,12 +42,10 @@ if (!app.isPackaged) {
 //
 // Enforcement: scripts/check_eager_imports.sh validates this in CI
 //
-// Lazy-load Config and IpcMain to avoid loading heavy AI SDK dependencies at startup
+// Lazy-load Config and ServiceContainer to avoid loading heavy AI SDK dependencies at startup
 // These will be loaded on-demand when createWindow() is called
 let config: Config | null = null;
-let ipcMain: IpcMain | null = null;
-// eslint-disable-next-line @typescript-eslint/consistent-type-imports
-let updaterService: typeof import("@/desktop/updater").UpdaterService.prototype | null = null;
+let services: ServiceContainer | null = null;
 const isE2ETest = process.env.MUX_E2E === "1";
 const forceDistLoad = process.env.MUX_E2E_LOAD_DIST === "1";
 
@@ -198,7 +174,10 @@ function createMenu() {
         { role: "zoomIn" },
         { role: "zoomOut" },
         { type: "separator" },
-        { role: "togglefullscreen" },
+        {
+          role: "togglefullscreen",
+          accelerator: process.platform === "darwin" ? "Ctrl+Command+F" : "F11",
+        },
       ],
     },
     {
@@ -212,6 +191,14 @@ function createMenu() {
       label: app.getName(),
       submenu: [
         { role: "about" },
+        { type: "separator" },
+        {
+          label: "Settings...",
+          accelerator: "Cmd+,",
+          click: () => {
+            services?.menuEventService.emitOpenSettings();
+          },
+        },
         { type: "separator" },
         { role: "services", submenu: [] },
         { type: "separator" },
@@ -287,43 +274,112 @@ function closeSplashScreen() {
 }
 
 /**
- * Load backend services (Config, IpcMain, AI SDK, tokenizer)
+ * Load backend services (Config, ServiceContainer, AI SDK, tokenizer)
  *
  * Heavy initialization (~100ms) happens here while splash is visible.
  * Note: Spinner may freeze briefly during this phase. This is acceptable since
  * the splash still provides visual feedback that the app is loading.
  */
 async function loadServices(): Promise<void> {
-  if (config && ipcMain) return; // Already loaded
+  if (config && services) return; // Already loaded
 
   const startTime = Date.now();
   console.log(`[${timestamp()}] Loading services...`);
 
   /* eslint-disable no-restricted-syntax */
   // Dynamic imports are justified here for performance:
-  // - IpcMain transitively imports the entire AI SDK (ai, @ai-sdk/anthropic, etc.)
+  // - ServiceContainer transitively imports the entire AI SDK (ai, @ai-sdk/anthropic, etc.)
   // - These are large modules (~100ms load time) that would block splash from appearing
   // - Loading happens once, then cached
   const [
     { Config: ConfigClass },
-    { IpcMain: IpcMainClass },
-    { UpdaterService: UpdaterServiceClass },
+    { ServiceContainer: ServiceContainerClass },
     { TerminalWindowManager: TerminalWindowManagerClass },
   ] = await Promise.all([
     import("@/node/config"),
-    import("@/node/services/ipcMain"),
-    import("@/desktop/updater"),
+    import("@/node/services/serviceContainer"),
     import("@/desktop/terminalWindowManager"),
   ]);
   /* eslint-enable no-restricted-syntax */
   config = new ConfigClass();
-  ipcMain = new IpcMainClass(config);
-  await ipcMain.initialize();
+
+  services = new ServiceContainerClass(config);
+  await services.initialize();
+
+  // Generate auth token (use env var or random per-session)
+  const authToken = process.env.MUX_SERVER_AUTH_TOKEN ?? randomBytes(32).toString("hex");
+
+  // Single router instance with auth middleware - used for both MessagePort and HTTP/WS
+  const orpcRouter = router(authToken);
+
+  const orpcHandler = new RPCHandler(orpcRouter, {
+    interceptors: [
+      onError((error) => {
+        console.error("ORPC Error:", error);
+      }),
+    ],
+  });
+
+  // Build the oRPC context with all services
+  const orpcContext = {
+    config: services.config,
+    aiService: services.aiService,
+    projectService: services.projectService,
+    workspaceService: services.workspaceService,
+    providerService: services.providerService,
+    terminalService: services.terminalService,
+    windowService: services.windowService,
+    updateService: services.updateService,
+    tokenizerService: services.tokenizerService,
+    serverService: services.serverService,
+    mcpConfigService: services.mcpConfigService,
+    mcpServerManager: services.mcpServerManager,
+    menuEventService: services.menuEventService,
+    voiceService: services.voiceService,
+    telemetryService: services.telemetryService,
+  };
+
+  electronIpcMain.on("start-orpc-server", (event) => {
+    const [serverPort] = event.ports;
+    orpcHandler.upgrade(serverPort, {
+      context: {
+        ...orpcContext,
+        // Inject synthetic auth header so auth middleware passes
+        headers: { authorization: `Bearer ${authToken}` },
+      },
+    });
+    serverPort.start();
+  });
+
+  // Start HTTP/WS API server for CLI access (unless explicitly disabled)
+  if (process.env.MUX_NO_API_SERVER !== "1") {
+    const lockfile = new ServerLockfile(config.rootDir);
+    const existing = await lockfile.read();
+
+    if (existing) {
+      console.log(`[${timestamp()}] API server already running at ${existing.baseUrl}, skipping`);
+    } else {
+      try {
+        const port = process.env.MUX_SERVER_PORT ? parseInt(process.env.MUX_SERVER_PORT, 10) : 0;
+        const serverInfo = await services.serverService.startServer({
+          muxHome: config.rootDir,
+          context: orpcContext,
+          router: orpcRouter,
+          authToken,
+          port,
+        });
+        console.log(`[${timestamp()}] API server started at ${serverInfo.baseUrl}`);
+      } catch (error) {
+        console.error(`[${timestamp()}] Failed to start API server:`, error);
+        // Non-fatal - continue without API server
+      }
+    }
+  }
 
   // Set TerminalWindowManager for desktop mode (pop-out terminal windows)
   const terminalWindowManager = new TerminalWindowManagerClass(config);
-  ipcMain.setProjectDirectoryPicker(async (event: IpcMainInvokeEvent) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
+  services.setProjectDirectoryPicker(async () => {
+    const win = BrowserWindow.getFocusedWindow();
     if (!win) return null;
 
     const res = await dialog.showOpenDialog(win, {
@@ -335,48 +391,39 @@ async function loadServices(): Promise<void> {
     return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0];
   });
 
-  ipcMain.setTerminalWindowManager(terminalWindowManager);
+  services.setTerminalWindowManager(terminalWindowManager);
 
   loadTokenizerModules().catch((error) => {
     console.error("Failed to preload tokenizer modules:", error);
   });
 
   // Initialize updater service in packaged builds or when DEBUG_UPDATER is set
-  const debugConfig = parseDebugUpdater(process.env.DEBUG_UPDATER);
-
-  if (app.isPackaged || debugConfig.enabled) {
-    updaterService = new UpdaterServiceClass();
-    const debugInfo = debugConfig.fakeVersion
-      ? `debug with fake version ${debugConfig.fakeVersion}`
-      : `debug enabled`;
-    console.log(
-      `[${timestamp()}] Updater service initialized (packaged: ${app.isPackaged}, ${debugConfig.enabled ? debugInfo : ""})`
-    );
-  } else {
-    console.log(
-      `[${timestamp()}] Updater service disabled in dev mode (set DEBUG_UPDATER=1 or DEBUG_UPDATER=<version> to enable)`
-    );
-  }
+  // Moved to UpdateService (services.updateService)
 
   const loadTime = Date.now() - startTime;
   console.log(`[${timestamp()}] Services loaded in ${loadTime}ms`);
 }
 
 function createWindow() {
-  assert(ipcMain, "Services must be loaded before creating window");
+  assert(services, "Services must be loaded before creating window");
 
-  // Calculate window size based on screen dimensions (80% of available space)
+  // Calculate default window size (80% of screen)
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width: screenWidth, height: screenHeight } = primaryDisplay.workArea;
 
-  const windowWidth = Math.max(1200, Math.floor(screenWidth * 0.8));
-  const windowHeight = Math.max(800, Math.floor(screenHeight * 0.8));
+  // Load saved window state with fallback to defaults
+  const windowState = windowStateKeeper({
+    defaultWidth: Math.max(1200, Math.floor(screenWidth * 0.8)),
+    defaultHeight: Math.max(800, Math.floor(screenHeight * 0.8)),
+  });
 
   console.log(`[${timestamp()}] [window] Creating BrowserWindow...`);
 
   mainWindow = new BrowserWindow({
-    width: windowWidth,
-    height: windowHeight,
+    x: windowState.x,
+    y: windowState.y,
+    width: windowState.width,
+    height: windowState.height,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -389,52 +436,12 @@ function createWindow() {
     show: false, // Don't show until ready-to-show event
   });
 
-  // Register IPC handlers with the main window
-  console.log(`[${timestamp()}] [window] Registering IPC handlers...`);
-  ipcMain.register(electronIpcMain, mainWindow);
+  // Track window state (handles resize, move, maximize, fullscreen)
+  windowState.manage(mainWindow);
 
-  // Register updater IPC handlers (available in both dev and prod)
-  electronIpcMain.handle(IPC_CHANNELS.UPDATE_CHECK, () => {
-    // Note: log interface already includes timestamp and file location
-    log.debug(`UPDATE_CHECK called (updaterService: ${updaterService ? "available" : "null"})`);
-    if (!updaterService) {
-      // Send "idle" status if updater not initialized (dev mode without DEBUG_UPDATER)
-      if (mainWindow) {
-        mainWindow.webContents.send(IPC_CHANNELS.UPDATE_STATUS, {
-          type: "idle" as const,
-        });
-      }
-      return;
-    }
-    log.debug("Calling updaterService.checkForUpdates()");
-    updaterService.checkForUpdates();
-  });
-
-  electronIpcMain.handle(IPC_CHANNELS.UPDATE_DOWNLOAD, async () => {
-    if (!updaterService) throw new Error("Updater not available in development");
-    await updaterService.downloadUpdate();
-  });
-
-  electronIpcMain.handle(IPC_CHANNELS.UPDATE_INSTALL, () => {
-    if (!updaterService) throw new Error("Updater not available in development");
-    updaterService.installUpdate();
-  });
-
-  // Handle status subscription requests
-  // Note: React StrictMode in dev causes components to mount twice, resulting in duplicate calls
-  electronIpcMain.on(IPC_CHANNELS.UPDATE_STATUS_SUBSCRIBE, () => {
-    log.debug("UPDATE_STATUS_SUBSCRIBE called");
-    if (!mainWindow) return;
-    const status = updaterService ? updaterService.getStatus() : { type: "idle" };
-    log.debug("Sending current status to renderer:", status);
-    mainWindow.webContents.send(IPC_CHANNELS.UPDATE_STATUS, status);
-  });
-
-  // Set up updater service with the main window (only in production)
-  if (updaterService) {
-    updaterService.setMainWindow(mainWindow);
-    // Note: Checks are initiated by frontend to respect telemetry preference
-  }
+  // Register window service with the main window
+  console.log(`[${timestamp()}] [window] Registering window service...`);
+  services.windowService.setMainWindow(mainWindow);
 
   // Show window once it's ready and close splash
   console.time("main window startup");
@@ -509,8 +516,11 @@ if (gotTheLock) {
       migrateLegacyMuxHome();
 
       // Install React DevTools in development
-      if (!app.isPackaged && installExtension && REACT_DEVELOPER_TOOLS) {
+      if (!app.isPackaged) {
         try {
+          const { default: installExtension, REACT_DEVELOPER_TOOLS } =
+            // eslint-disable-next-line no-restricted-syntax -- dev-only dependency, intentionally lazy-loaded
+            await import("electron-devtools-installer");
           const extension = await installExtension(REACT_DEVELOPER_TOOLS, {
             loadExtensionOptions: { allowFileAccess: true },
           });
@@ -556,21 +566,48 @@ if (gotTheLock) {
     }
   });
 
+  // Track if we're in the middle of disposing to prevent re-entry
+  let isDisposing = false;
+
+  app.on("before-quit", (event) => {
+    // Skip if already disposing or no services to clean up
+    if (isDisposing || !services) {
+      return;
+    }
+
+    // Prevent quit, clean up, then quit again
+    event.preventDefault();
+    isDisposing = true;
+
+    // Race dispose against timeout to ensure app quits even if disposal hangs
+    const disposePromise = services.dispose().catch((err) => {
+      console.error("Error during ServiceContainer dispose:", err);
+    });
+    const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, 5000));
+
+    void Promise.race([disposePromise, timeoutPromise]).finally(() => {
+      app.quit();
+    });
+  });
+
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") {
       app.quit();
     }
   });
 
+  app.on("before-quit", () => {
+    console.log(`[${timestamp()}] App before-quit - cleaning up...`);
+    if (services) {
+      void services.serverService.stopServer();
+      void services.shutdown();
+    }
+  });
+
   app.on("activate", () => {
-    // Only create window if app is ready and no window exists
-    // This prevents "Cannot create BrowserWindow before app is ready" error
+    // Skip splash on reactivation - services already loaded, window creation is fast
     if (app.isReady() && mainWindow === null) {
-      void (async () => {
-        await showSplashScreen();
-        await loadServices();
-        createWindow();
-      })();
+      createWindow();
     }
   });
 }

@@ -12,6 +12,7 @@ import {
   BASH_MAX_LINE_BYTES,
   BASH_MAX_TOTAL_BYTES,
   STATUS_MESSAGE_MAX_LENGTH,
+  WEB_FETCH_MAX_OUTPUT_BYTES,
 } from "@/common/constants/toolLimits";
 import { TOOL_EDIT_WARNING } from "@/common/types/tools";
 
@@ -50,6 +51,26 @@ export const TOOL_DEFINITIONS = {
         .optional()
         .describe(
           `Timeout (seconds, default: ${BASH_DEFAULT_TIMEOUT_SECS}). Start small and increase on retry; avoid large initial values to keep UX responsive`
+        ),
+      run_in_background: z
+        .boolean()
+        .default(false)
+        .describe(
+          "Run this command in the background without blocking. " +
+            "Use for processes running >5s (dev servers, builds, file watchers). " +
+            "Do NOT use for quick commands (<5s), interactive processes (no stdin support), " +
+            "or processes requiring real-time output (use foreground with larger timeout instead). " +
+            "Returns immediately with process_id (e.g., bg-a1b2c3d4), stdout_path, and stderr_path. " +
+            "Read output with bash (e.g., tail -50 <stdout_path>). " +
+            "Terminate with bash_background_terminate using the process_id. " +
+            "Process persists until terminated or workspace is removed."
+        ),
+      display_name: z
+        .string()
+        .optional()
+        .describe(
+          "Human-readable name for background processes (e.g., 'Dev Server', 'TypeCheck Watch'). " +
+            "Only used when run_in_background=true."
         ),
     }),
   },
@@ -140,23 +161,10 @@ export const TOOL_DEFINITIONS = {
   },
   propose_plan: {
     description:
-      "Propose a plan before taking action. The plan should be complete but minimal - cover what needs to be decided or understood, nothing more. Use this tool to get approval before proceeding with implementation.",
-    schema: z.object({
-      title: z
-        .string()
-        .describe("A short, descriptive title for the plan (e.g., 'Add User Authentication')"),
-      plan: z
-        .string()
-        .describe(
-          "Implementation plan in markdown (start at h2 level). " +
-            "Scale the detail to match the task complexity: for straightforward changes, briefly state what and why; " +
-            "for complex changes, explain approach, key decisions, risks/tradeoffs; " +
-            "for uncertain changes, clarify options and what needs user input. " +
-            "When presenting options, always provide your recommendation for the overall best option for the user. " +
-            "For highly complex concepts, use mermaid diagrams where they'd clarify better than text. " +
-            "Cover what's necessary to understand and approve the approach. Omit obvious details or ceremony."
-        ),
-    }),
+      "Signal that your plan is complete and ready for user approval. " +
+      "This tool reads the plan from the plan file you wrote. " +
+      "You must write your plan to the plan file before calling this tool.",
+    schema: z.object({}),
   },
   todo_write: {
     description:
@@ -228,6 +236,36 @@ export const TOOL_DEFINITIONS = {
       })
       .strict(),
   },
+  bash_background_list: {
+    description:
+      "List all background processes started with bash(run_in_background=true). " +
+      "Returns process_id, status, script, stdout_path, stderr_path for each process. " +
+      "Use to find process_id for termination or check output file paths.",
+    schema: z.object({}),
+  },
+  bash_background_terminate: {
+    description:
+      "Terminate a background process started with bash(run_in_background=true). " +
+      "Use process_id from the original bash response or from bash_background_list. " +
+      "Sends SIGTERM, waits briefly, then SIGKILL if needed. " +
+      "Output files remain available after termination.",
+    schema: z.object({
+      process_id: z
+        .string()
+        .regex(/^bg-[0-9a-f]{8}$/, "Invalid process ID format")
+        .describe("Background process ID to terminate"),
+    }),
+  },
+  web_fetch: {
+    description:
+      `Fetch a web page and extract its main content as clean markdown. ` +
+      `Uses the workspace's network context (requests originate from the workspace, not Mux host). ` +
+      `Requires curl to be installed in the workspace. ` +
+      `Output is truncated to ${Math.floor(WEB_FETCH_MAX_OUTPUT_BYTES / 1024)}KB.`,
+    schema: z.object({
+      url: z.string().url().describe("The URL to fetch (http or https)"),
+    }),
+  },
 } as const;
 
 /**
@@ -243,7 +281,8 @@ export function getToolSchemas(): Record<string, ToolSchema> {
       {
         name,
         description: def.description,
-        inputSchema: zodToJsonSchema(def.schema) as ToolSchema["inputSchema"],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
+        inputSchema: zodToJsonSchema(def.schema as any) as ToolSchema["inputSchema"],
       },
     ])
   );
@@ -260,6 +299,8 @@ export function getAvailableTools(modelString: string): string[] {
   // Base tools available for all models
   const baseTools = [
     "bash",
+    "bash_background_list",
+    "bash_background_terminate",
     "file_read",
     "file_edit_replace_string",
     // "file_edit_replace_lines", // DISABLED: causes models to break repo state
@@ -268,6 +309,7 @@ export function getAvailableTools(modelString: string): string[] {
     "todo_write",
     "todo_read",
     "status_set",
+    "web_fetch",
   ];
 
   // Add provider-specific tools

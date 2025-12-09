@@ -16,7 +16,8 @@ const hasAnyConfiguredProvider = (providers: ProvidersConfig | null | undefined)
 const buildProvidersFromEnv = (env: NodeJS.ProcessEnv): ProvidersConfig => {
   const providers: ProvidersConfig = {};
 
-  const anthropicKey = trim(env.ANTHROPIC_API_KEY);
+  // Check ANTHROPIC_API_KEY first, fall back to ANTHROPIC_AUTH_TOKEN
+  const anthropicKey = trim(env.ANTHROPIC_API_KEY) || trim(env.ANTHROPIC_AUTH_TOKEN);
   if (anthropicKey.length > 0) {
     const entry: ProviderConfig = { apiKey: anthropicKey };
 
@@ -52,6 +53,18 @@ const buildProvidersFromEnv = (env: NodeJS.ProcessEnv): ProvidersConfig => {
   const openRouterKey = trim(env.OPENROUTER_API_KEY);
   if (openRouterKey.length > 0) {
     providers.openrouter = { apiKey: openRouterKey };
+  }
+
+  const xaiKey = trim(env.XAI_API_KEY);
+  if (xaiKey.length > 0) {
+    const entry: ProviderConfig = { apiKey: xaiKey };
+
+    const baseUrl = trim(env.XAI_BASE_URL);
+    if (baseUrl.length > 0) {
+      entry.baseUrl = baseUrl;
+    }
+
+    providers.xai = entry;
   }
 
   if (!providers.openai) {
@@ -114,7 +127,7 @@ export const ensureProvidersConfig = (
   const providersFromEnv = buildProvidersFromEnv(env);
   if (!hasAnyConfiguredProvider(providersFromEnv)) {
     throw new Error(
-      "No provider credentials found. Configure providers.jsonc or set ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY / GOOGLE_API_KEY."
+      "No provider credentials found. Configure providers.jsonc or set ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN) / OPENAI_API_KEY / OPENROUTER_API_KEY / GOOGLE_API_KEY."
     );
   }
 

@@ -9,8 +9,7 @@ import { writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { execSync } from "child_process";
-import { parseDiff, extractAllHunks } from "./diffParser";
-import { buildGitDiffCommand } from "@/browser/components/RightSidebar/CodeReview/ReviewPanel";
+import { parseDiff, extractAllHunks, buildGitDiffCommand } from "./diffParser";
 
 describe("git diff parser (real repository)", () => {
   let testRepoPath: string;

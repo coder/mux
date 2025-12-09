@@ -6,6 +6,8 @@ import type { CountTokensInput } from "./tokenizer.worker";
 import { models, type ModelName } from "ai-tokenizer";
 import { run } from "./workerPool";
 import { TOKENIZER_MODEL_OVERRIDES, DEFAULT_WARM_MODELS } from "@/common/constants/knownModels";
+import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import { log } from "@/node/services/log";
 
 /**
  * Public tokenizer interface exposed to callers.
@@ -14,6 +16,31 @@ import { TOKENIZER_MODEL_OVERRIDES, DEFAULT_WARM_MODELS } from "@/common/constan
 export interface Tokenizer {
   encoding: string;
   countTokens: (text: string) => Promise<number>;
+}
+
+const APPROX_ENCODING = "approx-4";
+
+function shouldUseApproxTokenizer(): boolean {
+  // MUX_FORCE_REAL_TOKENIZER=1 overrides approx mode (for tests that need real tokenization)
+  // MUX_APPROX_TOKENIZER=1 enables fast approximate mode (default in Jest)
+  if (process.env.MUX_FORCE_REAL_TOKENIZER === "1") {
+    return false;
+  }
+  return process.env.MUX_APPROX_TOKENIZER === "1";
+}
+
+function approximateCount(text: string): number {
+  if (typeof text !== "string" || text.length === 0) {
+    return 0;
+  }
+  return Math.ceil(text.length / 4);
+}
+
+function getApproxTokenizer(): Tokenizer {
+  return {
+    encoding: APPROX_ENCODING,
+    countTokens: (input: string) => Promise.resolve(approximateCount(input)),
+  };
 }
 
 const encodingPromises = new Map<ModelName, Promise<string>>();
@@ -48,10 +75,11 @@ function normalizeModelKey(modelName: string): ModelName | null {
  * Optionally logs a warning when falling back.
  */
 function resolveModelName(modelString: string): ModelName {
-  let modelName = normalizeModelKey(modelString);
+  const normalized = normalizeGatewayModel(modelString);
+  let modelName = normalizeModelKey(normalized);
 
   if (!modelName) {
-    const provider = modelString.split(":")[0] || "anthropic";
+    const provider = normalized.split(":")[0] || "anthropic";
     const fallbackModel =
       provider === "anthropic"
         ? "anthropic/claude-sonnet-4.5"
@@ -62,8 +90,8 @@ function resolveModelName(modelString: string): ModelName {
     // Only warn once per unknown model to avoid log spam
     if (!warnedModels.has(modelString)) {
       warnedModels.add(modelString);
-      console.warn(
-        `[tokenizer] Unknown model '${modelString}', using ${fallbackModel} tokenizer for approximate token counting`
+      log.warn(
+        `Unknown model '${modelString}', using ${fallbackModel} tokenizer for approximate token counting`
       );
     }
 
@@ -135,6 +163,14 @@ async function countTokensInternal(modelName: ModelName, text: string): Promise<
 export function loadTokenizerModules(
   modelsToWarm: string[] = Array.from(DEFAULT_WARM_MODELS)
 ): Promise<Array<PromiseSettledResult<string>>> {
+  if (shouldUseApproxTokenizer()) {
+    const fulfilled: Array<PromiseFulfilledResult<string>> = modelsToWarm.map(() => ({
+      status: "fulfilled",
+      value: APPROX_ENCODING,
+    }));
+    return Promise.resolve(fulfilled);
+  }
+
   return Promise.allSettled(
     modelsToWarm.map((modelString) => {
       const modelName = normalizeModelKey(modelString);
@@ -148,6 +184,10 @@ export function loadTokenizerModules(
 }
 
 export async function getTokenizerForModel(modelString: string): Promise<Tokenizer> {
+  if (shouldUseApproxTokenizer()) {
+    return getApproxTokenizer();
+  }
+
   const modelName = resolveModelName(modelString);
   const encodingName = await resolveEncoding(modelName);
 
@@ -158,12 +198,21 @@ export async function getTokenizerForModel(modelString: string): Promise<Tokeniz
 }
 
 export function countTokens(modelString: string, text: string): Promise<number> {
+  if (shouldUseApproxTokenizer()) {
+    return Promise.resolve(approximateCount(text));
+  }
+
   const modelName = resolveModelName(modelString);
   return countTokensInternal(modelName, text);
 }
 
 export function countTokensBatch(modelString: string, texts: string[]): Promise<number[]> {
   assert(Array.isArray(texts), "Batch token counting expects an array of strings");
+
+  if (shouldUseApproxTokenizer()) {
+    return Promise.resolve(texts.map((text) => approximateCount(text)));
+  }
+
   const modelName = resolveModelName(modelString);
   return Promise.all(texts.map((text) => countTokensInternal(modelName, text)));
 }

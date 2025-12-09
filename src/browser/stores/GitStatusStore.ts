@@ -1,3 +1,5 @@
+import type { RouterClient } from "@orpc/server";
+import type { AppRouter } from "@/node/orpc/router";
 import type { FrontendWorkspaceMetadata, GitStatus } from "@/common/types/workspace";
 import { parseGitShowBranchForStatus } from "@/common/utils/git/parseGitStatus";
 import {
@@ -42,10 +44,14 @@ interface FetchState {
 export class GitStatusStore {
   private statuses = new MapStore<string, GitStatus | null>();
   private fetchCache = new Map<string, FetchState>();
+  private client: RouterClient<AppRouter> | null = null;
   private pollInterval: NodeJS.Timeout | null = null;
   private workspaceMetadata = new Map<string, FrontendWorkspaceMetadata>();
   private isActive = true;
 
+  setClient(client: RouterClient<AppRouter>) {
+    this.client = client;
+  }
   constructor() {
     // Store is ready for workspace sync
   }
@@ -146,12 +152,21 @@ export class GitStatusStore {
       return;
     }
 
+    // Only poll workspaces that have active subscribers
+    const workspaces = Array.from(this.workspaceMetadata.values()).filter((ws) =>
+      this.statuses.hasKeySubscribers(ws.id)
+    );
+
+    if (workspaces.length === 0) {
+      return;
+    }
+
     // Try to fetch workspaces that need it (background, non-blocking)
-    this.tryFetchWorkspaces(this.workspaceMetadata);
+    const workspacesMap = new Map(workspaces.map((ws) => [ws.id, ws]));
+    this.tryFetchWorkspaces(workspacesMap);
 
     // Query git status for each workspace
     // Rate limit: Process in batches to prevent bash process explosion
-    const workspaces = Array.from(this.workspaceMetadata.values());
     const results: Array<[string, GitStatus | null]> = [];
 
     for (let i = 0; i < workspaces.length; i += MAX_CONCURRENT_GIT_OPS) {
@@ -200,15 +215,19 @@ export class GitStatusStore {
   private async checkWorkspaceStatus(
     metadata: FrontendWorkspaceMetadata
   ): Promise<[string, GitStatus | null]> {
-    // Defensive: Return null if window.api is unavailable (e.g., test environment)
-    if (typeof window === "undefined" || !window.api) {
+    // Defensive: Return null if client is unavailable
+    if (!this.client) {
       return [metadata.id, null];
     }
 
     try {
-      const result = await window.api.workspace.executeBash(metadata.id, GIT_STATUS_SCRIPT, {
-        timeout_secs: 5,
-        niceness: 19, // Lowest priority - don't interfere with user operations
+      const result = await this.client.workspace.executeBash({
+        workspaceId: metadata.id,
+        script: GIT_STATUS_SCRIPT,
+        options: {
+          timeout_secs: 5,
+          niceness: 19,
+        },
       });
 
       if (!result.success) {
@@ -317,8 +336,8 @@ export class GitStatusStore {
    * For SSH workspaces: fetches the workspace's individual repo.
    */
   private async fetchWorkspace(fetchKey: string, workspaceId: string): Promise<void> {
-    // Defensive: Return early if window.api is unavailable (e.g., test environment)
-    if (typeof window === "undefined" || !window.api) {
+    // Defensive: Return early if client is unavailable
+    if (!this.client) {
       return;
     }
 
@@ -334,9 +353,13 @@ export class GitStatusStore {
     this.fetchCache.set(fetchKey, { ...cache, inProgress: true });
 
     try {
-      const result = await window.api.workspace.executeBash(workspaceId, GIT_FETCH_SCRIPT, {
-        timeout_secs: 30,
-        niceness: 19, // Lowest priority - don't interfere with user operations
+      const result = await this.client.workspace.executeBash({
+        workspaceId,
+        script: GIT_FETCH_SCRIPT,
+        options: {
+          timeout_secs: 30,
+          niceness: 19,
+        },
       });
 
       if (!result.success) {

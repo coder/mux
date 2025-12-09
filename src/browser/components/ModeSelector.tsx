@@ -1,6 +1,6 @@
 import React from "react";
 import { ToggleGroup, type ToggleOption } from "./ToggleGroup";
-import { TooltipWrapper, Tooltip, HelpIndicator } from "./Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent, HelpIndicator } from "./ui/tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import type { UIMode } from "@/common/types/mode";
 import { cn } from "@/common/lib/utils";
@@ -11,9 +11,11 @@ const MODE_OPTIONS: Array<ToggleOption<UIMode>> = [
 ];
 
 const ModeHelpTooltip: React.FC = () => (
-  <TooltipWrapper inline>
-    <HelpIndicator>?</HelpIndicator>
-    <Tooltip className="tooltip" align="center" width="wide">
+  <Tooltip>
+    <TooltipTrigger asChild>
+      <HelpIndicator>?</HelpIndicator>
+    </TooltipTrigger>
+    <TooltipContent align="center" className="max-w-80 whitespace-normal">
       <strong>Exec Mode:</strong> AI edits files and executes commands
       <br />
       <br />
@@ -21,8 +23,8 @@ const ModeHelpTooltip: React.FC = () => (
       <br />
       <br />
       Toggle with: {formatKeybind(KEYBINDS.TOGGLE_MODE)}
-    </Tooltip>
-  </TooltipWrapper>
+    </TooltipContent>
+  </Tooltip>
 );
 
 interface ModeSelectorProps {

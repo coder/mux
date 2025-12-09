@@ -1,4 +1,5 @@
 import type { WorkspaceMetadata } from "@/common/types/workspace";
+import type { MCPServerMap } from "@/common/types/mcp";
 import {
   readInstructionSet,
   readInstructionSetFromRuntime,
@@ -6,16 +7,14 @@ import {
 import {
   extractModeSection,
   extractModelSection,
+  extractToolSection,
   stripScopedInstructionSections,
 } from "@/node/utils/main/markdown";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { getMuxHome } from "@/common/constants/paths";
+import { getAvailableTools } from "@/common/utils/tools/toolDefinitions";
 
 // NOTE: keep this in sync with the docs/models.md file
-
-// The PRELUDE is intentionally minimal to not conflict with the user's instructions.
-// mux is designed to be model agnostic, and models have shown large inconsistency in how they
-// follow instructions.
 
 function sanitizeSectionTag(value: string | undefined, fallback: string): string {
   const normalized = (value ?? "")
@@ -34,9 +33,14 @@ function buildTaggedSection(
   const tag = sanitizeSectionTag(rawTagValue, fallback);
   return `\n\n<${tag}>\n${content}\n</${tag}>`;
 }
+
+// #region SYSTEM_PROMPT_DOCS
+// The PRELUDE is intentionally minimal to not conflict with the user's instructions.
+// mux is designed to be model agnostic, and models have shown large inconsistency in how they
+// follow instructions.
 const PRELUDE = ` 
 <prelude>
-You are a coding agent.
+You are a coding agent called Mux. You may find information about yourself here: https://mux.coder.com/.
   
 <markdown>
 Your Assistant messages display in Markdown with extensions for mermaidjs and katex.
@@ -50,6 +54,12 @@ When creating mermaid diagrams:
 
 Use GitHub-style \`<details>/<summary>\` tags to create collapsible sections for lengthy content, error traces, or supplementary information. Toggles help keep responses scannable while preserving detail.
 </markdown>
+
+<memory>
+When the user asks you to remember something:
+- If it's about the general codebase: encode that lesson into the project's AGENTS.md file, matching its existing tone and structure.
+- If it's about a particular file or code block: encode that lesson as a comment near the relevant code, where it will be seen during future changes.
+</memory>
 </prelude>
 `;
 
@@ -70,11 +80,113 @@ You are in a git worktree at ${workspacePath}
 }
 
 /**
+ * Build MCP servers context XML block.
+ * Only included when at least one MCP server is configured.
+ * Note: We only expose server names, not commands, to avoid leaking secrets.
+ */
+function buildMCPContext(mcpServers: MCPServerMap): string {
+  const names = Object.keys(mcpServers);
+  if (names.length === 0) return "";
+
+  const serverList = names.map((name) => `- ${name}`).join("\n");
+
+  return `
+<mcp>
+MCP (Model Context Protocol) servers provide additional tools. Configured in user's local project's .mux/mcp.jsonc:
+
+${serverList}
+
+Use /mcp add|edit|remove or Settings → Projects to manage servers.
+</mcp>
+`;
+}
+// #endregion SYSTEM_PROMPT_DOCS
+
+/**
  * Get the system directory where global mux configuration lives.
  * Users can place global AGENTS.md and .mux/PLAN.md files here.
  */
 function getSystemDirectory(): string {
   return getMuxHome();
+}
+
+/**
+ * Extract tool-specific instructions from instruction sources.
+ * Searches context (workspace/project) first, then falls back to global instructions.
+ *
+ * @param globalInstructions Global instructions from ~/.mux/AGENTS.md
+ * @param contextInstructions Context instructions from workspace/project AGENTS.md
+ * @param modelString Active model identifier to determine available tools
+ * @returns Map of tool names to their additional instructions
+ */
+export function extractToolInstructions(
+  globalInstructions: string | null,
+  contextInstructions: string | null,
+  modelString: string
+): Record<string, string> {
+  const availableTools = getAvailableTools(modelString);
+  const toolInstructions: Record<string, string> = {};
+
+  for (const toolName of availableTools) {
+    // Try context instructions first, then global
+    const content =
+      (contextInstructions && extractToolSection(contextInstructions, toolName)) ??
+      (globalInstructions && extractToolSection(globalInstructions, toolName)) ??
+      null;
+
+    if (content) {
+      toolInstructions[toolName] = content;
+    }
+  }
+
+  return toolInstructions;
+}
+
+/**
+ * Read instruction sources and extract tool-specific instructions.
+ * Convenience wrapper that combines readInstructionSources and extractToolInstructions.
+ *
+ * @param metadata - Workspace metadata (contains projectPath)
+ * @param runtime - Runtime for reading workspace files (supports SSH)
+ * @param workspacePath - Workspace directory path
+ * @param modelString - Active model identifier to determine available tools
+ * @returns Map of tool names to their additional instructions
+ */
+export async function readToolInstructions(
+  metadata: WorkspaceMetadata,
+  runtime: Runtime,
+  workspacePath: string,
+  modelString: string
+): Promise<Record<string, string>> {
+  const [globalInstructions, contextInstructions] = await readInstructionSources(
+    metadata,
+    runtime,
+    workspacePath
+  );
+
+  return extractToolInstructions(globalInstructions, contextInstructions, modelString);
+}
+
+/**
+ * Read instruction sets from global and context sources.
+ * Internal helper for buildSystemMessage and extractToolInstructions.
+ *
+ * @param metadata - Workspace metadata (contains projectPath)
+ * @param runtime - Runtime for reading workspace files (supports SSH)
+ * @param workspacePath - Workspace directory path
+ * @returns Tuple of [globalInstructions, contextInstructions]
+ */
+async function readInstructionSources(
+  metadata: WorkspaceMetadata,
+  runtime: Runtime,
+  workspacePath: string
+): Promise<[string | null, string | null]> {
+  const globalInstructions = await readInstructionSet(getSystemDirectory());
+  const workspaceInstructions = await readInstructionSetFromRuntime(runtime, workspacePath);
+  const contextInstructions =
+    workspaceInstructions ?? (await readInstructionSet(metadata.projectPath));
+
+  return [globalInstructions, contextInstructions];
 }
 
 /**
@@ -94,6 +206,7 @@ function getSystemDirectory(): string {
  * @param mode - Optional mode name (e.g., "plan", "exec")
  * @param additionalSystemInstructions - Optional instructions appended last
  * @param modelString - Active model identifier used for Model-specific sections
+ * @param mcpServers - Optional MCP server configuration (name -> command)
  * @throws Error if metadata or workspacePath invalid
  */
 export async function buildSystemMessage(
@@ -102,16 +215,18 @@ export async function buildSystemMessage(
   workspacePath: string,
   mode?: string,
   additionalSystemInstructions?: string,
-  modelString?: string
+  modelString?: string,
+  mcpServers?: MCPServerMap
 ): Promise<string> {
   if (!metadata) throw new Error("Invalid workspace metadata: metadata is required");
   if (!workspacePath) throw new Error("Invalid workspace path: workspacePath is required");
 
   // Read instruction sets
-  const globalInstructions = await readInstructionSet(getSystemDirectory());
-  const workspaceInstructions = await readInstructionSetFromRuntime(runtime, workspacePath);
-  const contextInstructions =
-    workspaceInstructions ?? (await readInstructionSet(metadata.projectPath));
+  const [globalInstructions, contextInstructions] = await readInstructionSources(
+    metadata,
+    runtime,
+    workspacePath
+  );
 
   // Combine: global + context (workspace takes precedence over project) after stripping scoped sections
   const sanitizeScopedInstructions = (input?: string | null): string | undefined => {
@@ -146,6 +261,11 @@ export async function buildSystemMessage(
 
   // Build system message
   let systemMessage = `${PRELUDE.trim()}\n\n${buildEnvironmentContext(workspacePath)}`;
+
+  // Add MCP context if servers are configured
+  if (mcpServers && Object.keys(mcpServers).length > 0) {
+    systemMessage += buildMCPContext(mcpServers);
+  }
 
   if (customInstructions) {
     systemMessage += `\n<custom-instructions>\n${customInstructions}\n</custom-instructions>`;

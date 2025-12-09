@@ -1,4 +1,7 @@
-# AGENT INSTRUCTIONS
+---
+title: AGENTS.md
+description: Agent instructions for AI assistants working on the mux codebase
+---
 
 **Prime directive:** keep edits minimal and token-efficient—say only what conveys actionable signal.
 
@@ -18,9 +21,11 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 ./scripts/wait_pr_checks.sh <pr_number>
 ```
 
+- Generally run `wait_pr_checks` after submitting a PR to ensure CI passes.
 - Status decoding: `mergeable=MERGEABLE` clean; `CONFLICTING` needs resolution. `mergeStateStatus=CLEAN` ready, `BLOCKED` waiting for CI, `BEHIND` rebase, `DIRTY` conflicts.
 - If behind: `git fetch origin && git rebase origin/main && git push --force-with-lease`.
 - Never enable auto-merge or merge at all unless the user explicitly says "merge it".
+- Do not enable auto-squash or auto-merge on Pull Requests unless explicit permission is given.
 - PR descriptions: include only information a busy reviewer cannot infer; focus on implementation nuances or validation steps.
 - Title prefixes: `perf|refactor|fix|feat|ci|bench`, e.g., `🤖 fix: handle workspace rename edge cases`.
 
@@ -31,7 +36,7 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 
 ## Documentation Rules
 
-- No free-floating Markdown. User docs live in `docs/` (read `docs/README.md`, update `docs/SUMMARY.md`, use standard Markdown + mermaid). Developer/test notes belong inline as comments.
+- No free-floating Markdown. User docs live in `docs/` (read `docs/README.md`, add pages to `docs.json` navigation, use standard Markdown + mermaid). Developer/test notes belong inline as comments.
 - For planning artifacts, use the `propose_plan` tool or inline comments instead of ad-hoc docs.
 - Do not add new root-level docs without explicit request; during feature work rely on code + tests + inline comments.
 - Test documentation stays inside the relevant test file as commentary explaining setup/edge cases.
@@ -47,6 +52,7 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 - Package manager: bun only. Use `bun install`, `bun add`, `bun run` (which proxies to Make when relevant). Run `bun install` if modules/types go missing.
 - Makefile is source of truth (new commands land there, not `package.json`).
 - Primary targets: `make dev|start|build|lint|lint-fix|fmt|fmt-check|typecheck|test|test-integration|clean|help`.
+- Full `static-check` includes docs link checking via `mintlify broken-links`.
 
 ## Refactoring & Runtime Etiquette
 
@@ -55,9 +61,17 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 
 ## Testing Doctrine
 
+Two types of tests are preferred:
+
+1. **True integration tests** — use real runtimes, real filesystems, real network calls. No mocks, stubs, or fakes. These prove the system works end-to-end.
+2. **Unit tests on pure/isolated logic** — test pure functions or well-isolated modules where inputs and outputs are clear. No mocks needed because the code has no external dependencies.
+
+Avoid mock-heavy tests that verify implementation details rather than behavior. If you need mocks to test something, consider whether the code should be restructured to be more testable.
+
 ### Storybook
 
-- Prefer full-app stories (`App.stories.tsx`) to isolated components.
+- Prefer full-app stories (`App.stories.tsx`) to isolated component stories. This tests components in their real context with proper providers, state management, and styling.
+- Use play functions with `@storybook/test` utilities (`within`, `userEvent`, `waitFor`) to interact with the UI and set up the desired visual state. Do not add props to production components solely for storybook convenience.
 
 ### TDD Expectations
 
@@ -75,9 +89,9 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 ### Integration Testing
 
 - Use `bun x jest` (optionally `TEST_INTEGRATION=1`). Examples:
-  - `TEST_INTEGRATION=1 bun x jest tests/ipcMain/sendMessage.test.ts -t "pattern"`
+  - `TEST_INTEGRATION=1 bun x jest tests/integration/sendMessage.test.ts -t "pattern"`
   - `TEST_INTEGRATION=1 bun x jest tests`
-- `tests/ipcMain` is slow; filter with `-t` when possible. Tests use `test.concurrent()`.
+- `tests/integration` is slow; filter with `-t` when possible. Tests use `test.concurrent()`.
 - Never bypass IPC: do not call `env.config.saveConfig`, `env.historyService`, etc., directly. Use `env.mockIpcRenderer.invoke(IPC_CHANNELS.CONFIG_SAVE|HISTORY_GET|WORKSPACE_CREATE, ...)` instead.
 - Acceptable exceptions: reading config to craft IPC args, verifying filesystem after IPC completes, or loading existing data to avoid redundant API calls.
 
@@ -98,11 +112,14 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 - Let types drive design: prefer discriminated unions for state, minimize runtime checks, and simplify when types feel unwieldy.
 - Use `using` declarations (or equivalent disposables) for processes, file handles, etc., to ensure cleanup even on errors.
 - Centralize magic constants under `src/constants/`; share them instead of duplicating values across layers.
+- Never repeat constant values (like keybinds) in comments—they become stale when the constant changes.
 
 ## Component State & Storage
 
 - Parent components own localStorage interactions; children announce intent only.
 - Use `usePersistedState`/`readPersistedState`/`updatePersistedState` helpers—never call `localStorage` directly.
+- When a component needs to read persisted state it doesn't own (to avoid layout flash), use `readPersistedState` in `useState` initializer: `useState(() => readPersistedState(key, default))`.
+- When multiple components need the same persisted value, use `usePersistedState` with identical keys and `{ listener: true }` for automatic cross-component sync.
 - Avoid destructuring props in function signatures; access via `props.field` to keep rename-friendly code.
 
 ## Module Imports
@@ -142,11 +159,10 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 - Prefer fixes that simplify existing code; such simplifications often do not need new tests.
 - When adding complexity, add or extend tests. If coverage requires new infrastructure, propose the harness and then add the tests there.
 
-<!-- IMPORTANT: Do not rename these Mode headings; the parser extracts them verbatim. -->
-
 ## Mode: Exec
 
 - Treat as a standing order: keep running checks and addressing failures until they pass or a blocker outside your control arises.
+- **Before pushing to a PR**, run `make static-check` locally and ensure all checks pass. Fix issues with `make fmt` or manual edits. Never push until local checks are green.
 - Reproduce remote static-check failures locally with `make static-check`; fix formatting with `make fmt` before rerunning CI.
 - When CI fails, reproduce locally with the smallest relevant command; log approximate runtimes to optimize future loops.
 
@@ -154,3 +170,7 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 
 - When Plan Mode is requested, assume the user wants the actual completed plan; do not merely describe how you would devise one.
 - Attach a net LoC estimate (product code only) to each recommended approach.
+
+## Tool: status_set
+
+- Set status url to the Pull Request once opened

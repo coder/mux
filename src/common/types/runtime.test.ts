@@ -23,16 +23,16 @@ describe("parseRuntimeModeAndHost", () => {
     });
   });
 
-  it("defaults to local for undefined", () => {
+  it("defaults to worktree for undefined", () => {
     expect(parseRuntimeModeAndHost(undefined)).toEqual({
-      mode: "local",
+      mode: "worktree",
       host: "",
     });
   });
 
-  it("defaults to local for null", () => {
+  it("defaults to worktree for null", () => {
     expect(parseRuntimeModeAndHost(null)).toEqual({
-      mode: "local",
+      mode: "worktree",
       host: "",
     });
   });
@@ -47,8 +47,12 @@ describe("buildRuntimeString", () => {
     expect(buildRuntimeString("ssh", "")).toBe("ssh");
   });
 
-  it("returns undefined for local mode", () => {
-    expect(buildRuntimeString("local", "")).toBeUndefined();
+  it("returns 'local' for local mode", () => {
+    expect(buildRuntimeString("local", "")).toBe("local");
+  });
+
+  it("returns undefined for worktree mode (default)", () => {
+    expect(buildRuntimeString("worktree", "")).toBeUndefined();
   });
 
   it("trims whitespace from host", () => {

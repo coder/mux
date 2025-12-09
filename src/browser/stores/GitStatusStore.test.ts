@@ -44,6 +44,12 @@ describe("GitStatusStore", () => {
     } as unknown as Window & typeof globalThis;
 
     store = new GitStatusStore();
+    // Set up mock client for ORPC calls
+    store.setClient({
+      workspace: {
+        executeBash: mockExecuteBash,
+      },
+    } as unknown as Parameters<typeof store.setClient>[0]);
   });
 
   afterEach(() => {
@@ -387,5 +393,40 @@ describe("GitStatusStore", () => {
 
       unsub();
     });
+  });
+
+  test("skips polling when no subscribers", async () => {
+    const metadata = {
+      id: "ws1",
+      name: "main",
+      projectName: "test-project",
+      projectPath: "/path",
+      namedWorkspacePath: "/path",
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    };
+
+    store.syncWorkspaces(new Map([["ws1", metadata]]));
+
+    // Ensure executeBash is cleared
+    mockExecuteBash.mockClear();
+
+    // Trigger update
+    // @ts-expect-error - Accessing private method
+    await store.updateGitStatus();
+
+    // Should not have called executeBash because no subscribers
+    expect(mockExecuteBash).not.toHaveBeenCalled();
+
+    // Add a subscriber
+    const unsub = store.subscribeKey("ws1", jest.fn());
+
+    // Trigger update again
+    // @ts-expect-error - Accessing private method
+    await store.updateGitStatus();
+
+    // Should have called executeBash
+    expect(mockExecuteBash).toHaveBeenCalled();
+
+    unsub();
   });
 });

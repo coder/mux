@@ -208,3 +208,21 @@ it("should preserve start message with runtime flag when no workspace name", () 
     startMessage: "Deploy to staging",
   });
 });
+
+describe("plan commands", () => {
+  it("should parse /plan as plan-show", () => {
+    expectParse("/plan", { type: "plan-show" });
+  });
+
+  it("should parse /plan open as plan-open", () => {
+    expectParse("/plan open", { type: "plan-open" });
+  });
+
+  it("should return unknown-command for invalid /plan subcommand", () => {
+    expectParse("/plan invalid", {
+      type: "unknown-command",
+      command: "plan",
+      subcommand: "invalid",
+    });
+  });
+});

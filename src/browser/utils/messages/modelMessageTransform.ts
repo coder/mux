@@ -5,6 +5,7 @@
 
 import type { ModelMessage, AssistantModelMessage, ToolModelMessage } from "ai";
 import type { MuxMessage } from "@/common/types/message";
+import type { EditedFileAttachment } from "@/node/services/agentSession";
 
 /**
  * Filter out assistant messages that are empty or only contain reasoning parts.
@@ -196,6 +197,45 @@ export function injectModeTransition(
   }
 
   return result;
+}
+
+/**
+ * Inject file change notifications as a synthetic user message.
+ * When files are modified externally (by user or linter), append a notification at the end
+ * so the model is aware of changes without busting the system message cache.
+ *
+ * @param messages The conversation history
+ * @param changedFileAttachments Files that were modified externally
+ * @returns Messages with file change notification appended if any files changed
+ */
+export function injectFileChangeNotifications(
+  messages: MuxMessage[],
+  changedFileAttachments?: EditedFileAttachment[]
+): MuxMessage[] {
+  if (!changedFileAttachments || changedFileAttachments.length === 0) {
+    return messages;
+  }
+
+  const notice = changedFileAttachments
+    .map(
+      (att) =>
+        `Note: ${att.filename} was modified, either by the user or by a linter.\n` +
+        `This change was intentional, so make sure to take it into account as you proceed ` +
+        `(i.e., don't revert it unless the user asks you to). Here are the relevant changes:\n${att.snippet}`
+    )
+    .join("\n\n");
+
+  const syntheticMessage: MuxMessage = {
+    id: `file-change-${Date.now()}`,
+    role: "user",
+    parts: [{ type: "text", text: `<system-file-update>\n${notice}\n</system-file-update>` }],
+    metadata: {
+      timestamp: Date.now(),
+      synthetic: true,
+    },
+  };
+
+  return [...messages, syntheticMessage];
 }
 
 /**

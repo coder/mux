@@ -1,20 +1,95 @@
+import * as os from "os";
+import * as path from "path";
+
 import type { Runtime } from "./Runtime";
 import { LocalRuntime } from "./LocalRuntime";
+import { WorktreeRuntime } from "./WorktreeRuntime";
 import { SSHRuntime } from "./SSHRuntime";
 import type { RuntimeConfig } from "@/common/types/runtime";
+import { hasSrcBaseDir } from "@/common/types/runtime";
+import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
+
+// Re-export for backward compatibility with existing imports
+export { isIncompatibleRuntimeConfig };
 
 /**
- * Create a Runtime instance based on the configuration
+ * Get the default output directory for background processes.
+ * Uses os.tmpdir() for platform-appropriate temp directory.
+ *
+ * Returns native path format (Windows or POSIX) since this is used by Node.js
+ * filesystem APIs. Conversion to POSIX for Git Bash shell commands happens
+ * at command construction time via toPosixPath().
  */
-export function createRuntime(config: RuntimeConfig): Runtime {
+function getDefaultBgOutputDir(): string {
+  return path.join(os.tmpdir(), "mux-bashes");
+}
+
+/**
+ * Error thrown when a workspace has an incompatible runtime configuration,
+ * typically from a newer version of mux that added new runtime types.
+ */
+export class IncompatibleRuntimeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "IncompatibleRuntimeError";
+  }
+}
+
+/**
+ * Options for creating a runtime.
+ */
+export interface CreateRuntimeOptions {
+  /**
+   * Project path - required for project-dir local runtimes (type: "local" without srcBaseDir).
+   * For other runtime types, this is optional and used only for getWorkspacePath calculations.
+   */
+  projectPath?: string;
+}
+
+/**
+ * Create a Runtime instance based on the configuration.
+ *
+ * Handles three runtime types:
+ * - "local" without srcBaseDir: Project-dir runtime (no isolation) - requires projectPath in options
+ * - "local" with srcBaseDir: Legacy worktree config (backward compat)
+ * - "worktree": Explicit worktree runtime
+ * - "ssh": Remote SSH runtime
+ */
+export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOptions): Runtime {
+  // Check for incompatible configs from newer versions
+  if (isIncompatibleRuntimeConfig(config)) {
+    throw new IncompatibleRuntimeError(
+      `This workspace uses a runtime configuration from a newer version of mux. ` +
+        `Please upgrade mux to use this workspace.`
+    );
+  }
+
+  const bgOutputDir = config.bgOutputDir ?? getDefaultBgOutputDir();
+
   switch (config.type) {
     case "local":
-      return new LocalRuntime(config.srcBaseDir);
+      // Check if this is legacy "local" with srcBaseDir (= worktree semantics)
+      // or new "local" without srcBaseDir (= project-dir semantics)
+      if (hasSrcBaseDir(config)) {
+        // Legacy: "local" with srcBaseDir is treated as worktree
+        return new WorktreeRuntime(config.srcBaseDir, bgOutputDir);
+      }
+      // Project-dir: uses project path directly, no isolation
+      if (!options?.projectPath) {
+        throw new Error(
+          "LocalRuntime requires projectPath in options for project-dir config (type: 'local' without srcBaseDir)"
+        );
+      }
+      return new LocalRuntime(options.projectPath, bgOutputDir);
+
+    case "worktree":
+      return new WorktreeRuntime(config.srcBaseDir, bgOutputDir);
 
     case "ssh":
       return new SSHRuntime({
         host: config.host,
         srcBaseDir: config.srcBaseDir,
+        bgOutputDir: config.bgOutputDir,
         identityFile: config.identityFile,
         port: config.port,
       });
@@ -24,4 +99,12 @@ export function createRuntime(config: RuntimeConfig): Runtime {
       throw new Error(`Unknown runtime type: ${unknownConfig.type ?? "undefined"}`);
     }
   }
+}
+
+/**
+ * Helper to check if a runtime config requires projectPath for createRuntime.
+ */
+export function runtimeRequiresProjectPath(config: RuntimeConfig): boolean {
+  // Project-dir local runtime (no srcBaseDir) requires projectPath
+  return config.type === "local" && !hasSrcBaseDir(config);
 }

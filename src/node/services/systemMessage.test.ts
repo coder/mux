@@ -20,8 +20,12 @@ describe("buildSystemMessage", () => {
   let globalDir: string;
   let mockHomedir: Mock<typeof os.homedir>;
   let runtime: LocalRuntime;
+  let originalMuxRoot: string | undefined;
 
   beforeEach(async () => {
+    // Snapshot any existing MUX_ROOT so we can restore it after the test.
+    originalMuxRoot = process.env.MUX_ROOT;
+
     // Create temp directory for test
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "systemMessage-test-"));
     projectDir = path.join(tempDir, "project");
@@ -35,13 +39,24 @@ describe("buildSystemMessage", () => {
     mockHomedir = spyOn(os, "homedir");
     mockHomedir.mockReturnValue(tempDir);
 
+    // Force mux home to our test .mux directory regardless of host MUX_ROOT.
+    process.env.MUX_ROOT = globalDir;
+
     // Create a local runtime for tests
-    runtime = new LocalRuntime(tempDir);
+    runtime = new LocalRuntime(tempDir, tempDir);
   });
 
   afterEach(async () => {
     // Clean up temp directory
     await fs.rm(tempDir, { recursive: true, force: true });
+
+    // Restore environment override
+    if (originalMuxRoot === undefined) {
+      delete process.env.MUX_ROOT;
+    } else {
+      process.env.MUX_ROOT = originalMuxRoot;
+    }
+
     // Restore the original homedir
     mockHomedir?.mockRestore();
   });

@@ -1,6 +1,7 @@
 import assert from "@/common/utils/assert";
 import { EventEmitter } from "events";
 import * as path from "path";
+import { stat, readFile } from "fs/promises";
 import { PlatformPaths } from "@/common/utils/paths";
 import { createMuxMessage } from "@/common/types/message";
 import type { Config } from "@/node/config";
@@ -8,21 +9,62 @@ import type { AIService } from "@/node/services/aiService";
 import type { HistoryService } from "@/node/services/historyService";
 import type { PartialService } from "@/node/services/partialService";
 import type { InitStateManager } from "@/node/services/initStateManager";
-import type { WorkspaceMetadata } from "@/common/types/workspace";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { RuntimeConfig } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type {
   WorkspaceChatMessage,
   StreamErrorMessage,
   SendMessageOptions,
   ImagePart,
-} from "@/common/types/ipc";
+} from "@/common/orpc/types";
 import type { SendMessageError } from "@/common/types/errors";
 import { createUnknownSendMessageError } from "@/node/services/utils/sendMessageError";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
+import type { MuxFrontendMetadata, ContinueMessage } from "@/common/types/message";
+import { prepareUserMessageForSend } from "@/common/types/message";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { MessageQueue } from "./messageQueue";
+import type { StreamEndEvent } from "@/common/types/stream";
+import { CompactionHandler } from "./compactionHandler";
+import type { BackgroundProcessManager } from "./backgroundProcessManager";
+import { computeDiff } from "@/node/utils/diff";
+
+/**
+ * Tracked file state for detecting external edits.
+ * Uses timestamp-based polling with diff injection.
+ */
+export interface FileState {
+  content: string;
+  timestamp: number; // mtime in ms
+}
+
+/**
+ * Attachment for files that were edited externally between messages.
+ */
+export interface EditedFileAttachment {
+  type: "edited_text_file";
+  filename: string;
+  snippet: string; // diff of changes
+}
+
+// Type guard for compaction request metadata
+interface CompactionRequestMetadata {
+  type: "compaction-request";
+  parsed: {
+    continueMessage?: ContinueMessage;
+  };
+}
+
+function isCompactionRequestMetadata(meta: unknown): meta is CompactionRequestMetadata {
+  if (typeof meta !== "object" || meta === null) return false;
+  const obj = meta as Record<string, unknown>;
+  if (obj.type !== "compaction-request") return false;
+  if (typeof obj.parsed !== "object" || obj.parsed === null) return false;
+  return true;
+}
 
 export interface AgentSessionChatEvent {
   workspaceId: string;
@@ -31,7 +73,7 @@ export interface AgentSessionChatEvent {
 
 export interface AgentSessionMetadataEvent {
   workspaceId: string;
-  metadata: WorkspaceMetadata | null;
+  metadata: FrontendWorkspaceMetadata | null;
 }
 
 interface AgentSessionOptions {
@@ -41,6 +83,7 @@ interface AgentSessionOptions {
   partialService: PartialService;
   aiService: AIService;
   initStateManager: InitStateManager;
+  backgroundProcessManager: BackgroundProcessManager;
 }
 
 export class AgentSession {
@@ -50,6 +93,7 @@ export class AgentSession {
   private readonly partialService: PartialService;
   private readonly aiService: AIService;
   private readonly initStateManager: InitStateManager;
+  private readonly backgroundProcessManager: BackgroundProcessManager;
   private readonly emitter = new EventEmitter();
   private readonly aiListeners: Array<{ event: string; handler: (...args: unknown[]) => void }> =
     [];
@@ -57,11 +101,25 @@ export class AgentSession {
     [];
   private disposed = false;
   private readonly messageQueue = new MessageQueue();
+  private readonly compactionHandler: CompactionHandler;
+
+  /**
+   * Tracked file state for detecting external edits.
+   * Key: absolute file path, Value: last known content and mtime.
+   */
+  private readonly readFileState = new Map<string, FileState>();
 
   constructor(options: AgentSessionOptions) {
     assert(options, "AgentSession requires options");
-    const { workspaceId, config, historyService, partialService, aiService, initStateManager } =
-      options;
+    const {
+      workspaceId,
+      config,
+      historyService,
+      partialService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    } = options;
 
     assert(typeof workspaceId === "string", "workspaceId must be a string");
     const trimmedWorkspaceId = workspaceId.trim();
@@ -73,6 +131,14 @@ export class AgentSession {
     this.partialService = partialService;
     this.aiService = aiService;
     this.initStateManager = initStateManager;
+    this.backgroundProcessManager = backgroundProcessManager;
+
+    this.compactionHandler = new CompactionHandler({
+      workspaceId: this.workspaceId,
+      historyService: this.historyService,
+      partialService: this.partialService,
+      emitter: this.emitter,
+    });
 
     this.attachAiListeners();
     this.attachInitListeners();
@@ -83,6 +149,12 @@ export class AgentSession {
       return;
     }
     this.disposed = true;
+
+    // Stop any active stream (fire and forget - disposal shouldn't block)
+    void this.aiService.stopStream(this.workspaceId, { abandonPartial: true });
+    // Terminate background processes for this workspace
+    void this.backgroundProcessManager.cleanup(this.workspaceId);
+
     for (const { event, handler } of this.aiListeners) {
       this.aiService.off(event, handler as never);
     }
@@ -126,7 +198,7 @@ export class AgentSession {
     await this.emitHistoricalEvents(listener);
   }
 
-  emitMetadata(metadata: WorkspaceMetadata | null): void {
+  emitMetadata(metadata: FrontendWorkspaceMetadata | null): void {
     this.assertNotDisposed("emitMetadata");
     this.emitter.emit("metadata-event", {
       workspaceId: this.workspaceId,
@@ -141,7 +213,8 @@ export class AgentSession {
     const historyResult = await this.historyService.getHistory(this.workspaceId);
     if (historyResult.success) {
       for (const message of historyResult.data) {
-        listener({ workspaceId: this.workspaceId, message });
+        // Add type: "message" for discriminated union (messages from chat.jsonl don't have it)
+        listener({ workspaceId: this.workspaceId, message: { ...message, type: "message" } });
       }
     }
 
@@ -152,7 +225,8 @@ export class AgentSession {
     if (streamInfo) {
       await this.aiService.replayStream(this.workspaceId);
     } else if (partial) {
-      listener({ workspaceId: this.workspaceId, message: partial });
+      // Add type: "message" for discriminated union (partials from disk don't have it)
+      listener({ workspaceId: this.workspaceId, message: { ...partial, type: "message" } });
     }
 
     // Replay init state BEFORE caught-up (treat as historical data)
@@ -168,10 +242,14 @@ export class AgentSession {
     });
   }
 
-  async ensureMetadata(args: { workspacePath: string; projectName?: string }): Promise<void> {
+  async ensureMetadata(args: {
+    workspacePath: string;
+    projectName?: string;
+    runtimeConfig?: RuntimeConfig;
+  }): Promise<void> {
     this.assertNotDisposed("ensureMetadata");
     assert(args, "ensureMetadata requires arguments");
-    const { workspacePath, projectName } = args;
+    const { workspacePath, projectName, runtimeConfig } = args;
 
     assert(typeof workspacePath === "string", "workspacePath must be a string");
     const trimmedWorkspacePath = workspacePath.trim();
@@ -190,7 +268,8 @@ export class AgentSession {
         ? metadata.projectPath
         : (() => {
             const runtime = createRuntime(
-              metadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir }
+              metadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
+              { projectPath: metadata.projectPath }
             );
             return runtime.getWorkspacePath(metadata.projectPath, metadata.name);
           })();
@@ -230,12 +309,13 @@ export class AgentSession {
           : PlatformPaths.basename(normalizedWorkspacePath) || "unknown";
     }
 
-    const metadata: WorkspaceMetadata = {
+    const metadata: FrontendWorkspaceMetadata = {
       id: this.workspaceId,
       name: workspaceName,
       projectName: derivedProjectName,
       projectPath: derivedProjectPath,
-      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+      namedWorkspacePath: normalizedWorkspacePath,
+      runtimeConfig: runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
     };
 
     // Write metadata directly to config.json (single source of truth)
@@ -262,6 +342,15 @@ export class AgentSession {
     }
 
     if (options?.editMessageId) {
+      // Interrupt an existing stream or compaction, if active
+      if (this.aiService.isStreaming(this.workspaceId)) {
+        // MUST use abandonPartial=true to prevent handleAbort from performing partial compaction
+        // with mismatched history (since we're about to truncate it)
+        const stopResult = await this.interruptStream({ abandonPartial: true });
+        if (!stopResult.success) {
+          return Err(createUnknownSendMessageError(stopResult.error));
+        }
+      }
       const truncateResult = await this.historyService.truncateAfterMessage(
         this.workspaceId,
         options.editMessageId
@@ -295,14 +384,19 @@ export class AgentSession {
           })
         : undefined;
 
+    // toolPolicy is properly typed via Zod schema inference
+    const typedToolPolicy = options?.toolPolicy;
+    // muxMetadata is z.any() in schema - cast to proper type
+    const typedMuxMetadata = options?.muxMetadata as MuxFrontendMetadata | undefined;
+
     const userMessage = createMuxMessage(
       messageId,
       "user",
       message,
       {
         timestamp: Date.now(),
-        toolPolicy: options?.toolPolicy,
-        muxMetadata: options?.muxMetadata, // Pass through frontend metadata as black-box
+        toolPolicy: typedToolPolicy,
+        muxMetadata: typedMuxMetadata, // Pass through frontend metadata as black-box
       },
       additionalParts
     );
@@ -312,7 +406,52 @@ export class AgentSession {
       return Err(createUnknownSendMessageError(appendResult.error));
     }
 
-    this.emitChatEvent(userMessage);
+    // Add type: "message" for discriminated union (createMuxMessage doesn't add it)
+    this.emitChatEvent({ ...userMessage, type: "message" });
+
+    // If this is a compaction request, terminate background processes first
+    // They won't be included in the summary, so continuing with orphaned processes would be confusing
+    if (isCompactionRequestMetadata(typedMuxMetadata)) {
+      await this.backgroundProcessManager.cleanup(this.workspaceId);
+    }
+
+    // If this is a compaction request with a continue message, queue it for auto-send after compaction
+    if (
+      isCompactionRequestMetadata(typedMuxMetadata) &&
+      typedMuxMetadata.parsed.continueMessage &&
+      options
+    ) {
+      const continueMessage = typedMuxMetadata.parsed.continueMessage;
+
+      // Process the continue message content (handles reviews -> text formatting + metadata)
+      const { finalText, metadata } = prepareUserMessageForSend(continueMessage);
+
+      // Build options for the queued message (strip compaction-specific fields)
+      const sanitizedOptions: Omit<
+        SendMessageOptions,
+        "muxMetadata" | "mode" | "editMessageId" | "imageParts" | "maxOutputTokens"
+      > & { imageParts?: typeof continueMessage.imageParts; muxMetadata?: typeof metadata } = {
+        model: continueMessage.model ?? options.model,
+        thinkingLevel: options.thinkingLevel,
+        toolPolicy: options.toolPolicy,
+        additionalSystemInstructions: options.additionalSystemInstructions,
+        providerOptions: options.providerOptions,
+      };
+
+      // Add image parts if present
+      const continueImageParts = continueMessage.imageParts;
+      if (continueImageParts && continueImageParts.length > 0) {
+        sanitizedOptions.imageParts = continueImageParts;
+      }
+
+      // Add metadata with reviews if present
+      if (metadata) {
+        sanitizedOptions.muxMetadata = metadata;
+      }
+
+      this.messageQueue.add(finalText, sanitizedOptions);
+      this.emitQueuedMessageChanged();
+    }
 
     if (!options?.model || options.model.trim().length === 0) {
       return Err(
@@ -337,14 +476,27 @@ export class AgentSession {
     return this.streamWithHistory(model, options);
   }
 
-  async interruptStream(): Promise<Result<void>> {
+  async interruptStream(options?: {
+    soft?: boolean;
+    abandonPartial?: boolean;
+  }): Promise<Result<void>> {
     this.assertNotDisposed("interruptStream");
 
     if (!this.aiService.isStreaming(this.workspaceId)) {
       return Ok(undefined);
     }
 
-    const stopResult = await this.aiService.stopStream(this.workspaceId);
+    // For hard interrupts, delete partial BEFORE stopping to prevent abort handler
+    // from committing it. For soft interrupts, defer to stream-abort handler since
+    // the stream continues running and would recreate the partial.
+    if (options?.abandonPartial && !options?.soft) {
+      const deleteResult = await this.partialService.deletePartial(this.workspaceId);
+      if (!deleteResult.success) {
+        return Err(deleteResult.error);
+      }
+    }
+
+    const stopResult = await this.aiService.stopStream(this.workspaceId, options);
     if (!stopResult.success) {
       return Err(stopResult.error);
     }
@@ -366,11 +518,17 @@ export class AgentSession {
       return Err(createUnknownSendMessageError(historyResult.error));
     }
 
+    // Check for external file edits (timestamp-based polling)
+    const changedFileAttachments = await this.getChangedFileAttachments();
+
     // Enforce thinking policy for the specified model (single source of truth)
     // This ensures model-specific requirements are met regardless of where the request originates
     const effectiveThinkingLevel = options?.thinkingLevel
       ? enforceThinkingPolicy(modelString, options.thinkingLevel)
       : undefined;
+
+    // Bind recordFileState to this session for the propose_plan tool
+    const recordFileState = this.recordFileState.bind(this);
 
     return this.aiService.streamMessage(
       historyResult.data,
@@ -382,12 +540,17 @@ export class AgentSession {
       options?.additionalSystemInstructions,
       options?.maxOutputTokens,
       options?.providerOptions,
-      options?.mode
+      options?.mode,
+      recordFileState,
+      changedFileAttachments.length > 0 ? changedFileAttachments : undefined
     );
   }
 
   private attachAiListeners(): void {
-    const forward = (event: string, handler: (payload: WorkspaceChatMessage) => void) => {
+    const forward = (
+      event: string,
+      handler: (payload: WorkspaceChatMessage) => Promise<void> | void
+    ) => {
       const wrapped = (...args: unknown[]) => {
         const [payload] = args;
         if (
@@ -398,7 +561,7 @@ export class AgentSession {
         ) {
           return;
         }
-        handler(payload as WorkspaceChatMessage);
+        void handler(payload as WorkspaceChatMessage);
       };
       this.aiListeners.push({ event, handler: wrapped });
       this.aiService.on(event, wrapped as never);
@@ -415,29 +578,16 @@ export class AgentSession {
     });
     forward("reasoning-delta", (payload) => this.emitChatEvent(payload));
     forward("reasoning-end", (payload) => this.emitChatEvent(payload));
+    forward("usage-delta", (payload) => this.emitChatEvent(payload));
+    forward("stream-abort", (payload) => this.emitChatEvent(payload));
 
-    forward("stream-end", (payload) => {
-      this.emitChatEvent(payload);
+    forward("stream-end", async (payload) => {
+      const handled = await this.compactionHandler.handleCompletion(payload as StreamEndEvent);
+      if (!handled) {
+        this.emitChatEvent(payload);
+      }
       // Stream end: auto-send queued messages
       this.sendQueuedMessages();
-    });
-
-    forward("stream-abort", (payload) => {
-      this.emitChatEvent(payload);
-      // Stream aborted: restore queued messages to input
-      if (!this.messageQueue.isEmpty()) {
-        const displayText = this.messageQueue.getDisplayText();
-        const imageParts = this.messageQueue.getImageParts();
-        this.messageQueue.clear();
-        this.emitQueuedMessageChanged();
-
-        this.emitChatEvent({
-          type: "restore-to-input",
-          workspaceId: this.workspaceId,
-          text: displayText,
-          imageParts: imageParts,
-        });
-      }
     });
 
     const errorHandler = (...args: unknown[]) => {
@@ -517,6 +667,27 @@ export class AgentSession {
     this.emitQueuedMessageChanged();
   }
 
+  /**
+   * Restore queued messages to input box.
+   * Called by IPC handler on user-initiated interrupt.
+   */
+  restoreQueueToInput(): void {
+    this.assertNotDisposed("restoreQueueToInput");
+    if (!this.messageQueue.isEmpty()) {
+      const displayText = this.messageQueue.getDisplayText();
+      const imageParts = this.messageQueue.getImageParts();
+      this.messageQueue.clear();
+      this.emitQueuedMessageChanged();
+
+      this.emitChatEvent({
+        type: "restore-to-input",
+        workspaceId: this.workspaceId,
+        text: displayText,
+        imageParts: imageParts,
+      });
+    }
+  }
+
   private emitQueuedMessageChanged(): void {
     this.emitChatEvent({
       type: "queued-message-changed",
@@ -529,9 +700,9 @@ export class AgentSession {
 
   /**
    * Send queued messages if any exist.
-   * Called when tool execution completes or stream ends.
+   * Called when tool execution completes, stream ends, or user clicks send immediately.
    */
-  private sendQueuedMessages(): void {
+  sendQueuedMessages(): void {
     if (!this.messageQueue.isEmpty()) {
       const { message, options } = this.messageQueue.produceMessage();
       this.messageQueue.clear();
@@ -539,6 +710,49 @@ export class AgentSession {
 
       void this.sendMessage(message, options);
     }
+  }
+
+  /**
+   * Record file state for change detection.
+   * Called by tools (e.g., propose_plan) after reading/writing files.
+   */
+  recordFileState(filePath: string, state: FileState): void {
+    this.readFileState.set(filePath, state);
+  }
+
+  /**
+   * Check tracked files for external modifications.
+   * Returns attachments for files that changed since last recorded state.
+   * Uses timestamp-based polling with diff injection.
+   */
+  async getChangedFileAttachments(): Promise<EditedFileAttachment[]> {
+    const checks = Array.from(this.readFileState.entries()).map(
+      async ([filePath, state]): Promise<EditedFileAttachment | null> => {
+        try {
+          const currentMtime = (await stat(filePath)).mtimeMs;
+          if (currentMtime <= state.timestamp) return null; // No change
+
+          const currentContent = await readFile(filePath, "utf-8");
+          const diff = computeDiff(state.content, currentContent);
+          if (!diff) return null; // Content identical despite mtime change
+
+          // Update stored state
+          this.readFileState.set(filePath, { content: currentContent, timestamp: currentMtime });
+
+          return {
+            type: "edited_text_file",
+            filename: filePath,
+            snippet: diff,
+          };
+        } catch {
+          // File deleted or inaccessible, skip
+          return null;
+        }
+      }
+    );
+
+    const results = await Promise.all(checks);
+    return results.filter((r): r is EditedFileAttachment => r !== null);
   }
 
   private assertNotDisposed(operation: string): void {

@@ -1,16 +1,19 @@
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import {
-  Modal,
-  ModalActions,
-  CancelButton,
-  DangerButton,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
   ErrorSection,
   ErrorLabel,
   ErrorCodeBlock,
   WarningBox,
   WarningTitle,
   WarningText,
-} from "./Modal";
+} from "@/browser/components/ui/dialog";
+import { Button } from "@/browser/components/ui/button";
 
 interface ForceDeleteModalProps {
   isOpen: boolean;
@@ -43,40 +46,47 @@ export const ForceDeleteModal: React.FC<ForceDeleteModalProps> = ({
     })();
   };
 
+  const handleOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open && !isDeleting) {
+        onClose();
+      }
+    },
+    [isDeleting, onClose]
+  );
+
   return (
-    <Modal
-      isOpen={isOpen}
-      title="Force Delete Workspace?"
-      subtitle="The workspace could not be removed normally"
-      onClose={onClose}
-      maxWidth="600px"
-      maxHeight="90vh"
-      isLoading={isDeleting}
-    >
-      <ErrorSection>
-        <ErrorLabel>Git Error</ErrorLabel>
-        <ErrorCodeBlock>{error}</ErrorCodeBlock>
-      </ErrorSection>
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+      <DialogContent maxWidth="600px" maxHeight="90vh" showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>Force Delete Workspace?</DialogTitle>
+          <DialogDescription>The workspace could not be removed normally</DialogDescription>
+        </DialogHeader>
+        <ErrorSection>
+          <ErrorLabel>Git Error</ErrorLabel>
+          <ErrorCodeBlock>{error}</ErrorCodeBlock>
+        </ErrorSection>
 
-      <WarningBox>
-        <WarningTitle>This action cannot be undone</WarningTitle>
-        <WarningText>
-          Force deleting will permanently remove the workspace and{" "}
-          {error.includes("unpushed commits:")
-            ? "discard the unpushed commits shown above"
-            : "may discard uncommitted work or lose data"}
-          . This action cannot be undone.
-        </WarningText>
-      </WarningBox>
+        <WarningBox>
+          <WarningTitle>This action cannot be undone</WarningTitle>
+          <WarningText>
+            Force deleting will permanently remove the workspace and{" "}
+            {error.includes("unpushed commits:")
+              ? "discard the unpushed commits shown above"
+              : "may discard uncommitted work or lose data"}
+            . This action cannot be undone.
+          </WarningText>
+        </WarningBox>
 
-      <ModalActions className="justify-center">
-        <CancelButton onClick={onClose} disabled={isDeleting}>
-          Cancel
-        </CancelButton>
-        <DangerButton onClick={handleForceDelete} disabled={isDeleting}>
-          {isDeleting ? "Deleting..." : "Force Delete"}
-        </DangerButton>
-      </ModalActions>
-    </Modal>
+        <DialogFooter className="justify-center">
+          <Button variant="secondary" onClick={onClose} disabled={isDeleting}>
+            Cancel
+          </Button>
+          <Button variant="destructive" onClick={handleForceDelete} disabled={isDeleting}>
+            {isDeleting ? "Deleting..." : "Force Delete"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };

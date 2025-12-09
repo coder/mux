@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
 import { cn } from "@/common/lib/utils";
 import { VERSION } from "@/version";
-import { TooltipWrapper, Tooltip } from "./Tooltip";
-import type { UpdateStatus } from "@/common/types/ipc";
-import { isTelemetryEnabled } from "@/common/telemetry";
+import { SettingsButton } from "./SettingsButton";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
+import type { UpdateStatus } from "@/common/orpc/types";
+
+import { useTutorial } from "@/browser/contexts/TutorialContext";
+import { useAPI } from "@/browser/contexts/API";
 
 // Update check intervals
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
@@ -31,12 +34,13 @@ function hasBuildInfo(value: unknown): value is VersionMetadata {
   return typeof candidate.buildTime === "string";
 }
 
-function formatUSDate(isoDate: string): string {
+function formatLocalDate(isoDate: string): string {
   const date = new Date(isoDate);
-  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(date.getUTCDate()).padStart(2, "0");
-  const year = date.getUTCFullYear();
-  return `${month}/${day}/${year}`;
+  return date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
 }
 
 function formatExtendedTimestamp(isoDate: string): string {
@@ -58,7 +62,7 @@ function parseBuildInfo(version: unknown) {
     const gitDescribe = typeof git_describe === "string" ? git_describe : undefined;
 
     return {
-      buildDate: formatUSDate(buildTime),
+      buildDate: formatLocalDate(buildTime),
       extendedTimestamp: formatExtendedTimestamp(buildTime),
       gitDescribe,
     };
@@ -72,46 +76,63 @@ function parseBuildInfo(version: unknown) {
 }
 
 export function TitleBar() {
+  const { api } = useAPI();
   const { buildDate, extendedTimestamp, gitDescribe } = parseBuildInfo(VERSION satisfies unknown);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
   const [isCheckingOnHover, setIsCheckingOnHover] = useState(false);
   const lastHoverCheckTime = useRef<number>(0);
-  const telemetryEnabled = isTelemetryEnabled();
+
+  const { startSequence } = useTutorial();
+
+  // Start settings tutorial on first launch
+  useEffect(() => {
+    // Small delay to ensure UI is rendered before showing tutorial
+    const timer = setTimeout(() => {
+      startSequence("settings");
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [startSequence]);
 
   useEffect(() => {
-    // Skip update checks if telemetry is disabled
-    if (!telemetryEnabled) {
-      return;
-    }
-
     // Skip update checks in browser mode - app updates only apply to Electron
-    if (window.api.platform === "browser") {
+    if (!window.api) {
       return;
     }
 
-    // Subscribe to update status changes (will receive current status immediately)
-    const unsubscribe = window.api.update.onStatus((status) => {
-      setUpdateStatus(status);
-      setIsCheckingOnHover(false); // Clear checking state when status updates
-    });
+    if (!api) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+
+    (async () => {
+      try {
+        const iterator = await api.update.onStatus(undefined, { signal });
+        for await (const status of iterator) {
+          if (signal.aborted) break;
+          setUpdateStatus(status);
+          setIsCheckingOnHover(false); // Clear checking state when status updates
+        }
+      } catch (error) {
+        if (!signal.aborted) {
+          console.error("Update status stream error:", error);
+        }
+      }
+    })();
 
     // Check for updates on mount
-    window.api.update.check().catch(console.error);
+    api.update.check(undefined).catch(console.error);
 
     // Check periodically
     const checkInterval = setInterval(() => {
-      window.api.update.check().catch(console.error);
+      api.update.check(undefined).catch(console.error);
     }, UPDATE_CHECK_INTERVAL_MS);
 
     return () => {
-      unsubscribe();
+      controller.abort();
       clearInterval(checkInterval);
     };
-  }, [telemetryEnabled]);
+  }, [api]);
 
   const handleIndicatorHover = () => {
-    if (!telemetryEnabled) return;
-
     // Debounce: Only check once per cooldown period on hover
     const now = Date.now();
 
@@ -126,7 +147,7 @@ export function TitleBar() {
     ) {
       lastHoverCheckTime.current = now;
       setIsCheckingOnHover(true);
-      window.api.update.check().catch((error) => {
+      api?.update.check().catch((error) => {
         console.error("Update check failed:", error);
         setIsCheckingOnHover(false);
       });
@@ -134,12 +155,10 @@ export function TitleBar() {
   };
 
   const handleUpdateClick = () => {
-    if (!telemetryEnabled) return; // No-op if telemetry disabled
-
     if (updateStatus.type === "available") {
-      window.api.update.download().catch(console.error);
+      api?.update.download().catch(console.error);
     } else if (updateStatus.type === "downloaded") {
-      window.api.update.install();
+      void api?.update.install();
     }
   };
 
@@ -147,12 +166,7 @@ export function TitleBar() {
     const currentVersion = gitDescribe ?? "dev";
     const lines: React.ReactNode[] = [`Current: ${currentVersion}`];
 
-    if (!telemetryEnabled) {
-      lines.push(
-        "Update checks disabled (telemetry is off)",
-        "Enable telemetry to receive updates."
-      );
-    } else if (isCheckingOnHover || updateStatus.type === "checking") {
+    if (isCheckingOnHover || updateStatus.type === "checking") {
       lines.push("Checking for updates...");
     } else {
       switch (updateStatus.type) {
@@ -197,8 +211,6 @@ export function TitleBar() {
   };
 
   const getIndicatorStatus = (): "available" | "downloading" | "downloaded" | "disabled" => {
-    if (!telemetryEnabled) return "disabled";
-
     if (isCheckingOnHover || updateStatus.type === "checking") return "disabled";
 
     switch (updateStatus.type) {
@@ -219,42 +231,49 @@ export function TitleBar() {
   const showUpdateIndicator = true;
 
   return (
-    <div className="bg-dark border-border-light font-primary text-muted flex shrink-0 items-center justify-between border-b px-4 py-2 text-[11px] select-none">
+    <div className="bg-sidebar border-border-light font-primary text-muted flex h-8 shrink-0 items-center justify-between border-b px-4 text-[11px] select-none">
       <div className="mr-4 flex min-w-0 items-center gap-2">
         {showUpdateIndicator && (
-          <TooltipWrapper>
-            <div
-              className={cn(
-                "w-4 h-4 flex items-center justify-center",
-                indicatorStatus === "disabled"
-                  ? "cursor-default"
-                  : "cursor-pointer hover:opacity-70"
-              )}
-              style={{ color: updateStatusColors[indicatorStatus] }}
-              onClick={handleUpdateClick}
-              onMouseEnter={handleIndicatorHover}
-            >
-              <span className="text-sm">
-                {indicatorStatus === "disabled"
-                  ? "⊘"
-                  : indicatorStatus === "downloading"
-                    ? "⟳"
-                    : "↓"}
-              </span>
-            </div>
-            <Tooltip align="left" interactive={true}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div
+                className={cn(
+                  "w-4 h-4 flex items-center justify-center",
+                  indicatorStatus === "disabled"
+                    ? "cursor-default"
+                    : "cursor-pointer hover:opacity-70"
+                )}
+                style={{ color: updateStatusColors[indicatorStatus] }}
+                onClick={handleUpdateClick}
+                onMouseEnter={handleIndicatorHover}
+              >
+                <span className="text-sm">
+                  {indicatorStatus === "disabled"
+                    ? "⊘"
+                    : indicatorStatus === "downloading"
+                      ? "⟳"
+                      : "↓"}
+                </span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent align="start" className="pointer-events-auto">
               {getUpdateTooltip()}
-            </Tooltip>
-          </TooltipWrapper>
+            </TooltipContent>
+          </Tooltip>
         )}
         <div className="min-w-0 cursor-text truncate text-xs font-normal tracking-wider select-text">
           mux {gitDescribe ?? "(dev)"}
         </div>
       </div>
-      <TooltipWrapper>
-        <div className="cursor-default text-[11px] opacity-70">{buildDate}</div>
-        <Tooltip align="right">Built at {extendedTimestamp}</Tooltip>
-      </TooltipWrapper>
+      <div className="flex items-center gap-3">
+        <SettingsButton />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="cursor-default text-[11px] opacity-70">{buildDate}</div>
+          </TooltipTrigger>
+          <TooltipContent align="end">Built at {extendedTimestamp}</TooltipContent>
+        </Tooltip>
+      </div>
     </div>
   );
 }

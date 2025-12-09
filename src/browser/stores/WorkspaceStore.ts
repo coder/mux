@@ -1,8 +1,9 @@
 import assert from "@/common/utils/assert";
 import type { MuxMessage, DisplayedMessage, QueuedMessage } from "@/common/types/message";
-import { createMuxMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { WorkspaceChatMessage } from "@/common/types/ipc";
+import type { WorkspaceChatMessage } from "@/common/orpc/types";
+import type { RouterClient } from "@orpc/server";
+import type { AppRouter } from "@/node/orpc/router";
 import type { TodoItem } from "@/common/types/tools";
 import { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
@@ -16,20 +17,16 @@ import {
   isMuxMessage,
   isQueuedMessageChanged,
   isRestoreToInput,
-} from "@/common/types/ipc";
+} from "@/common/orpc/types";
+import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import { MapStore } from "./MapStore";
-import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
+import { collectUsageHistory, createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
-import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import type { TokenConsumer } from "@/common/types/chatStats";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
-import { getCancelledCompactionKey } from "@/common/constants/storage";
-import {
-  isCompactingStream,
-  findCompactionRequestMessage,
-} from "@/common/utils/compaction/handler";
 import { createFreshRetryState } from "@/browser/utils/messages/retryState";
+import { trackStreamCompleted } from "@/common/telemetry";
 
 export interface WorkspaceState {
   name: string; // User-facing workspace name (e.g., "feature-branch")
@@ -66,10 +63,21 @@ type DerivedState = Record<string, number>;
 /**
  * Usage metadata extracted from API responses (no tokenization).
  * Updates instantly when usage metadata arrives.
+ *
+ * For multi-step tool calls, cost and context usage differ:
+ * - usageHistory: Total usage per message (sum of all steps) for cost calculation
+ * - lastContextUsage: Last step's usage for context window display (inputTokens = actual context size)
  */
 export interface WorkspaceUsageState {
+  /** Usage history for cost calculation (total across all steps per message) */
   usageHistory: ChatUsageDisplay[];
+  /** Last message's context usage (last step only, for context window display) */
+  lastContextUsage?: ChatUsageDisplay;
   totalTokens: number;
+  /** Live context usage during streaming (last step's inputTokens = current context window) */
+  liveUsage?: ChatUsageDisplay;
+  /** Live cost usage during streaming (cumulative across all steps) */
+  liveCostUsage?: ChatUsageDisplay;
 }
 
 /**
@@ -100,6 +108,7 @@ export class WorkspaceStore {
 
   // Usage and consumer stores (two-store approach for CostsTab optimization)
   private usageStore = new MapStore<string, WorkspaceUsageState>();
+  private client: RouterClient<AppRouter> | null = null;
   private consumersStore = new MapStore<string, WorkspaceConsumersState>();
 
   // Manager for consumer calculations (debouncing, caching, lazy loading)
@@ -115,6 +124,11 @@ export class WorkspaceStore {
   private pendingStreamEvents = new Map<string, WorkspaceChatMessage[]>();
   private workspaceMetadata = new Map<string, FrontendWorkspaceMetadata>(); // Store metadata for name lookup
   private queuedMessages = new Map<string, QueuedMessage | null>(); // Cached queued messages
+
+  // Idle callback handles for high-frequency delta events to reduce re-renders during streaming.
+  // Data is always updated immediately in the aggregator; only UI notification is scheduled.
+  // Using requestIdleCallback adapts to actual CPU availability rather than a fixed timer.
+  private deltaIdleHandles = new Map<string, number>();
 
   /**
    * Map of event types to their handlers. This is the single source of truth for:
@@ -140,37 +154,55 @@ export class WorkspaceStore {
       // Don't reset retry state here - stream might still fail after starting
       // Retry state will be reset on stream-end (successful completion)
       this.states.bump(workspaceId);
+      // Bump usage store so liveUsage is recomputed with new activeStreamId
+      this.usageStore.bump(workspaceId);
     },
     "stream-delta": (workspaceId, aggregator, data) => {
       aggregator.handleStreamDelta(data as never);
-      this.states.bump(workspaceId);
+      this.scheduleIdleStateBump(workspaceId);
     },
     "stream-end": (workspaceId, aggregator, data) => {
-      aggregator.handleStreamEnd(data as never);
-      aggregator.clearTokenState((data as { messageId: string }).messageId);
+      const streamEndData = data as StreamEndEvent;
+      aggregator.handleStreamEnd(streamEndData as never);
+      aggregator.clearTokenState(streamEndData.messageId);
 
-      if (this.handleCompactionCompletion(workspaceId, aggregator, data)) {
-        return;
-      }
+      // Track stream completion telemetry
+      this.trackStreamCompletedTelemetry(streamEndData, false);
 
       // Reset retry state on successful stream completion
       updatePersistedState(getRetryStateKey(workspaceId), createFreshRetryState());
 
+      // Flush any pending debounced bump before final bump to avoid double-bump
+      this.cancelPendingIdleBump(workspaceId);
       this.states.bump(workspaceId);
       this.checkAndBumpRecencyIfChanged();
-      this.finalizeUsageStats(workspaceId, (data as { metadata?: never }).metadata);
+      this.finalizeUsageStats(workspaceId, streamEndData.metadata);
     },
     "stream-abort": (workspaceId, aggregator, data) => {
-      aggregator.clearTokenState((data as { messageId: string }).messageId);
-      aggregator.handleStreamAbort(data as never);
+      const streamAbortData = data as StreamAbortEvent;
+      aggregator.clearTokenState(streamAbortData.messageId);
+      aggregator.handleStreamAbort(streamAbortData as never);
 
-      if (this.handleCompactionAbort(workspaceId, aggregator, data)) {
-        return;
+      // Track stream interruption telemetry (get model from aggregator)
+      const model = aggregator.getCurrentModel();
+      if (model) {
+        this.trackStreamCompletedTelemetry(
+          {
+            metadata: {
+              model,
+              usage: streamAbortData.metadata?.usage,
+              duration: streamAbortData.metadata?.duration,
+            },
+          },
+          true
+        );
       }
 
+      // Flush any pending debounced bump before final bump to avoid double-bump
+      this.cancelPendingIdleBump(workspaceId);
       this.states.bump(workspaceId);
       this.dispatchResumeCheck(workspaceId);
-      this.finalizeUsageStats(workspaceId, (data as { metadata?: never }).metadata);
+      this.finalizeUsageStats(workspaceId, streamAbortData.metadata);
     },
     "tool-call-start": (workspaceId, aggregator, data) => {
       aggregator.handleToolCallStart(data as never);
@@ -178,7 +210,7 @@ export class WorkspaceStore {
     },
     "tool-call-delta": (workspaceId, aggregator, data) => {
       aggregator.handleToolCallDelta(data as never);
-      this.states.bump(workspaceId);
+      this.scheduleIdleStateBump(workspaceId);
     },
     "tool-call-end": (workspaceId, aggregator, data) => {
       aggregator.handleToolCallEnd(data as never);
@@ -187,11 +219,15 @@ export class WorkspaceStore {
     },
     "reasoning-delta": (workspaceId, aggregator, data) => {
       aggregator.handleReasoningDelta(data as never);
-      this.states.bump(workspaceId);
+      this.scheduleIdleStateBump(workspaceId);
     },
     "reasoning-end": (workspaceId, aggregator, data) => {
       aggregator.handleReasoningEnd(data as never);
       this.states.bump(workspaceId);
+    },
+    "usage-delta": (workspaceId, aggregator, data) => {
+      aggregator.handleUsageDelta(data as never);
+      this.usageStore.bump(workspaceId);
     },
     "init-start": (workspaceId, aggregator, data) => {
       aggregator.handleMessage(data);
@@ -265,12 +301,75 @@ export class WorkspaceStore {
     // message completion events (not on deltas) to prevent App.tsx re-renders.
   }
 
+  setClient(client: RouterClient<AppRouter>) {
+    this.client = client;
+  }
+
   /**
    * Dispatch resume check event for a workspace.
    * Triggers useResumeManager to check if interrupted stream can be resumed.
    */
   private dispatchResumeCheck(workspaceId: string): void {
     window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.RESUME_CHECK_REQUESTED, { workspaceId }));
+  }
+
+  /**
+   * Schedule a state bump during browser idle time.
+   * Instead of updating UI on every delta, wait until the browser has spare capacity.
+   * This adapts to actual CPU availability - fast machines update more frequently,
+   * slow machines naturally throttle without dropping data.
+   *
+   * Data is always updated immediately in the aggregator - only UI notification is deferred.
+   */
+  private scheduleIdleStateBump(workspaceId: string): void {
+    // Skip if already scheduled
+    if (this.deltaIdleHandles.has(workspaceId)) {
+      return;
+    }
+
+    const handle = requestIdleCallback(
+      () => {
+        this.deltaIdleHandles.delete(workspaceId);
+        this.states.bump(workspaceId);
+      },
+      { timeout: 100 } // Force update within 100ms even if browser stays busy
+    );
+
+    this.deltaIdleHandles.set(workspaceId, handle);
+  }
+
+  /**
+   * Cancel any pending idle state bump for a workspace.
+   * Used when immediate state visibility is needed (e.g., stream-end).
+   * Just cancels the callback - the caller will bump() immediately after.
+   */
+  private cancelPendingIdleBump(workspaceId: string): void {
+    const handle = this.deltaIdleHandles.get(workspaceId);
+    if (handle) {
+      cancelIdleCallback(handle);
+      this.deltaIdleHandles.delete(workspaceId);
+    }
+  }
+
+  /**
+   * Track stream completion telemetry
+   */
+  private trackStreamCompletedTelemetry(
+    data: {
+      metadata: {
+        model: string;
+        usage?: { outputTokens?: number };
+        duration?: number;
+      };
+    },
+    wasInterrupted: boolean
+  ): void {
+    const { metadata } = data;
+    const durationSecs = metadata.duration ? metadata.duration / 1000 : 0;
+    const outputTokens = metadata.usage?.outputTokens ?? 0;
+
+    // trackStreamCompleted handles rounding internally
+    trackStreamCompleted(metadata.model, wasInterrupted, durationSecs, outputTokens);
   }
 
   /**
@@ -301,6 +400,12 @@ export class WorkspaceStore {
    * Delegates to MapStore's subscribeAny.
    */
   subscribe = this.states.subscribeAny;
+
+  /**
+   * Subscribe to derived state changes (recency, etc.).
+   * Use for hooks that depend on derived.bump() rather than states.bump().
+   */
+  subscribeDerived = this.derived.subscribeAny;
 
   /**
    * Subscribe to changes for a specific workspace.
@@ -419,11 +524,18 @@ export class WorkspaceStore {
 
   /**
    * Get aggregator for a workspace (used by components that need direct access).
-   *
-   * REQUIRES: Workspace must have been added via addWorkspace() first.
+   * Returns undefined if workspace does not exist.
    */
-  getAggregator(workspaceId: string): StreamingMessageAggregator {
-    return this.assertGet(workspaceId);
+  getAggregator(workspaceId: string): StreamingMessageAggregator | undefined {
+    return this.aggregators.get(workspaceId);
+  }
+
+  /**
+   * Bump state for a workspace to trigger React re-renders.
+   * Used by addEphemeralMessage for frontend-only messages.
+   */
+  bumpState(workspaceId: string): void {
+    this.states.bump(workspaceId);
   }
 
   /**
@@ -439,49 +551,20 @@ export class WorkspaceStore {
    * Extract usage from messages (no tokenization).
    * Each usage entry calculated with its own model for accurate costs.
    *
-   * REQUIRES: Workspace must have been added via addWorkspace() first.
+   * Returns empty state if workspace doesn't exist (e.g., creation mode).
    */
   getWorkspaceUsage(workspaceId: string): WorkspaceUsageState {
     return this.usageStore.get(workspaceId, () => {
-      const aggregator = this.assertGet(workspaceId);
+      const aggregator = this.aggregators.get(workspaceId);
+      if (!aggregator) {
+        return { usageHistory: [], totalTokens: 0 };
+      }
 
       const messages = aggregator.getAllMessages();
+      const model = aggregator.getCurrentModel();
 
-      // Extract usage from assistant messages
-      const usageHistory: ChatUsageDisplay[] = [];
-      let cumulativeHistorical: ChatUsageDisplay | undefined;
-
-      for (const msg of messages) {
-        if (msg.role === "assistant") {
-          // Check for historical usage from compaction summaries
-          // This preserves costs from messages deleted during compaction
-          if (msg.metadata?.historicalUsage) {
-            cumulativeHistorical = msg.metadata.historicalUsage;
-          }
-
-          // Extract current message's usage
-          if (msg.metadata?.usage) {
-            // Use the model from this specific message (not global)
-            const model = msg.metadata.model ?? aggregator.getCurrentModel() ?? "unknown";
-
-            const usage = createDisplayUsage(
-              msg.metadata.usage,
-              model,
-              msg.metadata.providerMetadata
-            );
-
-            if (usage) {
-              usageHistory.push(usage);
-            }
-          }
-        }
-      }
-
-      // If we have historical usage from a compaction, prepend it to history
-      // This ensures costs from pre-compaction messages are included in totals
-      if (cumulativeHistorical) {
-        usageHistory.unshift(cumulativeHistorical);
-      }
+      // Collect usage history for cost calculation (total across all steps per message)
+      const usageHistory = collectUsageHistory(messages, model);
 
       // Calculate total from usage history (now includes historical)
       const totalTokens = usageHistory.reduce(
@@ -495,7 +578,58 @@ export class WorkspaceStore {
         0
       );
 
-      return { usageHistory, totalTokens };
+      // Get last message's context usage for context window display
+      // Uses contextUsage (last step) if available, falls back to usage for old messages
+      // Skips compacted messages - their usage reflects pre-compaction context, not current
+      const lastContextUsage = (() => {
+        for (let i = messages.length - 1; i >= 0; i--) {
+          const msg = messages[i];
+          if (msg.role === "assistant") {
+            // Skip compacted messages - their usage is from pre-compaction context
+            // and doesn't reflect current context window size
+            if (msg.metadata?.compacted) {
+              continue;
+            }
+            const rawUsage = msg.metadata?.contextUsage;
+            const providerMeta =
+              msg.metadata?.contextProviderMetadata ?? msg.metadata?.providerMetadata;
+            if (rawUsage) {
+              const msgModel = msg.metadata?.model ?? model ?? "unknown";
+              return createDisplayUsage(rawUsage, msgModel, providerMeta);
+            }
+          }
+        }
+        return undefined;
+      })();
+
+      // Include active stream usage if currently streaming
+      const activeStreamId = aggregator.getActiveStreamMessageId();
+
+      // Live context usage (last step's inputTokens = current context window)
+      const rawContextUsage = activeStreamId
+        ? aggregator.getActiveStreamUsage(activeStreamId)
+        : undefined;
+      const rawStepProviderMetadata = activeStreamId
+        ? aggregator.getActiveStreamStepProviderMetadata(activeStreamId)
+        : undefined;
+      const liveUsage =
+        rawContextUsage && model
+          ? createDisplayUsage(rawContextUsage, model, rawStepProviderMetadata)
+          : undefined;
+
+      // Live cost usage (cumulative across all steps, with accumulated cache creation tokens)
+      const rawCumulativeUsage = activeStreamId
+        ? aggregator.getActiveStreamCumulativeUsage(activeStreamId)
+        : undefined;
+      const rawCumulativeProviderMetadata = activeStreamId
+        ? aggregator.getActiveStreamCumulativeProviderMetadata(activeStreamId)
+        : undefined;
+      const liveCostUsage =
+        rawCumulativeUsage && model
+          ? createDisplayUsage(rawCumulativeUsage, model, rawCumulativeProviderMetadata)
+          : undefined;
+
+      return { usageHistory, lastContextUsage, totalTokens, liveUsage, liveCostUsage };
     });
   }
 
@@ -542,178 +676,6 @@ export class WorkspaceStore {
    */
   subscribeConsumers(workspaceId: string, listener: () => void): () => void {
     return this.consumersStore.subscribeKey(workspaceId, listener);
-  }
-
-  /**
-   * Handle compact_summary tool completion.
-   * Returns true if compaction was handled (caller should early return).
-   */
-  // Track processed compaction-request IDs to dedupe performCompaction across duplicated events
-  private processedCompactionRequestIds = new Set<string>();
-
-  private handleCompactionCompletion(
-    workspaceId: string,
-    aggregator: StreamingMessageAggregator,
-    data: WorkspaceChatMessage
-  ): boolean {
-    // Type guard: only StreamEndEvent has messageId
-    if (!("messageId" in data)) return false;
-
-    // Check if this was a compaction stream
-    if (!isCompactingStream(aggregator)) {
-      return false;
-    }
-
-    // Extract the compaction-request message to identify this compaction run
-    const compactionRequestMsg = findCompactionRequestMessage(aggregator);
-    if (!compactionRequestMsg) {
-      return false;
-    }
-
-    // Dedupe: If we've already processed this compaction-request, skip re-running
-    if (this.processedCompactionRequestIds.has(compactionRequestMsg.id)) {
-      return true; // Already handled compaction for this request
-    }
-
-    // Extract the summary text from the assistant's response
-    const summary = aggregator.getCompactionSummary(data.messageId);
-    if (!summary) {
-      console.warn("[WorkspaceStore] Compaction completed but no summary text found");
-      return false;
-    }
-
-    // Mark this compaction-request as processed before performing compaction
-    this.processedCompactionRequestIds.add(compactionRequestMsg.id);
-
-    this.performCompaction(workspaceId, aggregator, data, summary);
-    return true;
-  }
-
-  /**
-   * Handle interruption of a compaction stream (StreamAbortEvent).
-   *
-   * Two distinct flows trigger this:
-   * - **Ctrl+A (accept early)**: Perform compaction with [truncated] sentinel
-   * - **Ctrl+C (cancel)**: Skip compaction, let cancelCompaction handle cleanup
-   *
-   * Uses localStorage to distinguish flows:
-   * - Checks for cancellation marker in localStorage
-   * - Verifies messageId matches for freshness
-   * - Reload-safe: localStorage persists across page reloads
-   */
-  private handleCompactionAbort(
-    workspaceId: string,
-    aggregator: StreamingMessageAggregator,
-    data: WorkspaceChatMessage
-  ): boolean {
-    // Type guard: only StreamAbortEvent has messageId
-    if (!("messageId" in data)) return false;
-
-    // Check if this was a compaction stream
-    if (!isCompactingStream(aggregator)) {
-      return false;
-    }
-
-    // Get the compaction request message for ID verification
-    const compactionRequestMsg = findCompactionRequestMessage(aggregator);
-    if (!compactionRequestMsg) {
-      return false;
-    }
-
-    // Ctrl+C flow: Check localStorage for cancellation marker
-    // Verify compaction-request user message ID matches (stable across retries)
-    const storageKey = getCancelledCompactionKey(workspaceId);
-    const cancelData = localStorage.getItem(storageKey);
-    if (cancelData) {
-      try {
-        const parsed = JSON.parse(cancelData) as { compactionRequestId: string; timestamp: number };
-        if (parsed.compactionRequestId === compactionRequestMsg.id) {
-          // This is a cancelled compaction - clean up marker and skip compaction
-          localStorage.removeItem(storageKey);
-          return false; // Skip compaction, cancelCompaction() handles cleanup
-        }
-      } catch (error) {
-        console.error("[WorkspaceStore] Failed to parse cancellation data:", error);
-      }
-      // If compactionRequestId doesn't match or parse failed, clean up stale data
-      localStorage.removeItem(storageKey);
-    }
-
-    // Ctrl+A flow: Accept early with [truncated] sentinel
-    const partialSummary = aggregator.getCompactionSummary(data.messageId);
-    if (!partialSummary) {
-      console.warn("[WorkspaceStore] Compaction aborted but no partial summary found");
-      return false;
-    }
-
-    // Append [truncated] sentinel on new line to indicate incomplete summary
-    const truncatedSummary = partialSummary.trim() + "\n\n[truncated]";
-
-    this.performCompaction(workspaceId, aggregator, data, truncatedSummary);
-    return true;
-  }
-
-  /**
-   * Perform history compaction by replacing chat history with summary message.
-   * Type-safe: only called when we've verified data is a StreamEndEvent.
-   */
-  private performCompaction(
-    workspaceId: string,
-    aggregator: StreamingMessageAggregator,
-    data: WorkspaceChatMessage,
-    summary: string
-  ): void {
-    // Extract metadata safely with type guard
-    const metadata = "metadata" in data ? data.metadata : undefined;
-
-    // Calculate cumulative historical usage before replacing history
-    // This preserves costs from all messages that are about to be deleted
-    const currentUsage = this.getWorkspaceUsage(workspaceId);
-    const historicalUsage =
-      currentUsage.usageHistory.length > 0 ? sumUsageHistory(currentUsage.usageHistory) : undefined;
-
-    // Extract continueMessage from compaction-request before history gets replaced
-    const compactRequestMsg = findCompactionRequestMessage(aggregator);
-    const muxMeta = compactRequestMsg?.metadata?.muxMetadata;
-    const continueMessage =
-      muxMeta?.type === "compaction-request" ? muxMeta.parsed.continueMessage : undefined;
-
-    const summaryMessage = createMuxMessage(
-      `summary-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-      "assistant",
-      summary,
-      {
-        timestamp: Date.now(),
-        compacted: true,
-        model: aggregator.getCurrentModel(),
-        usage: metadata?.usage,
-        historicalUsage, // Store cumulative costs from all pre-compaction messages
-        providerMetadata:
-          metadata && "providerMetadata" in metadata
-            ? (metadata.providerMetadata as Record<string, unknown> | undefined)
-            : undefined,
-        duration: metadata?.duration,
-        systemMessageTokens:
-          metadata && "systemMessageTokens" in metadata
-            ? (metadata.systemMessageTokens as number | undefined)
-            : undefined,
-        // Store continueMessage in summary so it survives history replacement
-        muxMetadata: continueMessage
-          ? { type: "compaction-result", continueMessage, requestId: compactRequestMsg?.id }
-          : { type: "normal" },
-      }
-    );
-
-    void (async () => {
-      try {
-        await window.api.workspace.replaceChatHistory(workspaceId, summaryMessage);
-      } catch (error) {
-        console.error("[WorkspaceStore] Failed to replace history:", error);
-      } finally {
-        this.states.bump(workspaceId);
-        this.checkAndBumpRecencyIfChanged();
-      }
-    })();
   }
 
   /**
@@ -796,13 +758,44 @@ export class WorkspaceStore {
 
     // Subscribe to IPC events
     // Wrap in queueMicrotask to ensure IPC events don't update during React render
-    const unsubscribe = window.api.workspace.onChat(workspaceId, (data: WorkspaceChatMessage) => {
-      queueMicrotask(() => {
-        this.handleChatMessage(workspaceId, data);
-      });
-    });
+    if (this.client) {
+      const controller = new AbortController();
+      const { signal } = controller;
 
-    this.ipcUnsubscribers.set(workspaceId, unsubscribe);
+      // Fire and forget the async loop
+      (async () => {
+        try {
+          const iterator = await this.client!.workspace.onChat({ workspaceId }, { signal });
+
+          for await (const data of iterator) {
+            if (signal.aborted) break;
+            queueMicrotask(() => {
+              this.handleChatMessage(workspaceId, data);
+            });
+          }
+        } catch (error) {
+          // Suppress errors when subscription was intentionally cleaned up
+          if (signal.aborted) return;
+
+          // EVENT_ITERATOR_VALIDATION_FAILED with ErrorEvent cause happens when:
+          // - The workspace was removed on server side (iterator ends with error)
+          // - Connection dropped (WebSocket/MessagePort error)
+          // Only suppress if workspace no longer exists (was removed during the race)
+          const isIteratorError =
+            error instanceof Error &&
+            "code" in error &&
+            error.code === "EVENT_ITERATOR_VALIDATION_FAILED";
+          const workspaceRemoved = !this.states.has(workspaceId);
+          if (isIteratorError && workspaceRemoved) return;
+
+          console.error(`[WorkspaceStore] Error in onChat subscription for ${workspaceId}:`, error);
+        }
+      })();
+
+      this.ipcUnsubscribers.set(workspaceId, () => controller.abort());
+    } else {
+      console.warn(`[WorkspaceStore] No ORPC client available for workspace ${workspaceId}`);
+    }
   }
 
   /**
@@ -811,6 +804,13 @@ export class WorkspaceStore {
   removeWorkspace(workspaceId: string): void {
     // Clean up consumer manager state
     this.consumerManager.removeWorkspace(workspaceId);
+
+    // Clean up idle callback to prevent stale callbacks
+    const handle = this.deltaIdleHandles.get(workspaceId);
+    if (handle) {
+      cancelIdleCallback(handle);
+      this.deltaIdleHandles.delete(workspaceId);
+    }
 
     // Unsubscribe from IPC
     const unsubscribe = this.ipcUnsubscribers.get(workspaceId);
@@ -892,8 +892,8 @@ export class WorkspaceStore {
     createdAt: string
   ): StreamingMessageAggregator {
     if (!this.aggregators.has(workspaceId)) {
-      // Create new aggregator with required createdAt
-      this.aggregators.set(workspaceId, new StreamingMessageAggregator(createdAt));
+      // Create new aggregator with required createdAt and workspaceId for localStorage persistence
+      this.aggregators.set(workspaceId, new StreamingMessageAggregator(createdAt, workspaceId));
       this.workspaceCreatedAt.set(workspaceId, createdAt);
     }
 
@@ -1016,6 +1016,8 @@ export class WorkspaceStore {
       aggregator.handleDeleteMessage(data);
       this.states.bump(workspaceId);
       this.checkAndBumpRecencyIfChanged();
+      this.usageStore.bump(workspaceId);
+      this.consumerManager.scheduleCalculation(workspaceId, aggregator);
       return;
     }
 
@@ -1037,6 +1039,7 @@ export class WorkspaceStore {
         // Process live events immediately (after history loaded)
         aggregator.handleMessage(data);
         this.states.bump(workspaceId);
+        this.usageStore.bump(workspaceId);
         this.checkAndBumpRecencyIfChanged();
       }
       return;
@@ -1098,11 +1101,12 @@ export function useWorkspaceStoreRaw(): WorkspaceStore {
 
 /**
  * Hook to get workspace recency timestamps.
+ * Subscribes to derived state since recency is updated via derived.bump("recency").
  */
 export function useWorkspaceRecency(): Record<string, number> {
   const store = getStoreInstance();
 
-  return useSyncExternalStore(store.subscribe, () => store.getWorkspaceRecency());
+  return useSyncExternalStore(store.subscribeDerived, () => store.getWorkspaceRecency());
 }
 
 /**
@@ -1124,9 +1128,37 @@ export function useWorkspaceSidebarState(workspaceId: string): WorkspaceSidebarS
 /**
  * Hook to get an aggregator for a workspace.
  */
-export function useWorkspaceAggregator(workspaceId: string) {
+export function useWorkspaceAggregator(
+  workspaceId: string
+): StreamingMessageAggregator | undefined {
   const store = useWorkspaceStoreRaw();
   return store.getAggregator(workspaceId);
+}
+
+/**
+ * Add an ephemeral message to a workspace and trigger a re-render.
+ * Used for displaying frontend-only messages like /plan output.
+ */
+export function addEphemeralMessage(workspaceId: string, message: MuxMessage): void {
+  const store = getStoreInstance();
+  const aggregator = store.getAggregator(workspaceId);
+  if (aggregator) {
+    aggregator.addMessage(message);
+    store.bumpState(workspaceId);
+  }
+}
+
+/**
+ * Remove an ephemeral message from a workspace and trigger a re-render.
+ * Used for dismissing frontend-only messages like /plan output.
+ */
+export function removeEphemeralMessage(workspaceId: string, messageId: string): void {
+  const store = getStoreInstance();
+  const aggregator = store.getAggregator(workspaceId);
+  if (aggregator) {
+    aggregator.removeMessage(messageId);
+    store.bumpState(workspaceId);
+  }
 }
 
 /**

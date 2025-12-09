@@ -18,6 +18,7 @@ import { log } from "./log";
 import type {
   StreamStartEvent,
   StreamEndEvent,
+  UsageDeltaEvent,
   ErrorEvent,
   ToolCallEndEvent,
   CompletedMessagePart,
@@ -27,11 +28,16 @@ import type { SendMessageError, StreamErrorType } from "@/common/types/errors";
 import type { MuxMetadata, MuxMessage } from "@/common/types/message";
 import type { PartialService } from "./partialService";
 import type { HistoryService } from "./historyService";
+import { addUsage, accumulateProviderMetadata } from "@/common/utils/tokens/usageHelpers";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { StreamingTokenTracker } from "@/node/utils/main/StreamingTokenTracker";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { execBuffered } from "@/node/utils/runtime/helpers";
+import {
+  createCachedSystemMessage,
+  applyCacheControlToTools,
+} from "@/common/utils/ai/cacheStrategy";
 
 // Type definitions for stream parts with extended properties
 interface ReasoningDeltaPart {
@@ -49,6 +55,7 @@ enum StreamState {
   STARTING = "starting",
   STREAMING = "streaming",
   STOPPING = "stopping",
+  COMPLETED = "completed", // Stream finished successfully (before cleanup)
   ERROR = "error",
 }
 
@@ -102,15 +109,25 @@ interface WorkspaceStreamInfo {
   // Track last partial write time for throttling
   lastPartialWriteTime: number;
   // Throttle timer for partial writes
-  partialWriteTimer?: NodeJS.Timeout;
+  partialWriteTimer?: ReturnType<typeof setTimeout>;
   // Track in-flight write to serialize writes
   partialWritePromise?: Promise<void>;
   // Track background processing promise for guaranteed cleanup
   processingPromise: Promise<void>;
+  // Soft-interrupt state: when pending, stream will end at next block boundary
+  softInterrupt: { pending: false } | { pending: true; abandonPartial: boolean };
   // Temporary directory for tool outputs (auto-cleaned when stream ends)
   runtimeTempDir: string;
   // Runtime for temp directory cleanup
   runtime: Runtime;
+  // Cumulative usage across all steps (for live cost display during streaming)
+  cumulativeUsage: LanguageModelV2Usage;
+  // Cumulative provider metadata across all steps (for live cost display with cache tokens)
+  cumulativeProviderMetadata?: Record<string, unknown>;
+  // Last step's usage (for context window display during streaming)
+  lastStepUsage?: LanguageModelV2Usage;
+  // Last step's provider metadata (for context window cache display)
+  lastStepProviderMetadata?: Record<string, unknown>;
 }
 
 /**
@@ -225,7 +242,7 @@ export class StreamManager extends EventEmitter {
     const existing = this.workspaceStreams.get(workspaceId);
 
     if (existing && existing.state !== StreamState.IDLE) {
-      await this.cancelStreamSafely(workspaceId, existing);
+      await this.cancelStreamSafely(workspaceId, existing, undefined);
     }
 
     // Generate unique token for this stream (8 hex chars for context efficiency)
@@ -317,22 +334,96 @@ export class StreamManager extends EventEmitter {
   private async getStreamMetadata(
     streamInfo: WorkspaceStreamInfo,
     timeoutMs = 1000
-  ): Promise<{ usage?: LanguageModelV2Usage; duration: number }> {
-    let usage = undefined;
-    try {
-      // Race usage retrieval against timeout to prevent hanging on abort
-      usage = await Promise.race([
-        streamInfo.streamResult.usage,
+  ): Promise<{
+    totalUsage?: LanguageModelV2Usage;
+    contextUsage?: LanguageModelV2Usage;
+    contextProviderMetadata?: Record<string, unknown>;
+    duration: number;
+  }> {
+    // Helper: wrap promise with independent timeout + error handling
+    // Each promise resolves independently - one failure doesn't mask others
+    const withTimeout = <T>(promise: Promise<T>): Promise<T | undefined> =>
+      Promise.race([
+        promise,
         new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), timeoutMs)),
-      ]);
-    } catch (error) {
-      log.debug("Could not retrieve usage:", error);
-    }
+      ]).catch(() => undefined);
+
+    // Fetch all metadata in parallel with independent timeouts
+    // - totalUsage: sum of all steps (for cost calculation)
+    // - contextUsage: last step only (for context window display)
+    // - contextProviderMetadata: last step (for context window cache display)
+    const [totalUsage, contextUsage, contextProviderMetadata] = await Promise.all([
+      withTimeout(streamInfo.streamResult.totalUsage),
+      withTimeout(streamInfo.streamResult.usage),
+      withTimeout(streamInfo.streamResult.providerMetadata),
+    ]);
 
     return {
-      usage,
+      totalUsage,
+      contextUsage,
+      contextProviderMetadata,
       duration: Date.now() - streamInfo.startTime,
     };
+  }
+
+  /**
+   * Aggregate provider metadata across all steps.
+   *
+   * CRITICAL: For multi-step tool calls, cache creation tokens are reported per-step.
+   * streamResult.providerMetadata only contains the LAST step's metadata, missing
+   * cache creation tokens from earlier steps. We must sum across all steps.
+   */
+  private async getAggregatedProviderMetadata(
+    streamInfo: WorkspaceStreamInfo,
+    timeoutMs = 1000
+  ): Promise<Record<string, unknown> | undefined> {
+    try {
+      const steps = await Promise.race([
+        streamInfo.streamResult.steps,
+        new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), timeoutMs)),
+      ]);
+
+      if (!steps || steps.length === 0) {
+        // Fall back to last step's provider metadata
+        return await streamInfo.streamResult.providerMetadata;
+      }
+
+      // If only one step, no aggregation needed
+      if (steps.length === 1) {
+        return steps[0].providerMetadata;
+      }
+
+      // Aggregate cache creation tokens across all steps
+      let totalCacheCreationTokens = 0;
+      let lastStepMetadata: Record<string, unknown> | undefined;
+
+      for (const step of steps) {
+        lastStepMetadata = step.providerMetadata;
+        const anthropicMeta = step.providerMetadata?.anthropic as
+          | { cacheCreationInputTokens?: number }
+          | undefined;
+        if (anthropicMeta?.cacheCreationInputTokens) {
+          totalCacheCreationTokens += anthropicMeta.cacheCreationInputTokens;
+        }
+      }
+
+      // If no cache creation tokens found, just return last step's metadata
+      if (totalCacheCreationTokens === 0) {
+        return lastStepMetadata;
+      }
+
+      // Merge aggregated cache creation tokens into the last step's metadata
+      return {
+        ...lastStepMetadata,
+        anthropic: {
+          ...(lastStepMetadata?.anthropic as Record<string, unknown> | undefined),
+          cacheCreationInputTokens: totalCacheCreationTokens,
+        },
+      };
+    } catch (error) {
+      log.debug("Could not aggregate provider metadata:", error);
+      return undefined;
+    }
   }
 
   /**
@@ -401,6 +492,7 @@ export class StreamManager extends EventEmitter {
           toolCallId: part.toolCallId,
           toolName: part.toolName,
           result: part.output,
+          timestamp: Date.now(),
         });
       }
     }
@@ -408,8 +500,32 @@ export class StreamManager extends EventEmitter {
 
   private async cancelStreamSafely(
     workspaceId: WorkspaceId,
+    streamInfo: WorkspaceStreamInfo,
+    abandonPartial?: boolean
+  ): Promise<void> {
+    try {
+      streamInfo.state = StreamState.STOPPING;
+      // Flush any pending partial write immediately (preserves work on interruption)
+      await this.flushPartialWrite(workspaceId, streamInfo);
+
+      streamInfo.abortController.abort();
+
+      // Unlike checkSoftCancelStream, await cleanup (blocking)
+      await this.cleanupStream(workspaceId, streamInfo, abandonPartial);
+    } catch (error) {
+      log.error("Error during stream cancellation:", error);
+      // Force cleanup even if cancellation fails
+      this.workspaceStreams.delete(workspaceId);
+    }
+  }
+
+  // Checks if a soft interrupt is necessary, and performs one if so
+  // Similar to cancelStreamSafely but performs cleanup without blocking
+  private async checkSoftCancelStream(
+    workspaceId: WorkspaceId,
     streamInfo: WorkspaceStreamInfo
   ): Promise<void> {
+    if (!streamInfo.softInterrupt.pending) return;
     try {
       streamInfo.state = StreamState.STOPPING;
 
@@ -418,29 +534,55 @@ export class StreamManager extends EventEmitter {
 
       streamInfo.abortController.abort();
 
-      // CRITICAL: Wait for processing to fully complete before cleanup
-      // This prevents race conditions where the old stream is still running
-      // while a new stream starts (e.g., old stream writing to partial.json)
-      await streamInfo.processingPromise;
-
-      // Get usage and duration metadata (usage may be undefined if aborted early)
-      const { usage, duration } = await this.getStreamMetadata(streamInfo);
-
-      // Emit abort event with usage if available
-      this.emit("stream-abort", {
-        type: "stream-abort",
-        workspaceId: workspaceId as string,
-        messageId: streamInfo.messageId,
-        metadata: { usage, duration },
-      });
-
-      // Clean up immediately
-      this.workspaceStreams.delete(workspaceId);
+      // Return back to the stream loop so we can wait for it to finish before
+      // sending the stream abort event.
+      const abandonPartial = streamInfo.softInterrupt.pending
+        ? streamInfo.softInterrupt.abandonPartial
+        : false;
+      void this.cleanupStream(workspaceId, streamInfo, abandonPartial);
     } catch (error) {
-      console.error("Error during stream cancellation:", error);
+      log.error("Error during stream cancellation:", error);
       // Force cleanup even if cancellation fails
       this.workspaceStreams.delete(workspaceId);
     }
+  }
+
+  private async cleanupStream(
+    workspaceId: WorkspaceId,
+    streamInfo: WorkspaceStreamInfo,
+    abandonPartial?: boolean
+  ): Promise<void> {
+    // CRITICAL: Wait for processing to fully complete before cleanup
+    // This prevents race conditions where the old stream is still running
+    // while a new stream starts (e.g., old stream writing to partial.json)
+    await streamInfo.processingPromise;
+
+    // For aborts, use our tracked cumulativeUsage directly instead of AI SDK's totalUsage.
+    // cumulativeUsage is updated on each finish-step event (before tool execution),
+    // so it has accurate data even when the stream is interrupted mid-tool-call.
+    // AI SDK's totalUsage may return zeros or stale data when aborted.
+    const duration = Date.now() - streamInfo.startTime;
+    const hasCumulativeUsage = (streamInfo.cumulativeUsage.totalTokens ?? 0) > 0;
+    const usage = hasCumulativeUsage ? streamInfo.cumulativeUsage : undefined;
+
+    // For context window display, use last step's usage (inputTokens = current context size)
+    const contextUsage = streamInfo.lastStepUsage;
+    const contextProviderMetadata = streamInfo.lastStepProviderMetadata;
+
+    // Include provider metadata for accurate cost calculation
+    const providerMetadata = streamInfo.cumulativeProviderMetadata;
+
+    // Emit abort event with usage if available
+    this.emit("stream-abort", {
+      type: "stream-abort",
+      workspaceId: workspaceId as string,
+      messageId: streamInfo.messageId,
+      metadata: { usage, contextUsage, duration, providerMetadata, contextProviderMetadata },
+      abandonPartial,
+    });
+
+    // Clean up immediately
+    this.workspaceStreams.delete(workspaceId);
   }
 
   /**
@@ -485,15 +627,34 @@ export class StreamManager extends EventEmitter {
       }
     }
 
+    // Apply cache control for Anthropic models
+    let finalMessages = messages;
+    let finalTools = tools;
+    let finalSystem: string | undefined = system;
+
+    // For Anthropic models, convert system message to a cached message at the start
+    const cachedSystemMessage = createCachedSystemMessage(system, modelString);
+    if (cachedSystemMessage) {
+      // Prepend cached system message and set system parameter to undefined
+      // Note: Must be undefined, not empty string, to avoid Anthropic API error
+      finalMessages = [cachedSystemMessage, ...messages];
+      finalSystem = undefined;
+    }
+
+    // Apply cache control to tools for Anthropic models
+    if (tools) {
+      finalTools = applyCacheControlToTools(tools, modelString);
+    }
+
     // Start streaming - this can throw immediately if API key is missing
     let streamResult;
     try {
       streamResult = streamText({
         model,
-        messages,
-        system,
+        messages: finalMessages,
+        system: finalSystem,
         abortSignal: abortController.signal,
-        tools,
+        tools: finalTools,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
         toolChoice: toolChoice as any, // Force tool use when required by policy
         // When toolChoice is set (required tool), limit to 1 step to prevent infinite loops
@@ -529,8 +690,12 @@ export class StreamManager extends EventEmitter {
       lastPartialWriteTime: 0, // Initialize to 0 to allow immediate first write
       partialWritePromise: undefined, // No write in flight initially
       processingPromise: Promise.resolve(), // Placeholder, overwritten in startStream
+      softInterrupt: { pending: false },
       runtimeTempDir, // Stream-scoped temp directory for tool outputs
       runtime, // Runtime for temp directory cleanup
+      // Initialize cumulative tracking for multi-step streams
+      cumulativeUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      cumulativeProviderMetadata: undefined,
     };
 
     // Atomically register the stream
@@ -540,9 +705,11 @@ export class StreamManager extends EventEmitter {
   }
 
   /**
-   * Complete a tool call by updating its part and emitting tool-call-end event
+   * Complete a tool call by updating its part and emitting tool-call-end event.
+   * CRITICAL: Flushes partial to disk BEFORE emitting event to prevent race conditions
+   * where listeners (e.g., sendQueuedMessages) read stale partial data.
    */
-  private completeToolCall(
+  private async completeToolCall(
     workspaceId: WorkspaceId,
     streamInfo: WorkspaceStreamInfo,
     toolCalls: Map<
@@ -552,7 +719,7 @@ export class StreamManager extends EventEmitter {
     toolCallId: string,
     toolName: string,
     output: unknown
-  ): void {
+  ): Promise<void> {
     // Find and update the existing tool part
     const existingPartIndex = streamInfo.parts.findIndex(
       (p) => p.type === "dynamic-tool" && p.toolCallId === toolCallId
@@ -583,7 +750,13 @@ export class StreamManager extends EventEmitter {
       }
     }
 
-    // Emit tool-call-end event
+    // CRITICAL: Flush partial to disk BEFORE emitting event
+    // This ensures listeners (like sendQueuedMessages) see the tool result when they
+    // read partial.json via commitToHistory. Without this await, there's a race condition
+    // where the partial is read before the tool result is written, causing "amnesia".
+    await this.flushPartialWrite(workspaceId, streamInfo);
+
+    // Emit tool-call-end event (listeners can now safely read partial)
     this.emit("tool-call-end", {
       type: "tool-call-end",
       workspaceId: workspaceId as string,
@@ -591,10 +764,8 @@ export class StreamManager extends EventEmitter {
       toolCallId,
       toolName,
       result: output,
+      timestamp: Date.now(),
     } as ToolCallEndEvent);
-
-    // Schedule partial write
-    void this.schedulePartialWrite(workspaceId, streamInfo);
   }
 
   /**
@@ -692,6 +863,7 @@ export class StreamManager extends EventEmitter {
               workspaceId: workspaceId as string,
               messageId: streamInfo.messageId,
             });
+            await this.checkSoftCancelStream(workspaceId, streamInfo);
             break;
           }
 
@@ -736,8 +908,8 @@ export class StreamManager extends EventEmitter {
               const strippedOutput = stripEncryptedContent(part.output);
               toolCall.output = strippedOutput;
 
-              // Use shared completion logic
-              this.completeToolCall(
+              // Use shared completion logic (await to ensure partial is flushed before event)
+              await this.completeToolCall(
                 workspaceId,
                 streamInfo,
                 toolCalls,
@@ -746,6 +918,7 @@ export class StreamManager extends EventEmitter {
                 strippedOutput
               );
             }
+            await this.checkSoftCancelStream(workspaceId, streamInfo);
             break;
           }
 
@@ -765,6 +938,7 @@ export class StreamManager extends EventEmitter {
 
             // Format error output
             const errorOutput = {
+              success: false,
               error:
                 typeof toolErrorPart.error === "string"
                   ? toolErrorPart.error
@@ -773,8 +947,8 @@ export class StreamManager extends EventEmitter {
                     : JSON.stringify(toolErrorPart.error),
             };
 
-            // Use shared completion logic
-            this.completeToolCall(
+            // Use shared completion logic (await to ensure partial is flushed before event)
+            await this.completeToolCall(
               workspaceId,
               streamInfo,
               toolCalls,
@@ -782,6 +956,7 @@ export class StreamManager extends EventEmitter {
               toolErrorPart.toolName,
               errorOutput
             );
+            await this.checkSoftCancelStream(workspaceId, streamInfo);
             break;
           }
 
@@ -827,9 +1002,48 @@ export class StreamManager extends EventEmitter {
           case "start-step":
           case "text-start":
           case "finish":
-          case "finish-step":
             // These events can be logged or handled if needed
             break;
+
+          case "finish-step": {
+            // Emit usage-delta event with usage from this step
+            const finishStepPart = part as {
+              type: "finish-step";
+              usage: LanguageModelV2Usage;
+              providerMetadata?: Record<string, unknown>;
+            };
+
+            // Update cumulative totals for this stream
+            streamInfo.cumulativeUsage = addUsage(streamInfo.cumulativeUsage, finishStepPart.usage);
+            streamInfo.cumulativeProviderMetadata = accumulateProviderMetadata(
+              streamInfo.cumulativeProviderMetadata,
+              finishStepPart.providerMetadata
+            );
+
+            // Track last step's data for context window display
+            streamInfo.lastStepUsage = finishStepPart.usage;
+            streamInfo.lastStepProviderMetadata = finishStepPart.providerMetadata;
+
+            const usageEvent: UsageDeltaEvent = {
+              type: "usage-delta",
+              workspaceId: workspaceId as string,
+              messageId: streamInfo.messageId,
+              // Step-level (for context window display)
+              usage: finishStepPart.usage,
+              providerMetadata: finishStepPart.providerMetadata,
+              // Cumulative (for live cost display)
+              cumulativeUsage: streamInfo.cumulativeUsage,
+              cumulativeProviderMetadata: streamInfo.cumulativeProviderMetadata,
+            };
+            this.emit("usage-delta", usageEvent);
+            await this.checkSoftCancelStream(workspaceId, streamInfo);
+            break;
+          }
+
+          case "text-end": {
+            await this.checkSoftCancelStream(workspaceId, streamInfo);
+            break;
+          }
         }
       }
 
@@ -844,9 +1058,19 @@ export class StreamManager extends EventEmitter {
 
       // Check if stream completed successfully
       if (!streamInfo.abortController.signal.aborted) {
-        // Get usage, duration, and provider metadata from stream result
-        const { usage, duration } = await this.getStreamMetadata(streamInfo);
-        const providerMetadata = await streamInfo.streamResult.providerMetadata;
+        // Get all metadata from stream result in one call
+        // - totalUsage: sum of all steps (for cost calculation)
+        // - contextUsage: last step only (for context window display)
+        // - contextProviderMetadata: last step (for context window cache tokens)
+        // Falls back to tracked values from finish-step if streamResult fails/times out
+        const streamMeta = await this.getStreamMetadata(streamInfo);
+        const totalUsage = streamMeta.totalUsage;
+        const contextUsage = streamMeta.contextUsage ?? streamInfo.lastStepUsage;
+        const contextProviderMetadata =
+          streamMeta.contextProviderMetadata ?? streamInfo.lastStepProviderMetadata;
+        const duration = streamMeta.duration;
+        // Aggregated provider metadata across all steps (for cost calculation with cache tokens)
+        const providerMetadata = await this.getAggregatedProviderMetadata(streamInfo);
 
         // Emit stream end event with parts preserved in temporal order
         const streamEndEvent: StreamEndEvent = {
@@ -856,12 +1080,18 @@ export class StreamManager extends EventEmitter {
           metadata: {
             ...streamInfo.initialMetadata, // AIService-provided metadata (systemMessageTokens, etc)
             model: streamInfo.model,
-            usage, // AI SDK normalized usage
-            providerMetadata, // Raw provider metadata
+            usage: totalUsage, // Total across all steps (for cost calculation)
+            contextUsage, // Last step only (for context window display)
+            providerMetadata, // Aggregated (for cost calculation)
+            contextProviderMetadata, // Last step (for context window display)
             duration,
           },
           parts: streamInfo.parts, // Parts array with temporal ordering (includes reasoning)
         };
+
+        // Mark as completed BEFORE emitting stream-end to prevent race conditions
+        // where isStreaming() returns true while event handlers try to send new messages
+        streamInfo.state = StreamState.COMPLETED;
 
         this.emit("stream-end", streamEndEvent);
 
@@ -889,7 +1119,7 @@ export class StreamManager extends EventEmitter {
       streamInfo.state = StreamState.ERROR;
 
       // Log the actual error for debugging
-      console.error("Stream processing error:", error);
+      log.error("Stream processing error:", error);
 
       // Check if this is a lost previousResponseId error and record it
       // Frontend will automatically retry, and buildProviderOptions will filter it out
@@ -937,8 +1167,14 @@ export class StreamManager extends EventEmitter {
         },
         parts: streamInfo.parts,
       };
-      // Write error state to disk (fire-and-forget to not block error emission)
-      void this.partialService.writePartial(workspaceId as string, errorPartialMessage);
+      // Wait for any in-flight partial write to complete before writing error state
+      // This prevents race conditions where the error write and a throttled flush
+      // write at the same time, causing inconsistent partial.json state
+      if (streamInfo.partialWritePromise) {
+        await streamInfo.partialWritePromise;
+      }
+      // Write error state to disk - await to ensure consistent state before any resume
+      await this.partialService.writePartial(workspaceId as string, errorPartialMessage);
 
       // Emit error event
       this.emit("error", {
@@ -1190,7 +1426,7 @@ export class StreamManager extends EventEmitter {
         streamInfo,
         historySequence
       ).catch((error) => {
-        console.error("Unexpected error in stream processing:", error);
+        log.error("Unexpected error in stream processing:", error);
       });
 
       return Ok(streamToken);
@@ -1317,14 +1553,31 @@ export class StreamManager extends EventEmitter {
 
   /**
    * Stops an active stream for a workspace
+   * If soft is true, performs a soft interrupt (cancels at next block boundary)
    */
-  async stopStream(workspaceId: string): Promise<Result<void>> {
+  async stopStream(
+    workspaceId: string,
+    options?: { soft?: boolean; abandonPartial?: boolean }
+  ): Promise<Result<void>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
     try {
       const streamInfo = this.workspaceStreams.get(typedWorkspaceId);
-      if (streamInfo) {
-        await this.cancelStreamSafely(typedWorkspaceId, streamInfo);
+      if (!streamInfo) {
+        return Ok(undefined); // No active stream
+      }
+
+      const soft = options?.soft ?? false;
+
+      if (soft) {
+        // Soft interrupt: set flag, will cancel at next block boundary
+        streamInfo.softInterrupt = {
+          pending: true,
+          abandonPartial: options?.abandonPartial ?? false,
+        };
+      } else {
+        // Hard interrupt: cancel immediately
+        await this.cancelStreamSafely(typedWorkspaceId, streamInfo, options?.abandonPartial);
       }
       return Ok(undefined);
     } catch (error) {
@@ -1427,9 +1680,10 @@ export class StreamManager extends EventEmitter {
    * This method allows integration tests to simulate stream errors without
    * mocking the AI SDK or network layer. It triggers the same error handling
    * path as genuine stream errors by aborting the stream and manually triggering
-   * the error event (since abort alone doesn't throw, it just sets a flag).
+   * the error event (since abort alone doesn't throw, it just sets a flag that
+   * causes the for-await loop to break cleanly).
    */
-  debugTriggerStreamError(workspaceId: string, errorMessage: string): boolean {
+  async debugTriggerStreamError(workspaceId: string, errorMessage: string): Promise<boolean> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
     const streamInfo = this.workspaceStreams.get(typedWorkspaceId);
 
@@ -1441,8 +1695,11 @@ export class StreamManager extends EventEmitter {
       return false;
     }
 
-    // Abort the stream first
+    // Abort the stream first (causes for-await loop to break cleanly)
     streamInfo.abortController.abort(new Error(errorMessage));
+
+    // Mark as error state (same as catch block does)
+    streamInfo.state = StreamState.ERROR;
 
     // Update streamInfo metadata with error (so subsequent flushes preserve it)
     streamInfo.initialMetadata = {
@@ -1452,6 +1709,10 @@ export class StreamManager extends EventEmitter {
     };
 
     // Write error state to partial.json (same as real error handling)
+    // Wait for any in-flight partial write to complete first
+    if (streamInfo.partialWritePromise) {
+      await streamInfo.partialWritePromise;
+    }
     const errorPartialMessage: MuxMessage = {
       id: streamInfo.messageId,
       role: "assistant",
@@ -1466,7 +1727,7 @@ export class StreamManager extends EventEmitter {
       },
       parts: streamInfo.parts,
     };
-    void this.partialService.writePartial(workspaceId, errorPartialMessage);
+    await this.partialService.writePartial(workspaceId, errorPartialMessage);
 
     // Emit error event (same as real error handling)
     this.emit("error", {
@@ -1476,6 +1737,9 @@ export class StreamManager extends EventEmitter {
       error: errorMessage,
       errorType: "network",
     } as ErrorEvent);
+
+    // Wait for the stream processing to complete (cleanup)
+    await streamInfo.processingPromise;
 
     return true;
   }

@@ -510,3 +510,10 @@ describe("StreamManager - previousResponseId recovery", () => {
     expect(streamManager.isResponseIdLost("resp_cafebabe")).toBe(true);
   });
 });
+
+// Note: Anthropic cache control tests are in cacheStrategy.test.ts
+// Those tests verify the cache control structure without requiring
+
+// Note: Comprehensive Anthropic cache control tests are in cacheStrategy.test.ts
+// Those unit tests cover all cache control functionality without requiring
+// complex setup. StreamManager integrates those functions directly.

@@ -6,6 +6,7 @@ import {
   addInterruptedSentinel,
   injectModeTransition,
   filterEmptyAssistantMessages,
+  injectFileChangeNotifications,
 } from "./modelMessageTransform";
 import type { MuxMessage } from "@/common/types/message";
 
@@ -1025,5 +1026,100 @@ describe("filterEmptyAssistantMessages", () => {
     expect(result2.length).toBe(2);
     expect(result2[1].id).toBe("assistant-1");
     expect(result2[1].metadata?.partial).toBe(true);
+  });
+});
+
+describe("injectFileChangeNotifications", () => {
+  it("should return messages unchanged when no file attachments provided", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Hello" }],
+        metadata: { timestamp: 1000 },
+      },
+    ];
+
+    const result = injectFileChangeNotifications(messages, undefined);
+    expect(result).toEqual(messages);
+
+    const result2 = injectFileChangeNotifications(messages, []);
+    expect(result2).toEqual(messages);
+  });
+
+  it("should append synthetic user message with file change notification", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Fix this code" }],
+        metadata: { timestamp: 1000 },
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{ type: "text", text: "I'll fix it" }],
+        metadata: { timestamp: 2000 },
+      },
+    ];
+
+    const changedFiles = [
+      {
+        type: "edited_text_file" as const,
+        filename: "src/app.ts",
+        snippet: "@@ -10,3 +10,3 @@\n-const x = 1\n+const x = 2",
+      },
+    ];
+
+    const result = injectFileChangeNotifications(messages, changedFiles);
+
+    expect(result.length).toBe(3);
+    expect(result[0]).toEqual(messages[0]);
+    expect(result[1]).toEqual(messages[1]);
+
+    const syntheticMsg = result[2];
+    expect(syntheticMsg.role).toBe("user");
+    expect(syntheticMsg.metadata?.synthetic).toBe(true);
+    expect(syntheticMsg.id).toMatch(/^file-change-/);
+    expect(syntheticMsg.parts[0]).toMatchObject({
+      type: "text",
+    });
+    const text = (syntheticMsg.parts[0] as { type: "text"; text: string }).text;
+    expect(text).toContain("<system-file-update>");
+    expect(text).toContain("src/app.ts was modified");
+    expect(text).toContain("@@ -10,3 +10,3 @@");
+  });
+
+  it("should handle multiple file changes", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Hello" }],
+        metadata: { timestamp: 1000 },
+      },
+    ];
+
+    const changedFiles = [
+      {
+        type: "edited_text_file" as const,
+        filename: "src/foo.ts",
+        snippet: "diff1",
+      },
+      {
+        type: "edited_text_file" as const,
+        filename: "src/bar.ts",
+        snippet: "diff2",
+      },
+    ];
+
+    const result = injectFileChangeNotifications(messages, changedFiles);
+
+    expect(result.length).toBe(2);
+    const text = (result[1].parts[0] as { type: "text"; text: string }).text;
+    expect(text).toContain("src/foo.ts was modified");
+    expect(text).toContain("src/bar.ts was modified");
+    expect(text).toContain("diff1");
+    expect(text).toContain("diff2");
   });
 });

@@ -1,10 +1,14 @@
-import { generateObject, type LanguageModel } from "ai";
+import { generateObject } from "ai";
 import { z } from "zod";
-import type { Config } from "@/node/config";
+import type { AIService } from "./aiService";
 import { log } from "./log";
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { createOpenAI } from "@ai-sdk/openai";
-import { MODEL_NAMES } from "@/common/constants/knownModels";
+import type { Result } from "@/common/types/result";
+import { Ok, Err } from "@/common/types/result";
+import type { SendMessageError } from "@/common/types/errors";
+import { getKnownModel } from "@/common/constants/knownModels";
+
+/** Models to try in order of preference for name generation (small, fast models) */
+const PREFERRED_MODELS = [getKnownModel("HAIKU").id, getKnownModel("GPT_MINI").id] as const;
 
 const workspaceNameSchema = z.object({
   name: z
@@ -16,120 +20,67 @@ const workspaceNameSchema = z.object({
 });
 
 /**
- * Generate workspace name using AI
- * Falls back to timestamp-based name if AI generation fails
- * @param message - The user's first message
- * @param modelString - Model string from send message options (e.g., "anthropic:claude-3-5-sonnet-20241022")
- * @param config - Config instance for provider access
+ * Get the preferred model for name generation by testing which models the AIService
+ * can actually create. This delegates credential checking to AIService, avoiding
+ * duplication of provider-specific API key logic.
+ */
+export async function getPreferredNameModel(aiService: AIService): Promise<string | null> {
+  for (const modelId of PREFERRED_MODELS) {
+    const result = await aiService.createModel(modelId);
+    if (result.success) {
+      return modelId;
+    }
+    // If it's an API key error, try the next model; other errors are also skipped
+  }
+  return null;
+}
+
+/**
+ * Generate workspace name using AI.
+ * If AI cannot be used (e.g. missing credentials, unsupported provider, invalid model),
+ * returns a SendMessageError so callers can surface the standard provider error UX.
  */
 export async function generateWorkspaceName(
   message: string,
   modelString: string,
-  config: Config
-): Promise<string> {
+  aiService: AIService
+): Promise<Result<string, SendMessageError>> {
   try {
-    const model = getModelForTitleGeneration(modelString, config);
-
-    if (!model) {
-      // No providers available, use fallback immediately
-      return createFallbackName();
+    const modelResult = await aiService.createModel(modelString);
+    if (!modelResult.success) {
+      return Err(modelResult.error);
     }
 
     const result = await generateObject({
-      model,
+      model: modelResult.data,
       schema: workspaceNameSchema,
-      prompt: `Generate a git-safe branch/workspace name for this development task:
-
-"${message}"
-
-Requirements:
-- Git-safe identifier (e.g., "automatic-title-generation")
-- Lowercase, hyphens only, no spaces
-- Concise (2-5 words) and descriptive of the task`,
+      mode: "json",
+      prompt: `Generate a git-safe branch/workspace name for this development task:\n\n"${message}"\n\nRequirements:\n- Git-safe identifier (e.g., "automatic-title-generation")\n- Lowercase, hyphens only, no spaces\n- Concise (2-5 words) and descriptive of the task`,
     });
 
-    return validateBranchName(result.object.name);
+    return Ok(validateBranchName(result.object.name));
   } catch (error) {
-    log.error("Failed to generate workspace name with AI, using fallback", error);
-    return createFallbackName();
+    const messageText = error instanceof Error ? error.message : String(error);
+    log.error("Failed to generate workspace name with AI", error);
+    return Err({ type: "unknown", raw: `Failed to generate workspace name: ${messageText}` });
   }
 }
 
 /**
- * Get model for title generation - prefers fast/cheap models
- * Priority: Haiku 4.5 (Anthropic) → GPT-5-mini (OpenAI) → fallback to user's model
- * Falls back to null if no provider configured
+ * Sanitize a string to be git-safe: lowercase, hyphens only, no leading/trailing hyphens.
  */
-function getModelForTitleGeneration(modelString: string, config: Config): LanguageModel | null {
-  const providersConfig = config.loadProvidersConfig();
-
-  if (!providersConfig) {
-    return null;
-  }
-
-  try {
-    // Try Anthropic Haiku first (fastest/cheapest)
-    if (providersConfig.anthropic?.apiKey) {
-      const provider = createAnthropic({
-        apiKey: String(providersConfig.anthropic.apiKey),
-      });
-      return provider(MODEL_NAMES.anthropic.HAIKU);
-    }
-
-    // Try OpenAI GPT-5-mini second
-    if (providersConfig.openai?.apiKey) {
-      const provider = createOpenAI({
-        apiKey: String(providersConfig.openai.apiKey),
-      });
-      return provider(MODEL_NAMES.openai.GPT_MINI);
-    }
-
-    // Parse user's model as fallback
-    const [providerName, modelId] = modelString.split(":", 2);
-    if (!providerName || !modelId) {
-      log.error("Invalid model string format:", modelString);
-      return null;
-    }
-
-    if (providerName === "anthropic" && providersConfig.anthropic?.apiKey) {
-      const provider = createAnthropic({
-        apiKey: String(providersConfig.anthropic.apiKey),
-      });
-      return provider(modelId);
-    }
-
-    if (providerName === "openai" && providersConfig.openai?.apiKey) {
-      const provider = createOpenAI({
-        apiKey: String(providersConfig.openai.apiKey),
-      });
-      return provider(modelId);
-    }
-
-    log.error(`Provider ${providerName} not configured or not supported`);
-    return null;
-  } catch (error) {
-    log.error(`Failed to create model for title generation`, error);
-    return null;
-  }
-}
-
-/**
- * Create fallback name using timestamp
- */
-function createFallbackName(): string {
-  const timestamp = Date.now().toString(36);
-  return `chat-${timestamp}`;
+function sanitizeBranchName(name: string, maxLength: number): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-+/g, "-")
+    .substring(0, maxLength);
 }
 
 /**
  * Validate and sanitize branch name to be git-safe
  */
 function validateBranchName(name: string): string {
-  // Ensure git-safe
-  const cleaned = name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
-  // Remove leading/trailing hyphens and collapse multiple hyphens
-  return cleaned
-    .replace(/^-+|-+$/g, "")
-    .replace(/-+/g, "-")
-    .substring(0, 50);
+  return sanitizeBranchName(name, 50);
 }

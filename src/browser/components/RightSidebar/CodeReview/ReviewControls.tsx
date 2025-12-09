@@ -115,7 +115,7 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
         </button>
       )}
 
-      <label className="text-foreground flex cursor-pointer items-center gap-1.5 text-[11px] whitespace-nowrap hover:text-white [&_input[type='checkbox']]:cursor-pointer">
+      <label className="text-foreground flex cursor-pointer items-center gap-1.5 text-[11px] whitespace-nowrap hover:text-[var(--color-hover-foreground)] [&_input[type='checkbox']]:cursor-pointer">
         <input
           type="checkbox"
           checked={filters.includeUncommitted}
@@ -124,7 +124,7 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
         Uncommitted
       </label>
 
-      <label className="text-foreground flex cursor-pointer items-center gap-1.5 text-[11px] whitespace-nowrap hover:text-white [&_input[type='checkbox']]:cursor-pointer">
+      <label className="text-foreground flex cursor-pointer items-center gap-1.5 text-[11px] whitespace-nowrap hover:text-[var(--color-hover-foreground)] [&_input[type='checkbox']]:cursor-pointer">
         <input type="checkbox" checked={filters.showReadHunks} onChange={handleShowReadToggle} />
         Show read
       </label>

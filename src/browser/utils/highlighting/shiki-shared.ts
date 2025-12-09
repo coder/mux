@@ -3,8 +3,9 @@
  * Used by both the main app and documentation theme
  */
 
-// Shiki theme used throughout the application
-export const SHIKI_THEME = "min-dark";
+// Shiki themes used throughout the application
+export const SHIKI_DARK_THEME = "min-dark";
+export const SHIKI_LIGHT_THEME = "min-light";
 
 /**
  * Map language names to Shiki-compatible language IDs
