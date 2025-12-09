@@ -152,7 +152,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
-                    className="text-muted hover:text-foreground cursor-pointer border-none bg-transparent p-0 text-base opacity-0 transition-colors duration-200"
+                    className="text-muted hover:text-foreground inline-flex cursor-pointer items-center border-none bg-transparent p-0 text-base leading-none opacity-0 transition-colors duration-200"
                     onClick={(e) => {
                       e.stopPropagation();
                       void onRemoveWorkspace(workspaceId, e.currentTarget);
@@ -217,7 +217,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
             )}
           </div>
           {!isCreating && (
-            <div className="min-w-0">
+            <div className="ml-[18px] min-w-0">
               {isDeleting ? (
                 <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
                   <span className="-mt-0.5 shrink-0 text-[10px]">🗑️</span>
