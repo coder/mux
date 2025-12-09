@@ -356,11 +356,17 @@ const AIViewInner: React.FC<AIViewProps> = ({
     openTerminal(workspaceId, runtimeConfig);
   }, [workspaceId, openTerminal, runtimeConfig]);
 
-  // Scroll to bottom when workspace changes (initial load)
+  // Scroll to bottom only when switching workspaces (not on new messages)
   // Virtuoso's followOutput handles streaming updates automatically
-  // Use a longer delay to ensure Virtuoso has measured all items
+  // Track previous workspace to detect actual workspace changes
+  const prevWorkspaceIdRef = useRef<string | null>(null);
   useLayoutEffect(() => {
-    if (workspaceState && !workspaceState.loading && workspaceState.messages.length > 0) {
+    const isWorkspaceChange = prevWorkspaceIdRef.current !== workspaceId;
+    prevWorkspaceIdRef.current = workspaceId;
+
+    if (isWorkspaceChange && workspaceState && !workspaceState.loading) {
+      // Reset autoScroll on workspace change
+      setAutoScroll(true);
       // Multiple attempts with increasing delays to handle dynamic content measurement
       const timers = [0, 50, 150].map((delay) =>
         setTimeout(() => {
@@ -369,7 +375,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
       );
       return () => timers.forEach(clearTimeout);
     }
-  }, [workspaceId, workspaceState?.loading, workspaceState?.messages.length, workspaceState]);
+  }, [workspaceId, workspaceState?.loading, workspaceState]);
 
   // Compute showRetryBarrier once for both keybinds and UI
   // Track if last message was interrupted or errored (for RetryBarrier)
@@ -540,8 +546,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
               // Start at the bottom of the list
               initialTopMostItemIndex={deferredMessages.length - 1}
               // followOutput automatically scrolls to bottom when new items arrive
-              // Only scroll if we're already at the bottom (autoScroll is true)
-              followOutput={(isAtBottom) => (isAtBottom ? "smooth" : false)}
+              // Use our autoScroll state (not just isAtBottom) to respect user intent
+              followOutput={() => (autoScroll ? "smooth" : false)}
               // Update autoScroll state when user scrolls
               atBottomStateChange={handleAtBottomChange}
               // Threshold for "at bottom" detection (pixels from bottom)
