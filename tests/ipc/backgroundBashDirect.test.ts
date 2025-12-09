@@ -179,7 +179,8 @@ describe("Background Bash Direct Integration", () => {
     expect(spawnResult.success).toBe(true);
     if (!spawnResult.success) return;
 
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    // Wait longer for output to be flushed to file (CI can be slow)
+    await new Promise((resolve) => setTimeout(resolve, 500));
 
     // First read gets marker1
     const output1 = await manager.getOutput(spawnResult.processId);
