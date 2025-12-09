@@ -81,10 +81,8 @@ export function buildWrapperScript(options: WrapperScriptOptions): string {
 export interface SpawnCommandOptions {
   /** The wrapper script to execute */
   wrapperScript: string;
-  /** Path for stdout redirection */
-  stdoutPath: string;
-  /** Path for stderr redirection */
-  stderrPath: string;
+  /** Path for unified output (stdout + stderr) redirection */
+  outputPath: string;
   /** Path to bash executable (defaults to "bash") */
   bashPath?: string;
   /** Optional niceness value for process priority */
@@ -100,6 +98,8 @@ export interface SpawnCommandOptions {
  * set -m: enables job control so backgrounded process gets its own process group (PID === PGID)
  * nohup: ignores SIGHUP (survives terminal hangup)
  *
+ * stdout and stderr are merged into a single output file with 2>&1 for unified display.
+ *
  * Returns PID via echo. With set -m, PID === PGID (process is its own group leader).
  */
 export function buildSpawnCommand(options: SpawnCommandOptions): string {
@@ -109,8 +109,7 @@ export function buildSpawnCommand(options: SpawnCommandOptions): string {
 
   return (
     `(set -m; ${nicePrefix}nohup ${shellQuote(bash)} -c ${shellQuote(options.wrapperScript)} ` +
-    `> ${quotePath(options.stdoutPath)} ` +
-    `2> ${quotePath(options.stderrPath)} ` +
+    `> ${quotePath(options.outputPath)} 2>&1 ` +
     `< /dev/null & echo $!)`
   );
 }

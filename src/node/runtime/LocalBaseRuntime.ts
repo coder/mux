@@ -341,6 +341,16 @@ export abstract class LocalBaseRuntime implements Runtime {
   abstract forkWorkspace(params: WorkspaceForkParams): Promise<WorkspaceForkResult>;
 
   /**
+   * Get the runtime's temp directory.
+   * Uses OS temp dir on local systems.
+   */
+  async tempDir(): Promise<string> {
+    // Use /tmp on Unix, or OS temp dir on Windows
+    const isWindows = process.platform === "win32";
+    return isWindows ? process.env.TEMP || "C:\\Temp" : "/tmp";
+  }
+
+  /**
    * Helper to run .mux/init hook if it exists and is executable.
    * Shared between WorktreeRuntime and LocalRuntime.
    * @param workspacePath - Path to the workspace directory

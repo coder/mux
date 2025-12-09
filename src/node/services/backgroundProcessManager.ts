@@ -43,8 +43,7 @@ export interface BackgroundProcess {
  * Each call to getOutput() returns only new content since the last read.
  */
 interface OutputReadPosition {
-  stdoutBytes: number;
-  stderrBytes: number;
+  outputBytes: number;
 }
 
 /**
@@ -152,18 +151,14 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     const processId = config.displayName;
 
     // Spawn via executor with background infrastructure
-    const result = await spawnProcess(
-      runtime,
-      script,
-      {
-        cwd: config.cwd,
-        workspaceId,
-        processId,
-        env: config.env,
-        niceness: config.niceness,
-      },
-      this.bgOutputDir
-    );
+    // spawnProcess uses runtime.tempDir() internally for output directory
+    const result = await spawnProcess(runtime, script, {
+      cwd: config.cwd,
+      workspaceId,
+      processId,
+      env: config.env,
+      niceness: config.niceness,
+    });
 
     if (!result.success) {
       log.debug(`BackgroundProcessManager: Failed to spawn: ${result.error}`);
@@ -425,43 +420,31 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     // Get or initialize read position
     let pos = this.readPositions.get(processId);
     if (!pos) {
-      pos = { stdoutBytes: 0, stderrBytes: 0 };
+      pos = { outputBytes: 0 };
       this.readPositions.set(processId, pos);
     }
 
     log.debug(
-      `BackgroundProcessManager.getOutput: proc.outputDir=${proc.outputDir}, stdoutOffset=${pos.stdoutBytes}, stderrOffset=${pos.stderrBytes}`
+      `BackgroundProcessManager.getOutput: proc.outputDir=${proc.outputDir}, offset=${pos.outputBytes}`
     );
 
     // Read new content via the handle (works for both local and SSH runtimes)
-    const [stdoutResult, stderrResult] = await Promise.all([
-      proc.handle.readOutput("stdout.log", pos.stdoutBytes),
-      proc.handle.readOutput("stderr.log", pos.stderrBytes),
-    ]);
+    // Output is already unified in output.log (stdout + stderr via 2>&1)
+    const result = await proc.handle.readOutput(pos.outputBytes);
+    const output = result.content;
 
-    const stdout = stdoutResult.content;
-    const stderr = stderrResult.content;
+    log.debug(`BackgroundProcessManager.getOutput: read outputLen=${output.length}`);
 
-    log.debug(
-      `BackgroundProcessManager.getOutput: read stdoutLen=${stdout.length}, stderrLen=${stderr.length}`
-    );
+    // Update read position
+    pos.outputBytes = result.newOffset;
 
-    // Update read positions
-    pos.stdoutBytes = stdoutResult.newOffset;
-    pos.stderrBytes = stderrResult.newOffset;
-
-    // Merge stdout and stderr into unified output (like bash tool does)
-    // This matches what users see in terminals and is easier for UI display
-    let output = stdout;
-    if (stderr) {
-      output = output ? `${output}\n${stderr}` : stderr;
-    }
+    let filteredOutput = output;
 
     // Apply filter if provided (permanently discards non-matching lines)
     if (filter) {
       try {
         const regex = new RegExp(filter);
-        output = output
+        filteredOutput = output
           .split("\n")
           .filter((line) => regex.test(line))
           .join("\n");
@@ -473,7 +456,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     return {
       success: true,
       status: proc.status,
-      output,
+      output: filteredOutput,
       exitCode: proc.exitCode,
       // Hint to agent when there's no new output to avoid busy-waiting
       ...(output === "" &&

@@ -80,16 +80,14 @@ describe("backgroundCommands", () => {
   });
 
   describe("buildSpawnCommand", () => {
-    it("uses set -m, nohup, redirections, and echoes PID", () => {
+    it("uses set -m, nohup, unified output with 2>&1, and echoes PID", () => {
       const result = buildSpawnCommand({
         wrapperScript: "echo hello",
-        stdoutPath: "/tmp/out.log",
-        stderrPath: "/tmp/err.log",
+        outputPath: "/tmp/output.log",
       });
 
       expect(result).toMatch(/^\(set -m; nohup 'bash' -c /);
-      expect(result).toContain("> '/tmp/out.log'");
-      expect(result).toContain("2> '/tmp/err.log'");
+      expect(result).toContain("> '/tmp/output.log' 2>&1");
       expect(result).toContain("< /dev/null");
       expect(result).toContain("& echo $!)");
     });
@@ -97,8 +95,7 @@ describe("backgroundCommands", () => {
     it("includes niceness prefix when provided", () => {
       const result = buildSpawnCommand({
         wrapperScript: "echo hello",
-        stdoutPath: "/tmp/out",
-        stderrPath: "/tmp/err",
+        outputPath: "/tmp/output.log",
         niceness: 10,
       });
 
@@ -108,8 +105,7 @@ describe("backgroundCommands", () => {
     it("uses custom bash path (including paths with spaces)", () => {
       const result = buildSpawnCommand({
         wrapperScript: "echo hello",
-        stdoutPath: "/tmp/out",
-        stderrPath: "/tmp/err",
+        outputPath: "/tmp/output.log",
         bashPath: "/c/Program Files/Git/bin/bash.exe",
       });
 
@@ -119,8 +115,7 @@ describe("backgroundCommands", () => {
     it("quotes the wrapper script", () => {
       const result = buildSpawnCommand({
         wrapperScript: "echo 'hello world'",
-        stdoutPath: "/tmp/out",
-        stderrPath: "/tmp/err",
+        outputPath: "/tmp/output.log",
       });
 
       expect(result).toContain("-c 'echo '\"'\"'hello world'\"'\"''");

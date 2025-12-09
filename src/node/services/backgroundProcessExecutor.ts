@@ -8,7 +8,7 @@
  * 2. Crash resilience - output always persisted to files
  * 3. Seamless fg→bg transition - "background this" = "stop waiting"
  *
- * Uses runtime.exec for all operations, making the code runtime-agnostic.
+ * Uses runtime.tempDir() for runtime-agnostic temp directory resolution.
  * Works identically for local and SSH runtimes.
  */
 
@@ -20,15 +20,12 @@ import {
   buildWrapperScript,
   buildSpawnCommand,
   parsePid,
-  shellQuote,
   parseExitCode,
   buildTerminateCommand,
 } from "@/node/runtime/backgroundCommands";
-import type { SSHRuntime } from "@/node/runtime/SSHRuntime";
-import { expandTildeForSSH, cdCommandForSSH } from "@/node/runtime/tildeExpansion";
 import { execBuffered } from "@/node/utils/runtime/helpers";
-import { toPosixPath } from "@/node/utils/paths";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
+import { toPosixPath } from "@/node/utils/paths";
 
 const isWindows = process.platform === "win32";
 const rootDir = isWindows ? "C:\\" : "/";
@@ -57,43 +54,35 @@ export type SpawnResult =
   | { success: false; error: string };
 
 /**
- * Detect if a runtime is an SSHRuntime by checking for SSH-specific methods.
- * This avoids circular imports while allowing type-safe SSH handle creation.
- */
-function isSSHRuntime(runtime: Runtime): runtime is SSHRuntime {
-  return "exec" in runtime && "getBgOutputDir" in runtime;
-}
-
-/**
  * Spawn a background process using runtime.exec (works for both local and SSH).
  *
  * All processes get the same infrastructure:
  * - nohup/setsid for process isolation
- * - stdout/stderr redirected to files
+ * - stdout/stderr merged into single output.log with 2>&1
  * - Exit code captured via bash trap
+ *
+ * Uses runtime.tempDir() for output directory, making the code runtime-agnostic.
  *
  * @param runtime Runtime to spawn on
  * @param script Script to execute
  * @param options Spawn options
- * @param bgOutputDir Base directory for output files (used for local, SSH uses its own config)
  */
 export async function spawnProcess(
   runtime: Runtime,
   script: string,
-  options: SpawnOptions,
-  bgOutputDir: string
+  options: SpawnOptions
 ): Promise<SpawnResult> {
-  const isSSH = isSSHRuntime(runtime);
-
-  // For SSH, get the runtime's configured bgOutputDir (resolves tildes on remote)
-  const effectiveBgOutputDir = isSSH ? await runtime.getBgOutputDir() : bgOutputDir;
-  const quotePath = isSSH ? expandTildeForSSH : toPosixPath;
-  const cdCommand = isSSH ? cdCommandForSSH : (p: string) => `cd ${toPosixPath(p)}`;
-
   log.debug(`BackgroundProcessExecutor.spawnProcess: Spawning in ${options.cwd}`);
 
+  // Get temp directory from runtime (absolute path, runtime-agnostic)
+  const tempDir = await runtime.tempDir();
+  const bgOutputDir = `${tempDir}/mux-bashes`;
+
+  // All paths are absolute from tempDir, so simple POSIX quoting works everywhere
+  const quotePath = toPosixPath;
+
   // Verify working directory exists
-  const cwdCheck = await execBuffered(runtime, cdCommand(options.cwd), {
+  const cwdCheck = await execBuffered(runtime, `cd ${quotePath(options.cwd)}`, {
     cwd: rootDir,
     timeout: 10,
   });
@@ -101,21 +90,15 @@ export async function spawnProcess(
     return { success: false, error: `Working directory does not exist: ${options.cwd}` };
   }
 
-  // Compute output paths
-  const outputDir = `${effectiveBgOutputDir}/${options.workspaceId}/${options.processId}`;
-  const stdoutPath = `${outputDir}/stdout.log`;
-  const stderrPath = `${outputDir}/stderr.log`;
+  // Compute output paths (unified output.log instead of separate stdout/stderr)
+  const outputDir = `${bgOutputDir}/${options.workspaceId}/${options.processId}`;
+  const outputPath = `${outputDir}/output.log`;
   const exitCodePath = `${outputDir}/exit_code`;
 
-  // Quote paths for shell usage
-  const outputDirQuoted = quotePath(outputDir);
-  const stdoutPathQuoted = quotePath(stdoutPath);
-  const stderrPathQuoted = quotePath(stderrPath);
-
-  // Create output directory and empty files
+  // Create output directory and empty file
   const mkdirResult = await execBuffered(
     runtime,
-    `mkdir -p ${outputDirQuoted} && touch ${stdoutPathQuoted} ${stderrPathQuoted}`,
+    `mkdir -p ${quotePath(outputDir)} && touch ${quotePath(outputPath)}`,
     { cwd: rootDir, timeout: 30 }
   );
   if (mkdirResult.exitCode !== 0) {
@@ -125,34 +108,17 @@ export async function spawnProcess(
     };
   }
 
-  // Build wrapper script and spawn command
-  // Use buildWrapperScript for local (handles Windows path conversion),
-  // manual assembly for SSH (handles tilde expansion)
-  let wrapperScript: string;
-  if (isSSH) {
-    const exitCodePathQuoted = quotePath(exitCodePath);
-    const wrapperParts: string[] = [];
-    wrapperParts.push(`trap 'echo $? > ${exitCodePathQuoted}' EXIT`);
-    wrapperParts.push(cdCommand(options.cwd));
-    const envVars = { ...options.env, ...NON_INTERACTIVE_ENV_VARS };
-    for (const [key, value] of Object.entries(envVars)) {
-      wrapperParts.push(`export ${key}=${shellQuote(value)}`);
-    }
-    wrapperParts.push(script);
-    wrapperScript = wrapperParts.join(" && ");
-  } else {
-    wrapperScript = buildWrapperScript({
-      exitCodePath: toPosixPath(exitCodePath),
-      cwd: toPosixPath(options.cwd),
-      env: { ...options.env, ...NON_INTERACTIVE_ENV_VARS },
-      script,
-    });
-  }
+  // Build wrapper script (same for all runtimes now that paths are absolute)
+  const wrapperScript = buildWrapperScript({
+    exitCodePath: quotePath(exitCodePath),
+    cwd: quotePath(options.cwd),
+    env: { ...options.env, ...NON_INTERACTIVE_ENV_VARS },
+    script,
+  });
 
   const spawnCommand = buildSpawnCommand({
     wrapperScript,
-    stdoutPath,
-    stderrPath,
+    outputPath,
     niceness: options.niceness,
     quotePath,
   });
@@ -197,7 +163,7 @@ export async function spawnProcess(
  * Unified handle to a background process.
  * Uses runtime.exec for all operations, working identically for local and SSH.
  *
- * Output files (stdout.log, stderr.log, exit_code) are on the runtime's filesystem.
+ * Output files (output.log, exit_code) are on the runtime's filesystem.
  * This handle provides lifecycle management via execBuffered commands.
  */
 class RuntimeBackgroundHandle implements BackgroundHandle {
@@ -282,15 +248,12 @@ class RuntimeBackgroundHandle implements BackgroundHandle {
   }
 
   /**
-   * Read output from a file at the given byte offset.
+   * Read output from output.log at the given byte offset.
    * Uses dd to skip bytes and read remaining content - works on both local and SSH.
    */
-  async readOutput(
-    filename: "stdout.log" | "stderr.log",
-    offset: number
-  ): Promise<{ content: string; newOffset: number }> {
+  async readOutput(offset: number): Promise<{ content: string; newOffset: number }> {
     try {
-      const filePath = this.quotePath(`${this.outputDir}/${filename}`);
+      const filePath = this.quotePath(`${this.outputDir}/output.log`);
       // Use dd to skip bytes and cat the rest. dd with bs=1 skip=N reads from byte N.
       // We get file size first to know how much we read.
       const sizeResult = await execBuffered(
@@ -356,7 +319,7 @@ export type MigrateResult =
  * This is called when user clicks "Background" on a running foreground process.
  * The process continues running, but we:
  * 1. Create output directory and write existing output
- * 2. Continue consuming streams and writing to files
+ * 2. Continue consuming streams and writing to unified output.log
  * 3. Track exit code when process completes
  * 4. Return a BackgroundHandle for the manager to track
  *
@@ -378,14 +341,12 @@ export async function migrateToBackground(
     // Create output directory
     await fs.mkdir(outputDir, { recursive: true });
 
-    // Write existing output to stdout.log
-    const stdoutPath = path.join(outputDir, "stdout.log");
-    const stderrPath = path.join(outputDir, "stderr.log");
-    await fs.writeFile(stdoutPath, options.existingOutput.join("\n") + "\n");
-    await fs.writeFile(stderrPath, "");
+    // Write existing output to unified output.log
+    const outputPath = path.join(outputDir, "output.log");
+    await fs.writeFile(outputPath, options.existingOutput.join("\n") + "\n");
 
-    // Create handle that will continue writing to files
-    const handle = new MigratedBackgroundHandle(execStream, outputDir, stdoutPath, stderrPath);
+    // Create handle that will continue writing to file
+    const handle = new MigratedBackgroundHandle(execStream, outputDir, outputPath);
 
     // Start consuming remaining output in background
     handle.startConsuming();
@@ -404,31 +365,30 @@ export async function migrateToBackground(
  * Unlike RuntimeBackgroundHandle which uses runtime.exec for file operations,
  * this handle uses local filesystem directly because the streams are already
  * being piped to the local machine (even for SSH runtime).
+ *
+ * Both stdout and stderr are written to a unified output.log file.
  */
 class MigratedBackgroundHandle implements BackgroundHandle {
   private exitCodeValue: number | null = null;
   private consuming = false;
-  private stdoutFd: fs.FileHandle | null = null;
-  private stderrFd: fs.FileHandle | null = null;
+  private outputFd: fs.FileHandle | null = null;
 
   constructor(
     private readonly execStream: ExecStream,
     public readonly outputDir: string,
-    private readonly stdoutPath: string,
-    private readonly stderrPath: string
+    private readonly outputPath: string
   ) {}
 
   /**
-   * Start consuming remaining output from streams and writing to files.
+   * Start consuming remaining output from streams and writing to unified file.
    * Called after handle is created to begin background file writing.
    */
   startConsuming(): void {
     if (this.consuming) return;
     this.consuming = true;
 
-    // Consume both streams concurrently
-    void this.consumeStream(this.execStream.stdout, this.stdoutPath);
-    void this.consumeStream(this.execStream.stderr, this.stderrPath);
+    // Open output file once, consume both streams to it
+    void this.consumeStreams();
 
     // Track exit code
     void this.execStream.exitCode.then((code) => {
@@ -439,23 +399,46 @@ class MigratedBackgroundHandle implements BackgroundHandle {
   }
 
   /**
-   * Consume a stream and append to file.
+   * Consume both stdout and stderr streams and append to unified output file.
    */
-  private async consumeStream(stream: ReadableStream<Uint8Array>, filePath: string): Promise<void> {
+  private async consumeStreams(): Promise<void> {
     try {
-      const fd = await fs.open(filePath, "a");
+      this.outputFd = await fs.open(this.outputPath, "a");
+
+      // Consume both streams concurrently, both writing to same file
+      await Promise.all([
+        this.consumeStream(this.execStream.stdout),
+        this.consumeStream(this.execStream.stderr),
+      ]);
+    } catch (error) {
+      log.debug(
+        `MigratedBackgroundHandle.consumeStreams: ${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
+      if (this.outputFd) {
+        await this.outputFd.close();
+        this.outputFd = null;
+      }
+    }
+  }
+
+  /**
+   * Consume a stream and append to the shared output file.
+   */
+  private async consumeStream(stream: ReadableStream<Uint8Array>): Promise<void> {
+    try {
       const reader = stream.getReader();
 
       try {
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
-          if (value) {
-            await fd.write(value);
+          if (value && this.outputFd) {
+            await this.outputFd.write(value);
           }
         }
       } finally {
-        await fd.close();
+        reader.releaseLock();
       }
     } catch (error) {
       // Stream may have been cancelled or process killed - that's fine
@@ -496,10 +479,7 @@ class MigratedBackgroundHandle implements BackgroundHandle {
 
   async dispose(): Promise<void> {
     // Close any open file handles
-    await this.stdoutFd?.close().catch(() => {
-      /* ignore */
-    });
-    await this.stderrFd?.close().catch(() => {
+    await this.outputFd?.close().catch(() => {
       /* ignore */
     });
   }
@@ -515,13 +495,9 @@ class MigratedBackgroundHandle implements BackgroundHandle {
     }
   }
 
-  async readOutput(
-    filename: "stdout.log" | "stderr.log",
-    offset: number
-  ): Promise<{ content: string; newOffset: number }> {
+  async readOutput(offset: number): Promise<{ content: string; newOffset: number }> {
     try {
-      const filePath = path.join(this.outputDir, filename);
-      const stat = await fs.stat(filePath);
+      const stat = await fs.stat(this.outputPath);
       const fileSize = stat.size;
 
       if (offset >= fileSize) {
@@ -529,7 +505,7 @@ class MigratedBackgroundHandle implements BackgroundHandle {
       }
 
       // Read from offset to end
-      const fd = await fs.open(filePath, "r");
+      const fd = await fs.open(this.outputPath, "r");
       try {
         const buffer = Buffer.alloc(fileSize - offset);
         const { bytesRead } = await fd.read(buffer, 0, buffer.length, offset);

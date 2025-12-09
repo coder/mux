@@ -30,8 +30,11 @@ describe("BackgroundProcessManager", () => {
     // Cleanup: terminate all processes
     await manager.cleanup(testWorkspaceId);
     await manager.cleanup(testWorkspaceId2);
-    // Remove temp sessions directory
+    // Remove temp sessions directory (legacy)
     await fs.rm(bgOutputDir, { recursive: true, force: true }).catch(() => undefined);
+    // Remove actual output directories from /tmp/mux-bashes (where executor writes)
+    await fs.rm(`/tmp/mux-bashes/${testWorkspaceId}`, { recursive: true, force: true }).catch(() => undefined);
+    await fs.rm(`/tmp/mux-bashes/${testWorkspaceId2}`, { recursive: true, force: true }).catch(() => undefined);
   });
 
   describe("spawn", () => {
@@ -46,7 +49,8 @@ describe("BackgroundProcessManager", () => {
       if (result.success) {
         // Process ID is now the display name directly
         expect(result.processId).toBe(displayName);
-        expect(result.outputDir).toContain(bgOutputDir);
+        // outputDir is now under runtime.tempDir()/mux-bashes/<workspaceId>/<processId>
+        expect(result.outputDir).toContain("mux-bashes");
         expect(result.outputDir).toContain(testWorkspaceId);
         expect(result.outputDir).toContain(result.processId);
       }
@@ -61,7 +65,7 @@ describe("BackgroundProcessManager", () => {
       expect(result.success).toBe(false);
     });
 
-    it("should write stdout and stderr to files", async () => {
+    it("should write stdout and stderr to unified output file", async () => {
       const result = await manager.spawn(runtime, testWorkspaceId, "echo hello; echo world >&2", {
         cwd: process.cwd(),
         displayName: "test",
@@ -72,14 +76,12 @@ describe("BackgroundProcessManager", () => {
         // Wait a moment for output to be written
         await new Promise((resolve) => setTimeout(resolve, 100));
 
-        const stdoutPath = path.join(result.outputDir, "stdout.log");
-        const stderrPath = path.join(result.outputDir, "stderr.log");
+        const outputPath = path.join(result.outputDir, "output.log");
+        const output = await fs.readFile(outputPath, "utf-8");
 
-        const stdout = await fs.readFile(stdoutPath, "utf-8");
-        const stderr = await fs.readFile(stderrPath, "utf-8");
-
-        expect(stdout).toContain("hello");
-        expect(stderr).toContain("world");
+        // Both stdout and stderr go to the same file
+        expect(output).toContain("hello");
+        expect(output).toContain("world");
       }
     });
 
@@ -303,10 +305,10 @@ describe("BackgroundProcessManager", () => {
         const proc = await manager.getProcess(result.processId);
         expect(proc?.status).toBe("exited");
 
-        // Verify stdout file still contains output
-        const stdoutPath = path.join(result.outputDir, "stdout.log");
-        const stdout = await fs.readFile(stdoutPath, "utf-8");
-        expect(stdout).toContain("test");
+        // Verify output file still contains output
+        const outputPath = path.join(result.outputDir, "output.log");
+        const output = await fs.readFile(outputPath, "utf-8");
+        expect(output).toContain("test");
       }
     });
 
@@ -539,8 +541,8 @@ describe("BackgroundProcessManager", () => {
       await new Promise((resolve) => setTimeout(resolve, 500));
 
       // Verify the file has content
-      const stdoutPath = path.join(result.outputDir, "stdout.log");
-      const fileContent = await fs.readFile(stdoutPath, "utf-8");
+      const outputPath = path.join(result.outputDir, "output.log");
+      const fileContent = await fs.readFile(outputPath, "utf-8");
       expect(fileContent).toContain("initial output");
 
       // Now call getOutput - first call should read from offset 0
@@ -572,8 +574,8 @@ describe("BackgroundProcessManager", () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       // Verify file exists at the expected path
-      const stdoutPath = path.join(result.outputDir, "stdout.log");
-      const content = await fs.readFile(stdoutPath, "utf-8");
+      const outputPath = path.join(result.outputDir, "output.log");
+      const content = await fs.readFile(outputPath, "utf-8");
       expect(content).toContain("verify test");
 
       // Now getOutput should return the content

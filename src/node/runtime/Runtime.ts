@@ -71,11 +71,11 @@ export interface ExecOptions {
  * Handle to a background process.
  * Abstracts away whether process is local or remote.
  *
- * Output is written directly to files by the runtime.
+ * Output is written directly to a unified output.log file by shell redirection.
  * This handle is for lifecycle management and output directory operations.
  */
 export interface BackgroundHandle {
-  /** Output directory containing stdout.log, stderr.log, meta.json */
+  /** Output directory containing output.log, meta.json, exit_code */
   readonly outputDir: string;
 
   /**
@@ -101,14 +101,11 @@ export interface BackgroundHandle {
   writeMeta(metaJson: string): Promise<void>;
 
   /**
-   * Read output from a file at the given byte offset.
+   * Read output from output.log at the given byte offset.
    * Returns the content read and the new offset (for incremental reads).
    * Works on both local and SSH runtimes by using runtime.exec() internally.
    */
-  readOutput(
-    filename: "stdout.log" | "stderr.log",
-    offset: number
-  ): Promise<{ content: string; newOffset: number }>;
+  readOutput(offset: number): Promise<{ content: string; newOffset: number }>;
 }
 
 /**
@@ -411,6 +408,15 @@ export interface Runtime {
    * @returns Result with new workspace path and source branch, or error
    */
   forkWorkspace(params: WorkspaceForkParams): Promise<WorkspaceForkResult>;
+
+  /**
+   * Get the runtime's temp directory (absolute path, resolved).
+   * - LocalRuntime: /tmp (or OS temp dir)
+   * - SSHRuntime: Resolved remote temp dir (e.g., /tmp)
+   *
+   * Used for background process output, temporary files, etc.
+   */
+  tempDir(): Promise<string>;
 }
 
 /**
