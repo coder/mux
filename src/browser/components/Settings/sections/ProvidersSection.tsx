@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from "react";
-import { ChevronDown, ChevronRight, Check, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Check, X, Eye, EyeOff } from "lucide-react";
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
 import type { ProviderName } from "@/common/constants/providers";
@@ -79,6 +79,7 @@ export function ProvidersSection() {
     field: string;
   } | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleToggleProvider = (provider: string) => {
     setExpandedProvider((prev) => (prev === provider ? null : provider));
@@ -96,6 +97,7 @@ export function ProvidersSection() {
   const handleCancelEdit = () => {
     setEditingField(null);
     setEditValue("");
+    setShowPassword(false);
   };
 
   const handleSaveEdit = useCallback(() => {
@@ -114,6 +116,7 @@ export function ProvidersSection() {
 
     setEditingField(null);
     setEditValue("");
+    setShowPassword(false);
 
     // Save in background
     void api.providers.setProviderConfig({ provider, keyPath: [field], value: editValue });
@@ -257,7 +260,9 @@ export function ProvidersSection() {
                       {isEditing ? (
                         <div className="flex gap-2">
                           <input
-                            type={fieldConfig.type === "secret" ? "password" : "text"}
+                            type={
+                              fieldConfig.type === "secret" && !showPassword ? "password" : "text"
+                            }
                             value={editValue}
                             onChange={(e) => setEditValue(e.target.value)}
                             placeholder={fieldConfig.placeholder}
@@ -268,6 +273,21 @@ export function ProvidersSection() {
                               onCancel: handleCancelEdit,
                             })}
                           />
+                          {fieldConfig.type === "secret" && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setShowPassword(!showPassword)}
+                              className="text-muted hover:text-foreground h-6 w-6"
+                              title={showPassword ? "Hide password" : "Show password"}
+                            >
+                              {showPassword ? (
+                                <EyeOff className="h-4 w-4" />
+                              ) : (
+                                <Eye className="h-4 w-4" />
+                              )}
+                            </Button>
+                          )}
                           <Button
                             variant="ghost"
                             size="icon"
