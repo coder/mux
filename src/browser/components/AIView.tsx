@@ -175,6 +175,9 @@ const AIViewInner: React.FC<AIViewProps> = ({
     undefined
   );
 
+  // Track which bash_output groups are expanded (keyed by first message ID)
+  const [expandedBashGroups, setExpandedBashGroups] = useState<Set<string>>(new Set());
+
   // Extract state from workspace state
   const { messages, canInterrupt, isCompacting, loading, currentModel } = workspaceState;
 
@@ -577,18 +580,14 @@ const AIViewInner: React.FC<AIViewProps> = ({
                     // Compute bash_output grouping at render-time
                     const bashOutputGroup = computeBashOutputGroupInfo(deferredMessages, index);
 
-                    // DEBUG: Log bash_output messages
-                    if (msg.type === "tool" && msg.toolName === "bash_output") {
-                      console.log("[DEBUG bash_output]", {
-                        index,
-                        toolName: msg.toolName,
-                        args: msg.args,
-                        bashOutputGroup,
-                      });
-                    }
+                    // For bash_output groups, use first message ID as expansion key
+                    const groupKey = bashOutputGroup
+                      ? deferredMessages[bashOutputGroup.firstIndex]?.id
+                      : undefined;
+                    const isGroupExpanded = groupKey ? expandedBashGroups.has(groupKey) : false;
 
-                    // Skip rendering middle items in a bash_output group (they're collapsed)
-                    if (bashOutputGroup?.position === "middle") {
+                    // Skip rendering middle items in a bash_output group (unless expanded)
+                    if (bashOutputGroup?.position === "middle" && !isGroupExpanded) {
                       return null;
                     }
 
@@ -625,10 +624,22 @@ const AIViewInner: React.FC<AIViewProps> = ({
                           />
                         </div>
                         {/* Show collapsed indicator after the first item in a bash_output group */}
-                        {bashOutputGroup?.position === "first" && (
+                        {bashOutputGroup?.position === "first" && groupKey && (
                           <BashOutputCollapsedIndicator
                             processId={bashOutputGroup.processId}
                             collapsedCount={bashOutputGroup.collapsedCount}
+                            isExpanded={isGroupExpanded}
+                            onToggle={() => {
+                              setExpandedBashGroups((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(groupKey)) {
+                                  next.delete(groupKey);
+                                } else {
+                                  next.add(groupKey);
+                                }
+                                return next;
+                              });
+                            }}
                           />
                         )}
                         {isAtCutoff && (

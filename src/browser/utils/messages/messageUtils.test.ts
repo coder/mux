@@ -464,4 +464,19 @@ describe("computeBashOutputGroupInfo", () => {
     const groupInfo = computeBashOutputGroupInfo(messages, 0);
     expect(groupInfo?.processId).toBe("my-special-process");
   });
+
+  it("includes firstIndex for all positions in group", () => {
+    const messages: DisplayedMessage[] = [
+      createBashOutputMessage("1", "proc", 1),
+      createBashOutputMessage("2", "proc", 2),
+      createBashOutputMessage("3", "proc", 3),
+      createBashOutputMessage("4", "proc", 4),
+    ];
+
+    // All positions should report firstIndex as 0
+    expect(computeBashOutputGroupInfo(messages, 0)?.firstIndex).toBe(0); // first
+    expect(computeBashOutputGroupInfo(messages, 1)?.firstIndex).toBe(0); // middle
+    expect(computeBashOutputGroupInfo(messages, 2)?.firstIndex).toBe(0); // middle
+    expect(computeBashOutputGroupInfo(messages, 3)?.firstIndex).toBe(0); // last
+  });
 });

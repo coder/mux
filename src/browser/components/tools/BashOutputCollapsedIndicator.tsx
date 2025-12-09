@@ -3,21 +3,30 @@ import React from "react";
 interface BashOutputCollapsedIndicatorProps {
   processId: string;
   collapsedCount: number;
+  isExpanded: boolean;
+  onToggle: () => void;
 }
 
 /**
  * Visual indicator showing collapsed bash_output calls.
  * Renders as a squiggly line with count badge between the first and last calls.
+ * Clickable to expand/collapse the hidden calls.
  */
 export const BashOutputCollapsedIndicator: React.FC<BashOutputCollapsedIndicatorProps> = ({
   processId,
   collapsedCount,
+  isExpanded,
+  onToggle,
 }) => {
   return (
-    <div className="text-muted flex items-center gap-2 px-3 py-1">
-      {/* Squiggly line SVG */}
+    <button
+      onClick={onToggle}
+      className="text-muted hover:bg-background-highlight flex w-full cursor-pointer items-center gap-2 rounded px-3 py-1 transition-colors"
+      title={isExpanded ? "Click to collapse" : "Click to expand"}
+    >
+      {/* Squiggly line SVG - rotates when expanded */}
       <svg
-        className="text-border shrink-0"
+        className={`text-border shrink-0 transition-transform ${isExpanded ? "rotate-90" : ""}`}
         width="16"
         height="24"
         viewBox="0 0 16 24"
@@ -33,9 +42,10 @@ export const BashOutputCollapsedIndicator: React.FC<BashOutputCollapsedIndicator
         />
       </svg>
       <span className="text-[10px] font-medium">
-        {collapsedCount} more output check{collapsedCount === 1 ? "" : "s"} for{" "}
+        {isExpanded ? "Hide" : "Show"} {collapsedCount} more output check
+        {collapsedCount === 1 ? "" : "s"} for{" "}
         <code className="font-monospace text-text-muted">{processId}</code>
       </span>
-    </div>
+    </button>
   );
 };

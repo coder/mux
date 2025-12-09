@@ -33,6 +33,8 @@ export interface BashOutputGroupInfo {
   collapsedCount: number;
   /** Process ID for the collapsed indicator */
   processId: string;
+  /** Index of the first message in this group (used as expand/collapse key) */
+  firstIndex: number;
 }
 
 /**
@@ -188,10 +190,28 @@ export function computeBashOutputGroupInfo(
 
   // Determine position
   if (index === groupStart) {
-    return { position: "first", totalCount: groupSize, collapsedCount, processId };
+    return {
+      position: "first",
+      totalCount: groupSize,
+      collapsedCount,
+      processId,
+      firstIndex: groupStart,
+    };
   } else if (index === groupEnd) {
-    return { position: "last", totalCount: groupSize, collapsedCount, processId };
+    return {
+      position: "last",
+      totalCount: groupSize,
+      collapsedCount,
+      processId,
+      firstIndex: groupStart,
+    };
   } else {
-    return { position: "middle", totalCount: groupSize, collapsedCount, processId };
+    return {
+      position: "middle",
+      totalCount: groupSize,
+      collapsedCount,
+      processId,
+      firstIndex: groupStart,
+    };
   }
 }
