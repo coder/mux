@@ -3,6 +3,7 @@ import { Plus, Image, SendHorizontal } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { ProviderIcon } from "../ProviderIcon";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
+import { getModelName, normalizeGatewayModel } from "@/common/utils/ai/models";
 import { Select, SelectTrigger, SelectContent, SelectItem } from "../ui/select";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
@@ -32,17 +33,13 @@ interface CreationToolbarProps {
 }
 
 /**
- * Extract provider from model string (e.g., "anthropic:claude-sonnet-4-5" -> "anthropic")
+ * Extract provider from model string, handling gateway format
+ * e.g., "anthropic:claude-sonnet-4-5" -> "anthropic"
+ * e.g., "mux-gateway:anthropic/claude-sonnet-4-5" -> "anthropic"
  */
 function getProvider(model: string): string {
-  return model.split(":")[0] || "anthropic";
-}
-
-/**
- * Extract model name from model string (e.g., "anthropic:claude-sonnet-4-5" -> "claude-sonnet-4-5")
- */
-function getModelName(model: string): string {
-  return model.split(":")[1] || model;
+  const normalized = normalizeGatewayModel(model);
+  return normalized.split(":")[0] || "anthropic";
 }
 
 /**
