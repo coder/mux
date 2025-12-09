@@ -3,7 +3,7 @@ import { Plus, Image, SendHorizontal } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { ProviderIcon } from "../ProviderIcon";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
-import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "../ui/select";
+import { Select, SelectTrigger, SelectContent, SelectItem } from "../ui/select";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import type { UIMode } from "@/common/types/mode";
@@ -58,6 +58,7 @@ function getModeDisplayName(mode: UIMode): string {
  */
 export function CreationToolbar(props: CreationToolbarProps) {
   const provider = getProvider(props.model);
+  const displayName = formatModelDisplayName(getModelName(props.model));
 
   return (
     <div
@@ -89,7 +90,7 @@ export function CreationToolbar(props: CreationToolbarProps) {
       <Select value={props.model} onValueChange={props.onModelChange} disabled={props.disabled}>
         <SelectTrigger className="text-muted hover:text-foreground h-auto gap-1.5 border-0 bg-transparent p-1 text-sm font-medium focus:ring-0">
           <ProviderIcon provider={provider} className="h-6 w-6" />
-          <SelectValue placeholder="Select model" />
+          <span>{displayName}</span>
         </SelectTrigger>
         <SelectContent>
           {props.recentModels.map((m) => {
