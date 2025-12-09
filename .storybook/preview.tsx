@@ -3,6 +3,11 @@ import type { Preview } from "@storybook/react-vite";
 import { ThemeProvider, type ThemeMode } from "../src/browser/contexts/ThemeContext";
 import "../src/browser/styles/globals.css";
 import { TUTORIAL_STATE_KEY, type TutorialState } from "../src/common/constants/storage";
+import { NOW } from "../src/browser/stories/mockFactory";
+
+// Mock Date.now() globally for deterministic snapshots
+// Components using Date.now() for elapsed time calculations need stable reference
+Date.now = () => NOW;
 
 // Disable tutorials by default in Storybook to prevent them from interfering with stories
 // Individual stories can override this by setting localStorage before rendering
