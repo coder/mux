@@ -75,13 +75,14 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
         <ToolIcon emoji="🔧" toolName="bash" />
         <span className="text-text font-monospace max-w-96 truncate">{args.script}</span>
-        {isBackground ? (
-          // Background mode: show background badge and optional display name
+        {isBackground && (
+          // Background mode: show icon and display name
           <span className="text-muted ml-2 flex items-center gap-1 text-[10px] whitespace-nowrap">
             <Layers size={10} />
-            background{args.display_name && ` • ${args.display_name}`}
+            {args.display_name}
           </span>
-        ) : (
+        )}
+        {!isBackground && (
           // Normal mode: show timeout and duration
           <>
             <span
