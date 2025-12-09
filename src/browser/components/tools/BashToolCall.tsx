@@ -136,7 +136,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
 
           {status === "executing" && !result && (
             <DetailSection>
-              <DetailContent>
+              <DetailContent className="px-2 py-1.5">
                 Waiting for result
                 <LoadingDots />
               </DetailContent>

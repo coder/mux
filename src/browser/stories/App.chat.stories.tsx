@@ -14,6 +14,7 @@ import {
   createTerminalTool,
   createStatusTool,
   createGenericTool,
+  createPendingTool,
 } from "./mockFactory";
 import { setupSimpleChatStory, setupStreamingChatStory } from "./storyHelpers";
 import { within, userEvent, waitFor } from "@storybook/test";
@@ -246,6 +247,54 @@ npm test 2>&1 | head -20`,
     // Expand the bash tool to show Script section with padding
     await waitFor(async () => {
       const toolHeader = canvas.getByText(/set -e/);
+      await userEvent.click(toolHeader);
+    });
+  },
+};
+
+/** Bash tool in executing state showing "Waiting for result" */
+export const WithBashToolWaiting: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-bash-waiting",
+          messages: [
+            createUserMessage("msg-1", "Run the tests", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 100000,
+            }),
+            createAssistantMessage("msg-2", "Running the test suite:", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 90000,
+              toolCalls: [
+                createPendingTool("call-1", "bash", {
+                  script: "npm test",
+                  run_in_background: false,
+                  display_name: "Test Runner",
+                  timeout_secs: 30,
+                }),
+              ],
+            }),
+          ],
+        })
+      }
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Bash tool in executing state with 'Waiting for result...' showing consistent padding.",
+      },
+    },
+  },
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const canvas = within(canvasElement);
+
+    // Expand the bash tool to show "Waiting for result" section
+    await waitFor(async () => {
+      const toolHeader = canvas.getByText(/npm test/);
       await userEvent.click(toolHeader);
     });
   },
