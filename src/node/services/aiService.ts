@@ -1087,8 +1087,7 @@ export class AIService extends EventEmitter {
           runtime,
           // Plan files are always local - create a local runtime for plan file I/O
           // even when the workspace uses SSH runtime
-          localRuntime:
-            mode === "plan" ? new LocalRuntime(workspacePath, runtimeTempDir) : undefined,
+          localRuntime: mode === "plan" ? new LocalRuntime(workspacePath) : undefined,
           secrets: secretsToRecord(projectSecrets),
           muxEnv: getMuxEnv(
             metadata.projectPath,

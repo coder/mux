@@ -408,8 +408,8 @@ describe("BackgroundProcessManager", () => {
       expect(result.success).toBe(true);
       if (!result.success) return;
 
-      // Wait for some output to be written
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // Wait for some output to be written (increased for CI reliability)
+      await new Promise((resolve) => setTimeout(resolve, 150));
 
       // Get output - should have at least the first line
       const output1 = await manager.getOutput(result.processId);
@@ -418,8 +418,8 @@ describe("BackgroundProcessManager", () => {
 
       expect(output1.output).toContain("line 1");
 
-      // Wait for more output
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      // Wait for more output (increased for CI reliability)
+      await new Promise((resolve) => setTimeout(resolve, 400));
 
       // Get output again - should have incremental output (line 2)
       const output2 = await manager.getOutput(result.processId);

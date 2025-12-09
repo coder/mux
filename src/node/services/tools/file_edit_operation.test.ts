@@ -154,7 +154,7 @@ describe("executeFileEditOperation plan mode enforcement", () => {
     const result = await executeFileEditOperation({
       config: {
         cwd: workspaceCwd,
-        runtime: new LocalRuntime(workspaceCwd, tempDir.path),
+        runtime: new LocalRuntime(workspaceCwd),
         runtimeTempDir: tempDir.path,
         mode: "plan",
         planFilePath: planPath,
@@ -176,7 +176,7 @@ describe("executeFileEditOperation plan mode enforcement", () => {
     const result = await executeFileEditOperation({
       config: {
         cwd: tempDir.path,
-        runtime: new LocalRuntime(tempDir.path, tempDir.path),
+        runtime: new LocalRuntime(tempDir.path),
         runtimeTempDir: tempDir.path,
         mode: "exec",
         // No planFilePath in exec mode
@@ -198,7 +198,7 @@ describe("executeFileEditOperation plan mode enforcement", () => {
     const result = await executeFileEditOperation({
       config: {
         cwd: tempDir.path,
-        runtime: new LocalRuntime(tempDir.path, tempDir.path),
+        runtime: new LocalRuntime(tempDir.path),
         runtimeTempDir: tempDir.path,
         // mode is undefined
       },
