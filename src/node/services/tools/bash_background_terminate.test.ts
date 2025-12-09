@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, afterEach } from "bun:test";
 import { createBashBackgroundTerminateTool } from "./bash_background_terminate";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
@@ -9,6 +9,7 @@ import type {
 } from "@/common/types/tools";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 import type { ToolCallOptions } from "ai";
+import * as fs from "fs/promises";
 
 const mockToolCallOptions: ToolCallOptions = {
   toolCallId: "test-call-id",
@@ -20,7 +21,16 @@ function createTestRuntime(): Runtime {
   return new LocalRuntime(process.cwd());
 }
 
+// Workspace IDs used in tests - need cleanup after each test
+const TEST_WORKSPACES = ["test-workspace", "workspace-a", "workspace-b"];
+
 describe("bash_background_terminate tool", () => {
+  afterEach(async () => {
+    // Clean up output directories from /tmp/mux-bashes/ to prevent test pollution
+    for (const ws of TEST_WORKSPACES) {
+      await fs.rm(`/tmp/mux-bashes/${ws}`, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
   it("should return error when manager not available", async () => {
     const tempDir = new TestTempDir("test-bash-bg-term");
     const config = createTestToolConfig(process.cwd());
