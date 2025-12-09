@@ -58,7 +58,7 @@ export async function executeFileEditOperation<TMetadata>({
 
     // Plan mode restriction: only allow editing the plan file
     if (config.mode === "plan" && config.planFilePath) {
-      if (!isPlanFilePath(resolvedPath, config)) {
+      if (!(await isPlanFilePath(filePath, config))) {
         return {
           success: false,
           error: `In plan mode, only the plan file can be edited. Attempted to edit: ${filePath}`,

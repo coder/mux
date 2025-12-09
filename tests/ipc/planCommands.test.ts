@@ -14,6 +14,7 @@ import type { TestEnvironment } from "./setup";
 import { createTempGitRepo, cleanupTempGitRepo, generateBranchName } from "./helpers";
 import { detectDefaultTrunkBranch } from "../../src/node/git";
 import { getPlanFilePath } from "../../src/common/utils/planStorage";
+import { expandTilde } from "../../src/node/runtime/tildeExpansion";
 
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -82,11 +83,12 @@ describeIntegration("Plan Commands Integration", () => {
       try {
         // Create a plan file
         const planPath = getPlanFilePath(workspaceId);
-        const planDir = path.dirname(planPath);
+        const expandedPlanPath = expandTilde(planPath);
+        const planDir = path.dirname(expandedPlanPath);
         await fs.mkdir(planDir, { recursive: true });
 
         const planContent = "# Test Plan\n\n## Step 1\n\nDo something\n\n## Step 2\n\nDo more";
-        await fs.writeFile(planPath, planContent);
+        await fs.writeFile(expandedPlanPath, planContent);
 
         const result = await env.orpc.workspace.getPlanContent({ workspaceId });
 
@@ -118,9 +120,10 @@ describeIntegration("Plan Commands Integration", () => {
       try {
         // Create an empty plan file
         const planPath = getPlanFilePath(workspaceId);
-        const planDir = path.dirname(planPath);
+        const expandedPlanPath = expandTilde(planPath);
+        const planDir = path.dirname(expandedPlanPath);
         await fs.mkdir(planDir, { recursive: true });
-        await fs.writeFile(planPath, "");
+        await fs.writeFile(expandedPlanPath, "");
 
         const result = await env.orpc.workspace.getPlanContent({ workspaceId });
 

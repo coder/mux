@@ -23,6 +23,8 @@ import { cn } from "@/common/lib/utils";
 import { useAPI } from "@/browser/contexts/API";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { usePopoverError } from "@/browser/hooks/usePopoverError";
+import { PopoverError } from "../PopoverError";
 
 /**
  * Check if the result is a successful file-based propose_plan result
@@ -109,6 +111,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const { api } = useAPI();
   const openInEditor = useOpenInEditor();
   const { workspaceMetadata } = useWorkspaceContext();
+  const editorError = usePopoverError();
 
   // Get runtimeConfig for the workspace (needed for SSH-aware editor opening)
   const runtimeConfig = workspaceId ? workspaceMetadata.get(workspaceId)?.runtimeConfig : undefined;
@@ -210,13 +213,17 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   // Copy to clipboard with feedback
   const { copied, copyToClipboard } = useCopyToClipboard();
 
-  const handleOpenInEditor = async () => {
+  const handleOpenInEditor = async (event: React.MouseEvent) => {
     if (!planPath || !workspaceId) {
       return;
     }
     const result = await openInEditor(workspaceId, planPath, runtimeConfig);
-    if (!result.success) {
-      console.error("Failed to open plan in editor:", result.error);
+    if (!result.success && result.error) {
+      const rect = (event.target as HTMLElement).getBoundingClientRect();
+      editorError.showError("plan-editor", result.error, {
+        top: rect.bottom + 8,
+        left: rect.left,
+      });
     }
   };
 
@@ -241,7 +248,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
-                  onClick={() => void handleOpenInEditor()}
+                  onClick={(e) => void handleOpenInEditor(e)}
                   className={cn(
                     controlButtonClasses,
                     "plan-chip-ghost hover:plan-chip-ghost-hover"
@@ -331,21 +338,29 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
 
   // Ephemeral preview mode: simple wrapper without tool container
   if (isEphemeralPreview) {
-    return <div className={cn("px-4 py-2", className)}>{planUI}</div>;
+    return (
+      <>
+        <div className={cn("px-4 py-2", className)}>{planUI}</div>
+        <PopoverError error={editorError.error} prefix="Failed to open editor" />
+      </>
+    );
   }
 
   // Tool call mode: full tool container with header
   return (
-    <ToolContainer expanded={expanded}>
-      <ToolHeader onClick={toggleExpanded}>
-        <ExpandIcon expanded={expanded}>▶</ExpandIcon>
-        <ToolName>propose_plan</ToolName>
-        <StatusIndicator status={status}>{statusDisplay}</StatusIndicator>
-      </ToolHeader>
+    <>
+      <ToolContainer expanded={expanded}>
+        <ToolHeader onClick={toggleExpanded}>
+          <ExpandIcon expanded={expanded}>▶</ExpandIcon>
+          <ToolName>propose_plan</ToolName>
+          <StatusIndicator status={status}>{statusDisplay}</StatusIndicator>
+        </ToolHeader>
 
-      {expanded && <ToolDetails>{planUI}</ToolDetails>}
+        {expanded && <ToolDetails>{planUI}</ToolDetails>}
 
-      {modal}
-    </ToolContainer>
+        {modal}
+      </ToolContainer>
+      <PopoverError error={editorError.error} prefix="Failed to open editor" />
+    </>
   );
 };

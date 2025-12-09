@@ -274,7 +274,8 @@ export class SSHRuntime implements Runtime {
     return new ReadableStream<Uint8Array>({
       start: async (controller: ReadableStreamDefaultController<Uint8Array>) => {
         try {
-          const stream = await this.exec(`cat ${shescape.quote(path)}`, {
+          // Use expandTildeForSSH to handle ~ paths (shescape.quote doesn't expand tildes)
+          const stream = await this.exec(`cat ${expandTildeForSSH(path)}`, {
             cwd: this.config.srcBaseDir,
             timeout: 300, // 5 minutes - reasonable for large files
             abortSignal,
@@ -320,13 +321,15 @@ export class SSHRuntime implements Runtime {
    * Preserves symlinks and file permissions by resolving and copying metadata
    */
   writeFile(path: string, abortSignal?: AbortSignal): WritableStream<Uint8Array> {
+    // Use expandTildeForSSH to handle ~ paths (shescape.quote doesn't expand tildes)
+    const expandedPath = expandTildeForSSH(path);
     const tempPath = `${path}.tmp.${Date.now()}`;
+    const expandedTempPath = expandTildeForSSH(tempPath);
     // Resolve symlinks to get the actual target path, preserving the symlink itself
     // If target exists, save its permissions to restore after write
     // If path doesn't exist, use 600 as default
     // Then write atomically using mv (all-or-nothing for readers)
-    // Use shescape.quote for safe path escaping
-    const writeCommand = `RESOLVED=$(readlink -f ${shescape.quote(path)} 2>/dev/null || echo ${shescape.quote(path)}) && PERMS=$(stat -c '%a' "$RESOLVED" 2>/dev/null || echo 600) && mkdir -p $(dirname "$RESOLVED") && cat > ${shescape.quote(tempPath)} && chmod "$PERMS" ${shescape.quote(tempPath)} && mv ${shescape.quote(tempPath)} "$RESOLVED"`;
+    const writeCommand = `RESOLVED=$(readlink -f ${expandedPath} 2>/dev/null || echo ${expandedPath}) && PERMS=$(stat -c '%a' "$RESOLVED" 2>/dev/null || echo 600) && mkdir -p $(dirname "$RESOLVED") && cat > ${expandedTempPath} && chmod "$PERMS" ${expandedTempPath} && mv ${expandedTempPath} "$RESOLVED"`;
 
     // Need to get the exec stream in async callbacks
     let execPromise: Promise<ExecStream> | null = null;
@@ -376,7 +379,8 @@ export class SSHRuntime implements Runtime {
   async stat(path: string, abortSignal?: AbortSignal): Promise<FileStat> {
     // Use stat with format string to get: size, mtime, type
     // %s = size, %Y = mtime (seconds since epoch), %F = file type
-    const stream = await this.exec(`stat -c '%s %Y %F' ${shescape.quote(path)}`, {
+    // Use expandTildeForSSH to handle ~ paths (shescape.quote doesn't expand tildes)
+    const stream = await this.exec(`stat -c '%s %Y %F' ${expandTildeForSSH(path)}`, {
       cwd: this.config.srcBaseDir,
       timeout: 10, // 10 seconds - stat should be fast
       abortSignal,

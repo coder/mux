@@ -2,6 +2,7 @@ import { spawn, spawnSync } from "child_process";
 import type { Config } from "@/node/config";
 import { isSSHRuntime } from "@/common/types/runtime";
 import { log } from "@/node/services/log";
+import { createRuntime } from "@/node/runtime/runtimeFactory";
 
 export interface EditorConfig {
   editor: string;
@@ -75,8 +76,12 @@ export class EditorService {
           };
         }
 
+        // Resolve tilde paths to absolute paths for SSH (VS Code doesn't expand ~)
+        const runtime = createRuntime(runtimeConfig, { projectPath: workspace.projectPath });
+        const resolvedPath = await runtime.resolvePath(targetPath);
+
         // Build the remote command: code --remote ssh-remote+host /remote/path
-        const args = ["--remote", `ssh-remote+${runtimeConfig.host}`, targetPath];
+        const args = ["--remote", `ssh-remote+${runtimeConfig.host}`, resolvedPath];
 
         log.info(`Opening SSH path in editor: ${editorCommand} ${args.join(" ")}`);
         const child = spawn(editorCommand, args, {

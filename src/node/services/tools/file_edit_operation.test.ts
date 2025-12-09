@@ -116,6 +116,12 @@ describe("executeFileEditOperation plan mode enforcement", () => {
           return `${_basePath}/${targetPath}`;
         }
       ),
+      resolvePath: jest.fn<(targetPath: string) => Promise<string>>((targetPath: string) => {
+        // For absolute paths, return as-is
+        if (targetPath.startsWith("/")) return Promise.resolve(targetPath);
+        // Return path as-is (mock doesn't need full resolution)
+        return Promise.resolve(targetPath);
+      }),
     } as unknown as Runtime;
 
     const result = await executeFileEditOperation({
@@ -213,7 +219,7 @@ describe("executeFileEditOperation plan mode enforcement", () => {
   test("should handle relative path to plan file in plan mode", async () => {
     // When user provides a relative path that resolves to the plan file,
     // it should still be allowed
-    const normalizePathCalls: string[] = [];
+    const resolvePathCalls: string[] = [];
 
     const mockRuntime = {
       stat: jest.fn(),
@@ -221,7 +227,6 @@ describe("executeFileEditOperation plan mode enforcement", () => {
       writeFile: jest.fn(),
       normalizePath: jest.fn<(targetPath: string, basePath: string) => string>(
         (targetPath: string, basePath: string) => {
-          normalizePathCalls.push(targetPath);
           // Simulate: "../.mux/sessions/ws/plan.md" resolves to "/home/user/.mux/sessions/ws/plan.md"
           if (targetPath === "../.mux/sessions/ws/plan.md") {
             return "/home/user/.mux/sessions/ws/plan.md";
@@ -233,6 +238,18 @@ describe("executeFileEditOperation plan mode enforcement", () => {
           return `${basePath}/${targetPath}`;
         }
       ),
+      resolvePath: jest.fn<(targetPath: string) => Promise<string>>((targetPath: string) => {
+        resolvePathCalls.push(targetPath);
+        // Both paths resolve to the same absolute path
+        if (targetPath === "../.mux/sessions/ws/plan.md") {
+          return Promise.resolve("/home/user/.mux/sessions/ws/plan.md");
+        }
+        if (targetPath === "/home/user/.mux/sessions/ws/plan.md") {
+          return Promise.resolve("/home/user/.mux/sessions/ws/plan.md");
+        }
+        if (targetPath.startsWith("/")) return Promise.resolve(targetPath);
+        return Promise.resolve(targetPath);
+      }),
     } as unknown as Runtime;
 
     await executeFileEditOperation({
@@ -249,8 +266,8 @@ describe("executeFileEditOperation plan mode enforcement", () => {
 
     // This will fail at file read (because mock doesn't provide real stream),
     // but the key is that it passes the plan mode check and tries to read the file
-    // So we check that normalizePath was called for both paths
-    expect(normalizePathCalls).toContain("../.mux/sessions/ws/plan.md");
-    expect(normalizePathCalls).toContain("/home/user/.mux/sessions/ws/plan.md");
+    // So we check that resolvePath was called for both paths
+    expect(resolvePathCalls).toContain("../.mux/sessions/ws/plan.md");
+    expect(resolvePathCalls).toContain("/home/user/.mux/sessions/ws/plan.md");
   });
 });

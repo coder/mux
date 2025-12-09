@@ -40,7 +40,7 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
 
         // Validate that the path is within the working directory
         // Exception: allow reading the plan file in plan mode (it may be outside workspace cwd)
-        if (!isPlanFilePath(resolvedPath, config)) {
+        if (!(await isPlanFilePath(filePath, config))) {
           const pathValidation = validatePathInCwd(filePath, config.cwd, config.runtime);
           if (pathValidation) {
             return {

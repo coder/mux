@@ -31,17 +31,26 @@ export function generateDiff(filePath: string, oldContent: string, newContent: s
 
 /**
  * Check if a file path is the plan file in plan mode.
+ * Uses runtime.resolvePath to properly expand tildes for comparison.
  *
- * @param resolvedPath - The resolved absolute path of the file
+ * @param targetPath - The path being accessed (may contain ~ or be absolute)
  * @param config - Tool configuration containing mode and planFilePath
  * @returns true if this is the plan file in plan mode
  */
-export function isPlanFilePath(resolvedPath: string, config: ToolConfiguration): boolean {
+export async function isPlanFilePath(
+  targetPath: string,
+  config: ToolConfiguration
+): Promise<boolean> {
   if (config.mode !== "plan" || !config.planFilePath) {
     return false;
   }
-  const resolvedPlanPath = config.runtime.normalizePath(config.planFilePath, config.cwd);
-  return resolvedPath === resolvedPlanPath;
+  // Resolve both paths to absolute form for proper comparison
+  // This handles cases where one path uses ~ and the other is fully expanded
+  const [resolvedTarget, resolvedPlan] = await Promise.all([
+    config.runtime.resolvePath(targetPath),
+    config.runtime.resolvePath(config.planFilePath),
+  ]);
+  return resolvedTarget === resolvedPlan;
 }
 
 /**

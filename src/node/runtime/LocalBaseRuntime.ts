@@ -184,7 +184,9 @@ export abstract class LocalBaseRuntime implements Runtime {
 
   readFile(filePath: string, _abortSignal?: AbortSignal): ReadableStream<Uint8Array> {
     // Note: _abortSignal ignored for local operations (fast, no need for cancellation)
-    const nodeStream = fs.createReadStream(filePath);
+    // Expand tildes before reading (Node.js fs doesn't expand ~)
+    const expandedPath = expandTilde(filePath);
+    const nodeStream = fs.createReadStream(expandedPath);
 
     // Handle errors by wrapping in a transform
     const webStream = Readable.toWeb(nodeStream) as unknown as ReadableStream<Uint8Array>;
@@ -214,6 +216,8 @@ export abstract class LocalBaseRuntime implements Runtime {
 
   writeFile(filePath: string, _abortSignal?: AbortSignal): WritableStream<Uint8Array> {
     // Note: _abortSignal ignored for local operations (fast, no need for cancellation)
+    // Expand tildes before writing (Node.js fs doesn't expand ~)
+    const expandedPath = expandTilde(filePath);
     let tempPath: string;
     let writer: WritableStreamDefaultWriter<Uint8Array>;
     let resolvedPath: string;
@@ -223,13 +227,13 @@ export abstract class LocalBaseRuntime implements Runtime {
       async start() {
         // Resolve symlinks to write through them (preserves the symlink)
         try {
-          resolvedPath = await fsPromises.realpath(filePath);
+          resolvedPath = await fsPromises.realpath(expandedPath);
           // Save original permissions to restore after write
           const stat = await fsPromises.stat(resolvedPath);
           originalMode = stat.mode;
         } catch {
-          // If file doesn't exist, use the original path and default permissions
-          resolvedPath = filePath;
+          // If file doesn't exist, use the expanded path and default permissions
+          resolvedPath = expandedPath;
           originalMode = undefined;
         }
 
@@ -281,8 +285,10 @@ export abstract class LocalBaseRuntime implements Runtime {
 
   async stat(filePath: string, _abortSignal?: AbortSignal): Promise<FileStat> {
     // Note: _abortSignal ignored for local operations (fast, no need for cancellation)
+    // Expand tildes before stat (Node.js fs doesn't expand ~)
+    const expandedPath = expandTilde(filePath);
     try {
-      const stats = await fsPromises.stat(filePath);
+      const stats = await fsPromises.stat(expandedPath);
       return {
         size: stats.size,
         modifiedTime: stats.mtime,
@@ -312,7 +318,9 @@ export abstract class LocalBaseRuntime implements Runtime {
     if (target === ".") {
       return path.resolve(basePath);
     }
-    return path.resolve(basePath, target);
+    // Expand tildes before resolving (~ is not expanded by path.resolve)
+    const expanded = expandTilde(target);
+    return path.resolve(basePath, expanded);
   }
 
   // Abstract methods that subclasses must implement

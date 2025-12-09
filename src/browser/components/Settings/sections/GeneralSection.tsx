@@ -65,7 +65,7 @@ export function GeneralSection() {
       <div className="flex items-center justify-between">
         <div>
           <div className="text-foreground text-sm">Editor</div>
-          <div className="text-muted text-xs">Editor to open workspaces in</div>
+          <div className="text-muted text-xs">Editor to open files in</div>
         </div>
         <Select value={editorConfig.editor} onValueChange={handleEditorChange}>
           <SelectTrigger className="border-border-medium bg-background-secondary hover:bg-hover h-9 w-auto cursor-pointer rounded-md border px-3 text-sm transition-colors">
