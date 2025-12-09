@@ -374,3 +374,269 @@ describe("Background Bash Output Capture", () => {
     }
   });
 });
+
+describe("Foreground to Background Migration", () => {
+  let env: TestEnvironment;
+  let tempGitRepo: string;
+  let workspaceId: string;
+  let workspacePath: string;
+
+  beforeAll(async () => {
+    env = await createTestEnvironment();
+    tempGitRepo = await createTempGitRepo();
+
+    const branchName = generateBranchName("fg-to-bg-test");
+    const trunkBranch = await detectDefaultTrunkBranch(tempGitRepo);
+    const result = await env.orpc.workspace.create({
+      projectPath: tempGitRepo,
+      branchName,
+      trunkBranch,
+    });
+
+    if (!result.success) {
+      throw new Error(`Failed to create workspace: ${result.error}`);
+    }
+    workspaceId = result.metadata.id;
+    workspacePath = result.metadata.namedWorkspacePath ?? tempGitRepo;
+  });
+
+  afterAll(async () => {
+    if (workspaceId) {
+      await env.orpc.workspace.remove({ workspaceId }).catch(() => {});
+    }
+    await cleanupTempGitRepo(tempGitRepo);
+    await cleanupTestEnvironment(env);
+  });
+
+  it("should migrate foreground bash to background and continue running", async () => {
+    // This test verifies the complete foreground→background migration flow:
+    // 1. Start a foreground bash (run_in_background=false)
+    // 2. While it's running, call sendToBackground
+    // 3. The bash tool returns with backgroundProcessId
+    // 4. Process continues running and output is accessible via bash_output
+
+    const manager = getBackgroundProcessManager(env);
+    const initStateManager = getInitStateManager(env);
+    const runtime = new LocalRuntime(workspacePath);
+
+    const testId = `fg_to_bg_${Date.now()}`;
+    const marker1 = `BEFORE_BG_${testId}`;
+    const marker2 = `AFTER_BG_${testId}`;
+
+    // Create tools for "message 1"
+    const tools1 = await getToolsForModel(
+      "anthropic:claude-sonnet-4-20250514",
+      {
+        cwd: workspacePath,
+        runtime,
+        secrets: {},
+        muxEnv: {},
+        runtimeTempDir: "/tmp",
+        backgroundProcessManager: manager,
+        workspaceId,
+      },
+      workspaceId,
+      initStateManager,
+      {}
+    );
+
+    // Start foreground bash that runs for ~3 seconds
+    // Script: output marker1, sleep, output marker2
+    const toolCallId = `tool_${testId}`;
+    const bashPromise = tools1.bash.execute!(
+      {
+        script: `echo "${marker1}"; sleep 2; echo "${marker2}"`,
+        run_in_background: false,
+        display_name: testId,
+        timeout_secs: 30,
+      },
+      { toolCallId, messages: [] }
+    ) as Promise<ToolExecuteResult>;
+
+    // Wait for foreground process to register and output first marker
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    // Verify foreground process is registered
+    const fgToolCallIds = manager.getForegroundToolCallIds(workspaceId);
+    expect(fgToolCallIds.includes(toolCallId)).toBe(true);
+
+    // Send to background while running
+    const bgResult = manager.sendToBackground(toolCallId);
+    expect(bgResult.success).toBe(true);
+
+    // Wait for bash tool to return (should return immediately after backgrounding)
+    const result = await bashPromise;
+
+    // Verify result indicates backgrounding (not completion)
+    expect(result.success).toBe(true);
+    expect(result.backgroundProcessId).toBe(testId);
+    // Output so far should contain marker1
+    expect(result.output).toContain(marker1);
+    // Should NOT yet contain marker2 (still running)
+    expect(result.output).not.toContain(marker2);
+
+    // Foreground registration should be removed
+    const fgToolCallIds2 = manager.getForegroundToolCallIds(workspaceId);
+    expect(fgToolCallIds2.includes(toolCallId)).toBe(false);
+
+    // Process should now be in background list
+    const bgProcs = await manager.list(workspaceId);
+    const migratedProc = bgProcs.find((p) => p.id === testId);
+    expect(migratedProc).toBeDefined();
+    expect(migratedProc?.status).toBe("running");
+
+    // === Simulate new message (stream ends, new stream begins) ===
+    // Create NEW tool instances (same manager reference, fresh tools)
+    const tools2 = await getToolsForModel(
+      "anthropic:claude-sonnet-4-20250514",
+      {
+        cwd: workspacePath,
+        runtime,
+        secrets: {},
+        muxEnv: {},
+        runtimeTempDir: "/tmp",
+        backgroundProcessManager: manager,
+        workspaceId,
+      },
+      workspaceId,
+      initStateManager,
+      {}
+    );
+
+    // Wait for process to complete (marker2 should appear)
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+
+    // Get output via bash_output tool (new tool instance)
+    const outputResult = (await tools2.bash_output.execute!(
+      { process_id: testId, timeout_secs: 0 },
+      { toolCallId: "output_read", messages: [] }
+    )) as ToolExecuteResult;
+
+    expect(outputResult.success).toBe(true);
+    // Should now contain marker2 (process continued after migration)
+    expect(outputResult.output).toContain(marker2);
+    // Status should be exited (process completed)
+    expect(outputResult.status).toBe("exited");
+    expect(outputResult.exitCode).toBe(0);
+  });
+
+  it("should preserve output across stream boundaries", async () => {
+    // Verifies that output written during foreground phase is preserved
+    // after migration and accessible in subsequent messages
+
+    const manager = getBackgroundProcessManager(env);
+    const initStateManager = getInitStateManager(env);
+    const runtime = new LocalRuntime(workspacePath);
+
+    const testId = `preserve_output_${Date.now()}`;
+    const marker1 = `EARLY_${testId}`;
+    const marker2 = `LATE_${testId}`;
+
+    const tools1 = await getToolsForModel(
+      "anthropic:claude-sonnet-4-20250514",
+      {
+        cwd: workspacePath,
+        runtime,
+        secrets: {},
+        muxEnv: {},
+        runtimeTempDir: "/tmp",
+        backgroundProcessManager: manager,
+        workspaceId,
+      },
+      workspaceId,
+      initStateManager,
+      {}
+    );
+
+    const toolCallId = `tool_${testId}`;
+    // Script outputs marker1, sleeps, then outputs marker2
+    const script = `echo "${marker1}"; sleep 2; echo "${marker2}"`;
+
+    const bashPromise = tools1.bash.execute!(
+      {
+        script,
+        run_in_background: false,
+        display_name: testId,
+        timeout_secs: 30,
+      },
+      { toolCallId, messages: [] }
+    ) as Promise<ToolExecuteResult>;
+
+    // Wait for marker1 to output
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    // Send to background mid-execution
+    manager.sendToBackground(toolCallId);
+
+    const result = await bashPromise;
+    expect(result.success).toBe(true);
+    expect(result.backgroundProcessId).toBe(testId);
+    // marker1 should be in the output already
+    expect(result.output).toContain(marker1);
+
+    // Wait for process to complete
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+
+    // Get the full output by reading from the file directly
+    const proc = await manager.getProcess(testId);
+    expect(proc).toBeDefined();
+
+    const outputPath = path.join(proc!.outputDir, "output.log");
+    const fullOutput = await fs.readFile(outputPath, "utf-8");
+
+    // Both markers should be present in the full file
+    expect(fullOutput).toContain(marker1);
+    expect(fullOutput).toContain(marker2);
+  });
+
+  it("should handle migration when process exits during send", async () => {
+    // Edge case: process exits right as we try to background it
+    const manager = getBackgroundProcessManager(env);
+    const initStateManager = getInitStateManager(env);
+    const runtime = new LocalRuntime(workspacePath);
+
+    const testId = `fast_exit_${Date.now()}`;
+    const marker = `QUICK_${testId}`;
+
+    const tools = await getToolsForModel(
+      "anthropic:claude-sonnet-4-20250514",
+      {
+        cwd: workspacePath,
+        runtime,
+        secrets: {},
+        muxEnv: {},
+        runtimeTempDir: "/tmp",
+        backgroundProcessManager: manager,
+        workspaceId,
+      },
+      workspaceId,
+      initStateManager,
+      {}
+    );
+
+    const toolCallId = `tool_${testId}`;
+
+    // Very fast script
+    const bashPromise = tools.bash.execute!(
+      {
+        script: `echo "${marker}"`,
+        run_in_background: false,
+        display_name: testId,
+        timeout_secs: 30,
+      },
+      { toolCallId, messages: [] }
+    ) as Promise<ToolExecuteResult>;
+
+    // Small delay then try to background (might already be done)
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // This might fail if process already completed - that's fine
+    manager.sendToBackground(toolCallId);
+
+    const result = await bashPromise;
+
+    // Either it completed normally or was backgrounded
+    expect(result.success).toBe(true);
+    expect(result.output).toContain(marker);
+  });
+});
