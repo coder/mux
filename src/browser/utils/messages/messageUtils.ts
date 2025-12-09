@@ -2,12 +2,22 @@ import type { DisplayedMessage } from "@/common/types/message";
 import type { BashOutputToolArgs } from "@/common/types/tools";
 
 /**
- * Type guard to check if a message is a bash_output tool call
+ * Type guard to check if a message is a bash_output tool call with valid args
  */
 export function isBashOutputTool(
   msg: DisplayedMessage
 ): msg is DisplayedMessage & { type: "tool"; toolName: "bash_output"; args: BashOutputToolArgs } {
-  return msg.type === "tool" && msg.toolName === "bash_output";
+  if (msg.type !== "tool" || msg.toolName !== "bash_output") {
+    return false;
+  }
+  // Validate args has required process_id field
+  const args = msg.args;
+  return (
+    typeof args === "object" &&
+    args !== null &&
+    "process_id" in args &&
+    typeof (args as { process_id: unknown }).process_id === "string"
+  );
 }
 
 /**

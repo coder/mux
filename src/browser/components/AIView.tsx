@@ -577,6 +577,16 @@ const AIViewInner: React.FC<AIViewProps> = ({
                     // Compute bash_output grouping at render-time
                     const bashOutputGroup = computeBashOutputGroupInfo(deferredMessages, index);
 
+                    // DEBUG: Log bash_output messages
+                    if (msg.type === "tool" && msg.toolName === "bash_output") {
+                      console.log("[DEBUG bash_output]", {
+                        index,
+                        toolName: msg.toolName,
+                        args: msg.args,
+                        bashOutputGroup,
+                      });
+                    }
+
                     // Skip rendering middle items in a bash_output group (they're collapsed)
                     if (bashOutputGroup?.position === "middle") {
                       return null;
