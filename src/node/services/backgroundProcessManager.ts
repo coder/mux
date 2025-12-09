@@ -373,11 +373,19 @@ export class BackgroundProcessManager extends EventEmitter {
     const stdoutPath = path.join(proc.outputDir, "stdout.log");
     const stderrPath = path.join(proc.outputDir, "stderr.log");
 
+    log.debug(
+      `BackgroundProcessManager.getOutput: proc.outputDir=${proc.outputDir}, stdoutPath=${stdoutPath}, stdoutOffset=${pos.stdoutBytes}, stderrOffset=${pos.stderrBytes}`
+    );
+
     // Read new content from each file
     const [stdout, stderr] = await Promise.all([
       this.readNewContent(stdoutPath, pos.stdoutBytes),
       this.readNewContent(stderrPath, pos.stderrBytes),
     ]);
+
+    log.debug(
+      `BackgroundProcessManager.getOutput: read stdoutLen=${stdout.length}, stderrLen=${stderr.length}`
+    );
 
     // Update read positions
     pos.stdoutBytes += stdout.length;
