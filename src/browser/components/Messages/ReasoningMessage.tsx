@@ -14,7 +14,7 @@ interface ReasoningMessageProps {
 const REASONING_FONT_CLASSES = "font-primary text-[12px] leading-[18px]";
 
 export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, className }) => {
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(message.isStreaming);
   // Track the height when expanded to reserve space during collapse transitions
   const [expandedHeight, setExpandedHeight] = useState<number | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
