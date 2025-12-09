@@ -1,5 +1,5 @@
 import React from "react";
-import { Plus, Image } from "lucide-react";
+import { Plus, Image, SendHorizontal } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { ProviderIcon } from "../ProviderIcon";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
@@ -49,7 +49,7 @@ function getModelName(model: string): string {
  * Get short display name for mode
  */
 function getModeDisplayName(mode: UIMode): string {
-  return mode === "exec" ? "Auto-Edit" : "Plan Only";
+  return mode === "exec" ? "Exec" : "Plan";
 }
 
 /**
@@ -90,7 +90,7 @@ export function CreationToolbar(props: CreationToolbarProps) {
       {/* Model selector */}
       <Select value={props.model} onValueChange={props.onModelChange} disabled={props.disabled}>
         <SelectTrigger className="text-muted hover:text-foreground h-auto gap-1.5 border-0 bg-transparent p-1 text-sm font-medium focus:ring-0">
-          <ProviderIcon provider={provider} className="h-4 w-4" />
+          <ProviderIcon provider={provider} className="h-5 w-5" />
           <span>{displayName}</span>
         </SelectTrigger>
         <SelectContent>
@@ -119,8 +119,8 @@ export function CreationToolbar(props: CreationToolbarProps) {
           <span>{getModeDisplayName(props.mode)}</span>
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="exec">Auto-Edit</SelectItem>
-          <SelectItem value="plan">Plan Only</SelectItem>
+          <SelectItem value="exec">Exec</SelectItem>
+          <SelectItem value="plan">Plan</SelectItem>
         </SelectContent>
       </Select>
 
@@ -150,17 +150,17 @@ export function CreationToolbar(props: CreationToolbarProps) {
             onClick={props.onSend}
             disabled={!props.canSend || props.disabled}
             className={cn(
-              "ml-1 inline-flex items-center gap-1.5 rounded px-2 py-1 text-sm font-medium transition-colors disabled:opacity-50",
+              "ml-1 inline-flex items-center justify-center rounded p-1.5 transition-colors disabled:opacity-50",
               props.mode === "plan"
                 ? "bg-plan-mode hover:bg-plan-mode-hover text-white"
                 : "bg-exec-mode hover:bg-exec-mode-hover text-white"
             )}
+            aria-label="Send message"
           >
-            Send
-            <span className="text-white/70">{formatKeybind(KEYBINDS.SEND_MESSAGE)}</span>
+            <SendHorizontal className="h-4 w-4" />
           </button>
         </TooltipTrigger>
-        <TooltipContent>Send message</TooltipContent>
+        <TooltipContent>Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})</TooltipContent>
       </Tooltip>
     </div>
   );

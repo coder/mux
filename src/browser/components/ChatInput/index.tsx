@@ -69,7 +69,6 @@ import { useTelemetry } from "@/browser/hooks/useTelemetry";
 import { getTokenCountPromise } from "@/browser/utils/tokenizer/rendererClient";
 import { CreationCenterContent } from "./CreationCenterContent";
 import { cn } from "@/common/lib/utils";
-import { CreationControls } from "./CreationControls";
 import { CreationToolbar } from "./CreationToolbar";
 import { useCreationWorkspace } from "./useCreationWorkspace";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
@@ -1335,6 +1334,11 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           onRuntimeModeChange={creationState.setRuntimeMode}
           disabled={creationState.isSending || isSending}
           nameState={creationState.nameState}
+          branches={creationState.branches}
+          trunkBranch={creationState.trunkBranch}
+          onTrunkBranchChange={creationState.setTrunkBranch}
+          sshHost={creationState.sshHost}
+          onSshHostChange={creationState.setSshHost}
         >
           {/* Textarea and image attachments in main content area for creation */}
           <ChatInputToast
@@ -1343,6 +1347,19 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           />
           {textareaElement}
           <ImageAttachments images={imageAttachments} onRemove={handleRemoveImage} />
+          {/* Toolbar below chat box */}
+          <div className="mt-2 flex justify-center">
+            <CreationToolbar
+              model={preferredModel}
+              recentModels={recentModels}
+              onModelChange={setPreferredModel}
+              mode={mode}
+              onModeChange={setMode}
+              canSend={canSend}
+              onSend={() => void handleSend()}
+              disabled={creationState.isSending || isSending}
+            />
+          </div>
         </CreationCenterContent>
       )}
 
@@ -1382,30 +1399,8 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             </>
           )}
 
-          {/* Creation variant: compact centered toolbar */}
-          {variant === "creation" ? (
-            <div className="flex flex-col items-center gap-2">
-              <CreationToolbar
-                model={preferredModel}
-                recentModels={recentModels}
-                onModelChange={setPreferredModel}
-                mode={mode}
-                onModeChange={setMode}
-                canSend={canSend}
-                onSend={() => void handleSend()}
-                disabled={creationState.isSending || isSending}
-              />
-              <CreationControls
-                branches={creationState.branches}
-                trunkBranch={creationState.trunkBranch}
-                onTrunkBranchChange={creationState.setTrunkBranch}
-                runtimeMode={creationState.runtimeMode}
-                sshHost={creationState.sshHost}
-                onSshHostChange={creationState.setSshHost}
-                disabled={creationState.isSending || isSending}
-              />
-            </div>
-          ) : (
+          {/* Workspace variant: full toolbar */}
+          {variant === "workspace" && (
             <div className="flex flex-col gap-0.5" data-component="ChatModeToggles">
               {/* Editing indicator - workspace only */}
               {editingMessage && (

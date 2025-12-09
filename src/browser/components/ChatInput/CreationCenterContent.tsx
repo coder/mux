@@ -5,6 +5,7 @@ import { Loader2, Wand2 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
+import { Select as SimpleSelect } from "../Select";
 
 // Runtime-specific text colors matching RuntimeIconSelector
 const RUNTIME_TEXT_COLORS: Record<RuntimeMode, string> = {
@@ -28,15 +29,30 @@ interface CreationCenterContentProps {
   children?: React.ReactNode;
   /** Workspace name generation state and actions */
   nameState: WorkspaceNameState;
+  /** Available branches for trunk branch selector */
+  branches: string[];
+  /** Current trunk branch */
+  trunkBranch: string;
+  /** Callback when trunk branch changes */
+  onTrunkBranchChange: (branch: string) => void;
+  /** SSH host input value */
+  sshHost: string;
+  /** Callback when SSH host changes */
+  onSshHostChange: (host: string) => void;
 }
 
 /**
- * Header for the creation view showing "New Task in [Runtime Mode] - [workspace-name]"
+ * Header for the creation view showing "New Chat in [Runtime Mode] - [workspace-name]"
  * Runtime mode is selectable via dropdown, workspace name is editable inline
+ * From/Host controls are shown below the header
  */
 export function CreationCenterContent(props: CreationCenterContentProps) {
   const { nameState } = props;
   const runtimeColor = RUNTIME_TEXT_COLORS[props.runtimeMode];
+
+  // Local runtime doesn't need a trunk branch selector (uses project dir as-is)
+  const showTrunkBranchSelector =
+    props.branches.length > 0 && props.runtimeMode !== RUNTIME_MODE.LOCAL;
 
   const handleNameChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -78,9 +94,9 @@ export function CreationCenterContent(props: CreationCenterContentProps) {
 
   return (
     <div className="flex h-full flex-1 flex-col overflow-hidden p-6">
-      {/* Header: New Task in [Runtime Mode dropdown] - [workspace-name] */}
-      <div className="mb-4 flex items-center gap-2">
-        <h1 className="text-foreground text-xl font-semibold">New Task in</h1>
+      {/* Header: New Chat in [Runtime Mode dropdown] - [workspace-name] */}
+      <div className="mb-2 flex items-center gap-2">
+        <h1 className="text-foreground text-xl font-semibold">New Chat in</h1>
         <Select
           value={props.runtimeMode}
           onValueChange={(value) => props.onRuntimeModeChange(value as RuntimeMode)}
@@ -159,6 +175,44 @@ export function CreationCenterContent(props: CreationCenterContentProps) {
         </div>
         {nameState.error && <span className="text-sm text-red-500">{nameState.error}</span>}
       </div>
+
+      {/* From/Host controls - below header */}
+      {(showTrunkBranchSelector || props.runtimeMode === RUNTIME_MODE.SSH) && (
+        <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+          {/* Trunk Branch Selector - hidden for Local runtime */}
+          {showTrunkBranchSelector && (
+            <div
+              className="flex h-6 items-center gap-1"
+              data-component="TrunkBranchGroup"
+              data-tutorial="trunk-branch"
+            >
+              <label htmlFor="trunk-branch" className="text-muted text-xs">
+                From:
+              </label>
+              <SimpleSelect
+                id="trunk-branch"
+                value={props.trunkBranch}
+                options={props.branches}
+                onChange={props.onTrunkBranchChange}
+                disabled={props.disabled}
+                className="h-6 max-w-[120px]"
+              />
+            </div>
+          )}
+
+          {/* SSH Host Input - after From selector */}
+          {props.runtimeMode === RUNTIME_MODE.SSH && (
+            <input
+              type="text"
+              value={props.sshHost}
+              onChange={(e) => props.onSshHostChange(e.target.value)}
+              placeholder="user@host"
+              disabled={props.disabled}
+              className="bg-separator text-foreground border-border-medium focus:border-accent h-6 w-32 rounded border px-1 text-xs focus:outline-none disabled:opacity-50"
+            />
+          )}
+        </div>
+      )}
 
       {/* Main content area - prompt text, with override to allow textarea to grow */}
       <div className="min-h-0 flex-1 overflow-y-auto [&_textarea]:max-h-none [&_textarea]:min-h-[200px] [&_textarea]:flex-1">
