@@ -25,7 +25,7 @@ interface BashOutputToolCallProps {
 
 /**
  * Display component for bash_output tool calls.
- * Shows output from background processes in a format similar to regular bash tool.
+ * Shows output from background processes in a format matching regular bash tool.
  */
 export const BashOutputToolCall: React.FC<BashOutputToolCallProps> = ({
   args,
@@ -46,6 +46,7 @@ export const BashOutputToolCall: React.FC<BashOutputToolCallProps> = ({
         <span className="text-muted ml-2 flex items-center gap-1 text-[10px] whitespace-nowrap">
           <Layers size={10} />
           output
+          {args.filter && ` (filter: ${args.filter})`}
         </span>
         {result?.success && processStatus && (
           <span
@@ -67,18 +68,6 @@ export const BashOutputToolCall: React.FC<BashOutputToolCallProps> = ({
 
       {expanded && (
         <ToolDetails>
-          <DetailSection>
-            <DetailLabel>Process ID</DetailLabel>
-            <DetailContent className="px-2 py-1.5">
-              <code className="font-mono">{args.process_id}</code>
-              {args.filter && (
-                <span className="text-muted ml-2">
-                  (filter: <code className="font-mono">{args.filter}</code>)
-                </span>
-              )}
-            </DetailContent>
-          </DetailSection>
-
           {result && (
             <>
               {result.success === false && (
@@ -97,7 +86,9 @@ export const BashOutputToolCall: React.FC<BashOutputToolCallProps> = ({
 
               {result.success && !result.output && (
                 <DetailSection>
-                  <DetailContent className="text-muted italic">No new output</DetailContent>
+                  <DetailContent className="px-2 py-1.5 text-muted italic">
+                    No new output
+                  </DetailContent>
                 </DetailSection>
               )}
             </>
@@ -105,7 +96,7 @@ export const BashOutputToolCall: React.FC<BashOutputToolCallProps> = ({
 
           {status === "executing" && !result && (
             <DetailSection>
-              <DetailContent>
+              <DetailContent className="px-2 py-1.5">
                 Waiting for result
                 <LoadingDots />
               </DetailContent>
