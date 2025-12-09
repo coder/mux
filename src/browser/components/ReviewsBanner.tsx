@@ -406,8 +406,19 @@ const ReviewsBannerInner: React.FC<ReviewsBannerInnerProps> = ({ workspaceId }) 
           {/* Pending reviews section */}
           {pendingList.length > 0 && (
             <div className="space-y-1.5">
-              <div className="text-muted text-[10px] font-medium tracking-wide uppercase">
-                Pending ({pendingList.length})
+              <div className="flex items-center justify-between">
+                <div className="text-muted text-[10px] font-medium tracking-wide uppercase">
+                  Pending ({pendingList.length})
+                </div>
+                {pendingList.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={reviewsHook.attachAllPending}
+                    className="text-muted text-[10px] transition-colors hover:text-[var(--color-review-accent)]"
+                  >
+                    Attach all to chat
+                  </button>
+                )}
               </div>
               {pendingList.map((review) => (
                 <ReviewItem

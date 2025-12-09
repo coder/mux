@@ -54,7 +54,7 @@ import {
 } from "@/browser/utils/ui/keybinds";
 import { ModelSelector, type ModelSelectorRef } from "../ModelSelector";
 import { useModelLRU } from "@/browser/hooks/useModelLRU";
-import { SendHorizontal } from "lucide-react";
+import { SendHorizontal, X } from "lucide-react";
 import { VimTextArea } from "../VimTextArea";
 import { ImageAttachments, type ImageAttachment } from "../ImageAttachments";
 import {
@@ -1381,6 +1381,27 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           {/* Hide during send to avoid duplicate display with the sent message */}
           {variant === "workspace" && attachedReviews.length > 0 && !hideReviewsDuringSend && (
             <div className="border-border max-h-[50vh] space-y-2 overflow-y-auto border-b px-1.5 py-1.5">
+              {/* Header with count and clear all button */}
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted font-medium">
+                  {attachedReviews.length} review{attachedReviews.length !== 1 && "s"} attached
+                </span>
+                {props.onDetachAllReviews && attachedReviews.length > 1 && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={props.onDetachAllReviews}
+                        className="text-muted hover:text-error flex items-center gap-1 text-xs transition-colors"
+                      >
+                        <X className="size-3" />
+                        Clear all
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>Remove all reviews from message</TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
               {attachedReviews.map((review) => (
                 <ReviewBlockFromData
                   key={review.id}

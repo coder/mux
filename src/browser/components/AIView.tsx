@@ -665,6 +665,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
           autoCompactionCheck={autoCompactionResult}
           attachedReviews={reviews.attachedReviews}
           onDetachReview={reviews.detachReview}
+          onDetachAllReviews={reviews.detachAllAttached}
           onCheckReviews={(ids) => ids.forEach((id) => reviews.checkReview(id))}
           onUpdateReviewNote={reviews.updateReviewNote}
         />

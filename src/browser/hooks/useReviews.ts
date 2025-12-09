@@ -32,6 +32,10 @@ export interface UseReviewsReturn {
   attachReview: (reviewId: string) => void;
   /** Detach a review from chat input (back to pending) */
   detachReview: (reviewId: string) => void;
+  /** Attach all pending reviews to chat input */
+  attachAllPending: () => void;
+  /** Detach all attached reviews from chat input (back to pending) */
+  detachAllAttached: () => void;
   /** Mark a review as checked (sent) */
   checkReview: (reviewId: string) => void;
   /** Uncheck a review (mark as pending again) */
@@ -152,6 +156,42 @@ export function useReviews(workspaceId: string): UseReviewsReturn {
     },
     [setState]
   );
+
+  const attachAllPending = useCallback(() => {
+    setState((prev) => {
+      const now = Date.now();
+      const updated = { ...prev.reviews };
+      let hasChanges = false;
+
+      for (const [id, review] of Object.entries(prev.reviews)) {
+        if (review.status === "pending") {
+          updated[id] = { ...review, status: "attached", statusChangedAt: now };
+          hasChanges = true;
+        }
+      }
+
+      if (!hasChanges) return prev;
+      return { ...prev, reviews: updated, lastUpdated: now };
+    });
+  }, [setState]);
+
+  const detachAllAttached = useCallback(() => {
+    setState((prev) => {
+      const now = Date.now();
+      const updated = { ...prev.reviews };
+      let hasChanges = false;
+
+      for (const [id, review] of Object.entries(prev.reviews)) {
+        if (review.status === "attached") {
+          updated[id] = { ...review, status: "pending", statusChangedAt: now };
+          hasChanges = true;
+        }
+      }
+
+      if (!hasChanges) return prev;
+      return { ...prev, reviews: updated, lastUpdated: now };
+    });
+  }, [setState]);
 
   const checkReview = useCallback(
     (reviewId: string) => {
@@ -276,6 +316,8 @@ export function useReviews(workspaceId: string): UseReviewsReturn {
       addReview,
       attachReview,
       detachReview,
+      attachAllPending,
+      detachAllAttached,
       checkReview,
       uncheckReview,
       removeReview,
@@ -293,6 +335,8 @@ export function useReviews(workspaceId: string): UseReviewsReturn {
       addReview,
       attachReview,
       detachReview,
+      attachAllPending,
+      detachAllAttached,
       checkReview,
       uncheckReview,
       removeReview,

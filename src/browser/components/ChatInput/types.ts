@@ -34,6 +34,8 @@ export interface ChatInputWorkspaceVariant {
   attachedReviews?: Review[];
   /** Detach a review from chat input (sets status to pending) */
   onDetachReview?: (reviewId: string) => void;
+  /** Detach all attached reviews from chat input */
+  onDetachAllReviews?: () => void;
   /** Mark reviews as checked after sending */
   onCheckReviews?: (reviewIds: string[]) => void;
   /** Update a review's comment/note */
