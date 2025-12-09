@@ -195,6 +195,15 @@ export const DEFAULT_TUTORIAL_STATE: TutorialState = {
 };
 
 /**
+ * Get the localStorage key for review (hunk read) state per workspace
+ * Stores which hunks have been marked as read during code review
+ * Format: "review-state:{workspaceId}"
+ */
+export function getReviewStateKey(workspaceId: string): string {
+  return `review-state:${workspaceId}`;
+}
+
+/**
  * Get the localStorage key for hunk expand/collapse state in Review tab
  * Stores user's manual expand/collapse preferences per hunk
  * Format: "reviewExpandState:{workspaceId}"
@@ -278,6 +287,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getThinkingLevelKey,
   getAutoRetryKey,
   getRetryStateKey,
+  getReviewStateKey,
   getReviewExpandStateKey,
   getFileTreeExpandStateKey,
   getReviewSearchStateKey,

@@ -6,18 +6,12 @@
 import { useCallback, useMemo, useEffect, useState } from "react";
 import { usePersistedState } from "./usePersistedState";
 import type { ReviewState, HunkReadState } from "@/common/types/review";
+import { getReviewStateKey } from "@/common/constants/storage";
 
 /**
  * Maximum number of read states to keep per workspace (LRU eviction)
  */
 const MAX_READ_STATES = 1024;
-
-/**
- * Get the localStorage key for review state
- */
-function getReviewStateKey(workspaceId: string): string {
-  return `review-state:${workspaceId}`;
-}
 
 /**
  * Evict oldest read states if count exceeds max
