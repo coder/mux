@@ -2,8 +2,7 @@ import type { Runtime, BackgroundHandle } from "@/node/runtime/Runtime";
 import { spawnProcess } from "./backgroundProcessExecutor";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "./log";
-import * as path from "path";
-import * as fs from "fs/promises";
+
 import { EventEmitter } from "events";
 
 /**
@@ -370,26 +369,26 @@ export class BackgroundProcessManager extends EventEmitter {
       this.readPositions.set(processId, pos);
     }
 
-    const stdoutPath = path.join(proc.outputDir, "stdout.log");
-    const stderrPath = path.join(proc.outputDir, "stderr.log");
-
     log.debug(
-      `BackgroundProcessManager.getOutput: proc.outputDir=${proc.outputDir}, stdoutPath=${stdoutPath}, stdoutOffset=${pos.stdoutBytes}, stderrOffset=${pos.stderrBytes}`
+      `BackgroundProcessManager.getOutput: proc.outputDir=${proc.outputDir}, stdoutOffset=${pos.stdoutBytes}, stderrOffset=${pos.stderrBytes}`
     );
 
-    // Read new content from each file
-    const [stdout, stderr] = await Promise.all([
-      this.readNewContent(stdoutPath, pos.stdoutBytes),
-      this.readNewContent(stderrPath, pos.stderrBytes),
+    // Read new content via the handle (works for both local and SSH runtimes)
+    const [stdoutResult, stderrResult] = await Promise.all([
+      proc.handle.readOutput("stdout.log", pos.stdoutBytes),
+      proc.handle.readOutput("stderr.log", pos.stderrBytes),
     ]);
+
+    const stdout = stdoutResult.content;
+    const stderr = stderrResult.content;
 
     log.debug(
       `BackgroundProcessManager.getOutput: read stdoutLen=${stdout.length}, stderrLen=${stderr.length}`
     );
 
     // Update read positions
-    pos.stdoutBytes += stdout.length;
-    pos.stderrBytes += stderr.length;
+    pos.stdoutBytes = stdoutResult.newOffset;
+    pos.stderrBytes = stderrResult.newOffset;
 
     // Apply filter if provided (permanently discards non-matching lines)
     let filteredStdout = stdout;
@@ -417,31 +416,6 @@ export class BackgroundProcessManager extends EventEmitter {
       stderr: filteredStderr,
       exitCode: proc.exitCode,
     };
-  }
-
-  /**
-   * Read new content from a file starting at a byte offset.
-   * Returns empty string if file doesn't exist or offset is at/beyond EOF.
-   */
-  private async readNewContent(filePath: string, offset: number): Promise<string> {
-    try {
-      const fd = await fs.open(filePath, "r");
-      try {
-        const stat = await fd.stat();
-        if (offset >= stat.size) {
-          return "";
-        }
-        const buffer = Buffer.alloc(stat.size - offset);
-        const { bytesRead } = await fd.read(buffer, 0, buffer.length, offset);
-        return buffer.toString("utf-8", 0, bytesRead);
-      } finally {
-        await fd.close();
-      }
-    } catch (e) {
-      // File doesn't exist yet or other error - return empty
-      log.debug(`readNewContent(${filePath}): ${getErrorMessage(e)}`);
-      return "";
-    }
   }
 
   /**

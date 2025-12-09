@@ -278,4 +278,47 @@ class RuntimeBackgroundHandle implements BackgroundHandle {
       );
     }
   }
+
+  /**
+   * Read output from a file at the given byte offset.
+   * Uses dd to skip bytes and read remaining content - works on both local and SSH.
+   */
+  async readOutput(
+    filename: "stdout.log" | "stderr.log",
+    offset: number
+  ): Promise<{ content: string; newOffset: number }> {
+    try {
+      const filePath = this.quotePath(`${this.outputDir}/${filename}`);
+      // Use dd to skip bytes and cat the rest. dd with bs=1 skip=N reads from byte N.
+      // We get file size first to know how much we read.
+      const sizeResult = await execBuffered(
+        this.runtime,
+        `stat -c%s ${filePath} 2>/dev/null || echo 0`,
+        { cwd: rootDir, timeout: 10 }
+      );
+      const fileSize = parseInt(sizeResult.stdout.trim(), 10) || 0;
+
+      if (offset >= fileSize) {
+        return { content: "", newOffset: offset };
+      }
+
+      // Read from offset to end of file
+      const bytesToRead = fileSize - offset;
+      const readResult = await execBuffered(
+        this.runtime,
+        `dd if=${filePath} bs=1 skip=${offset} count=${bytesToRead} 2>/dev/null`,
+        { cwd: rootDir, timeout: 30 }
+      );
+
+      return {
+        content: readResult.stdout,
+        newOffset: offset + readResult.stdout.length,
+      };
+    } catch (error) {
+      log.debug(
+        `RuntimeBackgroundHandle.readOutput: Error: ${error instanceof Error ? error.message : String(error)}`
+      );
+      return { content: "", newOffset: offset };
+    }
+  }
 }

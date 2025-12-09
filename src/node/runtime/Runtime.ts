@@ -99,6 +99,16 @@ export interface BackgroundHandle {
    * Write meta.json to the output directory.
    */
   writeMeta(metaJson: string): Promise<void>;
+
+  /**
+   * Read output from a file at the given byte offset.
+   * Returns the content read and the new offset (for incremental reads).
+   * Works on both local and SSH runtimes by using runtime.exec() internally.
+   */
+  readOutput(
+    filename: "stdout.log" | "stderr.log",
+    offset: number
+  ): Promise<{ content: string; newOffset: number }>;
 }
 
 /**

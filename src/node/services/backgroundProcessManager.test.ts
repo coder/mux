@@ -5,6 +5,10 @@ import type { Runtime } from "@/node/runtime/Runtime";
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
+import { createBashTool } from "@/node/services/tools/bash";
+import { createBashOutputTool } from "@/node/services/tools/bash_output";
+import { TestTempDir, createTestToolConfig } from "@/node/services/tools/testHelpers";
+import type { BashToolResult, BashOutputToolResult } from "@/common/types/tools";
 
 describe("BackgroundProcessManager", () => {
   let manager: BackgroundProcessManager;
@@ -545,11 +549,6 @@ describe("BackgroundProcessManager", () => {
       // 1. bash tool with run_in_background=true spawns process
       // 2. bash_output tool reads output
 
-      // Import the tools
-      const { createBashTool } = await import("@/node/services/tools/bash");
-      const { createBashOutputTool } = await import("@/node/services/tools/bash_output");
-      const { TestTempDir, createTestToolConfig } = await import("@/node/services/tools/testHelpers");
-
       const tempDir = new TestTempDir("test-bg-integration");
 
       // Create shared config with the SAME manager instance
@@ -562,44 +561,39 @@ describe("BackgroundProcessManager", () => {
 
       // Create bash tool and spawn background process
       const bashTool = createBashTool(config);
-      const spawnResult = await bashTool.execute!(
+      const spawnResult = (await bashTool.execute!(
         { script: "echo 'hello from integration test'", run_in_background: true },
         { toolCallId: "test", messages: [] }
-      );
+      )) as BashToolResult;
 
       expect(spawnResult).toBeDefined();
-      const bashResult = spawnResult as {
-        success: boolean;
-        backgroundProcessId?: string;
-      };
-      expect(bashResult.success).toBe(true);
-      expect(bashResult.backgroundProcessId).toBeDefined();
+      expect(spawnResult.success).toBe(true);
+      expect(spawnResult.backgroundProcessId).toBeDefined();
 
-      const processId = bashResult.backgroundProcessId!;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      const processId: string = spawnResult.backgroundProcessId;
 
       // Wait for output
       await new Promise((resolve) => setTimeout(resolve, 200));
 
       // Create bash_output tool and read output
       const outputTool = createBashOutputTool(config);
-      const outputResult = await outputTool.execute!(
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      const rawOutputResult = await outputTool.execute!(
         { process_id: processId },
         { toolCallId: "test2", messages: [] }
       );
+       
+      const outputResult = rawOutputResult as BashOutputToolResult;
 
       expect(outputResult).toBeDefined();
-      const output = outputResult as {
-        success: boolean;
-        stdout?: string;
-        error?: string;
-      };
 
       // This is the key assertion - should succeed AND have content
-      expect(output.success).toBe(true);
-      if (output.success) {
-        expect(output.stdout).toContain("hello from integration test");
+      expect(outputResult.success).toBe(true);
+      if (outputResult.success) {
+        expect(outputResult.stdout).toContain("hello from integration test");
       } else {
-        throw new Error(`bash_output failed: ${output.error}`);
+        throw new Error(`bash_output failed: ${outputResult.error}`);
       }
 
       tempDir[Symbol.dispose]();
