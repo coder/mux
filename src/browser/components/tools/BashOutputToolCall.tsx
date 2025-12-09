@@ -48,19 +48,29 @@ export const BashOutputToolCall: React.FC<BashOutputToolCallProps> = ({
           output
           {args.filter && ` (filter: ${args.filter})`}
         </span>
-        {result?.success && processStatus && (
+        {result?.success && (
           <span
             className={cn(
               "ml-2 inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
-              processStatus === "running"
+              result.output
                 ? "bg-pending/20 text-pending"
-                : processStatus === "exited" && result.exitCode === 0
-                  ? "bg-success text-on-success"
-                  : "bg-danger text-on-danger"
+                : "bg-muted-foreground/20 text-muted-foreground"
+            )}
+          >
+            {result.output ? "new output" : "no output"}
+          </span>
+        )}
+        {result?.success && processStatus && processStatus !== "running" && (
+          <span
+            className={cn(
+              "ml-2 inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
+              processStatus === "exited" && result.exitCode === 0
+                ? "bg-success text-on-success"
+                : "bg-danger text-on-danger"
             )}
           >
             {processStatus}
-            {result.exitCode !== undefined && processStatus !== "running" && ` (${result.exitCode})`}
+            {result.exitCode !== undefined && ` (${result.exitCode})`}
           </span>
         )}
         <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
@@ -86,7 +96,7 @@ export const BashOutputToolCall: React.FC<BashOutputToolCallProps> = ({
 
               {result.success && !result.output && (
                 <DetailSection>
-                  <DetailContent className="px-2 py-1.5 text-muted italic">
+                  <DetailContent className="text-muted px-2 py-1.5 italic">
                     No new output
                   </DetailContent>
                 </DetailSection>

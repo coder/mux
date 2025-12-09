@@ -237,6 +237,7 @@ export type BashOutputToolResult =
       status: "running" | "exited" | "killed" | "failed";
       output: string;
       exitCode?: number;
+      note?: string; // Agent-only message (not displayed in UI)
     }
   | { success: false; error: string };
 

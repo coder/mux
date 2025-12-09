@@ -350,7 +350,13 @@ export function createBackgroundBashTool(
     toolName: "bash",
     state: "output-available",
     input: { script, run_in_background: true, display_name: displayName },
-    output: { success: true, output: `Background process started with ID: ${processId}`, exitCode: 0, wall_duration_ms: 50, backgroundProcessId: processId },
+    output: {
+      success: true,
+      output: `Background process started with ID: ${processId}`,
+      exitCode: 0,
+      wall_duration_ms: 50,
+      backgroundProcessId: processId,
+    },
   };
 }
 
@@ -423,7 +429,11 @@ export function createBashBackgroundTerminateTool(
     toolName: "bash_background_terminate",
     state: "output-available",
     input: { process_id: processId },
-    output: { success: true, message: `Process ${processId} terminated`, display_name: displayName },
+    output: {
+      success: true,
+      message: `Process ${processId} terminated`,
+      display_name: displayName,
+    },
   };
 }
 

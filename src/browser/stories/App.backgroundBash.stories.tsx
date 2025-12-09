@@ -39,12 +39,7 @@ export const SpawnAndOutput: AppStory = {
                 historySequence: 2,
                 timestamp: STABLE_TIMESTAMP - 290000,
                 toolCalls: [
-                  createBackgroundBashTool(
-                    "call-1",
-                    "npm run dev",
-                    "bash_1",
-                    "Dev Server"
-                  ),
+                  createBackgroundBashTool("call-1", "npm run dev", "bash_1", "Dev Server"),
                 ],
               }
             ),
@@ -85,9 +80,7 @@ export const ProcessExitedSuccess: AppStory = {
             createAssistantMessage("msg-2", "Starting the build process.", {
               historySequence: 2,
               timestamp: STABLE_TIMESTAMP - 190000,
-              toolCalls: [
-                createBackgroundBashTool("call-1", "npm run build", "bash_2"),
-              ],
+              toolCalls: [createBackgroundBashTool("call-1", "npm run build", "bash_2")],
             }),
             createUserMessage("msg-3", "Check the build status", {
               historySequence: 3,
@@ -300,9 +293,7 @@ export const TerminateProcess: AppStory = {
             createAssistantMessage("msg-2", "Terminating the dev server.", {
               historySequence: 2,
               timestamp: STABLE_TIMESTAMP - 90000,
-              toolCalls: [
-                createBashBackgroundTerminateTool("call-1", "bash_1", "Dev Server"),
-              ],
+              toolCalls: [createBashBackgroundTerminateTool("call-1", "bash_1", "Dev Server")],
             }),
           ],
         })
@@ -376,9 +367,7 @@ export const CompleteWorkflow: AppStory = {
             createAssistantMessage("msg-8", "Terminating the process.", {
               historySequence: 8,
               timestamp: STABLE_TIMESTAMP - 90000,
-              toolCalls: [
-                createBashBackgroundTerminateTool("call-4", "bash_5", "Data Processing"),
-              ],
+              toolCalls: [createBashBackgroundTerminateTool("call-4", "bash_5", "Data Processing")],
             }),
           ],
         })
@@ -406,11 +395,7 @@ export const RegularVsBackground: AppStory = {
                 timestamp: STABLE_TIMESTAMP - 190000,
                 toolCalls: [
                   createBashTool("call-1", "echo 'Hello World'", "Hello World", 0, 3, 12),
-                  createBackgroundBashTool(
-                    "call-2",
-                    "npm run build && npm run test",
-                    "bash_6"
-                  ),
+                  createBackgroundBashTool("call-2", "npm run build && npm run test", "bash_6"),
                 ],
               }
             ),

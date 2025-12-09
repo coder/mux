@@ -152,16 +152,14 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
               )}
 
               {"backgroundProcessId" in result ? (
-                // Background process: show process ID inline with icon
-                <DetailSection>
-                  <DetailContent className="flex items-center gap-2 px-2 py-1.5">
-                    <Layers size={14} className="text-muted shrink-0" />
-                    <span className="text-muted">Background process</span>
-                    <code className="bg-[var(--color-bg-tertiary)] rounded px-1.5 py-0.5 font-mono text-xs">
-                      {result.backgroundProcessId}
-                    </code>
-                  </DetailContent>
-                </DetailSection>
+                // Background process: show process ID inline with icon (compact, no section wrapper)
+                <div className="flex items-center gap-2 text-[11px]">
+                  <Layers size={12} className="text-muted shrink-0" />
+                  <span className="text-muted">Background process</span>
+                  <code className="rounded bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 font-mono text-[10px]">
+                    {result.backgroundProcessId}
+                  </code>
+                </div>
               ) : (
                 // Normal process: show output
                 result.output && (

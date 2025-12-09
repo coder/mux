@@ -474,6 +474,11 @@ export class BackgroundProcessManager extends EventEmitter {
       status: proc.status,
       output,
       exitCode: proc.exitCode,
+      // Hint to agent when there's no new output to avoid busy-waiting
+      ...(output === "" &&
+        proc.status === "running" && {
+          note: "No new output. Do other useful work and check again later.",
+        }),
     };
   }
 
