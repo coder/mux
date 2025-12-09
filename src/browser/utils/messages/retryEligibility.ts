@@ -92,6 +92,7 @@ export function hasInterruptedStream(
 
   return (
     lastMessage.type === "stream-error" || // Stream errored out (show UI for ALL error types)
+    lastMessage.type === "chat-error" || // Pre-stream error (show UI so user can retry after fixing)
     lastMessage.type === "user" || // No response received yet (app restart during slow model)
     (lastMessage.type === "assistant" && lastMessage.isPartial === true) ||
     (lastMessage.type === "tool" && lastMessage.isPartial === true) ||
@@ -122,6 +123,13 @@ export function isEligibleForAutoRetry(
   // If the last message is a non-retryable error, don't auto-retry
   // (but manual retry is still available via hasInterruptedStream)
   const lastMessage = messages[messages.length - 1];
+
+  // chat-error is NEVER auto-retryable - always requires user action
+  // (fixing model selection, adding API key, etc.)
+  if (lastMessage.type === "chat-error") {
+    return false;
+  }
+
   if (lastMessage.type === "stream-error") {
     // Debug flag: force all errors to be retryable
     if (isForceAllRetryableEnabled()) {

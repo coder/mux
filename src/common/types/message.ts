@@ -223,6 +223,17 @@ export type DisplayedMessage =
       errorCount?: number; // Number of consecutive identical errors merged into this message
     }
   | {
+      // chat-error: Pre-stream failures (before stream-start)
+      // Distinct from stream-error which occurs during AI SDK streaming
+      type: "chat-error";
+      id: string; // Display ID for UI/React keys
+      historyId: string; // Original MuxMessage ID for history operations
+      error: string; // Error message
+      errorType: StreamErrorType; // Error type/category
+      historySequence: number; // Global ordering across all messages
+      timestamp?: number;
+    }
+  | {
       type: "history-hidden";
       id: string; // Display ID for UI/React keys
       hiddenCount: number; // Number of messages hidden

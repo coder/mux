@@ -31,3 +31,29 @@ export const StreamErrorMessage: React.FC<StreamErrorMessageProps> = ({ message,
     </div>
   );
 };
+
+/**
+ * ChatErrorMessage - displays pre-stream errors (before AI SDK streaming starts).
+ * These are errors like invalid model, missing API key, unsupported provider, etc.
+ */
+interface ChatErrorMessageProps {
+  message: DisplayedMessage & { type: "chat-error" };
+  className?: string;
+}
+
+export const ChatErrorMessage: React.FC<ChatErrorMessageProps> = ({ message, className }) => {
+  return (
+    <div className={cn("bg-error-bg border border-error rounded px-5 py-4 my-3", className)}>
+      <div className="font-primary text-error mb-3 flex items-center gap-2.5 text-[13px] font-semibold tracking-wide">
+        <span className="text-base leading-none">●</span>
+        <span>Error</span>
+        <span className="text-secondary rounded-sm bg-black/40 px-2 py-0.5 font-mono text-[10px] tracking-wider uppercase">
+          {message.errorType}
+        </span>
+      </div>
+      <div className="text-foreground font-mono text-[13px] leading-relaxed break-words">
+        {message.error}
+      </div>
+    </div>
+  );
+};
