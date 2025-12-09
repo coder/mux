@@ -203,6 +203,8 @@ export function createAssistantMessage(
     model?: string;
     reasoning?: string;
     toolCalls?: MuxPart[];
+    /** Custom context usage for testing compaction warning (default: small values) */
+    contextUsage?: { inputTokens: number; outputTokens: number; totalTokens: number };
   }
 ): ChatMuxMessage {
   const parts: MuxPart[] = [];
@@ -213,6 +215,11 @@ export function createAssistantMessage(
   if (opts.toolCalls) {
     parts.push(...opts.toolCalls);
   }
+  const contextUsage = opts.contextUsage ?? {
+    inputTokens: 100,
+    outputTokens: 50,
+    totalTokens: 150,
+  };
   return {
     type: "message",
     id,
@@ -222,8 +229,8 @@ export function createAssistantMessage(
       historySequence: opts.historySequence,
       timestamp: opts.timestamp ?? STABLE_TIMESTAMP,
       model: opts.model ?? DEFAULT_MODEL,
-      usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
-      contextUsage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+      usage: contextUsage,
+      contextUsage,
       duration: 1000,
     },
   };
