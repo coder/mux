@@ -13,12 +13,16 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type {
   WorkspaceChatMessage,
+  ChatErrorMessage,
   StreamErrorMessage,
   SendMessageOptions,
   ImagePart,
 } from "@/common/orpc/types";
 import type { SendMessageError } from "@/common/types/errors";
-import { createUnknownSendMessageError } from "@/node/services/utils/sendMessageError";
+import {
+  createUnknownSendMessageError,
+  formatSendMessageError,
+} from "@/node/services/utils/sendMessageError";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
@@ -427,9 +431,11 @@ export class AgentSession {
     }
 
     if (!options?.model || options.model.trim().length === 0) {
-      return Err(
-        createUnknownSendMessageError("No model specified. Please select a model using /model.")
+      const error = createUnknownSendMessageError(
+        "No model specified. Please select a model using /model."
       );
+      this.emitChatError(error);
+      return Err(error);
     }
 
     return this.streamWithHistory(options.model, options);
@@ -483,12 +489,16 @@ export class AgentSession {
   ): Promise<Result<void, SendMessageError>> {
     const commitResult = await this.partialService.commitToHistory(this.workspaceId);
     if (!commitResult.success) {
-      return Err(createUnknownSendMessageError(commitResult.error));
+      const error = createUnknownSendMessageError(commitResult.error);
+      this.emitChatError(error);
+      return Err(error);
     }
 
     const historyResult = await this.historyService.getHistory(this.workspaceId);
     if (!historyResult.success) {
-      return Err(createUnknownSendMessageError(historyResult.error));
+      const error = createUnknownSendMessageError(historyResult.error);
+      this.emitChatError(error);
+      return Err(error);
     }
 
     // Enforce thinking policy for the specified model (single source of truth)
@@ -497,7 +507,7 @@ export class AgentSession {
       ? enforceThinkingPolicy(modelString, options.thinkingLevel)
       : undefined;
 
-    return this.aiService.streamMessage(
+    const result = await this.aiService.streamMessage(
       historyResult.data,
       this.workspaceId,
       modelString,
@@ -509,6 +519,40 @@ export class AgentSession {
       options?.providerOptions,
       options?.mode
     );
+
+    // If stream failed to start, emit a stream-error so the user sees the error in the chat UI
+    // (not just a toast which might be missed). The error is already displayed in the chat via
+    // stream-error handling, which shows up as an error message in the conversation.
+    if (!result.success) {
+      this.emitChatError(result.error);
+    }
+
+    return result;
+  }
+
+  /**
+   * Emit a chat-error event for pre-stream failures.
+   * Distinct from stream-error (AI SDK errors during streaming).
+   *
+   * chat-error is for errors that occur BEFORE streaming starts:
+   * - Invalid model format
+   * - Missing API key
+   * - Unsupported provider
+   * - etc.
+   *
+   * This ensures errors are visible in the chat UI, not just as a toast
+   * that might be dismissed or missed.
+   */
+  private emitChatError(error: SendMessageError): void {
+    const { message, errorType } = formatSendMessageError(error);
+    const chatError: ChatErrorMessage = {
+      type: "chat-error",
+      // Use a synthetic messageId since no assistant message was created
+      messageId: `error-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+      error: message,
+      errorType,
+    };
+    this.emitChatEvent(chatError);
   }
 
   private attachAiListeners(): void {

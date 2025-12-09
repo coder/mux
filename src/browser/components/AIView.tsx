@@ -133,7 +133,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
     }
 
     for (const message of workspaceState.messages) {
-      if (message.type !== "stream-error") {
+      if (message.type !== "stream-error" && message.type !== "chat-error") {
         continue;
       }
       if (message.errorType !== "model_not_found") {
@@ -143,7 +143,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
         continue;
       }
       handledModelErrorsRef.current.add(message.id);
-      if (message.model) {
+      if (message.type === "stream-error" && message.model) {
         evictModelFromLRU(message.model);
       }
     }

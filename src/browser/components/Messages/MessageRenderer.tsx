@@ -5,7 +5,7 @@ import { UserMessage } from "./UserMessage";
 import { AssistantMessage } from "./AssistantMessage";
 import { ToolMessage } from "./ToolMessage";
 import { ReasoningMessage } from "./ReasoningMessage";
-import { StreamErrorMessage } from "./StreamErrorMessage";
+import { StreamErrorMessage, ChatErrorMessage } from "./StreamErrorMessage";
 import { HistoryHiddenMessage } from "./HistoryHiddenMessage";
 import { InitMessage } from "./InitMessage";
 
@@ -56,6 +56,8 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
         return <ReasoningMessage message={message} className={className} />;
       case "stream-error":
         return <StreamErrorMessage message={message} className={className} />;
+      case "chat-error":
+        return <ChatErrorMessage message={message} className={className} />;
       case "history-hidden":
         return <HistoryHiddenMessage message={message} className={className} />;
       case "workspace-init":

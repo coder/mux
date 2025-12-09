@@ -22,6 +22,23 @@ export const StreamErrorMessageSchema = z.object({
   errorType: StreamErrorTypeSchema,
 });
 
+/**
+ * Chat error message - for errors that occur BEFORE streaming starts.
+ * Distinct from StreamErrorMessage (AI SDK stream errors that happen during streaming).
+ *
+ * These errors are NOT auto-retryable - they require user action:
+ * - Invalid model format
+ * - Missing API key
+ * - Unsupported provider
+ * - etc.
+ */
+export const ChatErrorMessageSchema = z.object({
+  type: z.literal("chat-error"),
+  messageId: z.string(),
+  error: z.string(),
+  errorType: StreamErrorTypeSchema,
+});
+
 export const DeleteMessageSchema = z.object({
   type: z.literal("delete"),
   historySequences: z.array(z.number()),
@@ -260,6 +277,7 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   // Stream lifecycle events
   CaughtUpMessageSchema,
   StreamErrorMessageSchema,
+  ChatErrorMessageSchema,
   DeleteMessageSchema,
   StreamStartEventSchema,
   StreamDeltaEventSchema,

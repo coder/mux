@@ -21,7 +21,12 @@ import type {
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { TodoItem, StatusSetToolResult } from "@/common/types/tools";
 
-import type { WorkspaceChatMessage, StreamErrorMessage, DeleteMessage } from "@/common/orpc/types";
+import type {
+  WorkspaceChatMessage,
+  StreamErrorMessage,
+  ChatErrorMessage,
+  DeleteMessage,
+} from "@/common/orpc/types";
 import { isInitStart, isInitOutput, isInitEnd, isMuxMessage } from "@/common/orpc/types";
 import type {
   DynamicToolPart,
@@ -587,6 +592,40 @@ export class StreamingMessageAggregator {
       this.messages.set(data.messageId, errorMessage);
       this.invalidateCache();
     }
+  }
+
+  /**
+   * Handle pre-stream chat errors (before stream-start).
+   * These are distinct from stream-error (AI SDK errors during streaming).
+   *
+   * chat-error occurs when:
+   * - Model validation fails (invalid format, non-existent model)
+   * - API key is missing
+   * - Provider is not supported
+   * - etc.
+   *
+   * Creates a synthetic error message since there's no active stream.
+   */
+  handleChatError(data: ChatErrorMessage): void {
+    // Get the highest historySequence from existing messages so this appears at the end
+    const maxSequence = Math.max(
+      0,
+      ...Array.from(this.messages.values()).map((m) => m.metadata?.historySequence ?? 0)
+    );
+    const errorMessage: MuxMessage = {
+      id: data.messageId,
+      role: "assistant",
+      parts: [],
+      metadata: {
+        partial: true,
+        error: data.error,
+        errorType: data.errorType,
+        timestamp: Date.now(),
+        historySequence: maxSequence + 1,
+      },
+    };
+    this.messages.set(data.messageId, errorMessage);
+    this.invalidateCache();
   }
 
   handleToolCallStart(data: ToolCallStartEvent): void {

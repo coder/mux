@@ -25,6 +25,7 @@ export type ImagePart = z.infer<typeof schemas.ImagePartSchema>;
 export type WorkspaceChatMessage = z.infer<typeof schemas.WorkspaceChatMessageSchema>;
 export type CaughtUpMessage = z.infer<typeof schemas.CaughtUpMessageSchema>;
 export type StreamErrorMessage = z.infer<typeof schemas.StreamErrorMessageSchema>;
+export type ChatErrorMessage = z.infer<typeof schemas.ChatErrorMessageSchema>;
 export type DeleteMessage = z.infer<typeof schemas.DeleteMessageSchema>;
 export type WorkspaceInitEvent = z.infer<typeof schemas.WorkspaceInitEventSchema>;
 export type UpdateStatus = z.infer<typeof schemas.UpdateStatusSchema>;
@@ -41,6 +42,10 @@ export function isCaughtUpMessage(msg: WorkspaceChatMessage): msg is CaughtUpMes
 
 export function isStreamError(msg: WorkspaceChatMessage): msg is StreamErrorMessage {
   return (msg as { type?: string }).type === "stream-error";
+}
+
+export function isChatError(msg: WorkspaceChatMessage): msg is ChatErrorMessage {
+  return (msg as { type?: string }).type === "chat-error";
 }
 
 export function isDeleteMessage(msg: WorkspaceChatMessage): msg is DeleteMessage {

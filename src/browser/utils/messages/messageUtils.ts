@@ -11,6 +11,7 @@ export function shouldShowInterruptedBarrier(msg: DisplayedMessage): boolean {
   if (
     msg.type === "user" ||
     msg.type === "stream-error" ||
+    msg.type === "chat-error" ||
     msg.type === "history-hidden" ||
     msg.type === "workspace-init"
   )

@@ -97,6 +97,30 @@ describeIntegration("sendMessage error handling tests", () => {
     );
 
     test.concurrent(
+      "should emit chat-error when model validation fails early",
+      async () => {
+        await withSharedWorkspace("openai", async ({ env, workspaceId, collector }) => {
+          // Send a message with an invalid model format (causes early validation failure)
+          const result = await sendMessage(env, workspaceId, "Hello", {
+            model: "invalid-model-without-provider",
+          });
+
+          // IPC call fails immediately (pre-stream validation error)
+          expect(result.success).toBe(false);
+
+          // Should emit chat-error (not stream-error) since this is a pre-stream failure.
+          // This is important because the user message is displayed before stream starts.
+          const errorEvent = await collector.waitForEvent("chat-error", 3000);
+          expect(errorEvent).toBeDefined();
+          if (errorEvent?.type === "chat-error") {
+            expect(errorEvent.error).toBeDefined();
+          }
+        });
+      },
+      15000
+    );
+
+    test.concurrent(
       "should fail with non-existent model",
       async () => {
         await withSharedWorkspace("openai", async ({ env, workspaceId, collector }) => {

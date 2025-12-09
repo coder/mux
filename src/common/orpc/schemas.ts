@@ -82,6 +82,7 @@ export {
   ReasoningEndEventSchema,
   RestoreToInputEventSchema,
   SendMessageOptionsSchema,
+  ChatErrorMessageSchema,
   StreamAbortEventSchema,
   StreamDeltaEventSchema,
   StreamEndEventSchema,

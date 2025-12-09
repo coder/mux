@@ -13,6 +13,7 @@ import { useSyncExternalStore } from "react";
 import {
   isCaughtUpMessage,
   isStreamError,
+  isChatError,
   isDeleteMessage,
   isMuxMessage,
   isQueuedMessageChanged,
@@ -993,6 +994,16 @@ export class WorkspaceStore {
         { attempt: 0, retryStartTime: Date.now() }
       );
 
+      this.states.bump(workspaceId);
+      this.dispatchResumeCheck(workspaceId);
+      return;
+    }
+
+    // chat-error: pre-stream failures (invalid model, missing API key, etc.)
+    // These are NOT auto-retryable - they require user action
+    // Don't increment retry counter, but still show in UI and allow manual retry
+    if (isChatError(data)) {
+      aggregator.handleChatError(data);
       this.states.bump(workspaceId);
       this.dispatchResumeCheck(workspaceId);
       return;
