@@ -10,6 +10,7 @@ import { TOKEN_COMPONENT_COLORS } from "@/common/utils/tokens/tokenMeterUtils";
 import { ConsumerBreakdown } from "./ConsumerBreakdown";
 import { HorizontalThresholdSlider } from "./ThresholdSlider";
 import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 
 // Format token display - show k for thousands with 1 decimal
 const formatTokens = (tokens: number) =>
@@ -394,8 +395,19 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                             onChange={setViewMode}
                           />
                         </div>
-                        <span className="text-muted text-xs">
+                        <span className="text-muted flex items-center gap-1 text-xs">
                           {formatCostWithDollar(totalCost)}
+                          {displayUsage?.hasUnknownCosts && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="text-warning cursor-help">?</span>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom" className="max-w-[200px]">
+                                Cost may be incomplete — some models in this session have unknown
+                                pricing
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
                         </span>
                       </div>
                       <div className="relative w-full">

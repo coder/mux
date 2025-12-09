@@ -1,8 +1,8 @@
 import { describe, test, expect } from "bun:test";
 import { collectUsageHistory, createDisplayUsage } from "./displayUsage";
+import { sumUsageHistory, type ChatUsageDisplay } from "./usageAggregator";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
-import type { ChatUsageDisplay } from "./usageAggregator";
 
 // Helper to create assistant message with usage
 const createAssistant = (
@@ -339,5 +339,80 @@ describe("createDisplayUsage", () => {
       expect(result).toBeDefined();
       expect(result!.cacheCreate.tokens).toBe(1500);
     });
+  });
+});
+
+describe("multi-model cost calculation", () => {
+  test("calculates correct total cost across different models", () => {
+    // Create messages with different models and raw token counts
+    const claudeMsg = createAssistant(
+      "a1",
+      {
+        inputTokens: 10000,
+        outputTokens: 1000,
+        totalTokens: 11000,
+      },
+      "anthropic:claude-sonnet-4-5"
+    );
+
+    const gptMsg = createAssistant(
+      "a2",
+      {
+        inputTokens: 20000,
+        outputTokens: 2000,
+        totalTokens: 22000,
+      },
+      "openai:gpt-4o"
+    );
+
+    // Run through full pipeline
+    const usageHistory = collectUsageHistory([claudeMsg, gptMsg]);
+    const total = sumUsageHistory(usageHistory);
+
+    // Verify per-model costs are calculated correctly
+    // Claude: $3/M input, $15/M output
+    expect(usageHistory[0].input.cost_usd).toBeCloseTo(0.03); // 10k × $0.000003
+    expect(usageHistory[0].output.cost_usd).toBeCloseTo(0.015); // 1k × $0.000015
+
+    // GPT-4o: $2.50/M input, $10/M output
+    expect(usageHistory[1].input.cost_usd).toBeCloseTo(0.05); // 20k × $0.0000025
+    expect(usageHistory[1].output.cost_usd).toBeCloseTo(0.02); // 2k × $0.00001
+
+    // Verify total sums correctly
+    expect(total?.input.cost_usd).toBeCloseTo(0.08); // $0.03 + $0.05
+    expect(total?.output.cost_usd).toBeCloseTo(0.035); // $0.015 + $0.02
+    expect(total?.hasUnknownCosts).toBeFalsy();
+  });
+
+  test("flags hasUnknownCosts when one model has no pricing", () => {
+    const claudeMsg = createAssistant(
+      "a1",
+      {
+        inputTokens: 10000,
+        outputTokens: 1000,
+        totalTokens: 11000,
+      },
+      "anthropic:claude-sonnet-4-5"
+    );
+
+    const unknownMsg = createAssistant(
+      "a2",
+      {
+        inputTokens: 5000,
+        outputTokens: 500,
+        totalTokens: 5500,
+      },
+      "unknown:custom-model"
+    );
+
+    const usageHistory = collectUsageHistory([claudeMsg, unknownMsg]);
+    const total = sumUsageHistory(usageHistory);
+
+    // Claude costs should still be included
+    expect(total?.input.cost_usd).toBeCloseTo(0.03);
+    expect(total?.output.cost_usd).toBeCloseTo(0.015);
+
+    // Flag indicates incomplete total
+    expect(total?.hasUnknownCosts).toBe(true);
   });
 });
