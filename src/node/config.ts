@@ -11,6 +11,7 @@ import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { getMuxHome } from "@/common/constants/paths";
 import { PlatformPaths } from "@/common/utils/paths";
+import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 
 // Re-export project types from dedicated types file (for preload usage)
 export type { Workspace, ProjectConfig, ProjectsConfig };
@@ -56,9 +57,13 @@ export class Config {
 
         // Config is stored as array of [path, config] pairs
         if (parsed.projects && Array.isArray(parsed.projects)) {
-          const projectsMap = new Map<string, ProjectConfig>(
-            parsed.projects as Array<[string, ProjectConfig]>
-          );
+          const rawPairs = parsed.projects as Array<[string, ProjectConfig]>;
+          // Migrate: normalize project paths by stripping trailing slashes
+          // This fixes configs created with paths like "/home/user/project/"
+          const normalizedPairs = rawPairs.map(([projectPath, projectConfig]) => {
+            return [stripTrailingSlashes(projectPath), projectConfig] as [string, ProjectConfig];
+          });
+          const projectsMap = new Map<string, ProjectConfig>(normalizedPairs);
           return {
             projects: projectsMap,
           };

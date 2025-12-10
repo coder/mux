@@ -18,6 +18,32 @@ describe("Config", () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
+  describe("loadConfigOrDefault with trailing slash migration", () => {
+    it("should strip trailing slashes from project paths on load", () => {
+      // Create config file with trailing slashes in project paths
+      const configFile = path.join(tempDir, "config.json");
+      const corruptedConfig = {
+        projects: [
+          ["/home/user/project/", { workspaces: [] }],
+          ["/home/user/another//", { workspaces: [] }],
+          ["/home/user/clean", { workspaces: [] }],
+        ],
+      };
+      fs.writeFileSync(configFile, JSON.stringify(corruptedConfig));
+
+      // Load config - should migrate paths
+      const loaded = config.loadConfigOrDefault();
+
+      // Verify paths are normalized (no trailing slashes)
+      const projectPaths = Array.from(loaded.projects.keys());
+      expect(projectPaths).toContain("/home/user/project");
+      expect(projectPaths).toContain("/home/user/another");
+      expect(projectPaths).toContain("/home/user/clean");
+      expect(projectPaths).not.toContain("/home/user/project/");
+      expect(projectPaths).not.toContain("/home/user/another//");
+    });
+  });
+
   describe("generateStableId", () => {
     it("should generate a 10-character hex string", () => {
       const id = config.generateStableId();

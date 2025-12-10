@@ -27,6 +27,21 @@ export function expandTilde(inputPath: string): string {
 }
 
 /**
+ * Strip trailing slashes from a path.
+ * path.normalize() preserves a single trailing slash which breaks basename extraction.
+ *
+ * @param inputPath - Path that may have trailing slashes
+ * @returns Path without trailing slashes
+ *
+ * @example
+ * stripTrailingSlashes("/home/user/project/") // => "/home/user/project"
+ * stripTrailingSlashes("/home/user/project//") // => "/home/user/project"
+ */
+export function stripTrailingSlashes(inputPath: string): string {
+  return inputPath.replace(/[/\\]+$/, "");
+}
+
+/**
  * Validate that a project path exists, is a directory, and is a git repository
  * Automatically expands tilde and normalizes the path
  *
@@ -47,8 +62,8 @@ export async function validateProjectPath(inputPath: string): Promise<PathValida
   // Expand tilde if present
   const expandedPath = expandTilde(inputPath);
 
-  // Normalize to resolve any .. or . in the path
-  const normalizedPath = path.normalize(expandedPath);
+  // Normalize to resolve any .. or . in the path, then strip trailing slashes
+  const normalizedPath = stripTrailingSlashes(path.normalize(expandedPath));
 
   // Check if path exists
   try {

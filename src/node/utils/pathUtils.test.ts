@@ -129,5 +129,23 @@ describe("pathUtils", () => {
       expect(result.valid).toBe(true);
       expect(result.expandedPath).toBe(tempDir);
     });
+
+    it("should strip trailing slashes from path", async () => {
+      // Create .git directory for validation
+      // eslint-disable-next-line local/no-sync-fs-methods -- Test setup only
+      fs.mkdirSync(path.join(tempDir, ".git"));
+
+      // Test with single trailing slash
+      const resultSingle = await validateProjectPath(`${tempDir}/`);
+      expect(resultSingle.valid).toBe(true);
+      expect(resultSingle.expandedPath).toBe(tempDir);
+      expect(resultSingle.expandedPath).not.toMatch(/[/\\]$/);
+
+      // Test with multiple trailing slashes
+      const resultMultiple = await validateProjectPath(`${tempDir}//`);
+      expect(resultMultiple.valid).toBe(true);
+      expect(resultMultiple.expandedPath).toBe(tempDir);
+      expect(resultMultiple.expandedPath).not.toMatch(/[/\\]$/);
+    });
   });
 });
