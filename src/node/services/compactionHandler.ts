@@ -7,7 +7,7 @@ import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createMuxMessage } from "@/common/types/message";
 import { log } from "@/node/services/log";
 import {
   extractEditedFileDiffs,
@@ -108,7 +108,7 @@ export class CompactionHandler {
     // Mark as processed before performing compaction
     this.processedCompactionRequestIds.add(lastUserMsg.id);
 
-    const result = await this.performCompaction(summary, messages, event.metadata);
+    const result = await this.performCompaction(summary, event.metadata);
     if (!result.success) {
       log.error("Compaction failed:", result.error);
       return false;
@@ -130,7 +130,6 @@ export class CompactionHandler {
    */
   private async performCompaction(
     summary: string,
-    _messages: MuxMessage[],
     metadata: {
       model: string;
       usage?: LanguageModelV2Usage;
