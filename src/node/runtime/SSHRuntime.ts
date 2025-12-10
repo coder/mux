@@ -228,8 +228,11 @@ export class SSHRuntime implements Runtime {
 
         // SSH exit code 255 indicates connection failure - report to pool for backoff
         // This prevents thundering herd when a previously healthy host goes down
+        // Any other exit code means the connection worked (command may have failed)
         if (exitCode === 255) {
           sshConnectionPool.reportFailure(this.config, "SSH connection failed (exit code 255)");
+        } else {
+          sshConnectionPool.markHealthy(this.config);
         }
 
         resolve(exitCode);
@@ -473,6 +476,8 @@ export class SSHRuntime implements Runtime {
           return;
         }
 
+        // Connection worked - mark healthy to clear any backoff state
+        sshConnectionPool.markHealthy(this.config);
         const output = stdout.trim();
         resolve(output);
       });
