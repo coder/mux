@@ -4,6 +4,15 @@ import { isSSHRuntime } from "@/common/types/runtime";
 import { log } from "@/node/services/log";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 
+/**
+ * Quote a string for safe use in shell commands.
+ * Uses single quotes with proper escaping for embedded single quotes.
+ */
+function shellQuote(value: string): string {
+  if (value.length === 0) return "''";
+  return "'" + value.replace(/'/g, "'\"'\"'") + "'";
+}
+
 export interface EditorConfig {
   editor: string;
   customCommand?: string;
@@ -81,20 +90,24 @@ export class EditorService {
         const resolvedPath = await runtime.resolvePath(targetPath);
 
         // Build the remote command: code --remote ssh-remote+host /remote/path
-        const args = ["--remote", `ssh-remote+${runtimeConfig.host}`, resolvedPath];
+        // Quote the path to handle spaces; the remote host arg doesn't need quoting
+        const shellCmd = `${editorCommand} --remote ${shellQuote(`ssh-remote+${runtimeConfig.host}`)} ${shellQuote(resolvedPath)}`;
 
-        log.info(`Opening SSH path in editor: ${editorCommand} ${args.join(" ")}`);
-        const child = spawn(editorCommand, args, {
+        log.info(`Opening SSH path in editor: ${shellCmd}`);
+        const child = spawn(shellCmd, [], {
           detached: true,
           stdio: "ignore",
+          shell: true,
         });
         child.unref();
       } else {
-        // Local - just open the path
-        log.info(`Opening local path in editor: ${editorCommand} ${targetPath}`);
-        const child = spawn(editorCommand, [targetPath], {
+        // Local - just open the path (quote to handle spaces)
+        const shellCmd = `${editorCommand} ${shellQuote(targetPath)}`;
+        log.info(`Opening local path in editor: ${shellCmd}`);
+        const child = spawn(shellCmd, [], {
           detached: true,
           stdio: "ignore",
+          shell: true,
         });
         child.unref();
       }
@@ -108,11 +121,13 @@ export class EditorService {
   }
 
   /**
-   * Check if a command is available in the system PATH
+   * Check if a command is available in the system PATH.
+   * Uses shell: true to ensure we get the full PATH from user's shell profile,
+   * which is necessary for commands installed via Homebrew or similar.
    */
   private isCommandAvailable(command: string): boolean {
     try {
-      const result = spawnSync("which", [command], { encoding: "utf8" });
+      const result = spawnSync("which", [command], { encoding: "utf8", shell: true });
       return result.status === 0;
     } catch {
       return false;
