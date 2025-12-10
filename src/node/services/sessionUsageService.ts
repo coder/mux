@@ -112,10 +112,6 @@ export class SessionUsageService {
   /**
    * Rebuild session usage from messages (for migration/recovery).
    * Internal version - called within lock.
-   *
-   * Handles historicalUsage from compaction summaries - this is a cumulative
-   * ChatUsageDisplay representing all pre-compaction costs (model-agnostic).
-   * We store it under the special "pre-compaction" key so it's included in totals.
    */
   private async rebuildFromMessagesInternal(
     workspaceId: string,
@@ -123,18 +119,9 @@ export class SessionUsageService {
   ): Promise<void> {
     const result: SessionUsageFile = { byModel: {}, version: 1 };
     let lastAssistantUsage: { model: string; usage: ChatUsageDisplay } | undefined;
-    // Track the last historicalUsage seen (each compaction summary contains
-    // cumulative history, so only the last one matters)
-    let lastHistoricalUsage: ChatUsageDisplay | undefined;
 
     for (const msg of messages) {
       if (msg.role === "assistant") {
-        // Check for historicalUsage from compaction summaries
-        // This preserves costs from messages deleted during compaction
-        if (msg.metadata?.historicalUsage) {
-          lastHistoricalUsage = msg.metadata.historicalUsage;
-        }
-
         // Extract current message's usage
         if (msg.metadata?.usage) {
           const rawModel = msg.metadata.model ?? "unknown";
@@ -152,15 +139,6 @@ export class SessionUsageService {
           }
         }
       }
-    }
-
-    // Include historical usage from compaction under a special key
-    // This ensures pre-compaction costs are included in session totals
-    if (lastHistoricalUsage) {
-      const existing = result.byModel["pre-compaction"];
-      result.byModel["pre-compaction"] = existing
-        ? sumUsageHistory([existing, lastHistoricalUsage])!
-        : lastHistoricalUsage;
     }
 
     if (lastAssistantUsage) {

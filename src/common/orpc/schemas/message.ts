@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { ChatUsageDisplaySchema } from "./chatStats";
 import { StreamErrorTypeSchema } from "./errors";
 
 export const ImagePartSchema = z.object({
@@ -90,7 +89,6 @@ export const MuxMessageSchema = z.object({
       synthetic: z.boolean().optional(),
       error: z.string().optional(),
       errorType: StreamErrorTypeSchema.optional(),
-      historicalUsage: ChatUsageDisplaySchema.optional(),
     })
     .optional(),
 });

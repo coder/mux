@@ -594,7 +594,7 @@ export const router = (authToken?: string) => {
             }
           }),
       },
-getPlanContent: t
+      getPlanContent: t
         .input(schemas.workspace.getPlanContent.input)
         .output(schemas.workspace.getPlanContent.output)
         .handler(async ({ context, input }) => {

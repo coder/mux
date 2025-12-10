@@ -6,7 +6,6 @@ import type { EventEmitter } from "events";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import type { StreamEndEvent } from "@/common/types/stream";
 import { Ok, Err, type Result } from "@/common/types/result";
-import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 
 interface EmittedEvent {
   event: string;
@@ -84,23 +83,6 @@ const createCompactionRequest = (id = "req-1"): MuxMessage =>
   createMuxMessage(id, "user", "Please summarize the conversation", {
     historySequence: 0,
     muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
-  });
-
-const createAssistantMessage = (
-  content: string,
-  options: {
-    id?: string;
-    historySequence?: number;
-    model?: string;
-    usage?: { inputTokens: number; outputTokens: number; totalTokens?: number };
-    duration?: number;
-  } = {}
-): MuxMessage =>
-  createMuxMessage(options.id ?? "asst-1", "assistant", content, {
-    historySequence: options.historySequence ?? 1,
-    model: options.model ?? "claude-3-5-sonnet-20241022",
-    usage: options.usage as LanguageModelV2Usage | undefined,
-    duration: options.duration,
   });
 
 const createStreamEndEvent = (
@@ -332,30 +314,6 @@ describe("CompactionHandler", () => {
       expect(streamEndEvent?.data.workspaceId).toBe(workspaceId);
       const streamMsg = streamEndEvent?.data.message as StreamEndEvent;
       expect(streamMsg.metadata.duration).toBe(1234);
-    });
-
-    it("should calculate historicalUsage from all messages using collectUsageHistory and sumUsageHistory", async () => {
-      const compactionReq = createCompactionRequest();
-      const msg1 = createAssistantMessage("Response 1", {
-        historySequence: 1,
-        usage: { inputTokens: 50, outputTokens: 25, totalTokens: 75 },
-      });
-      const msg2 = createAssistantMessage("Response 2", {
-        historySequence: 2,
-        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
-      });
-      mockHistoryService.mockGetHistory(Ok([compactionReq, msg1, msg2]));
-      mockHistoryService.mockClearHistory(Ok([0, 1, 2]));
-      mockHistoryService.mockAppendToHistory(Ok(undefined));
-
-      const event = createStreamEndEvent("Summary");
-      await handler.handleCompletion(event);
-
-      const appendedMsg = mockHistoryService.appendToHistory.mock.calls[0][1] as MuxMessage;
-      expect(appendedMsg.metadata?.historicalUsage).toBeDefined();
-      // historicalUsage is ChatUsageDisplay with input/output/cached/reasoning components
-      expect(appendedMsg.metadata?.historicalUsage).toHaveProperty("input");
-      expect(appendedMsg.metadata?.historicalUsage).toHaveProperty("output");
     });
 
     it("should set compacted: true in summary metadata", async () => {

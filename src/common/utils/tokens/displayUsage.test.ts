@@ -1,21 +1,15 @@
 import { describe, test, expect } from "bun:test";
 import { collectUsageHistory, createDisplayUsage } from "./displayUsage";
-import { sumUsageHistory, type ChatUsageDisplay } from "./usageAggregator";
+import { sumUsageHistory } from "./usageAggregator";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 
 // Helper to create assistant message with usage
-const createAssistant = (
-  id: string,
-  usage?: LanguageModelV2Usage,
-  model?: string,
-  historicalUsage?: ChatUsageDisplay
-): MuxMessage => {
+const createAssistant = (id: string, usage?: LanguageModelV2Usage, model?: string): MuxMessage => {
   const msg = createMuxMessage(id, "assistant", "Response", {
     historySequence: 0,
     usage,
     model,
-    historicalUsage,
   });
   return msg;
 };
@@ -85,52 +79,6 @@ describe("collectUsageHistory", () => {
     const result = collectUsageHistory([msg]);
 
     expect(result[0].model).toBe("unknown");
-  });
-
-  test("prepends historical usage from compaction summary", () => {
-    const historicalUsage: ChatUsageDisplay = {
-      input: { tokens: 500, cost_usd: 0.01 },
-      output: { tokens: 250, cost_usd: 0.02 },
-      cached: { tokens: 0 },
-      cacheCreate: { tokens: 0 },
-      reasoning: { tokens: 0 },
-      model: "historical-model",
-    };
-
-    const msg = createAssistant("a1", basicUsage, "claude-sonnet-4-5", historicalUsage);
-    const result = collectUsageHistory([msg]);
-
-    expect(result).toHaveLength(2);
-    expect(result[0]).toBe(historicalUsage); // Historical comes first
-    expect(result[1].model).toBe("claude-sonnet-4-5"); // Current message second
-  });
-
-  test("uses latest historical usage when multiple messages have it", () => {
-    const historical1: ChatUsageDisplay = {
-      input: { tokens: 100 },
-      output: { tokens: 50 },
-      cached: { tokens: 0 },
-      cacheCreate: { tokens: 0 },
-      reasoning: { tokens: 0 },
-      model: "first",
-    };
-
-    const historical2: ChatUsageDisplay = {
-      input: { tokens: 200 },
-      output: { tokens: 100 },
-      cached: { tokens: 0 },
-      cacheCreate: { tokens: 0 },
-      reasoning: { tokens: 0 },
-      model: "second",
-    };
-
-    const msg1 = createAssistant("a1", basicUsage, "model-1", historical1);
-    const msg2 = createAssistant("a2", basicUsage, "model-2", historical2);
-    const result = collectUsageHistory([msg1, msg2]);
-
-    expect(result).toHaveLength(3); // historical2 + msg1 + msg2
-    expect(result[0]).toBe(historical2); // Latest historical usage wins
-    expect(result[0].model).toBe("second");
   });
 
   test("handles mixed message order correctly", () => {

@@ -323,7 +323,7 @@ export const workspace = {
       ),
     },
   },
-/**
+  /**
    * Get the current plan file content for a workspace.
    * Used by UI to refresh plan display when file is edited externally.
    */

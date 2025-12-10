@@ -111,16 +111,9 @@ export function collectUsageHistory(
 ): ChatUsageDisplay[] {
   // Extract usage from assistant messages
   const usageHistory: ChatUsageDisplay[] = [];
-  let cumulativeHistorical: ChatUsageDisplay | undefined;
 
   for (const msg of messages) {
     if (msg.role === "assistant") {
-      // Check for historical usage from compaction summaries
-      // This preserves costs from messages deleted during compaction
-      if (msg.metadata?.historicalUsage) {
-        cumulativeHistorical = msg.metadata.historicalUsage;
-      }
-
       // Extract current message's usage (total across all steps)
       if (msg.metadata?.usage) {
         // Use the model from this specific message (not global)
@@ -132,12 +125,6 @@ export function collectUsageHistory(
         }
       }
     }
-  }
-
-  // If we have historical usage from a compaction, prepend it to history
-  // This ensures costs from pre-compaction messages are included in totals
-  if (cumulativeHistorical) {
-    usageHistory.unshift(cumulativeHistorical);
   }
 
   return usageHistory;
