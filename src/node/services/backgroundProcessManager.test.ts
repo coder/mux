@@ -461,7 +461,7 @@ describe("BackgroundProcessManager", () => {
       if (!result.success) return;
 
       // Wait with timeout to ensure blocking
-      const output = await manager.getOutput(result.processId, undefined, 1);
+      const output = await manager.getOutput(result.processId, undefined, undefined, 1);
       expect(output.success).toBe(true);
       if (!output.success) return;
 
@@ -523,6 +523,119 @@ describe("BackgroundProcessManager", () => {
       expect(output.output).toContain("INFO: message");
       expect(output.output).toContain("INFO: another");
       expect(output.output).not.toContain("DEBUG");
+    });
+
+    it("should exclude matching lines when filter_exclude is true", async () => {
+      const result = await manager.spawn(
+        runtime,
+        testWorkspaceId,
+        "echo 'INFO: message'; echo 'DEBUG: noise'; echo 'INFO: another'",
+        { cwd: process.cwd(), displayName: "test" }
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Exclude DEBUG lines (invert filter)
+      const output = await manager.getOutput(result.processId, "DEBUG", true);
+      expect(output.success).toBe(true);
+      if (!output.success) return;
+
+      expect(output.output).toContain("INFO: message");
+      expect(output.output).toContain("INFO: another");
+      expect(output.output).not.toContain("DEBUG");
+    });
+
+    it("should return error when filter_exclude is true but no filter provided", async () => {
+      const result = await manager.spawn(runtime, testWorkspaceId, "echo hello", {
+        cwd: process.cwd(),
+        displayName: "test",
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // filter_exclude without filter should error
+      const output = await manager.getOutput(result.processId, undefined, true);
+      expect(output.success).toBe(false);
+      if (output.success) return;
+      expect(output.error).toContain("filter_exclude requires filter");
+    });
+
+    it("should keep waiting when only excluded lines arrive", async () => {
+      // Script outputs progress spam for 300ms, then meaningful output
+      const result = await manager.spawn(
+        runtime,
+        testWorkspaceId,
+        "for i in 1 2 3; do echo 'PROGRESS'; sleep 0.1; done; echo 'DONE'",
+        { cwd: process.cwd(), displayName: "test" }
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // With filter_exclude for PROGRESS, should wait until DONE arrives
+      // Set timeout long enough to cover the full script duration
+      const output = await manager.getOutput(result.processId, "PROGRESS", true, 2);
+      expect(output.success).toBe(true);
+      if (!output.success) return;
+
+      // Should only see DONE, not PROGRESS lines
+      expect(output.output).toContain("DONE");
+      expect(output.output).not.toContain("PROGRESS");
+      // Should have waited ~300ms+ for meaningful output
+      expect(output.elapsed_ms).toBeGreaterThanOrEqual(200);
+    });
+
+    it("should return when process exits even if only excluded lines", async () => {
+      // Script outputs ONLY excluded lines then exits
+      const result = await manager.spawn(
+        runtime,
+        testWorkspaceId,
+        "echo 'PROGRESS'; echo 'PROGRESS'; exit 0",
+        { cwd: process.cwd(), displayName: "test" }
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Wait for process to exit
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      // Should return (not hang) even though all output is excluded
+      const output = await manager.getOutput(result.processId, "PROGRESS", true, 2);
+      expect(output.success).toBe(true);
+      if (!output.success) return;
+
+      // Output should be empty (all lines excluded), but we should have status
+      expect(output.output.trim()).toBe("");
+      expect(output.status).toBe("exited");
+    });
+
+    it("should timeout and return even if only excluded lines arrived", async () => {
+      // Script outputs progress indefinitely
+      const result = await manager.spawn(
+        runtime,
+        testWorkspaceId,
+        "while true; do echo 'PROGRESS'; sleep 0.1; done",
+        { cwd: process.cwd(), displayName: "test", timeoutSecs: 10 }
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Short timeout - should return with empty output, not hang
+      const output = await manager.getOutput(result.processId, "PROGRESS", true, 0.3);
+      expect(output.success).toBe(true);
+      if (!output.success) return;
+
+      // Should have returned due to timeout, output empty (all excluded)
+      expect(output.output.trim()).toBe("");
+      expect(output.status).toBe("running");
+      expect(output.elapsed_ms).toBeGreaterThanOrEqual(250);
+      expect(output.elapsed_ms).toBeLessThan(1000); // Didn't hang
     });
   });
 

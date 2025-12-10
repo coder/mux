@@ -251,8 +251,20 @@ export const TOOL_DEFINITIONS = {
         .string()
         .optional()
         .describe(
-          "Optional regex to filter output lines. Only matching lines are returned. " +
+          "Optional regex to filter output lines. By default, only matching lines are returned. " +
+            "When filter_exclude is true, matching lines are excluded instead. " +
             "Non-matching lines are permanently discarded and cannot be retrieved later."
+        ),
+      filter_exclude: z
+        .boolean()
+        .optional()
+        .describe(
+          "When true, lines matching 'filter' are excluded instead of kept. " +
+            "Key behavior: excluded lines do NOT cause early return from timeout - " +
+            "waiting continues until non-excluded output arrives or process exits. " +
+            "Use to avoid busy polling on progress spam (e.g., filter='⏳|waiting|\\.\\.\\.' with filter_exclude=true " +
+            "lets you set a long timeout and only wake on meaningful output). " +
+            "Requires 'filter' to be set."
         ),
       timeout_secs: z
         .number()

@@ -12,7 +12,7 @@ export const createBashOutputTool: ToolFactory = (config: ToolConfiguration) => 
     description: TOOL_DEFINITIONS.bash_output.description,
     inputSchema: TOOL_DEFINITIONS.bash_output.schema,
     execute: async (
-      { process_id, filter, timeout_secs },
+      { process_id, filter, filter_exclude, timeout_secs },
       { abortSignal }
     ): Promise<BashOutputToolResult> => {
       if (!config.backgroundProcessManager) {
@@ -43,6 +43,7 @@ export const createBashOutputTool: ToolFactory = (config: ToolConfiguration) => 
       return await config.backgroundProcessManager.getOutput(
         process_id,
         filter,
+        filter_exclude,
         timeout_secs,
         abortSignal,
         config.workspaceId

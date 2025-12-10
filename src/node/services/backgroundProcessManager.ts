@@ -436,6 +436,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
    * Returns only NEW output since the last call (tracked per process).
    * @param processId Process ID to get output from
    * @param filter Optional regex pattern to filter output lines (non-matching lines are discarded permanently)
+   * @param filterExclude When true, invert filter to exclude matching lines instead of keeping them
    * @param timeout Seconds to wait for output if none available (default 0 = non-blocking)
    * @param abortSignal Optional signal to abort waiting early (e.g., when stream is cancelled)
    * @param workspaceId Optional workspace ID to check for queued messages (return early to process them)
@@ -443,6 +444,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
   async getOutput(
     processId: string,
     filter?: string,
+    filterExclude?: boolean,
     timeout?: number,
     abortSignal?: AbortSignal,
     workspaceId?: string
@@ -458,8 +460,13 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
   > {
     const timeoutSecs = Math.max(timeout ?? 0, 0);
     log.debug(
-      `BackgroundProcessManager.getOutput(${processId}, filter=${filter ?? "none"}, timeout=${timeoutSecs}s) called`
+      `BackgroundProcessManager.getOutput(${processId}, filter=${filter ?? "none"}, exclude=${filterExclude ?? false}, timeout=${timeoutSecs}s) called`
     );
+
+    // Validate: filter_exclude requires filter
+    if (filterExclude && !filter) {
+      return { success: false, error: "filter_exclude requires filter to be set" };
+    }
 
     const proc = await this.getProcess(processId);
     if (!proc) {
@@ -477,18 +484,38 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       `BackgroundProcessManager.getOutput: proc.outputDir=${proc.outputDir}, offset=${pos.outputBytes}`
     );
 
+    // Pre-compile regex if filter is provided
+    let filterRegex: RegExp | undefined;
+    if (filter) {
+      try {
+        filterRegex = new RegExp(filter);
+      } catch (e) {
+        return { success: false, error: `Invalid filter regex: ${getErrorMessage(e)}` };
+      }
+    }
+
+    // Apply filtering to output, returns filtered result
+    const applyFilter = (raw: string): string => {
+      if (!filterRegex) return raw;
+      const lines = raw.split("\n");
+      const filtered = filterExclude
+        ? lines.filter((line) => !filterRegex.test(line))
+        : lines.filter((line) => filterRegex.test(line));
+      return filtered.join("\n");
+    };
+
     // Blocking wait loop: poll for output up to timeout seconds
     const startTime = Date.now();
     const timeoutMs = timeoutSecs * 1000;
     const pollIntervalMs = 100;
-    let output = "";
+    let accumulatedRaw = "";
     let currentStatus = proc.status;
 
     while (true) {
       // Read new content via the handle (works for both local and SSH runtimes)
       // Output is already unified in output.log (stdout + stderr via 2>&1)
       const result = await proc.handle.readOutput(pos.outputBytes);
-      output = result.content;
+      accumulatedRaw += result.content;
 
       // Update read position
       pos.outputBytes = result.newOffset;
@@ -497,12 +524,19 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       const refreshedProc = await this.getProcess(processId);
       currentStatus = refreshedProc?.status ?? proc.status;
 
+      // When using filter_exclude, check if we have meaningful (non-excluded) output
+      // If all new output matches the exclusion pattern, keep waiting
+      const filteredOutput = applyFilter(accumulatedRaw);
+      const hasMeaningfulOutput = filterExclude
+        ? filteredOutput.trim().length > 0
+        : accumulatedRaw.length > 0;
+
       // Return immediately if:
-      // 1. We have output
+      // 1. We have meaningful output (after filtering if filter_exclude is set)
       // 2. Process is no longer running (exited/killed/failed)
       // 3. Timeout elapsed
       // 4. Abort signal received (user sent a new message)
-      if (output.length > 0 || currentStatus !== "running") {
+      if (hasMeaningfulOutput || currentStatus !== "running") {
         break;
       }
 
@@ -525,22 +559,9 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
     }
 
-    log.debug(`BackgroundProcessManager.getOutput: read outputLen=${output.length}`);
+    log.debug(`BackgroundProcessManager.getOutput: read rawLen=${accumulatedRaw.length}`);
 
-    let filteredOutput = output;
-
-    // Apply filter if provided (permanently discards non-matching lines)
-    if (filter) {
-      try {
-        const regex = new RegExp(filter);
-        filteredOutput = output
-          .split("\n")
-          .filter((line) => regex.test(line))
-          .join("\n");
-      } catch (e) {
-        return { success: false, error: `Invalid filter regex: ${getErrorMessage(e)}` };
-      }
-    }
+    const filteredOutput = applyFilter(accumulatedRaw);
 
     return {
       success: true,
