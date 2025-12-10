@@ -117,7 +117,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     if (!api) return false; // Return false to indicate metadata wasn't loaded
     try {
       const metadataList = await api.workspace.list(undefined);
-      console.log("[WorkspaceContext] Loaded metadata list:", metadataList.map(m => ({ id: m.id, name: m.name, title: m.title })));
+      console.log(
+        "[WorkspaceContext] Loaded metadata list:",
+        metadataList.map((m) => ({ id: m.id, name: m.name, title: m.title }))
+      );
       const metadataMap = new Map<string, FrontendWorkspaceMetadata>();
       for (const metadata of metadataList) {
         ensureCreatedAt(metadata);
@@ -385,12 +388,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       if (!api) return { success: false, error: "API not connected" };
       try {
         const result = await api.workspace.updateTitle({ workspaceId, title: newTitle });
-        console.log("[WorkspaceContext] updateTitle result:", result);
         if (result.success) {
           // Reload workspace metadata to get the updated title
-          console.log("[WorkspaceContext] Reloading metadata...");
           await loadWorkspaceMetadata();
-          console.log("[WorkspaceContext] Metadata reloaded");
           return { success: true };
         } else {
           console.error("Failed to update workspace title:", result.error);

@@ -206,13 +206,14 @@ function AppInner() {
     (prev, next) =>
       compareMaps(prev, next, (a, b) => {
         if (a.length !== b.length) return false;
-        // Check ID, name, and status to detect changes
+        // Check ID, name, title, and status to detect changes
         return a.every((meta, i) => {
           const other = b[i];
           return (
             other &&
             meta.id === other.id &&
             meta.name === other.name &&
+            meta.title === other.title &&
             meta.status === other.status
           );
         });
