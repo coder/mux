@@ -607,7 +607,8 @@ if (gotTheLock) {
 
   app.on("activate", () => {
     // Skip splash on reactivation - services already loaded, window creation is fast
-    if (app.isReady() && mainWindow === null) {
+    // Guard: services must be loaded (prevents race if activate fires during startup)
+    if (app.isReady() && mainWindow === null && services) {
       createWindow();
     }
   });
