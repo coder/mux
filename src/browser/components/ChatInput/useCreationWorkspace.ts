@@ -71,8 +71,8 @@ interface UseCreationWorkspaceReturn {
   handleSend: (message: string, imageParts?: ImagePart[]) => Promise<boolean>;
   /** Workspace name/title generation state and actions (for CreationControls) */
   nameState: WorkspaceNameState;
-  /** The confirmed title being used for creation (null until generation resolves) */
-  creatingWithTitle: string | null;
+  /** The confirmed name being used for creation (null until generation resolves) */
+  creatingWithName: string | null;
 }
 
 /**
@@ -93,8 +93,8 @@ export function useCreationWorkspace({
   const [recommendedTrunk, setRecommendedTrunk] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [isSending, setIsSending] = useState(false);
-  // The confirmed title being used for workspace creation (set after waitForGeneration resolves)
-  const [creatingWithTitle, setCreatingWithTitle] = useState<string | null>(null);
+  // The confirmed name being used for workspace creation (set after waitForGeneration resolves)
+  const [creatingWithName, setCreatingWithName] = useState<string | null>(null);
 
   // Centralized draft workspace settings with automatic persistence
   const {
@@ -147,19 +147,19 @@ export function useCreationWorkspace({
 
       setIsSending(true);
       setToast(null);
-      setCreatingWithTitle(null);
+      setCreatingWithName(null);
 
       try {
         // Wait for identity generation to complete (blocks if still in progress)
-        // Returns null if generation failed or manual title is empty (error already set in hook)
+        // Returns null if generation failed or manual name is empty (error already set in hook)
         const identity = await waitForGeneration();
         if (!identity) {
           setIsSending(false);
           return false;
         }
 
-        // Set the confirmed title for UI display
-        setCreatingWithTitle(identity.title);
+        // Set the confirmed name for UI display
+        setCreatingWithName(identity.name);
 
         // Get runtime config from options
         const runtimeString = getRuntimeString();
@@ -259,7 +259,7 @@ export function useCreationWorkspace({
     handleSend,
     // Workspace name/title state (for CreationControls)
     nameState: workspaceNameState,
-    // The confirmed title being used for creation (null until generation resolves)
-    creatingWithTitle,
+    // The confirmed name being used for creation (null until generation resolves)
+    creatingWithName,
   };
 }

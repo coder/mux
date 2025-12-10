@@ -20,8 +20,8 @@ export interface WorkspaceIdentity {
 
 /** State and actions for workspace name generation, suitable for passing to components */
 export interface WorkspaceNameState {
-  /** The generated or manually entered title (shown in UI) */
-  title: string;
+  /** The generated or manually entered name (shown in CreationControls UI) */
+  name: string;
   /** Whether name generation is in progress */
   isGenerating: boolean;
   /** Whether auto-generation is enabled */
@@ -30,8 +30,8 @@ export interface WorkspaceNameState {
   error: string | null;
   /** Set whether auto-generation is enabled */
   setAutoGenerate: (enabled: boolean) => void;
-  /** Set manual title (for when auto-generate is off) */
-  setTitle: (title: string) => void;
+  /** Set manual name (for when auto-generate is off) */
+  setName: (name: string) => void;
 }
 
 export interface UseWorkspaceNameReturn extends WorkspaceNameState {
@@ -52,8 +52,8 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
 
   // Generated identity (name + title) from AI
   const [generatedIdentity, setGeneratedIdentity] = useState<WorkspaceIdentity | null>(null);
-  // Manual title (user-editable)
-  const [manualTitle, setManualTitle] = useState("");
+  // Manual name (user-editable during creation)
+  const [manualName, setManualName] = useState("");
   const [autoGenerate, setAutoGenerate] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,8 +73,8 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
     requestId: number;
   } | null>(null);
 
-  // Title shown in UI: generated title when auto, manual when not
-  const title = autoGenerate ? (generatedIdentity?.title ?? "") : manualTitle;
+  // Name shown in CreationControls UI: generated name when auto, manual when not
+  const name = autoGenerate ? (generatedIdentity?.name ?? "") : manualName;
 
   // Cancel any pending generation and resolve waiters with null
   const cancelPendingGeneration = useCallback(() => {
@@ -200,7 +200,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
     };
   }, [message, autoGenerate, debounceMs, generateIdentity, cancelPendingGeneration]);
 
-  // When auto-generate is toggled, handle title preservation
+  // When auto-generate is toggled, handle name preservation
   const handleSetAutoGenerate = useCallback(
     (enabled: boolean) => {
       if (enabled) {
@@ -208,9 +208,9 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
         lastGeneratedForRef.current = "";
         setError(null);
       } else {
-        // Switching to manual: copy generated title as starting point for editing
-        if (generatedIdentity?.title) {
-          setManualTitle(generatedIdentity.title);
+        // Switching to manual: copy generated name as starting point for editing
+        if (generatedIdentity?.name) {
+          setManualName(generatedIdentity.name);
         }
       }
       setAutoGenerate(enabled);
@@ -218,23 +218,28 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
     [generatedIdentity]
   );
 
-  const setTitle = useCallback((title: string) => {
-    setManualTitle(title);
-    // Clear error when user starts typing (title has no validation requirements)
+  const setNameManual = useCallback((newName: string) => {
+    setManualName(newName);
+    // Clear error when user starts typing
     setError(null);
   }, []);
 
   const waitForGeneration = useCallback(async (): Promise<WorkspaceIdentity | null> => {
-    // If auto-generate is off, we need to generate a name for the manual title
-    // The user only edited the title, so we still need the backend to provide a name
+    // If auto-generate is off, user has provided a manual name
+    // Use that name directly with a generated title from the message
     if (!autoGenerate) {
-      if (!manualTitle.trim()) {
-        setError("Please enter a workspace title");
+      if (!manualName.trim()) {
+        setError("Please enter a workspace name");
         return null;
       }
-      // Generate identity based on the manual title
-      // This ensures we get a proper name even when title is manually set
-      return generateIdentity(manualTitle);
+      // Generate identity for the message to get the title, then override name with manual
+      const identity = await generateIdentity(message);
+      if (identity) {
+        // Use manual name with AI-generated title
+        return { name: manualName.trim(), title: identity.title };
+      }
+      // Fallback: if generation fails, use manual name as title too
+      return { name: manualName.trim(), title: manualName.trim() };
     }
 
     // Always wait for generation to complete on the full message.
@@ -269,18 +274,26 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
     }
 
     return null;
-  }, [autoGenerate, manualTitle, generatedIdentity, message, generateIdentity]);
+  }, [autoGenerate, manualName, generatedIdentity, message, generateIdentity]);
 
   return useMemo(
     () => ({
-      title,
+      name,
       isGenerating,
       autoGenerate,
       error,
       setAutoGenerate: handleSetAutoGenerate,
-      setTitle,
+      setName: setNameManual,
       waitForGeneration,
     }),
-    [title, isGenerating, autoGenerate, error, handleSetAutoGenerate, setTitle, waitForGeneration]
+    [
+      name,
+      isGenerating,
+      autoGenerate,
+      error,
+      handleSetAutoGenerate,
+      setNameManual,
+      waitForGeneration,
+    ]
   );
 }
