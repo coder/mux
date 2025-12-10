@@ -1,5 +1,5 @@
 import { act, cleanup, render, waitFor } from "@testing-library/react";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 
 // Mock WebSocket that we can control
@@ -81,38 +81,15 @@ function APIStateObserver(props: { onState: (state: UseAPIResult) => void }) {
   return null;
 }
 
+// Factory that creates MockWebSocket instances (injected via prop)
+const createMockWebSocket = (url: string) => new MockWebSocket(url) as unknown as WebSocket;
+
 describe("API reconnection", () => {
-  let originalConsoleError: typeof console.error;
-  let originalWebSocket: typeof WebSocket;
-
-  beforeAll(() => {
-    // Store originals for restoration
-    originalConsoleError = globalThis.console.error;
-    originalWebSocket = globalThis.WebSocket;
-    // Suppress console errors from React during tests
-    // eslint-disable-next-line @typescript-eslint/no-empty-function
-    globalThis.console.error = () => {};
-  });
-
-  afterAll(() => {
-    // Restore originals
-    globalThis.console.error = originalConsoleError;
-    globalThis.WebSocket = originalWebSocket;
-  });
-
   beforeEach(() => {
+    // Minimal DOM setup required by @testing-library/react
     const happyWindow = new GlobalWindow();
-    // Create a window object that mimics browser environment (not Electron)
-    const mockWindow = Object.assign(happyWindow, {
-      location: { origin: "http://localhost:3000", search: "" },
-      WebSocket: MockWebSocket,
-    });
-    globalThis.window = mockWindow as unknown as Window & typeof globalThis;
+    globalThis.window = happyWindow as unknown as Window & typeof globalThis;
     globalThis.document = happyWindow.document as unknown as Document;
-    globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket;
-    // Explicitly delete window.api to ensure we're not in Electron mode
-    // (other tests may have set this on the global)
-    delete (globalThis.window as unknown as Record<string, unknown>).api;
     MockWebSocket.reset();
   });
 
@@ -127,12 +104,11 @@ describe("API reconnection", () => {
     const states: string[] = [];
 
     render(
-      <APIProvider>
+      <APIProvider createWebSocket={createMockWebSocket}>
         <APIStateObserver onState={(s) => states.push(s.status)} />
       </APIProvider>
     );
 
-    // Initial connection
     const ws1 = MockWebSocket.lastInstance();
     expect(ws1).toBeDefined();
 
@@ -143,7 +119,6 @@ describe("API reconnection", () => {
       await new Promise((r) => setTimeout(r, 10));
     });
 
-    // Should be connected
     expect(states).toContain("connected");
 
     // Simulate server restart (close code 1006 = abnormal closure)
@@ -156,7 +131,6 @@ describe("API reconnection", () => {
       expect(states).toContain("reconnecting");
     });
 
-    // Verify auth_required was never set
     expect(states.filter((s) => s === "auth_required")).toHaveLength(0);
 
     // New WebSocket should be created for reconnect attempt (after delay)
@@ -169,7 +143,7 @@ describe("API reconnection", () => {
     const states: string[] = [];
 
     render(
-      <APIProvider>
+      <APIProvider createWebSocket={createMockWebSocket}>
         <APIStateObserver onState={(s) => states.push(s.status)} />
       </APIProvider>
     );
@@ -177,7 +151,6 @@ describe("API reconnection", () => {
     const ws1 = MockWebSocket.lastInstance();
     expect(ws1).toBeDefined();
 
-    // Simulate successful connection then auth rejection
     await act(async () => {
       ws1!.simulateOpen();
       await new Promise((r) => setTimeout(r, 10));
@@ -186,7 +159,7 @@ describe("API reconnection", () => {
     expect(states).toContain("connected");
 
     act(() => {
-      ws1!.simulateClose(4401); // Auth required code
+      ws1!.simulateClose(4401);
     });
 
     await waitFor(() => {
@@ -198,7 +171,7 @@ describe("API reconnection", () => {
     const states: string[] = [];
 
     render(
-      <APIProvider>
+      <APIProvider createWebSocket={createMockWebSocket}>
         <APIStateObserver onState={(s) => states.push(s.status)} />
       </APIProvider>
     );
@@ -214,7 +187,7 @@ describe("API reconnection", () => {
     expect(states).toContain("connected");
 
     act(() => {
-      ws1!.simulateClose(1008); // Policy violation (auth)
+      ws1!.simulateClose(1008);
     });
 
     await waitFor(() => {
@@ -226,7 +199,7 @@ describe("API reconnection", () => {
     const states: string[] = [];
 
     render(
-      <APIProvider>
+      <APIProvider createWebSocket={createMockWebSocket}>
         <APIStateObserver onState={(s) => states.push(s.status)} />
       </APIProvider>
     );
@@ -234,18 +207,16 @@ describe("API reconnection", () => {
     const ws1 = MockWebSocket.lastInstance();
     expect(ws1).toBeDefined();
 
-    // First connection fails (server not up, no previous connection)
-    // Browser fires error then close - we simulate both
+    // First connection fails - browser fires error then close
     act(() => {
       ws1!.simulateError();
-      ws1!.simulateClose(1006); // Abnormal closure
+      ws1!.simulateClose(1006);
     });
 
     await waitFor(() => {
       expect(states).toContain("auth_required");
     });
 
-    // Should not attempt reconnect on first failure
     expect(states.filter((s) => s === "reconnecting")).toHaveLength(0);
   });
 
@@ -253,7 +224,7 @@ describe("API reconnection", () => {
     const states: string[] = [];
 
     render(
-      <APIProvider>
+      <APIProvider createWebSocket={createMockWebSocket}>
         <APIStateObserver onState={(s) => states.push(s.status)} />
       </APIProvider>
     );
@@ -261,7 +232,6 @@ describe("API reconnection", () => {
     const ws1 = MockWebSocket.lastInstance();
     expect(ws1).toBeDefined();
 
-    // Successful connection first
     await act(async () => {
       ws1!.simulateOpen();
       await new Promise((r) => setTimeout(r, 10));
@@ -269,17 +239,16 @@ describe("API reconnection", () => {
 
     expect(states).toContain("connected");
 
-    // Connection lost after being connected (error + close)
+    // Connection lost after being connected
     act(() => {
       ws1!.simulateError();
-      ws1!.simulateClose(1006); // Abnormal closure
+      ws1!.simulateClose(1006);
     });
 
     await waitFor(() => {
       expect(states).toContain("reconnecting");
     });
 
-    // Should not show auth_required
     const authRequiredAfterConnected = states.slice(states.indexOf("connected") + 1);
     expect(authRequiredAfterConnected.filter((s) => s === "auth_required")).toHaveLength(0);
   });

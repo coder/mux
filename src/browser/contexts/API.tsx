@@ -51,6 +51,8 @@ interface APIProviderProps {
   children: React.ReactNode;
   /** Optional pre-created client. If provided, skips internal connection setup. */
   client?: APIClient;
+  /** WebSocket factory for testing. Defaults to native WebSocket constructor. */
+  createWebSocket?: (url: string) => WebSocket;
 }
 
 function getApiBase(): string {
@@ -72,7 +74,10 @@ function createElectronClient(): { client: APIClient; cleanup: () => void } {
   };
 }
 
-function createBrowserClient(authToken: string | null): {
+function createBrowserClient(
+  authToken: string | null,
+  createWebSocket: (url: string) => WebSocket
+): {
   client: APIClient;
   cleanup: () => void;
   ws: WebSocket;
@@ -84,7 +89,7 @@ function createBrowserClient(authToken: string | null): {
     ? `${WS_BASE}/orpc/ws?token=${encodeURIComponent(authToken)}`
     : `${WS_BASE}/orpc/ws`;
 
-  const ws = new WebSocket(wsUrl);
+  const ws = createWebSocket(wsUrl);
   const link = new WebSocketLink({ websocket: ws });
 
   return {
@@ -114,6 +119,11 @@ export const APIProvider = (props: APIProviderProps) => {
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scheduleReconnectRef = useRef<(() => void) | null>(null);
 
+  const wsFactory = useMemo(
+    () => props.createWebSocket ?? ((url: string) => new WebSocket(url)),
+    [props.createWebSocket]
+  );
+
   const connect = useCallback(
     (token: string | null) => {
       if (props.client) {
@@ -123,7 +133,8 @@ export const APIProvider = (props: APIProviderProps) => {
         return;
       }
 
-      if (window.api) {
+      // Skip Electron detection if custom WebSocket factory provided (for testing)
+      if (!props.createWebSocket && window.api) {
         const { client, cleanup } = createElectronClient();
         window.__ORPC_CLIENT__ = client;
         cleanupRef.current = cleanup;
@@ -132,7 +143,7 @@ export const APIProvider = (props: APIProviderProps) => {
       }
 
       setState({ status: "connecting" });
-      const { client, cleanup, ws } = createBrowserClient(token);
+      const { client, cleanup, ws } = createBrowserClient(token, wsFactory);
 
       ws.addEventListener("open", () => {
         client.general
@@ -196,7 +207,7 @@ export const APIProvider = (props: APIProviderProps) => {
         }
       });
     },
-    [props.client]
+    [props.client, props.createWebSocket, wsFactory]
   );
 
   // Schedule reconnection with exponential backoff
