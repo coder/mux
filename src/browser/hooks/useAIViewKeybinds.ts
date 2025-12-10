@@ -22,6 +22,7 @@ interface UseAIViewKeybindsParams {
   chatInputAPI: React.RefObject<ChatInputAPI | null>;
   jumpToBottom: () => void;
   handleOpenTerminal: () => void;
+  handleOpenInEditor: () => void;
   aggregator: StreamingMessageAggregator | undefined; // For compaction detection
   setEditingMessage: (editing: { id: string; content: string } | undefined) => void;
   vimEnabled: boolean; // For vim-aware interrupt keybind
@@ -34,6 +35,7 @@ interface UseAIViewKeybindsParams {
  * - Ctrl+Shift+T: Toggle thinking level
  * - Ctrl+G: Jump to bottom
  * - Ctrl+T: Open terminal
+ * - Ctrl+Shift+E: Open in editor
  * - Ctrl+C (during compaction in vim mode): Cancel compaction, restore command
  *
  * Note: In vim mode, Ctrl+C always interrupts streams. Use vim yank (y) commands for copying.
@@ -49,6 +51,7 @@ export function useAIViewKeybinds({
   chatInputAPI,
   jumpToBottom,
   handleOpenTerminal,
+  handleOpenInEditor,
   aggregator,
   setEditingMessage,
   vimEnabled,
@@ -144,6 +147,9 @@ export function useAIViewKeybinds({
       } else if (matchesKeybind(e, KEYBINDS.OPEN_TERMINAL)) {
         e.preventDefault();
         handleOpenTerminal();
+      } else if (matchesKeybind(e, KEYBINDS.OPEN_IN_EDITOR)) {
+        e.preventDefault();
+        handleOpenInEditor();
       }
     };
 
@@ -152,6 +158,7 @@ export function useAIViewKeybinds({
   }, [
     jumpToBottom,
     handleOpenTerminal,
+    handleOpenInEditor,
     workspaceId,
     canInterrupt,
     showRetryBarrier,

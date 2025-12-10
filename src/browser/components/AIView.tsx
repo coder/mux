@@ -34,6 +34,7 @@ import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsConte
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
+import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { readPersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useThinking } from "@/browser/contexts/ThinkingContext";
 import {
@@ -371,6 +372,11 @@ const AIViewInner: React.FC<AIViewProps> = ({
     openTerminal(workspaceId, runtimeConfig);
   }, [workspaceId, openTerminal, runtimeConfig]);
 
+  const openInEditor = useOpenInEditor();
+  const handleOpenInEditor = useCallback(() => {
+    void openInEditor(workspaceId, namedWorkspacePath, runtimeConfig);
+  }, [workspaceId, namedWorkspacePath, openInEditor, runtimeConfig]);
+
   // Auto-scroll when messages or todos update (during streaming)
   useEffect(() => {
     if (workspaceState && autoScroll) {
@@ -414,6 +420,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
     chatInputAPI,
     jumpToBottom,
     handleOpenTerminal,
+    handleOpenInEditor,
     aggregator,
     setEditingMessage,
     vimEnabled,
