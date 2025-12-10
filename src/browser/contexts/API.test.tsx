@@ -1,5 +1,5 @@
 import { act, cleanup, render, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, mock, test, beforeAll } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 
 // Mock WebSocket that we can control
@@ -82,23 +82,37 @@ function APIStateObserver(props: { onState: (state: UseAPIResult) => void }) {
 }
 
 describe("API reconnection", () => {
+  let originalConsoleError: typeof console.error;
+  let originalWebSocket: typeof WebSocket;
+
   beforeAll(() => {
+    // Store originals for restoration
+    originalConsoleError = globalThis.console.error;
+    originalWebSocket = globalThis.WebSocket;
     // Suppress console errors from React during tests
     // eslint-disable-next-line @typescript-eslint/no-empty-function
     globalThis.console.error = () => {};
   });
 
+  afterAll(() => {
+    // Restore originals
+    globalThis.console.error = originalConsoleError;
+    globalThis.WebSocket = originalWebSocket;
+  });
+
   beforeEach(() => {
-    const window = new GlobalWindow();
-    globalThis.window = window as unknown as Window & typeof globalThis;
-    globalThis.document = window.document as unknown as Document;
+    const happyWindow = new GlobalWindow();
+    // Create a window object that mimics browser environment (not Electron)
+    const mockWindow = Object.assign(happyWindow, {
+      location: { origin: "http://localhost:3000", search: "" },
+      WebSocket: MockWebSocket,
+    });
+    globalThis.window = mockWindow as unknown as Window & typeof globalThis;
+    globalThis.document = happyWindow.document as unknown as Document;
     globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket;
-    // Ensure we're not in Electron mode (would skip WebSocket)
-    (globalThis.window as unknown as Record<string, unknown>).api = undefined;
-    // Mock import.meta.env
-    (globalThis as Record<string, unknown>).import = {
-      meta: { env: { VITE_BACKEND_URL: "http://localhost:3000" } },
-    };
+    // Explicitly delete window.api to ensure we're not in Electron mode
+    // (other tests may have set this on the global)
+    delete (globalThis.window as unknown as Record<string, unknown>).api;
     MockWebSocket.reset();
   });
 
@@ -208,7 +222,7 @@ describe("API reconnection", () => {
     });
   });
 
-  test("shows auth_required on first connection error without token", async () => {
+  test("shows auth_required on first connection failure without token", async () => {
     const states: string[] = [];
 
     render(
@@ -221,8 +235,10 @@ describe("API reconnection", () => {
     expect(ws1).toBeDefined();
 
     // First connection fails (server not up, no previous connection)
+    // Browser fires error then close - we simulate both
     act(() => {
       ws1!.simulateError();
+      ws1!.simulateClose(1006); // Abnormal closure
     });
 
     await waitFor(() => {
@@ -233,7 +249,7 @@ describe("API reconnection", () => {
     expect(states.filter((s) => s === "reconnecting")).toHaveLength(0);
   });
 
-  test("reconnects on error when previously connected", async () => {
+  test("reconnects on connection loss when previously connected", async () => {
     const states: string[] = [];
 
     render(
@@ -253,9 +269,10 @@ describe("API reconnection", () => {
 
     expect(states).toContain("connected");
 
-    // Error after being connected
+    // Connection lost after being connected (error + close)
     act(() => {
       ws1!.simulateError();
+      ws1!.simulateClose(1006); // Abnormal closure
     });
 
     await waitFor(() => {

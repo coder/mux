@@ -162,35 +162,37 @@ export const APIProvider = (props: APIProviderProps) => {
           });
       });
 
+      // Note: Browser fires 'error' before 'close', so we handle reconnection
+      // only in 'close' to avoid double-scheduling. The 'error' event just
+      // signals that something went wrong; 'close' provides the final state.
       ws.addEventListener("error", () => {
-        cleanup();
-        if (hasConnectedRef.current) {
-          // Was connected before - try to reconnect
-          scheduleReconnectRef.current?.();
-        } else if (token) {
-          // First connection failed with token - might be invalid
-          clearStoredAuthToken();
-          setState({ status: "auth_required", error: "Connection failed - invalid token?" });
-        } else {
-          // First connection failed without token - server might require auth
-          setState({ status: "auth_required" });
-        }
+        // Error occurred - close event will follow and handle reconnection
+        // We don't call cleanup() here since close handler will do it
       });
 
       ws.addEventListener("close", (event) => {
+        cleanup();
+
         // Auth-specific close codes
         if (event.code === 1008 || event.code === 4401) {
-          cleanup();
           clearStoredAuthToken();
           hasConnectedRef.current = false; // Reset - need fresh auth
           setState({ status: "auth_required", error: "Authentication required" });
           return;
         }
 
-        // Normal disconnection (server restart, network issue)
+        // If we were previously connected, try to reconnect
         if (hasConnectedRef.current) {
-          cleanup();
           scheduleReconnectRef.current?.();
+          return;
+        }
+
+        // First connection failed - check if auth might be needed
+        if (token) {
+          clearStoredAuthToken();
+          setState({ status: "auth_required", error: "Connection failed - invalid token?" });
+        } else {
+          setState({ status: "auth_required" });
         }
       });
     },
