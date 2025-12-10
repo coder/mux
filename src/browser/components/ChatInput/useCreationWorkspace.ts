@@ -19,7 +19,11 @@ import type { Toast } from "@/browser/components/ChatInputToast";
 import { createErrorToast } from "@/browser/components/ChatInputToasts";
 import { useAPI } from "@/browser/contexts/API";
 import type { ImagePart } from "@/common/orpc/types";
-import { useWorkspaceName, type WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
+import {
+  useWorkspaceName,
+  type WorkspaceNameState,
+  type WorkspaceIdentity,
+} from "@/browser/hooks/useWorkspaceName";
 
 interface UseCreationWorkspaceOptions {
   projectPath: string;
@@ -71,10 +75,8 @@ interface UseCreationWorkspaceReturn {
   handleSend: (message: string, imageParts?: ImagePart[]) => Promise<boolean>;
   /** Workspace name/title generation state and actions (for CreationControls) */
   nameState: WorkspaceNameState;
-  /** The confirmed name being used for creation (null until generation resolves) */
-  creatingWithName: string | null;
-  /** The confirmed title being used for creation (null until generation resolves) */
-  creatingWithTitle: string | null;
+  /** The confirmed identity being used for creation (null until generation resolves) */
+  creatingWithIdentity: WorkspaceIdentity | null;
 }
 
 /**
@@ -95,9 +97,8 @@ export function useCreationWorkspace({
   const [recommendedTrunk, setRecommendedTrunk] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [isSending, setIsSending] = useState(false);
-  // The confirmed name/title being used for workspace creation (set after waitForGeneration resolves)
-  const [creatingWithName, setCreatingWithName] = useState<string | null>(null);
-  const [creatingWithTitle, setCreatingWithTitle] = useState<string | null>(null);
+  // The confirmed identity being used for workspace creation (set after waitForGeneration resolves)
+  const [creatingWithIdentity, setCreatingWithIdentity] = useState<WorkspaceIdentity | null>(null);
 
   // Centralized draft workspace settings with automatic persistence
   const {
@@ -150,8 +151,7 @@ export function useCreationWorkspace({
 
       setIsSending(true);
       setToast(null);
-      setCreatingWithName(null);
-      setCreatingWithTitle(null);
+      setCreatingWithIdentity(null);
 
       try {
         // Wait for identity generation to complete (blocks if still in progress)
@@ -162,9 +162,8 @@ export function useCreationWorkspace({
           return false;
         }
 
-        // Set the confirmed name and title for splash UI display
-        setCreatingWithName(identity.name);
-        setCreatingWithTitle(identity.title);
+        // Set the confirmed identity for splash UI display
+        setCreatingWithIdentity(identity);
 
         // Get runtime config from options
         const runtimeString = getRuntimeString();
@@ -264,8 +263,7 @@ export function useCreationWorkspace({
     handleSend,
     // Workspace name/title state (for CreationControls)
     nameState: workspaceNameState,
-    // The confirmed name/title being used for creation (null until generation resolves)
-    creatingWithName,
-    creatingWithTitle,
+    // The confirmed identity being used for creation (null until generation resolves)
+    creatingWithIdentity,
   };
 }
