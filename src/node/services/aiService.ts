@@ -214,6 +214,26 @@ export function normalizeAnthropicBaseURL(baseURL: string): string {
   return `${trimmed}/v1`;
 }
 
+/** Header value for Anthropic 1M context beta */
+export const ANTHROPIC_1M_CONTEXT_HEADER = "context-1m-2025-08-07";
+
+/**
+ * Build headers for Anthropic provider, optionally including the 1M context beta header.
+ * Exported for testing.
+ */
+export function buildAnthropicHeaders(
+  existingHeaders: Record<string, string> | undefined,
+  use1MContext: boolean | undefined
+): Record<string, string> | undefined {
+  if (!use1MContext) {
+    return existingHeaders;
+  }
+  if (existingHeaders) {
+    return { ...existingHeaders, "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER };
+  }
+  return { "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER };
+}
+
 /**
  * Preload AI SDK provider modules to avoid race conditions in concurrent test environments.
  * This function loads @ai-sdk/anthropic, @ai-sdk/openai, and ollama-ai-provider-v2 eagerly
@@ -447,14 +467,10 @@ export class AIService extends EventEmitter {
           : configWithApiKey;
 
         // Add 1M context beta header if requested
-        const use1MContext = muxProviderOptions?.anthropic?.use1MContext;
-        const existingHeaders = normalizedConfig.headers;
-        const headers =
-          use1MContext && existingHeaders
-            ? { ...existingHeaders, "anthropic-beta": "context-1m-2025-08-07" }
-            : use1MContext
-              ? { "anthropic-beta": "context-1m-2025-08-07" }
-              : existingHeaders;
+        const headers = buildAnthropicHeaders(
+          normalizedConfig.headers,
+          muxProviderOptions?.anthropic?.use1MContext
+        );
 
         // Lazy-load Anthropic provider to reduce startup time
         const { createAnthropic } = await PROVIDER_REGISTRY.anthropic();
