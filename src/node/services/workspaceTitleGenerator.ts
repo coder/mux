@@ -18,7 +18,9 @@ const workspaceIdentitySchema = z.object({
     .regex(/^[a-z0-9-]+$/)
     .min(2)
     .max(20)
-    .describe("Codebase area (1-2 words): lowercase, hyphens only, e.g. 'sidebar', 'auth', 'config'"),
+    .describe(
+      "Codebase area (1-2 words): lowercase, hyphens only, e.g. 'sidebar', 'auth', 'config'"
+    ),
   title: z
     .string()
     .min(5)
