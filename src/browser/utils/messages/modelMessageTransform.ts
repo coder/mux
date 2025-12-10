@@ -112,15 +112,20 @@ export function addInterruptedSentinel(messages: MuxMessage[]): MuxMessage[] {
  * Inserts a synthetic user message before the final user message to signal the mode switch.
  * This provides temporal context that helps models understand they should follow new mode instructions.
  *
+ * When transitioning from plan → exec mode with plan content, includes the plan so the model
+ * can evaluate its relevance to the current request.
+ *
  * @param messages The conversation history
  * @param currentMode The mode for the upcoming assistant response (e.g., "plan", "exec")
  * @param toolNames Optional list of available tool names to include in transition message
+ * @param planContent Optional plan content to include when transitioning plan → exec
  * @returns Messages with mode transition context injected if needed
  */
 export function injectModeTransition(
   messages: MuxMessage[],
   currentMode?: string,
-  toolNames?: string[]
+  toolNames?: string[],
+  planContent?: string
 ): MuxMessage[] {
   // No mode specified, nothing to do
   if (!currentMode) {
@@ -173,6 +178,17 @@ export function injectModeTransition(
     transitionText += ` Available tools: ${toolNames.join(", ")}.]`;
   } else {
     transitionText += "]";
+  }
+
+  // When transitioning plan → exec with plan content, include the plan for context
+  if (lastMode === "plan" && currentMode === "exec" && planContent) {
+    transitionText += `
+
+The following plan was developed in plan mode. Based on the user's message, determine if they have accepted the plan. If accepted and relevant, use it to guide your implementation:
+
+<plan>
+${planContent}
+</plan>`;
   }
 
   const transitionMessage: MuxMessage = {

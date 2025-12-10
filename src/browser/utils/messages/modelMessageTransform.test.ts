@@ -874,6 +874,155 @@ describe("injectModeTransition", () => {
       text: "[Mode switched from plan to exec. Follow exec mode instructions.]",
     });
   });
+
+  it("should include plan content when transitioning from plan to exec", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Let's plan a feature" }],
+        metadata: { timestamp: 1000 },
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{ type: "text", text: "Here's the plan..." }],
+        metadata: { timestamp: 2000, mode: "plan" },
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Now execute it" }],
+        metadata: { timestamp: 3000 },
+      },
+    ];
+
+    const planContent = "# My Plan\n\n## Step 1\nDo something\n\n## Step 2\nDo more";
+    const result = injectModeTransition(messages, "exec", undefined, planContent);
+
+    expect(result.length).toBe(4);
+    const transitionMessage = result[2];
+    expect(transitionMessage.role).toBe("user");
+    expect(transitionMessage.metadata?.synthetic).toBe(true);
+
+    const textPart = transitionMessage.parts[0];
+    expect(textPart.type).toBe("text");
+    if (textPart.type === "text") {
+      expect(textPart.text).toContain(
+        "[Mode switched from plan to exec. Follow exec mode instructions.]"
+      );
+      expect(textPart.text).toContain("The following plan was developed in plan mode");
+      expect(textPart.text).toContain("<plan>");
+      expect(textPart.text).toContain(planContent);
+      expect(textPart.text).toContain("</plan>");
+    }
+  });
+
+  it("should NOT include plan content when transitioning from exec to plan", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Done with feature" }],
+        metadata: { timestamp: 1000 },
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{ type: "text", text: "Feature complete" }],
+        metadata: { timestamp: 2000, mode: "exec" },
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Let's plan the next one" }],
+        metadata: { timestamp: 3000 },
+      },
+    ];
+
+    const planContent = "# Old Plan\n\nSome content";
+    const result = injectModeTransition(messages, "plan", undefined, planContent);
+
+    expect(result.length).toBe(4);
+    const transitionMessage = result[2];
+    const textPart = transitionMessage.parts[0];
+    if (textPart.type === "text") {
+      expect(textPart.text).toBe(
+        "[Mode switched from exec to plan. Follow plan mode instructions.]"
+      );
+      expect(textPart.text).not.toContain("<plan>");
+    }
+  });
+
+  it("should NOT include plan content when no plan content provided", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Let's plan" }],
+        metadata: { timestamp: 1000 },
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{ type: "text", text: "Planning..." }],
+        metadata: { timestamp: 2000, mode: "plan" },
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Execute" }],
+        metadata: { timestamp: 3000 },
+      },
+    ];
+
+    const result = injectModeTransition(messages, "exec", undefined, undefined);
+
+    expect(result.length).toBe(4);
+    const transitionMessage = result[2];
+    const textPart = transitionMessage.parts[0];
+    if (textPart.type === "text") {
+      expect(textPart.text).toBe(
+        "[Mode switched from plan to exec. Follow exec mode instructions.]"
+      );
+      expect(textPart.text).not.toContain("<plan>");
+    }
+  });
+
+  it("should include both tools and plan content in transition message", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Plan done" }],
+        metadata: { timestamp: 1000 },
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{ type: "text", text: "Plan ready" }],
+        metadata: { timestamp: 2000, mode: "plan" },
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Go" }],
+        metadata: { timestamp: 3000 },
+      },
+    ];
+
+    const toolNames = ["file_read", "bash"];
+    const planContent = "# Plan\n\nDo stuff";
+    const result = injectModeTransition(messages, "exec", toolNames, planContent);
+
+    expect(result.length).toBe(4);
+    const textPart = result[2].parts[0];
+    if (textPart.type === "text") {
+      expect(textPart.text).toContain("Available tools: file_read, bash.]");
+      expect(textPart.text).toContain("<plan>");
+      expect(textPart.text).toContain(planContent);
+    }
+  });
 });
 
 describe("filterEmptyAssistantMessages", () => {

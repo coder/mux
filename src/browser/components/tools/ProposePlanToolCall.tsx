@@ -27,7 +27,8 @@ import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "../PopoverError";
 
 /**
- * Check if the result is a successful file-based propose_plan result
+ * Check if the result is a successful file-based propose_plan result.
+ * Note: planContent may be absent in newer results (context optimization).
  */
 function isProposePlanResult(result: unknown): result is ProposePlanToolResult {
   return (
@@ -35,9 +36,15 @@ function isProposePlanResult(result: unknown): result is ProposePlanToolResult {
     typeof result === "object" &&
     "success" in result &&
     result.success === true &&
-    "planContent" in result &&
     "planPath" in result
   );
+}
+
+/**
+ * Result type that may have planContent (for backwards compatibility with old chat history)
+ */
+interface ProposePlanResultWithContent extends ProposePlanToolResult {
+  planContent?: string;
 }
 
 /**
@@ -173,11 +180,20 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     const titleMatch = /^#\s+(.+)$/m.exec(freshContent);
     planTitle = titleMatch ? titleMatch[1] : (planPath?.split("/").pop() ?? "Plan");
   } else if (isProposePlanResult(result)) {
-    planContent = result.planContent;
+    // New format: planContent may be absent (context optimization)
+    // For backwards compatibility, check if planContent exists in old chat history
+    const resultWithContent = result as ProposePlanResultWithContent;
     planPath = result.planPath;
-    // Extract title from first markdown heading or use filename
-    const titleMatch = /^#\s+(.+)$/m.exec(result.planContent);
-    planTitle = titleMatch ? titleMatch[1] : (planPath.split("/").pop() ?? "Plan");
+    if (resultWithContent.planContent) {
+      // Old result with embedded content (backwards compatibility)
+      planContent = resultWithContent.planContent;
+      const titleMatch = /^#\s+(.+)$/m.exec(resultWithContent.planContent);
+      planTitle = titleMatch ? titleMatch[1] : (planPath.split("/").pop() ?? "Plan");
+    } else {
+      // New result without content - show path info, content is fetched for latest
+      planContent = `*Plan saved to ${planPath}*`;
+      planTitle = planPath.split("/").pop() ?? "Plan";
+    }
   } else if (isLegacyProposePlanResult(result)) {
     // Legacy format: title + plan passed directly (no file)
     planContent = result.plan;

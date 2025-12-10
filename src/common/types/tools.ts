@@ -170,11 +170,12 @@ export type FileEditToolArgs =
 // Args derived from schema
 export type ProposePlanToolArgs = z.infer<typeof TOOL_DEFINITIONS.propose_plan.schema>;
 
-// Result type for new file-based propose_plan tool
+// Result type for file-based propose_plan tool
+// Note: planContent is NOT included to save context - plan is visible via file_edit_* diffs
+// and will be included in mode transition message when switching to exec mode
 export interface ProposePlanToolResult {
   success: true;
   planPath: string;
-  planContent: string;
   message: string;
 }
 

@@ -11,9 +11,13 @@ const proposePlanSchema = z.object({});
 
 /**
  * Propose plan tool factory for AI assistant.
- * The tool reads the plan from the plan file the agent wrote to.
+ * The tool validates the plan file exists and is non-empty.
  * If the plan file doesn't exist, it returns an error instructing
  * the agent to write the plan first.
+ *
+ * Note: Plan content is NOT included in the tool result to save context.
+ * The plan is already visible via file_edit_* diffs in history, and will be
+ * included in the mode transition message when switching to exec mode.
  */
 export const createProposePlanTool: ToolFactory = (config) => {
   return tool({
@@ -66,7 +70,6 @@ export const createProposePlanTool: ToolFactory = (config) => {
       return {
         success: true as const,
         planPath,
-        planContent,
         message: "Plan proposed. Waiting for user approval.",
       };
     },

@@ -57,6 +57,7 @@ import { EnvHttpProxyAgent, type Dispatcher } from "undici";
 import { getPlanFilePath } from "@/common/utils/planStorage";
 import { getPlanModeInstruction } from "@/common/utils/ui/modeUtils";
 import type { UIMode } from "@/common/types/mode";
+import { readFileString } from "@/node/utils/runtime/helpers";
 
 // Export a standalone version of getToolsForModel for use in backend
 
@@ -954,58 +955,8 @@ export class AIService extends EventEmitter {
       // Add [CONTINUE] sentinel to partial messages (for model context)
       const messagesWithSentinel = addInterruptedSentinel(filteredMessages);
 
-      // Inject mode transition context if mode changed from last assistant message
-      // Include tool names so model knows what tools are available in the new mode
-      const messagesWithModeContext = injectModeTransition(
-        messagesWithSentinel,
-        mode,
-        toolNamesForSentinel
-      );
-
-      // Inject file change notifications as user messages (preserves system message cache)
-      const messagesWithFileChanges = injectFileChangeNotifications(
-        messagesWithModeContext,
-        changedFileAttachments
-      );
-
-      // Apply centralized tool-output redaction BEFORE converting to provider ModelMessages
-      // This keeps the persisted/UI history intact while trimming heavy fields for the request
-      const redactedForProvider = applyToolOutputRedaction(messagesWithFileChanges);
-      log.debug_obj(`${workspaceId}/2a_redacted_messages.json`, redactedForProvider);
-
-      // Sanitize tool inputs to ensure they are valid objects (not strings or arrays)
-      // This fixes cases where corrupted data in history has malformed tool inputs
-      // that would cause API errors like "Input should be a valid dictionary"
-      const sanitizedMessages = sanitizeToolInputs(redactedForProvider);
-      log.debug_obj(`${workspaceId}/2b_sanitized_messages.json`, sanitizedMessages);
-
-      // Convert MuxMessage to ModelMessage format using Vercel AI SDK utility
-      // Type assertion needed because MuxMessage has custom tool parts for interrupted tools
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
-      const modelMessages = convertToModelMessages(sanitizedMessages as any, {
-        // Drop unfinished tool calls (input-streaming/input-available) so downstream
-        // transforms only see tool calls that actually produced outputs.
-        ignoreIncompleteToolCalls: true,
-      });
-      log.debug_obj(`${workspaceId}/2_model_messages.json`, modelMessages);
-
-      // Apply ModelMessage transforms based on provider requirements
-      const transformedMessages = transformModelMessages(modelMessages, providerName);
-
-      // Apply cache control for Anthropic models AFTER transformation
-      const finalMessages = applyCacheControl(transformedMessages, modelString);
-      log.debug_obj(`${workspaceId}/3_final_messages.json`, finalMessages);
-
-      // Validate the messages meet Anthropic requirements (Anthropic only)
-      if (providerName === "anthropic") {
-        const validation = validateAnthropicCompliance(finalMessages);
-        if (!validation.valid) {
-          log.error(
-            `Anthropic compliance validation failed: ${validation.error ?? "unknown error"}`
-          );
-          // Continue anyway, as the API might be more lenient
-        }
-      }
+      // Note: Further message processing (mode transition, file changes, etc.) happens
+      // after runtime is created below, as we need runtime to read the plan file
 
       // Get workspace metadata to retrieve workspace path
       const metadataResult = await this.getWorkspaceMetadata(workspaceId);
@@ -1055,6 +1006,79 @@ export class AIService extends EventEmitter {
         effectiveAdditionalInstructions = additionalSystemInstructions
           ? `${planModeInstruction}\n\n${additionalSystemInstructions}`
           : planModeInstruction;
+      }
+
+      // Read plan content for mode transition (plan → exec)
+      // Only read if switching to exec mode and last assistant was in plan mode
+      let planContentForTransition: string | undefined;
+      if (mode === "exec") {
+        const lastAssistantMessage = [...filteredMessages]
+          .reverse()
+          .find((m) => m.role === "assistant");
+        if (lastAssistantMessage?.metadata?.mode === "plan") {
+          const planFilePath = getPlanFilePath(workspaceId);
+          try {
+            const content = await readFileString(runtime, planFilePath);
+            if (content.trim()) {
+              planContentForTransition = content;
+            }
+          } catch {
+            // No plan file exists, proceed without plan content
+          }
+        }
+      }
+
+      // Now inject mode transition context with plan content (runtime is now available)
+      const messagesWithModeContext = injectModeTransition(
+        messagesWithSentinel,
+        mode,
+        toolNamesForSentinel,
+        planContentForTransition
+      );
+
+      // Inject file change notifications as user messages (preserves system message cache)
+      const messagesWithFileChanges = injectFileChangeNotifications(
+        messagesWithModeContext,
+        changedFileAttachments
+      );
+
+      // Apply centralized tool-output redaction BEFORE converting to provider ModelMessages
+      // This keeps the persisted/UI history intact while trimming heavy fields for the request
+      const redactedForProvider = applyToolOutputRedaction(messagesWithFileChanges);
+      log.debug_obj(`${workspaceId}/2a_redacted_messages.json`, redactedForProvider);
+
+      // Sanitize tool inputs to ensure they are valid objects (not strings or arrays)
+      // This fixes cases where corrupted data in history has malformed tool inputs
+      // that would cause API errors like "Input should be a valid dictionary"
+      const sanitizedMessages = sanitizeToolInputs(redactedForProvider);
+      log.debug_obj(`${workspaceId}/2b_sanitized_messages.json`, sanitizedMessages);
+
+      // Convert MuxMessage to ModelMessage format using Vercel AI SDK utility
+      // Type assertion needed because MuxMessage has custom tool parts for interrupted tools
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
+      const modelMessages = convertToModelMessages(sanitizedMessages as any, {
+        // Drop unfinished tool calls (input-streaming/input-available) so downstream
+        // transforms only see tool calls that actually produced outputs.
+        ignoreIncompleteToolCalls: true,
+      });
+      log.debug_obj(`${workspaceId}/2_model_messages.json`, modelMessages);
+
+      // Apply ModelMessage transforms based on provider requirements
+      const transformedMessages = transformModelMessages(modelMessages, providerName);
+
+      // Apply cache control for Anthropic models AFTER transformation
+      const finalMessages = applyCacheControl(transformedMessages, modelString);
+      log.debug_obj(`${workspaceId}/3_final_messages.json`, finalMessages);
+
+      // Validate the messages meet Anthropic requirements (Anthropic only)
+      if (providerName === "anthropic") {
+        const validation = validateAnthropicCompliance(finalMessages);
+        if (!validation.valid) {
+          log.error(
+            `Anthropic compliance validation failed: ${validation.error ?? "unknown error"}`
+          );
+          // Continue anyway, as the API might be more lenient
+        }
       }
 
       // Build system message from workspace metadata
