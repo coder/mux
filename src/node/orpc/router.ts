@@ -94,14 +94,19 @@ export const router = (authToken?: string) => {
         .output(schemas.providers.onConfigChanged.output)
         .handler(async function* ({ context }) {
           let resolveNext: (() => void) | null = null;
+          let pendingNotification = false;
           let ended = false;
 
           const push = () => {
             if (ended) return;
             if (resolveNext) {
+              // Listener is waiting - wake it up
               const resolve = resolveNext;
               resolveNext = null;
               resolve();
+            } else {
+              // No listener waiting yet - queue the notification
+              pendingNotification = true;
             }
           };
 
@@ -109,6 +114,13 @@ export const router = (authToken?: string) => {
 
           try {
             while (!ended) {
+              // If notification arrived before we started waiting, yield immediately
+              if (pendingNotification) {
+                pendingNotification = false;
+                yield undefined;
+                continue;
+              }
+              // Wait for next notification
               await new Promise<void>((resolve) => {
                 resolveNext = resolve;
               });
