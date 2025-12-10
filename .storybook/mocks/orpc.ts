@@ -91,6 +91,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     },
     server: {
       getLaunchProject: async () => null,
+      getSshHost: async () => null,
+      setSshHost: async () => undefined,
     },
     providers: {
       list: async () => providersList,
