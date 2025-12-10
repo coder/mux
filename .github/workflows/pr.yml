@@ -285,7 +285,8 @@ jobs:
   build-windows:
     name: Build / Windows
     needs: [changes]
-    if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
+    # Windows builds are slow - only run in merge queue, not on every PR push
+    if: ${{ github.event_name == 'merge_group' && (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
