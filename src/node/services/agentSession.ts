@@ -659,12 +659,15 @@ export class AgentSession {
     this.assertNotDisposed("queueMessage");
     this.messageQueue.add(message, options);
     this.emitQueuedMessageChanged();
+    // Signal to bash_output that it should return early to process the queued message
+    this.backgroundProcessManager.setMessageQueued(this.workspaceId, true);
   }
 
   clearQueue(): void {
     this.assertNotDisposed("clearQueue");
     this.messageQueue.clear();
     this.emitQueuedMessageChanged();
+    this.backgroundProcessManager.setMessageQueued(this.workspaceId, false);
   }
 
   /**
@@ -703,6 +706,9 @@ export class AgentSession {
    * Called when tool execution completes, stream ends, or user clicks send immediately.
    */
   sendQueuedMessages(): void {
+    // Clear the queued message flag (even if queue is empty, to handle race conditions)
+    this.backgroundProcessManager.setMessageQueued(this.workspaceId, false);
+
     if (!this.messageQueue.isEmpty()) {
       const { message, options } = this.messageQueue.produceMessage();
       this.messageQueue.clear();

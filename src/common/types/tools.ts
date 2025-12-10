@@ -235,7 +235,7 @@ export interface BashOutputToolArgs {
 export type BashOutputToolResult =
   | {
       success: true;
-      status: "running" | "exited" | "killed" | "failed";
+      status: "running" | "exited" | "killed" | "failed" | "interrupted";
       output: string;
       exitCode?: number;
       note?: string; // Agent-only message (not displayed in UI)

@@ -257,12 +257,11 @@ export const TOOL_DEFINITIONS = {
       timeout_secs: z
         .number()
         .min(0)
-        .max(15)
         .describe(
-          "Seconds to wait for new output (0-15). " +
+          "Seconds to wait for new output. " +
             "If no output is immediately available and process is still running, " +
             "blocks up to this duration. Returns early when output arrives or process exits. " +
-            "Use this instead of polling in a loop."
+            "Only use long timeouts (>15s) when no other useful work can be done in parallel."
         ),
     }),
   },

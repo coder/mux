@@ -481,4 +481,104 @@ describe("bash_output tool", () => {
     await manager.cleanup("test-workspace");
     tempDir[Symbol.dispose]();
   });
+
+  it("should return early with 'interrupted' status when abortSignal is triggered", async () => {
+    const tempDir = new TestTempDir("test-bash-output");
+    const manager = new BackgroundProcessManager(tempDir.path);
+
+    const runtime = createTestRuntime();
+    const config = createTestToolConfig(process.cwd(), { sessionsDir: tempDir.path });
+    config.runtimeTempDir = tempDir.path;
+    config.backgroundProcessManager = manager;
+
+    const processId = `abort-test-${Date.now()}`;
+
+    // Spawn a long-running process with no output
+    const spawnResult = await manager.spawn(runtime, "test-workspace", "sleep 60", {
+      cwd: process.cwd(),
+      displayName: processId,
+    });
+
+    if (!spawnResult.success) {
+      throw new Error("Failed to spawn process");
+    }
+
+    const tool = createBashOutputTool(config);
+    const abortController = new AbortController();
+
+    // Abort after 200ms
+    setTimeout(() => abortController.abort(), 200);
+
+    // Call with long timeout - should be interrupted by abort signal
+    const start = Date.now();
+    const result = (await tool.execute!(
+      { process_id: spawnResult.processId, timeout_secs: 30 },
+      { ...mockToolCallOptions, abortSignal: abortController.signal }
+    )) as BashOutputToolResult;
+    const elapsed = Date.now() - start;
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.status).toBe("interrupted");
+      expect(result.output).toBe("(waiting interrupted)");
+      // Should have returned quickly after abort, not waiting full 30s
+      expect(elapsed).toBeLessThan(1000);
+      expect(elapsed).toBeGreaterThan(150); // At least waited until abort
+    }
+
+    // Cleanup
+    await manager.terminate(spawnResult.processId);
+    await manager.cleanup("test-workspace");
+    tempDir[Symbol.dispose]();
+  });
+
+  it("should return early with 'interrupted' status when message is queued", async () => {
+    const tempDir = new TestTempDir("test-bash-output");
+    const manager = new BackgroundProcessManager(tempDir.path);
+
+    const runtime = createTestRuntime();
+    const config = createTestToolConfig(process.cwd(), { sessionsDir: tempDir.path });
+    config.runtimeTempDir = tempDir.path;
+    config.backgroundProcessManager = manager;
+
+    const processId = `queued-msg-test-${Date.now()}`;
+
+    // Spawn a long-running process with no output
+    const spawnResult = await manager.spawn(runtime, "test-workspace", "sleep 60", {
+      cwd: process.cwd(),
+      displayName: processId,
+    });
+
+    if (!spawnResult.success) {
+      throw new Error("Failed to spawn process");
+    }
+
+    const tool = createBashOutputTool(config);
+
+    // Queue a message after 200ms
+    setTimeout(() => manager.setMessageQueued("test-workspace", true), 200);
+
+    // Call with long timeout - should be interrupted by queued message
+    const start = Date.now();
+    const result = (await tool.execute!(
+      { process_id: spawnResult.processId, timeout_secs: 30 },
+      mockToolCallOptions
+    )) as BashOutputToolResult;
+    const elapsed = Date.now() - start;
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.status).toBe("interrupted");
+      expect(result.output).toBe("(waiting interrupted)");
+      // Should have returned quickly after queued message, not waiting full 30s
+      expect(elapsed).toBeLessThan(1000);
+      expect(elapsed).toBeGreaterThan(150); // At least waited until message was queued
+    }
+
+    // Cleanup
+    manager.setMessageQueued("test-workspace", false);
+    await manager.terminate(spawnResult.processId);
+    await manager.cleanup("test-workspace");
+    tempDir[Symbol.dispose]();
+  });
 });

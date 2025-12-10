@@ -215,10 +215,10 @@ export const ExitCodeBadge: React.FC<ExitCodeBadgeProps> = ({ exitCode, classNam
 );
 
 /**
- * Badge for displaying process status (exited, killed, failed)
+ * Badge for displaying process status (exited, killed, failed, interrupted)
  */
 interface ProcessStatusBadgeProps {
-  status: "exited" | "killed" | "failed";
+  status: "exited" | "killed" | "failed" | "interrupted";
   exitCode?: number;
   className?: string;
 }
@@ -233,7 +233,9 @@ export const ProcessStatusBadge: React.FC<ProcessStatusBadgeProps> = ({
       "inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
       status === "exited" && exitCode === 0
         ? "bg-success text-on-success"
-        : "bg-danger text-on-danger",
+        : status === "interrupted"
+          ? "bg-warning text-on-warning"
+          : "bg-danger text-on-danger",
       className
     )}
   >

@@ -99,10 +99,31 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
   // Tracks foreground processes (started via runtime.exec) that can be backgrounded
   // Key is toolCallId to support multiple parallel foreground processes per workspace
   private foregroundProcesses = new Map<string, ForegroundProcess>();
+  // Tracks workspaces with queued messages (for bash_output to return early)
+  private queuedMessageWorkspaces = new Set<string>();
 
   constructor(bgOutputDir: string) {
     super();
     this.bgOutputDir = bgOutputDir;
+  }
+
+  /**
+   * Mark whether a workspace has a queued user message.
+   * Used by bash_output to return early when user has sent a new message.
+   */
+  setMessageQueued(workspaceId: string, queued: boolean): void {
+    if (queued) {
+      this.queuedMessageWorkspaces.add(workspaceId);
+    } else {
+      this.queuedMessageWorkspaces.delete(workspaceId);
+    }
+  }
+
+  /**
+   * Check if a workspace has a queued user message.
+   */
+  hasQueuedMessage(workspaceId: string): boolean {
+    return this.queuedMessageWorkspaces.has(workspaceId);
   }
 
   /** Emit a change event for a workspace */
@@ -409,23 +430,27 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
    * Returns only NEW output since the last call (tracked per process).
    * @param processId Process ID to get output from
    * @param filter Optional regex pattern to filter output lines (non-matching lines are discarded permanently)
-   * @param timeout Seconds to wait for output if none available (0-15, default 0 = non-blocking)
+   * @param timeout Seconds to wait for output if none available (default 0 = non-blocking)
+   * @param abortSignal Optional signal to abort waiting early (e.g., when stream is cancelled)
+   * @param workspaceId Optional workspace ID to check for queued messages (return early to process them)
    */
   async getOutput(
     processId: string,
     filter?: string,
-    timeout?: number
+    timeout?: number,
+    abortSignal?: AbortSignal,
+    workspaceId?: string
   ): Promise<
     | {
         success: true;
-        status: "running" | "exited" | "killed" | "failed";
+        status: "running" | "exited" | "killed" | "failed" | "interrupted";
         output: string;
         exitCode?: number;
         elapsed_ms: number;
       }
     | { success: false; error: string }
   > {
-    const timeoutSecs = Math.min(Math.max(timeout ?? 0, 0), 15); // Clamp to 0-15
+    const timeoutSecs = Math.max(timeout ?? 0, 0);
     log.debug(
       `BackgroundProcessManager.getOutput(${processId}, filter=${filter ?? "none"}, timeout=${timeoutSecs}s) called`
     );
@@ -470,8 +495,19 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       // 1. We have output
       // 2. Process is no longer running (exited/killed/failed)
       // 3. Timeout elapsed
+      // 4. Abort signal received (user sent a new message)
       if (output.length > 0 || currentStatus !== "running") {
         break;
+      }
+
+      if (abortSignal?.aborted || (workspaceId && this.hasQueuedMessage(workspaceId))) {
+        const elapsed_ms = Date.now() - startTime;
+        return {
+          success: true,
+          status: "interrupted",
+          output: "(waiting interrupted)",
+          elapsed_ms,
+        };
       }
 
       const elapsed = Date.now() - startTime;
