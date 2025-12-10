@@ -66,7 +66,7 @@ export function useOpenInEditor() {
         if (!editor || !DEEP_LINK_EDITORS.includes(editor)) {
           return {
             success: false,
-            error: `${editor || "This editor"} is not supported in browser mode. Use VS Code or Cursor.`,
+            error: `${editor ?? "This editor"} is not supported in browser mode. Use VS Code or Cursor.`,
           };
         }
 

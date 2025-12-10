@@ -143,63 +143,37 @@ describeIntegration("Plan Commands Integration", () => {
   });
 
   describe("openInEditor", () => {
-    it("should return error when editor command not found", async () => {
-      const branchName = generateBranchName("plan-open-test");
-      const trunkBranch = await detectDefaultTrunkBranch(repoPath);
-
-      const createResult = await env.orpc.workspace.create({
-        projectPath: repoPath,
-        branchName,
-        trunkBranch,
-      });
-
-      expect(createResult.success).toBe(true);
-      if (!createResult.success) throw new Error("Failed to create workspace");
-
-      const workspaceId = createResult.metadata.id;
-      const workspaceName = createResult.metadata.name;
-      const projectName = createResult.metadata.projectName;
-
-      try {
-        // Create a plan file
-        const planPath = getPlanFilePath(workspaceName, projectName);
-        const planDir = path.dirname(planPath);
-        await fs.mkdir(planDir, { recursive: true });
-        await fs.writeFile(planPath, "# Test Plan");
-
-        // Try to open with a non-existent custom editor
-        const result = await env.orpc.general.openInEditor({
-          workspaceId,
-          targetPath: planPath,
-          editorConfig: {
-            editor: "custom",
-            customCommand: "nonexistent-editor-command-12345",
-          },
-        });
-
-        // Should return error since editor command doesn't exist
-        expect(result.success).toBe(false);
-        if (!result.success) {
-          expect(result.error).toContain("not found");
-        }
-      } finally {
-        await env.orpc.workspace.remove({ workspaceId });
-      }
-    }, 30000);
-
     it("should return error when workspace not found", async () => {
       const result = await env.orpc.general.openInEditor({
         workspaceId: "nonexistent-workspace-id",
         targetPath: "/some/path",
-        editorConfig: {
-          editor: "vscode",
-        },
       });
 
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error).toContain("not found");
       }
+    }, 30000);
+  });
+
+  describe("listEditors", () => {
+    it("should return available editors from config", async () => {
+      const result = await env.orpc.general.listEditors();
+
+      // Should have at least the default editors
+      expect(Array.isArray(result)).toBe(true);
+      expect(result.length).toBeGreaterThan(0);
+
+      // Each editor should have id, name, and isDefault
+      for (const editor of result) {
+        expect(editor).toHaveProperty("id");
+        expect(editor).toHaveProperty("name");
+        expect(editor).toHaveProperty("isDefault");
+      }
+
+      // Exactly one should be default
+      const defaultEditors = result.filter((e) => e.isDefault);
+      expect(defaultEditors.length).toBe(1);
     }, 30000);
   });
 });

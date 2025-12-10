@@ -1,8 +1,16 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Pencil } from "lucide-react";
+import { Pencil, ChevronDown, Check } from "lucide-react";
 import { GitStatusIndicator } from "./GitStatusIndicator";
 import { RuntimeBadge } from "./RuntimeBadge";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "./ui/dropdown-menu";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
@@ -11,6 +19,8 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
+import { useAPI } from "@/browser/contexts/API";
+import type { EditorInfo } from "@/common/types/editor";
 
 interface WorkspaceHeaderProps {
   workspaceId: string;
@@ -27,26 +37,37 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   namedWorkspacePath,
   runtimeConfig,
 }) => {
+  const { api } = useAPI();
   const openTerminal = useOpenTerminal();
   const openInEditor = useOpenInEditor();
   const gitStatus = useGitStatus(workspaceId);
   const { canInterrupt } = useWorkspaceSidebarState(workspaceId);
   const { startSequence: startTutorial, isSequenceCompleted } = useTutorial();
   const [editorError, setEditorError] = useState<string | null>(null);
+  const [editors, setEditors] = useState<EditorInfo[]>([]);
+
+  // Load editors from backend
+  useEffect(() => {
+    if (!api) return;
+    void api.general.listEditors().then(setEditors).catch(console.error);
+  }, [api]);
 
   const handleOpenTerminal = useCallback(() => {
     openTerminal(workspaceId, runtimeConfig);
   }, [workspaceId, openTerminal, runtimeConfig]);
 
-  const handleOpenInEditor = useCallback(async () => {
-    setEditorError(null);
-    const result = await openInEditor(workspaceId, namedWorkspacePath);
-    if (!result.success && result.error) {
-      setEditorError(result.error);
-      // Clear error after 3 seconds
-      setTimeout(() => setEditorError(null), 3000);
-    }
-  }, [workspaceId, namedWorkspacePath, openInEditor]);
+  const handleOpenInEditor = useCallback(
+    async (editorId?: string) => {
+      setEditorError(null);
+      const result = await openInEditor(workspaceId, namedWorkspacePath, runtimeConfig, editorId);
+      if (!result.success && result.error) {
+        setEditorError(result.error);
+        // Clear error after 3 seconds
+        setTimeout(() => setEditorError(null), 3000);
+      }
+    },
+    [workspaceId, namedWorkspacePath, openInEditor, runtimeConfig]
+  );
 
   // Start workspace tutorial on first entry (only if settings tutorial is done)
   useEffect(() => {
@@ -81,21 +102,42 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
       </div>
       <div className="flex items-center">
         {editorError && <span className="text-danger-soft mr-2 text-xs">{editorError}</span>}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => void handleOpenInEditor()}
-              className="text-muted hover:text-foreground h-6 w-6 shrink-0"
-            >
-              <Pencil className="h-4 w-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" align="center">
-            Open in editor ({formatKeybind(KEYBINDS.OPEN_IN_EDITOR)})
-          </TooltipContent>
-        </Tooltip>
+        <DropdownMenu>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-muted hover:text-foreground h-6 w-6 shrink-0"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  <ChevronDown className="h-2.5 w-2.5" />
+                </Button>
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="center">
+              Open in editor ({formatKeybind(KEYBINDS.OPEN_IN_EDITOR)})
+            </TooltipContent>
+          </Tooltip>
+          <DropdownMenuContent align="end">
+            <DropdownMenuLabel>Open in Editor</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            {editors.map((editor) => (
+              <DropdownMenuItem
+                key={editor.id}
+                onClick={() => void handleOpenInEditor(editor.id)}
+                className="cursor-pointer"
+              >
+                <span className="flex-1">{editor.name}</span>
+                {editor.isDefault && <Check className="text-muted ml-2 h-4 w-4" />}
+              </DropdownMenuItem>
+            ))}
+            {editors.length === 0 && (
+              <DropdownMenuItem disabled>Loading editors...</DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
