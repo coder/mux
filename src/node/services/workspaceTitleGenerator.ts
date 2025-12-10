@@ -49,11 +49,22 @@ export async function getPreferredNameModel(aiService: AIService): Promise<strin
   return null;
 }
 
+// Crockford Base32 alphabet (excludes I, L, O, U to avoid confusion)
+const CROCKFORD_ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";
+
 /**
- * Generate a 4-character random hex suffix for workspace names.
+ * Generate a 4-character random suffix using Crockford Base32.
+ * Uses 20 bits of randomness (4 chars × 5 bits each).
  */
 function generateNameSuffix(): string {
-  return crypto.randomBytes(2).toString("hex");
+  const bytes = crypto.randomBytes(3); // 24 bits, we'll use 20
+  const value = (bytes[0] << 12) | (bytes[1] << 4) | (bytes[2] >> 4);
+  return (
+    CROCKFORD_ALPHABET[(value >> 15) & 0x1f] +
+    CROCKFORD_ALPHABET[(value >> 10) & 0x1f] +
+    CROCKFORD_ALPHABET[(value >> 5) & 0x1f] +
+    CROCKFORD_ALPHABET[value & 0x1f]
+  );
 }
 
 /**
