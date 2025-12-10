@@ -244,7 +244,8 @@ export const TOOL_DEFINITIONS = {
       "Returns stdout and stderr output along with process status. " +
       "Supports optional regex filtering to show only lines matching a pattern. " +
       "WARNING: When using filter, non-matching lines are permanently discarded. " +
-      "Use timeout to wait for output instead of polling repeatedly.",
+      "Use timeout to wait for output instead of polling repeatedly. " +
+      "If you've called this 3+ times on the same process, use filter_exclude with a longer timeout instead.",
     schema: z.object({
       process_id: z.string().describe("The ID of the background process to retrieve output from"),
       filter: z
