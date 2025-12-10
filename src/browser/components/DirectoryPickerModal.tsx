@@ -119,10 +119,12 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
         }
       } else if ((e.ctrlKey || e.metaKey) && e.key === "o") {
         e.preventDefault();
-        handleConfirm();
+        if (!isLoading && root) {
+          handleConfirm();
+        }
       }
     },
-    [pathInput, loadDirectory, handleConfirm]
+    [pathInput, loadDirectory, handleConfirm, isLoading, root]
   );
 
   const entries =
