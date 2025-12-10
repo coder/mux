@@ -112,7 +112,7 @@ export const createWebFetchTool: ToolFactory = (config: ToolConfiguration) => {
         const result = await execBuffered(config.runtime, curlCommand, {
           cwd: config.cwd,
           abortSignal,
-          timeout: (WEB_FETCH_TIMEOUT_SECS + 5) * 1000, // Slightly longer than curl's timeout
+          timeout: WEB_FETCH_TIMEOUT_SECS + 5, // Slightly longer than curl's timeout (seconds)
         });
 
         if (result.exitCode !== 0) {
