@@ -398,14 +398,20 @@ export function createBashOutputTool(
   status: "running" | "exited" | "killed" | "failed" = "running",
   exitCode?: number,
   filter?: string,
-  timeoutSecs = 5
+  timeoutSecs = 5,
+  filterExclude?: boolean
 ): MuxPart {
   return {
     type: "dynamic-tool",
     toolCallId,
     toolName: "bash_output",
     state: "output-available",
-    input: { process_id: processId, timeout_secs: timeoutSecs, filter },
+    input: {
+      process_id: processId,
+      timeout_secs: timeoutSecs,
+      filter,
+      filter_exclude: filterExclude,
+    },
     output: { success: true, status, output, exitCode },
   };
 }

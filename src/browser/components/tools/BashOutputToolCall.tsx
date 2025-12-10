@@ -52,7 +52,7 @@ export const BashOutputToolCall: React.FC<BashOutputToolCallProps> = ({
           <Layers size={10} />
           output
           {args.timeout_secs > 0 && ` • wait ${args.timeout_secs}s`}
-          {args.filter && ` • filter: ${args.filter}`}
+          {args.filter && ` • ${args.filter_exclude ? "exclude" : "filter"}: ${args.filter}`}
           {groupPosition && (
             <span className="text-muted ml-1 flex items-center gap-0.5">
               • <Link size={8} /> {groupPosition === "first" ? "start" : "end"}

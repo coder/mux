@@ -230,6 +230,7 @@ export interface StatusSetToolArgs {
 export interface BashOutputToolArgs {
   process_id: string;
   filter?: string;
+  filter_exclude?: boolean;
   timeout_secs: number;
 }
 

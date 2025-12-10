@@ -434,3 +434,101 @@ export const GroupedOutput: AppStory = {
     />
   ),
 };
+
+/**
+ * Story: Filter Exclude
+ * Demonstrates the filter_exclude parameter for bash_output.
+ * Shows both regular filter (include) and filter_exclude (exclude) modes.
+ */
+export const FilterExclude: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-filter-exclude",
+          messages: [
+            // Background process started (CI checks)
+            createUserMessage("msg-1", "Run CI checks and wait for completion", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 400000,
+            }),
+            createAssistantMessage("msg-2", "Starting CI checks:", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 390000,
+              toolCalls: [
+                createBackgroundBashTool(
+                  "call-1",
+                  "./scripts/wait_pr_checks.sh 1081",
+                  "bash_ci",
+                  "Wait PR Checks"
+                ),
+              ],
+            }),
+            // Polling with filter_exclude to skip progress spam
+            createUserMessage("msg-3", "Wait for the result", {
+              historySequence: 3,
+              timestamp: STABLE_TIMESTAMP - 300000,
+            }),
+            createAssistantMessage(
+              "msg-4",
+              "Waiting for CI with filter_exclude to skip progress messages:",
+              {
+                historySequence: 4,
+                timestamp: STABLE_TIMESTAMP - 290000,
+                toolCalls: [
+                  // First call - using filter_exclude to skip ⏳ lines
+                  createBashOutputTool(
+                    "call-2",
+                    "bash_ci",
+                    "", // No meaningful output yet (⏳ lines were excluded)
+                    "running",
+                    undefined,
+                    "⏳", // filter pattern
+                    60, // long timeout
+                    true // filter_exclude = true
+                  ),
+                  // Second call - still waiting, excluded lines don't wake us
+                  createBashOutputTool(
+                    "call-3",
+                    "bash_ci",
+                    "✅ All checks passed!\n\n🤖 Checking for unresolved Codex comments...\n\n✅ PR is ready to merge!",
+                    "exited",
+                    0,
+                    "⏳",
+                    60,
+                    true
+                  ),
+                ],
+              }
+            ),
+            // Comparison: regular filter (include mode)
+            createUserMessage("msg-5", "Show an example with regular filter", {
+              historySequence: 5,
+              timestamp: STABLE_TIMESTAMP - 100000,
+            }),
+            createAssistantMessage("msg-6", "Regular filter only shows matching lines:", {
+              historySequence: 6,
+              timestamp: STABLE_TIMESTAMP - 90000,
+              toolCalls: [
+                // Regular filter - include only ERROR lines
+                createBashOutputTool(
+                  "call-4",
+                  "bash_ci",
+                  "ERROR: Build failed\nERROR: Test suite failed",
+                  "exited",
+                  1,
+                  "ERROR", // filter pattern (include mode)
+                  5,
+                  false // filter_exclude = false (default)
+                ),
+              ],
+            }),
+          ],
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await expandAllBashTools(canvasElement);
+  },
+};
