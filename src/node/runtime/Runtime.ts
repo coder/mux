@@ -79,11 +79,12 @@ export interface BackgroundHandle {
   readonly outputDir: string;
 
   /**
-   * Get the exit code if the process has exited.
+   * Get the exit code and exit time if the process has exited.
    * Returns null if still running.
    * Async because SSH needs to read remote exit_code file.
+   * exitTime is epoch ms - from file mtime for nohup processes, Date.now() for migrated.
    */
-  getExitCode(): Promise<number | null>;
+  getExitCode(): Promise<{ code: number; exitTime: number } | null>;
 
   /**
    * Terminate the process (SIGTERM → wait → SIGKILL).

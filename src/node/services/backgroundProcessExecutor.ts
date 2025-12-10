@@ -224,18 +224,26 @@ class RuntimeBackgroundHandle implements BackgroundHandle {
   ) {}
 
   /**
-   * Get the exit code from the exit_code file.
+   * Get the exit code and exit time from the exit_code file.
    * Returns null if process is still running (file doesn't exist yet).
+   * Uses file mtime as exit time (written by bash trap on process exit).
    */
-  async getExitCode(): Promise<number | null> {
+  async getExitCode(): Promise<{ code: number; exitTime: number } | null> {
     try {
       const exitCodePath = this.quotePath(`${this.outputDir}/${EXIT_CODE_FILENAME}`);
+      // Get both mtime (epoch seconds) and content in one command
+      // date -r FILE +%s gives mtime as epoch seconds (works on Linux and macOS)
       const result = await execBuffered(
         this.runtime,
-        `cat ${exitCodePath} 2>/dev/null || echo ""`,
+        `date -r ${exitCodePath} +%s 2>/dev/null && cat ${exitCodePath} 2>/dev/null || echo ""`,
         { cwd: FALLBACK_CWD, timeout: 10 }
       );
-      return parseExitCode(result.stdout);
+      const lines = result.stdout.trim().split("\n");
+      if (lines.length < 2) return null;
+      const mtime = parseInt(lines[0], 10);
+      const code = parseExitCode(lines[1]);
+      if (isNaN(mtime) || code === null) return null;
+      return { code, exitTime: mtime * 1000 }; // Convert to ms
     } catch (error) {
       log.debug(`RuntimeBackgroundHandle.getExitCode: Error: ${errorMsg(error)}`);
       return null;
@@ -413,6 +421,7 @@ export async function migrateToBackground(
  */
 class MigratedBackgroundHandle implements BackgroundHandle {
   private exitCodeValue: number | null = null;
+  private exitTimeValue: number | null = null;
   private consuming = false;
   private outputFd: fs.FileHandle | null = null;
 
@@ -433,9 +442,10 @@ class MigratedBackgroundHandle implements BackgroundHandle {
     // Open output file once, consume both streams to it
     void this.consumeStreams();
 
-    // Track exit code
+    // Track exit code and time
     void this.execStream.exitCode.then((code) => {
       this.exitCodeValue = code;
+      this.exitTimeValue = Date.now();
       // Write exit code to file
       void this.writeExitCode(code);
     });
@@ -499,8 +509,11 @@ class MigratedBackgroundHandle implements BackgroundHandle {
     }
   }
 
-  getExitCode(): Promise<number | null> {
-    return Promise.resolve(this.exitCodeValue);
+  getExitCode(): Promise<{ code: number; exitTime: number } | null> {
+    if (this.exitCodeValue === null || this.exitTimeValue === null) {
+      return Promise.resolve(null);
+    }
+    return Promise.resolve({ code: this.exitCodeValue, exitTime: this.exitTimeValue });
   }
 
   async terminate(): Promise<void> {

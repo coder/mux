@@ -387,12 +387,12 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
 
     // Refresh status if still running (exit code null = still running)
     if (proc.status === "running") {
-      const exitCode = await proc.handle.getExitCode();
-      if (exitCode !== null) {
+      const result = await proc.handle.getExitCode();
+      if (result !== null) {
         log.debug(`Background process ${proc.id} has exited`);
         proc.status = "exited";
-        proc.exitCode = exitCode;
-        proc.exitTime = Date.now();
+        proc.exitCode = result.code;
+        proc.exitTime = result.exitTime;
         await this.updateMetaFile(proc).catch((err: unknown) => {
           log.debug(
             `BackgroundProcessManager: Failed to update meta.json: ${getErrorMessage(err)}`
@@ -537,12 +537,12 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     );
 
     for (const proc of runningProcesses) {
-      const exitCode = await proc.handle.getExitCode();
-      if (exitCode !== null) {
+      const result = await proc.handle.getExitCode();
+      if (result !== null) {
         log.debug(`Background process ${proc.id} has exited`);
         proc.status = "exited";
-        proc.exitCode = exitCode;
-        proc.exitTime = Date.now();
+        proc.exitCode = result.code;
+        proc.exitTime = result.exitTime;
         await this.updateMetaFile(proc).catch((err: unknown) => {
           log.debug(
             `BackgroundProcessManager: Failed to update meta.json: ${getErrorMessage(err)}`
@@ -577,8 +577,9 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
 
       // Update process status and exit code
       proc.status = "killed";
-      proc.exitCode = (await proc.handle.getExitCode()) ?? undefined;
-      proc.exitTime ??= Date.now();
+      const result = await proc.handle.getExitCode();
+      proc.exitCode = result?.code;
+      proc.exitTime = result?.exitTime ?? Date.now();
 
       // Update meta.json
       await this.updateMetaFile(proc).catch((err: unknown) => {
