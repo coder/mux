@@ -440,18 +440,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             <>
               <div className="border-dark flex items-center justify-between border-b p-4">
                 <h2 className="text-foreground m-0 text-lg font-medium">Projects</h2>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      onClick={onAddProject}
-                      aria-label="Add project"
-                      className="text-secondary hover:bg-hover hover:border-border-light flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 text-2xl transition-all duration-200"
-                    >
-                      +
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent align="end">Add Project</TooltipContent>
-                </Tooltip>
+                <button
+                  onClick={onAddProject}
+                  aria-label="Add project"
+                  className="text-secondary hover:bg-hover hover:border-border-light flex cursor-pointer items-center gap-1 rounded border border-transparent bg-transparent px-1.5 py-0.5 text-sm transition-all duration-200"
+                >
+                  <span className="text-base leading-none">+</span>
+                  <span>New Project</span>
+                </button>
               </div>
               <div className="flex-1 overflow-y-auto">
                 {projects.size === 0 ? (
