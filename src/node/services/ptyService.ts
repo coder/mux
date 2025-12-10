@@ -17,7 +17,7 @@ import { SSHRuntime, type SSHRuntimeConfig } from "@/node/runtime/SSHRuntime";
 import { LocalBaseRuntime } from "@/node/runtime/LocalBaseRuntime";
 import { access } from "fs/promises";
 import { constants } from "fs";
-import { getControlPath } from "@/node/runtime/sshConnectionPool";
+import { getControlPath, sshConnectionPool } from "@/node/runtime/sshConnectionPool";
 import { expandTildeForSSH } from "@/node/runtime/tildeExpansion";
 
 interface SessionData {
@@ -213,6 +213,11 @@ export class PTYService {
     } else if (runtime instanceof SSHRuntime) {
       // SSH: Use node-pty to spawn SSH with local PTY (enables resize support)
       const sshConfig = runtime.getConfig();
+
+      // Ensure connection is healthy before spawning terminal
+      // This provides backoff protection and singleflighting for concurrent requests
+      await sshConnectionPool.acquireConnection(sshConfig);
+
       const sshArgs = buildSSHArgs(sshConfig, workspacePath);
 
       log.info(`[PTY] SSH terminal for ${sessionId}: ssh ${sshArgs.join(" ")}`);

@@ -24,7 +24,7 @@ import { expandTildeForSSH, cdCommandForSSH } from "./tildeExpansion";
 import { getProjectName, execBuffered } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 import { execAsync, DisposableProcess } from "@/node/utils/disposableExec";
-import { getControlPath } from "./sshConnectionPool";
+import { getControlPath, sshConnectionPool, type SSHRuntimeConfig } from "./sshConnectionPool";
 import { getBashPath } from "@/node/utils/main/bashPath";
 
 /**
@@ -41,21 +41,8 @@ const shescape = {
   },
 };
 
-/**
- * SSH Runtime Configuration
- */
-export interface SSHRuntimeConfig {
-  /** SSH host (can be hostname, user@host, or SSH config alias) */
-  host: string;
-  /** Working directory on remote host */
-  srcBaseDir: string;
-  /** Directory on remote for background process output (default: /tmp/mux-bashes) */
-  bgOutputDir?: string;
-  /** Optional: Path to SSH private key (if not using ~/.ssh/config or ssh-agent) */
-  identityFile?: string;
-  /** Optional: SSH port (default: 22) */
-  port?: number;
-}
+// Re-export SSHRuntimeConfig from connection pool (defined there to avoid circular deps)
+export type { SSHRuntimeConfig } from "./sshConnectionPool";
 
 /**
  * SSH runtime implementation that executes commands and file operations
@@ -127,7 +114,6 @@ export class SSHRuntime implements Runtime {
   /**
    * Execute command over SSH with streaming I/O
    */
-  // eslint-disable-next-line @typescript-eslint/require-await
   async exec(command: string, options: ExecOptions): Promise<ExecStream> {
     const startTime = performance.now();
 
@@ -135,6 +121,10 @@ export class SSHRuntime implements Runtime {
     if (options.abortSignal?.aborted) {
       throw new RuntimeErrorClass("Operation aborted before execution", "exec");
     }
+
+    // Ensure connection is healthy before executing
+    // This provides backoff protection and singleflighting for concurrent requests
+    await sshConnectionPool.acquireConnection(this.config);
 
     // Build command parts
     const parts: string[] = [];
@@ -233,11 +223,22 @@ export class SSHRuntime implements Runtime {
           resolve(EXIT_CODE_TIMEOUT);
           return;
         }
-        resolve(code ?? (signal ? -1 : 0));
+
+        const exitCode = code ?? (signal ? -1 : 0);
+
+        // SSH exit code 255 indicates connection failure - report to pool for backoff
+        // This prevents thundering herd when a previously healthy host goes down
+        if (exitCode === 255) {
+          sshConnectionPool.reportFailure(this.config, "SSH connection failed (exit code 255)");
+        }
+
+        resolve(exitCode);
         // Cleanup runs automatically via DisposableProcess
       });
 
       sshProcess.on("error", (err) => {
+        // Spawn errors are connection-level failures
+        sshConnectionPool.reportFailure(this.config, `SSH spawn error: ${err.message}`);
         reject(new RuntimeErrorClass(`Failed to execute SSH command: ${err.message}`, "exec", err));
       });
     });
@@ -427,6 +428,9 @@ export class SSHRuntime implements Runtime {
    * @private
    */
   private async execSSHCommand(command: string, timeoutMs: number): Promise<string> {
+    // Ensure connection is healthy before executing
+    await sshConnectionPool.acquireConnection(this.config, timeoutMs);
+
     const sshArgs = this.buildSSHArgs();
     sshArgs.push(this.config.host, command);
 
@@ -461,6 +465,10 @@ export class SSHRuntime implements Runtime {
         if (timedOut) return; // Already rejected
 
         if (code !== 0) {
+          // SSH exit code 255 indicates connection failure - report to pool for backoff
+          if (code === 255) {
+            sshConnectionPool.reportFailure(this.config, "SSH connection failed (exit code 255)");
+          }
           reject(new RuntimeErrorClass(`SSH command failed: ${stderr.trim()}`, "network"));
           return;
         }
@@ -473,6 +481,8 @@ export class SSHRuntime implements Runtime {
         clearTimeout(timer);
         if (timedOut) return; // Already rejected
 
+        // Spawn errors are connection-level failures
+        sshConnectionPool.reportFailure(this.config, `SSH spawn error: ${getErrorMessage(err)}`);
         reject(
           new RuntimeErrorClass(
             `Cannot execute SSH command: ${getErrorMessage(err)}`,

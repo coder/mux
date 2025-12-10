@@ -6,6 +6,7 @@ import { BASH_MAX_TOTAL_BYTES } from "@/common/constants/toolLimits";
 import * as fs from "fs";
 import { TestTempDir, createTestToolConfig, getTestDeps } from "./testHelpers";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
+import { sshConnectionPool } from "@/node/runtime/sshConnectionPool";
 import type { ToolCallOptions } from "ai";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 
@@ -1381,11 +1382,15 @@ describe("SSH runtime redundant cd detection", () => {
   // Note: These tests check redundant cd detection logic only - they don't actually execute via SSH
   function createTestBashToolWithSSH(cwd: string) {
     const tempDir = new TestTempDir("test-bash-ssh");
-    const sshRuntime = createRuntime({
-      type: "ssh",
+    const sshConfig = {
+      type: "ssh" as const,
       host: "test-host",
       srcBaseDir: "/remote/base",
-    });
+    };
+    const sshRuntime = createRuntime(sshConfig);
+
+    // Pre-mark connection as healthy to skip actual SSH probe in tests
+    sshConnectionPool.markHealthy(sshConfig);
 
     const tool = createBashTool({
       ...getTestDeps(),
