@@ -114,6 +114,7 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 - Use `using` declarations (or equivalent disposables) for processes, file handles, etc., to ensure cleanup even on errors.
 - Centralize magic constants under `src/constants/`; share them instead of duplicating values across layers.
 - Never repeat constant values (like keybinds) in comments—they become stale when the constant changes.
+- **Avoid `void asyncFn()`** - fire-and-forget async calls hide race conditions. When state is observable by other code (in-memory cache, event emitters), ensure visibility order matches invariants. If memory and disk must stay in sync, persist before updating memory so observers see consistent state.
 
 ## Component State & Storage
 

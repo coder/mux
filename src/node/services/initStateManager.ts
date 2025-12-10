@@ -197,6 +197,10 @@ export class InitStateManager extends EventEmitter {
   /**
    * Finalize init hook execution.
    * Updates state, persists to disk, emits init-end event, and resolves completion promise.
+   *
+   * IMPORTANT: We persist BEFORE updating in-memory exitCode to prevent a race condition
+   * where replay() sees exitCode !== null but the file doesn't exist yet. This ensures
+   * the invariant: if init-end is visible (live or replay), the file MUST exist.
    */
   async endInit(workspaceId: string, exitCode: number): Promise<void> {
     const state = this.store.getState(workspaceId);
@@ -207,12 +211,23 @@ export class InitStateManager extends EventEmitter {
     }
 
     const endTime = Date.now();
-    state.status = exitCode === 0 ? "success" : "error";
+    const finalStatus = exitCode === 0 ? "success" : "error";
+
+    // Create complete state for persistence (don't mutate in-memory state yet)
+    const stateToPerist: InitHookState = {
+      ...state,
+      status: finalStatus,
+      exitCode,
+      endTime,
+    };
+
+    // Persist FIRST - ensures file exists before in-memory state shows completion
+    await this.store.persist(workspaceId, stateToPerist);
+
+    // NOW update in-memory state (replay will now see file exists)
+    state.status = finalStatus;
     state.exitCode = exitCode;
     state.endTime = endTime;
-
-    // Persist to disk (fire-and-forget, errors logged internally by EventStore)
-    await this.store.persist(workspaceId, state);
 
     log.info(
       `Init hook ${state.status} for workspace ${workspaceId} (exit code ${exitCode}, duration ${endTime - state.startTime}ms)`
