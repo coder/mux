@@ -22,28 +22,32 @@ export const ReviewsBanner: AppStory = {
       setup={() => {
         const workspaceId = "ws-reviews";
 
-        // Set up reviews
+        // Use deterministic timestamps so reviews render in stable order
+        const baseTime = 1700000000000;
         setReviews(workspaceId, [
           createReview(
             "review-1",
             "src/api/auth.ts",
             "42-48",
             "Consider using a constant for the token expiry",
-            "pending"
+            "pending",
+            baseTime + 1
           ),
           createReview(
             "review-2",
             "src/utils/helpers.ts",
             "15",
             "This function could be simplified",
-            "pending"
+            "pending",
+            baseTime + 2
           ),
           createReview(
             "review-3",
             "src/components/Button.tsx",
             "23-25",
             "Already addressed in another PR",
-            "checked"
+            "checked",
+            baseTime + 3
           ),
         ]);
 
@@ -95,9 +99,25 @@ export const AllReviewsChecked: AppStory = {
       setup={() => {
         const workspaceId = "ws-all-checked";
 
+        // Use deterministic timestamps so reviews render in stable order
+        const baseTime = 1700000000000;
         setReviews(workspaceId, [
-          createReview("review-1", "src/api/users.ts", "10-15", "Fixed the null check", "checked"),
-          createReview("review-2", "src/utils/format.ts", "42", "Added error handling", "checked"),
+          createReview(
+            "review-1",
+            "src/api/users.ts",
+            "10-15",
+            "Fixed the null check",
+            "checked",
+            baseTime + 1
+          ),
+          createReview(
+            "review-2",
+            "src/utils/format.ts",
+            "42",
+            "Added error handling",
+            "checked",
+            baseTime + 2
+          ),
         ]);
 
         return setupSimpleChatStory({
@@ -126,13 +146,16 @@ export const ManyReviews: AppStory = {
         const workspaceId = "ws-many-reviews";
 
         // Create many reviews to test scroll behavior
+        // Use deterministic timestamps so reviews render in stable order
+        const baseTime = 1700000000000;
         const reviewItems = Array.from({ length: 10 }, (_, i) =>
           createReview(
             `review-${i + 1}`,
             `src/components/Feature${i + 1}.tsx`,
             `${10 + i * 5}-${15 + i * 5}`,
             `Review comment ${i + 1}: This needs attention`,
-            i < 7 ? "pending" : "checked"
+            i < 7 ? "pending" : "checked",
+            baseTime + i + 1
           )
         );
 
