@@ -151,5 +151,49 @@ describe("SessionUsageService", () => {
       expect(result!.byModel["claude-sonnet-4-20250514"]).toBeDefined();
       expect(result!.byModel["claude-sonnet-4-20250514"].input.tokens).toBe(100);
     });
+
+    it("should include historicalUsage from legacy compaction summaries", async () => {
+      const workspaceId = "test-workspace";
+
+      // Create a compaction summary with historicalUsage (legacy format)
+      const compactionSummary = createMuxMessage("summary-1", "assistant", "Compacted summary", {
+        historySequence: 1,
+        compacted: true,
+        model: "anthropic:claude-sonnet-4-5",
+        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+      });
+
+      // Add historicalUsage - this field was removed from MuxMetadata type
+      // but may still exist in persisted data from before the change
+      (compactionSummary.metadata as Record<string, unknown>).historicalUsage = createUsage(
+        5000,
+        1000
+      );
+
+      // Add a post-compaction message
+      const postCompactionMsg = createMuxMessage("msg2", "assistant", "New response", {
+        historySequence: 2,
+        model: "anthropic:claude-sonnet-4-5",
+        usage: { inputTokens: 200, outputTokens: 75, totalTokens: 275 },
+      });
+
+      mockHistoryService = createMockHistoryService([compactionSummary, postCompactionMsg]);
+      service = new SessionUsageService(config, mockHistoryService);
+
+      // Create session dir but NOT the session-usage.json file (triggers rebuild)
+      await fs.mkdir(config.getSessionDir(workspaceId), { recursive: true });
+
+      const result = await service.getSessionUsage(workspaceId);
+
+      expect(result).toBeDefined();
+      // Should include historical usage under "historical" key
+      expect(result!.byModel.historical).toBeDefined();
+      expect(result!.byModel.historical.input.tokens).toBe(5000);
+      expect(result!.byModel.historical.output.tokens).toBe(1000);
+
+      // Should also include current model usage (compaction summary + post-compaction)
+      expect(result!.byModel["anthropic:claude-sonnet-4-5"]).toBeDefined();
+      expect(result!.byModel["anthropic:claude-sonnet-4-5"].input.tokens).toBe(300); // 100 + 200
+    });
   });
 });

@@ -122,6 +122,18 @@ export class SessionUsageService {
 
     for (const msg of messages) {
       if (msg.role === "assistant") {
+        // Include historicalUsage from legacy compaction summaries.
+        // This field was removed from MuxMetadata but may exist in persisted data.
+        // It's a ChatUsageDisplay representing all pre-compaction costs (model-agnostic).
+        const historicalUsage = (msg.metadata as { historicalUsage?: ChatUsageDisplay })
+          ?.historicalUsage;
+        if (historicalUsage) {
+          const existing = result.byModel.historical;
+          result.byModel.historical = existing
+            ? sumUsageHistory([existing, historicalUsage])!
+            : historicalUsage;
+        }
+
         // Extract current message's usage
         if (msg.metadata?.usage) {
           const rawModel = msg.metadata.model ?? "unknown";
