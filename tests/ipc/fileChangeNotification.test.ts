@@ -94,11 +94,14 @@ describeIntegration("File Change Notification Integration", () => {
     if (!createResult.success) throw new Error("Failed to create workspace");
 
     const workspaceId = createResult.metadata.id;
+    const workspaceName = createResult.metadata.name;
+    const projectName = createResult.metadata.projectName;
+    const projectPath = createResult.metadata.projectPath;
 
     try {
       // 2. Get the AgentSession and plan file path
       const session = env.services.workspaceService.getOrCreateSession(workspaceId);
-      const planPath = getPlanFilePath(workspaceId);
+      const planPath = getPlanFilePath(workspaceName, projectName, projectPath);
 
       // 3. Create the plan directory and file
       const planDir = join(planPath, "..");
@@ -206,11 +209,14 @@ describeIntegration("File Change Notification Integration", () => {
     if (!createResult.success) throw new Error("Failed to create workspace");
 
     const workspaceId = createResult.metadata.id;
+    const workspaceName = createResult.metadata.name;
+    const projectName = createResult.metadata.projectName;
+    const projectPath = createResult.metadata.projectPath;
 
     try {
       // 2. Get the AgentSession and plan file path
       const session = env.services.workspaceService.getOrCreateSession(workspaceId);
-      const planPath = getPlanFilePath(workspaceId);
+      const planPath = getPlanFilePath(workspaceName, projectName, projectPath);
 
       // 3. Create the plan directory and file
       const planDir = join(planPath, "..");

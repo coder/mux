@@ -54,10 +54,10 @@ import type {
 import { applyToolPolicy, type ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { MockScenarioPlayer } from "./mock/mockScenarioPlayer";
 import { EnvHttpProxyAgent, type Dispatcher } from "undici";
-import { getPlanFilePath } from "@/common/utils/planStorage";
+import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
 import { getPlanModeInstruction } from "@/common/utils/ui/modeUtils";
 import type { UIMode } from "@/common/types/mode";
-import { readFileString } from "@/node/utils/runtime/helpers";
+import { readFileString, writeFileString, execBuffered } from "@/node/utils/runtime/helpers";
 
 // Export a standalone version of getToolsForModel for use in backend
 
@@ -992,15 +992,35 @@ export class AIService extends EventEmitter {
       // Construct plan mode instruction if in plan mode
       // This is done backend-side because we have access to the plan file path
       let effectiveAdditionalInstructions = additionalSystemInstructions;
+      const planFilePath = getPlanFilePath(
+        metadata.name,
+        metadata.projectName,
+        metadata.projectPath
+      );
+      const legacyPlanPath = getLegacyPlanFilePath(workspaceId);
       if (mode === "plan") {
-        const planFilePath = getPlanFilePath(workspaceId);
         // Check if plan file exists using runtime (supports both local and SSH)
+        // Try new path first, then legacy path
         let planExists = false;
         try {
           await runtime.stat(planFilePath);
           planExists = true;
         } catch {
-          // File doesn't exist
+          // Try legacy path
+          try {
+            await runtime.stat(legacyPlanPath);
+            planExists = true;
+            // Migrate legacy plan to new location
+            try {
+              const content = await readFileString(runtime, legacyPlanPath);
+              await writeFileString(runtime, planFilePath, content);
+              await execBuffered(runtime, `rm -f "${legacyPlanPath}"`, { cwd: "/tmp", timeout: 5 });
+            } catch {
+              // Migration failed, but plan exists at legacy path
+            }
+          } catch {
+            // File doesn't exist at either location
+          }
         }
         const planModeInstruction = getPlanModeInstruction(planFilePath, planExists);
         effectiveAdditionalInstructions = additionalSystemInstructions
@@ -1016,14 +1036,32 @@ export class AIService extends EventEmitter {
           .reverse()
           .find((m) => m.role === "assistant");
         if (lastAssistantMessage?.metadata?.mode === "plan") {
-          const planFilePath = getPlanFilePath(workspaceId);
+          // Try new path first, then legacy path (reuse paths computed above)
           try {
             const content = await readFileString(runtime, planFilePath);
             if (content.trim()) {
               planContentForTransition = content;
             }
           } catch {
-            // No plan file exists, proceed without plan content
+            // Try legacy path
+            try {
+              const content = await readFileString(runtime, legacyPlanPath);
+              if (content.trim()) {
+                planContentForTransition = content;
+                // Migrate legacy plan to new location
+                try {
+                  await writeFileString(runtime, planFilePath, content);
+                  await execBuffered(runtime, `rm -f "${legacyPlanPath}"`, {
+                    cwd: "/tmp",
+                    timeout: 5,
+                  });
+                } catch {
+                  // Migration failed, but we have the content
+                }
+              }
+            } catch {
+              // No plan file exists, proceed without plan content
+            }
           }
         }
       }
@@ -1141,7 +1179,7 @@ export class AIService extends EventEmitter {
           backgroundProcessManager: this.backgroundProcessManager,
           // Plan mode configuration for path enforcement
           mode: mode as UIMode | undefined,
-          planFilePath: mode === "plan" ? getPlanFilePath(workspaceId) : undefined,
+          planFilePath: mode === "plan" ? planFilePath : undefined,
           workspaceId,
           // External edit detection callback
           recordFileState,

@@ -13,9 +13,9 @@ import type {
 } from "@/common/orpc/types";
 import { createAuthMiddleware } from "./authMiddleware";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
-import { getPlanFilePath } from "@/common/utils/planStorage";
+import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
-import { readFileString } from "@/node/utils/runtime/helpers";
+import { readFileString, writeFileString, execBuffered } from "@/node/utils/runtime/helpers";
 import { createAsyncEventQueue } from "@/common/utils/asyncEventIterator";
 
 export const router = (authToken?: string) => {
@@ -580,24 +580,43 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.getPlanContent.input)
         .output(schemas.workspace.getPlanContent.output)
         .handler(async ({ context, input }) => {
-          const planPath = getPlanFilePath(input.workspaceId);
-
-          // Get workspace metadata to determine runtime
+          // Get workspace metadata to determine runtime and paths
           const metadata = await context.workspaceService.getInfo(input.workspaceId);
           if (!metadata) {
             return { success: false as const, error: `Workspace not found: ${input.workspaceId}` };
           }
+
+          const planPath = getPlanFilePath(
+            metadata.name,
+            metadata.projectName,
+            metadata.projectPath
+          );
+          const legacyPath = getLegacyPlanFilePath(input.workspaceId);
 
           // Create runtime to read plan file (supports both local and SSH)
           const runtime = createRuntime(metadata.runtimeConfig, {
             projectPath: metadata.projectPath,
           });
 
+          // Try new path first
           try {
             const content = await readFileString(runtime, planPath);
             return { success: true as const, data: { content, path: planPath } };
           } catch {
-            return { success: false as const, error: `Plan file not found at ${planPath}` };
+            // Fall back to legacy path and migrate if found
+            try {
+              const content = await readFileString(runtime, legacyPath);
+              // Migrate: write to new location and delete legacy
+              try {
+                await writeFileString(runtime, planPath, content);
+                await execBuffered(runtime, `rm -f "${legacyPath}"`, { cwd: "/tmp", timeout: 5 });
+              } catch {
+                // Migration failed, but we still have the content
+              }
+              return { success: true as const, data: { content, path: planPath } };
+            } catch {
+              return { success: false as const, error: `Plan file not found at ${planPath}` };
+            }
           }
         }),
       backgroundBashes: {
