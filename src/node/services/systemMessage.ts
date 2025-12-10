@@ -65,8 +65,39 @@ When the user asks you to remember something:
 
 /**
  * Build environment context XML block describing the workspace.
+ * @param workspacePath - Workspace directory path
+ * @param runtimeType - Runtime type: "local", "worktree", or "ssh"
  */
-function buildEnvironmentContext(workspacePath: string): string {
+function buildEnvironmentContext(
+  workspacePath: string,
+  runtimeType: "local" | "worktree" | "ssh"
+): string {
+  if (runtimeType === "local") {
+    // Local runtime works directly in project directory - may or may not be git
+    return `
+<environment>
+You are working in a directory at ${workspacePath}
+
+- Tools run here automatically
+- You are meant to do your work isolated from the user and other agents
+</environment>
+`;
+  }
+
+  if (runtimeType === "ssh") {
+    // SSH runtime clones the repository on a remote host
+    return `
+<environment>
+You are in a clone of a git repository at ${workspacePath}
+
+- This IS a git repository - run git commands directly (no cd needed)
+- Tools run here automatically
+- You are meant to do your work isolated from the user and other agents
+</environment>
+`;
+  }
+
+  // Worktree runtime creates a git worktree locally
   return `
 <environment>
 You are in a git worktree at ${workspacePath}
@@ -259,8 +290,11 @@ export async function buildSystemMessage(
       null;
   }
 
+  // Get runtime type from metadata (defaults to "local" for legacy workspaces without runtimeConfig)
+  const runtimeType = metadata.runtimeConfig?.type ?? "local";
+
   // Build system message
-  let systemMessage = `${PRELUDE.trim()}\n\n${buildEnvironmentContext(workspacePath)}`;
+  let systemMessage = `${PRELUDE.trim()}\n\n${buildEnvironmentContext(workspacePath, runtimeType)}`;
 
   // Add MCP context if servers are configured
   if (mcpServers && Object.keys(mcpServers).length > 0) {
