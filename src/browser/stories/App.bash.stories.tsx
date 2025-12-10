@@ -21,20 +21,29 @@ import { userEvent, waitFor } from "@storybook/test";
 
 /**
  * Helper to expand all bash tool calls in a story.
- * Clicks on the ▶ expand icons to expand tool details.
+ * Waits for messages to load, then clicks on the ▶ expand icons to expand tool details.
  */
 async function expandAllBashTools(canvasElement: HTMLElement) {
+  // Wait for messages to finish loading (non-racy: uses actual loading state)
+  await waitFor(
+    () => {
+      const messageWindow = canvasElement.querySelector('[data-testid="message-window"]');
+      if (!messageWindow || messageWindow.getAttribute("data-loaded") !== "true") {
+        throw new Error("Messages not loaded yet");
+      }
+    },
+    { timeout: 5000 }
+  );
+
+  // Now find and expand all tool icons
   await waitFor(
     async () => {
-      // Find all ▶ expand icons (they contain the triangle character)
-      // The icon parent div is clickable and triggers expansion
       const allSpans = canvasElement.querySelectorAll("span");
       const expandIcons = Array.from(allSpans).filter((span) => span.textContent?.trim() === "▶");
       if (expandIcons.length === 0) {
         throw new Error("No expand icons found");
       }
       for (const icon of expandIcons) {
-        // Click the parent element (the tool header row)
         const header = icon.closest("[class*='cursor-pointer']");
         if (header) {
           await userEvent.click(header as HTMLElement);
@@ -44,7 +53,7 @@ async function expandAllBashTools(canvasElement: HTMLElement) {
     { timeout: 5000 }
   );
 
-  // Wait for any auto-focus timers, then blur
+  // Wait for focus auto-select timer, then blur
   await new Promise((resolve) => setTimeout(resolve, 150));
   (document.activeElement as HTMLElement)?.blur();
 }
