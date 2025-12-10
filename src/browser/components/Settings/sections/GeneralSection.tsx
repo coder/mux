@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { useTheme, THEME_OPTIONS, type ThemeMode } from "@/browser/contexts/ThemeContext";
 import {
   Select,
@@ -9,6 +9,7 @@ import {
 } from "@/browser/components/ui/select";
 import { Input } from "@/browser/components/ui/input";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { useAPI } from "@/browser/contexts/API";
 import {
   EDITOR_CONFIG_KEY,
   DEFAULT_EDITOR_CONFIG,
@@ -28,10 +29,23 @@ const isBrowserMode = typeof window !== "undefined" && !window.api;
 
 export function GeneralSection() {
   const { theme, setTheme } = useTheme();
+  const { api } = useAPI();
   const [editorConfig, setEditorConfig] = usePersistedState<EditorConfig>(
     EDITOR_CONFIG_KEY,
     DEFAULT_EDITOR_CONFIG
   );
+  const [sshHost, setSshHost] = useState<string>("");
+  const [sshHostLoaded, setSshHostLoaded] = useState(false);
+
+  // Load SSH host from server on mount (browser mode only)
+  useEffect(() => {
+    if (isBrowserMode && api) {
+      void api.server.getSshHost().then((host) => {
+        setSshHost(host ?? "");
+        setSshHostLoaded(true);
+      });
+    }
+  }, [api]);
 
   const handleEditorChange = (editor: EditorType) => {
     setEditorConfig((prev) => ({ ...prev, editor }));
@@ -40,6 +54,15 @@ export function GeneralSection() {
   const handleCustomCommandChange = (customCommand: string) => {
     setEditorConfig((prev) => ({ ...prev, customCommand }));
   };
+
+  const handleSshHostChange = useCallback(
+    (value: string) => {
+      setSshHost(value);
+      // Save to server (debounced effect would be better, but keeping it simple)
+      void api?.server.setSshHost({ sshHost: value || null });
+    },
+    [api]
+  );
 
   return (
     <div className="space-y-6">
@@ -105,6 +128,25 @@ export function GeneralSection() {
               Custom editors are not supported in browser mode. Use VS Code or Cursor instead.
             </div>
           )}
+        </div>
+      )}
+
+      {isBrowserMode && sshHostLoaded && (
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-foreground text-sm">SSH Host</div>
+            <div className="text-muted text-xs">
+              SSH hostname for &apos;Open in Editor&apos; deep links
+            </div>
+          </div>
+          <Input
+            value={sshHost}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              handleSshHostChange(e.target.value)
+            }
+            placeholder={window.location.hostname}
+            className="border-border-medium bg-background-secondary h-9 w-40"
+          />
         </div>
       )}
     </div>
