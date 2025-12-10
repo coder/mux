@@ -247,6 +247,51 @@ export class HistoryService {
   }
 
   /**
+   * Delete a specific message from history by its historySequence number.
+   * Used to clean up empty placeholder messages when a stream is interrupted
+   * before producing any content.
+   */
+  async deleteMessageBySequence(
+    workspaceId: string,
+    historySequence: number
+  ): Promise<Result<void>> {
+    return this.fileLocks.withLock(workspaceId, async () => {
+      try {
+        const historyPath = this.getChatHistoryPath(workspaceId);
+
+        // Read all messages
+        const historyResult = await this.getHistory(workspaceId);
+        if (!historyResult.success) {
+          return historyResult;
+        }
+
+        const messages = historyResult.data;
+
+        // Filter out the message with the target sequence
+        const filteredMessages = messages.filter(
+          (msg) => msg.metadata?.historySequence !== historySequence
+        );
+
+        // If nothing was removed, return success (idempotent)
+        if (filteredMessages.length === messages.length) {
+          return Ok(undefined);
+        }
+
+        // Rewrite entire file without the deleted message
+        const historyEntries = filteredMessages
+          .map((msg) => JSON.stringify({ ...msg, workspaceId }) + "\n")
+          .join("");
+
+        await writeFileAtomic(historyPath, historyEntries);
+        return Ok(undefined);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return Err(`Failed to delete message: ${message}`);
+      }
+    });
+  }
+
+  /**
    * Truncate history after a specific message ID
    * Removes the message with the given ID and all subsequent messages
    */

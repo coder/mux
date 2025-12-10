@@ -1123,3 +1123,75 @@ describe("injectFileChangeNotifications", () => {
     expect(text).toContain("diff2");
   });
 });
+
+describe("transformModelMessages - empty content filtering", () => {
+  it("should filter out messages with empty content arrays", () => {
+    // This tests the defense-in-depth filtering of empty content
+    // Note: consecutive user messages get merged, so we verify the empty assistant is removed
+    const messages: ModelMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Hello" }] },
+      { role: "assistant", content: [] }, // Empty content - should be filtered
+      { role: "user", content: [{ type: "text", text: "World" }] },
+    ];
+
+    const result = transformModelMessages(messages, "anthropic");
+
+    // The empty assistant message should be filtered out
+    // The two user messages get merged into one
+    expect(result.length).toBe(1);
+    expect(result[0].role).toBe("user");
+    // Verify both user texts were merged
+    const content = result[0].content;
+    expect(Array.isArray(content)).toBe(true);
+    if (Array.isArray(content)) {
+      const text = content.find((c) => c.type === "text")?.text;
+      expect(text).toContain("Hello");
+      expect(text).toContain("World");
+    }
+  });
+
+  it("should filter out messages with empty string content", () => {
+    const messages: ModelMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Hello" }] },
+      { role: "assistant", content: "" }, // Empty string content - should be filtered
+      { role: "user", content: [{ type: "text", text: "World" }] },
+    ];
+
+    const result = transformModelMessages(messages, "anthropic");
+
+    // Same as above - empty assistant filtered, users merged
+    expect(result.length).toBe(1);
+    expect(result[0].role).toBe("user");
+  });
+
+  it("should keep messages with non-empty content", () => {
+    const messages: ModelMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Hello" }] },
+      { role: "assistant", content: [{ type: "text", text: "Hi there!" }] },
+      { role: "user", content: [{ type: "text", text: "World" }] },
+    ];
+
+    const result = transformModelMessages(messages, "anthropic");
+
+    expect(result.length).toBe(3);
+    expect(result[0].role).toBe("user");
+    expect(result[1].role).toBe("assistant");
+    expect(result[2].role).toBe("user");
+  });
+
+  it("should filter out empty assistant message between non-user messages", () => {
+    const messages: ModelMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Hello" }] },
+      { role: "assistant", content: [{ type: "text", text: "Hi there!" }] },
+      { role: "assistant", content: [] }, // Empty - should be filtered
+      { role: "user", content: [{ type: "text", text: "Thanks" }] },
+    ];
+
+    const result = transformModelMessages(messages, "anthropic");
+
+    expect(result.length).toBe(3);
+    expect(result[0].role).toBe("user");
+    expect(result[1].role).toBe("assistant");
+    expect(result[2].role).toBe("user");
+  });
+});

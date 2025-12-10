@@ -392,6 +392,26 @@ function filterReasoningOnlyMessages(messages: ModelMessage[]): ModelMessage[] {
 }
 
 /**
+ * Filter out any ModelMessage with empty content.
+ * This is defense-in-depth to catch edge cases where upstream transforms
+ * (e.g., ignoreIncompleteToolCalls, reasoning stripping) leave messages
+ * with empty content arrays that would cause API errors.
+ *
+ * Anthropic API rejects messages like: { role: "assistant", content: [] }
+ */
+function filterEmptyContentMessages(messages: ModelMessage[]): ModelMessage[] {
+  return messages.filter((msg) => {
+    // String content with actual text is valid
+    if (typeof msg.content === "string") {
+      return msg.content.length > 0;
+    }
+
+    // Array content must have at least one item
+    return msg.content.length > 0;
+  });
+}
+
+/**
  * Coalesce consecutive parts of the same type within each message.
  * Streaming creates many individual text/reasoning parts; merge them for easier debugging.
  * Also reduces JSON overhead when sending messages to the API.
@@ -534,7 +554,12 @@ export function transformModelMessages(messages: ModelMessage[], provider: strin
   // Pass 3: Merge consecutive user messages (applies to all providers)
   const merged = mergeConsecutiveUserMessages(reasoningHandled);
 
-  return merged;
+  // Pass 4: Filter any messages that ended up with empty content
+  // This is defense-in-depth for edge cases where transforms produce empty content
+  // (e.g., tool calls dropped, reasoning stripped, but message structure remained)
+  const nonEmpty = filterEmptyContentMessages(merged);
+
+  return nonEmpty;
 }
 
 /**

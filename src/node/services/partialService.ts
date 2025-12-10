@@ -156,10 +156,13 @@ export class PartialService {
         (msg) => msg.metadata?.historySequence === partialSeq
       );
 
+      const partialHasContent = (partial.parts?.length ?? 0) > 0;
+      const existingIsEmpty = (existingMessage?.parts?.length ?? 0) === 0;
+
       const shouldCommit =
         (!existingMessage || // No message with this sequence yet
           (partial.parts?.length ?? 0) > (existingMessage.parts?.length ?? 0)) && // Partial has more parts
-        (partial.parts?.length ?? 0) > 0; // Don't commit empty messages
+        partialHasContent; // Don't commit empty messages
 
       if (shouldCommit) {
         if (existingMessage) {
@@ -174,6 +177,18 @@ export class PartialService {
           if (!appendResult.success) {
             return appendResult;
           }
+        }
+      } else if (!partialHasContent && existingMessage && existingIsEmpty) {
+        // Partial has no content AND there's an empty placeholder in history
+        // This happens when stream is interrupted before producing any content
+        // Delete the empty placeholder to prevent "content field is empty" API errors
+        const deleteResult = await this.historyService.deleteMessageBySequence(
+          workspaceId,
+          partialSeq
+        );
+        if (!deleteResult.success) {
+          // Log but don't fail - the message filter will catch this as fallback
+          log.warn(`Failed to delete empty placeholder: ${deleteResult.error}`);
         }
       }
 
