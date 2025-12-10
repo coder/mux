@@ -683,6 +683,16 @@ export const router = (authToken?: string) => {
         .handler(({ context, input }) => {
           return context.workspaceService.getPostCompactionState(input.workspaceId);
         }),
+      setPostCompactionExclusion: t
+        .input(schemas.workspace.setPostCompactionExclusion.input)
+        .output(schemas.workspace.setPostCompactionExclusion.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.setPostCompactionExclusion(
+            input.workspaceId,
+            input.itemId,
+            input.excluded
+          );
+        }),
     },
     window: {
       setTitle: t

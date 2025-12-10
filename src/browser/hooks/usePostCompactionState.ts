@@ -4,6 +4,8 @@ import { useAPI } from "@/browser/contexts/API";
 interface PostCompactionState {
   planPath: string | null;
   trackedFilePaths: string[];
+  excludedItems: Set<string>;
+  toggleExclusion: (itemId: string) => Promise<void>;
 }
 
 /**
@@ -12,9 +14,14 @@ interface PostCompactionState {
  */
 export function usePostCompactionState(workspaceId: string): PostCompactionState {
   const { api } = useAPI();
-  const [state, setState] = useState<PostCompactionState>({
+  const [state, setState] = useState<{
+    planPath: string | null;
+    trackedFilePaths: string[];
+    excludedItems: Set<string>;
+  }>({
     planPath: null,
     trackedFilePaths: [],
+    excludedItems: new Set(),
   });
 
   const fetchState = useCallback(async () => {
@@ -24,6 +31,7 @@ export function usePostCompactionState(workspaceId: string): PostCompactionState
       setState({
         planPath: result.planPath,
         trackedFilePaths: result.trackedFilePaths,
+        excludedItems: new Set(result.excludedItems),
       });
     } catch {
       // Silently fail - component will show nothing if data unavailable
@@ -37,5 +45,29 @@ export function usePostCompactionState(workspaceId: string): PostCompactionState
     return () => clearInterval(interval);
   }, [fetchState]);
 
-  return state;
+  const toggleExclusion = useCallback(
+    async (itemId: string) => {
+      if (!api) return;
+      const isCurrentlyExcluded = state.excludedItems.has(itemId);
+      const result = await api.workspace.setPostCompactionExclusion({
+        workspaceId,
+        itemId,
+        excluded: !isCurrentlyExcluded,
+      });
+      if (result.success) {
+        setState((prev) => {
+          const newSet = new Set(prev.excludedItems);
+          if (isCurrentlyExcluded) {
+            newSet.delete(itemId);
+          } else {
+            newSet.add(itemId);
+          }
+          return { ...prev, excludedItems: newSet };
+        });
+      }
+    },
+    [api, workspaceId, state.excludedItems]
+  );
+
+  return { ...state, toggleExclusion };
 }

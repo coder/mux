@@ -1,12 +1,15 @@
 import React, { useMemo, useState } from "react";
-import { ChevronRight, FileText, ExternalLink, Check } from "lucide-react";
+import { ChevronRight, FileText, ExternalLink, Check, Eye, EyeOff } from "lucide-react";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
 
 interface PostCompactionSectionProps {
   workspaceId: string;
   planPath: string | null;
   trackedFilePaths: string[];
+  excludedItems: Set<string>;
+  onToggleExclusion: (itemId: string) => Promise<void>;
 }
 
 /** Extract just the filename from a full path */
@@ -43,6 +46,7 @@ export const PostCompactionSection: React.FC<PostCompactionSectionProps> = (prop
   // Derive values from props
   const planExists = props.planPath !== null;
   const trackedFilesCount = props.trackedFilePaths.length;
+  const isPlanExcluded = props.excludedItems.has("plan");
 
   // Format file names for display - show just filename, with parent dir if duplicates
   const formattedFiles = useMemo(() => {
@@ -57,9 +61,14 @@ export const PostCompactionSection: React.FC<PostCompactionSectionProps> = (prop
       const needsContext = (nameCount.get(name) ?? 0) > 1;
       const parts = fullPath.split("/");
       const displayName = needsContext && parts.length > 1 ? parts.slice(-2).join("/") : name;
-      return { fullPath, displayName };
+      const itemId = `file:${fullPath}`;
+      const isExcluded = props.excludedItems.has(itemId);
+      return { fullPath, displayName, itemId, isExcluded };
     });
-  }, [props.trackedFilePaths]);
+  }, [props.trackedFilePaths, props.excludedItems]);
+
+  // Count how many items are included (not excluded)
+  const includedFilesCount = formattedFiles.filter((f) => !f.isExcluded).length;
 
   // Don't render if nothing will be injected
   if (!planExists && trackedFilesCount === 0) {
@@ -84,25 +93,51 @@ export const PostCompactionSection: React.FC<PostCompactionSectionProps> = (prop
       {!collapsed && (
         <div className="mt-2 flex flex-col gap-2">
           {planExists && props.planPath && (
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => void handleCopyPath()}
-                className="text-subtle hover:text-foreground flex items-center gap-2 text-left text-xs transition-colors"
-                type="button"
-                title="Click to copy path"
-              >
-                <FileText className="h-3.5 w-3.5" />
-                <span>Plan file</span>
-                {copied && <Check className="h-3 w-3 text-green-500" />}
-              </button>
-              <button
-                onClick={handleOpenPlan}
-                className="text-subtle hover:text-foreground p-0.5 transition-colors"
-                type="button"
-                title="Open in editor"
-              >
-                <ExternalLink className="h-3 w-3" />
-              </button>
+            <div className={`flex items-center gap-1 ${isPlanExcluded ? "opacity-50" : ""}`}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => void props.onToggleExclusion("plan")}
+                    className="text-subtle hover:text-foreground p-0.5 transition-colors"
+                    type="button"
+                  >
+                    {isPlanExcluded ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" showArrow={false}>
+                  {isPlanExcluded ? "Include in context" : "Exclude from context"}
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => void handleCopyPath()}
+                    className={`text-subtle hover:text-foreground flex items-center gap-2 text-left text-xs transition-colors ${isPlanExcluded ? "line-through" : ""}`}
+                    type="button"
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    <span>Plan file</span>
+                    {copied && <Check className="h-3 w-3 text-green-500" />}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" showArrow={false}>
+                  Click to copy path
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleOpenPlan}
+                    className="text-subtle hover:text-foreground p-0.5 transition-colors"
+                    type="button"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" showArrow={false}>
+                  Open in editor
+                </TooltipContent>
+              </Tooltip>
             </div>
           )}
 
@@ -117,17 +152,42 @@ export const PostCompactionSection: React.FC<PostCompactionSectionProps> = (prop
                   className={`h-3 w-3 transition-transform duration-200 ${filesExpanded ? "rotate-90" : ""}`}
                 />
                 <span>
-                  {trackedFilesCount} file diff{trackedFilesCount !== 1 ? "s" : ""}
+                  {includedFilesCount}/{trackedFilesCount} file diff
+                  {trackedFilesCount !== 1 ? "s" : ""}
                 </span>
               </button>
 
               {filesExpanded && formattedFiles.length > 0 && (
-                <div className="text-muted mt-1 ml-5 text-[10px]">
-                  {formattedFiles.map((file, i) => (
-                    <span key={file.fullPath}>
-                      {file.displayName}
-                      {i < formattedFiles.length - 1 && ", "}
-                    </span>
+                <div className="mt-1 ml-5 flex flex-col gap-0.5">
+                  {formattedFiles.map((file) => (
+                    <div
+                      key={file.fullPath}
+                      className={`flex items-center gap-1 ${file.isExcluded ? "opacity-50" : ""}`}
+                    >
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            onClick={() => void props.onToggleExclusion(file.itemId)}
+                            className="text-subtle hover:text-foreground p-0.5 transition-colors"
+                            type="button"
+                          >
+                            {file.isExcluded ? (
+                              <EyeOff className="h-2.5 w-2.5" />
+                            ) : (
+                              <Eye className="h-2.5 w-2.5" />
+                            )}
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" showArrow={false}>
+                          {file.isExcluded ? "Include in context" : "Exclude from context"}
+                        </TooltipContent>
+                      </Tooltip>
+                      <span
+                        className={`text-muted text-[10px] ${file.isExcluded ? "line-through" : ""}`}
+                      >
+                        {file.displayName}
+                      </span>
+                    </div>
                   ))}
                 </div>
               )}

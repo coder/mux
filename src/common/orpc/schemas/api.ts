@@ -371,7 +371,20 @@ export const workspace = {
     output: z.object({
       planPath: z.string().nullable(),
       trackedFilePaths: z.array(z.string()),
+      excludedItems: z.array(z.string()),
     }),
+  },
+  /**
+   * Toggle whether a post-compaction item is excluded from injection.
+   * Item IDs: "plan" for plan file, "file:<path>" for tracked files.
+   */
+  setPostCompactionExclusion: {
+    input: z.object({
+      workspaceId: z.string(),
+      itemId: z.string(),
+      excluded: z.boolean(),
+    }),
+    output: ResultSchema(z.void(), z.string()),
   },
 };
 

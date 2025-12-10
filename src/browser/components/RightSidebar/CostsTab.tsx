@@ -274,6 +274,8 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
             workspaceId={workspaceId}
             planPath={postCompactionState.planPath}
             trackedFilePaths={postCompactionState.trackedFilePaths}
+            excludedItems={postCompactionState.excludedItems}
+            onToggleExclusion={postCompactionState.toggleExclusion}
           />
         </div>
       )}

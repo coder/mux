@@ -32,7 +32,7 @@ import { CompactionHandler } from "./compactionHandler";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import { computeDiff } from "@/node/utils/diff";
 import { AttachmentService } from "./attachmentService";
-import type { PostCompactionAttachment } from "@/common/types/attachment";
+import type { PostCompactionAttachment, PostCompactionExclusions } from "@/common/types/attachment";
 import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
 import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
 
@@ -798,8 +798,14 @@ export class AgentSession {
         { projectPath: metadataResult.data.projectPath }
       );
 
-      // Use cached diffs extracted before history was cleared
-      return AttachmentService.generatePostCompactionAttachments(this.workspaceId, pendingDiffs, runtime);
+      // Load exclusions and use cached diffs extracted before history was cleared
+      const excludedItems = await this.loadExcludedItems();
+      return AttachmentService.generatePostCompactionAttachments(
+        this.workspaceId,
+        pendingDiffs,
+        runtime,
+        excludedItems
+      );
     }
 
     // Increment turn counter
@@ -836,7 +842,33 @@ export class AgentSession {
       { projectPath: metadataResult.data.projectPath }
     );
 
-    return AttachmentService.generatePostCompactionAttachments(this.workspaceId, fileDiffs, runtime);
+    // Load exclusions
+    const excludedItems = await this.loadExcludedItems();
+
+    return AttachmentService.generatePostCompactionAttachments(
+      this.workspaceId,
+      fileDiffs,
+      runtime,
+      excludedItems
+    );
+  }
+
+  /**
+   * Load excluded items from the exclusions file.
+   * Returns empty set if file doesn't exist or can't be read.
+   */
+  private async loadExcludedItems(): Promise<Set<string>> {
+    const exclusionsPath = path.join(
+      this.config.getSessionDir(this.workspaceId),
+      "exclusions.json"
+    );
+    try {
+      const data = await readFile(exclusionsPath, "utf-8");
+      const exclusions = JSON.parse(data) as PostCompactionExclusions;
+      return new Set(exclusions.excludedItems);
+    } catch {
+      return new Set();
+    }
   }
 
   /**

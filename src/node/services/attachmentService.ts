@@ -70,24 +70,32 @@ export class AttachmentService {
   /**
    * Generate all post-compaction attachments.
    * Returns empty array if no attachments are needed.
+   * @param excludedItems - Set of item IDs to exclude ("plan" or "file:<path>")
    */
   static async generatePostCompactionAttachments(
     workspaceId: string,
     fileDiffs: FileEditDiff[],
-    runtime: Runtime
+    runtime: Runtime,
+    excludedItems: Set<string> = new Set<string>()
   ): Promise<PostCompactionAttachment[]> {
     const attachments: PostCompactionAttachment[] = [];
     const planFilePath = getPlanFilePath(workspaceId);
 
-    // Plan file reference (mode-agnostic, matching CC CLI behavior)
-    const planRef = await this.generatePlanFileReference(workspaceId, runtime);
-    if (planRef) {
-      attachments.push(planRef);
+    // Plan file reference (skip if excluded)
+    let planRef: PlanFileReferenceAttachment | null = null;
+    if (!excludedItems.has("plan")) {
+      planRef = await this.generatePlanFileReference(workspaceId, runtime);
+      if (planRef) {
+        attachments.push(planRef);
+      }
     }
+
+    // Filter out excluded files
+    const filteredDiffs = fileDiffs.filter((f) => !excludedItems.has(`file:${f.path}`));
 
     // Edited files reference (only exclude plan diffs if plan reference was included)
     const editedFilesRef = this.generateEditedFilesAttachment(
-      fileDiffs,
+      filteredDiffs,
       planRef ? planFilePath : undefined
     );
     if (editedFilesRef) {

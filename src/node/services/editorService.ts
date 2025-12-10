@@ -101,8 +101,11 @@ export class EditorService {
         });
         child.unref();
       } else {
-        // Local - just open the path (quote to handle spaces)
-        const shellCmd = `${editorCommand} ${shellQuote(targetPath)}`;
+        // Local - expand tilde and open the path (quote to handle spaces)
+        const resolvedPath = targetPath.startsWith("~/")
+          ? targetPath.replace("~", process.env.HOME ?? "~")
+          : targetPath;
+        const shellCmd = `${editorCommand} ${shellQuote(resolvedPath)}`;
         log.info(`Opening local path in editor: ${shellCmd}`);
         const child = spawn(shellCmd, [], {
           detached: true,

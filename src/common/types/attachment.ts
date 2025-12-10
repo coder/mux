@@ -21,3 +21,13 @@ export interface EditedFilesReferenceAttachment {
 }
 
 export type PostCompactionAttachment = PlanFileReferenceAttachment | EditedFilesReferenceAttachment;
+
+/**
+ * Exclusion state for post-compaction context items.
+ * Items are identified by:
+ * - "plan" for the plan file
+ * - "file:<path>" for tracked files (path is the full file path)
+ */
+export interface PostCompactionExclusions {
+  excludedItems: string[];
+}

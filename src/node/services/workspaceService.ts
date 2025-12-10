@@ -19,6 +19,7 @@ import { getPlanFilePath } from "@/common/utils/planStorage";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
 import { fileExists } from "@/node/utils/runtime/fileExists";
 
+import type { PostCompactionExclusions } from "@/common/types/attachment";
 import type {
   SendMessageOptions,
   DeleteMessage,
@@ -284,6 +285,7 @@ export class WorkspaceService extends EventEmitter {
   public async getPostCompactionState(workspaceId: string): Promise<{
     planPath: string | null;
     trackedFilePaths: string[];
+    excludedItems: string[];
   }> {
     const planPath = getPlanFilePath(workspaceId);
 
@@ -295,6 +297,9 @@ export class WorkspaceService extends EventEmitter {
       planExists = await fileExists(runtime, planPath);
     }
 
+    // Load exclusions
+    const exclusions = await this.getPostCompactionExclusions(workspaceId);
+
     // If session has pending compaction attachments, use cached paths
     // (history is cleared after compaction, but cache survives)
     const session = this.sessions.get(workspaceId);
@@ -304,6 +309,7 @@ export class WorkspaceService extends EventEmitter {
       return {
         planPath: planExists ? planPath : null,
         trackedFilePaths,
+        excludedItems: exclusions.excludedItems,
       };
     }
 
@@ -317,7 +323,55 @@ export class WorkspaceService extends EventEmitter {
     return {
       planPath: planExists ? planPath : null,
       trackedFilePaths,
+      excludedItems: exclusions.excludedItems,
     };
+  }
+
+  /**
+   * Get post-compaction exclusions for a workspace.
+   * Returns empty exclusions if file doesn't exist.
+   */
+  public async getPostCompactionExclusions(workspaceId: string): Promise<PostCompactionExclusions> {
+    const exclusionsPath = path.join(this.config.getSessionDir(workspaceId), "exclusions.json");
+    try {
+      const data = await fsPromises.readFile(exclusionsPath, "utf-8");
+      return JSON.parse(data) as PostCompactionExclusions;
+    } catch {
+      return { excludedItems: [] };
+    }
+  }
+
+  /**
+   * Set whether an item is excluded from post-compaction context.
+   * Item IDs: "plan" for plan file, "file:<path>" for tracked files.
+   */
+  public async setPostCompactionExclusion(
+    workspaceId: string,
+    itemId: string,
+    excluded: boolean
+  ): Promise<Result<void>> {
+    try {
+      const exclusions = await this.getPostCompactionExclusions(workspaceId);
+      const set = new Set(exclusions.excludedItems);
+
+      if (excluded) {
+        set.add(itemId);
+      } else {
+        set.delete(itemId);
+      }
+
+      const sessionDir = this.config.getSessionDir(workspaceId);
+      await fsPromises.mkdir(sessionDir, { recursive: true });
+      const exclusionsPath = path.join(sessionDir, "exclusions.json");
+      await fsPromises.writeFile(
+        exclusionsPath,
+        JSON.stringify({ excludedItems: [...set] }, null, 2)
+      );
+      return Ok(undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to set exclusion: ${message}`);
+    }
   }
 
   async create(
@@ -972,7 +1026,9 @@ export class WorkspaceService extends EventEmitter {
       // Delete plan file through runtime (supports both local and SSH)
       const metadata = await this.getInfo(workspaceId);
       if (metadata) {
-        const runtime = createRuntime(metadata.runtimeConfig, { projectPath: metadata.projectPath });
+        const runtime = createRuntime(metadata.runtimeConfig, {
+          projectPath: metadata.projectPath,
+        });
         const planPath = getPlanFilePath(workspaceId);
         try {
           // Use exec to delete file since runtime doesn't have a deleteFile method
