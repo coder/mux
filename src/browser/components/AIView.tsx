@@ -126,6 +126,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
   const {
     processes: backgroundBashes,
+    terminatingIds: backgroundBashTerminatingIds,
     handleTerminate: handleTerminateBackgroundBash,
     foregroundToolCallIds,
     handleSendToBackground: handleSendBashToBackground,
@@ -682,6 +683,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
         )}
         <BackgroundProcessesBanner
           processes={backgroundBashes}
+          terminatingIds={backgroundBashTerminatingIds}
           onTerminate={handleTerminateBackgroundBash}
         />
         <ReviewsBanner workspaceId={workspaceId} />

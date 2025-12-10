@@ -23,6 +23,8 @@ export function useBackgroundBashHandlers(
 ): {
   /** List of background processes */
   processes: BackgroundProcessInfo[];
+  /** Set of process IDs currently being terminated */
+  terminatingIds: Set<string>;
   /** Terminate a background process */
   handleTerminate: (processId: string) => void;
   /** Set of tool call IDs of foreground bashes */
@@ -36,6 +38,8 @@ export function useBackgroundBashHandlers(
 } {
   const [processes, setProcesses] = useState<BackgroundProcessInfo[]>(EMPTY_PROCESSES);
   const [foregroundToolCallIds, setForegroundToolCallIds] = useState<Set<string>>(EMPTY_SET);
+  // Process IDs currently being terminated (for visual feedback)
+  const [terminatingIds, setTerminatingIds] = useState<Set<string>>(EMPTY_SET);
   // Keep a ref for handleMessageSentBackground to avoid recreating on every change
   const foregroundIdsRef = useRef<Set<string>>(EMPTY_SET);
   const error = usePopoverError();
@@ -122,7 +126,17 @@ export function useBackgroundBashHandlers(
   const { showError } = error;
   const handleTerminate = useCallback(
     (processId: string) => {
+      // Mark as terminating immediately for visual feedback
+      setTerminatingIds((prev) => new Set(prev).add(processId));
+
       terminate(processId).catch((err: Error) => {
+        // Only clear on FAILURE - restore to normal so user can retry
+        // On success: don't clear - subscription removes the process while still dimmed
+        setTerminatingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(processId);
+          return next;
+        });
         showError(processId, err.message);
       });
     },
@@ -150,6 +164,7 @@ export function useBackgroundBashHandlers(
   return useMemo(
     () => ({
       processes,
+      terminatingIds,
       handleTerminate,
       foregroundToolCallIds,
       handleSendToBackground,
@@ -158,6 +173,7 @@ export function useBackgroundBashHandlers(
     }),
     [
       processes,
+      terminatingIds,
       handleTerminate,
       foregroundToolCallIds,
       handleSendToBackground,
