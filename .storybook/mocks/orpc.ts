@@ -207,6 +207,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         terminate: async () => ({ success: true, data: undefined }),
         sendToBackground: async () => ({ success: true, data: undefined }),
       },
+      getSessionUsage: async () => undefined,
     },
     window: {
       setTitle: async () => undefined,
