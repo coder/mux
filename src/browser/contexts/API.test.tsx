@@ -71,8 +71,20 @@ void mock.module("@/browser/components/AuthTokenModal", () => ({
   clearStoredAuthToken: () => {},
 }));
 
-// Import after mocks
-import { APIProvider, useAPI, type UseAPIResult } from "./API";
+// Import the real API module types (not the mocked version)
+import type { UseAPIResult as _UseAPIResult, APIProvider as APIProviderType } from "./API";
+
+// IMPORTANT: Other test files mock @/browser/contexts/API with a fake APIProvider.
+// Module mocks leak between test files in bun (https://github.com/oven-sh/bun/issues/12823).
+// The query string creates a distinct module cache key, bypassing any mocked version.
+/* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment */
+const RealAPIModule: {
+  APIProvider: typeof APIProviderType;
+  useAPI: () => _UseAPIResult;
+} = require("./API?real=1");
+/* eslint-enable @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment */
+const { APIProvider, useAPI } = RealAPIModule;
+type UseAPIResult = _UseAPIResult;
 
 // Test component to observe API state
 function APIStateObserver(props: { onState: (state: UseAPIResult) => void }) {
