@@ -10,6 +10,21 @@ description: Agent instructions for AI assistants working on the mux codebase
 - `mux`: Electron + React desktop app for parallel agent workflows; UX must be fast, responsive, predictable.
 - Minor breaking changes are expected, but critical flows must allow upgrade↔downgrade without friction; skip migrations when breakage is tightly scoped.
 - Public work (issues/PRs/commits) must use 🤖 in the title and include "_Generated with `mux`_" in the body when applicable.
+- If a plan file exists and is relevant to the PR (i.e., it describes what was implemented), include it in the PR description to help reviewers understand the agent's goals:
+
+```markdown
+---
+
+<details>
+<summary>📋 Implementation Plan</summary>
+
+CONTENTS OF THE PLAN FILE
+
+</details>
+
+---
+_Generated with `mux`_
+```
 
 ## PR + Release Workflow
 
