@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from "react";
-import { Terminal, X, ChevronDown, ChevronRight } from "lucide-react";
+import { Terminal, X, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import type { BackgroundProcessInfo } from "@/common/orpc/schemas/api";
 import { cn } from "@/common/lib/utils";
@@ -19,6 +19,7 @@ function truncateScript(script: string, maxLength = 60): string {
 
 interface BackgroundProcessesBannerProps {
   processes: BackgroundProcessInfo[];
+  terminatingIds: Set<string>;
   onTerminate: (processId: string) => void;
 }
 
@@ -85,39 +86,51 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
       {/* Expanded view - content aligned with chat */}
       {isExpanded && (
         <div className="border-border mx-auto max-h-48 max-w-4xl space-y-1.5 overflow-y-auto border-t py-2">
-          {runningProcesses.map((proc) => (
-            <div
-              key={proc.id}
-              className={cn(
-                "hover:bg-hover flex items-center justify-between gap-3 rounded px-2 py-1.5",
-                "transition-colors"
-              )}
-            >
-              <div className="min-w-0 flex-1">
-                <div className="text-foreground truncate font-mono text-xs" title={proc.script}>
-                  {proc.displayName ?? truncateScript(proc.script)}
+          {runningProcesses.map((proc) => {
+            const isTerminating = props.terminatingIds.has(proc.id);
+            return (
+              <div
+                key={proc.id}
+                className={cn(
+                  "hover:bg-hover flex items-center justify-between gap-3 rounded px-2 py-1.5",
+                  "transition-colors",
+                  isTerminating && "pointer-events-none opacity-50"
+                )}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="text-foreground truncate font-mono text-xs" title={proc.script}>
+                    {proc.displayName ?? truncateScript(proc.script)}
+                  </div>
+                  <div className="text-muted font-mono text-[10px]">pid {proc.pid}</div>
                 </div>
-                <div className="text-muted font-mono text-[10px]">pid {proc.pid}</div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="text-muted text-[10px]">
+                    {formatDuration(Date.now() - proc.startTime)}
+                  </span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        disabled={isTerminating}
+                        onClick={(e) => handleTerminate(proc.id, e)}
+                        className={cn(
+                          "text-muted hover:text-error rounded p-1 transition-colors",
+                          isTerminating && "cursor-not-allowed"
+                        )}
+                      >
+                        {isTerminating ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <X size={14} />
+                        )}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>Terminate process</TooltipContent>
+                  </Tooltip>
+                </div>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <span className="text-muted text-[10px]">
-                  {formatDuration(Date.now() - proc.startTime)}
-                </span>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={(e) => handleTerminate(proc.id, e)}
-                      className="text-muted hover:text-error rounded p-1 transition-colors"
-                    >
-                      <X size={14} />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>Terminate process</TooltipContent>
-                </Tooltip>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
