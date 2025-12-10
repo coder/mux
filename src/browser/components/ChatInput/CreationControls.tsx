@@ -9,6 +9,8 @@ import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
 
 interface CreationControlsProps {
   branches: string[];
+  /** Whether branches have finished loading (to distinguish loading vs non-git repo) */
+  branchesLoaded: boolean;
   trunkBranch: string;
   onTrunkBranchChange: (branch: string) => void;
   runtimeMode: RuntimeMode;
@@ -29,8 +31,9 @@ interface CreationControlsProps {
  * - Workspace name (auto-generated with manual override)
  */
 export function CreationControls(props: CreationControlsProps) {
-  // Non-git directories (empty branches) can only use local runtime
-  const isNonGitRepo = props.branches.length === 0;
+  // Non-git directories (empty branches after loading completes) can only use local runtime
+  // Don't check until branches have loaded to avoid prematurely switching runtime
+  const isNonGitRepo = props.branchesLoaded && props.branches.length === 0;
 
   // Local runtime doesn't need a trunk branch selector (uses project dir as-is)
   const showTrunkBranchSelector =
@@ -38,7 +41,7 @@ export function CreationControls(props: CreationControlsProps) {
 
   const { runtimeMode, onRuntimeModeChange, nameState } = props;
 
-  // Force local runtime for non-git directories
+  // Force local runtime for non-git directories (only after branches loaded)
   useEffect(() => {
     if (isNonGitRepo && runtimeMode !== RUNTIME_MODE.LOCAL) {
       onRuntimeModeChange(RUNTIME_MODE.LOCAL);

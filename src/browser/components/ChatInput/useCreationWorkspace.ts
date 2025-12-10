@@ -58,6 +58,8 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
 
 interface UseCreationWorkspaceReturn {
   branches: string[];
+  /** Whether listBranches has completed (to distinguish loading vs non-git repo) */
+  branchesLoaded: boolean;
   trunkBranch: string;
   setTrunkBranch: (branch: string) => void;
   runtimeMode: RuntimeMode;
@@ -94,6 +96,7 @@ export function useCreationWorkspace({
 }: UseCreationWorkspaceOptions): UseCreationWorkspaceReturn {
   const { api } = useAPI();
   const [branches, setBranches] = useState<string[]>([]);
+  const [branchesLoaded, setBranchesLoaded] = useState(false);
   const [recommendedTrunk, setRecommendedTrunk] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [isSending, setIsSending] = useState(false);
@@ -133,6 +136,7 @@ export function useCreationWorkspace({
     if (!projectPath.length || !api) {
       return;
     }
+    setBranchesLoaded(false);
     const loadBranches = async () => {
       try {
         const result = await api.projects.listBranches({ projectPath });
@@ -140,6 +144,8 @@ export function useCreationWorkspace({
         setRecommendedTrunk(result.recommendedTrunk);
       } catch (err) {
         console.error("Failed to load branches:", err);
+      } finally {
+        setBranchesLoaded(true);
       }
     };
     void loadBranches();
@@ -249,6 +255,7 @@ export function useCreationWorkspace({
 
   return {
     branches,
+    branchesLoaded,
     trunkBranch: settings.trunkBranch,
     setTrunkBranch,
     runtimeMode: settings.runtimeMode,

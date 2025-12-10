@@ -1605,6 +1605,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             {variant === "creation" && (
               <CreationControls
                 branches={creationState.branches}
+                branchesLoaded={creationState.branchesLoaded}
                 trunkBranch={creationState.trunkBranch}
                 onTrunkBranchChange={creationState.setTrunkBranch}
                 runtimeMode={creationState.runtimeMode}
