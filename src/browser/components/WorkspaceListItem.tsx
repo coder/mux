@@ -88,13 +88,13 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   };
 
   const handleEditKeyDown = (e: React.KeyboardEvent) => {
+    // Always stop propagation to prevent parent div's onKeyDown from interfering
+    e.stopPropagation();
     if (e.key === "Enter") {
       e.preventDefault();
       void handleConfirmEdit();
     } else if (e.key === "Escape") {
-      // Stop propagation to prevent global Escape handler from interrupting stream
       e.preventDefault();
-      e.stopPropagation();
       handleCancelEdit();
     }
   };
@@ -170,7 +170,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
             <RuntimeBadge runtimeConfig={metadata.runtimeConfig} isWorking={canInterrupt} />
             {isEditing ? (
               <input
-                className="bg-input-bg text-input-text border-input-border font-inherit focus:border-input-border-focus min-w-0 rounded-sm border px-1 text-left text-[13px] outline-none"
+                className="bg-input-bg text-input-text border-input-border font-inherit focus:border-input-border-focus col-span-2 min-w-0 flex-1 rounded-sm border px-1 text-left text-[13px] outline-none"
                 value={editingTitle}
                 onChange={(e) => setEditingTitle(e.target.value)}
                 onKeyDown={handleEditKeyDown}
