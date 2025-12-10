@@ -419,6 +419,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
             `BackgroundProcessManager: Failed to update meta.json: ${getErrorMessage(err)}`
           );
         });
+        this.emitChange(proc.workspaceId);
       }
     }
 
@@ -584,6 +585,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
             `BackgroundProcessManager: Failed to update meta.json: ${getErrorMessage(err)}`
           );
         });
+        this.emitChange(proc.workspaceId);
       }
     }
   }
