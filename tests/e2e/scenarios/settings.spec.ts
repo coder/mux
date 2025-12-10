@@ -117,4 +117,56 @@ test.describe("Settings Modal", () => {
     await expect(page.getByPlaceholder(/model-id/i)).toBeVisible();
     await expect(page.getByRole("button", { name: /^Add$/i })).toBeVisible();
   });
+
+  test("provider settings updates propagate without reload", async ({ ui, page }) => {
+    await ui.projects.openFirstWorkspace();
+    await ui.settings.open();
+    await ui.settings.selectSection("Providers");
+
+    // Expand OpenAI provider - use the specific button with OpenAI icon
+    const openaiButton = page
+      .getByRole("button", { name: /OpenAI/i })
+      .filter({ has: page.getByText("OpenAI icon") });
+    await expect(openaiButton).toBeVisible();
+    await openaiButton.click();
+
+    // Wait for the provider section to expand - API Key label should be visible
+    await expect(page.getByText("API Key", { exact: true })).toBeVisible();
+
+    // Verify API key is not set initially (shows "Not set")
+    await expect(page.getByText("Not set").first()).toBeVisible();
+
+    // Click "Set" to enter edit mode - it's a text link, not a button role
+    const setLink = page.getByText("Set", { exact: true }).first();
+    await setLink.click();
+
+    // The password input should appear with autofocus
+    const apiKeyInput = page.locator('input[type="password"]');
+    await expect(apiKeyInput).toBeVisible();
+    await apiKeyInput.fill("sk-test-key-12345");
+
+    // Save by pressing Enter (the input has onKeyDown handler for Enter)
+    await page.keyboard.press("Enter");
+
+    // Verify the field now shows as set (masked value)
+    await expect(page.getByText("••••••••")).toBeVisible();
+
+    // Close settings
+    await ui.settings.close();
+
+    // Re-open settings and verify the change persisted without reload
+    await ui.settings.open();
+    await ui.settings.selectSection("Providers");
+
+    // Expand OpenAI again
+    await openaiButton.click();
+    await expect(page.getByText("API Key", { exact: true })).toBeVisible();
+
+    // The API key should still show as set
+    await expect(page.getByText("••••••••")).toBeVisible();
+
+    // The provider should show as configured (green indicator dot)
+    const configuredIndicator = openaiButton.locator(".bg-green-500");
+    await expect(configuredIndicator).toBeVisible();
+  });
 });
