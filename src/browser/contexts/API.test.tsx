@@ -93,6 +93,8 @@ describe("API reconnection", () => {
     globalThis.window = window as unknown as Window & typeof globalThis;
     globalThis.document = window.document as unknown as Document;
     globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket;
+    // Ensure we're not in Electron mode (would skip WebSocket)
+    (globalThis.window as unknown as Record<string, unknown>).api = undefined;
     // Mock import.meta.env
     (globalThis as Record<string, unknown>).import = {
       meta: { env: { VITE_BACKEND_URL: "http://localhost:3000" } },
