@@ -110,14 +110,15 @@ export function useBackgroundBashHandlers(
           setProcesses(state.processes);
           setForegroundToolCallIds(new Set(state.foregroundToolCallIds));
 
-          // Clear terminating IDs for processes that are no longer in the list
-          // (either successfully terminated, or could be restarted with same name)
-          const currentIds = new Set(state.processes.map((p) => p.id));
+          // Clear terminating IDs for processes that are no longer running
+          // (killed/exited/failed should clear so new processes with same name aren't affected)
+          const runningIds = new Set(
+            state.processes.filter((p) => p.status === "running").map((p) => p.id)
+          );
           setTerminatingIds((prev) => {
             if (prev.size === 0) return prev;
-            // Keep only IDs that still exist in the process list
-            const stillPending = new Set([...prev].filter((id) => currentIds.has(id)));
-            return stillPending.size === prev.size ? prev : stillPending;
+            const stillRunning = new Set([...prev].filter((id) => runningIds.has(id)));
+            return stillRunning.size === prev.size ? prev : stillRunning;
           });
         }
       } catch (err) {
