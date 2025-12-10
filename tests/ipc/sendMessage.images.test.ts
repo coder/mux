@@ -25,9 +25,9 @@ if (shouldRunIntegrationTests()) {
   validateApiKeys(["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]);
 }
 
-// 1x1 red PNG pixel as base64 data URI
+// 4x4 pure red PNG (#FF0000) as base64 data URI (larger than 1x1 for reliable vision model processing)
 const RED_PIXEL = {
-  url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
+  url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAEAQMAAACTPww9AAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGUExURf8AAP///0EdNBEAAAABYktHRAH/Ai3eAAAAB3RJTUUH6QwKEhoGET7FfwAAAAtJREFUCNdjYIAAAAAIAAEvID0xAAAAAElFTkSuQmCC",
   mediaType: "image/png" as const,
 };
 
@@ -58,10 +58,15 @@ describeIntegration("sendMessage image handling tests", () => {
 
         await withSharedWorkspace(provider, async ({ env, workspaceId, collector }) => {
           // Send message with image attachment
-          const result = await sendMessage(env, workspaceId, "What color is this?", {
-            model: modelString(provider, model),
-            imageParts: [RED_PIXEL],
-          });
+          const result = await sendMessage(
+            env,
+            workspaceId,
+            "This is a small solid-color image. What color is it? Answer with just the color name.",
+            {
+              model: modelString(provider, model),
+              imageParts: [RED_PIXEL],
+            }
+          );
 
           expect(result.success).toBe(true);
 
@@ -81,7 +86,7 @@ describeIntegration("sendMessage image handling tests", () => {
           // Should mention red color in some form
           expect(fullResponse.length).toBeGreaterThan(0);
           // Red pixel should be detected (flexible matching as different models may phrase differently)
-          expect(fullResponse).toMatch(/red|color|orange/i);
+          expect(fullResponse).toMatch(/red/i);
         });
       },
       40000 // Vision models can be slower
