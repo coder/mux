@@ -42,6 +42,7 @@ import type { PostCompactionAttachment } from "@/common/types/attachment";
 import { applyCacheControl } from "@/common/utils/ai/cacheStrategy";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
+import type { SessionUsageService } from "./sessionUsageService";
 import { buildSystemMessage, readToolInstructions } from "./systemMessage";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
@@ -284,7 +285,8 @@ export class AIService extends EventEmitter {
     historyService: HistoryService,
     partialService: PartialService,
     initStateManager: InitStateManager,
-    backgroundProcessManager?: BackgroundProcessManager
+    backgroundProcessManager?: BackgroundProcessManager,
+    sessionUsageService?: SessionUsageService
   ) {
     super();
     // Increase max listeners to accommodate multiple concurrent workspace listeners
@@ -295,7 +297,7 @@ export class AIService extends EventEmitter {
     this.partialService = partialService;
     this.initStateManager = initStateManager;
     this.backgroundProcessManager = backgroundProcessManager;
-    this.streamManager = new StreamManager(historyService, partialService);
+    this.streamManager = new StreamManager(historyService, partialService, sessionUsageService);
     void this.ensureSessionsDir();
     this.setupStreamEventForwarding();
     this.mockModeEnabled = process.env.MUX_MOCK_AI === "1";

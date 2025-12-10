@@ -23,6 +23,7 @@ export {
   ChatStatsSchema,
   ChatUsageComponentSchema,
   ChatUsageDisplaySchema,
+  SessionUsageFileSchema,
   TokenConsumerSchema,
 } from "./schemas/chatStats";
 

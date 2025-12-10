@@ -1,7 +1,7 @@
 import React from "react";
 import { useWorkspaceUsage, useWorkspaceConsumers } from "@/browser/stores/WorkspaceStore";
 import { getModelStats } from "@/common/utils/tokens/modelStats";
-import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
+import { sumUsageHistory, type ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { ToggleGroup, type ToggleOption } from "../ToggleGroup";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
@@ -83,17 +83,17 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
     useAutoCompactionSettings(workspaceId, currentModel);
 
   // Session usage for cost calculation
-  // Uses usageHistory (total across all steps) + liveCostUsage (cumulative during streaming)
+  // Uses sessionTotal (pre-computed) + liveCostUsage (cumulative during streaming)
   const sessionUsage = React.useMemo(() => {
-    const historicalSum = sumUsageHistory(usage.usageHistory);
-    if (!usage.liveCostUsage) return historicalSum;
-    if (!historicalSum) return usage.liveCostUsage;
-    return sumUsageHistory([historicalSum, usage.liveCostUsage]);
-  }, [usage.usageHistory, usage.liveCostUsage]);
+    const parts: ChatUsageDisplay[] = [];
+    if (usage.sessionTotal) parts.push(usage.sessionTotal);
+    if (usage.liveCostUsage) parts.push(usage.liveCostUsage);
+    return parts.length > 0 ? sumUsageHistory(parts) : undefined;
+  }, [usage.sessionTotal, usage.liveCostUsage]);
 
   const hasUsageData =
     usage &&
-    (usage.usageHistory.length > 0 ||
+    (usage.sessionTotal !== undefined ||
       usage.lastContextUsage !== undefined ||
       usage.liveUsage !== undefined);
   const hasConsumerData = consumers && (consumers.totalTokens > 0 || consumers.isCalculating);
@@ -111,8 +111,8 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
     );
   }
 
-  // Last Request (for Cost section): always the last completed request
-  const lastRequestUsage = usage.usageHistory[usage.usageHistory.length - 1];
+  // Last Request (for Cost section): from persisted data
+  const lastRequestUsage = usage.lastRequest?.usage;
 
   // Cost and Details table use viewMode
   const displayUsage = viewMode === "last-request" ? lastRequestUsage : sessionUsage;

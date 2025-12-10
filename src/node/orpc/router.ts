@@ -594,7 +594,7 @@ export const router = (authToken?: string) => {
             }
           }),
       },
-      getPlanContent: t
+getPlanContent: t
         .input(schemas.workspace.getPlanContent.input)
         .output(schemas.workspace.getPlanContent.output)
         .handler(async ({ context, input }) => {
@@ -677,7 +677,7 @@ export const router = (authToken?: string) => {
             return { success: true, data: undefined };
           }),
       },
-      getPostCompactionState: t
+getPostCompactionState: t
         .input(schemas.workspace.getPostCompactionState.input)
         .output(schemas.workspace.getPostCompactionState.output)
         .handler(({ context, input }) => {
@@ -692,6 +692,12 @@ export const router = (authToken?: string) => {
             input.itemId,
             input.excluded
           );
+        }),
+      getSessionUsage: t
+        .input(schemas.workspace.getSessionUsage.input)
+        .output(schemas.workspace.getSessionUsage.output)
+        .handler(async ({ context, input }) => {
+          return context.sessionUsageService.getSessionUsage(input.workspaceId);
         }),
     },
     window: {

@@ -857,6 +857,16 @@ export class WorkspaceService extends EventEmitter {
             throw error;
           }
         }
+
+        const sourceUsagePath = path.join(sourceSessionDir, "session-usage.json");
+        const newUsagePath = path.join(newSessionDir, "session-usage.json");
+        try {
+          await fsPromises.copyFile(sourceUsagePath, newUsagePath);
+        } catch (error) {
+          if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
+            throw error;
+          }
+        }
       } catch (copyError) {
         await runtime.deleteWorkspace(foundProjectPath, newName, true);
         try {

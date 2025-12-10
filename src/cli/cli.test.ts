@@ -73,6 +73,7 @@ async function createTestServer(authToken?: string): Promise<TestServerHandle> {
     menuEventService: services.menuEventService,
     voiceService: services.voiceService,
     telemetryService: services.telemetryService,
+    sessionUsageService: services.sessionUsageService,
   };
 
   // Use the actual createOrpcServer function

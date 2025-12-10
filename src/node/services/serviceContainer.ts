@@ -23,6 +23,7 @@ import { TelemetryService } from "@/node/services/telemetryService";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import { MCPConfigService } from "@/node/services/mcpConfigService";
 import { MCPServerManager } from "@/node/services/mcpServerManager";
+import { SessionUsageService } from "@/node/services/sessionUsageService";
 
 /**
  * ServiceContainer - Central dependency container for all backend services.
@@ -49,6 +50,7 @@ export class ServiceContainer {
   public readonly mcpConfigService: MCPConfigService;
   public readonly mcpServerManager: MCPServerManager;
   public readonly telemetryService: TelemetryService;
+  public readonly sessionUsageService: SessionUsageService;
   private readonly initStateManager: InitStateManager;
   private readonly extensionMetadata: ExtensionMetadataService;
   private readonly ptyService: PTYService;
@@ -68,12 +70,14 @@ export class ServiceContainer {
       path.join(os.tmpdir(), "mux-bashes")
     );
     this.mcpServerManager = new MCPServerManager(this.mcpConfigService);
+    this.sessionUsageService = new SessionUsageService(config, this.historyService);
     this.aiService = new AIService(
       config,
       this.historyService,
       this.partialService,
       this.initStateManager,
-      this.backgroundProcessManager
+      this.backgroundProcessManager,
+      this.sessionUsageService
     );
     this.aiService.setMCPServerManager(this.mcpServerManager);
     this.workspaceService = new WorkspaceService(

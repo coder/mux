@@ -11,9 +11,12 @@ const mockOnChat = mock(async function* (): AsyncGenerator<WorkspaceChatMessage,
   await Promise.resolve();
 });
 
+const mockGetSessionUsage = mock(() => Promise.resolve(undefined));
+
 const mockClient = {
   workspace: {
     onChat: mockOnChat,
+    getSessionUsage: mockGetSessionUsage,
   },
 };
 

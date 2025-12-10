@@ -1,0 +1,201 @@
+import * as fs from "fs/promises";
+import * as path from "path";
+import writeFileAtomic from "write-file-atomic";
+import type { Config } from "@/node/config";
+import type { HistoryService } from "./historyService";
+import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
+import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
+import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
+import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
+import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import type { MuxMessage } from "@/common/types/message";
+import { log } from "./log";
+
+export interface SessionUsageFile {
+  byModel: Record<string, ChatUsageDisplay>;
+  lastRequest?: {
+    model: string;
+    usage: ChatUsageDisplay;
+    timestamp: number;
+  };
+  version: 1;
+}
+
+/**
+ * Service for managing cumulative session usage tracking.
+ *
+ * Replaces O(n) message iteration with a persistent JSON file that stores
+ * per-model usage breakdowns. Usage is accumulated on stream-end, never
+ * subtracted, making costs immune to message deletion.
+ */
+export class SessionUsageService {
+  private readonly SESSION_USAGE_FILE = "session-usage.json";
+  private readonly fileLocks = workspaceFileLocks;
+  private readonly config: Config;
+  private readonly historyService: HistoryService;
+
+  constructor(config: Config, historyService: HistoryService) {
+    this.config = config;
+    this.historyService = historyService;
+  }
+
+  private getFilePath(workspaceId: string): string {
+    return path.join(this.config.getSessionDir(workspaceId), this.SESSION_USAGE_FILE);
+  }
+
+  private async readFile(workspaceId: string): Promise<SessionUsageFile> {
+    try {
+      const data = await fs.readFile(this.getFilePath(workspaceId), "utf-8");
+      return JSON.parse(data) as SessionUsageFile;
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        return { byModel: {}, version: 1 };
+      }
+      throw error;
+    }
+  }
+
+  private async writeFile(workspaceId: string, data: SessionUsageFile): Promise<void> {
+    const filePath = this.getFilePath(workspaceId);
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await writeFileAtomic(filePath, JSON.stringify(data, null, 2));
+  }
+
+  /**
+   * Record usage from a completed stream. Accumulates with existing usage
+   * AND updates lastRequest in a single atomic write.
+   * Model should already be normalized via normalizeGatewayModel().
+   */
+  async recordUsage(workspaceId: string, model: string, usage: ChatUsageDisplay): Promise<void> {
+    return this.fileLocks.withLock(workspaceId, async () => {
+      const current = await this.readFile(workspaceId);
+      const existing = current.byModel[model];
+      // CRITICAL: Accumulate, don't overwrite
+      current.byModel[model] = existing ? sumUsageHistory([existing, usage])! : usage;
+      current.lastRequest = { model, usage, timestamp: Date.now() };
+      await this.writeFile(workspaceId, current);
+    });
+  }
+
+  /**
+   * Read current session usage. Returns undefined if file missing/corrupted
+   * and no messages to rebuild from.
+   */
+  async getSessionUsage(workspaceId: string): Promise<SessionUsageFile | undefined> {
+    return this.fileLocks.withLock(workspaceId, async () => {
+      try {
+        const filePath = this.getFilePath(workspaceId);
+        const data = await fs.readFile(filePath, "utf-8");
+        return JSON.parse(data) as SessionUsageFile;
+      } catch (error) {
+        // File missing or corrupted - try to rebuild from messages
+        if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+          const historyResult = await this.historyService.getHistory(workspaceId);
+          if (historyResult.success && historyResult.data.length > 0) {
+            await this.rebuildFromMessagesInternal(workspaceId, historyResult.data);
+            return this.readFile(workspaceId);
+          }
+          return undefined; // Truly empty session
+        }
+        // Parse error - try rebuild
+        log.warn(`session-usage.json corrupted for ${workspaceId}, rebuilding`);
+        const historyResult = await this.historyService.getHistory(workspaceId);
+        if (historyResult.success && historyResult.data.length > 0) {
+          await this.rebuildFromMessagesInternal(workspaceId, historyResult.data);
+          return this.readFile(workspaceId);
+        }
+        return undefined;
+      }
+    });
+  }
+
+  /**
+   * Rebuild session usage from messages (for migration/recovery).
+   * Internal version - called within lock.
+   *
+   * Handles historicalUsage from compaction summaries - this is a cumulative
+   * ChatUsageDisplay representing all pre-compaction costs (model-agnostic).
+   * We store it under the special "pre-compaction" key so it's included in totals.
+   */
+  private async rebuildFromMessagesInternal(
+    workspaceId: string,
+    messages: MuxMessage[]
+  ): Promise<void> {
+    const result: SessionUsageFile = { byModel: {}, version: 1 };
+    let lastAssistantUsage: { model: string; usage: ChatUsageDisplay } | undefined;
+    // Track the last historicalUsage seen (each compaction summary contains
+    // cumulative history, so only the last one matters)
+    let lastHistoricalUsage: ChatUsageDisplay | undefined;
+
+    for (const msg of messages) {
+      if (msg.role === "assistant") {
+        // Check for historicalUsage from compaction summaries
+        // This preserves costs from messages deleted during compaction
+        if (msg.metadata?.historicalUsage) {
+          lastHistoricalUsage = msg.metadata.historicalUsage;
+        }
+
+        // Extract current message's usage
+        if (msg.metadata?.usage) {
+          const rawModel = msg.metadata.model ?? "unknown";
+          const model = normalizeGatewayModel(rawModel);
+          const usage = createDisplayUsage(
+            msg.metadata.usage,
+            rawModel,
+            msg.metadata.providerMetadata
+          );
+
+          if (usage) {
+            const existing = result.byModel[model];
+            result.byModel[model] = existing ? sumUsageHistory([existing, usage])! : usage;
+            lastAssistantUsage = { model, usage };
+          }
+        }
+      }
+    }
+
+    // Include historical usage from compaction under a special key
+    // This ensures pre-compaction costs are included in session totals
+    if (lastHistoricalUsage) {
+      const existing = result.byModel["pre-compaction"];
+      result.byModel["pre-compaction"] = existing
+        ? sumUsageHistory([existing, lastHistoricalUsage])!
+        : lastHistoricalUsage;
+    }
+
+    if (lastAssistantUsage) {
+      result.lastRequest = {
+        model: lastAssistantUsage.model,
+        usage: lastAssistantUsage.usage,
+        timestamp: Date.now(),
+      };
+    }
+
+    await this.writeFile(workspaceId, result);
+    log.info(`Rebuilt session-usage.json for ${workspaceId} from ${messages.length} messages`);
+  }
+
+  /**
+   * Public rebuild method (acquires lock).
+   */
+  async rebuildFromMessages(workspaceId: string, messages: MuxMessage[]): Promise<void> {
+    return this.fileLocks.withLock(workspaceId, async () => {
+      await this.rebuildFromMessagesInternal(workspaceId, messages);
+    });
+  }
+
+  /**
+   * Delete session usage file (when workspace is deleted).
+   */
+  async deleteSessionUsage(workspaceId: string): Promise<void> {
+    return this.fileLocks.withLock(workspaceId, async () => {
+      try {
+        await fs.unlink(this.getFilePath(workspaceId));
+      } catch (error) {
+        if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
+          throw error;
+        }
+      }
+    });
+  }
+}

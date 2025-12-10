@@ -605,6 +605,7 @@ function createMockAPI(options: MockAPIOptions = {}) {
           );
         })
     ),
+    getSessionUsage: mock(options.workspace?.getSessionUsage ?? (() => Promise.resolve(undefined))),
     onChat: mock(
       options.workspace?.onChat ??
         (async () => {

@@ -1,6 +1,6 @@
 import { eventIterator } from "@orpc/server";
 import { z } from "zod";
-import { ChatStatsSchema } from "./chatStats";
+import { ChatStatsSchema, SessionUsageFileSchema } from "./chatStats";
 import { SendMessageErrorSchema } from "./errors";
 import { BranchListResultSchema, ImagePartSchema, MuxMessageSchema } from "./message";
 import { ProjectConfigSchema } from "./project";
@@ -323,7 +323,7 @@ export const workspace = {
       ),
     },
   },
-  /**
+/**
    * Get the current plan file content for a workspace.
    * Used by UI to refresh plan display when file is edited externally.
    */
@@ -366,7 +366,7 @@ export const workspace = {
       output: ResultSchema(z.void(), z.string()),
     },
   },
-  /**
+/**
    * Get post-compaction context state for a workspace.
    * Returns plan path (if exists) and tracked file paths that will be injected.
    */
@@ -389,6 +389,10 @@ export const workspace = {
       excluded: z.boolean(),
     }),
     output: ResultSchema(z.void(), z.string()),
+  },
+  getSessionUsage: {
+    input: z.object({ workspaceId: z.string() }),
+    output: SessionUsageFileSchema.optional(),
   },
 };
 

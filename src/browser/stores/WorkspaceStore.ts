@@ -20,10 +20,14 @@ import {
 } from "@/common/orpc/types";
 import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import { MapStore } from "./MapStore";
-import { collectUsageHistory, createDisplayUsage } from "@/common/utils/tokens/displayUsage";
+import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
+import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import type { TokenConsumer } from "@/common/types/chatStats";
+import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import type { z } from "zod";
+import type { SessionUsageFileSchema } from "@/common/orpc/schemas/chatStats";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { createFreshRetryState } from "@/browser/utils/messages/retryState";
 import { trackStreamCompleted } from "@/common/telemetry";
@@ -65,12 +69,19 @@ type DerivedState = Record<string, number>;
  * Updates instantly when usage metadata arrives.
  *
  * For multi-step tool calls, cost and context usage differ:
- * - usageHistory: Total usage per message (sum of all steps) for cost calculation
+ * - sessionTotal: Pre-computed sum of all models from session-usage.json
+ * - lastRequest: Last completed request (persisted for app restart)
  * - lastContextUsage: Last step's usage for context window display (inputTokens = actual context size)
  */
 export interface WorkspaceUsageState {
-  /** Usage history for cost calculation (total across all steps per message) */
-  usageHistory: ChatUsageDisplay[];
+  /** Pre-computed session total (sum of all models) */
+  sessionTotal?: ChatUsageDisplay;
+  /** Last completed request (persisted) */
+  lastRequest?: {
+    model: string;
+    usage: ChatUsageDisplay;
+    timestamp: number;
+  };
   /** Last message's context usage (last step only, for context window display) */
   lastContextUsage?: ChatUsageDisplay;
   totalTokens: number;
@@ -124,6 +135,8 @@ export class WorkspaceStore {
   private pendingStreamEvents = new Map<string, WorkspaceChatMessage[]>();
   private workspaceMetadata = new Map<string, FrontendWorkspaceMetadata>(); // Store metadata for name lookup
   private queuedMessages = new Map<string, QueuedMessage | null>(); // Cached queued messages
+  // Cumulative session usage (from session-usage.json)
+  private sessionUsage = new Map<string, z.infer<typeof SessionUsageFileSchema>>();
 
   // Idle callback handles for high-frequency delta events to reduce re-renders during streaming.
   // Data is always updated immediately in the aggregator; only UI notification is scheduled.
@@ -171,6 +184,26 @@ export class WorkspaceStore {
 
       // Reset retry state on successful stream completion
       updatePersistedState(getRetryStateKey(workspaceId), createFreshRetryState());
+
+      // Update local session usage (mirrors backend's addUsage)
+      const model = streamEndData.metadata?.model;
+      const rawUsage = streamEndData.metadata?.usage;
+      const providerMetadata = streamEndData.metadata?.providerMetadata;
+      if (model && rawUsage) {
+        const usage = createDisplayUsage(rawUsage, model, providerMetadata);
+        if (usage) {
+          const normalizedModel = normalizeGatewayModel(model);
+          const current = this.sessionUsage.get(workspaceId) ?? {
+            byModel: {},
+            version: 1 as const,
+          };
+          const existing = current.byModel[normalizedModel];
+          // CRITICAL: Accumulate, don't overwrite (same logic as backend)
+          current.byModel[normalizedModel] = existing ? sumUsageHistory([existing, usage])! : usage;
+          current.lastRequest = { model: normalizedModel, usage, timestamp: Date.now() };
+          this.sessionUsage.set(workspaceId, current);
+        }
+      }
 
       // Flush any pending debounced bump before final bump to avoid double-bump
       this.cancelPendingIdleBump(workspaceId);
@@ -548,8 +581,7 @@ export class WorkspaceStore {
   }
 
   /**
-   * Extract usage from messages (no tokenization).
-   * Each usage entry calculated with its own model for accurate costs.
+   * Extract usage from session-usage.json (no tokenization or message iteration).
    *
    * Returns empty state if workspace doesn't exist (e.g., creation mode).
    */
@@ -557,39 +589,37 @@ export class WorkspaceStore {
     return this.usageStore.get(workspaceId, () => {
       const aggregator = this.aggregators.get(workspaceId);
       if (!aggregator) {
-        return { usageHistory: [], totalTokens: 0 };
+        return { totalTokens: 0 };
       }
 
-      const messages = aggregator.getAllMessages();
       const model = aggregator.getCurrentModel();
+      const sessionData = this.sessionUsage.get(workspaceId);
 
-      // Collect usage history for cost calculation (total across all steps per message)
-      const usageHistory = collectUsageHistory(messages, model);
+      // Session total: sum all models from persisted data
+      const sessionTotal =
+        sessionData && Object.keys(sessionData.byModel).length > 0
+          ? sumUsageHistory(Object.values(sessionData.byModel))
+          : undefined;
 
-      // Calculate total from usage history (now includes historical)
-      const totalTokens = usageHistory.reduce(
-        (sum, u) =>
-          sum +
-          u.input.tokens +
-          u.cached.tokens +
-          u.cacheCreate.tokens +
-          u.output.tokens +
-          u.reasoning.tokens,
-        0
-      );
+      // Last request from persisted data
+      const lastRequest = sessionData?.lastRequest;
 
-      // Get last message's context usage for context window display
-      // Uses contextUsage (last step) if available, falls back to usage for old messages
-      // Skips compacted messages - their usage reflects pre-compaction context, not current
+      // Calculate total tokens from session total
+      const totalTokens = sessionTotal
+        ? sessionTotal.input.tokens +
+          sessionTotal.cached.tokens +
+          sessionTotal.cacheCreate.tokens +
+          sessionTotal.output.tokens +
+          sessionTotal.reasoning.tokens
+        : 0;
+
+      // Get last message's context usage (unchanged from before)
+      const messages = aggregator.getAllMessages();
       const lastContextUsage = (() => {
         for (let i = messages.length - 1; i >= 0; i--) {
           const msg = messages[i];
           if (msg.role === "assistant") {
-            // Skip compacted messages - their usage is from pre-compaction context
-            // and doesn't reflect current context window size
-            if (msg.metadata?.compacted) {
-              continue;
-            }
+            if (msg.metadata?.compacted) continue;
             const rawUsage = msg.metadata?.contextUsage;
             const providerMeta =
               msg.metadata?.contextProviderMetadata ?? msg.metadata?.providerMetadata;
@@ -602,10 +632,8 @@ export class WorkspaceStore {
         return undefined;
       })();
 
-      // Include active stream usage if currently streaming
+      // Live streaming data (unchanged)
       const activeStreamId = aggregator.getActiveStreamMessageId();
-
-      // Live context usage (last step's inputTokens = current context window)
       const rawContextUsage = activeStreamId
         ? aggregator.getActiveStreamUsage(activeStreamId)
         : undefined;
@@ -617,7 +645,6 @@ export class WorkspaceStore {
           ? createDisplayUsage(rawContextUsage, model, rawStepProviderMetadata)
           : undefined;
 
-      // Live cost usage (cumulative across all steps, with accumulated cache creation tokens)
       const rawCumulativeUsage = activeStreamId
         ? aggregator.getActiveStreamCumulativeUsage(activeStreamId)
         : undefined;
@@ -629,7 +656,7 @@ export class WorkspaceStore {
           ? createDisplayUsage(rawCumulativeUsage, model, rawCumulativeProviderMetadata)
           : undefined;
 
-      return { usageHistory, lastContextUsage, totalTokens, liveUsage, liveCostUsage };
+      return { sessionTotal, lastRequest, lastContextUsage, totalTokens, liveUsage, liveCostUsage };
     });
   }
 
@@ -793,6 +820,19 @@ export class WorkspaceStore {
       })();
 
       this.ipcUnsubscribers.set(workspaceId, () => controller.abort());
+
+      // Fetch persisted session usage (fire-and-forget)
+      this.client.workspace
+        .getSessionUsage({ workspaceId })
+        .then((data) => {
+          if (data) {
+            this.sessionUsage.set(workspaceId, data);
+            this.usageStore.bump(workspaceId);
+          }
+        })
+        .catch((error) => {
+          console.warn(`Failed to fetch session usage for ${workspaceId}:`, error);
+        });
     } else {
       console.warn(`[WorkspaceStore] No ORPC client available for workspace ${workspaceId}`);
     }
@@ -831,6 +871,7 @@ export class WorkspaceStore {
     this.previousSidebarValues.delete(workspaceId);
     this.sidebarStateCache.delete(workspaceId);
     this.workspaceCreatedAt.delete(workspaceId);
+    this.sessionUsage.delete(workspaceId);
   }
 
   /**

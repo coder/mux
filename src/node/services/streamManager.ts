@@ -38,6 +38,9 @@ import {
   createCachedSystemMessage,
   applyCacheControlToTools,
 } from "@/common/utils/ai/cacheStrategy";
+import type { SessionUsageService } from "./sessionUsageService";
+import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
+import { normalizeGatewayModel } from "@/common/utils/ai/models";
 
 // Type definitions for stream parts with extended properties
 interface ReasoningDeltaPart {
@@ -144,16 +147,22 @@ export class StreamManager extends EventEmitter {
   private readonly PARTIAL_WRITE_THROTTLE_MS = 500;
   private readonly historyService: HistoryService;
   private readonly partialService: PartialService;
+  private readonly sessionUsageService?: SessionUsageService;
   // Token tracker for live streaming statistics
   private tokenTracker = new StreamingTokenTracker();
   // Track OpenAI previousResponseIds that have been invalidated
   // When frontend retries, buildProviderOptions will omit these IDs
   private lostResponseIds = new Set<string>();
 
-  constructor(historyService: HistoryService, partialService: PartialService) {
+  constructor(
+    historyService: HistoryService,
+    partialService: PartialService,
+    sessionUsageService?: SessionUsageService
+  ) {
     super();
     this.historyService = historyService;
     this.partialService = partialService;
+    this.sessionUsageService = sessionUsageService;
   }
 
   /**
@@ -1113,6 +1122,19 @@ export class StreamManager extends EventEmitter {
 
           // Update the placeholder message in chat.jsonl with final content
           await this.historyService.updateHistory(workspaceId as string, finalAssistantMessage);
+
+          // Update cumulative session usage (if service is available)
+          if (this.sessionUsageService && totalUsage) {
+            const messageUsage = createDisplayUsage(totalUsage, streamInfo.model, providerMetadata);
+            if (messageUsage) {
+              const normalizedModel = normalizeGatewayModel(streamInfo.model);
+              await this.sessionUsageService.recordUsage(
+                workspaceId as string,
+                normalizedModel,
+                messageUsage
+              );
+            }
+          }
         }
       }
     } catch (error) {

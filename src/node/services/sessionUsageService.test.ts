@@ -1,0 +1,210 @@
+import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
+import { SessionUsageService } from "./sessionUsageService";
+import type { HistoryService } from "./historyService";
+import { Config } from "@/node/config";
+import { createMuxMessage } from "@/common/types/message";
+import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
+import { Ok } from "@/common/types/result";
+import * as fs from "fs/promises";
+import * as path from "path";
+import * as os from "os";
+
+function createMockHistoryService(
+  messages: Array<ReturnType<typeof createMuxMessage>> = []
+): HistoryService {
+  return {
+    getHistory: mock(() => Promise.resolve(Ok(messages))),
+    appendToHistory: mock(() => Promise.resolve(Ok(undefined))),
+    updateHistory: mock(() => Promise.resolve(Ok(undefined))),
+    truncateAfterMessage: mock(() => Promise.resolve(Ok(undefined))),
+    clearHistory: mock(() => Promise.resolve(Ok([]))),
+  } as unknown as HistoryService;
+}
+
+function createUsage(input: number, output: number): ChatUsageDisplay {
+  return {
+    input: { tokens: input },
+    output: { tokens: output },
+    cached: { tokens: 0 },
+    cacheCreate: { tokens: 0 },
+    reasoning: { tokens: 0 },
+  };
+}
+
+describe("SessionUsageService", () => {
+  let service: SessionUsageService;
+  let config: Config;
+  let tempDir: string;
+  let mockHistoryService: HistoryService;
+
+  beforeEach(async () => {
+    tempDir = path.join(os.tmpdir(), `mux-session-usage-test-${Date.now()}-${Math.random()}`);
+    await fs.mkdir(tempDir, { recursive: true });
+    config = new Config(tempDir);
+    mockHistoryService = createMockHistoryService();
+    service = new SessionUsageService(config, mockHistoryService);
+  });
+
+  afterEach(async () => {
+    try {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+  });
+
+  describe("recordUsage", () => {
+    it("should accumulate usage for same model (not overwrite)", async () => {
+      const workspaceId = "test-workspace";
+      const model = "claude-sonnet-4-20250514";
+      const usage1 = createUsage(100, 50);
+      const usage2 = createUsage(200, 75);
+
+      await service.recordUsage(workspaceId, model, usage1);
+      await service.recordUsage(workspaceId, model, usage2);
+
+      const result = await service.getSessionUsage(workspaceId);
+      expect(result).toBeDefined();
+      expect(result!.byModel[model].input.tokens).toBe(300); // 100 + 200
+      expect(result!.byModel[model].output.tokens).toBe(125); // 50 + 75
+    });
+
+    it("should track separate usage per model", async () => {
+      const workspaceId = "test-workspace";
+      const sonnet = createUsage(100, 50);
+      const opus = createUsage(500, 200);
+
+      await service.recordUsage(workspaceId, "claude-sonnet-4-20250514", sonnet);
+      await service.recordUsage(workspaceId, "claude-opus-4-20250514", opus);
+
+      const result = await service.getSessionUsage(workspaceId);
+      expect(result).toBeDefined();
+      expect(result!.byModel["claude-sonnet-4-20250514"].input.tokens).toBe(100);
+      expect(result!.byModel["claude-opus-4-20250514"].input.tokens).toBe(500);
+    });
+
+    it("should update lastRequest with each recordUsage call", async () => {
+      const workspaceId = "test-workspace";
+      const usage1 = createUsage(100, 50);
+      const usage2 = createUsage(200, 75);
+
+      await service.recordUsage(workspaceId, "claude-sonnet-4-20250514", usage1);
+      let result = await service.getSessionUsage(workspaceId);
+      expect(result?.lastRequest?.model).toBe("claude-sonnet-4-20250514");
+      expect(result?.lastRequest?.usage.input.tokens).toBe(100);
+
+      await service.recordUsage(workspaceId, "claude-opus-4-20250514", usage2);
+      result = await service.getSessionUsage(workspaceId);
+      expect(result?.lastRequest?.model).toBe("claude-opus-4-20250514");
+      expect(result?.lastRequest?.usage.input.tokens).toBe(200);
+    });
+  });
+
+  describe("getSessionUsage", () => {
+    it("should rebuild from messages when file missing (ENOENT)", async () => {
+      const workspaceId = "test-workspace";
+      const messages = [
+        createMuxMessage("msg1", "assistant", "Hello", {
+          model: "claude-sonnet-4-20250514",
+          usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+        }),
+        createMuxMessage("msg2", "assistant", "World", {
+          model: "claude-sonnet-4-20250514",
+          usage: { inputTokens: 200, outputTokens: 75, totalTokens: 275 },
+        }),
+      ];
+      mockHistoryService = createMockHistoryService(messages);
+      service = new SessionUsageService(config, mockHistoryService);
+
+      // Create session dir but NOT the session-usage.json file
+      await fs.mkdir(config.getSessionDir(workspaceId), { recursive: true });
+
+      const result = await service.getSessionUsage(workspaceId);
+
+      expect(result).toBeDefined();
+      // Should have rebuilt and summed the usage
+      expect(result!.byModel["claude-sonnet-4-20250514"]).toBeDefined();
+    });
+  });
+
+  describe("rebuildFromMessages", () => {
+    it("should rebuild from messages when file is corrupted JSON", async () => {
+      const workspaceId = "test-workspace";
+      const messages = [
+        createMuxMessage("msg1", "assistant", "Hello", {
+          model: "claude-sonnet-4-20250514",
+          usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+        }),
+      ];
+      mockHistoryService = createMockHistoryService(messages);
+      service = new SessionUsageService(config, mockHistoryService);
+
+      // Create session dir with corrupted JSON
+      const sessionDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(sessionDir, { recursive: true });
+      await fs.writeFile(path.join(sessionDir, "session-usage.json"), "{ invalid json");
+
+      const result = await service.getSessionUsage(workspaceId);
+
+      expect(result).toBeDefined();
+      // Should have rebuilt from messages
+      expect(result!.byModel["claude-sonnet-4-20250514"]).toBeDefined();
+      expect(result!.byModel["claude-sonnet-4-20250514"].input.tokens).toBe(100);
+    });
+
+    it("should capture historicalUsage from compaction summary under 'pre-compaction' key", async () => {
+      const workspaceId = "test-workspace";
+      const historicalUsage = createUsage(1000, 500); // Pre-compaction costs
+
+      const messages = [
+        createMuxMessage("summary", "assistant", "Compaction summary", {
+          compacted: true,
+          model: "claude-sonnet-4-20250514",
+          usage: { inputTokens: 50, outputTokens: 25, totalTokens: 75 },
+          historicalUsage, // This preserves pre-compaction costs
+        }),
+      ];
+
+      await service.rebuildFromMessages(workspaceId, messages);
+      const result = await service.getSessionUsage(workspaceId);
+
+      expect(result).toBeDefined();
+      expect(result!.byModel["pre-compaction"]).toBeDefined();
+      expect(result!.byModel["pre-compaction"].input.tokens).toBe(1000);
+      expect(result!.byModel["pre-compaction"].output.tokens).toBe(500);
+    });
+
+    it("should use LAST historicalUsage when multiple compactions exist (each is cumulative)", async () => {
+      const workspaceId = "test-workspace";
+      const firstHistorical = createUsage(500, 250);
+      const secondHistorical = createUsage(1500, 750); // Cumulative - includes first
+
+      const messages = [
+        createMuxMessage("summary1", "assistant", "First compaction", {
+          compacted: true,
+          model: "claude-sonnet-4-20250514",
+          usage: { inputTokens: 50, outputTokens: 25, totalTokens: 75 },
+          historicalUsage: firstHistorical,
+        }),
+        createMuxMessage("msg1", "assistant", "Regular message", {
+          model: "claude-sonnet-4-20250514",
+          usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+        }),
+        createMuxMessage("summary2", "assistant", "Second compaction", {
+          compacted: true,
+          model: "claude-sonnet-4-20250514",
+          usage: { inputTokens: 50, outputTokens: 25, totalTokens: 75 },
+          historicalUsage: secondHistorical, // This is cumulative, should replace first
+        }),
+      ];
+
+      await service.rebuildFromMessages(workspaceId, messages);
+      const result = await service.getSessionUsage(workspaceId);
+
+      expect(result).toBeDefined();
+      // Should have the LAST historicalUsage, not sum of both
+      expect(result!.byModel["pre-compaction"].input.tokens).toBe(1500);
+      expect(result!.byModel["pre-compaction"].output.tokens).toBe(750);
+    });
+  });
+});

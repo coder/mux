@@ -37,3 +37,19 @@ export const ChatStatsSchema = z.object({
     .array(ChatUsageDisplaySchema)
     .meta({ description: "Ordered array of actual usage statistics from API responses" }),
 });
+
+/**
+ * Cumulative session usage file format.
+ * Stored in ~/.mux/sessions/{workspaceId}/session-usage.json
+ */
+export const SessionUsageFileSchema = z.object({
+  byModel: z.record(z.string(), ChatUsageDisplaySchema),
+  lastRequest: z
+    .object({
+      model: z.string(),
+      usage: ChatUsageDisplaySchema,
+      timestamp: z.number(),
+    })
+    .optional(),
+  version: z.literal(1),
+});

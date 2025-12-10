@@ -27,23 +27,14 @@ const createUsageEntry = (
 // Helper to create mock WorkspaceUsageState
 const createMockUsage = (
   lastEntryTokens: number,
-  historicalTokens?: number,
+  _historicalTokens?: number, // Kept for backward compat but unused (session-usage.json handles historical)
   model: string = KNOWN_MODELS.SONNET.id,
   liveUsage?: ChatUsageDisplay
 ): WorkspaceUsageState => {
-  const usageHistory: ChatUsageDisplay[] = [];
+  // Create lastContextUsage representing the most recent context window state
+  const lastContextUsage = createUsageEntry(lastEntryTokens, model);
 
-  if (historicalTokens !== undefined) {
-    // Add historical usage (from compaction)
-    usageHistory.push(createUsageEntry(historicalTokens, "historical-model"));
-  }
-
-  // Add recent usage
-  const recentUsage = createUsageEntry(lastEntryTokens, model);
-  usageHistory.push(recentUsage);
-
-  // lastContextUsage is the most recent context window state
-  return { usageHistory, lastContextUsage: recentUsage, totalTokens: 0, liveUsage };
+  return { lastContextUsage, totalTokens: 0, liveUsage };
 };
 
 describe("checkAutoCompaction", () => {
@@ -60,8 +51,8 @@ describe("checkAutoCompaction", () => {
       expect(result.thresholdPercentage).toBe(70);
     });
 
-    test("returns false when usage history is empty", () => {
-      const usage: WorkspaceUsageState = { usageHistory: [], totalTokens: 0 };
+    test("returns false when no context usage data", () => {
+      const usage: WorkspaceUsageState = { totalTokens: 0 };
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
 
       expect(result.shouldShowWarning).toBe(false);
@@ -146,7 +137,6 @@ describe("checkAutoCompaction", () => {
         model: KNOWN_MODELS.SONNET.id,
       };
       const usage: WorkspaceUsageState = {
-        usageHistory: [usageEntry],
         lastContextUsage: usageEntry,
         totalTokens: 0,
       };
@@ -195,8 +185,8 @@ describe("checkAutoCompaction", () => {
   });
 
   describe("Edge Cases", () => {
-    test("empty usageHistory array returns safe defaults", () => {
-      const usage: WorkspaceUsageState = { usageHistory: [], totalTokens: 0 };
+    test("missing context usage returns safe defaults", () => {
+      const usage: WorkspaceUsageState = { totalTokens: 0 };
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
 
       expect(result.shouldShowWarning).toBe(false);
@@ -204,7 +194,7 @@ describe("checkAutoCompaction", () => {
       expect(result.thresholdPercentage).toBe(70);
     });
 
-    test("single entry in usageHistory works correctly", () => {
+    test("single context usage entry works correctly", () => {
       const usage = createMockUsage(140_000);
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
 
@@ -242,7 +232,6 @@ describe("checkAutoCompaction", () => {
         model: KNOWN_MODELS.SONNET.id,
       };
       const usage: WorkspaceUsageState = {
-        usageHistory: [zeroEntry],
         lastContextUsage: zeroEntry,
         totalTokens: 0,
       };
@@ -356,24 +345,22 @@ describe("checkAutoCompaction", () => {
       expect(result.shouldForceCompact).toBe(true);
     });
 
-    test("shouldForceCompact triggers with empty history but liveUsage at force threshold", () => {
+    test("shouldForceCompact triggers with liveUsage at force threshold (no lastContextUsage)", () => {
       const liveUsage = createUsageEntry(150_000); // 75%
       const usage: WorkspaceUsageState = {
-        usageHistory: [],
         totalTokens: 0,
         liveUsage,
       };
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
 
       expect(result.shouldForceCompact).toBe(true);
-      expect(result.usagePercentage).toBe(75); // usagePercentage reflects live even with empty history
+      expect(result.usagePercentage).toBe(75); // usagePercentage reflects live
     });
 
-    test("shouldShowWarning uses live usage when no history exists", () => {
-      // No lastUsage, liveUsage at 65% - should show warning (65% >= 60%)
+    test("shouldShowWarning uses live usage when no lastContextUsage exists", () => {
+      // No lastContextUsage, liveUsage at 65% - should show warning (65% >= 60%)
       const liveUsage = createUsageEntry(130_000); // 65%
       const usage: WorkspaceUsageState = {
-        usageHistory: [],
         totalTokens: 0,
         liveUsage,
       };
