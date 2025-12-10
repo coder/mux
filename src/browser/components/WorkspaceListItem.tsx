@@ -122,7 +122,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
           });
         }}
         onKeyDown={(e) => {
-          if (isDisabled) return;
+          if (isDisabled || isEditing) return;
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             onSelectWorkspace({
