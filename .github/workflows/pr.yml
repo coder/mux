@@ -292,8 +292,13 @@ jobs:
         with:
           fetch-depth: 0
       - uses: ./.github/actions/setup-mux
-      - name: Install GNU Make
-        run: choco install -y make
+      - name: Add MSYS2 make to PATH
+        shell: pwsh
+        run: |
+          # MSYS2 is pre-installed on Windows runners, just needs to be in PATH
+          # Install make via pacman (faster than choco)
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm make
+          echo "C:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Verify tools
         shell: bash
         run: |

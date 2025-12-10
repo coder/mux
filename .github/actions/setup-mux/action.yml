@@ -48,3 +48,27 @@ runs:
       if: steps.check-node-modules.outputs.exists != 'true'
       shell: bash
       run: bun install --frozen-lockfile
+
+    # Cache Electron binaries and electron-builder resources (NSIS, etc.)
+    # These are downloaded during electron-builder and can be 200MB+ total
+    - name: Cache Electron
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/electron
+          ~/Library/Caches/electron
+          ~/AppData/Local/electron/Cache
+        key: ${{ runner.os }}-${{ runner.arch }}-electron-${{ hashFiles('**/bun.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-electron-
+
+    - name: Cache electron-builder
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/electron-builder
+          ~/Library/Caches/electron-builder
+          ~/AppData/Local/electron-builder/Cache
+        key: ${{ runner.os }}-${{ runner.arch }}-electron-builder-${{ hashFiles('**/bun.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-electron-builder-
