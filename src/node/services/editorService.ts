@@ -1,8 +1,9 @@
-import { spawn, spawnSync } from "child_process";
+import { spawn } from "child_process";
 import type { Config } from "@/node/config";
 import { isSSHRuntime } from "@/common/types/runtime";
 import { log } from "@/node/services/log";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
+import { isCommandAvailable, resolveCommandPath } from "@/node/utils/commandDiscovery";
 
 export interface EditorConfig {
   editor: string;
@@ -61,11 +62,12 @@ export class EditorService {
         return { success: false, error: "No editor command configured" };
       }
 
-      // Check if editor is available
-      const isAvailable = this.isCommandAvailable(editorCommand);
+      // Check if editor is available and resolve to full path if needed
+      const isAvailable = await isCommandAvailable(editorCommand);
       if (!isAvailable) {
         return { success: false, error: `Editor command not found: ${editorCommand}` };
       }
+      const resolvedCommand = (await resolveCommandPath(editorCommand)) ?? editorCommand;
 
       if (isSSH) {
         // SSH workspace handling - only VS Code and Cursor support Remote-SSH
@@ -83,16 +85,16 @@ export class EditorService {
         // Build the remote command: code --remote ssh-remote+host /remote/path
         const args = ["--remote", `ssh-remote+${runtimeConfig.host}`, resolvedPath];
 
-        log.info(`Opening SSH path in editor: ${editorCommand} ${args.join(" ")}`);
-        const child = spawn(editorCommand, args, {
+        log.info(`Opening SSH path in editor: ${resolvedCommand} ${args.join(" ")}`);
+        const child = spawn(resolvedCommand, args, {
           detached: true,
           stdio: "ignore",
         });
         child.unref();
       } else {
         // Local - just open the path
-        log.info(`Opening local path in editor: ${editorCommand} ${targetPath}`);
-        const child = spawn(editorCommand, [targetPath], {
+        log.info(`Opening local path in editor: ${resolvedCommand} ${targetPath}`);
+        const child = spawn(resolvedCommand, [targetPath], {
           detached: true,
           stdio: "ignore",
         });
@@ -104,18 +106,6 @@ export class EditorService {
       const message = err instanceof Error ? err.message : String(err);
       log.error(`Failed to open in editor: ${message}`);
       return { success: false, error: message };
-    }
-  }
-
-  /**
-   * Check if a command is available in the system PATH
-   */
-  private isCommandAvailable(command: string): boolean {
-    try {
-      const result = spawnSync("which", [command], { encoding: "utf8" });
-      return result.status === 0;
-    } catch {
-      return false;
     }
   }
 }

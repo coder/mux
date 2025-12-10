@@ -8,16 +8,25 @@ import { spawnSync } from "child_process";
 
 /** Known installation paths for GUI editors on macOS */
 const MACOS_APP_PATHS: Record<string, string[]> = {
-  cursor: ["/Applications/Cursor.app/Contents/Resources/app/bin/cursor", "/usr/local/bin/cursor"],
+  cursor: [
+    "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
+    "/opt/homebrew/bin/cursor",
+    "/usr/local/bin/cursor",
+  ],
   code: [
     "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
+    "/opt/homebrew/bin/code",
     "/usr/local/bin/code",
   ],
-  zed: ["/Applications/Zed.app/Contents/MacOS/cli", "/usr/local/bin/zed"],
-  subl: ["/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl", "/usr/local/bin/subl"],
+  zed: ["/Applications/Zed.app/Contents/MacOS/cli", "/opt/homebrew/bin/zed", "/usr/local/bin/zed"],
+  subl: [
+    "/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl",
+    "/opt/homebrew/bin/subl",
+    "/usr/local/bin/subl",
+  ],
   ghostty: [
-    "/opt/homebrew/bin/ghostty",
     "/Applications/Ghostty.app/Contents/MacOS/ghostty",
+    "/opt/homebrew/bin/ghostty",
     "/usr/local/bin/ghostty",
   ],
 };
@@ -49,6 +58,37 @@ export async function isCommandAvailable(command: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Resolve a command to its full path if found in known locations or PATH.
+ * Returns the full path, or null if not found.
+ */
+export async function resolveCommandPath(command: string): Promise<string | null> {
+  // Check known paths for macOS apps first
+  if (process.platform === "darwin" && command in MACOS_APP_PATHS) {
+    for (const appPath of MACOS_APP_PATHS[command]) {
+      try {
+        const stats = await fs.stat(appPath);
+        if (stats.isFile() && (stats.mode & 0o111) !== 0) {
+          return appPath;
+        }
+      } catch {
+        // Try next path
+      }
+    }
+  }
+
+  // Fall back to which
+  try {
+    const result = spawnSync("which", [command], { encoding: "utf8" });
+    if (result.status === 0 && result.stdout.trim()) {
+      return result.stdout.trim();
+    }
+  } catch {
+    // Not found
+  }
+  return null;
 }
 
 /**
