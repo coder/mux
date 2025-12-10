@@ -286,13 +286,6 @@ async function loadServices(): Promise<void> {
   const startTime = Date.now();
   console.log(`[${timestamp()}] Loading services...`);
 
-  // E2E test hook: delay service loading to test race conditions (e.g., activate during startup)
-  const delayMs = parseInt(process.env.MUX_E2E_DELAY_SERVICES_MS ?? "0", 10);
-  if (delayMs > 0) {
-    console.log(`[${timestamp()}] E2E: Delaying service load by ${delayMs}ms`);
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-  }
-
   /* eslint-disable no-restricted-syntax */
   // Dynamic imports are justified here for performance:
   // - ServiceContainer transitively imports the entire AI SDK (ai, @ai-sdk/anthropic, etc.)
