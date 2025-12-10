@@ -168,6 +168,8 @@ export const BulkReviewActions: AppStory = {
       setup={() => {
         const workspaceId = "ws-bulk-reviews";
 
+        // Use deterministic timestamps so reviews render in stable order
+        const baseTime = 1700000000000;
         setReviews(workspaceId, [
           // Attached reviews - shown in ChatInput with "Clear all" button
           createReview(
@@ -175,21 +177,24 @@ export const BulkReviewActions: AppStory = {
             "src/api/auth.ts",
             "42-48",
             "Consider using a constant for the token expiry",
-            "attached"
+            "attached",
+            baseTime + 1
           ),
           createReview(
             "review-attached-2",
             "src/utils/helpers.ts",
             "15-20",
             "This function could be simplified using reduce",
-            "attached"
+            "attached",
+            baseTime + 2
           ),
           createReview(
             "review-attached-3",
             "src/hooks/useAuth.ts",
             "30-35",
             "Missing error handling for network failures",
-            "attached"
+            "attached",
+            baseTime + 3
           ),
           // Pending reviews - shown in banner with "Attach all to chat" button
           createReview(
@@ -197,21 +202,24 @@ export const BulkReviewActions: AppStory = {
             "src/components/LoginForm.tsx",
             "55-60",
             "Add loading state while authenticating",
-            "pending"
+            "pending",
+            baseTime + 4
           ),
           createReview(
             "review-pending-2",
             "src/services/api.ts",
             "12-18",
             "Consider adding retry logic for failed requests",
-            "pending"
+            "pending",
+            baseTime + 5
           ),
           createReview(
             "review-pending-3",
             "src/types/user.ts",
             "5-10",
             "Make email field optional for guest users",
-            "pending"
+            "pending",
+            baseTime + 6
           ),
         ]);
 

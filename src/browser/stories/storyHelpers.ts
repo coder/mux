@@ -76,7 +76,8 @@ export function createReview(
   filePath: string,
   lineRange: string,
   note: string,
-  status: "pending" | "attached" | "checked" = "pending"
+  status: "pending" | "attached" | "checked" = "pending",
+  createdAt?: number
 ): Review {
   return {
     id,
@@ -87,7 +88,7 @@ export function createReview(
       userNote: note,
     },
     status,
-    createdAt: Date.now() - Math.random() * 3600000, // Random time in last hour
+    createdAt: createdAt ?? Date.now(),
     statusChangedAt: status === "checked" ? Date.now() : undefined,
   };
 }
