@@ -170,8 +170,13 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
   > {
     log.debug(`BackgroundProcessManager.spawn() called for workspace ${workspaceId}`);
 
-    // Process ID is the display name directly
-    const processId = config.displayName;
+    // Generate unique processId, appending (1), (2), etc. on collision
+    let processId = config.displayName;
+    let suffix = 1;
+    while (this.processes.has(processId)) {
+      processId = `${config.displayName} (${suffix})`;
+      suffix++;
+    }
 
     // Spawn via executor with background infrastructure
     // spawnProcess uses runtime.tempDir() internally for output directory
