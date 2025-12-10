@@ -23,6 +23,9 @@ const EDITOR_OPTIONS: Array<{ value: EditorType; label: string }> = [
   { value: "custom", label: "Custom" },
 ];
 
+// Browser mode: window.api is not set (only exists in Electron via preload)
+const isBrowserMode = typeof window !== "undefined" && !window.api;
+
 export function GeneralSection() {
   const { theme, setTheme } = useTheme();
   const [editorConfig, setEditorConfig] = usePersistedState<EditorConfig>(
@@ -82,19 +85,26 @@ export function GeneralSection() {
       </div>
 
       {editorConfig.editor === "custom" && (
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-foreground text-sm">Custom Command</div>
-            <div className="text-muted text-xs">Command to run (path will be appended)</div>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-foreground text-sm">Custom Command</div>
+              <div className="text-muted text-xs">Command to run (path will be appended)</div>
+            </div>
+            <Input
+              value={editorConfig.customCommand ?? ""}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                handleCustomCommandChange(e.target.value)
+              }
+              placeholder="e.g., nvim"
+              className="border-border-medium bg-background-secondary h-9 w-40"
+            />
           </div>
-          <Input
-            value={editorConfig.customCommand ?? ""}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-              handleCustomCommandChange(e.target.value)
-            }
-            placeholder="e.g., nvim"
-            className="border-border-medium bg-background-secondary h-9 w-40"
-          />
+          {isBrowserMode && (
+            <div className="text-warning text-xs">
+              Custom editors are not supported in browser mode. Use VS Code or Cursor instead.
+            </div>
+          )}
         </div>
       )}
     </div>

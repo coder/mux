@@ -52,7 +52,7 @@ export class Config {
     try {
       if (fs.existsSync(this.configFile)) {
         const data = fs.readFileSync(this.configFile, "utf-8");
-        const parsed = JSON.parse(data) as { projects?: unknown };
+        const parsed = JSON.parse(data) as { projects?: unknown; serverSshHost?: string };
 
         // Config is stored as array of [path, config] pairs
         if (parsed.projects && Array.isArray(parsed.projects)) {
@@ -61,6 +61,7 @@ export class Config {
           );
           return {
             projects: projectsMap,
+            serverSshHost: parsed.serverSshHost,
           };
         }
       }
@@ -80,9 +81,12 @@ export class Config {
         fs.mkdirSync(this.rootDir, { recursive: true });
       }
 
-      const data = {
+      const data: { projects: Array<[string, ProjectConfig]>; serverSshHost?: string } = {
         projects: Array.from(config.projects.entries()),
       };
+      if (config.serverSshHost) {
+        data.serverSshHost = config.serverSshHost;
+      }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
     } catch (error) {
@@ -98,6 +102,14 @@ export class Config {
     const config = this.loadConfigOrDefault();
     const newConfig = fn(config);
     await this.saveConfig(newConfig);
+  }
+
+  /**
+   * Get the configured SSH hostname for this server (used for editor deep links in browser mode).
+   */
+  getServerSshHost(): string | undefined {
+    const config = this.loadConfigOrDefault();
+    return config.serverSshHost;
   }
 
   private getProjectName(projectPath: string): string {

@@ -28,6 +28,7 @@ export class ServerService {
   private server: OrpcServer | null = null;
   private lockfile: ServerLockfile | null = null;
   private serverInfo: ServerInfo | null = null;
+  private sshHost: string | undefined = undefined;
 
   /**
    * Set the launch project path
@@ -41,6 +42,20 @@ export class ServerService {
    */
   getLaunchProject(): Promise<string | null> {
     return Promise.resolve(this.launchProjectPath);
+  }
+
+  /**
+   * Set the SSH hostname for editor deep links (browser mode)
+   */
+  setSshHost(host: string | undefined): void {
+    this.sshHost = host;
+  }
+
+  /**
+   * Get the SSH hostname for editor deep links (browser mode)
+   */
+  getSshHost(): string | undefined {
+    return this.sshHost;
   }
 
   /**

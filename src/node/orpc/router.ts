@@ -49,6 +49,12 @@ export const router = (authToken?: string) => {
         .handler(async ({ context }) => {
           return context.serverService.getLaunchProject();
         }),
+      getSshHost: t
+        .input(schemas.server.getSshHost.input)
+        .output(schemas.server.getSshHost.output)
+        .handler(({ context }) => {
+          return context.serverService.getSshHost() ?? null;
+        }),
     },
     providers: {
       list: t

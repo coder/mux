@@ -440,6 +440,10 @@ export const server = {
     input: z.void(),
     output: z.string().nullable(),
   },
+  getSshHost: {
+    input: z.void(),
+    output: z.string().nullable(),
+  },
 };
 
 // Update

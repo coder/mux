@@ -19,6 +19,7 @@ program
   .option("-h, --host <host>", "bind to specific host", "localhost")
   .option("-p, --port <port>", "bind to specific port", "3000")
   .option("--auth-token <token>", "optional bearer token for HTTP/WS auth")
+  .option("--ssh-host <host>", "SSH hostname/alias for editor deep links (e.g., devbox)")
   .option("--add-project <path>", "add and open project at the specified path (idempotent)")
   .parse(process.argv);
 
@@ -28,6 +29,8 @@ const PORT = Number.parseInt(String(options.port), 10);
 const rawAuthToken = (options.authToken as string | undefined) ?? process.env.MUX_SERVER_AUTH_TOKEN;
 const AUTH_TOKEN = rawAuthToken?.trim() ? rawAuthToken.trim() : undefined;
 const ADD_PROJECT_PATH = options.addProject as string | undefined;
+// SSH host for editor deep links (CLI flag > env var > config file, resolved later)
+const CLI_SSH_HOST = options.sshHost as string | undefined;
 
 // Track the launch project path for initial navigation
 let launchProjectPath: string | null = null;
@@ -65,6 +68,10 @@ const mockWindow: BrowserWindow = {
 
   // Set launch project path for clients
   serviceContainer.serverService.setLaunchProject(launchProjectPath);
+
+  // Set SSH host for editor deep links (CLI > env > config file)
+  const sshHost = CLI_SSH_HOST ?? process.env.MUX_SSH_HOST ?? config.getServerSshHost();
+  serviceContainer.serverService.setSshHost(sshHost);
 
   // Build oRPC context from services
   const context: ORPCContext = {

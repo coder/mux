@@ -9,14 +9,26 @@ import {
 } from "@/common/constants/storage";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { isSSHRuntime } from "@/common/types/runtime";
+import {
+  getEditorDeepLink,
+  isLocalhost,
+  type DeepLinkEditor,
+} from "@/browser/utils/editorDeepLinks";
 
 export interface OpenInEditorResult {
   success: boolean;
   error?: string;
 }
 
+// Browser mode: window.api is not set (only exists in Electron via preload)
+const isBrowserMode = typeof window !== "undefined" && !window.api;
+
 /**
  * Hook to open a path in the user's configured code editor.
+ *
+ * In Electron mode: calls the backend API to spawn the editor process.
+ * In browser mode: generates deep link URLs (vscode://, cursor://) that open
+ * the user's locally installed editor.
  *
  * If no editor is configured, opens Settings to the General section.
  * For SSH workspaces with unsupported editors (Zed, custom), returns an error.
@@ -66,7 +78,47 @@ export function useOpenInEditor() {
         }
       }
 
-      // Call the backend API
+      // Browser mode: use deep links instead of backend spawn
+      if (isBrowserMode) {
+        // Custom editor can't work via deep links
+        if (editorConfig.editor === "custom") {
+          return {
+            success: false,
+            error: "Custom editors are not supported in browser mode. Use VS Code or Cursor.",
+          };
+        }
+
+        // Determine SSH host for deep link
+        let sshHost: string | undefined;
+        if (isSSH && runtimeConfig?.type === "ssh") {
+          // SSH workspace: use the configured SSH host
+          sshHost = runtimeConfig.host;
+        } else if (!isLocalhost(window.location.hostname)) {
+          // Remote server + local workspace: need SSH to reach server's files
+          const serverSshHost = await api?.server.getSshHost();
+          sshHost = serverSshHost ?? window.location.hostname;
+        }
+        // else: localhost access to local workspace → no SSH needed
+
+        const deepLink = getEditorDeepLink({
+          editor: editorConfig.editor as DeepLinkEditor,
+          path: targetPath,
+          sshHost,
+        });
+
+        if (!deepLink) {
+          return {
+            success: false,
+            error: `${editorConfig.editor} does not support SSH remote connections`,
+          };
+        }
+
+        // Open deep link (browser will handle protocol and launch editor)
+        window.open(deepLink, "_blank");
+        return { success: true };
+      }
+
+      // Electron mode: call the backend API
       const result = await api?.general.openInEditor({
         workspaceId,
         targetPath,
