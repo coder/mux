@@ -1,0 +1,173 @@
+---
+title: Editor Configuration
+description: Configure which editor opens your workspaces
+---
+
+mux can open workspaces in your preferred code editor. Click the pencil icon in the workspace header or use the keyboard shortcut to open the current workspace in your editor.
+
+## Selecting Your Editor
+
+Go to **Settings → General → Editor** to choose your default editor. mux ships with support for:
+
+- **VS Code** - Opens with Remote-SSH for SSH workspaces
+- **Cursor** - Opens with Remote-SSH for SSH workspaces
+- **Zed** - Local workspaces only (no SSH support)
+- **Vim/Neovim** - Opens in mux's web terminal
+
+## Editor Types
+
+Editors fall into two categories:
+
+### Native Editors
+
+Native editors (VS Code, Cursor, Zed) spawn as separate GUI applications. They work best in **desktop mode** (the Electron app). In browser mode, native editors aren't available since the browser can't launch applications on your computer.
+
+For SSH workspaces, VS Code and Cursor use their Remote-SSH extension to connect directly to the remote host.
+
+### Terminal Editors
+
+Terminal editors (Vim/Neovim) run inside mux's web terminal. They work in **all modes**:
+
+- Desktop (Electron) - Opens in a terminal window
+- Browser mode - Opens in a browser popup
+- SSH workspaces - Runs on the remote host via the terminal
+
+This makes terminal editors the most portable option.
+
+## Custom Editors
+
+You can customize the editor configuration by editing `~/.mux/editors.js`. This file is created automatically on first run with the default editors.
+
+### File Structure
+
+```javascript
+export default {
+  // Which editor to use by default
+  default: "vscode",
+
+  // Editor definitions
+  editors: {
+    vscode: {
+      name: "VS Code",
+      open: async (ctx) => {
+        // Return instructions for opening
+      },
+    },
+    // ... more editors
+  },
+};
+```
+
+### Adding a Custom Editor
+
+Each editor has a `name` and an `open` function. The `open` function receives a context object and returns instructions:
+
+```javascript
+// Example: Add Sublime Text
+sublime: {
+  name: "Sublime Text",
+  open: async (ctx) => {
+    if (ctx.isBrowser) {
+      return { error: "Sublime Text requires the desktop app" };
+    }
+    if (ctx.isSSH) {
+      return { error: "Sublime Text does not support SSH workspaces" };
+    }
+    return { type: "native", command: "subl", args: [ctx.path] };
+  },
+},
+```
+
+### Context Object
+
+The `open` function receives these properties:
+
+| Property      | Type       | Description                                |
+| ------------- | ---------- | ------------------------------------------ |
+| `path`        | `string`   | Absolute path to open                      |
+| `host`        | `string?`  | SSH host (if SSH workspace)                |
+| `isSSH`       | `boolean`  | Whether this is an SSH workspace           |
+| `isBrowser`   | `boolean`  | Whether running in browser mode            |
+| `isDesktop`   | `boolean`  | Whether running in desktop (Electron) mode |
+| `platform`    | `string`   | OS platform: "darwin", "linux", or "win32" |
+| `findCommand` | `function` | Find first available command from a list   |
+
+### Return Values
+
+Return one of these objects:
+
+**Native editor (GUI application):**
+
+```javascript
+{ type: "native", command: "code", args: ["--new-window", ctx.path] }
+```
+
+**Terminal editor (runs in web terminal):**
+
+```javascript
+{ type: "web_term", command: `nvim ${ctx.path}` }
+```
+
+**Error (show message to user):**
+
+```javascript
+{
+  error: "This editor doesn't support SSH workspaces";
+}
+```
+
+### Example: Emacs
+
+```javascript
+emacs: {
+  name: "Emacs",
+  open: async (ctx) => {
+    // Use emacsclient for GUI, or run in terminal for SSH
+    if (ctx.isSSH) {
+      return { type: "web_term", command: `emacs -nw ${ctx.path}` };
+    }
+    if (ctx.isBrowser) {
+      return { type: "web_term", command: `emacs -nw ${ctx.path}` };
+    }
+    // Desktop mode - use GUI emacs
+    return { type: "native", command: "emacsclient", args: ["-c", ctx.path] };
+  },
+},
+```
+
+### Example: Helix
+
+```javascript
+helix: {
+  name: "Helix",
+  open: async (ctx) => {
+    const cmd = await ctx.findCommand(["hx", "helix"]);
+    if (!cmd) {
+      return { error: "Helix not found (tried hx, helix)" };
+    }
+    return { type: "web_term", command: `${cmd} ${ctx.path}` };
+  },
+},
+```
+
+## SSH Workspace Support
+
+| Editor     | SSH Support | Method                         |
+| ---------- | ----------- | ------------------------------ |
+| VS Code    | ✅          | Remote-SSH extension           |
+| Cursor     | ✅          | Remote-SSH extension           |
+| Zed        | ❌          | Not supported                  |
+| Vim/Neovim | ✅          | Runs in web terminal on remote |
+
+## Keyboard Shortcut
+
+Open the current workspace in your editor:
+
+- **macOS**: `Cmd+Shift+E`
+- **Windows/Linux**: `Ctrl+Shift+E`
+
+## Related
+
+- [VS Code Extension](/vscode-extension) - Deeper VS Code integration
+- [Workspaces](/workspaces) - Workspace management
+- [SSH Runtime](/runtime/ssh) - SSH workspace setup

@@ -10,10 +10,13 @@ import type { TerminalSession } from "@/common/types/terminal";
  * 1. Create new session: when existingSessionId is undefined, creates a new PTY session
  * 2. Reattach to existing session: when existingSessionId is provided (e.g., from openInEditor),
  *    subscribes to that session without creating a new one
+ *
+ * @param initialCommand - Optional command to run immediately after terminal creation (e.g., "vim /path/to/file")
  */
 export function useTerminalSession(
   workspaceId: string,
   existingSessionId: string | undefined,
+  initialCommand: string | undefined,
   enabled: boolean,
   terminalSize?: { cols: number; rows: number } | null,
   onOutput?: (data: string) => void,
@@ -60,6 +63,7 @@ export function useTerminalSession(
             workspaceId,
             cols: terminalSize.cols,
             rows: terminalSize.rows,
+            initialCommand,
           });
 
           if (!mounted) {

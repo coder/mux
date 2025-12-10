@@ -157,22 +157,8 @@ export const PREFERRED_COMPACTION_MODEL_KEY = "preferredCompactionModel";
  */
 export const VIM_ENABLED_KEY = "vimEnabled";
 
-/**
- * Editor configuration for "Open in Editor" feature (global)
- * Format: "editorConfig"
- */
-export const EDITOR_CONFIG_KEY = "editorConfig";
-
-export type EditorType = "vscode" | "cursor" | "zed" | "custom";
-
-export interface EditorConfig {
-  editor: EditorType;
-  customCommand?: string; // Only when editor='custom'
-}
-
-export const DEFAULT_EDITOR_CONFIG: EditorConfig = {
-  editor: "vscode",
-};
+// Note: Editor configuration moved to ~/.mux/editors.js
+// See src/common/types/editor.ts for types
 
 /**
  * Tutorial state storage key (global)

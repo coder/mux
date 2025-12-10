@@ -163,8 +163,20 @@ export const router = (authToken?: string) => {
           return context.editorService.openInEditor(
             input.workspaceId,
             input.targetPath,
-            input.editorConfig
+            input.editorId
           );
+        }),
+      listEditors: t
+        .input(schemas.general.listEditors.input)
+        .output(schemas.general.listEditors.output)
+        .handler(async ({ context }) => {
+          return context.editorService.listEditors();
+        }),
+      setDefaultEditor: t
+        .input(schemas.general.setDefaultEditor.input)
+        .output(schemas.general.setDefaultEditor.output)
+        .handler(async ({ context, input }) => {
+          return context.editorService.setDefaultEditor(input.editorId);
         }),
     },
     projects: {
@@ -786,7 +798,7 @@ export const router = (authToken?: string) => {
         .input(schemas.terminal.openWindow.input)
         .output(schemas.terminal.openWindow.output)
         .handler(async ({ context, input }) => {
-          return context.terminalService.openWindow(input.workspaceId);
+          return context.terminalService.openWindow(input.workspaceId, input.initialCommand);
         }),
       closeWindow: t
         .input(schemas.terminal.closeWindow.input)

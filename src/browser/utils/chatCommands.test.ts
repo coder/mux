@@ -318,8 +318,6 @@ describe("handlePlanOpenCommand", () => {
     expect(context.api.general.openInEditor).toHaveBeenCalledWith({
       workspaceId: "test-workspace-id",
       targetPath: "/path/to/plan.md",
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      editorConfig: expect.any(Object),
     });
   });
 

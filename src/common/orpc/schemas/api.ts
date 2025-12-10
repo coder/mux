@@ -417,7 +417,11 @@ export const terminal = {
     output: eventIterator(z.number()),
   },
   openWindow: {
-    input: z.object({ workspaceId: z.string() }),
+    input: z.object({
+      workspaceId: z.string(),
+      /** Optional command to run immediately after terminal opens (e.g., "vim /path/to/file") */
+      initialCommand: z.string().optional(),
+    }),
     output: z.void(),
   },
   closeWindow: {
@@ -471,11 +475,11 @@ export const update = {
   },
 };
 
-// Editor config schema for openWorkspaceInEditor
-const EditorTypeSchema = z.enum(["vscode", "cursor", "zed", "custom"]);
-const EditorConfigSchema = z.object({
-  editor: EditorTypeSchema,
-  customCommand: z.string().optional(),
+// Editor info for listing available editors
+const EditorInfoSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  isDefault: z.boolean(),
 });
 
 // General
@@ -501,19 +505,33 @@ export const general = {
   },
   /**
    * Open a path in the user's configured code editor.
-   * For SSH workspaces with useRemoteExtension enabled, uses Remote-SSH extension.
+   * Uses the default editor from ~/.mux/editors.js unless editorId is specified.
    *
    * @param workspaceId - The workspace (used to determine if SSH and get remote host)
    * @param targetPath - The path to open (workspace directory or specific file)
-   * @param editorConfig - Editor configuration from user settings
+   * @param editorId - Optional editor ID override (uses default if not provided)
    */
   openInEditor: {
     input: z.object({
       workspaceId: z.string(),
       targetPath: z.string(),
-      editorConfig: EditorConfigSchema,
+      editorId: z.string().optional(),
     }),
     output: ResultSchema(z.void(), z.string()),
+  },
+  /**
+   * List available editors from ~/.mux/editors.js
+   */
+  listEditors: {
+    input: z.void(),
+    output: z.array(EditorInfoSchema),
+  },
+  /**
+   * Set the default editor
+   */
+  setDefaultEditor: {
+    input: z.object({ editorId: z.string() }),
+    output: z.void(),
   },
 };
 

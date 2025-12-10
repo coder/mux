@@ -6,10 +6,16 @@ import { useAPI } from "@/browser/contexts/API";
 interface TerminalViewProps {
   workspaceId: string;
   sessionId?: string;
+  initialCommand?: string;
   visible: boolean;
 }
 
-export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewProps) {
+export function TerminalView({
+  workspaceId,
+  sessionId,
+  initialCommand,
+  visible,
+}: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -57,7 +63,15 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
     sendInput,
     resize,
     error: sessionError,
-  } = useTerminalSession(workspaceId, sessionId, visible, terminalSize, handleOutput, handleExit);
+  } = useTerminalSession(
+    workspaceId,
+    sessionId,
+    initialCommand,
+    visible,
+    terminalSize,
+    handleOutput,
+    handleExit
+  );
 
   // Keep refs to latest functions so callbacks always use current version
   const sendInputRef = useRef(sendInput);

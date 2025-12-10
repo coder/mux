@@ -94,6 +94,8 @@ export class ServiceContainer {
     this.workspaceService.setTerminalService(this.terminalService);
     // Editor service for opening workspaces in code editors
     this.editorService = new EditorService(config);
+    // Wire terminal service to editor service for web_term editors
+    this.editorService.setTerminalService(this.terminalService);
     this.windowService = new WindowService();
     this.updateService = new UpdateService();
     this.tokenizerService = new TokenizerService();

@@ -116,7 +116,12 @@ describe("TerminalService", () => {
 
   it("should open terminal window via manager", async () => {
     await service.openWindow("ws-1");
-    expect(openTerminalWindowMock).toHaveBeenCalledWith("ws-1");
+    expect(openTerminalWindowMock).toHaveBeenCalledWith("ws-1", undefined);
+  });
+
+  it("should open terminal window with initial command", async () => {
+    await service.openWindow("ws-1", "vim /path/to/file");
+    expect(openTerminalWindowMock).toHaveBeenCalledWith("ws-1", "vim /path/to/file");
   });
 
   it("should handle session exit", async () => {

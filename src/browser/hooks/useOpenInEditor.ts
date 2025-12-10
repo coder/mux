@@ -1,12 +1,5 @@
 import { useCallback } from "react";
 import { useAPI } from "@/browser/contexts/API";
-import { useSettings } from "@/browser/contexts/SettingsContext";
-import { readPersistedState } from "@/browser/hooks/usePersistedState";
-import {
-  EDITOR_CONFIG_KEY,
-  DEFAULT_EDITOR_CONFIG,
-  type EditorConfig,
-} from "@/common/constants/storage";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { isSSHRuntime } from "@/common/types/runtime";
 import {
@@ -23,70 +16,61 @@ export interface OpenInEditorResult {
 // Browser mode: window.api is not set (only exists in Electron via preload)
 const isBrowserMode = typeof window !== "undefined" && !window.api;
 
+// Editors that support deep links in browser mode
+const DEEP_LINK_EDITORS = ["vscode", "cursor", "zed"];
+
 /**
  * Hook to open a path in the user's configured code editor.
  *
- * In Electron mode: calls the backend API to spawn the editor process.
+ * In Electron mode: calls the backend API which uses ~/.mux/editors.js config.
  * In browser mode: generates deep link URLs (vscode://, cursor://) that open
- * the user's locally installed editor.
+ * the user's locally installed editor. Only VS Code/Cursor support SSH remote.
  *
- * If no editor is configured, opens Settings to the General section.
- * For SSH workspaces with unsupported editors (Zed, custom), returns an error.
+ * Editor configuration is handled by the backend via ~/.mux/editors.js.
+ * The backend determines the appropriate editor based on:
+ * - User's default editor preference
+ * - Workspace type (local vs SSH)
+ * - Runtime environment (desktop vs browser)
  *
  * @returns A function that opens a path in the editor:
  *   - workspaceId: required workspace identifier
  *   - targetPath: the path to open (workspace directory or specific file)
- *   - runtimeConfig: optional, used to detect SSH workspaces for validation
+ *   - runtimeConfig: optional, used for SSH host in browser mode deep links
+ *   - editorId: optional, override the default editor
  */
 export function useOpenInEditor() {
   const { api } = useAPI();
-  const { open: openSettings } = useSettings();
 
   return useCallback(
     async (
       workspaceId: string,
       targetPath: string,
-      runtimeConfig?: RuntimeConfig
+      runtimeConfig?: RuntimeConfig,
+      editorId?: string
     ): Promise<OpenInEditorResult> => {
-      // Read editor config from localStorage
-      const editorConfig = readPersistedState<EditorConfig>(
-        EDITOR_CONFIG_KEY,
-        DEFAULT_EDITOR_CONFIG
-      );
-
-      const isSSH = isSSHRuntime(runtimeConfig);
-
-      // For custom editor with no command configured, open settings
-      if (editorConfig.editor === "custom" && !editorConfig.customCommand) {
-        openSettings("general");
-        return { success: false, error: "Please configure a custom editor command in Settings" };
-      }
-
-      // For SSH workspaces, validate the editor supports Remote-SSH (only VS Code/Cursor)
-      if (isSSH) {
-        if (editorConfig.editor === "zed") {
-          return {
-            success: false,
-            error: "Zed does not support Remote-SSH for SSH workspaces",
-          };
-        }
-        if (editorConfig.editor === "custom") {
-          return {
-            success: false,
-            error: "Custom editors do not support Remote-SSH for SSH workspaces",
-          };
-        }
-      }
-
-      // Browser mode: use deep links instead of backend spawn
+      // Browser mode: use deep links for supported editors
       if (isBrowserMode) {
-        // Custom editor can't work via deep links
-        if (editorConfig.editor === "custom") {
+        // Get the editor to use - either specified or fetch default from backend
+        let editor = editorId;
+        if (!editor) {
+          try {
+            const editors = await api?.general.listEditors();
+            const defaultEditor = editors?.find((e) => e.isDefault);
+            editor = defaultEditor?.id;
+          } catch {
+            // Fall back to vscode if we can't fetch
+            editor = "vscode";
+          }
+        }
+
+        if (!editor || !DEEP_LINK_EDITORS.includes(editor)) {
           return {
             success: false,
-            error: "Custom editors are not supported in browser mode. Use VS Code or Cursor.",
+            error: `${editor || "This editor"} is not supported in browser mode. Use VS Code or Cursor.`,
           };
         }
+
+        const isSSH = isSSHRuntime(runtimeConfig);
 
         // Determine SSH host for deep link
         let sshHost: string | undefined;
@@ -101,7 +85,7 @@ export function useOpenInEditor() {
         // else: localhost access to local workspace → no SSH needed
 
         const deepLink = getEditorDeepLink({
-          editor: editorConfig.editor as DeepLinkEditor,
+          editor: editor as DeepLinkEditor,
           path: targetPath,
           sshHost,
         });
@@ -109,7 +93,7 @@ export function useOpenInEditor() {
         if (!deepLink) {
           return {
             success: false,
-            error: `${editorConfig.editor} does not support SSH remote connections`,
+            error: `${editor} does not support SSH remote connections`,
           };
         }
 
@@ -122,7 +106,7 @@ export function useOpenInEditor() {
       const result = await api?.general.openInEditor({
         workspaceId,
         targetPath,
-        editorConfig,
+        editorId,
       });
 
       if (!result) {
@@ -135,6 +119,6 @@ export function useOpenInEditor() {
 
       return { success: true };
     },
-    [api, openSettings]
+    [api]
   );
 }
