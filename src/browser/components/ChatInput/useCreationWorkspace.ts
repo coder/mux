@@ -73,6 +73,8 @@ interface UseCreationWorkspaceReturn {
   nameState: WorkspaceNameState;
   /** The confirmed name being used for creation (null until generation resolves) */
   creatingWithName: string | null;
+  /** The confirmed title being used for creation (null until generation resolves) */
+  creatingWithTitle: string | null;
 }
 
 /**
@@ -93,8 +95,9 @@ export function useCreationWorkspace({
   const [recommendedTrunk, setRecommendedTrunk] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [isSending, setIsSending] = useState(false);
-  // The confirmed name being used for workspace creation (set after waitForGeneration resolves)
+  // The confirmed name/title being used for workspace creation (set after waitForGeneration resolves)
   const [creatingWithName, setCreatingWithName] = useState<string | null>(null);
+  const [creatingWithTitle, setCreatingWithTitle] = useState<string | null>(null);
 
   // Centralized draft workspace settings with automatic persistence
   const {
@@ -148,6 +151,7 @@ export function useCreationWorkspace({
       setIsSending(true);
       setToast(null);
       setCreatingWithName(null);
+      setCreatingWithTitle(null);
 
       try {
         // Wait for identity generation to complete (blocks if still in progress)
@@ -158,8 +162,9 @@ export function useCreationWorkspace({
           return false;
         }
 
-        // Set the confirmed name for UI display
+        // Set the confirmed name and title for splash UI display
         setCreatingWithName(identity.name);
+        setCreatingWithTitle(identity.title);
 
         // Get runtime config from options
         const runtimeString = getRuntimeString();
@@ -259,7 +264,8 @@ export function useCreationWorkspace({
     handleSend,
     // Workspace name/title state (for CreationControls)
     nameState: workspaceNameState,
-    // The confirmed name being used for creation (null until generation resolves)
+    // The confirmed name/title being used for creation (null until generation resolves)
     creatingWithName,
+    creatingWithTitle,
   };
 }

@@ -3,8 +3,10 @@ import React from "react";
 interface CreationCenterContentProps {
   projectName: string;
   isSending: boolean;
-  /** The confirmed workspace name (null while name generation is in progress) */
+  /** The confirmed workspace name (null while generation is in progress) */
   workspaceName?: string | null;
+  /** The confirmed workspace title (null while generation is in progress) */
+  workspaceTitle?: string | null;
 }
 
 /**
@@ -22,6 +24,9 @@ export function CreationCenterContent(props: CreationCenterContentProps) {
             {props.workspaceName ? (
               <>
                 <code className="bg-separator rounded px-1">{props.workspaceName}</code>
+                {props.workspaceTitle && (
+                  <span className="text-muted-foreground ml-1">— {props.workspaceTitle}</span>
+                )}
               </>
             ) : (
               "Generating name…"

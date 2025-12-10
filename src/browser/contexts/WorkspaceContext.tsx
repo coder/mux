@@ -371,6 +371,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
    * Update workspace title (formerly "rename").
    * Unlike the old rename which changed the git branch/directory name,
    * this only updates the display title and can be called during streaming.
+   *
+   * Note: This is simpler than the old rename because the workspace ID doesn't change.
+   * We just reload metadata after the update - no need to update selectedWorkspace
+   * since the ID stays the same and the metadata map refresh handles the title update.
    */
   const renameWorkspace = useCallback(
     async (
