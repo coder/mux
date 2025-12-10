@@ -96,12 +96,11 @@ describeIntegration("File Change Notification Integration", () => {
     const workspaceId = createResult.metadata.id;
     const workspaceName = createResult.metadata.name;
     const projectName = createResult.metadata.projectName;
-    const projectPath = createResult.metadata.projectPath;
 
     try {
       // 2. Get the AgentSession and plan file path
       const session = env.services.workspaceService.getOrCreateSession(workspaceId);
-      const planPath = getPlanFilePath(workspaceName, projectName, projectPath);
+      const planPath = getPlanFilePath(workspaceName, projectName);
 
       // 3. Create the plan directory and file
       const planDir = join(planPath, "..");
@@ -211,12 +210,11 @@ describeIntegration("File Change Notification Integration", () => {
     const workspaceId = createResult.metadata.id;
     const workspaceName = createResult.metadata.name;
     const projectName = createResult.metadata.projectName;
-    const projectPath = createResult.metadata.projectPath;
 
     try {
       // 2. Get the AgentSession and plan file path
       const session = env.services.workspaceService.getOrCreateSession(workspaceId);
-      const planPath = getPlanFilePath(workspaceName, projectName, projectPath);
+      const planPath = getPlanFilePath(workspaceName, projectName);
 
       // 3. Create the plan directory and file
       const planDir = join(planPath, "..");

@@ -1,5 +1,6 @@
 import type { Runtime, ExecOptions } from "@/node/runtime/Runtime";
 import { PlatformPaths } from "@/node/utils/paths.main";
+import { getLegacyPlanFilePath, getPlanFilePath } from "@/common/utils/planStorage";
 
 /**
  * Convenience helpers for working with streaming Runtime APIs.
@@ -115,5 +116,78 @@ async function streamToString(stream: ReadableStream<Uint8Array>): Promise<strin
     return result;
   } finally {
     reader.releaseLock();
+  }
+}
+
+/**
+ * Result from reading a plan file with legacy migration support
+ */
+export interface ReadPlanResult {
+  /** Plan file content (empty string if file doesn't exist) */
+  content: string;
+  /** Whether a plan file exists */
+  exists: boolean;
+  /** The canonical plan file path (new format) */
+  path: string;
+}
+
+/**
+ * Read plan file content, checking new path first then legacy, migrating if needed.
+ * This handles the transparent migration from ~/.mux/plans/{id}.md to
+ * ~/.mux/plans/{projectName}/{workspaceName}.md
+ */
+export async function readPlanFile(
+  runtime: Runtime,
+  workspaceName: string,
+  projectName: string,
+  workspaceId: string
+): Promise<ReadPlanResult> {
+  const planPath = getPlanFilePath(workspaceName, projectName);
+  const legacyPath = getLegacyPlanFilePath(workspaceId);
+
+  // Try new path first
+  try {
+    const content = await readFileString(runtime, planPath);
+    return { content, exists: true, path: planPath };
+  } catch {
+    // Fall back to legacy path
+    try {
+      const content = await readFileString(runtime, legacyPath);
+      // Migrate: move to new location
+      try {
+        const planDir = planPath.substring(0, planPath.lastIndexOf("/"));
+        await execBuffered(runtime, `mkdir -p "${planDir}" && mv "${legacyPath}" "${planPath}"`, {
+          cwd: "/tmp",
+          timeout: 5,
+        });
+      } catch {
+        // Migration failed, but we have the content
+      }
+      return { content, exists: true, path: planPath };
+    } catch {
+      // File doesn't exist at either location
+      return { content: "", exists: false, path: planPath };
+    }
+  }
+}
+
+/**
+ * Move a plan file from one workspace name to another (e.g., during rename).
+ * Silently succeeds if source file doesn't exist.
+ */
+export async function movePlanFile(
+  runtime: Runtime,
+  oldWorkspaceName: string,
+  newWorkspaceName: string,
+  projectName: string
+): Promise<void> {
+  const oldPath = getPlanFilePath(oldWorkspaceName, projectName);
+  const newPath = getPlanFilePath(newWorkspaceName, projectName);
+
+  try {
+    await runtime.stat(oldPath);
+    await execBuffered(runtime, `mv "${oldPath}" "${newPath}"`, { cwd: "/tmp", timeout: 5 });
+  } catch {
+    // No plan file to move, that's fine
   }
 }
