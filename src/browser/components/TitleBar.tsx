@@ -34,26 +34,17 @@ function hasBuildInfo(value: unknown): value is VersionMetadata {
   return typeof candidate.buildTime === "string";
 }
 
+// undefined locale = use browser's default, respecting regional settings
+const USER_LOCALE = undefined;
+
 function formatLocalDate(isoDate: string): string {
   const date = new Date(isoDate);
-  return date.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
+  return date.toLocaleDateString(USER_LOCALE, { dateStyle: "short" });
 }
 
 function formatExtendedTimestamp(isoDate: string): string {
   const date = new Date(isoDate);
-  return date.toLocaleString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    timeZoneName: "short",
-  });
+  return date.toLocaleString(USER_LOCALE, { dateStyle: "medium", timeStyle: "short" });
 }
 
 function parseBuildInfo(version: unknown) {
