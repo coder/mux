@@ -20,6 +20,7 @@ export type { APIClient };
 export type APIState =
   | { status: "connecting"; api: null; error: null }
   | { status: "connected"; api: APIClient; error: null }
+  | { status: "reconnecting"; api: null; error: null; attempt: number }
   | { status: "auth_required"; api: null; error: string | null }
   | { status: "error"; api: null; error: string };
 
@@ -35,8 +36,14 @@ export type UseAPIResult = APIState & APIStateMethods;
 type ConnectionState =
   | { status: "connecting" }
   | { status: "connected"; client: APIClient; cleanup: () => void }
+  | { status: "reconnecting"; attempt: number }
   | { status: "auth_required"; error?: string }
   | { status: "error"; error: string };
+
+// Reconnection constants
+const MAX_RECONNECT_ATTEMPTS = 10;
+const BASE_DELAY_MS = 100;
+const MAX_DELAY_MS = 10000;
 
 const APIContext = createContext<UseAPIResult | null>(null);
 
@@ -102,6 +109,10 @@ export const APIProvider = (props: APIProviderProps) => {
   });
 
   const cleanupRef = useRef<(() => void) | null>(null);
+  const hasConnectedRef = useRef(false);
+  const reconnectAttemptRef = useRef(0);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleReconnectRef = useRef<(() => void) | null>(null);
 
   const connect = useCallback(
     (token: string | null) => {
@@ -127,6 +138,8 @@ export const APIProvider = (props: APIProviderProps) => {
         client.general
           .ping("auth-check")
           .then(() => {
+            hasConnectedRef.current = true;
+            reconnectAttemptRef.current = 0;
             window.__ORPC_CLIENT__ = client;
             cleanupRef.current = cleanup;
             setState({ status: "connected", client, cleanup });
@@ -151,29 +164,66 @@ export const APIProvider = (props: APIProviderProps) => {
 
       ws.addEventListener("error", () => {
         cleanup();
-        if (token) {
+        if (hasConnectedRef.current) {
+          // Was connected before - try to reconnect
+          scheduleReconnectRef.current?.();
+        } else if (token) {
+          // First connection failed with token - might be invalid
           clearStoredAuthToken();
           setState({ status: "auth_required", error: "Connection failed - invalid token?" });
         } else {
+          // First connection failed without token - server might require auth
           setState({ status: "auth_required" });
         }
       });
 
       ws.addEventListener("close", (event) => {
+        // Auth-specific close codes
         if (event.code === 1008 || event.code === 4401) {
           cleanup();
           clearStoredAuthToken();
+          hasConnectedRef.current = false; // Reset - need fresh auth
           setState({ status: "auth_required", error: "Authentication required" });
+          return;
+        }
+
+        // Normal disconnection (server restart, network issue)
+        if (hasConnectedRef.current) {
+          cleanup();
+          scheduleReconnectRef.current?.();
         }
       });
     },
     [props.client]
   );
 
+  // Schedule reconnection with exponential backoff
+  const scheduleReconnect = useCallback(() => {
+    const attempt = reconnectAttemptRef.current;
+    if (attempt >= MAX_RECONNECT_ATTEMPTS) {
+      setState({ status: "error", error: "Connection lost. Please refresh the page." });
+      return;
+    }
+
+    const delay = Math.min(BASE_DELAY_MS * Math.pow(2, attempt), MAX_DELAY_MS);
+    reconnectAttemptRef.current = attempt + 1;
+    setState({ status: "reconnecting", attempt: attempt + 1 });
+
+    reconnectTimeoutRef.current = setTimeout(() => {
+      connect(authToken);
+    }, delay);
+  }, [authToken, connect]);
+
+  // Keep ref in sync with latest scheduleReconnect
+  scheduleReconnectRef.current = scheduleReconnect;
+
   useEffect(() => {
     connect(authToken);
     return () => {
       cleanupRef.current?.();
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -198,6 +248,8 @@ export const APIProvider = (props: APIProviderProps) => {
         return { status: "connecting", api: null, error: null, ...base };
       case "connected":
         return { status: "connected", api: state.client, error: null, ...base };
+      case "reconnecting":
+        return { status: "reconnecting", api: null, error: null, attempt: state.attempt, ...base };
       case "auth_required":
         return { status: "auth_required", api: null, error: state.error ?? null, ...base };
       case "error":
