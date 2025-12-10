@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from "react";
-import { Terminal, X, ChevronDown, ChevronRight } from "lucide-react";
+import { Terminal, X, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import type { BackgroundProcessInfo } from "@/common/orpc/schemas/api";
 import { cn } from "@/common/lib/utils";
@@ -118,7 +118,11 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
                           isTerminating && "cursor-not-allowed"
                         )}
                       >
-                        <X size={14} />
+                        {isTerminating ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <X size={14} />
+                        )}
                       </button>
                     </TooltipTrigger>
                     <TooltipContent>Terminate process</TooltipContent>
