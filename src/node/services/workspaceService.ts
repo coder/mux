@@ -274,7 +274,7 @@ export class WorkspaceService extends EventEmitter {
   async create(
     projectPath: string,
     branchName: string,
-    trunkBranch: string,
+    trunkBranch: string | undefined,
     title?: string,
     runtimeConfig?: RuntimeConfig
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata }>> {
@@ -283,12 +283,6 @@ export class WorkspaceService extends EventEmitter {
     if (!validation.valid) {
       return Err(validation.error ?? "Invalid workspace name");
     }
-
-    if (typeof trunkBranch !== "string" || trunkBranch.trim().length === 0) {
-      return Err("Trunk branch is required");
-    }
-
-    const normalizedTrunkBranch = trunkBranch.trim();
 
     // Generate stable workspace ID
     const workspaceId = this.config.generateStableId();
@@ -299,6 +293,13 @@ export class WorkspaceService extends EventEmitter {
       type: "worktree",
       srcBaseDir: this.config.srcDir,
     };
+
+    // Local runtime doesn't need a trunk branch; worktree/SSH runtimes require it
+    const isLocalRuntime = finalRuntimeConfig.type === "local";
+    const normalizedTrunkBranch = trunkBranch?.trim() ?? "";
+    if (!isLocalRuntime && normalizedTrunkBranch.length === 0) {
+      return Err("Trunk branch is required for worktree and SSH runtimes");
+    }
 
     let runtime;
     try {

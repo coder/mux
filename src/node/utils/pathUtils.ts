@@ -42,8 +42,10 @@ export function stripTrailingSlashes(inputPath: string): string {
 }
 
 /**
- * Validate that a project path exists, is a directory, and is a git repository
- * Automatically expands tilde and normalizes the path
+ * Validate that a project path exists and is a directory.
+ * Git repository status is checked separately - non-git repos are valid
+ * but will be restricted to local runtime only.
+ * Automatically expands tilde and normalizes the path.
  *
  * @param inputPath - Path to validate (may contain tilde)
  * @returns Validation result with expanded path or error
@@ -54,9 +56,6 @@ export function stripTrailingSlashes(inputPath: string): string {
  *
  * await validateProjectPath("~/nonexistent")
  * // => { valid: false, error: "Path does not exist: /home/user/nonexistent" }
- *
- * await validateProjectPath("~/not-a-git-repo")
- * // => { valid: false, error: "Not a git repository: /home/user/not-a-git-repo" }
  */
 export async function validateProjectPath(inputPath: string): Promise<PathValidationResult> {
   // Expand tilde if present
@@ -86,22 +85,24 @@ export async function validateProjectPath(inputPath: string): Promise<PathValida
     throw err;
   }
 
-  // Check if it's a git repository
-  const gitPath = path.join(normalizedPath, ".git");
-  try {
-    await fs.stat(gitPath);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return {
-        valid: false,
-        error: `Not a git repository: ${normalizedPath}`,
-      };
-    }
-    throw err;
-  }
-
   return {
     valid: true,
     expandedPath: normalizedPath,
   };
+}
+
+/**
+ * Check if a path is a git repository
+ *
+ * @param projectPath - Path to check (should be already validated/normalized)
+ * @returns true if the path contains a .git directory
+ */
+export async function isGitRepository(projectPath: string): Promise<boolean> {
+  const gitPath = path.join(projectPath, ".git");
+  try {
+    await fs.stat(gitPath);
+    return true;
+  } catch {
+    return false;
+  }
 }

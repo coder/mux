@@ -172,7 +172,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
         setWorkspaceModalState((prev) => ({
           ...prev,
           branches,
-          defaultTrunkBranch: recommendedTrunk,
+          defaultTrunkBranch: recommendedTrunk ?? undefined,
           loadErrorMessage: null,
           isLoading: false,
         }));

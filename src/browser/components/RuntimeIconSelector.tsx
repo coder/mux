@@ -12,6 +12,8 @@ interface RuntimeIconSelectorProps {
   /** Called when user checks "Default for project" in tooltip */
   onSetDefault: (mode: RuntimeMode) => void;
   disabled?: boolean;
+  /** Modes that cannot be selected (e.g., worktree/SSH for non-git repos) */
+  disabledModes?: RuntimeMode[];
   className?: string;
 }
 
@@ -58,6 +60,8 @@ interface RuntimeIconButtonProps {
   onClick: () => void;
   onSetDefault: () => void;
   disabled?: boolean;
+  /** Why this mode is unavailable (shown in tooltip when disabled) */
+  unavailableReason?: string;
 }
 
 function RuntimeIconButton(props: RuntimeIconButtonProps) {
@@ -98,15 +102,19 @@ function RuntimeIconButton(props: RuntimeIconButtonProps) {
       >
         <strong>{info.label}</strong>
         <p className="text-muted mt-0.5 text-xs">{info.description}</p>
-        <label className="mt-1.5 flex cursor-pointer items-center gap-1.5 text-xs">
-          <input
-            type="checkbox"
-            checked={props.isDefault}
-            onChange={() => props.onSetDefault()}
-            className="accent-accent h-3 w-3"
-          />
-          <span className="text-muted">Default for project</span>
-        </label>
+        {props.unavailableReason ? (
+          <p className="mt-1 text-xs text-yellow-500">{props.unavailableReason}</p>
+        ) : (
+          <label className="mt-1.5 flex cursor-pointer items-center gap-1.5 text-xs">
+            <input
+              type="checkbox"
+              checked={props.isDefault}
+              onChange={() => props.onSetDefault()}
+              className="accent-accent h-3 w-3"
+            />
+            <span className="text-muted">Default for project</span>
+          </label>
+        )}
       </TooltipContent>
     </Tooltip>
   );
@@ -120,6 +128,7 @@ function RuntimeIconButton(props: RuntimeIconButtonProps) {
  */
 export function RuntimeIconSelector(props: RuntimeIconSelectorProps) {
   const modes: RuntimeMode[] = [RUNTIME_MODE.LOCAL, RUNTIME_MODE.WORKTREE, RUNTIME_MODE.SSH];
+  const disabledModes = props.disabledModes ?? [];
 
   return (
     <div
@@ -127,17 +136,21 @@ export function RuntimeIconSelector(props: RuntimeIconSelectorProps) {
       data-component="RuntimeIconSelector"
       data-tutorial="runtime-selector"
     >
-      {modes.map((mode) => (
-        <RuntimeIconButton
-          key={mode}
-          mode={mode}
-          isSelected={props.value === mode}
-          isDefault={props.defaultMode === mode}
-          onClick={() => props.onChange(mode)}
-          onSetDefault={() => props.onSetDefault(mode)}
-          disabled={props.disabled}
-        />
-      ))}
+      {modes.map((mode) => {
+        const isModeDisabled = disabledModes.includes(mode);
+        return (
+          <RuntimeIconButton
+            key={mode}
+            mode={mode}
+            isSelected={props.value === mode}
+            isDefault={props.defaultMode === mode}
+            onClick={() => props.onChange(mode)}
+            onSetDefault={() => props.onSetDefault(mode)}
+            disabled={Boolean(props.disabled) || isModeDisabled}
+            unavailableReason={isModeDisabled ? "Requires git repository" : undefined}
+          />
+        );
+      })}
     </div>
   );
 }

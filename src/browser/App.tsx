@@ -318,16 +318,17 @@ function AppInner() {
   const getBranchesForProject = useCallback(
     async (projectPath: string): Promise<BranchListResult> => {
       if (!api) {
-        return { branches: [], recommendedTrunk: "" };
+        return { branches: [], recommendedTrunk: null };
       }
       const branchResult = await api.projects.listBranches({ projectPath });
       const sanitizedBranches = branchResult.branches.filter(
         (branch): branch is string => typeof branch === "string"
       );
 
-      const recommended = sanitizedBranches.includes(branchResult.recommendedTrunk)
-        ? branchResult.recommendedTrunk
-        : (sanitizedBranches[0] ?? "");
+      const recommended =
+        branchResult.recommendedTrunk && sanitizedBranches.includes(branchResult.recommendedTrunk)
+          ? branchResult.recommendedTrunk
+          : (sanitizedBranches[0] ?? null);
 
       return {
         branches: sanitizedBranches,

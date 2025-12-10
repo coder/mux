@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { expandTilde, validateProjectPath } from "./pathUtils";
+import { expandTilde, validateProjectPath, isGitRepository } from "./pathUtils";
 
 describe("pathUtils", () => {
   describe("expandTilde", () => {
@@ -114,10 +114,10 @@ describe("pathUtils", () => {
       expect(result.expandedPath).toBe(tempDir);
     });
 
-    it("should reject directory without .git", async () => {
+    it("should accept directory without .git (non-git repos are valid)", async () => {
       const result = await validateProjectPath(tempDir);
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain("Not a git repository");
+      expect(result.valid).toBe(true);
+      expect(result.expandedPath).toBe(tempDir);
     });
 
     it("should accept directory with .git", async () => {
@@ -146,6 +146,30 @@ describe("pathUtils", () => {
       expect(resultMultiple.valid).toBe(true);
       expect(resultMultiple.expandedPath).toBe(tempDir);
       expect(resultMultiple.expandedPath).not.toMatch(/[/\\]$/);
+    });
+  });
+
+  describe("isGitRepository", () => {
+    let tempDir: string;
+
+    beforeEach(() => {
+      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-git-test-"));
+    });
+
+    afterEach(() => {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    it("should return false for non-git directory", async () => {
+      const result = await isGitRepository(tempDir);
+      expect(result).toBe(false);
+    });
+
+    it("should return true for git directory", async () => {
+      // eslint-disable-next-line local/no-sync-fs-methods -- Test setup only
+      fs.mkdirSync(path.join(tempDir, ".git"));
+      const result = await isGitRepository(tempDir);
+      expect(result).toBe(true);
     });
   });
 });

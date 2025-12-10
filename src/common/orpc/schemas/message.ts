@@ -97,5 +97,6 @@ export const MuxMessageSchema = z.object({
 
 export const BranchListResultSchema = z.object({
   branches: z.array(z.string()),
-  recommendedTrunk: z.string(),
+  /** Recommended trunk branch, or null for non-git directories */
+  recommendedTrunk: z.string().nullable(),
 });

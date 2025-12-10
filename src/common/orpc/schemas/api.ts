@@ -179,7 +179,8 @@ export const workspace = {
     input: z.object({
       projectPath: z.string(),
       branchName: z.string(),
-      trunkBranch: z.string(),
+      /** Trunk branch to fork from - only required for worktree/SSH runtimes, ignored for local */
+      trunkBranch: z.string().optional(),
       /** Human-readable title (e.g., "Fix plan mode over SSH") - optional for backwards compat */
       title: z.string().optional(),
       runtimeConfig: RuntimeConfigSchema.optional(),

@@ -105,21 +105,30 @@ describeIntegration("PROJECT_CREATE IPC Handler", () => {
     await fs.rm(tempProjectDir, { recursive: true, force: true });
   });
 
-  test.concurrent("should reject directory without .git", async () => {
-    const env = await createTestEnvironment();
-    const tempProjectDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-project-test-"));
+  test.concurrent(
+    "should accept directory without .git (non-git repos use local runtime only)",
+    async () => {
+      const env = await createTestEnvironment();
+      const tempProjectDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-project-test-"));
 
-    const client = resolveOrpcClient(env);
-    const result = await client.projects.create({ projectPath: tempProjectDir });
+      const client = resolveOrpcClient(env);
+      const result = await client.projects.create({ projectPath: tempProjectDir });
 
-    if (result.success) {
-      throw new Error("Expected failure but got success");
+      // Non-git directories are now valid - they just can only use local runtime
+      if (!result.success) {
+        throw new Error(`Expected success but got: ${result.error}`);
+      }
+      expect(result.data.normalizedPath).toBe(tempProjectDir);
+
+      // listBranches should return empty for non-git repo
+      const branchResult = await client.projects.listBranches({ projectPath: tempProjectDir });
+      expect(branchResult.branches).toEqual([]);
+      expect(branchResult.recommendedTrunk).toBeNull();
+
+      await cleanupTestEnvironment(env);
+      await fs.rm(tempProjectDir, { recursive: true, force: true });
     }
-    expect(result.error).toContain("Not a git repository");
-
-    await cleanupTestEnvironment(env);
-    await fs.rm(tempProjectDir, { recursive: true, force: true });
-  });
+  );
 
   test.concurrent("should accept valid absolute path", async () => {
     const env = await createTestEnvironment();

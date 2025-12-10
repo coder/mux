@@ -1,5 +1,5 @@
 import type { Config, ProjectConfig } from "@/node/config";
-import { validateProjectPath } from "@/node/utils/pathUtils";
+import { validateProjectPath, isGitRepository } from "@/node/utils/pathUtils";
 import { listLocalBranches, detectDefaultTrunkBranch } from "@/node/git";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
@@ -138,6 +138,12 @@ export class ProjectService {
         throw new Error(validation.error ?? "Invalid project path");
       }
       const normalizedPath = validation.expandedPath!;
+
+      // Non-git repos return empty branches - they're restricted to local runtime only
+      if (!(await isGitRepository(normalizedPath))) {
+        return { branches: [], recommendedTrunk: null };
+      }
+
       const branches = await listLocalBranches(normalizedPath);
       const recommendedTrunk = await detectDefaultTrunkBranch(normalizedPath, branches);
       return { branches, recommendedTrunk };
