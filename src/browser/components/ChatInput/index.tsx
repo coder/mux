@@ -1446,6 +1446,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
               onSshHostChange={creationState.setSshHost}
               disabled={creationState.isSending || isSending}
               projectName={props.projectName}
+              nameState={creationState.nameState}
             />
           )}
 

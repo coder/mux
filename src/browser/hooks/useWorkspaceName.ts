@@ -22,6 +22,8 @@ export interface WorkspaceIdentity {
 export interface WorkspaceNameState {
   /** The generated or manually entered name (shown in CreationControls UI) */
   name: string;
+  /** The generated title (only available when auto-generation is enabled) */
+  title: string | null;
   /** Whether name generation is in progress */
   isGenerating: boolean;
   /** Whether auto-generation is enabled */
@@ -75,6 +77,8 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
 
   // Name shown in CreationControls UI: generated name when auto, manual when not
   const name = autoGenerate ? (generatedIdentity?.name ?? "") : manualName;
+  // Title is only shown when auto-generation is enabled (manual mode doesn't have generated title)
+  const title = autoGenerate ? (generatedIdentity?.title ?? null) : null;
 
   // Cancel any pending generation and resolve waiters with null
   const cancelPendingGeneration = useCallback(() => {
@@ -279,6 +283,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
   return useMemo(
     () => ({
       name,
+      title,
       isGenerating,
       autoGenerate,
       error,
@@ -288,6 +293,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
     }),
     [
       name,
+      title,
       isGenerating,
       autoGenerate,
       error,

@@ -1,9 +1,11 @@
-import React, { useEffect } from "react";
+import React, { useCallback, useEffect } from "react";
 import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
 import { Select } from "../Select";
+import { Loader2, Wand2 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { SSHIcon, WorktreeIcon, LocalIcon } from "../icons/RuntimeIcons";
+import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
 
 interface CreationControlsProps {
   branches: string[];
@@ -20,6 +22,8 @@ interface CreationControlsProps {
   disabled: boolean;
   /** Project name to display as header */
   projectName: string;
+  /** Workspace name/title generation state and actions */
+  nameState: WorkspaceNameState;
 }
 
 /** Runtime type button group with icons and colors */
@@ -113,9 +117,11 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
 
 /**
  * Prominent controls shown above the input during workspace creation.
- * Displays project name as header and runtime/branch selectors.
+ * Displays project name as header, workspace name with magic wand, and runtime/branch selectors.
  */
 export function CreationControls(props: CreationControlsProps) {
+  const { nameState } = props;
+
   // Non-git directories (empty branches after loading completes) can only use local runtime
   // Don't check until branches have loaded to avoid prematurely switching runtime
   const isNonGitRepo = props.branchesLoaded && props.branches.length === 0;
@@ -133,10 +139,92 @@ export function CreationControls(props: CreationControlsProps) {
     }
   }, [isNonGitRepo, runtimeMode, onRuntimeModeChange]);
 
+  const handleNameChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      nameState.setName(e.target.value);
+    },
+    [nameState]
+  );
+
+  // Clicking into the input disables auto-generation so user can edit
+  const handleInputFocus = useCallback(() => {
+    if (nameState.autoGenerate) {
+      nameState.setAutoGenerate(false);
+    }
+  }, [nameState]);
+
+  // Toggle auto-generation via wand button
+  const handleWandClick = useCallback(() => {
+    nameState.setAutoGenerate(!nameState.autoGenerate);
+  }, [nameState]);
+
   return (
     <div className="mb-3 flex flex-col gap-4">
       {/* Project name header */}
       <h2 className="text-foreground text-lg font-semibold">{props.projectName}</h2>
+
+      {/* Workspace name and title preview row */}
+      <div className="flex flex-col gap-1.5" data-component="WorkspaceNameGroup">
+        <label className="text-muted-foreground text-xs font-medium">Workspace</label>
+        <div className="flex items-center gap-3">
+          {/* Name input with magic wand */}
+          <div className="relative max-w-[200px] shrink-0">
+            <input
+              id="workspace-name"
+              type="text"
+              value={nameState.name}
+              onChange={handleNameChange}
+              onFocus={handleInputFocus}
+              placeholder={nameState.isGenerating ? "Generating..." : "workspace-name"}
+              disabled={props.disabled}
+              className={cn(
+                "bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-full rounded-md border px-2 pr-7 text-sm focus:outline-none disabled:opacity-50",
+                nameState.error && "border-red-500"
+              )}
+            />
+            {/* Magic wand / loading indicator */}
+            <div className="absolute inset-y-0 right-0 flex items-center pr-2">
+              {nameState.isGenerating ? (
+                <Loader2 className="text-accent h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={handleWandClick}
+                      disabled={props.disabled}
+                      className="flex h-full items-center disabled:opacity-50"
+                      aria-label={
+                        nameState.autoGenerate ? "Disable auto-naming" : "Enable auto-naming"
+                      }
+                    >
+                      <Wand2
+                        className={cn(
+                          "h-3.5 w-3.5 transition-colors",
+                          nameState.autoGenerate
+                            ? "text-accent"
+                            : "text-muted-foreground opacity-50 hover:opacity-75"
+                        )}
+                      />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent align="center">
+                    {nameState.autoGenerate ? "Auto-naming enabled" : "Click to enable auto-naming"}
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </div>
+          </div>
+
+          {/* Title preview (read-only) */}
+          {nameState.title && (
+            <span className="text-muted-foreground truncate text-sm italic">{nameState.title}</span>
+          )}
+
+          {/* Error display */}
+          {nameState.error && <span className="text-xs text-red-500">{nameState.error}</span>}
+        </div>
+      </div>
 
       {/* Runtime type - button group */}
       <div className="flex flex-col gap-1.5" data-component="RuntimeTypeGroup">
