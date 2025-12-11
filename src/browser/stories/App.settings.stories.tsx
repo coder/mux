@@ -166,3 +166,52 @@ export const ModelsConfigured: AppStory = {
     await openSettingsToSection(canvasElement, "models");
   },
 };
+
+/** Experiments section - shows available experiments */
+export const Experiments: AppStory = {
+  render: () => <AppWithMocks setup={() => setupSettingsStory({})} />,
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSection(canvasElement, "experiments");
+  },
+};
+
+/** Experiments section - toggle experiment on */
+export const ExperimentsToggleOn: AppStory = {
+  render: () => <AppWithMocks setup={() => setupSettingsStory({})} />,
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSection(canvasElement, "experiments");
+
+    // Find and click the switch to toggle it on
+    const body = within(document.body);
+    const modal = body.getByRole("dialog");
+    const modalCanvas = within(modal);
+
+    // Find the switch by its role - experiments use role="switch"
+    const switches = await modalCanvas.findAllByRole("switch");
+    if (switches.length > 0) {
+      // Toggle the first experiment on
+      await userEvent.click(switches[0]);
+    }
+  },
+};
+
+/** Experiments section - toggle experiment off (starts enabled, then toggles off) */
+export const ExperimentsToggleOff: AppStory = {
+  render: () => <AppWithMocks setup={() => setupSettingsStory({})} />,
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSection(canvasElement, "experiments");
+
+    const body = within(document.body);
+    const modal = body.getByRole("dialog");
+    const modalCanvas = within(modal);
+
+    // Find the switch
+    const switches = await modalCanvas.findAllByRole("switch");
+    if (switches.length > 0) {
+      // Toggle on first
+      await userEvent.click(switches[0]);
+      // Then toggle off
+      await userEvent.click(switches[0]);
+    }
+  },
+};
