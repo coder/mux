@@ -193,7 +193,7 @@ export function CreationControls(props: CreationControlsProps) {
             </TooltipContent>
           </Tooltip>
           {/* Magic wand / loading indicator */}
-          <div className="absolute inset-y-0 right-0 flex items-center pr-1">
+          <div className="absolute inset-y-0 right-0 flex items-center pr-2">
             {nameState.isGenerating ? (
               <Loader2 className="text-accent h-3.5 w-3.5 animate-spin" />
             ) : (
