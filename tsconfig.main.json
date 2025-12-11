@@ -12,6 +12,7 @@
     "excludeFiles": ["**/*.d.ts.map"]
   },
   "include": [
+    "src/version.ts",
     "src/cli/index.ts",
     "src/cli/server.ts",
     "src/desktop/**/*",
