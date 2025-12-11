@@ -41,8 +41,8 @@ describeIntegration("sendMessage heavy/load tests", () => {
         await withSharedWorkspace(provider, async ({ env, workspaceId, collector }) => {
           // Build up large conversation history to exceed context limit
           // This approach is model-agnostic - it keeps sending until we've built up enough history
-          const largeMessage = "x".repeat(50_000);
-          for (let i = 0; i < 10; i++) {
+          const largeMessage = "x".repeat(70_000);
+          for (let i = 0; i < 8; i++) {
             await sendMessageWithModel(
               env,
               workspaceId,
@@ -101,7 +101,7 @@ describeIntegration("sendMessage heavy/load tests", () => {
           await collector.waitForEvent("stream-end", 30000);
         });
       },
-      180000 // 3 minute timeout for building large history and API calls
+      300000 // 5 minute timeout for building large history and API calls
     );
   });
 
