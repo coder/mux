@@ -168,7 +168,7 @@ export function CreationControls(props: CreationControlsProps) {
         {/* Name input with magic wand - uses grid overlay technique for auto-sizing */}
         <div className="relative inline-grid items-center">
           {/* Hidden sizer span - determines width based on content, minimum is placeholder width */}
-          <span className="invisible col-start-1 row-start-1 whitespace-pre pr-6 text-lg font-semibold">
+          <span className="invisible col-start-1 row-start-1 whitespace-pre pr-7 text-lg font-semibold">
             {nameState.name || "workspace-name"}
           </span>
           <Tooltip>
