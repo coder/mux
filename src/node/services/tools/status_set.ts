@@ -2,7 +2,6 @@ import { tool } from "ai";
 import type { ToolFactory, ToolConfiguration } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { StatusSetToolArgs, StatusSetToolResult } from "@/common/types/tools";
-import { parseAgentStatusFromLine } from "@/common/utils/status/parseAgentStatus";
 import { StatusScriptPoller } from "@/node/services/statusScriptPoller";
 
 interface PollerState {
@@ -66,14 +65,6 @@ export const createStatusSetTool: ToolFactory = (config: ToolConfiguration) => {
           status,
         });
       };
-
-      // Legacy args: emit a single status update and stop polling.
-      if ("emoji" in args) {
-        state.poller.stop();
-        const line = `${args.emoji} ${args.message}${args.url ? ` ${args.url}` : ""}`;
-        state.emit(parseAgentStatusFromLine(line));
-        return { success: true };
-      }
 
       const env = {
         ...(config.muxEnv ?? {}),

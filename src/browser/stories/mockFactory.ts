@@ -291,17 +291,16 @@ export function createTerminalTool(
 
 export function createStatusTool(
   toolCallId: string,
-  emoji: string,
-  message: string,
-  url?: string
+  script: string,
+  pollIntervalMs: number
 ): MuxPart {
   return {
     type: "dynamic-tool",
     toolCallId,
     toolName: "status_set",
     state: "output-available",
-    input: { emoji, message, url },
-    output: { success: true, emoji, message, url },
+    input: { script, poll_interval_ms: pollIntervalMs },
+    output: { success: true },
   };
 }
 

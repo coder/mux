@@ -216,37 +216,23 @@ export const TOOL_DEFINITIONS = {
       "\n" +
       "NOTE: Workspace status persists after streaming completes and is not cleared on new user turns.",
     schema: z
-      .union([
-        z
-          .object({
-            script: z
-              .string()
-              .min(1)
-              .describe("Shell script to execute. Print a single status line to stdout."),
-            poll_interval_ms: z
-              .number()
-              .int()
-              .min(0)
-              .max(60_000)
-              .describe("Polling interval in milliseconds. 0 runs once."),
-          })
-          .strict()
-          .refine((data) => data.poll_interval_ms === 0 || data.poll_interval_ms >= 1000, {
-            message: "poll_interval_ms must be 0 or at least 1000",
-            path: ["poll_interval_ms"],
-          }),
-        // Legacy shape (kept for backward-compatible history rendering)
-        z
-          .object({
-            emoji: z.string(),
-            message: z.string(),
-            url: z.string().url().optional(),
-          })
-          .strict(),
-      ])
-      .describe(
-        "New shape: { script, poll_interval_ms }. Legacy shape: { emoji, message, url? } (deprecated)."
-      ),
+      .object({
+        script: z
+          .string()
+          .min(1)
+          .describe("Shell script to execute. Print a single status line to stdout."),
+        poll_interval_ms: z
+          .number()
+          .int()
+          .min(0)
+          .max(60_000)
+          .describe("Polling interval in milliseconds. 0 runs once."),
+      })
+      .strict()
+      .refine((data) => data.poll_interval_ms === 0 || data.poll_interval_ms >= 1000, {
+        message: "poll_interval_ms must be 0 or at least 1000",
+        path: ["poll_interval_ms"],
+      }),
   },
   bash_output: {
     description:

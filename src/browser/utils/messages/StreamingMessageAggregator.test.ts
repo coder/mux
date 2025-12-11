@@ -289,7 +289,7 @@ describe("StreamingMessageAggregator", () => {
       expect(aggregator2.getCurrentTodos()).toHaveLength(0);
     });
 
-    test("should reconstruct agentStatus but NOT todos when no active stream", () => {
+    test("should not reconstruct agentStatus but NOT todos when no active stream", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
       const historicalMessage = {
@@ -312,8 +312,8 @@ describe("StreamingMessageAggregator", () => {
             toolCallId: "tool2",
             toolName: "status_set",
             state: "output-available" as const,
-            input: { emoji: "🔧", message: "Working on it" },
-            output: { success: true, emoji: "🔧", message: "Working on it" },
+            input: { script: "echo 'Working on it'", poll_interval_ms: 0 },
+            output: { success: true },
           },
         ],
         metadata: {
@@ -326,8 +326,8 @@ describe("StreamingMessageAggregator", () => {
       // Load without active stream
       aggregator.loadHistoricalMessages([historicalMessage], false);
 
-      // agentStatus should be reconstructed (persists across sessions)
-      expect(aggregator.getAgentStatus()).toEqual({ emoji: "🔧", message: "Working on it" });
+      // agentStatus is not reconstructed from status_set tool calls.
+      expect(aggregator.getAgentStatus()).toBeUndefined();
 
       // TODOs should NOT be reconstructed (stream-scoped)
       expect(aggregator.getCurrentTodos()).toHaveLength(0);

@@ -203,9 +203,8 @@ export const WithAgentStatus: AppStory = {
                 toolCalls: [
                   createStatusTool(
                     "call-1",
-                    "🚀",
-                    "PR #1234 waiting for CI",
-                    "https://github.com/example/repo/pull/1234"
+                    "echo '🚀 PR #1234 waiting for CI https://github.com/example/repo/pull/1234'",
+                    5000
                   ),
                 ],
               }

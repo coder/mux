@@ -67,38 +67,4 @@ describe("status_set tool", () => {
       url: "https://github.com/example/repo/pull/123",
     });
   });
-
-  it("accepts legacy args and emits a single agent-status-update", async () => {
-    emitted.length = 0;
-    const tool = createStatusSetTool(mockConfig);
-
-    expect(
-      await tool.execute!(
-        {
-          emoji: "🟡",
-          message: "CI running",
-          url: "https://github.com/example/repo/pull/1",
-        },
-        mockToolCallOptions
-      )
-    ).toEqual({ success: true });
-
-    await waitFor(() => emitted.some((e) => e.event === "agent-status-update"));
-
-    const found = emitted.find((e) => e.event === "agent-status-update");
-    expect(found).toBeDefined();
-    if (!found) {
-      throw new Error("Missing agent-status-update event");
-    }
-
-    const payload = found.payload as {
-      status: { emoji?: string; message: string; url?: string };
-    };
-
-    expect(payload.status).toEqual({
-      emoji: "🟡",
-      message: "CI running",
-      url: "https://github.com/example/repo/pull/1",
-    });
-  });
 });

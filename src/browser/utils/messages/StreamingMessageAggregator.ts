@@ -19,7 +19,7 @@ import type {
   ReasoningEndEvent,
 } from "@/common/types/stream";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
-import type { TodoItem, StatusSetToolResult } from "@/common/types/tools";
+import type { TodoItem } from "@/common/types/tools";
 
 import type { WorkspaceChatMessage, StreamErrorMessage, DeleteMessage } from "@/common/orpc/types";
 import {
@@ -688,37 +688,8 @@ export class StreamingMessageAggregator {
       }
     }
 
-    // Update agent status if this was a successful status_set
-    // agentStatus persists: update both during streaming and on historical reload
-    // Use output instead of input to get the truncated message
-    // Legacy status_set: older sessions stored status directly in the tool result.
-    // New status_set returns only { success: true } and emits agent-status-update events instead.
-    if (
-      toolName === "status_set" &&
-      hasSuccessResult(output) &&
-      typeof output === "object" &&
-      output !== null &&
-      "emoji" in output &&
-      "message" in output
-    ) {
-      const result = output as Extract<
-        StatusSetToolResult,
-        { success: true; emoji: string; message: string }
-      >;
-
-      // Use the provided URL, or fall back to the last URL ever set
-      const url = result.url ?? this.lastStatusUrl;
-      if (url) {
-        this.lastStatusUrl = url;
-      }
-
-      this.agentStatus = {
-        emoji: result.emoji,
-        message: result.message,
-        url,
-      };
-      this.savePersistedAgentStatus(this.agentStatus);
-    }
+    // status_set updates are delivered via "agent-status-update" events.
+    // Tool results are only acknowledgements ({ success: true }).
   }
 
   handleToolCallEnd(data: ToolCallEndEvent): void {

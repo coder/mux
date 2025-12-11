@@ -22,12 +22,9 @@ export const StatusSetToolCall: React.FC<StatusSetToolCallProps> = ({
       ? String(result.error)
       : undefined;
 
-  const isLegacy = "emoji" in args;
-  const iconEmoji = isLegacy ? args.emoji : "📡";
+  const iconEmoji = "📡";
 
-  const summary = isLegacy
-    ? args.message
-    : `poll=${args.poll_interval_ms}ms: ${args.script.split(/\r?\n/)[0] ?? ""}`;
+  const summary = `poll=${args.poll_interval_ms}ms: ${args.script.split(/\r?\n/)[0] ?? ""}`;
 
   return (
     <ToolContainer expanded={false}>
