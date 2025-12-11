@@ -44,6 +44,8 @@ export interface BackgroundProcess {
   /** Mutex to serialize getOutput() calls (prevents race condition when
    * parallel tool calls read from same offset before position is updated) */
   outputLock: AsyncMutex;
+  /** Tracks how many times getOutput() has been called (for polling detection) */
+  getOutputCallCount: number;
 }
 
 /**
@@ -219,6 +221,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       isForeground: config.isForeground ?? false,
       outputBytesRead: 0,
       outputLock: new AsyncMutex(),
+      getOutputCallCount: 0,
     };
 
     // Store process in map
@@ -327,6 +330,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       isForeground: false, // Now in background
       outputBytesRead: 0,
       outputLock: new AsyncMutex(),
+      getOutputCallCount: 0,
     };
 
     // Store process in map
@@ -458,6 +462,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
         output: string;
         exitCode?: number;
         elapsed_ms: number;
+        note?: string;
       }
     | { success: false; error: string }
   > {
@@ -481,8 +486,12 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     // the same offset before either updates the read position.
     await using _lock = await proc.outputLock.acquire();
 
+    // Track call count for polling detection
+    proc.getOutputCallCount++;
+    const callCount = proc.getOutputCallCount;
+
     log.debug(
-      `BackgroundProcessManager.getOutput: proc.outputDir=${proc.outputDir}, offset=${proc.outputBytesRead}`
+      `BackgroundProcessManager.getOutput: proc.outputDir=${proc.outputDir}, offset=${proc.outputBytesRead}, callCount=${callCount}`
     );
 
     // Pre-compile regex if filter is provided
@@ -564,6 +573,10 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
 
     const filteredOutput = applyFilter(accumulatedRaw);
 
+    // Suggest filter_exclude if polling too frequently on a running process
+    const shouldSuggestFilterExclude =
+      callCount >= 3 && !filterExclude && currentStatus === "running";
+
     return {
       success: true,
       status: currentStatus,
@@ -573,6 +586,12 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
           ? ((await this.getProcess(processId))?.exitCode ?? undefined)
           : undefined,
       elapsed_ms: Date.now() - startTime,
+      note: shouldSuggestFilterExclude
+        ? "STOP POLLING. You've called bash_output 3+ times on this process. " +
+          "This wastes tokens and clutters the conversation. " +
+          "Instead, make ONE call with: filter='⏳|progress|waiting|\\\\.\\\\.\\\\.', " +
+          "filter_exclude=true, timeout_secs=120. This blocks until meaningful output arrives."
+        : undefined,
     };
   }
 

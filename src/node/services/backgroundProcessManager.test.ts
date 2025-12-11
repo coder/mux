@@ -870,4 +870,80 @@ describe("BackgroundProcessManager", () => {
       expect(exitCodeContent.trim()).toBe("42");
     });
   });
+
+  describe("polling detection", () => {
+    it("should return note after 3+ calls without filter_exclude on running process", async () => {
+      // Long-running process
+      const result = await manager.spawn(
+        runtime,
+        testWorkspaceId,
+        "while true; do echo 'tick'; sleep 0.5; done",
+        { cwd: process.cwd(), displayName: "test", timeoutSecs: 30 }
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // First two calls should not have a note
+      const output1 = await manager.getOutput(result.processId, undefined, undefined, 0.1);
+      expect(output1.success).toBe(true);
+      if (!output1.success) return;
+      expect(output1.note).toBeUndefined();
+
+      const output2 = await manager.getOutput(result.processId, undefined, undefined, 0.1);
+      expect(output2.success).toBe(true);
+      if (!output2.success) return;
+      expect(output2.note).toBeUndefined();
+
+      // Third call should have the suggestion note
+      const output3 = await manager.getOutput(result.processId, undefined, undefined, 0.1);
+      expect(output3.success).toBe(true);
+      if (!output3.success) return;
+      expect(output3.note).toContain("filter_exclude");
+      expect(output3.note).toContain("3+ times");
+    });
+
+    it("should NOT return note when filter_exclude is already used", async () => {
+      const result = await manager.spawn(
+        runtime,
+        testWorkspaceId,
+        "while true; do echo 'tick'; sleep 0.5; done",
+        { cwd: process.cwd(), displayName: "test", timeoutSecs: 30 }
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Make 3+ calls with filter_exclude
+      for (let i = 0; i < 4; i++) {
+        const output = await manager.getOutput(result.processId, "nomatch", true, 0.1);
+        expect(output.success).toBe(true);
+        if (!output.success) return;
+        // Should never get the note since we're using filter_exclude
+        expect(output.note).toBeUndefined();
+      }
+    });
+
+    it("should NOT return note when process has exited", async () => {
+      const result = await manager.spawn(runtime, testWorkspaceId, "echo done; exit 0", {
+        cwd: process.cwd(),
+        displayName: "test",
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Wait for process to exit
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      // Make 3+ calls on exited process
+      for (let i = 0; i < 4; i++) {
+        const output = await manager.getOutput(result.processId, undefined, undefined, 0.1);
+        expect(output.success).toBe(true);
+        if (!output.success) return;
+        // Should not get note since process is not running
+        expect(output.note).toBeUndefined();
+      }
+    });
+  });
 });
