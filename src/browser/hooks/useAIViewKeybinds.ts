@@ -136,6 +136,18 @@ export function useAIViewKeybinds({
         return;
       }
 
+      // Open in editor / terminal - work even in input fields (global feel, like TOGGLE_MODE)
+      if (matchesKeybind(e, KEYBINDS.OPEN_IN_EDITOR)) {
+        e.preventDefault();
+        handleOpenInEditor();
+        return;
+      }
+      if (matchesKeybind(e, KEYBINDS.OPEN_TERMINAL)) {
+        e.preventDefault();
+        handleOpenTerminal();
+        return;
+      }
+
       // Don't handle other shortcuts if user is typing in an input field
       if (isEditableElement(e.target)) {
         return;
@@ -144,12 +156,6 @@ export function useAIViewKeybinds({
       if (matchesKeybind(e, KEYBINDS.JUMP_TO_BOTTOM)) {
         e.preventDefault();
         jumpToBottom();
-      } else if (matchesKeybind(e, KEYBINDS.OPEN_TERMINAL)) {
-        e.preventDefault();
-        handleOpenTerminal();
-      } else if (matchesKeybind(e, KEYBINDS.OPEN_IN_EDITOR)) {
-        e.preventDefault();
-        handleOpenInEditor();
       }
     };
 
