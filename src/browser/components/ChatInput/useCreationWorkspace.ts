@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { RuntimeConfig, RuntimeMode } from "@/common/types/runtime";
+import type { RuntimeConfig, RuntimeMode, ParsedRuntime } from "@/common/types/runtime";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { UIMode } from "@/common/types/mode";
 import { parseRuntimeString } from "@/browser/utils/chatCommands";
@@ -90,15 +90,13 @@ interface UseCreationWorkspaceReturn {
   branchesLoaded: boolean;
   trunkBranch: string;
   setTrunkBranch: (branch: string) => void;
-  runtimeMode: RuntimeMode;
+  /** Currently selected runtime (discriminated union: SSH has host, Docker has image) */
+  selectedRuntime: ParsedRuntime;
   defaultRuntimeMode: RuntimeMode;
-  sshHost: string;
-  /** Set the currently selected runtime mode (does not persist) */
-  setRuntimeMode: (mode: RuntimeMode) => void;
+  /** Set the currently selected runtime (discriminated union) */
+  setSelectedRuntime: (runtime: ParsedRuntime) => void;
   /** Set the default runtime mode for this project (persists via checkbox) */
   setDefaultRuntimeMode: (mode: RuntimeMode) => void;
-  /** Set the SSH host (persisted separately from runtime mode) */
-  setSshHost: (host: string) => void;
   toast: Toast | null;
   setToast: (toast: Toast | null) => void;
   isSending: boolean;
@@ -134,14 +132,8 @@ export function useCreationWorkspace({
   const [creatingWithIdentity, setCreatingWithIdentity] = useState<WorkspaceIdentity | null>(null);
 
   // Centralized draft workspace settings with automatic persistence
-  const {
-    settings,
-    setRuntimeMode,
-    setDefaultRuntimeMode,
-    setSshHost,
-    setTrunkBranch,
-    getRuntimeString,
-  } = useDraftWorkspaceSettings(projectPath, branches, recommendedTrunk);
+  const { settings, setSelectedRuntime, setDefaultRuntimeMode, setTrunkBranch, getRuntimeString } =
+    useDraftWorkspaceSettings(projectPath, branches, recommendedTrunk);
 
   // Project scope ID for reading send options at send time
   const projectScopeId = getProjectScopeId(projectPath);
@@ -336,12 +328,10 @@ export function useCreationWorkspace({
     branchesLoaded,
     trunkBranch: settings.trunkBranch,
     setTrunkBranch,
-    runtimeMode: settings.runtimeMode,
+    selectedRuntime: settings.selectedRuntime,
     defaultRuntimeMode: settings.defaultRuntimeMode,
-    sshHost: settings.sshHost,
-    setRuntimeMode,
+    setSelectedRuntime,
     setDefaultRuntimeMode,
-    setSshHost,
     toast,
     setToast,
     isSending,
