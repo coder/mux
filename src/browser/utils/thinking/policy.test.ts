@@ -56,6 +56,23 @@ describe("getThinkingPolicyForModel", () => {
     expect(getThinkingPolicyForModel("openai:gpt-5.2-pro")).toEqual(["medium", "high", "xhigh"]);
   });
 
+  test("returns medium/high/xhigh for gpt-5.2-pro behind mux-gateway", () => {
+    expect(getThinkingPolicyForModel("mux-gateway:openai/gpt-5.2-pro")).toEqual([
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+  });
+
+  test("returns 5 levels including xhigh for gpt-5.1-codex-max behind mux-gateway", () => {
+    expect(getThinkingPolicyForModel("mux-gateway:openai/gpt-5.1-codex-max")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+  });
   test("returns medium/high/xhigh for gpt-5.2-pro with version suffix", () => {
     expect(getThinkingPolicyForModel("openai:gpt-5.2-pro-2025-12-11")).toEqual([
       "medium",

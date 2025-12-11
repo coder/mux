@@ -34,27 +34,34 @@ export type ThinkingPolicy = readonly ThinkingLevel[];
  * Does NOT match gpt-5-pro-mini (uses negative lookahead).
  */
 export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
-  // Normalize to be robust to provider prefixes, whitespace, and version suffixes
+  // Normalize to be robust to provider prefixes, whitespace, gateway wrappers, and version suffixes
   const normalized = modelString.trim().toLowerCase();
   const withoutPrefix = normalized.replace(/^[a-z0-9_-]+:\s*/, "");
 
+  // Many providers/proxies encode the upstream provider as a path segment:
+  //   mux-gateway:openai/gpt-5.2-pro -> openai/gpt-5.2-pro -> gpt-5.2-pro
+  const withoutProviderNamespace = withoutPrefix.replace(/^[a-z0-9_-]+\//, "");
+
   // GPT-5.1-Codex-Max supports 5 reasoning levels including xhigh (Extra High)
-  if (withoutPrefix.startsWith("gpt-5.1-codex-max") || withoutPrefix.startsWith("codex-max")) {
+  if (
+    withoutProviderNamespace.startsWith("gpt-5.1-codex-max") ||
+    withoutProviderNamespace.startsWith("codex-max")
+  ) {
     return ["off", "low", "medium", "high", "xhigh"];
   }
 
   // gpt-5.2-pro supports medium, high, xhigh reasoning levels
-  if (/^gpt-5\.2-pro(?!-[a-z])/.test(withoutPrefix)) {
+  if (/^gpt-5\.2-pro(?!-[a-z])/.test(withoutProviderNamespace)) {
     return ["medium", "high", "xhigh"];
   }
 
   // gpt-5-pro (legacy) only supports high
-  if (/^gpt-5-pro(?!-[a-z])/.test(withoutPrefix)) {
+  if (/^gpt-5-pro(?!-[a-z])/.test(withoutProviderNamespace)) {
     return ["high"];
   }
 
   // Gemini 3 Pro only supports "low" and "high" reasoning levels
-  if (withoutPrefix.includes("gemini-3")) {
+  if (withoutProviderNamespace.includes("gemini-3")) {
     return ["low", "high"];
   }
 
