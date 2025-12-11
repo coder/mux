@@ -42,6 +42,7 @@ import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
 import { SettingsModal } from "./components/Settings/SettingsModal";
 import { TutorialProvider } from "./contexts/TutorialContext";
 import { TooltipProvider } from "./components/ui/tooltip";
+import { ExperimentsProvider } from "./contexts/ExperimentsContext";
 import { getWorkspaceSidebarKey } from "./utils/workspace";
 
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high"];
@@ -693,15 +694,17 @@ function AppInner() {
 function App() {
   return (
     <ThemeProvider>
-      <TooltipProvider delayDuration={200}>
-        <SettingsProvider>
-          <TutorialProvider>
-            <CommandRegistryProvider>
-              <AppInner />
-            </CommandRegistryProvider>
-          </TutorialProvider>
-        </SettingsProvider>
-      </TooltipProvider>
+      <ExperimentsProvider>
+        <TooltipProvider delayDuration={200}>
+          <SettingsProvider>
+            <TutorialProvider>
+              <CommandRegistryProvider>
+                <AppInner />
+              </CommandRegistryProvider>
+            </TutorialProvider>
+          </SettingsProvider>
+        </TooltipProvider>
+      </ExperimentsProvider>
     </ThemeProvider>
   );
 }

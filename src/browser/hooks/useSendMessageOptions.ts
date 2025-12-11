@@ -13,6 +13,8 @@ import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions"
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 import { useProviderOptions } from "./useProviderOptions";
 import type { GatewayState } from "./useGatewayModels";
+import { isExperimentEnabled } from "./useExperiments";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
 /**
  * Transform model to gateway format using reactive gateway state.
@@ -65,6 +67,9 @@ function constructSendMessageOptions(
     mode: mode === "exec" || mode === "plan" ? mode : "exec", // Only pass exec/plan to backend
     toolPolicy: modeToToolPolicy(mode),
     providerOptions,
+    experiments: {
+      postCompactionContext: isExperimentEnabled(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT),
+    },
   };
 }
 

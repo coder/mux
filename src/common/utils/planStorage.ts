@@ -1,4 +1,12 @@
 /**
+ * Mux home directory for plan storage.
+ * Uses tilde prefix for portability across local/remote runtimes.
+ * Note: Plan files intentionally do NOT use the -dev suffix because they
+ * should be accessible regardless of whether running dev or prod builds.
+ */
+const MUX_HOME = "~/.mux";
+
+/**
  * Get the plan file path for a workspace.
  * Returns a path with ~ prefix that works with both local and SSH runtimes.
  * The runtime will expand ~ to the appropriate home directory.
@@ -13,7 +21,7 @@
  * @param projectName - Project name extracted from project path (e.g., "mux")
  */
 export function getPlanFilePath(workspaceName: string, projectName: string): string {
-  return `~/.mux/plans/${projectName}/${workspaceName}.md`;
+  return `${MUX_HOME}/plans/${projectName}/${workspaceName}.md`;
 }
 
 /**
@@ -23,5 +31,5 @@ export function getPlanFilePath(workspaceName: string, projectName: string): str
  * @param workspaceId - Stable workspace identifier (e.g., "a1b2c3d4e5")
  */
 export function getLegacyPlanFilePath(workspaceId: string): string {
-  return `~/.mux/plans/${workspaceId}.md`;
+  return `${MUX_HOME}/plans/${workspaceId}.md`;
 }

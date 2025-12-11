@@ -310,6 +310,11 @@ export const ToolPolicySchema = z.array(ToolPolicyFilterSchema).meta({
     "Tool policy - array of filters applied in order. Default behavior is allow all tools.",
 });
 
+// Experiments schema for feature gating
+export const ExperimentsSchema = z.object({
+  postCompactionContext: z.boolean().optional(),
+});
+
 // SendMessage options
 export const SendMessageOptionsSchema = z.object({
   editMessageId: z.string().optional(),
@@ -321,6 +326,7 @@ export const SendMessageOptionsSchema = z.object({
   providerOptions: MuxProviderOptionsSchema.optional(),
   mode: z.string().optional(),
   muxMetadata: z.any().optional(), // Black box
+  experiments: ExperimentsSchema.optional(),
 });
 
 // Re-export ChatUsageDisplaySchema for convenience

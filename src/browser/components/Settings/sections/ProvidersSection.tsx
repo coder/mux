@@ -8,6 +8,7 @@ import { useAPI } from "@/browser/contexts/API";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useGateway } from "@/browser/hooks/useGatewayModels";
 import { Button } from "@/browser/components/ui/button";
+import { Switch } from "@/browser/components/ui/switch";
 
 interface FieldConfig {
   key: string;
@@ -351,21 +352,11 @@ export function ProvidersSection() {
                       <label className="text-foreground block text-xs font-medium">Enabled</label>
                       <span className="text-muted text-xs">Route requests through Mux Gateway</span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={gateway.toggleEnabled}
-                      className={`relative h-5 w-9 rounded-full transition-colors ${
-                        gateway.isEnabled ? "bg-accent" : "bg-border-medium"
-                      }`}
-                      role="switch"
-                      aria-checked={gateway.isEnabled}
-                    >
-                      <span
-                        className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
-                          gateway.isEnabled ? "translate-x-4" : "translate-x-0"
-                        }`}
-                      />
-                    </button>
+                    <Switch
+                      checked={gateway.isEnabled}
+                      onCheckedChange={() => gateway.toggleEnabled()}
+                      aria-label="Toggle Mux Gateway"
+                    />
                   </div>
                 )}
               </div>

@@ -537,8 +537,10 @@ export class AgentSession {
     // Check for external file edits (timestamp-based polling)
     const changedFileAttachments = await this.getChangedFileAttachments();
 
-    // Check if post-compaction attachments should be injected
-    const postCompactionAttachments = await this.getPostCompactionAttachmentsIfNeeded();
+    // Check if post-compaction attachments should be injected (gated by experiment)
+    const postCompactionAttachments = options?.experiments?.postCompactionContext
+      ? await this.getPostCompactionAttachmentsIfNeeded()
+      : null;
 
     // Enforce thinking policy for the specified model (single source of truth)
     // This ensures model-specific requirements are met regardless of where the request originates
@@ -801,6 +803,8 @@ export class AgentSession {
       // Load exclusions and use cached diffs extracted before history was cleared
       const excludedItems = await this.loadExcludedItems();
       return AttachmentService.generatePostCompactionAttachments(
+        metadataResult.data.name,
+        metadataResult.data.projectName,
         this.workspaceId,
         pendingDiffs,
         runtime,
@@ -846,6 +850,8 @@ export class AgentSession {
     const excludedItems = await this.loadExcludedItems();
 
     return AttachmentService.generatePostCompactionAttachments(
+      metadataResult.data.name,
+      metadataResult.data.projectName,
       this.workspaceId,
       fileDiffs,
       runtime,

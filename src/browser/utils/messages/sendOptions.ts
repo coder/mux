@@ -9,6 +9,8 @@ import type { ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
 /**
  * Read provider options from localStorage
@@ -68,5 +70,8 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
     thinkingLevel: effectiveThinkingLevel,
     toolPolicy: modeToToolPolicy(mode),
     providerOptions,
+    experiments: {
+      postCompactionContext: isExperimentEnabled(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT),
+    },
   };
 }

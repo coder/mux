@@ -1,5 +1,5 @@
 import React from "react";
-import { Settings, Key, Cpu, X, Briefcase } from "lucide-react";
+import { Settings, Key, Cpu, X, Briefcase, FlaskConical } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { Dialog, DialogContent, DialogTitle, VisuallyHidden } from "@/browser/components/ui/dialog";
 import { GeneralSection } from "./sections/GeneralSection";
@@ -7,6 +7,7 @@ import { ProvidersSection } from "./sections/ProvidersSection";
 import { ModelsSection } from "./sections/ModelsSection";
 import { Button } from "@/browser/components/ui/button";
 import { ProjectSettingsSection } from "./sections/ProjectSettingsSection";
+import { ExperimentsSection } from "./sections/ExperimentsSection";
 import type { SettingsSection } from "./types";
 
 const SECTIONS: SettingsSection[] = [
@@ -33,6 +34,12 @@ const SECTIONS: SettingsSection[] = [
     label: "Models",
     icon: <Cpu className="h-4 w-4" />,
     component: ModelsSection,
+  },
+  {
+    id: "experiments",
+    label: "Experiments",
+    icon: <FlaskConical className="h-4 w-4" />,
+    component: ExperimentsSection,
   },
 ];
 

@@ -143,19 +143,50 @@ export const PostCompactionSection: React.FC<PostCompactionSectionProps> = (prop
 
           {trackedFilesCount > 0 && (
             <div className="flex flex-col">
-              <button
-                onClick={() => setFilesExpanded((prev) => !prev)}
-                className="text-subtle hover:text-foreground flex items-center gap-2 text-left text-xs transition-colors"
-                type="button"
-              >
-                <ChevronRight
-                  className={`h-3 w-3 transition-transform duration-200 ${filesExpanded ? "rotate-90" : ""}`}
-                />
-                <span>
-                  {includedFilesCount}/{trackedFilesCount} file diff
-                  {trackedFilesCount !== 1 ? "s" : ""}
-                </span>
-              </button>
+              <div className="flex items-center gap-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        // Toggle all files: if any included, exclude all; otherwise include all
+                        const shouldExclude = includedFilesCount > 0;
+                        void (async () => {
+                          for (const file of formattedFiles) {
+                            if (shouldExclude !== file.isExcluded) {
+                              await props.onToggleExclusion(file.itemId);
+                            }
+                          }
+                        })();
+                      }}
+                      className="text-subtle hover:text-foreground p-0.5 transition-colors"
+                      type="button"
+                    >
+                      {includedFilesCount === 0 ? (
+                        <EyeOff className="h-3 w-3" />
+                      ) : (
+                        <Eye className="h-3 w-3" />
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" showArrow={false}>
+                    {includedFilesCount === 0 ? "Include all files" : "Exclude all files"}
+                  </TooltipContent>
+                </Tooltip>
+                <button
+                  onClick={() => setFilesExpanded((prev) => !prev)}
+                  className="text-subtle hover:text-foreground flex items-center gap-2 text-left text-xs transition-colors"
+                  type="button"
+                >
+                  <ChevronRight
+                    className={`h-3 w-3 transition-transform duration-200 ${filesExpanded ? "rotate-90" : ""}`}
+                  />
+                  <span>
+                    {includedFilesCount}/{trackedFilesCount} file diff
+                    {trackedFilesCount !== 1 ? "s" : ""}
+                  </span>
+                </button>
+              </div>
 
               {filesExpanded && formattedFiles.length > 0 && (
                 <div className="mt-1 ml-5 flex flex-col gap-0.5">
@@ -195,7 +226,7 @@ export const PostCompactionSection: React.FC<PostCompactionSectionProps> = (prop
           )}
 
           <p className="text-muted mt-1 text-[10px] italic">
-            Re-injected after compaction to preserve context
+            Keeps agent aligned with your plan and prior edits
           </p>
         </div>
       )}

@@ -15,9 +15,10 @@ import type { ExtensionMetadataService } from "@/node/services/ExtensionMetadata
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import { createRuntime, IncompatibleRuntimeError } from "@/node/runtime/runtimeFactory";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
-import { getPlanFilePath } from "@/common/utils/planStorage";
+import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
 import { fileExists } from "@/node/utils/runtime/fileExists";
+import { expandTilde } from "@/node/runtime/tildeExpansion";
 
 import type { PostCompactionExclusions } from "@/common/types/attachment";
 import type {
@@ -287,27 +288,46 @@ export class WorkspaceService extends EventEmitter {
     trackedFilePaths: string[];
     excludedItems: string[];
   }> {
-    const planPath = getPlanFilePath(workspaceId);
-
     // Get workspace metadata to create runtime for plan file check
     const metadata = await this.getInfo(workspaceId);
-    let planExists = false;
-    if (metadata) {
-      const runtime = createRuntime(metadata.runtimeConfig, { projectPath: metadata.projectPath });
-      planExists = await fileExists(runtime, planPath);
+    if (!metadata) {
+      // Can't get metadata, return empty state
+      const exclusions = await this.getPostCompactionExclusions(workspaceId);
+      return { planPath: null, trackedFilePaths: [], excludedItems: exclusions.excludedItems };
     }
+
+    const planPath = getPlanFilePath(metadata.name, metadata.projectName);
+    // Expand tilde for comparison with absolute paths from message history
+    const expandedPlanPath = expandTilde(planPath);
+    // Also get legacy plan path (stored by workspace ID) for filtering
+    const legacyPlanPath = getLegacyPlanFilePath(workspaceId);
+    const expandedLegacyPlanPath = expandTilde(legacyPlanPath);
+    const runtime = createRuntime(metadata.runtimeConfig, { projectPath: metadata.projectPath });
+
+    // Check both new and legacy plan paths, prefer new path
+    const newPlanExists = await fileExists(runtime, planPath);
+    const legacyPlanExists = !newPlanExists && (await fileExists(runtime, legacyPlanPath));
+    const activePlanPath = newPlanExists ? planPath : legacyPlanExists ? legacyPlanPath : null;
 
     // Load exclusions
     const exclusions = await this.getPostCompactionExclusions(workspaceId);
+
+    // Helper to check if a path is a plan file (new or legacy format)
+    const isPlanPath = (p: string) =>
+      p === planPath ||
+      p === expandedPlanPath ||
+      p === legacyPlanPath ||
+      p === expandedLegacyPlanPath;
 
     // If session has pending compaction attachments, use cached paths
     // (history is cleared after compaction, but cache survives)
     const session = this.sessions.get(workspaceId);
     const pendingPaths = session?.getPendingTrackedFilePaths();
     if (pendingPaths) {
-      const trackedFilePaths = pendingPaths.filter((p) => p !== planPath);
+      // Filter out both new and legacy plan file paths
+      const trackedFilePaths = pendingPaths.filter((p) => !isPlanPath(p));
       return {
-        planPath: planExists ? planPath : null,
+        planPath: activePlanPath,
         trackedFilePaths,
         excludedItems: exclusions.excludedItems,
       };
@@ -319,9 +339,10 @@ export class WorkspaceService extends EventEmitter {
     const allPaths = extractEditedFilePaths(messages);
 
     // Exclude plan file from tracked files since it has its own section
-    const trackedFilePaths = allPaths.filter((p) => p !== planPath);
+    // Filter out both new and legacy plan file paths
+    const trackedFilePaths = allPaths.filter((p) => !isPlanPath(p));
     return {
-      planPath: planExists ? planPath : null,
+      planPath: activePlanPath,
       trackedFilePaths,
       excludedItems: exclusions.excludedItems,
     };
@@ -1029,7 +1050,7 @@ export class WorkspaceService extends EventEmitter {
         const runtime = createRuntime(metadata.runtimeConfig, {
           projectPath: metadata.projectPath,
         });
-        const planPath = getPlanFilePath(workspaceId);
+        const planPath = getPlanFilePath(metadata.name, metadata.projectName);
         try {
           // Use exec to delete file since runtime doesn't have a deleteFile method
           // The shell will expand ~ appropriately (local or remote)
