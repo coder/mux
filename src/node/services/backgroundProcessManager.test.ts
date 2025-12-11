@@ -871,6 +871,75 @@ describe("BackgroundProcessManager", () => {
     });
   });
 
+  describe("line-buffered filtering", () => {
+    it("should only filter complete lines, not fragments", async () => {
+      // Process that outputs lines that should be filtered and one that shouldn't
+      const result = await manager.spawn(
+        runtime,
+        testWorkspaceId,
+        // Output lines: some with 'progress', one without
+        "echo 'progress 1'; echo 'progress 2'; echo 'FINAL RESULT'",
+        { cwd: process.cwd(), displayName: "test" }
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Wait for process to complete
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      // Filter out lines containing 'progress', should only get 'FINAL RESULT'
+      const output = await manager.getOutput(result.processId, "progress", true, 0.5);
+      expect(output.success).toBe(true);
+      if (!output.success) return;
+      expect(output.output).toContain("FINAL RESULT");
+      expect(output.output).not.toContain("progress");
+    });
+
+    it("should buffer incomplete lines across calls", async () => {
+      // Process that outputs progress lines
+      const result = await manager.spawn(
+        runtime,
+        testWorkspaceId,
+        "echo 'progress: 50%'; sleep 0.1; echo 'progress: 100%'; echo 'DONE'",
+        { cwd: process.cwd(), displayName: "test" }
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Wait for process to complete
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // Filter out progress lines, should only get 'DONE'
+      const output = await manager.getOutput(result.processId, "progress", true, 0.5);
+      expect(output.success).toBe(true);
+      if (!output.success) return;
+      expect(output.output).toContain("DONE");
+      expect(output.output).not.toContain("progress");
+    });
+
+    it("should include incomplete line on process exit", async () => {
+      // Process that exits without final newline
+      const result = await manager.spawn(runtime, testWorkspaceId, "printf 'no newline at end'", {
+        cwd: process.cwd(),
+        displayName: "test",
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Wait for process to exit
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      const output = await manager.getOutput(result.processId, undefined, undefined, 0.5);
+      expect(output.success).toBe(true);
+      if (!output.success) return;
+      expect(output.output).toContain("no newline at end");
+      expect(output.status).not.toBe("running");
+    });
+  });
+
   describe("polling detection", () => {
     it("should return note after 3+ calls without filter_exclude on running process", async () => {
       // Long-running process
@@ -903,7 +972,7 @@ describe("BackgroundProcessManager", () => {
       expect(output3.note).toContain("3+ times");
     });
 
-    it("should NOT return note when filter_exclude is already used", async () => {
+    it("should return better pattern note when filter_exclude is used but still polling", async () => {
       const result = await manager.spawn(
         runtime,
         testWorkspaceId,
@@ -914,14 +983,17 @@ describe("BackgroundProcessManager", () => {
       expect(result.success).toBe(true);
       if (!result.success) return;
 
-      // Make 3+ calls with filter_exclude
+      // Make 3+ calls with filter_exclude - should get "better pattern" note
+      let lastNote: string | undefined;
       for (let i = 0; i < 4; i++) {
         const output = await manager.getOutput(result.processId, "nomatch", true, 0.1);
         expect(output.success).toBe(true);
         if (!output.success) return;
-        // Should never get the note since we're using filter_exclude
-        expect(output.note).toBeUndefined();
+        lastNote = output.note;
       }
+      // Should get the "better pattern" note since we're using filter_exclude but still polling
+      expect(lastNote).toContain("filter_exclude but still polling");
+      expect(lastNote).toContain("broader pattern");
     });
 
     it("should NOT return note when process has exited", async () => {

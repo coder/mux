@@ -46,6 +46,8 @@ export interface BackgroundProcess {
   outputLock: AsyncMutex;
   /** Tracks how many times getOutput() has been called (for polling detection) */
   getOutputCallCount: number;
+  /** Buffer for incomplete lines (no trailing newline) from previous read */
+  incompleteLineBuffer: string;
 }
 
 /**
@@ -222,6 +224,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       outputBytesRead: 0,
       outputLock: new AsyncMutex(),
       getOutputCallCount: 0,
+      incompleteLineBuffer: "",
     };
 
     // Store process in map
@@ -331,6 +334,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       outputBytesRead: 0,
       outputLock: new AsyncMutex(),
       getOutputCallCount: 0,
+      incompleteLineBuffer: "",
     };
 
     // Store process in map
@@ -504,10 +508,10 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       }
     }
 
-    // Apply filtering to output, returns filtered result
-    const applyFilter = (raw: string): string => {
-      if (!filterRegex) return raw;
-      const lines = raw.split("\n");
+    // Apply filtering to complete lines only
+    // Incomplete line fragments (no trailing newline) are kept in buffer for next read
+    const applyFilter = (lines: string[]): string => {
+      if (!filterRegex) return lines.join("\n");
       const filtered = filterExclude
         ? lines.filter((line) => !filterRegex.test(line))
         : lines.filter((line) => filterRegex.test(line));
@@ -520,6 +524,9 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     const pollIntervalMs = 100;
     let accumulatedRaw = "";
     let currentStatus = proc.status;
+
+    // Track the previous buffer to prepend to accumulated output
+    const previousBuffer = proc.incompleteLineBuffer;
 
     while (true) {
       // Read new content via the handle (works for both local and SSH runtimes)
@@ -534,16 +541,25 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       const refreshedProc = await this.getProcess(processId);
       currentStatus = refreshedProc?.status ?? proc.status;
 
+      // Line-buffered filtering: prepend incomplete line from previous call
+      const rawWithBuffer = previousBuffer + accumulatedRaw;
+      const allLines = rawWithBuffer.split("\n");
+
+      // Last element is incomplete if content doesn't end with newline
+      const hasTrailingNewline = rawWithBuffer.endsWith("\n");
+      const completeLines = hasTrailingNewline ? allLines.slice(0, -1) : allLines.slice(0, -1);
+      const incompleteLine = hasTrailingNewline ? "" : allLines[allLines.length - 1];
+
       // When using filter_exclude, check if we have meaningful (non-excluded) output
-      // If all new output matches the exclusion pattern, keep waiting
-      const filteredOutput = applyFilter(accumulatedRaw);
+      // Only consider complete lines for filtering - fragments can't match patterns
+      const filteredOutput = applyFilter(completeLines);
       const hasMeaningfulOutput = filterExclude
         ? filteredOutput.trim().length > 0
-        : accumulatedRaw.length > 0;
+        : completeLines.length > 0 || incompleteLine.length > 0;
 
       // Return immediately if:
       // 1. We have meaningful output (after filtering if filter_exclude is set)
-      // 2. Process is no longer running (exited/killed/failed)
+      // 2. Process is no longer running (exited/killed/failed) - flush buffer
       // 3. Timeout elapsed
       // 4. Abort signal received (user sent a new message)
       if (hasMeaningfulOutput || currentStatus !== "running") {
@@ -569,13 +585,51 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
     }
 
-    log.debug(`BackgroundProcessManager.getOutput: read rawLen=${accumulatedRaw.length}`);
+    // Final line processing with buffer from previous call
+    const rawWithBuffer = previousBuffer + accumulatedRaw;
+    const allLines = rawWithBuffer.split("\n");
+    const hasTrailingNewline = rawWithBuffer.endsWith("\n");
 
-    const filteredOutput = applyFilter(accumulatedRaw);
+    // On process exit, include incomplete line; otherwise keep it buffered
+    const linesToReturn =
+      currentStatus !== "running"
+        ? allLines.filter((l) => l.length > 0) // Include all non-empty lines on exit
+        : hasTrailingNewline
+          ? allLines.slice(0, -1)
+          : allLines.slice(0, -1);
+
+    // Update buffer for next call (clear on exit, keep incomplete line otherwise)
+    proc.incompleteLineBuffer =
+      currentStatus === "running" && !hasTrailingNewline ? allLines[allLines.length - 1] : "";
+
+    log.debug(
+      `BackgroundProcessManager.getOutput: read rawLen=${accumulatedRaw.length}, completeLines=${linesToReturn.length}`
+    );
+
+    const filteredOutput = applyFilter(linesToReturn);
 
     // Suggest filter_exclude if polling too frequently on a running process
     const shouldSuggestFilterExclude =
       callCount >= 3 && !filterExclude && currentStatus === "running";
+
+    // Suggest better pattern if using filter_exclude but still polling frequently
+    const shouldSuggestBetterPattern =
+      callCount >= 3 && filterExclude && currentStatus === "running";
+
+    let note: string | undefined;
+    if (shouldSuggestFilterExclude) {
+      note =
+        "STOP POLLING. You've called bash_output 3+ times on this process. " +
+        "This wastes tokens and clutters the conversation. " +
+        "Instead, make ONE call with: filter='⏳|progress|waiting|\\\\\\.\\\\\\.\\\\\\.', " +
+        "filter_exclude=true, timeout_secs=120. This blocks until meaningful output arrives.";
+    } else if (shouldSuggestBetterPattern) {
+      note =
+        "You're using filter_exclude but still polling frequently. " +
+        "Your filter pattern may not be matching the actual output. " +
+        "Try a broader pattern like: filter='\\\\.|\\\\d+%|running|progress|pending|⏳|waiting'. " +
+        "Wait for the FULL timeout before checking again.";
+    }
 
     return {
       success: true,
@@ -586,12 +640,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
           ? ((await this.getProcess(processId))?.exitCode ?? undefined)
           : undefined,
       elapsed_ms: Date.now() - startTime,
-      note: shouldSuggestFilterExclude
-        ? "STOP POLLING. You've called bash_output 3+ times on this process. " +
-          "This wastes tokens and clutters the conversation. " +
-          "Instead, make ONE call with: filter='⏳|progress|waiting|\\\\.\\\\.\\\\.', " +
-          "filter_exclude=true, timeout_secs=120. This blocks until meaningful output arrives."
-        : undefined,
+      note,
     };
   }
 
