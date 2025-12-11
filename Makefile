@@ -246,10 +246,10 @@ static-check: lint typecheck fmt-check check-eager-imports check-bench-agent che
 check-bench-agent: ## Verify terminal-bench agent configuration and imports
 	@./scripts/check-bench-agent.sh
 
-lint: node_modules/.installed ## Run ESLint (typecheck runs in separate target)
+lint: node_modules/.installed src/version.ts ## Run ESLint (typecheck runs in separate target)
 	@./scripts/lint.sh
 
-lint-fix: node_modules/.installed ## Run linter with --fix
+lint-fix: node_modules/.installed src/version.ts ## Run linter with --fix
 	@./scripts/lint.sh --fix
 
 ifeq ($(OS),Windows_NT)

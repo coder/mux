@@ -14,6 +14,8 @@ import {
   createStatusTool,
   createGenericTool,
 } from "./mockFactory";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { getModelKey } from "@/common/constants/storage";
 import { setupSimpleChatStory, setupStreamingChatStory } from "./storyHelpers";
 import { within, userEvent, waitFor } from "@storybook/test";
 
@@ -494,6 +496,77 @@ export const ModeHelpTooltip: AppStory = {
       description: {
         story:
           "Verifies the HelpIndicator tooltip works by focusing the ? icon. The tooltip should appear with Exec/Plan mode explanations.",
+      },
+    },
+  },
+};
+
+/**
+ * Model selector pretty display with mux-gateway enabled.
+ *
+ * Regression test: when gateway is enabled, `useSendMessageOptions().model` becomes
+ * `mux-gateway:provider/model`, but the UI should still display the canonical
+ * provider:model form (e.g. GPT-4o, not \"Openai/gpt 4o\").
+ */
+export const ModelSelectorPrettyWithGateway: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaceId = "ws-gateway-model";
+        const baseModel = "openai:gpt-4o";
+
+        // Ensure the gateway transform actually kicks in (so the regression would reproduce).
+        updatePersistedState(getModelKey(workspaceId), baseModel);
+        updatePersistedState("gateway-enabled", true);
+        updatePersistedState("gateway-available", true);
+        updatePersistedState("gateway-models", [baseModel]);
+
+        return setupSimpleChatStory({
+          workspaceId,
+          messages: [],
+          providersConfig: {
+            "mux-gateway": { apiKeySet: false, couponCodeSet: true },
+          },
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const canvas = within(canvasElement);
+
+    // Wait for chat input to mount.
+    await canvas.findAllByText("Exec", {}, { timeout: 10000 });
+
+    // With gateway enabled, we should still display the *pretty* model name.
+    await waitFor(() => {
+      canvas.getByText("GPT-4o");
+    });
+
+    // The buggy rendering (mux-gateway:openai/gpt-4o) shows up as "Openai/gpt 4o".
+    const ugly = canvas.queryByText("Openai/gpt 4o");
+    if (ugly) {
+      throw new Error(`Unexpected gateway-formatted model label: ${ugly.textContent ?? "(empty)"}`);
+    }
+
+    // Sanity check that the gateway indicator exists.
+    const gatewayIndicator = canvasElement.querySelector('[aria-label="Using Mux Gateway"]');
+    if (!gatewayIndicator) throw new Error("Gateway indicator not found");
+
+    // Hover to prove the gateway tooltip is wired up (and keep it visible for snapshot).
+    await userEvent.hover(gatewayIndicator);
+    await waitFor(
+      () => {
+        const tooltip = document.querySelector('[role="tooltip"]');
+        if (!tooltip) throw new Error("Tooltip not visible");
+      },
+      { timeout: 2000, interval: 50 }
+    );
+  },
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Verifies the bottom-left model selector stays pretty (e.g. GPT-4o) even when mux-gateway routing is enabled.",
       },
     },
   },

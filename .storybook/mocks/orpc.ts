@@ -6,7 +6,7 @@
 import type { APIClient } from "@/browser/contexts/API";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig } from "@/node/config";
-import type { WorkspaceChatMessage } from "@/common/orpc/types";
+import type { WorkspaceChatMessage, ProvidersConfigMap } from "@/common/orpc/types";
 import type { ChatStats } from "@/common/types/chatStats";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
@@ -22,7 +22,7 @@ export interface MockORPCClientOptions {
     script: string
   ) => Promise<{ success: true; output: string; exitCode: number; wall_duration_ms: number }>;
   /** Provider configuration (API keys, base URLs, etc.) */
-  providersConfig?: Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>;
+  providersConfig?: ProvidersConfigMap;
   /** List of available provider names */
   providersList?: string[];
   /** Mock for projects.remove - return error string to simulate failure */

@@ -1534,7 +1534,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
               >
                 <ModelSelector
                   ref={modelSelectorRef}
-                  value={preferredModel}
+                  value={baseModel}
                   onChange={setPreferredModel}
                   recentModels={recentModels}
                   onComplete={() => inputRef.current?.focus()}
@@ -1576,7 +1576,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
               </div>
 
               <div className="ml-4 flex items-center" data-component="ModelSettingsGroup">
-                <ModelSettings model={preferredModel || ""} />
+                <ModelSettings model={baseModel || ""} />
               </div>
 
               {preferredModel && (
