@@ -44,10 +44,11 @@ export const modelsExtra: Record<string, ModelData> = {
   // $1.75/M input, $14/M output
   // Cached input: $0.175/M
   "gpt-5.2": {
-    max_input_tokens: 200000,
-    max_output_tokens: 100000,
+    max_input_tokens: 400000,
+    max_output_tokens: 128000,
     input_cost_per_token: 0.00000175, // $1.75 per million input tokens
     output_cost_per_token: 0.000014, // $14 per million output tokens
+    // OpenAI model page lists "cached input" pricing, which corresponds to prompt cache reads.
     cache_read_input_token_cost: 0.000000175, // $0.175 per million cached input tokens
     litellm_provider: "openai",
     mode: "chat",
@@ -55,7 +56,7 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_vision: true,
     supports_reasoning: true,
     supports_response_schema: true,
-    knowledge_cutoff: "2025-03-31",
+    knowledge_cutoff: "2025-08-31",
   },
 
   // GPT-5.2 Pro - Released December 11, 2025
@@ -63,16 +64,16 @@ export const modelsExtra: Record<string, ModelData> = {
   // Supports medium, high, xhigh reasoning levels
   "gpt-5.2-pro": {
     max_input_tokens: 400000,
-    max_output_tokens: 272000,
+    max_output_tokens: 128000,
     input_cost_per_token: 0.000021, // $21 per million input tokens
     output_cost_per_token: 0.000168, // $168 per million output tokens
+    knowledge_cutoff: "2025-08-31",
     litellm_provider: "openai",
     mode: "chat",
     supports_function_calling: true,
     supports_vision: true,
     supports_reasoning: true,
     supports_response_schema: true,
-    knowledge_cutoff: "2024-09-30",
     supported_endpoints: ["/v1/responses"],
   },
 
