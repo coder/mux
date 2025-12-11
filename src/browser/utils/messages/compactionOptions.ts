@@ -7,6 +7,7 @@
 
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { CompactionRequestData } from "@/common/types/message";
+import { toGatewayModel } from "@/browser/hooks/useGatewayModels";
 
 /**
  * Apply compaction-specific option overrides to base options.
@@ -24,7 +25,8 @@ export function applyCompactionOverrides(
   compactData: CompactionRequestData
 ): SendMessageOptions {
   // Use custom model if specified, otherwise use workspace default
-  const compactionModel = compactData.model ?? baseOptions.model;
+  // Apply gateway transformation - compactData.model is raw, baseOptions.model is already transformed
+  const compactionModel = compactData.model ? toGatewayModel(compactData.model) : baseOptions.model;
 
   return {
     ...baseOptions,
