@@ -5,14 +5,17 @@ import { useMode } from "@/browser/contexts/ModeContext";
 import { getDefaultModel } from "./useModelsFromSettings";
 import {
   type RuntimeMode,
+  type ParsedRuntime,
   parseRuntimeModeAndHost,
   buildRuntimeString,
+  RUNTIME_MODE,
 } from "@/common/types/runtime";
 import {
   getModelKey,
   getRuntimeKey,
   getTrunkBranchKey,
   getLastSshHostKey,
+  getLastDockerImageKey,
   getProjectScopeId,
 } from "@/common/constants/storage";
 import type { UIMode } from "@/common/types/mode";
@@ -33,7 +36,10 @@ export interface DraftWorkspaceSettings {
   runtimeMode: RuntimeMode;
   /** Persisted default runtime for this project (used to initialize selection) */
   defaultRuntimeMode: RuntimeMode;
+  /** SSH host (persisted separately from mode) */
   sshHost: string;
+  /** Docker image (persisted separately from mode) */
+  dockerImage: string;
   trunkBranch: string;
 }
 
@@ -57,6 +63,7 @@ export function useDraftWorkspaceSettings(
   /** Set the default runtime mode for this project (persists via checkbox) */
   setDefaultRuntimeMode: (mode: RuntimeMode) => void;
   setSshHost: (host: string) => void;
+  setDockerImage: (image: string) => void;
   setTrunkBranch: (branch: string) => void;
   getRuntimeString: () => string | undefined;
 } {
@@ -78,8 +85,9 @@ export function useDraftWorkspaceSettings(
     { listener: true }
   );
 
-  // Parse default runtime string into mode (worktree when undefined)
-  const { mode: defaultRuntimeMode } = parseRuntimeModeAndHost(defaultRuntimeString);
+  // Parse default runtime string into mode (worktree when undefined or invalid)
+  const parsedDefault = parseRuntimeModeAndHost(defaultRuntimeString);
+  const defaultRuntimeMode: RuntimeMode = parsedDefault?.mode ?? RUNTIME_MODE.WORKTREE;
 
   // Currently selected runtime mode for this session (initialized from default)
   // This allows user to select a different runtime without changing the default
@@ -105,6 +113,13 @@ export function useDraftWorkspaceSettings(
     { listener: true }
   );
 
+  // Project-scoped Docker image preference (persisted separately from runtime mode)
+  const [lastDockerImage, setLastDockerImage] = usePersistedState<string>(
+    getLastDockerImageKey(projectPath),
+    "",
+    { listener: true }
+  );
+
   // Initialize trunk branch from backend recommendation or first branch
   useEffect(() => {
     if (!trunkBranch && branches.length > 0) {
@@ -113,6 +128,22 @@ export function useDraftWorkspaceSettings(
     }
   }, [branches, recommendedTrunk, trunkBranch, setTrunkBranch]);
 
+  // Build ParsedRuntime from mode + stored host/image
+  const buildParsedRuntime = (mode: RuntimeMode): ParsedRuntime | null => {
+    switch (mode) {
+      case RUNTIME_MODE.LOCAL:
+        return { mode: "local" };
+      case RUNTIME_MODE.WORKTREE:
+        return { mode: "worktree" };
+      case RUNTIME_MODE.SSH:
+        return lastSshHost ? { mode: "ssh", host: lastSshHost } : null;
+      case RUNTIME_MODE.DOCKER:
+        return lastDockerImage ? { mode: "docker", image: lastDockerImage } : null;
+      default:
+        return null;
+    }
+  };
+
   // Setter for selected runtime mode (changes current selection, does not persist)
   const setRuntimeMode = (newMode: RuntimeMode) => {
     setSelectedRuntimeMode(newMode);
@@ -120,7 +151,8 @@ export function useDraftWorkspaceSettings(
 
   // Setter for default runtime mode (persists via checkbox in tooltip)
   const setDefaultRuntimeMode = (newMode: RuntimeMode) => {
-    const newRuntimeString = buildRuntimeString(newMode, lastSshHost);
+    const parsed = buildParsedRuntime(newMode);
+    const newRuntimeString = parsed ? buildRuntimeString(parsed) : undefined;
     setDefaultRuntimeString(newRuntimeString);
     // Also update selection to match new default
     setSelectedRuntimeMode(newMode);
@@ -131,9 +163,15 @@ export function useDraftWorkspaceSettings(
     setLastSshHost(newHost);
   };
 
+  // Setter for Docker image (persisted separately so it's remembered across mode switches)
+  const setDockerImage = (newImage: string) => {
+    setLastDockerImage(newImage);
+  };
+
   // Helper to get runtime string for IPC calls (uses selected mode, not default)
   const getRuntimeString = (): string | undefined => {
-    return buildRuntimeString(selectedRuntimeMode, lastSshHost);
+    const parsed = buildParsedRuntime(selectedRuntimeMode);
+    return parsed ? buildRuntimeString(parsed) : undefined;
   };
 
   return {
@@ -144,11 +182,13 @@ export function useDraftWorkspaceSettings(
       runtimeMode: selectedRuntimeMode,
       defaultRuntimeMode,
       sshHost: lastSshHost,
+      dockerImage: lastDockerImage,
       trunkBranch,
     },
     setRuntimeMode,
     setDefaultRuntimeMode,
     setSshHost,
+    setDockerImage,
     setTrunkBranch,
     getRuntimeString,
   };

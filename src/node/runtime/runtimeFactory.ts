@@ -1,10 +1,14 @@
-import type { Runtime } from "./Runtime";
+import * as fs from "fs/promises";
+import * as path from "path";
+import type { Runtime, RuntimeAvailability } from "./Runtime";
 import { LocalRuntime } from "./LocalRuntime";
 import { WorktreeRuntime } from "./WorktreeRuntime";
 import { SSHRuntime } from "./SSHRuntime";
-import type { RuntimeConfig } from "@/common/types/runtime";
+import { DockerRuntime, getContainerName } from "./DockerRuntime";
+import type { RuntimeConfig, RuntimeMode } from "@/common/types/runtime";
 import { hasSrcBaseDir } from "@/common/types/runtime";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
+import { execAsync } from "@/node/utils/disposableExec";
 
 // Re-export for backward compatibility with existing imports
 export { isIncompatibleRuntimeConfig };
@@ -26,19 +30,26 @@ export class IncompatibleRuntimeError extends Error {
 export interface CreateRuntimeOptions {
   /**
    * Project path - required for project-dir local runtimes (type: "local" without srcBaseDir).
+   * For Docker runtimes with existing workspaces, used together with workspaceName to derive container name.
    * For other runtime types, this is optional and used only for getWorkspacePath calculations.
    */
   projectPath?: string;
+  /**
+   * Workspace name - required for Docker runtimes when connecting to an existing workspace.
+   * Used together with projectPath to derive the container name.
+   */
+  workspaceName?: string;
 }
 
 /**
  * Create a Runtime instance based on the configuration.
  *
- * Handles three runtime types:
+ * Handles runtime types:
  * - "local" without srcBaseDir: Project-dir runtime (no isolation) - requires projectPath in options
  * - "local" with srcBaseDir: Legacy worktree config (backward compat)
  * - "worktree": Explicit worktree runtime
  * - "ssh": Remote SSH runtime
+ * - "docker": Docker container runtime
  */
 export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOptions): Runtime {
   // Check for incompatible configs from newer versions
@@ -77,6 +88,18 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
         port: config.port,
       });
 
+    case "docker": {
+      // For existing workspaces, derive container name from project+workspace
+      const containerName =
+        options?.projectPath && options?.workspaceName
+          ? getContainerName(options.projectPath, options.workspaceName)
+          : undefined;
+      return new DockerRuntime({
+        image: config.image,
+        containerName,
+      });
+    }
+
     default: {
       const unknownConfig = config as { type?: string };
       throw new Error(`Unknown runtime type: ${unknownConfig.type ?? "undefined"}`);
@@ -90,4 +113,61 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
 export function runtimeRequiresProjectPath(config: RuntimeConfig): boolean {
   // Project-dir local runtime (no srcBaseDir) requires projectPath
   return config.type === "local" && !hasSrcBaseDir(config);
+}
+
+/**
+ * Check if a project has a .git directory (is a git repository).
+ */
+async function isGitRepository(projectPath: string): Promise<boolean> {
+  try {
+    const gitPath = path.join(projectPath, ".git");
+    const stat = await fs.stat(gitPath);
+    // .git can be a directory (normal repo) or a file (worktree)
+    return stat.isDirectory() || stat.isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if Docker daemon is running and accessible.
+ */
+async function isDockerAvailable(): Promise<boolean> {
+  try {
+    using proc = execAsync("docker info");
+    await proc.result;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check availability of all runtime types for a given project.
+ * Returns a record of runtime mode to availability status.
+ *
+ * This consolidates runtime-specific availability checks:
+ * - local: Always available
+ * - worktree: Requires git repository
+ * - ssh: Requires git repository
+ * - docker: Requires Docker daemon running
+ */
+export async function checkRuntimeAvailability(
+  projectPath: string
+): Promise<Record<RuntimeMode, RuntimeAvailability>> {
+  const [isGit, dockerAvailable] = await Promise.all([
+    isGitRepository(projectPath),
+    isDockerAvailable(),
+  ]);
+
+  const gitRequiredReason = "Requires git repository";
+
+  return {
+    local: { available: true },
+    worktree: isGit ? { available: true } : { available: false, reason: gitRequiredReason },
+    ssh: isGit ? { available: true } : { available: false, reason: gitRequiredReason },
+    docker: dockerAvailable
+      ? { available: true }
+      : { available: false, reason: "Docker daemon not running" },
+  };
 }

@@ -19,13 +19,14 @@ import type { RuntimeConfig } from "@/common/types/runtime";
  * - "local" with srcBaseDir: Legacy worktree config (for backward compat)
  * - "worktree": Explicit worktree runtime
  * - "ssh": Remote SSH runtime
+ * - "docker": Docker container runtime
  */
 export function isIncompatibleRuntimeConfig(config: RuntimeConfig | undefined): boolean {
   if (!config) {
     return false;
   }
   // All known types are compatible
-  const knownTypes = ["local", "worktree", "ssh"];
+  const knownTypes = ["local", "worktree", "ssh", "docker"];
   if (!knownTypes.includes(config.type)) {
     // Unknown type from a future version
     return true;

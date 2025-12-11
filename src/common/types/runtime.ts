@@ -14,77 +14,106 @@ export const RUNTIME_MODE = {
   LOCAL: "local" as const,
   WORKTREE: "worktree" as const,
   SSH: "ssh" as const,
+  DOCKER: "docker" as const,
 } as const;
 
 /** Runtime string prefix for SSH mode (e.g., "ssh hostname") */
 export const SSH_RUNTIME_PREFIX = "ssh ";
 
+/** Runtime string prefix for Docker mode (e.g., "docker ubuntu:22.04") */
+export const DOCKER_RUNTIME_PREFIX = "docker ";
+
 export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
 
 /**
- * Parse runtime string from localStorage or UI input into mode and host
- * Format: "ssh <host>" -> { mode: "ssh", host: "<host>" }
- *         "ssh" -> { mode: "ssh", host: "" }
- *         "worktree" -> { mode: "worktree", host: "" }
- *         "local" or undefined -> { mode: "local", host: "" }
- *
- * Use this for UI state management (localStorage, form inputs)
+ * Parsed runtime result - discriminated union based on mode.
+ * SSH requires host, Docker requires image, others have no extra args.
  */
-export function parseRuntimeModeAndHost(runtime: string | null | undefined): {
-  mode: RuntimeMode;
-  host: string;
-} {
+export type ParsedRuntime =
+  | { mode: "local" }
+  | { mode: "worktree" }
+  | { mode: "ssh"; host: string }
+  | { mode: "docker"; image: string };
+
+/**
+ * Parse runtime string from localStorage or UI input into structured result.
+ * Format: "ssh <host>" -> { mode: "ssh", host: "<host>" }
+ *         "docker <image>" -> { mode: "docker", image: "<image>" }
+ *         "worktree" -> { mode: "worktree" }
+ *         "local" or undefined -> { mode: "local" }
+ *
+ * Note: "ssh" or "docker" without arguments returns null (invalid).
+ * Use this for UI state management (localStorage, form inputs).
+ */
+export function parseRuntimeModeAndHost(runtime: string | null | undefined): ParsedRuntime | null {
   if (!runtime) {
-    return { mode: RUNTIME_MODE.WORKTREE, host: "" };
+    return { mode: RUNTIME_MODE.WORKTREE };
   }
 
   const trimmed = runtime.trim();
   const lowerTrimmed = trimmed.toLowerCase();
 
   if (lowerTrimmed === RUNTIME_MODE.LOCAL) {
-    return { mode: RUNTIME_MODE.LOCAL, host: "" };
+    return { mode: RUNTIME_MODE.LOCAL };
   }
 
   if (lowerTrimmed === RUNTIME_MODE.WORKTREE) {
-    return { mode: RUNTIME_MODE.WORKTREE, host: "" };
+    return { mode: RUNTIME_MODE.WORKTREE };
   }
 
-  // Check for "ssh <host>" format first (before trying to parse as plain mode)
+  // Check for "ssh <host>" format
   if (lowerTrimmed.startsWith(SSH_RUNTIME_PREFIX)) {
     const host = trimmed.substring(SSH_RUNTIME_PREFIX.length).trim();
+    if (!host) return null; // "ssh " without host is invalid
     return { mode: RUNTIME_MODE.SSH, host };
   }
 
-  // Plain "ssh" without host
+  // Plain "ssh" without host is invalid
   if (lowerTrimmed === RUNTIME_MODE.SSH) {
-    return { mode: RUNTIME_MODE.SSH, host: "" };
+    return null;
   }
 
-  // Try to parse as a plain mode
+  // Check for "docker <image>" format
+  if (lowerTrimmed.startsWith(DOCKER_RUNTIME_PREFIX)) {
+    const image = trimmed.substring(DOCKER_RUNTIME_PREFIX.length).trim();
+    if (!image) return null; // "docker " without image is invalid
+    return { mode: RUNTIME_MODE.DOCKER, image };
+  }
+
+  // Plain "docker" without image is invalid
+  if (lowerTrimmed === RUNTIME_MODE.DOCKER) {
+    return null;
+  }
+
+  // Try to parse as a plain mode (local/worktree)
   const modeResult = RuntimeModeSchema.safeParse(lowerTrimmed);
   if (modeResult.success) {
-    return { mode: modeResult.data, host: "" };
+    const mode = modeResult.data;
+    if (mode === "local") return { mode: "local" };
+    if (mode === "worktree") return { mode: "worktree" };
+    // ssh/docker without args handled above
   }
 
-  // Default to local for unrecognized strings
-  return { mode: RUNTIME_MODE.LOCAL, host: "" };
+  // Unrecognized - return null
+  return null;
 }
 
 /**
- * Build runtime string for storage/IPC from mode and host
- * Returns: "ssh <host>" for SSH, "local" for local, undefined for worktree (default)
+ * Build runtime string for storage/IPC from parsed runtime.
+ * Returns: "ssh <host>" for SSH, "docker <image>" for Docker, "local" for local, undefined for worktree (default)
  */
-export function buildRuntimeString(mode: RuntimeMode, host: string): string | undefined {
-  if (mode === RUNTIME_MODE.SSH) {
-    const trimmedHost = host.trim();
-    // Persist SSH mode even without a host so UI remains in SSH state
-    return trimmedHost ? `${SSH_RUNTIME_PREFIX}${trimmedHost}` : "ssh";
+export function buildRuntimeString(parsed: ParsedRuntime): string | undefined {
+  switch (parsed.mode) {
+    case RUNTIME_MODE.SSH:
+      return `${SSH_RUNTIME_PREFIX}${parsed.host}`;
+    case RUNTIME_MODE.DOCKER:
+      return `${DOCKER_RUNTIME_PREFIX}${parsed.image}`;
+    case RUNTIME_MODE.LOCAL:
+      return "local";
+    case RUNTIME_MODE.WORKTREE:
+      // Worktree is default, no string needed
+      return undefined;
   }
-  if (mode === RUNTIME_MODE.LOCAL) {
-    return "local";
-  }
-  // Worktree is default, no string needed
-  return undefined;
 }
 
 /**
@@ -94,6 +123,15 @@ export function isSSHRuntime(
   config: RuntimeConfig | undefined
 ): config is Extract<RuntimeConfig, { type: "ssh" }> {
   return config?.type === "ssh";
+}
+
+/**
+ * Type guard to check if a runtime config is Docker
+ */
+export function isDockerRuntime(
+  config: RuntimeConfig | undefined
+): config is Extract<RuntimeConfig, { type: "docker" }> {
+  return config?.type === "docker";
 }
 
 /**

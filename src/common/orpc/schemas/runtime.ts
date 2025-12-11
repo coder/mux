@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const RuntimeModeSchema = z.enum(["local", "worktree", "ssh"]);
+export const RuntimeModeSchema = z.enum(["local", "worktree", "ssh", "docker"]);
 
 /**
  * Runtime configuration union type.
@@ -55,5 +55,10 @@ export const RuntimeConfigSchema = z.union([
       .optional()
       .meta({ description: "Path to SSH private key (if not using ~/.ssh/config or ssh-agent)" }),
     port: z.number().optional().meta({ description: "SSH port (default: 22)" }),
+  }),
+  // Docker runtime - each workspace runs in its own container
+  z.object({
+    type: z.literal("docker"),
+    image: z.string().meta({ description: "Docker image to use (e.g., ubuntu:22.04)" }),
   }),
 ]);

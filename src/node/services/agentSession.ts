@@ -335,7 +335,7 @@ export class AgentSession {
         : (() => {
             const runtime = createRuntime(
               metadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
-              { projectPath: metadata.projectPath }
+              { projectPath: metadata.projectPath, workspaceName: metadata.name }
             );
             return runtime.getWorkspacePath(metadata.projectPath, metadata.name);
           })();

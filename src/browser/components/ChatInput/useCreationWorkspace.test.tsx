@@ -550,6 +550,7 @@ function createDraftSettingsHarness(
   initial?: Partial<{
     runtimeMode: RuntimeMode;
     sshHost: string;
+    dockerImage: string;
     trunkBranch: string;
     runtimeString?: string | undefined;
     defaultRuntimeMode?: RuntimeMode;
@@ -559,12 +560,14 @@ function createDraftSettingsHarness(
     runtimeMode: initial?.runtimeMode ?? "local",
     defaultRuntimeMode: initial?.defaultRuntimeMode ?? "worktree",
     sshHost: initial?.sshHost ?? "",
+    dockerImage: initial?.dockerImage ?? "",
     trunkBranch: initial?.trunkBranch ?? "main",
     runtimeString: initial?.runtimeString,
   } satisfies {
     runtimeMode: RuntimeMode;
     defaultRuntimeMode: RuntimeMode;
     sshHost: string;
+    dockerImage: string;
     trunkBranch: string;
     runtimeString: string | undefined;
   };
@@ -592,11 +595,16 @@ function createDraftSettingsHarness(
     state.sshHost = host;
   });
 
+  const setDockerImage = mock((image: string) => {
+    state.dockerImage = image;
+  });
+
   return {
     state,
     setRuntimeMode,
     setDefaultRuntimeMode,
     setSshHost,
+    setDockerImage,
     setTrunkBranch,
     getRuntimeString,
     snapshot(): {
@@ -604,6 +612,7 @@ function createDraftSettingsHarness(
       setRuntimeMode: typeof setRuntimeMode;
       setDefaultRuntimeMode: typeof setDefaultRuntimeMode;
       setSshHost: typeof setSshHost;
+      setDockerImage: typeof setDockerImage;
       setTrunkBranch: typeof setTrunkBranch;
       getRuntimeString: typeof getRuntimeString;
     } {
@@ -614,6 +623,7 @@ function createDraftSettingsHarness(
         runtimeMode: state.runtimeMode,
         defaultRuntimeMode: state.defaultRuntimeMode,
         sshHost: state.sshHost,
+        dockerImage: state.dockerImage ?? "",
         trunkBranch: state.trunkBranch,
       };
       return {
@@ -621,6 +631,7 @@ function createDraftSettingsHarness(
         setRuntimeMode,
         setDefaultRuntimeMode,
         setSshHost,
+        setDockerImage,
         setTrunkBranch,
         getRuntimeString,
       };
