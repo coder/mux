@@ -190,7 +190,8 @@ export function CreationControls(props: CreationControlsProps) {
               placeholder={nameState.isGenerating ? "Generating..." : "workspace-name"}
               disabled={props.disabled}
               className={cn(
-                "bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-full rounded-md border px-2 pr-7 text-sm focus:outline-none disabled:opacity-50",
+                "bg-bg-dark border-border-medium focus:border-accent h-7 w-full rounded-md border px-2 pr-7 text-sm focus:outline-none disabled:opacity-50",
+                nameState.autoGenerate ? "text-muted" : "text-foreground",
                 nameState.error && "border-red-500"
               )}
             />
