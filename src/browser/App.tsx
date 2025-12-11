@@ -446,6 +446,12 @@ function AppInner() {
       } else if (matchesKeybind(e, KEYBINDS.OPEN_SETTINGS)) {
         e.preventDefault();
         openSettings();
+      } else if (matchesKeybind(e, KEYBINDS.FOCUS_CHAT)) {
+        // Focus creation chat when on new chat page (no workspace selected)
+        if (creationProjectPath && creationChatInputRef.current) {
+          e.preventDefault();
+          creationChatInputRef.current.focus();
+        }
       }
     };
 
@@ -457,6 +463,7 @@ function AppInner() {
     isCommandPaletteOpen,
     closeCommandPalette,
     openCommandPalette,
+    creationProjectPath,
     openSettings,
   ]);
 
