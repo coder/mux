@@ -452,6 +452,7 @@ export class AgentSession {
         toolPolicy: options.toolPolicy,
         additionalSystemInstructions: options.additionalSystemInstructions,
         providerOptions: options.providerOptions,
+        experiments: options.experiments,
       };
 
       // Add image parts if present
