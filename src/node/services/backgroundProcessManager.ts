@@ -2,6 +2,7 @@ import type { Runtime, BackgroundHandle } from "@/node/runtime/Runtime";
 import { spawnProcess } from "./backgroundProcessExecutor";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "./log";
+import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 
 import { EventEmitter } from "events";
 
@@ -20,7 +21,9 @@ export interface BackgroundProcessMeta {
 }
 
 /**
- * Represents a background process with file-based output
+ * Represents a background process with file-based output.
+ * All per-process state is consolidated here so cleanup is automatic when
+ * the process is removed from the processes map.
  */
 export interface BackgroundProcess {
   id: string; // Process ID (display_name from the bash tool call)
@@ -36,14 +39,11 @@ export interface BackgroundProcess {
   displayName?: string; // Human-readable name (e.g., "Dev Server")
   /** True if this process is being waited on (foreground mode) */
   isForeground: boolean;
-}
-
-/**
- * Tracks read position for incremental output retrieval.
- * Each call to getOutput() returns only new content since the last read.
- */
-interface OutputReadPosition {
-  outputBytes: number;
+  /** Tracks read position for incremental output retrieval */
+  outputBytesRead: number;
+  /** Mutex to serialize getOutput() calls (prevents race condition when
+   * parallel tool calls read from same offset before position is updated) */
+  outputLock: AsyncMutex;
 }
 
 /**
@@ -89,10 +89,9 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
   // NOTE: This map is in-memory only. Background processes use nohup/setsid so they
   // could survive app restarts, but we kill all tracked processes on shutdown via
   // dispose(). Rehydrating from meta.json on startup is out of scope for now.
+  // All per-process state (read position, output lock) is stored in BackgroundProcess
+  // so cleanup is automatic when the process is removed from this map.
   private processes = new Map<string, BackgroundProcess>();
-
-  // Tracks read positions for incremental output retrieval
-  private readPositions = new Map<string, OutputReadPosition>();
 
   // Base directory for process output files
   private readonly bgOutputDir: string;
@@ -218,6 +217,8 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       handle,
       displayName: config.displayName,
       isForeground: config.isForeground ?? false,
+      outputBytesRead: 0,
+      outputLock: new AsyncMutex(),
     };
 
     // Store process in map
@@ -324,6 +325,8 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       handle,
       displayName,
       isForeground: false, // Now in background
+      outputBytesRead: 0,
+      outputLock: new AsyncMutex(),
     };
 
     // Store process in map
@@ -473,15 +476,13 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       return { success: false, error: `Process not found: ${processId}` };
     }
 
-    // Get or initialize read position
-    let pos = this.readPositions.get(processId);
-    if (!pos) {
-      pos = { outputBytes: 0 };
-      this.readPositions.set(processId, pos);
-    }
+    // Acquire per-process mutex to serialize concurrent getOutput() calls.
+    // This prevents race conditions where parallel tool calls both read from
+    // the same offset before either updates the read position.
+    await using _lock = await proc.outputLock.acquire();
 
     log.debug(
-      `BackgroundProcessManager.getOutput: proc.outputDir=${proc.outputDir}, offset=${pos.outputBytes}`
+      `BackgroundProcessManager.getOutput: proc.outputDir=${proc.outputDir}, offset=${proc.outputBytesRead}`
     );
 
     // Pre-compile regex if filter is provided
@@ -514,11 +515,11 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     while (true) {
       // Read new content via the handle (works for both local and SSH runtimes)
       // Output is already unified in output.log (stdout + stderr via 2>&1)
-      const result = await proc.handle.readOutput(pos.outputBytes);
+      const result = await proc.handle.readOutput(proc.outputBytesRead);
       accumulatedRaw += result.content;
 
       // Update read position
-      pos.outputBytes = result.newOffset;
+      proc.outputBytesRead = result.newOffset;
 
       // Refresh process status
       const refreshedProc = await this.getProcess(processId);
@@ -699,6 +700,8 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     await Promise.all(matching.map((p) => this.terminate(p.id)));
 
     // Remove from memory (output dirs left on disk for OS/workspace cleanup)
+    // All per-process state (outputBytesRead, outputLock) is stored in the
+    // BackgroundProcess object, so cleanup is automatic when we delete here.
     for (const p of matching) {
       this.processes.delete(p.id);
     }

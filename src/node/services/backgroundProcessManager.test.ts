@@ -637,6 +637,50 @@ describe("BackgroundProcessManager", () => {
       expect(output.elapsed_ms).toBeGreaterThanOrEqual(250);
       expect(output.elapsed_ms).toBeLessThan(1000); // Didn't hang
     });
+
+    it("should serialize concurrent getOutput calls to prevent duplicate output", async () => {
+      // This test verifies the fix for the race condition where parallel bash_output
+      // calls could both read from the same offset before either updates the position.
+      // Without serialization, both calls would return the same output.
+      const result = await manager.spawn(
+        runtime,
+        testWorkspaceId,
+        "echo 'line1'; echo 'line2'; echo 'line3'",
+        { cwd: process.cwd(), displayName: "test" }
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Wait for all output to be written
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      // Call getOutput twice in parallel - without serialization, both would
+      // read from offset 0 and return duplicate "line1\nline2\nline3"
+      const [output1, output2] = await Promise.all([
+        manager.getOutput(result.processId),
+        manager.getOutput(result.processId),
+      ]);
+
+      expect(output1.success).toBe(true);
+      expect(output2.success).toBe(true);
+      if (!output1.success || !output2.success) return;
+
+      // Combine outputs - should contain all lines exactly once
+      const combinedOutput = output1.output + output2.output;
+      const line1Count = (combinedOutput.match(/line1/g) ?? []).length;
+      const line2Count = (combinedOutput.match(/line2/g) ?? []).length;
+      const line3Count = (combinedOutput.match(/line3/g) ?? []).length;
+
+      // Each line should appear exactly once across both outputs (no duplicates)
+      expect(line1Count).toBe(1);
+      expect(line2Count).toBe(1);
+      expect(line3Count).toBe(1);
+
+      // One call should get the content, the other should get empty (already read)
+      const hasContent = output1.output.trim().length > 0 || output2.output.trim().length > 0;
+      expect(hasContent).toBe(true);
+    });
   });
 
   describe("integration: spawn and getOutput", () => {
