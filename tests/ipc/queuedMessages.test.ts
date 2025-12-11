@@ -8,6 +8,7 @@ import {
   modelString,
   resolveOrpcClient,
   StreamCollector,
+  configureTestRetries,
 } from "./helpers";
 import { isQueuedMessageChanged, isRestoreToInput } from "@/common/orpc/types";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
@@ -87,9 +88,7 @@ async function waitForRestoreToInputEvent(
 
 describeIntegration("Queued messages", () => {
   // Enable retries in CI for flaky API tests
-  if (process.env.CI && typeof jest !== "undefined" && jest.retryTimes) {
-    jest.retryTimes(3, { logErrorsBeforeRetry: true });
-  }
+  configureTestRetries(3);
 
   test.concurrent(
     "should queue message during streaming and auto-send on stream end",

@@ -23,6 +23,7 @@ import {
   readChatHistory,
   modelString,
   resolveOrpcClient,
+  configureTestRetries,
 } from "./helpers";
 import type { StreamCollector } from "./streamCollector";
 
@@ -197,9 +198,7 @@ async function collectStreamUntil(
 // Using describeIntegration to enable when TEST_INTEGRATION=1
 describeIntegration("Stream Error Recovery (No Amnesia)", () => {
   // Enable retries in CI for flaky API tests
-  if (process.env.CI && typeof jest !== "undefined" && jest.retryTimes) {
-    jest.retryTimes(3, { logErrorsBeforeRetry: true });
-  }
+  configureTestRetries(3);
 
   test.concurrent(
     "should preserve exact prefix and continue from exact point after stream error",

@@ -1,6 +1,11 @@
 import { setupWorkspace, shouldRunIntegrationTests, validateApiKeys } from "./setup";
-import { sendMessageWithModel, createStreamCollector, modelString } from "./helpers";
-import { resolveOrpcClient } from "./helpers";
+import {
+  sendMessageWithModel,
+  createStreamCollector,
+  modelString,
+  resolveOrpcClient,
+  configureTestRetries,
+} from "./helpers";
 import { HistoryService } from "../../src/node/services/historyService";
 import { createMuxMessage } from "../../src/common/types/message";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
@@ -15,9 +20,7 @@ if (shouldRunIntegrationTests()) {
 
 describeIntegration("resumeStream", () => {
   // Enable retries in CI for flaky API tests
-  if (process.env.CI && typeof jest !== "undefined" && jest.retryTimes) {
-    jest.retryTimes(3, { logErrorsBeforeRetry: true });
-  }
+  configureTestRetries(3);
 
   test.concurrent(
     "should resume interrupted stream without new user message",

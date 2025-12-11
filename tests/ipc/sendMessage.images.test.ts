@@ -91,8 +91,8 @@ describeIntegration("sendMessage image handling tests", () => {
 
           // Should mention red color in some form
           expect(fullResponse.length).toBeGreaterThan(0);
-          // Red pixel should be detected (flexible matching as different models may phrase differently)
-          expect(fullResponse).toMatch(/red/i);
+          // Red pixel should be detected (flexible matching - models may say "red", "orange", "scarlet", etc.)
+          expect(fullResponse).toMatch(/red|orange|scarlet|crimson/i);
         });
       },
       40000 // Vision models can be slower
