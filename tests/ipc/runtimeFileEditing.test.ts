@@ -25,6 +25,7 @@ import {
   createWorkspaceWithInit,
   sendMessageAndWait,
   extractTextFromEvents,
+  configureTestRetries,
   HAIKU_MODEL,
   TEST_TIMEOUT_LOCAL_MS,
   TEST_TIMEOUT_SSH_MS,
@@ -53,6 +54,9 @@ const describeIntegration = shouldRunIntegrationTests() ? describe : describe.sk
 if (shouldRunIntegrationTests()) {
   validateApiKeys(["ANTHROPIC_API_KEY"]);
 }
+
+// Retry flaky tests in CI (API latency/rate limiting)
+configureTestRetries();
 
 // SSH server config (shared across all SSH tests)
 let sshConfig: SSHServerConfig | undefined;

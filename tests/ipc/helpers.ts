@@ -295,7 +295,10 @@ export async function sendMessageAndWait(
     }
 
     // Wait for stream completion
-    await collector.waitForEvent("stream-end", timeoutMs);
+    const streamEnd = await collector.waitForEvent("stream-end", timeoutMs);
+    if (!streamEnd) {
+      throw new Error(`Stream timeout after ${timeoutMs}ms waiting for stream-end`);
+    }
     return collector.getEvents();
   } finally {
     collector.stop();
@@ -627,5 +630,16 @@ export async function buildLargeHistory(
     if (!result.success) {
       throw new Error(`Failed to append message ${i} to history: ${result.error}`);
     }
+  }
+}
+
+/**
+ * Configure test retries for flaky integration tests in CI.
+ * Only enables retries in CI environment to avoid masking real bugs locally.
+ * Call at module level (before describe blocks).
+ */
+export function configureTestRetries(count: number = 2): void {
+  if (process.env.CI && typeof jest !== "undefined" && jest.retryTimes) {
+    jest.retryTimes(count, { logErrorsBeforeRetry: true });
   }
 }

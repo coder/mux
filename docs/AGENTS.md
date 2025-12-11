@@ -28,6 +28,7 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 - Do not enable auto-squash or auto-merge on Pull Requests unless explicit permission is given.
 - PR descriptions: include only information a busy reviewer cannot infer; focus on implementation nuances or validation steps.
 - Title prefixes: `perf|refactor|fix|feat|ci|bench`, e.g., `🤖 fix: handle workspace rename edge cases`.
+- Use `ci:` for testing-only changes (test helpers, flaky test fixes, CI config).
 
 ## Repo Reference
 

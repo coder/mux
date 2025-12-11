@@ -185,9 +185,12 @@ export async function withSharedWorkspaceNoProvider(
 }
 
 /**
- * Configure test retries for flaky integration tests.
- * Call in describe block to set retry count.
+ * Configure test retries for flaky integration tests in CI.
+ * Only enables retries in CI environment to avoid masking real bugs locally.
+ * Call at module level (before describe blocks).
  */
-export function configureTestRetries(count: number): void {
-  jest.retryTimes(count, { logErrorsBeforeRetry: true });
+export function configureTestRetries(count: number = 2): void {
+  if (process.env.CI && typeof jest !== "undefined" && jest.retryTimes) {
+    jest.retryTimes(count, { logErrorsBeforeRetry: true });
+  }
 }

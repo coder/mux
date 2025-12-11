@@ -5,6 +5,7 @@ import {
   assertStreamSuccess,
   extractTextFromEvents,
   modelString,
+  configureTestRetries,
 } from "./helpers";
 import { spawn } from "child_process";
 import { loadTokenizerModules } from "../../src/node/utils/main/tokenizer";
@@ -84,9 +85,7 @@ async function ensureOllamaModel(model: string): Promise<void> {
 
 describeOllama("Ollama integration", () => {
   // Enable retries in CI for potential network flakiness with Ollama
-  if (process.env.CI && typeof jest !== "undefined" && jest.retryTimes) {
-    jest.retryTimes(3, { logErrorsBeforeRetry: true });
-  }
+  configureTestRetries(3);
 
   // Load tokenizer modules and ensure model is available before all tests
   beforeAll(async () => {

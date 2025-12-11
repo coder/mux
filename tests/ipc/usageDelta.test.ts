@@ -4,6 +4,7 @@ import {
   createStreamCollector,
   modelString,
   assertStreamSuccess,
+  configureTestRetries,
 } from "./helpers";
 import { isUsageDelta } from "../../src/common/orpc/types";
 import { KNOWN_MODELS } from "../../src/common/constants/knownModels";
@@ -18,9 +19,7 @@ if (shouldRunIntegrationTests()) {
 
 describeIntegration("usage-delta events", () => {
   // Enable retries in CI for flaky API tests
-  if (process.env.CI && typeof jest !== "undefined" && jest.retryTimes) {
-    jest.retryTimes(3, { logErrorsBeforeRetry: true });
-  }
+  configureTestRetries(3);
 
   // Only test with Anthropic - more reliable multi-step behavior
   test.concurrent(
