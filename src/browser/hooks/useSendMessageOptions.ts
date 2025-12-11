@@ -13,7 +13,7 @@ import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions"
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 import { useProviderOptions } from "./useProviderOptions";
 import type { GatewayState } from "./useGatewayModels";
-import { isExperimentEnabled, useExperimentValue } from "./useExperiments";
+import { useExperimentValue } from "./useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
 /**
