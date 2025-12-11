@@ -191,11 +191,27 @@ export class DockerRuntime extends RemoteRuntime {
     return { process };
   }
 
+  /**
+   * Override buildWriteCommand to preserve symlinks and file permissions.
+   *
+   * This matches SSHRuntime behavior: write through the symlink to the final target,
+   * while keeping the symlink itself intact.
+   */
+  protected buildWriteCommand(quotedPath: string, quotedTempPath: string): string {
+    return `RESOLVED=$(readlink -f ${quotedPath} 2>/dev/null || echo ${quotedPath}) && PERMS=$(stat -c '%a' "$RESOLVED" 2>/dev/null || echo 600) && mkdir -p $(dirname "$RESOLVED") && cat > ${quotedTempPath} && chmod "$PERMS" ${quotedTempPath} && mv ${quotedTempPath} "$RESOLVED"`;
+  }
   // ===== Runtime interface implementations =====
 
   resolvePath(filePath: string): Promise<string> {
-    // Inside container, paths are already absolute
-    // Just return as-is since we use fixed /src path
+    // DockerRuntime uses a fixed workspace base (/src), but we still want reasonable shell-style
+    // behavior for callers that pass "~" or "~/...".
+    if (filePath === "~") {
+      return Promise.resolve("/root");
+    }
+    if (filePath.startsWith("~/")) {
+      return Promise.resolve(path.posix.join("/root", filePath.slice(2)));
+    }
+
     return Promise.resolve(
       filePath.startsWith("/") ? filePath : path.posix.join(CONTAINER_SRC_DIR, filePath)
     );
