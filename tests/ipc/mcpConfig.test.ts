@@ -127,12 +127,54 @@ describeIntegration("MCP project configuration", () => {
 
       // Should list the added server
       const listed = await client.projects.mcp.list({ projectPath: repoPath });
-      expect(listed).toEqual({ "chrome-devtools": "npx chrome-devtools-mcp@latest" });
+      expect(listed).toEqual({
+        "chrome-devtools": { command: "npx chrome-devtools-mcp@latest", disabled: false },
+      });
 
       // Config file should be written
       const configPath = path.join(repoPath, ".mux", "mcp.jsonc");
       const file = await fs.readFile(configPath, "utf-8");
       expect(JSON.parse(file)).toEqual({
+        servers: { "chrome-devtools": "npx chrome-devtools-mcp@latest" },
+      });
+
+      // Disable server
+      const disableResult = await client.projects.mcp.setEnabled({
+        projectPath: repoPath,
+        name: "chrome-devtools",
+        enabled: false,
+      });
+      expect(disableResult.success).toBe(true);
+
+      // Should still be listed but disabled
+      const disabledList = await client.projects.mcp.list({ projectPath: repoPath });
+      expect(disabledList).toEqual({
+        "chrome-devtools": { command: "npx chrome-devtools-mcp@latest", disabled: true },
+      });
+
+      // Config file should have disabled format
+      const disabledConfig = await fs.readFile(configPath, "utf-8");
+      expect(JSON.parse(disabledConfig)).toEqual({
+        servers: {
+          "chrome-devtools": { command: "npx chrome-devtools-mcp@latest", disabled: true },
+        },
+      });
+
+      // Re-enable server
+      const enableResult = await client.projects.mcp.setEnabled({
+        projectPath: repoPath,
+        name: "chrome-devtools",
+        enabled: true,
+      });
+      expect(enableResult.success).toBe(true);
+
+      // Should be enabled again, config file back to string format
+      const enabledList = await client.projects.mcp.list({ projectPath: repoPath });
+      expect(enabledList).toEqual({
+        "chrome-devtools": { command: "npx chrome-devtools-mcp@latest", disabled: false },
+      });
+      const enabledConfig = await fs.readFile(configPath, "utf-8");
+      expect(JSON.parse(enabledConfig)).toEqual({
         servers: { "chrome-devtools": "npx chrome-devtools-mcp@latest" },
       });
 

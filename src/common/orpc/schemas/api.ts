@@ -19,6 +19,7 @@ import {
   MCPAddParamsSchema,
   MCPRemoveParamsSchema,
   MCPServerMapSchema,
+  MCPSetEnabledParamsSchema,
   MCPTestParamsSchema,
   MCPTestResultSchema,
 } from "./mcp";
@@ -152,6 +153,10 @@ export const projects = {
     test: {
       input: MCPTestParamsSchema,
       output: MCPTestResultSchema,
+    },
+    setEnabled: {
+      input: MCPSetEnabledParamsSchema,
+      output: ResultSchema(z.void(), z.string()),
     },
   },
   secrets: {

@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as jsonc from "jsonc-parser";
 import writeFileAtomic from "write-file-atomic";
-import type { MCPConfig, MCPServerMap } from "@/common/types/mcp";
+import type { MCPConfig, MCPServerInfo } from "@/common/types/mcp";
 import { log } from "@/node/services/log";
 import { Ok, Err } from "@/common/types/result";
 import type { Result } from "@/common/types/result";
@@ -28,6 +28,14 @@ export class MCPConfigService {
     }
   }
 
+  /** Raw config file format - string (legacy) or object */
+  private normalizeEntry(entry: string | { command: string; disabled?: boolean }): MCPServerInfo {
+    if (typeof entry === "string") {
+      return { command: entry, disabled: false };
+    }
+    return { command: entry.command, disabled: entry.disabled ?? false };
+  }
+
   async getConfig(projectPath: string): Promise<MCPConfig> {
     const filePath = this.getConfigPath(projectPath);
     try {
@@ -36,11 +44,18 @@ export class MCPConfigService {
         return { servers: {} };
       }
       const raw = await fs.promises.readFile(filePath, "utf-8");
-      const parsed = jsonc.parse(raw) as MCPConfig | undefined;
+      const parsed = jsonc.parse(raw) as { servers?: Record<string, unknown> } | undefined;
       if (!parsed || typeof parsed !== "object" || !parsed.servers) {
         return { servers: {} };
       }
-      return { servers: parsed.servers };
+      // Normalize all entries on read
+      const servers: Record<string, MCPServerInfo> = {};
+      for (const [name, entry] of Object.entries(parsed.servers)) {
+        servers[name] = this.normalizeEntry(
+          entry as string | { command: string; disabled?: boolean }
+        );
+      }
+      return { servers };
     } catch (error) {
       log.error("Failed to read MCP config", { projectPath, error });
       return { servers: {} };
@@ -50,10 +65,16 @@ export class MCPConfigService {
   private async saveConfig(projectPath: string, config: MCPConfig): Promise<void> {
     await this.ensureProjectDir(projectPath);
     const filePath = this.getConfigPath(projectPath);
-    await writeFileAtomic(filePath, JSON.stringify(config, null, 2), "utf-8");
+    // Write minimal format: string for enabled, object only when disabled
+    const output: Record<string, string | { command: string; disabled: true }> = {};
+    for (const [name, entry] of Object.entries(config.servers)) {
+      output[name] = entry.disabled ? { command: entry.command, disabled: true } : entry.command;
+    }
+    await writeFileAtomic(filePath, JSON.stringify({ servers: output }, null, 2), "utf-8");
   }
 
-  async listServers(projectPath: string): Promise<MCPServerMap> {
+  /** List all servers with normalized config */
+  async listServers(projectPath: string): Promise<Record<string, MCPServerInfo>> {
     const cfg = await this.getConfig(projectPath);
     return cfg.servers;
   }
@@ -67,13 +88,35 @@ export class MCPConfigService {
     }
 
     const cfg = await this.getConfig(projectPath);
-    cfg.servers[name] = command;
+    const existing = cfg.servers[name];
+    // Preserve disabled state if updating existing server
+    cfg.servers[name] = { command, disabled: existing?.disabled ?? false };
 
     try {
       await this.saveConfig(projectPath, cfg);
       return Ok(undefined);
     } catch (error) {
       log.error("Failed to save MCP server", { projectPath, name, error });
+      return Err(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async setServerEnabled(
+    projectPath: string,
+    name: string,
+    enabled: boolean
+  ): Promise<Result<void>> {
+    const cfg = await this.getConfig(projectPath);
+    const entry = cfg.servers[name];
+    if (!entry) {
+      return Err(`Server ${name} not found`);
+    }
+    cfg.servers[name] = { ...entry, disabled: !enabled };
+    try {
+      await this.saveConfig(projectPath, cfg);
+      return Ok(undefined);
+    } catch (error) {
+      log.error("Failed to update MCP server enabled state", { projectPath, name, error });
       return Err(error instanceof Error ? error.message : String(error));
     }
   }

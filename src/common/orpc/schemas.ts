@@ -40,9 +40,10 @@ export { MuxProviderOptionsSchema } from "./schemas/providerOptions";
 
 // MCP schemas
 export {
-  MCPServerMapSchema,
   MCPAddParamsSchema,
   MCPRemoveParamsSchema,
+  MCPServerMapSchema,
+  MCPSetEnabledParamsSchema,
   MCPTestParamsSchema,
   MCPTestResultSchema,
 } from "./schemas/mcp";

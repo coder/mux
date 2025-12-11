@@ -22,8 +22,10 @@ import {
   SelectValue,
 } from "@/browser/components/ui/select";
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
+import { Switch } from "@/browser/components/ui/switch";
+import { cn } from "@/common/lib/utils";
 import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
-import type { CachedMCPTestResult } from "@/common/types/mcp";
+import type { CachedMCPTestResult, MCPServerInfo } from "@/common/types/mcp";
 import { getMCPTestResultsKey } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 
@@ -83,7 +85,7 @@ export const ProjectSettingsSection: React.FC = () => {
 
   // Core state
   const [selectedProject, setSelectedProject] = useState<string>("");
-  const [servers, setServers] = useState<Record<string, string>>({});
+  const [servers, setServers] = useState<Record<string, MCPServerInfo>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -154,6 +156,40 @@ export const ProjectSettingsSection: React.FC = () => {
       }
     },
     [api, selectedProject, refresh, clearTestResult]
+  );
+
+  const handleToggleEnabled = useCallback(
+    async (name: string, enabled: boolean) => {
+      if (!api || !selectedProject) return;
+      // Optimistic update
+      setServers((prev) => ({
+        ...prev,
+        [name]: { ...prev[name], disabled: !enabled },
+      }));
+      try {
+        const result = await api.projects.mcp.setEnabled({
+          projectPath: selectedProject,
+          name,
+          enabled,
+        });
+        if (!result.success) {
+          // Revert on error
+          setServers((prev) => ({
+            ...prev,
+            [name]: { ...prev[name], disabled: enabled },
+          }));
+          setError(result.error ?? "Failed to update server");
+        }
+      } catch (err) {
+        // Revert on error
+        setServers((prev) => ({
+          ...prev,
+          [name]: { ...prev[name], disabled: enabled },
+        }));
+        setError(err instanceof Error ? err.message : "Failed to update server");
+      }
+    },
+    [api, selectedProject]
   );
 
   const handleTest = useCallback(
@@ -320,23 +356,33 @@ export const ProjectSettingsSection: React.FC = () => {
         <p className="text-muted-foreground py-4 text-sm">No MCP servers configured yet.</p>
       ) : (
         <ul className="space-y-2">
-          {Object.entries(servers).map(([name, command]) => {
+          {Object.entries(servers).map(([name, entry]) => {
             const isTesting = testingServer === name;
             const cached = testCache[name];
             const isEditing = editing?.name === name;
+            const isEnabled = !entry.disabled;
             return (
               <li key={name} className="border-border-medium bg-secondary/20 rounded-lg border p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
+                <div className="flex items-start gap-3">
+                  <Switch
+                    checked={isEnabled}
+                    onCheckedChange={(checked) => void handleToggleEnabled(name, checked)}
+                    title={isEnabled ? "Disable server" : "Enable server"}
+                    className="mt-0.5 shrink-0"
+                  />
+                  <div className={cn("min-w-0 flex-1", !isEnabled && "opacity-50")}>
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{name}</span>
-                      {cached?.result.success && !isEditing && (
+                      {cached?.result.success && !isEditing && isEnabled && (
                         <span
                           className="rounded bg-green-500/10 px-1.5 py-0.5 text-xs text-green-500"
                           title={`Tested ${formatRelativeTime(cached.testedAt)}`}
                         >
                           {cached.result.tools.length} tools
                         </span>
+                      )}
+                      {!isEnabled && (
+                        <span className="text-muted-foreground text-xs">disabled</span>
                       )}
                     </div>
                     {isEditing ? (
@@ -354,11 +400,11 @@ export const ProjectSettingsSection: React.FC = () => {
                       />
                     ) : (
                       <p className="text-muted-foreground mt-0.5 font-mono text-xs break-all">
-                        {command}
+                        {entry.command}
                       </p>
                     )}
                   </div>
-                  <div className="flex shrink-0 gap-1">
+                  <div className="flex shrink-0 items-center gap-1">
                     {isEditing ? (
                       <>
                         <Button
@@ -405,7 +451,7 @@ export const ProjectSettingsSection: React.FC = () => {
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => handleStartEdit(name, command)}
+                          onClick={() => handleStartEdit(name, entry.command)}
                           className="text-muted hover:text-accent h-7 w-7"
                           title="Edit command"
                         >

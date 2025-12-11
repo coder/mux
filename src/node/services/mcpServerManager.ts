@@ -151,11 +151,19 @@ export class MCPServerManager {
   /**
    * Get merged servers: config file servers (unless ignoreConfigFile) + inline servers.
    * Inline servers take precedence over config file servers with the same name.
+   * Filters out disabled servers.
    */
   private async getMergedServers(projectPath: string): Promise<MCPServerMap> {
-    const configServers = this.ignoreConfigFile
+    const allServers = this.ignoreConfigFile
       ? {}
       : await this.configService.listServers(projectPath);
+    // Filter to enabled servers only, extract command strings
+    const configServers: MCPServerMap = {};
+    for (const [name, entry] of Object.entries(allServers)) {
+      if (!entry.disabled) {
+        configServers[name] = entry.command;
+      }
+    }
     // Inline servers override config file servers
     return { ...configServers, ...this.inlineServers };
   }
@@ -224,11 +232,11 @@ export class MCPServerManager {
   async test(projectPath: string, name?: string, command?: string): Promise<MCPTestResult> {
     if (name) {
       const servers = await this.configService.listServers(projectPath);
-      const serverCommand = servers[name];
-      if (!serverCommand) {
+      const server = servers[name];
+      if (!server) {
         return { success: false, error: `Server "${name}" not found in configuration` };
       }
-      return runServerTest(serverCommand, projectPath, `server "${name}"`);
+      return runServerTest(server.command, projectPath, `server "${name}"`);
     }
     if (command?.trim()) {
       return runServerTest(command, projectPath, "command");
