@@ -199,13 +199,14 @@ describeIntegration("MCP server integration with model", () => {
   const imageFormatCases = [
     {
       name: "PNG",
-      prompt: "Navigate to https://example.com and take a screenshot. Describe what you see.",
+      prompt:
+        "You MUST use chrome_navigate_page to go to https://example.com, then MUST use chrome_take_screenshot to capture the page. After taking the screenshot, describe what you see in the image.",
       mediaTypePattern: /^image\//,
     },
     {
       name: "JPEG",
       prompt:
-        'Navigate to https://example.com and take a screenshot in JPEG format (use format: "jpeg"). Describe what you see.',
+        'You MUST use chrome_navigate_page to go to https://example.com, then MUST use chrome_take_screenshot with format "jpeg" to capture the page. After taking the screenshot, describe what you see in the image.',
       mediaTypePattern: /^image\/(jpeg|jpg|webp)$/,
     },
   ] as const;
@@ -245,6 +246,15 @@ describeIntegration("MCP server integration with model", () => {
           (e): e is Extract<typeof e, { type: "tool-call-end" }> => e.type === "tool-call-end"
         );
         const screenshotResult = toolCallEnds.find((e) => e.toolName === "chrome_take_screenshot");
+
+        // Debug: log tool calls if screenshot not found
+        if (!screenshotResult) {
+          const toolNames = toolCallEnds.map((e) => e.toolName);
+          const deltas = collector.getDeltas();
+          const responseText = extractTextFromEvents(deltas);
+          console.log(`[MCP ${name} Test] Tool calls made:`, toolNames);
+          console.log(`[MCP ${name} Test] Model response:`, responseText.slice(0, 500));
+        }
         expect(screenshotResult).toBeDefined();
 
         // Validate result structure and media content
