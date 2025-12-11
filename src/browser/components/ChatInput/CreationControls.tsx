@@ -5,6 +5,7 @@ import { Loader2, Wand2 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { SSHIcon, WorktreeIcon, LocalIcon } from "../icons/RuntimeIcons";
+import { DocsLink } from "../DocsLink";
 import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
 
 interface CreationControlsProps {
@@ -118,14 +119,7 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
             >
               <div className="flex items-baseline justify-between gap-3">
                 <span>{option.description}</span>
-                <a
-                  href={`https://mux.coder.com${option.docsPath}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-accent hover:underline"
-                >
-                  docs
-                </a>
+                <DocsLink path={option.docsPath} />
               </div>
               {isModeDisabled ? (
                 <p className="mt-1 text-yellow-500">Requires git repository</p>
@@ -201,7 +195,7 @@ export function CreationControls(props: CreationControlsProps) {
         {/* Name input with magic wand - uses grid overlay technique for auto-sizing */}
         <div className="relative inline-grid items-center">
           {/* Hidden sizer span - determines width based on content, minimum is placeholder width */}
-          <span className="invisible col-start-1 row-start-1 whitespace-pre pr-7 text-lg font-semibold">
+          <span className="invisible col-start-1 row-start-1 pr-7 text-lg font-semibold whitespace-pre">
             {nameState.name || "workspace-name"}
           </span>
           <Tooltip>
