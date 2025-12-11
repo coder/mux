@@ -19,7 +19,7 @@ import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStora
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
 import { fileExists } from "@/node/utils/runtime/fileExists";
-import { expandTilde } from "@/node/runtime/tildeExpansion";
+import { expandTilde, expandTildeForSSH } from "@/node/runtime/tildeExpansion";
 
 import type { PostCompactionExclusions } from "@/common/types/attachment";
 import type {
@@ -37,7 +37,7 @@ import type {
 } from "@/common/types/workspace";
 import type { MuxMessage } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
-import { hasSrcBaseDir, getSrcBaseDir } from "@/common/types/runtime";
+import { hasSrcBaseDir, getSrcBaseDir, isSSHRuntime } from "@/common/types/runtime";
 import { defaultModel } from "@/common/utils/ai/models";
 import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
@@ -1090,20 +1090,22 @@ export class WorkspaceService extends EventEmitter {
         const planPath = getPlanFilePath(metadata.name, metadata.projectName);
         const legacyPlanPath = getLegacyPlanFilePath(workspaceId);
 
-        // Expand tilde before quoting - shellQuote uses single quotes which prevent tilde expansion
-        const expandedPlanPath = expandTilde(planPath);
-        const expandedLegacyPlanPath = expandTilde(legacyPlanPath);
+        // For SSH: use $HOME expansion so remote shell resolves to remote home directory
+        // For local: expand tilde locally since shellQuote prevents shell expansion
+        const quotedPlanPath = isSSHRuntime(metadata.runtimeConfig)
+          ? expandTildeForSSH(planPath)
+          : shellQuote(expandTilde(planPath));
+        const quotedLegacyPlanPath = isSSHRuntime(metadata.runtimeConfig)
+          ? expandTildeForSSH(legacyPlanPath)
+          : shellQuote(expandTilde(legacyPlanPath));
 
         try {
           // Use exec to delete files since runtime doesn't have a deleteFile method
           // Delete both paths in one command for efficiency
-          await runtime.exec(
-            `rm -f ${shellQuote(expandedPlanPath)} ${shellQuote(expandedLegacyPlanPath)}`,
-            {
-              cwd: metadata.projectPath,
-              timeout: 10,
-            }
-          );
+          await runtime.exec(`rm -f ${quotedPlanPath} ${quotedLegacyPlanPath}`, {
+            cwd: metadata.projectPath,
+            timeout: 10,
+          });
         } catch {
           // Plan files don't exist or can't be deleted - ignore
         }
