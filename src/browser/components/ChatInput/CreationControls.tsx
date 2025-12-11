@@ -161,12 +161,12 @@ export function CreationControls(props: CreationControlsProps) {
   return (
     <div className="mb-3 flex flex-col gap-4">
       {/* Project name / workspace name header row */}
-      <div className="flex items-center gap-2" data-component="WorkspaceNameGroup">
-        <h2 className="text-foreground text-lg font-semibold">{props.projectName}</h2>
-        <span className="text-muted-foreground text-lg">/</span>
+      <div className="flex items-center" data-component="WorkspaceNameGroup">
+        <h2 className="text-foreground shrink-0 text-lg font-semibold">{props.projectName}</h2>
+        <span className="text-muted-foreground mx-2 text-lg">/</span>
 
         {/* Name input with magic wand */}
-        <div className="relative max-w-[180px]">
+        <div className="relative min-w-0 flex-1">
           <Tooltip>
             <TooltipTrigger asChild>
               <input
@@ -178,7 +178,7 @@ export function CreationControls(props: CreationControlsProps) {
                 placeholder={nameState.isGenerating ? "Generating..." : "workspace-name"}
                 disabled={props.disabled}
                 className={cn(
-                  "bg-transparent border-border-medium focus:border-accent h-7 w-full rounded-md border border-transparent px-2 pr-7 text-lg font-semibold focus:border focus:bg-bg-dark focus:outline-none disabled:opacity-50",
+                  "bg-transparent border-border-medium focus:border-accent h-7 w-full rounded-md border border-transparent px-1 pr-7 text-lg font-semibold focus:border focus:bg-bg-dark focus:outline-none disabled:opacity-50",
                   nameState.autoGenerate ? "text-muted" : "text-foreground",
                   nameState.error && "border-red-500"
                 )}
