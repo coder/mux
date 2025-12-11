@@ -48,11 +48,12 @@ TooltipContent.displayName = TooltipPrimitive.Content.displayName;
 
 const HelpIndicator = React.forwardRef<
   HTMLSpanElement,
-  { className?: string; children?: React.ReactNode }
->(({ className, children }, ref) => (
+  React.HTMLAttributes<HTMLSpanElement> & { className?: string; children?: React.ReactNode }
+>(({ className, children, ...props }, ref) => (
   <span
     ref={ref}
     className={cn("text-muted flex cursor-help items-center text-[10px] leading-none", className)}
+    {...props}
   >
     {children}
   </span>
