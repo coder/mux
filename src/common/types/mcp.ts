@@ -1,7 +1,14 @@
-export interface MCPConfig {
-  servers: Record<string, string>;
+/** Normalized server info (always has disabled field) */
+export interface MCPServerInfo {
+  command: string;
+  disabled: boolean;
 }
 
+export interface MCPConfig {
+  servers: Record<string, MCPServerInfo>;
+}
+
+/** Internal map of server name → command string (used after filtering disabled) */
 export type MCPServerMap = Record<string, string>;
 
 /** Result of testing an MCP server connection */

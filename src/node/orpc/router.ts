@@ -235,6 +235,12 @@ export const router = (authToken?: string) => {
           .handler(({ context, input }) =>
             context.mcpServerManager.test(input.projectPath, input.name, input.command)
           ),
+        setEnabled: t
+          .input(schemas.projects.mcp.setEnabled.input)
+          .output(schemas.projects.mcp.setEnabled.output)
+          .handler(({ context, input }) =>
+            context.mcpConfigService.setServerEnabled(input.projectPath, input.name, input.enabled)
+          ),
       },
     },
     nameGeneration: {

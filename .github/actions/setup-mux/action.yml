@@ -44,8 +44,10 @@ runs:
         restore-keys: |
           ${{ runner.os }}-bun-cache-
 
+    # Always run install if we didn't get an exact cache hit.
+    # This handles restore-key matches which may have stale/incomplete node_modules.
     - name: Install dependencies
-      if: steps.check-node-modules.outputs.exists != 'true'
+      if: steps.cache-node-modules.outputs.cache-hit != 'true'
       shell: bash
       run: bun install --frozen-lockfile
 
