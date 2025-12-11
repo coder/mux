@@ -67,11 +67,11 @@ When the user asks you to remember something:
 /**
  * Build environment context XML block describing the workspace.
  * @param workspacePath - Workspace directory path
- * @param runtimeType - Runtime type: "local", "worktree", or "ssh"
+ * @param runtimeType - Runtime type: "local", "worktree", "ssh", or "docker"
  */
 function buildEnvironmentContext(
   workspacePath: string,
-  runtimeType: "local" | "worktree" | "ssh"
+  runtimeType: "local" | "worktree" | "ssh" | "docker"
 ): string {
   if (runtimeType === "local") {
     // Local runtime works directly in project directory - may or may not be git
@@ -93,6 +93,19 @@ You are in a clone of a git repository at ${workspacePath}
 
 - This IS a git repository - run git commands directly (no cd needed)
 - Tools run here automatically
+- You are meant to do your work isolated from the user and other agents
+</environment>
+`;
+  }
+
+  if (runtimeType === "docker") {
+    // Docker runtime runs in an isolated container
+    return `
+<environment>
+You are in a clone of a git repository at ${workspacePath} inside a Docker container
+
+- This IS a git repository - run git commands directly (no cd needed)
+- Tools run here automatically inside the container
 - You are meant to do your work isolated from the user and other agents
 </environment>
 `;

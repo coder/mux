@@ -17,7 +17,8 @@ import type {
 import { RuntimeError as RuntimeErrorClass } from "./Runtime";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { log } from "@/node/services/log";
-import { checkInitHookExists, createLineBufferedLoggers, getMuxEnv } from "./initHook";
+import { checkInitHookExists, getMuxEnv, runInitHookOnRuntime } from "./initHook";
+import { expandTildeForSSH as expandHookPath } from "./tildeExpansion";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { streamProcessToLogger } from "./streamProcess";
 import { expandTildeForSSH, cdCommandForSSH } from "./tildeExpansion";
@@ -26,20 +27,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { execAsync, DisposableProcess } from "@/node/utils/disposableExec";
 import { getControlPath, sshConnectionPool, type SSHRuntimeConfig } from "./sshConnectionPool";
 import { getBashPath } from "@/node/utils/main/bashPath";
-
-/**
- * Shell-escape helper for remote bash.
- * Reused across all SSH runtime operations for performance.
- * Note: For background process commands, use shellQuote from backgroundCommands for parity.
- */
-const shescape = {
-  quote(value: unknown): string {
-    const s = String(value);
-    if (s.length === 0) return "''";
-    // Use POSIX-safe pattern to embed single quotes within single-quoted strings
-    return "'" + s.replace(/'/g, "'\"'\"'") + "'";
-  },
-};
+import { streamToString, shescape } from "./streamUtils";
 
 function logSSHBackoffWait(initLogger: InitLogger, waitMs: number): void {
   const secs = Math.max(1, Math.ceil(waitMs / 1000));
@@ -813,78 +801,6 @@ export class SSHRuntime implements Runtime {
     }
   }
 
-  /**
-   * Run .mux/init hook on remote machine if it exists
-   * @param workspacePath - Path to the workspace directory on remote
-   * @param muxEnv - MUX_ environment variables (from getMuxEnv)
-   * @param initLogger - Logger for streaming output
-   * @param abortSignal - Optional abort signal
-   */
-  private async runInitHook(
-    workspacePath: string,
-    muxEnv: Record<string, string>,
-    initLogger: InitLogger,
-    abortSignal?: AbortSignal
-  ): Promise<void> {
-    // Construct hook path - expand tilde if present
-    const remoteHookPath = `${workspacePath}/.mux/init`;
-    initLogger.logStep(`Running init hook: ${remoteHookPath}`);
-
-    // Expand tilde in hook path for execution
-    // Tilde won't be expanded when the path is quoted, so we need to expand it ourselves
-    const hookCommand = expandTildeForSSH(remoteHookPath);
-
-    // Run hook remotely and stream output
-    // No timeout - user init hooks can be arbitrarily long
-    const hookStream = await this.exec(hookCommand, {
-      cwd: workspacePath, // Run in the workspace directory
-      timeout: 3600, // 1 hour - generous timeout for init hooks
-      abortSignal,
-      env: muxEnv,
-    });
-
-    // Create line-buffered loggers
-    const loggers = createLineBufferedLoggers(initLogger);
-
-    // Stream stdout/stderr through line-buffered loggers
-    const stdoutReader = hookStream.stdout.getReader();
-    const stderrReader = hookStream.stderr.getReader();
-    const decoder = new TextDecoder();
-
-    // Read stdout in parallel
-    const readStdout = async () => {
-      try {
-        while (true) {
-          const { done, value } = await stdoutReader.read();
-          if (done) break;
-          loggers.stdout.append(decoder.decode(value, { stream: true }));
-        }
-        loggers.stdout.flush();
-      } finally {
-        stdoutReader.releaseLock();
-      }
-    };
-
-    // Read stderr in parallel
-    const readStderr = async () => {
-      try {
-        while (true) {
-          const { done, value } = await stderrReader.read();
-          if (done) break;
-          loggers.stderr.append(decoder.decode(value, { stream: true }));
-        }
-        loggers.stderr.flush();
-      } finally {
-        stderrReader.releaseLock();
-      }
-    };
-
-    // Wait for completion
-    const [exitCode] = await Promise.all([hookStream.exitCode, readStdout(), readStderr()]);
-
-    initLogger.logComplete(exitCode);
-  }
-
   getWorkspacePath(projectPath: string, workspaceName: string): string {
     const projectName = getProjectName(projectPath);
     return path.posix.join(this.config.srcBaseDir, projectName, workspaceName);
@@ -1083,7 +999,7 @@ export class SSHRuntime implements Runtime {
       }
 
       // 5. Run .mux/init hook if it exists
-      // Note: runInitHook calls logComplete() internally if hook exists
+      // Note: runInitHookOnRuntime calls logComplete() internally
       const hookExists = await checkInitHookExists(projectPath);
       if (hookExists) {
         const muxEnv = { ...env, ...getMuxEnv(projectPath, "ssh", branchName) };
@@ -1645,23 +1561,5 @@ export class SSHRuntime implements Runtime {
   }
 }
 
-/**
- * Helper to convert a ReadableStream to a string
- */
-export async function streamToString(stream: ReadableStream<Uint8Array>): Promise<string> {
-  const reader = stream.getReader();
-  const decoder = new TextDecoder("utf-8");
-  let result = "";
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      result += decoder.decode(value, { stream: true });
-    }
-    result += decoder.decode();
-    return result;
-  } finally {
-    reader.releaseLock();
-  }
-}
+// Re-export for backward compatibility with existing imports
+export { streamToString } from "./streamUtils";

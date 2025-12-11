@@ -78,6 +78,8 @@
     --color-runtime-worktree: #a855f7;
     --color-runtime-worktree-text: #c084fc; /* purple-400 */
     --color-runtime-local: hsl(0 0% 60%); /* matches --color-muted-foreground */
+    --color-runtime-docker: #2496ed; /* Docker blue */
+    --color-runtime-docker-text: #54b3f4;
 
     /* Background & Layout */
     --color-background: hsl(0 0% 12%);
@@ -348,6 +350,8 @@
   --color-runtime-worktree: #a855f7;
   --color-runtime-worktree-text: #c084fc;
   --color-runtime-local: hsl(210 14% 48%); /* matches --color-muted-foreground */
+  --color-runtime-docker: #2496ed; /* Docker blue */
+  --color-runtime-docker-text: #0d7cc4;
 
   --color-background: hsl(210 33% 98%);
   --color-background-secondary: hsl(210 36% 95%);
@@ -587,6 +591,8 @@
   --color-runtime-worktree: #6c71c4; /* violet */
   --color-runtime-worktree-text: #6c71c4;
   --color-runtime-local: #839496; /* base0 */
+  --color-runtime-docker: #2aa198; /* cyan */
+  --color-runtime-docker-text: #2aa198;
 
   /* Background & Layout - Solarized base colors */
   --color-background: #fdf6e3; /* base3 */
@@ -796,6 +802,8 @@
   --color-runtime-worktree: #6c71c4; /* violet */
   --color-runtime-worktree-text: #6c71c4;
   --color-runtime-local: #839496; /* base0 */
+  --color-runtime-docker: #2aa198; /* cyan */
+  --color-runtime-docker-text: #2aa198;
 
   /* Background & Layout - Solarized dark base colors
      Palette reference:

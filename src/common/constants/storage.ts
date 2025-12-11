@@ -184,6 +184,16 @@ export function getLastSshHostKey(projectPath: string): string {
 }
 
 /**
+ * Get the localStorage key for the last entered Docker image for a project
+ * Stores the last entered Docker image separately from runtime mode
+ * so it persists when switching between runtime modes
+ * Format: "lastDockerImage:{projectPath}"
+ */
+export function getLastDockerImageKey(projectPath: string): string {
+  return `lastDockerImage:${projectPath}`;
+}
+
+/**
  * Get the localStorage key for the preferred compaction model (global)
  * Format: "preferredCompactionModel"
  */
