@@ -97,7 +97,9 @@ describeIntegration("Plan Commands Integration", () => {
         expect(result.success).toBe(true);
         if (result.success) {
           expect(result.data.content).toBe(planContent);
-          expect(result.data.path).toBe(planPath);
+          // Path should be expanded (no tilde) so it works with editor deep links
+          expect(result.data.path).toBe(expandedPlanPath);
+          expect(result.data.path).not.toContain("~");
         }
       } finally {
         await env.orpc.workspace.remove({ workspaceId });

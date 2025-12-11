@@ -145,10 +145,14 @@ export async function readPlanFile(
   const planPath = getPlanFilePath(workspaceName, projectName);
   const legacyPath = getLegacyPlanFilePath(workspaceId);
 
+  // Resolve tilde to absolute path for client use (editor deep links, etc.)
+  // For local runtimes this expands ~ to /home/user; for SSH it resolves remotely
+  const resolvedPath = await runtime.resolvePath(planPath);
+
   // Try new path first
   try {
     const content = await readFileString(runtime, planPath);
-    return { content, exists: true, path: planPath };
+    return { content, exists: true, path: resolvedPath };
   } catch {
     // Fall back to legacy path
     try {
@@ -163,10 +167,10 @@ export async function readPlanFile(
       } catch {
         // Migration failed, but we have the content
       }
-      return { content, exists: true, path: planPath };
+      return { content, exists: true, path: resolvedPath };
     } catch {
       // File doesn't exist at either location
-      return { content: "", exists: false, path: planPath };
+      return { content: "", exists: false, path: resolvedPath };
     }
   }
 }
