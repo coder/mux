@@ -8,21 +8,8 @@ import {
   SelectValue,
 } from "@/browser/components/ui/select";
 import { Input } from "@/browser/components/ui/input";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useAPI } from "@/browser/contexts/API";
-import {
-  EDITOR_CONFIG_KEY,
-  DEFAULT_EDITOR_CONFIG,
-  type EditorConfig,
-  type EditorType,
-} from "@/common/constants/storage";
-
-const EDITOR_OPTIONS: Array<{ value: EditorType; label: string }> = [
-  { value: "vscode", label: "VS Code" },
-  { value: "cursor", label: "Cursor" },
-  { value: "zed", label: "Zed" },
-  { value: "custom", label: "Custom" },
-];
+import type { EditorInfo } from "@/common/types/editor";
 
 // Browser mode: window.api is not set (only exists in Electron via preload)
 const isBrowserMode = typeof window !== "undefined" && !window.api;
@@ -30,12 +17,33 @@ const isBrowserMode = typeof window !== "undefined" && !window.api;
 export function GeneralSection() {
   const { theme, setTheme } = useTheme();
   const { api } = useAPI();
-  const [editorConfig, setEditorConfig] = usePersistedState<EditorConfig>(
-    EDITOR_CONFIG_KEY,
-    DEFAULT_EDITOR_CONFIG
-  );
+  const [editors, setEditors] = useState<EditorInfo[]>([]);
+  const [defaultEditor, setDefaultEditor] = useState<string>("");
+  const [loading, setLoading] = useState(true);
   const [sshHost, setSshHost] = useState<string>("");
   const [sshHostLoaded, setSshHostLoaded] = useState(false);
+
+  // Load editors from backend
+  useEffect(() => {
+    if (!api) return;
+
+    const loadEditors = async () => {
+      try {
+        const editorList = await api.general.listEditors();
+        setEditors(editorList);
+        const current = editorList.find((e) => e.isDefault);
+        if (current) {
+          setDefaultEditor(current.id);
+        }
+      } catch (err) {
+        console.error("Failed to load editors:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void loadEditors();
+  }, [api]);
 
   // Load SSH host from server on mount (browser mode only)
   useEffect(() => {
@@ -47,12 +55,30 @@ export function GeneralSection() {
     }
   }, [api]);
 
-  const handleEditorChange = (editor: EditorType) => {
-    setEditorConfig((prev) => ({ ...prev, editor }));
-  };
+  const handleEditorChange = async (editorId: string) => {
+    if (!api) return;
 
-  const handleCustomCommandChange = (customCommand: string) => {
-    setEditorConfig((prev) => ({ ...prev, customCommand }));
+    // Optimistic update
+    setDefaultEditor(editorId);
+    setEditors((prev) =>
+      prev.map((e) => ({
+        ...e,
+        isDefault: e.id === editorId,
+      }))
+    );
+
+    try {
+      await api.general.setDefaultEditor({ editorId });
+    } catch (err) {
+      console.error("Failed to set default editor:", err);
+      // Revert on error
+      const editorList = await api.general.listEditors();
+      setEditors(editorList);
+      const current = editorList.find((e) => e.isDefault);
+      if (current) {
+        setDefaultEditor(current.id);
+      }
+    }
   };
 
   const handleSshHostChange = useCallback(
@@ -91,45 +117,35 @@ export function GeneralSection() {
       <div className="flex items-center justify-between">
         <div>
           <div className="text-foreground text-sm">Editor</div>
-          <div className="text-muted text-xs">Editor to open files in</div>
+          <div className="text-muted text-xs">
+            Default editor for opening workspaces.{" "}
+            <a
+              href="https://mux.coder.com/docs/editor"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 hover:underline"
+            >
+              Learn more
+            </a>
+          </div>
         </div>
-        <Select value={editorConfig.editor} onValueChange={handleEditorChange}>
+        <Select
+          value={defaultEditor}
+          onValueChange={(value) => void handleEditorChange(value)}
+          disabled={loading}
+        >
           <SelectTrigger className="border-border-medium bg-background-secondary hover:bg-hover h-9 w-auto cursor-pointer rounded-md border px-3 text-sm transition-colors">
-            <SelectValue />
+            <SelectValue placeholder={loading ? "Loading..." : "Select editor"} />
           </SelectTrigger>
           <SelectContent>
-            {EDITOR_OPTIONS.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
+            {editors.map((editor) => (
+              <SelectItem key={editor.id} value={editor.id}>
+                {editor.name}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
       </div>
-
-      {editorConfig.editor === "custom" && (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-foreground text-sm">Custom Command</div>
-              <div className="text-muted text-xs">Command to run (path will be appended)</div>
-            </div>
-            <Input
-              value={editorConfig.customCommand ?? ""}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                handleCustomCommandChange(e.target.value)
-              }
-              placeholder="e.g., nvim"
-              className="border-border-medium bg-background-secondary h-9 w-40"
-            />
-          </div>
-          {isBrowserMode && (
-            <div className="text-warning text-xs">
-              Custom editors are not supported in browser mode. Use VS Code or Cursor instead.
-            </div>
-          )}
-        </div>
-      )}
 
       {isBrowserMode && sshHostLoaded && (
         <div className="flex items-center justify-between">

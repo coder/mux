@@ -1,55 +1,135 @@
-import { spawn, spawnSync } from "child_process";
+import { spawn } from "child_process";
+import { statSync } from "fs";
 import type { Config } from "@/node/config";
 import { isSSHRuntime } from "@/common/types/runtime";
 import { log } from "@/node/services/log";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
-
-/**
- * Quote a string for safe use in shell commands.
- * Uses single quotes with proper escaping for embedded single quotes.
- */
-function shellQuote(value: string): string {
-  if (value.length === 0) return "''";
-  return "'" + value.replace(/'/g, "'\"'\"'") + "'";
-}
-
-export interface EditorConfig {
-  editor: string;
-  customCommand?: string;
-}
+import { findAvailableCommand } from "@/node/utils/commandDiscovery";
+import type { TerminalService } from "@/node/services/terminalService";
+import type {
+  EditorContext,
+  EditorsConfig,
+  EditorInfo,
+  EditorOpenResult,
+} from "@/common/types/editor";
+import { DEFAULT_EDITORS_JS } from "@/common/types/editor";
 
 /**
  * Service for opening workspaces in code editors.
- * Supports VS Code, Cursor, Zed, and custom editors.
- * For SSH workspaces, can use Remote-SSH extension (VS Code/Cursor only).
+ *
+ * Editor configuration is loaded from ~/.mux/editors.js which exports:
+ * - default: string (editor ID)
+ * - editors: Record<string, { name, open(ctx) }>
+ *
+ * Each editor's open() function receives context about the workspace
+ * and returns instructions for how to open it (native spawn or web terminal).
  */
 export class EditorService {
   private readonly config: Config;
-
-  private static readonly EDITOR_COMMANDS: Record<string, string> = {
-    vscode: "code",
-    cursor: "cursor",
-    zed: "zed",
-  };
+  private terminalService?: TerminalService;
+  private editorsConfig: EditorsConfig | null = null;
+  private editorsConfigMtime = 0;
 
   constructor(config: Config) {
     this.config = config;
   }
 
   /**
+   * Set the terminal service reference (for opening web terminals).
+   * Called after service container initialization to avoid circular deps.
+   */
+  setTerminalService(terminalService: TerminalService): void {
+    this.terminalService = terminalService;
+  }
+
+  /**
+   * Check if running in browser mode (no native process spawning)
+   */
+  isBrowserMode(): boolean {
+    return !this.terminalService?.isDesktopMode();
+  }
+
+  /**
+   * Load editors config from ~/.mux/editors.js
+   * Creates default file if it doesn't exist.
+   * Caches config and reloads when file changes.
+   */
+  private async loadEditorsConfig(): Promise<EditorsConfig> {
+    const editorsPath = this.config.getEditorsFilePath();
+
+    // Ensure file exists with defaults
+    await this.config.ensureEditorsFile(DEFAULT_EDITORS_JS);
+
+    // Check if we need to reload (file modified)
+    let mtime = 0;
+    try {
+      mtime = statSync(editorsPath).mtimeMs;
+    } catch {
+      // File doesn't exist, will be created
+    }
+
+    if (this.editorsConfig && mtime === this.editorsConfigMtime) {
+      return this.editorsConfig;
+    }
+
+    // Dynamic import the JS file
+    // Add cache-busting query to force reload when file changes
+    // Note: Dynamic import is required here - we're loading user-defined JavaScript config
+    // eslint-disable-next-line no-restricted-syntax
+    const module = (await import(/* @vite-ignore */ `file://${editorsPath}?t=${mtime}`)) as {
+      default: EditorsConfig;
+    };
+    this.editorsConfig = module.default;
+    this.editorsConfigMtime = mtime;
+    return this.editorsConfig;
+  }
+
+  /**
+   * Get list of available editors for the UI
+   */
+  async listEditors(): Promise<EditorInfo[]> {
+    const config = await this.loadEditorsConfig();
+    return Object.entries(config.editors).map(([id, editor]) => ({
+      id,
+      name: editor.name,
+      isDefault: id === config.default,
+    }));
+  }
+
+  /**
+   * Get the current default editor ID
+   */
+  getDefaultEditorId(): string {
+    return this.config.getDefaultEditorId();
+  }
+
+  /**
+   * Set the default editor
+   */
+  async setDefaultEditor(editorId: string): Promise<void> {
+    const config = await this.loadEditorsConfig();
+    if (!config.editors[editorId]) {
+      throw new Error(`Unknown editor: ${editorId}`);
+    }
+    await this.config.setDefaultEditorId(editorId);
+    // Invalidate cache so next load picks up the change
+    this.editorsConfigMtime = 0;
+  }
+
+  /**
    * Open a path in the user's configured code editor.
-   * For SSH workspaces with Remote-SSH extension enabled, opens directly in the editor.
    *
    * @param workspaceId - The workspace (used to determine if SSH and get remote host)
    * @param targetPath - The path to open (workspace directory or specific file)
-   * @param editorConfig - Editor configuration from user settings
+   * @param editorId - Optional editor ID override (uses default if not provided)
    */
   async openInEditor(
     workspaceId: string,
     targetPath: string,
-    editorConfig: EditorConfig
+    editorId?: string
   ): Promise<{ success: true; data: void } | { success: false; error: string }> {
     try {
+      // Load workspace metadata
       const allMetadata = await this.config.getAllWorkspaceMetadata();
       const workspace = allMetadata.find((w) => w.id === workspaceId);
 
@@ -57,80 +137,76 @@ export class EditorService {
         return { success: false, error: `Workspace not found: ${workspaceId}` };
       }
 
+      // Load editor config
+      const editorsConfig = await this.loadEditorsConfig();
+      const selectedEditorId = editorId ?? editorsConfig.default;
+      const editor = editorsConfig.editors[selectedEditorId];
+
+      if (!editor) {
+        return { success: false, error: `Unknown editor: ${selectedEditorId}` };
+      }
+
+      // Build context for the editor's open function
       const runtimeConfig = workspace.runtimeConfig;
       const isSSH = isSSHRuntime(runtimeConfig);
 
-      // Determine the editor command
-      const editorCommand =
-        editorConfig.editor === "custom"
-          ? editorConfig.customCommand
-          : EditorService.EDITOR_COMMANDS[editorConfig.editor];
-
-      if (!editorCommand) {
-        return { success: false, error: "No editor command configured" };
-      }
-
-      // Check if editor is available
-      const isAvailable = this.isCommandAvailable(editorCommand);
-      if (!isAvailable) {
-        return { success: false, error: `Editor command not found: ${editorCommand}` };
-      }
-
+      // Resolve path for SSH workspaces (VS Code doesn't expand ~)
+      let resolvedPath = targetPath;
       if (isSSH) {
-        // SSH workspace handling - only VS Code and Cursor support Remote-SSH
-        if (editorConfig.editor !== "vscode" && editorConfig.editor !== "cursor") {
+        const runtime = createRuntime(runtimeConfig, { projectPath: workspace.projectPath });
+        resolvedPath = await runtime.resolvePath(targetPath);
+      }
+
+      const ctx: EditorContext = {
+        path: resolvedPath,
+        host: isSSH ? runtimeConfig.host : undefined,
+        isSSH,
+        isBrowser: this.isBrowserMode(),
+        isDesktop: !this.isBrowserMode(),
+        platform: process.platform,
+        findCommand: (commands: string[]) => findAvailableCommand(commands),
+      };
+
+      // Call the editor's open function
+      const result: EditorOpenResult = await editor.open(ctx);
+
+      // Handle error response
+      if ("error" in result) {
+        return { success: false, error: result.error };
+      }
+
+      // Handle web terminal response
+      if (result.type === "web_term") {
+        if (!this.terminalService) {
+          return { success: false, error: "Terminal service not available" };
+        }
+        await this.terminalService.openWindow(workspaceId, result.command);
+        return { success: true, data: undefined };
+      }
+
+      // Handle native spawn response
+      if (result.type === "native") {
+        if (this.isBrowserMode()) {
           return {
             success: false,
-            error: `${editorConfig.editor} does not support Remote-SSH for SSH workspaces`,
+            error: "Native editors are not available in browser mode",
           };
         }
 
-        // Resolve tilde paths to absolute paths for SSH (VS Code doesn't expand ~)
-        const runtime = createRuntime(runtimeConfig, { projectPath: workspace.projectPath });
-        const resolvedPath = await runtime.resolvePath(targetPath);
-
-        // Build the remote command: code --remote ssh-remote+host /remote/path
-        // Quote the path to handle spaces; the remote host arg doesn't need quoting
-        const shellCmd = `${editorCommand} --remote ${shellQuote(`ssh-remote+${runtimeConfig.host}`)} ${shellQuote(resolvedPath)}`;
-
-        log.info(`Opening SSH path in editor: ${shellCmd}`);
-        const child = spawn(shellCmd, [], {
+        log.info(`Opening in editor: ${result.command} ${result.args.join(" ")}`);
+        const child = spawn(result.command, result.args, {
           detached: true,
           stdio: "ignore",
-          shell: true,
         });
         child.unref();
-      } else {
-        // Local - just open the path (quote to handle spaces)
-        const shellCmd = `${editorCommand} ${shellQuote(targetPath)}`;
-        log.info(`Opening local path in editor: ${shellCmd}`);
-        const child = spawn(shellCmd, [], {
-          detached: true,
-          stdio: "ignore",
-          shell: true,
-        });
-        child.unref();
+        return { success: true, data: undefined };
       }
 
-      return { success: true, data: undefined };
+      return { success: false, error: "Invalid editor response" };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.error(`Failed to open in editor: ${message}`);
       return { success: false, error: message };
-    }
-  }
-
-  /**
-   * Check if a command is available in the system PATH.
-   * Uses shell: true to ensure we get the full PATH from user's shell profile,
-   * which is necessary for commands installed via Homebrew or similar.
-   */
-  private isCommandAvailable(command: string): boolean {
-    try {
-      const result = spawnSync("which", [command], { encoding: "utf8", shell: true });
-      return result.status === 0;
-    } catch {
-      return false;
     }
   }
 }

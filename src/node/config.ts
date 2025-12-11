@@ -39,6 +39,7 @@ export class Config {
   private readonly configFile: string;
   private readonly providersFile: string;
   private readonly secretsFile: string;
+  private readonly editorsFile: string;
 
   constructor(rootDir?: string) {
     this.rootDir = rootDir ?? getMuxHome();
@@ -47,6 +48,7 @@ export class Config {
     this.configFile = path.join(this.rootDir, "config.json");
     this.providersFile = path.join(this.rootDir, "providers.jsonc");
     this.secretsFile = path.join(this.rootDir, "secrets.json");
+    this.editorsFile = path.join(this.rootDir, "editors.js");
   }
 
   loadConfigOrDefault(): ProjectsConfig {
@@ -587,6 +589,70 @@ ${jsonString}`;
     const config = this.loadSecretsConfig();
     config[projectPath] = secrets;
     await this.saveSecretsConfig(config);
+  }
+
+  /**
+   * Get the path to the editors.js config file
+   */
+  getEditorsFilePath(): string {
+    return this.editorsFile;
+  }
+
+  /**
+   * Check if editors.js exists
+   */
+  editorsFileExists(): boolean {
+    return fs.existsSync(this.editorsFile);
+  }
+
+  /**
+   * Initialize editors.js with default content if it doesn't exist
+   */
+  async ensureEditorsFile(defaultContent: string): Promise<void> {
+    if (!this.editorsFileExists()) {
+      if (!fs.existsSync(this.rootDir)) {
+        fs.mkdirSync(this.rootDir, { recursive: true });
+      }
+      await writeFileAtomic(this.editorsFile, defaultContent, "utf-8");
+    }
+  }
+
+  /**
+   * Get the default editor ID from editors.js
+   * Returns "vscode" if file doesn't exist or can't be parsed
+   */
+  getDefaultEditorId(): string {
+    try {
+      if (!this.editorsFileExists()) {
+        return "vscode";
+      }
+      // Read file and extract default using regex (avoid full import for this simple query)
+      const content = fs.readFileSync(this.editorsFile, "utf-8");
+      const defaultRegex = /default:\s*["']([^"']+)["']/;
+      const match = defaultRegex.exec(content);
+      return match?.[1] ?? "vscode";
+    } catch (error) {
+      log.error("Error reading default editor:", error);
+      return "vscode";
+    }
+  }
+
+  /**
+   * Set the default editor ID in editors.js
+   */
+  async setDefaultEditorId(editorId: string): Promise<void> {
+    try {
+      if (!this.editorsFileExists()) {
+        throw new Error("editors.js does not exist");
+      }
+      const content = fs.readFileSync(this.editorsFile, "utf-8");
+      // Replace the default: "..." line
+      const updated = content.replace(/default:\s*["'][^"']+["']/, `default: "${editorId}"`);
+      await writeFileAtomic(this.editorsFile, updated, "utf-8");
+    } catch (error) {
+      log.error("Error setting default editor:", error);
+      throw error;
+    }
   }
 }
 

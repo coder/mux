@@ -11,10 +11,11 @@ import { TerminalView } from "@/browser/components/TerminalView";
 import { APIProvider } from "@/browser/contexts/API";
 import "./styles/globals.css";
 
-// Get workspace ID from query parameter
+// Get parameters from query string
 const params = new URLSearchParams(window.location.search);
 const workspaceId = params.get("workspaceId");
 const sessionId = params.get("sessionId"); // Reserved for future reload support
+const initialCommand = params.get("initialCommand"); // Command to run on terminal start (e.g., vim)
 
 if (!workspaceId) {
   document.body.innerHTML = `
@@ -30,7 +31,12 @@ if (!workspaceId) {
   // race conditions with WebSocket connections and terminal lifecycle
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <APIProvider>
-      <TerminalView workspaceId={workspaceId} sessionId={sessionId ?? undefined} visible={true} />
+      <TerminalView
+        workspaceId={workspaceId}
+        sessionId={sessionId ?? undefined}
+        initialCommand={initialCommand ?? undefined}
+        visible={true}
+      />
     </APIProvider>
   );
 }

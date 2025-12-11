@@ -22,8 +22,9 @@ export class TerminalWindowManager {
   /**
    * Open a new terminal window for a workspace
    * Multiple windows can be open for the same workspace
+   * @param initialCommand - Optional command to run immediately after terminal opens (e.g., "vim /path/to/file")
    */
-  async openTerminalWindow(workspaceId: string): Promise<void> {
+  async openTerminalWindow(workspaceId: string, initialCommand?: string): Promise<void> {
     this.windowCount++;
     const windowId = this.windowCount;
 
@@ -75,20 +76,25 @@ export class TerminalWindowManager {
     const forceDistLoad = process.env.MUX_E2E_LOAD_DIST === "1";
     const useDevServer = !app.isPackaged && !forceDistLoad;
 
+    // Build query params
+    const query: Record<string, string> = { workspaceId };
+    if (initialCommand) {
+      query.initialCommand = initialCommand;
+    }
+
     if (useDevServer) {
       // Development mode - load from Vite dev server
-      await terminalWindow.loadURL(
-        `http://localhost:5173/terminal.html?workspaceId=${encodeURIComponent(workspaceId)}`
-      );
+      const params = new URLSearchParams(query);
+      await terminalWindow.loadURL(`http://localhost:5173/terminal.html?${params.toString()}`);
       terminalWindow.webContents.openDevTools();
     } else {
       // Production mode (or E2E dist mode) - load from built files
-      await terminalWindow.loadFile(path.join(__dirname, "../terminal.html"), {
-        query: { workspaceId },
-      });
+      await terminalWindow.loadFile(path.join(__dirname, "../terminal.html"), { query });
     }
 
-    log.info(`Terminal window ${windowId} opened for workspace: ${workspaceId}`);
+    log.info(
+      `Terminal window ${windowId} opened for workspace: ${workspaceId}${initialCommand ? ` with command: ${initialCommand}` : ""}`
+    );
   }
 
   /**
