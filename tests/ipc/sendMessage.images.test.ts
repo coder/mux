@@ -25,15 +25,17 @@ if (shouldRunIntegrationTests()) {
   validateApiKeys(["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]);
 }
 
-// 4x4 pure red PNG (#FF0000) as base64 data URI (larger than 1x1 for reliable vision model processing)
+// 4x4 pure red PNG (#FF0000) as base64 data URI
+// Uses 8-bit RGB color (not indexed) for reliable vision model processing
 const RED_PIXEL = {
-  url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAEAQMAAACTPww9AAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGUExURf8AAP///0EdNBEAAAABYktHRAH/Ai3eAAAAB3RJTUUH6QwKEhoGET7FfwAAAAtJREFUCNdjYIAAAAAIAAEvID0xAAAAAElFTkSuQmCC",
+  url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGYktHRAD/AP8A/6C9p5MAAAAHdElNRQfpDAsPKDCftlPRAAAAEElEQVQI12P8z4AATAxEcQAz0QEH8e1QIgAAAABJRU5ErkJggg==",
   mediaType: "image/png" as const,
 };
 
-// 1x1 blue PNG pixel as base64 data URI
+// 4x4 pure blue PNG (#0000FF) as base64 data URI
+// Uses 8-bit RGB color (not indexed) for reliable vision model processing
 const BLUE_PIXEL = {
-  url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPj/HwADBwIAMCbHYQAAAABJRU5ErkJggg==",
+  url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGYktHRAD/AP8A/6C9p5MAAAAHdElNRQfpDAsPKQs3pou0AAAAFElEQVQI12NkYPjPAANMDEgANwcAMdMBB3M2PuYAAAAASUVORK5CYII=",
   mediaType: "image/png" as const,
 };
 
