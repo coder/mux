@@ -41,13 +41,14 @@ export const modelsExtra: Record<string, ModelData> = {
   },
 
   // GPT-5.2 - Released December 11, 2025
-  // $2.50/M input, $10/M output (same as gpt-5.1)
-  // Long context and improved front-end UI generation
+  // $1.75/M input, $14/M output
+  // Cached input: $0.175/M
   "gpt-5.2": {
     max_input_tokens: 200000,
     max_output_tokens: 100000,
-    input_cost_per_token: 0.0000025, // $2.50 per million input tokens
-    output_cost_per_token: 0.00001, // $10 per million output tokens
+    input_cost_per_token: 0.00000175, // $1.75 per million input tokens
+    output_cost_per_token: 0.000014, // $14 per million output tokens
+    cache_read_input_token_cost: 0.000000175, // $0.175 per million cached input tokens
     litellm_provider: "openai",
     mode: "chat",
     supports_function_calling: true,
@@ -58,13 +59,13 @@ export const modelsExtra: Record<string, ModelData> = {
   },
 
   // GPT-5.2 Pro - Released December 11, 2025
-  // $15/M input, $120/M output
+  // $21/M input, $168/M output
   // Supports medium, high, xhigh reasoning levels
   "gpt-5.2-pro": {
     max_input_tokens: 400000,
     max_output_tokens: 272000,
-    input_cost_per_token: 0.000015, // $15 per million input tokens
-    output_cost_per_token: 0.00012, // $120 per million output tokens
+    input_cost_per_token: 0.000021, // $21 per million input tokens
+    output_cost_per_token: 0.000168, // $168 per million output tokens
     litellm_provider: "openai",
     mode: "chat",
     supports_function_calling: true,
