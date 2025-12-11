@@ -16,6 +16,7 @@ import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import { createRuntime, IncompatibleRuntimeError } from "@/node/runtime/runtimeFactory";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
+import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
 import { fileExists } from "@/node/utils/runtime/fileExists";
 import { expandTilde } from "@/node/runtime/tildeExpansion";
@@ -1070,7 +1071,7 @@ export class WorkspaceService extends EventEmitter {
         try {
           // Use exec to delete file since runtime doesn't have a deleteFile method
           // The shell will expand ~ appropriately (local or remote)
-          await runtime.exec(`rm -f ${planPath}`, {
+          await runtime.exec(`rm -f ${shellQuote(planPath)}`, {
             cwd: metadata.projectPath,
             timeout: 10,
           });
