@@ -30,7 +30,7 @@ export function createDisplayUsage(
   const cachedTokens = usage.cachedInputTokens ?? 0;
   const rawInputTokens = usage.inputTokens ?? 0;
 
-  // Normalize gateway models (e.g., "mux-gateway:openai/gpt-5.1" → "openai:gpt-5.1")
+  // Normalize gateway models (e.g., "mux-gateway:openai/gpt-5.2" → "openai:gpt-5.2")
   // before detecting provider, so gateway-routed requests get correct handling
   const normalizedModel = normalizeGatewayModel(model);
 

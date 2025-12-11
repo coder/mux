@@ -110,7 +110,7 @@ describe("getModelStats", () => {
 
   describe("model without provider prefix", () => {
     test("should handle model string without provider", () => {
-      const stats = getModelStats("gpt-5.1");
+      const stats = getModelStats("gpt-5.2");
       expect(stats).not.toBeNull();
       expect(stats?.max_input_tokens).toBeGreaterThan(0);
     });

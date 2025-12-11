@@ -159,7 +159,7 @@ describe("createDisplayUsage", () => {
     };
 
     test("subtracts cached tokens for direct OpenAI model", () => {
-      const result = createDisplayUsage(openAIUsage, "openai:gpt-5.1");
+      const result = createDisplayUsage(openAIUsage, "openai:gpt-5.2");
 
       expect(result).toBeDefined();
       expect(result!.cached.tokens).toBe(71600);
@@ -169,7 +169,7 @@ describe("createDisplayUsage", () => {
 
     test("subtracts cached tokens for gateway OpenAI model", () => {
       // Gateway format: mux-gateway:openai/model-name
-      const result = createDisplayUsage(openAIUsage, "mux-gateway:openai/gpt-5.1");
+      const result = createDisplayUsage(openAIUsage, "mux-gateway:openai/gpt-5.2");
 
       expect(result).toBeDefined();
       expect(result!.cached.tokens).toBe(71600);
@@ -245,7 +245,7 @@ describe("createDisplayUsage", () => {
   });
 
   test("returns undefined for undefined usage", () => {
-    expect(createDisplayUsage(undefined, "openai:gpt-5.1")).toBeUndefined();
+    expect(createDisplayUsage(undefined, "openai:gpt-5.2")).toBeUndefined();
   });
 
   test("handles zero cached tokens", () => {
@@ -256,7 +256,7 @@ describe("createDisplayUsage", () => {
       cachedInputTokens: 0,
     };
 
-    const result = createDisplayUsage(usage, "openai:gpt-5.1");
+    const result = createDisplayUsage(usage, "openai:gpt-5.2");
 
     expect(result).toBeDefined();
     expect(result!.input.tokens).toBe(1000);
@@ -270,7 +270,7 @@ describe("createDisplayUsage", () => {
       totalTokens: 1500,
     };
 
-    const result = createDisplayUsage(usage, "openai:gpt-5.1");
+    const result = createDisplayUsage(usage, "openai:gpt-5.2");
 
     expect(result).toBeDefined();
     expect(result!.input.tokens).toBe(1000);

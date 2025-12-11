@@ -52,15 +52,27 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
-  test("returns single HIGH for gpt-5-pro base model", () => {
+  test("returns medium/high/xhigh for gpt-5.2-pro", () => {
+    expect(getThinkingPolicyForModel("openai:gpt-5.2-pro")).toEqual(["medium", "high", "xhigh"]);
+  });
+
+  test("returns medium/high/xhigh for gpt-5.2-pro with version suffix", () => {
+    expect(getThinkingPolicyForModel("openai:gpt-5.2-pro-2025-12-11")).toEqual([
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+  });
+
+  test("returns single HIGH for gpt-5-pro base model (legacy)", () => {
     expect(getThinkingPolicyForModel("openai:gpt-5-pro")).toEqual(["high"]);
   });
 
-  test("returns single HIGH for gpt-5-pro with version suffix", () => {
+  test("returns single HIGH for gpt-5-pro with version suffix (legacy)", () => {
     expect(getThinkingPolicyForModel("openai:gpt-5-pro-2025-10-06")).toEqual(["high"]);
   });
 
-  test("returns single HIGH for gpt-5-pro with whitespace after colon", () => {
+  test("returns single HIGH for gpt-5-pro with whitespace after colon (legacy)", () => {
     expect(getThinkingPolicyForModel("openai: gpt-5-pro")).toEqual(["high"]);
   });
 
