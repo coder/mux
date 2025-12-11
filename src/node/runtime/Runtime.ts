@@ -420,6 +420,11 @@ export interface Runtime {
 }
 
 /**
+ * Result of checking if a runtime type is available for a project.
+ */
+export type RuntimeAvailability = { available: true } | { available: false; reason: string };
+
+/**
  * Error thrown by runtime implementations
  */
 export class RuntimeError extends Error {

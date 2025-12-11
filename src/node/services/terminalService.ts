@@ -66,9 +66,10 @@ export class TerminalService {
         throw new Error(`Workspace not found: ${params.workspaceId}`);
       }
 
-      // 2. Create runtime
+      // 2. Create runtime (pass workspace info for Docker container name derivation)
       const runtime = createRuntime(
-        workspaceMetadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir }
+        workspaceMetadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
+        { projectPath: workspaceMetadata.projectPath, workspaceName: workspaceMetadata.name }
       );
 
       // 3. Compute workspace path

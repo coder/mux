@@ -565,7 +565,7 @@ export class WorkspaceService extends EventEmitter {
 
         const runtime = createRuntime(
           metadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
-          { projectPath }
+          { projectPath, workspaceName: metadata.name }
         );
 
         // Delete workspace from runtime
@@ -696,7 +696,7 @@ export class WorkspaceService extends EventEmitter {
 
       const runtime = createRuntime(
         oldMetadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
-        { projectPath }
+        { projectPath, workspaceName: oldName }
       );
 
       const renameResult = await runtime.renameWorkspace(projectPath, oldName, newName);
@@ -813,7 +813,10 @@ export class WorkspaceService extends EventEmitter {
         type: "local",
         srcBaseDir: this.config.srcDir,
       };
-      const runtime = createRuntime(sourceRuntimeConfig);
+      const runtime = createRuntime(sourceRuntimeConfig, {
+        projectPath: foundProjectPath,
+        workspaceName: sourceMetadata.name,
+      });
 
       const newWorkspaceId = this.config.generateStableId();
 
@@ -1268,7 +1271,10 @@ export class WorkspaceService extends EventEmitter {
         type: "local" as const,
         srcBaseDir: this.config.srcDir,
       };
-      const runtime = createRuntime(runtimeConfig, { projectPath: metadata.projectPath });
+      const runtime = createRuntime(runtimeConfig, {
+        projectPath: metadata.projectPath,
+        workspaceName: metadata.name,
+      });
       const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
 
       // Create bash tool
