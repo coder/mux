@@ -10,37 +10,33 @@ interface CreationCenterContentProps {
 }
 
 /**
- * Center content displayed during workspace creation
- * Shows either a loading state with the workspace name or welcome message
+ * Loading overlay displayed during workspace creation.
+ * Shown as an overlay when isSending is true.
  */
 export function CreationCenterContent(props: CreationCenterContentProps) {
+  // Only render when actually sending/creating
+  if (!props.isSending) {
+    return null;
+  }
+
   return (
-    <div className="flex flex-1 items-center justify-center">
-      {props.isSending ? (
-        <div className="max-w-xl px-8 text-center">
-          <div className="bg-accent mb-4 inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-current border-r-transparent"></div>
-          <h2 className="text-foreground mb-2 text-lg font-medium">Creating workspace</h2>
-          <p className="text-muted text-sm leading-relaxed">
-            {props.workspaceName ? (
-              <>
-                <code className="bg-separator rounded px-1">{props.workspaceName}</code>
-                {props.workspaceTitle && (
-                  <span className="text-muted-foreground ml-1">— {props.workspaceTitle}</span>
-                )}
-              </>
-            ) : (
-              "Generating name…"
-            )}
-          </p>
-        </div>
-      ) : (
-        <div className="max-w-2xl px-8 text-center">
-          <h1 className="text-foreground mb-4 text-2xl font-semibold">{props.projectName}</h1>
-          <p className="text-muted text-sm leading-relaxed">
-            Describe what you want to build and a workspace will be created.
-          </p>
-        </div>
-      )}
+    <div className="bg-bg-dark/80 absolute inset-0 z-10 flex items-center justify-center backdrop-blur-sm">
+      <div className="max-w-xl px-8 text-center">
+        <div className="bg-accent mb-4 inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-current border-r-transparent"></div>
+        <h2 className="text-foreground mb-2 text-lg font-medium">Creating workspace</h2>
+        <p className="text-muted text-sm leading-relaxed">
+          {props.workspaceName ? (
+            <>
+              <code className="bg-separator rounded px-1">{props.workspaceName}</code>
+              {props.workspaceTitle && (
+                <span className="text-muted-foreground ml-1">— {props.workspaceTitle}</span>
+              )}
+            </>
+          ) : (
+            "Generating name…"
+          )}
+        </p>
+      </div>
     </div>
   );
 }

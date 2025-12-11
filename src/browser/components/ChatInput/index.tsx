@@ -1340,13 +1340,16 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     return `Type a message... (${hints.join(", ")})`;
   })();
 
-  // Wrapper for creation variant to enable full-height flex layout
+  // Wrapper for creation variant to enable full-height flex layout with vertical centering
   const Wrapper = variant === "creation" ? "div" : React.Fragment;
-  const wrapperProps = variant === "creation" ? { className: "flex h-full flex-1 flex-col" } : {};
+  const wrapperProps =
+    variant === "creation"
+      ? { className: "relative flex h-full flex-1 flex-col items-center justify-center p-4" }
+      : {};
 
   return (
     <Wrapper {...wrapperProps}>
-      {/* Creation center content (shows while loading or idle) */}
+      {/* Loading overlay during workspace creation */}
       {variant === "creation" && (
         <CreationCenterContent
           projectName={props.projectName}
@@ -1364,15 +1367,17 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         />
       )}
 
-      {/* Input section - dim when creating workspace */}
+      {/* Input section - centered card for creation, bottom bar for workspace */}
       <div
         className={cn(
-          "bg-separator border-border-light relative flex flex-col gap-1 border-t px-[15px] pt-[5px] pb-[15px]",
-          variant === "creation" && (creationState.isSending || isSending) && "opacity-50"
+          "relative flex flex-col gap-1",
+          variant === "creation"
+            ? "bg-separator w-full max-w-3xl rounded-lg border border-border-light px-6 py-5 shadow-lg"
+            : "bg-separator border-border-light border-t px-[15px] pt-[5px] pb-[15px]"
         )}
         data-component="ChatInputSection"
       >
-        <div className="mx-auto w-full max-w-4xl">
+        <div className={cn("w-full", variant !== "creation" && "mx-auto max-w-4xl")}>
           {/* Toast - show shared toast (slash commands) or variant-specific toast */}
           <ChatInputToast
             toast={toast ?? (variant === "creation" ? creationState.toast : null)}
@@ -1426,6 +1431,24 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
             </div>
           )}
 
+          {/* Creation header controls - shown above textarea for creation variant */}
+          {variant === "creation" && (
+            <CreationControls
+              branches={creationState.branches}
+              branchesLoaded={creationState.branchesLoaded}
+              trunkBranch={creationState.trunkBranch}
+              onTrunkBranchChange={creationState.setTrunkBranch}
+              runtimeMode={creationState.runtimeMode}
+              defaultRuntimeMode={creationState.defaultRuntimeMode}
+              sshHost={creationState.sshHost}
+              onRuntimeModeChange={creationState.setRuntimeMode}
+              onSetDefaultRuntime={creationState.setDefaultRuntimeMode}
+              onSshHostChange={creationState.setSshHost}
+              disabled={creationState.isSending || isSending}
+              projectName={props.projectName}
+            />
+          )}
+
           {/* Command suggestions - available in both variants */}
           {/* In creation mode, use portal (anchorRef) to escape overflow:hidden containers */}
           <CommandSuggestions
@@ -1471,6 +1494,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                       : undefined
                   }
                   aria-expanded={showCommandSuggestions && commandSuggestions.length > 0}
+                  className={variant === "creation" ? "min-h-24" : undefined}
                 />
                 {/* Floating voice input button inside textarea */}
                 <div className="absolute right-2 bottom-2">
@@ -1515,6 +1539,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                   onComplete={() => inputRef.current?.focus()}
                   defaultModel={defaultModel}
                   onSetDefaultModel={setDefaultModel}
+                  displayMode={variant === "creation" ? "wide" : "compact"}
                 />
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -1600,24 +1625,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                 </Tooltip>
               </div>
             </div>
-
-            {/* Creation controls - below model controls for creation variant */}
-            {variant === "creation" && (
-              <CreationControls
-                branches={creationState.branches}
-                branchesLoaded={creationState.branchesLoaded}
-                trunkBranch={creationState.trunkBranch}
-                onTrunkBranchChange={creationState.setTrunkBranch}
-                runtimeMode={creationState.runtimeMode}
-                defaultRuntimeMode={creationState.defaultRuntimeMode}
-                sshHost={creationState.sshHost}
-                onRuntimeModeChange={creationState.setRuntimeMode}
-                onSetDefaultRuntime={creationState.setDefaultRuntimeMode}
-                onSshHostChange={creationState.setSshHost}
-                disabled={creationState.isSending || isSending}
-                nameState={creationState.nameState}
-              />
-            )}
           </div>
         </div>
       </div>
