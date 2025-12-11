@@ -6,6 +6,7 @@ import { Loader2, Wand2 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
+import { SSHHostInput } from "./SSHHostInput";
 
 interface CreationControlsProps {
   branches: string[];
@@ -160,13 +161,10 @@ export function CreationControls(props: CreationControlsProps) {
 
         {/* SSH Host Input - after From selector */}
         {props.runtimeMode === RUNTIME_MODE.SSH && (
-          <input
-            type="text"
+          <SSHHostInput
             value={props.sshHost}
-            onChange={(e) => props.onSshHostChange(e.target.value)}
-            placeholder="user@host"
+            onChange={props.onSshHostChange}
             disabled={props.disabled}
-            className="bg-separator text-foreground border-border-medium focus:border-accent h-6 w-32 rounded border px-1 text-xs focus:outline-none disabled:opacity-50"
           />
         )}
       </div>

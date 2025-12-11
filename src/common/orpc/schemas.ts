@@ -109,6 +109,7 @@ export {
   providers,
   ProvidersConfigMapSchema,
   server,
+  ssh,
   telemetry,
   TelemetryEventSchema,
   terminal,

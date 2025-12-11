@@ -15,6 +15,7 @@ import type { VoiceService } from "@/node/services/voiceService";
 import type { MCPConfigService } from "@/node/services/mcpConfigService";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import type { TelemetryService } from "@/node/services/telemetryService";
+import type { SSHService } from "@/node/services/sshService";
 
 export interface ORPCContext {
   config: Config;
@@ -33,5 +34,6 @@ export interface ORPCContext {
   mcpConfigService: MCPConfigService;
   mcpServerManager: MCPServerManager;
   telemetryService: TelemetryService;
+  sshService: SSHService;
   headers?: IncomingHttpHeaders;
 }
