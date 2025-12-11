@@ -18,9 +18,12 @@ const getIndicatorColor = (branch: number): string => {
   }
 };
 
+export type GitStatusIndicatorMode = "divergence" | "line-delta";
+
 export interface GitStatusIndicatorViewProps {
   gitStatus: GitStatus | null;
   tooltipPosition?: "right" | "bottom";
+  mode: GitStatusIndicatorMode;
   // Tooltip data
   branchHeaders: GitBranchHeader[] | null;
   commits: GitCommit[] | null;
@@ -34,7 +37,8 @@ export interface GitStatusIndicatorViewProps {
   onMouseLeave: () => void;
   onTooltipMouseEnter: () => void;
   onTooltipMouseLeave: () => void;
-  onContainerRef: (el: HTMLSpanElement | null) => void;
+  onToggleMode: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  onContainerRef: (el: HTMLButtonElement | null) => void;
   /** When true, shows blue pulsing styling to indicate agent is working */
   isWorking?: boolean;
 }
@@ -47,6 +51,7 @@ export interface GitStatusIndicatorViewProps {
 export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   gitStatus,
   tooltipPosition = "right",
+  mode,
   branchHeaders,
   commits,
   dirtyFiles,
@@ -58,6 +63,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   onMouseLeave,
   onTooltipMouseEnter,
   onTooltipMouseLeave,
+  onToggleMode,
   onContainerRef,
   isWorking = false,
 }) => {
@@ -71,8 +77,16 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
     );
   }
 
+  const outgoingLines = gitStatus.outgoingAdditions + gitStatus.outgoingDeletions;
+  const incomingLines = gitStatus.incomingAdditions + gitStatus.incomingDeletions;
+
   // Render empty placeholder when nothing to show (prevents layout shift)
-  if (gitStatus.ahead === 0 && gitStatus.behind === 0 && !gitStatus.dirty) {
+  const isEmpty =
+    mode === "divergence"
+      ? gitStatus.ahead === 0 && gitStatus.behind === 0 && !gitStatus.dirty
+      : outgoingLines === 0 && incomingLines === 0 && !gitStatus.dirty;
+
+  if (isEmpty) {
     return (
       <span
         className="text-accent relative mr-1.5 flex items-center gap-1 font-mono text-[11px]"
@@ -210,27 +224,46 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   const statusColor = isWorking ? "text-accent" : "text-muted";
   const dirtyColor = isWorking ? "text-git-dirty" : "text-muted";
 
+  const toggleLabel = mode === "divergence" ? "Show line delta" : "Show divergence (ahead/behind)";
+
   return (
     <>
-      <span
+      <button
+        type="button"
         ref={onContainerRef}
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
+        onClick={onToggleMode}
         className={cn(
-          "relative mr-1.5 flex items-center gap-1 font-mono text-[11px] transition-colors",
+          "relative mr-1.5 flex items-center gap-1 font-mono text-[11px] transition-colors bg-transparent border-0 p-0",
           statusColor
         )}
+        aria-label={`Git status indicator. ${toggleLabel}.`}
+        title={`Click to toggle view (${toggleLabel})`}
       >
-        {gitStatus.ahead > 0 && (
-          <span className="flex items-center font-normal">↑{gitStatus.ahead}</span>
-        )}
-        {gitStatus.behind > 0 && (
-          <span className="flex items-center font-normal">↓{gitStatus.behind}</span>
+        {mode === "divergence" ? (
+          <>
+            {gitStatus.ahead > 0 && (
+              <span className="flex items-center font-normal">↑{gitStatus.ahead}</span>
+            )}
+            {gitStatus.behind > 0 && (
+              <span className="flex items-center font-normal">↓{gitStatus.behind}</span>
+            )}
+          </>
+        ) : (
+          <>
+            {outgoingLines > 0 && (
+              <span className="flex items-center font-normal">↑{outgoingLines}L</span>
+            )}
+            {incomingLines > 0 && (
+              <span className="flex items-center font-normal">↓{incomingLines}L</span>
+            )}
+          </>
         )}
         {gitStatus.dirty && (
           <span className={cn("flex items-center leading-none font-normal", dirtyColor)}>*</span>
         )}
-      </span>
+      </button>
 
       {createPortal(tooltipElement, document.body)}
     </>

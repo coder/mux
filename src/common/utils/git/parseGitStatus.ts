@@ -29,8 +29,16 @@ export function parseGitRevList(output: string): GitStatus | null {
     return null;
   }
 
-  // Note: dirty status is checked separately in the caller
-  return { ahead, behind, dirty: false };
+  // Note: dirty + line deltas are computed separately in the caller
+  return {
+    ahead,
+    behind,
+    dirty: false,
+    outgoingAdditions: 0,
+    outgoingDeletions: 0,
+    incomingAdditions: 0,
+    incomingDeletions: 0,
+  };
 }
 
 /**
@@ -102,6 +110,14 @@ export function parseGitShowBranchForStatus(output: string): GitStatus | null {
     }
   }
 
-  // Note: dirty status is checked separately in the caller
-  return { ahead, behind, dirty: false };
+  // Note: dirty + line deltas are computed separately in the caller
+  return {
+    ahead,
+    behind,
+    dirty: false,
+    outgoingAdditions: 0,
+    outgoingDeletions: 0,
+    incomingAdditions: 0,
+    incomingDeletions: 0,
+  };
 }

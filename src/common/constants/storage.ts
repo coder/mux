@@ -158,6 +158,12 @@ export const PREFERRED_COMPACTION_MODEL_KEY = "preferredCompactionModel";
 export const VIM_ENABLED_KEY = "vimEnabled";
 
 /**
+ * Git status indicator display mode (global)
+ * Stores: "line-delta" | "divergence"
+ */
+export const GIT_STATUS_INDICATOR_MODE_KEY = "gitStatusIndicatorMode";
+
+/**
  * Editor configuration for "Open in Editor" feature (global)
  * Format: "editorConfig"
  */

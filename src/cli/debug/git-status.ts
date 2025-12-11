@@ -71,7 +71,14 @@ function testGitStatus(workspaceId: string, workspacePath: string) {
       return;
     }
 
-    const { showBranchOutput, dirtyCount } = parsed;
+    const {
+      showBranchOutput,
+      dirtyCount,
+      outgoingAdditions,
+      outgoingDeletions,
+      incomingAdditions,
+      incomingDeletions,
+    } = parsed;
     const dirty = dirtyCount > 0;
 
     console.log("\n--- SHOW-BRANCH OUTPUT (extracted) ---");
@@ -83,7 +90,7 @@ function testGitStatus(workspaceId: string, workspacePath: string) {
     console.log("\n--- PARSED RESULT ---");
     if (parsedStatus) {
       console.log(
-        `✅ Success: { ahead: ${parsedStatus.ahead}, behind: ${parsedStatus.behind}, dirty: ${dirty} }`
+        `✅ Success: { ahead: ${parsedStatus.ahead}, behind: ${parsedStatus.behind}, dirty: ${dirty}, outgoing: +${outgoingAdditions}/-${outgoingDeletions}, incoming: +${incomingAdditions}/-${incomingDeletions} }`
       );
     } else {
       console.log("❌ FAILED: parseGitShowBranchForStatus returned null");

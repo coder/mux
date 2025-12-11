@@ -206,7 +206,15 @@ export class GitStatusStore {
     if (a === null && b === null) return true;
     if (a === null || b === null) return false;
 
-    return a.ahead === b.ahead && a.behind === b.behind && a.dirty === b.dirty;
+    return (
+      a.ahead === b.ahead &&
+      a.behind === b.behind &&
+      a.dirty === b.dirty &&
+      a.outgoingAdditions === b.outgoingAdditions &&
+      a.outgoingDeletions === b.outgoingDeletions &&
+      a.incomingAdditions === b.incomingAdditions &&
+      a.incomingDeletions === b.incomingDeletions
+    );
   }
 
   /**
@@ -254,7 +262,14 @@ export class GitStatusStore {
         return [metadata.id, null];
       }
 
-      const { showBranchOutput, dirtyCount } = parsed;
+      const {
+        showBranchOutput,
+        dirtyCount,
+        outgoingAdditions,
+        outgoingDeletions,
+        incomingAdditions,
+        incomingDeletions,
+      } = parsed;
       const dirty = dirtyCount > 0;
 
       // Parse ahead/behind from show-branch output
@@ -264,7 +279,17 @@ export class GitStatusStore {
         return [metadata.id, null];
       }
 
-      return [metadata.id, { ...parsedStatus, dirty }];
+      return [
+        metadata.id,
+        {
+          ...parsedStatus,
+          dirty,
+          outgoingAdditions,
+          outgoingDeletions,
+          incomingAdditions,
+          incomingDeletions,
+        },
+      ];
     } catch (err) {
       // Silently fail - git status failures shouldn't crash the UI
       console.debug(`[gitStatus] Exception for ${metadata.id}:`, err);

@@ -1,6 +1,8 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import type { GitStatus } from "@/common/types/workspace";
-import { GitStatusIndicatorView } from "./GitStatusIndicatorView";
+import { GIT_STATUS_INDICATOR_MODE_KEY } from "@/common/constants/storage";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { GitStatusIndicatorView, type GitStatusIndicatorMode } from "./GitStatusIndicatorView";
 import { useGitBranchDetails } from "./hooks/useGitBranchDetails";
 
 interface GitStatusIndicatorProps {
@@ -28,8 +30,24 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
     left: 0,
   });
   const hideTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const containerRef = useRef<HTMLSpanElement | null>(null);
+  const containerRef = useRef<HTMLButtonElement | null>(null);
   const trimmedWorkspaceId = workspaceId.trim();
+
+  const [mode, setMode] = usePersistedState<GitStatusIndicatorMode>(
+    GIT_STATUS_INDICATOR_MODE_KEY,
+    "line-delta",
+    { listener: true }
+  );
+
+  const handleToggleMode = useCallback(
+    (e: React.MouseEvent<HTMLButtonElement>) => {
+      // Avoid triggering workspace selection when clicking in the sidebar.
+      e.stopPropagation();
+
+      setMode((prev) => (prev === "line-delta" ? "divergence" : "line-delta"));
+    },
+    [setMode]
+  );
 
   console.assert(
     trimmedWorkspaceId.length > 0,
@@ -92,7 +110,7 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
     setShowTooltip(false);
   };
 
-  const handleContainerRef = (el: HTMLSpanElement | null) => {
+  const handleContainerRef = (el: HTMLButtonElement | null) => {
     containerRef.current = el;
   };
 
@@ -107,6 +125,7 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
 
   return (
     <GitStatusIndicatorView
+      mode={mode}
       gitStatus={gitStatus}
       tooltipPosition={tooltipPosition}
       branchHeaders={branchHeaders}
@@ -119,6 +138,7 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onTooltipMouseEnter={handleTooltipMouseEnter}
+      onToggleMode={handleToggleMode}
       onTooltipMouseLeave={handleTooltipMouseLeave}
       onContainerRef={handleContainerRef}
       isWorking={isWorking}

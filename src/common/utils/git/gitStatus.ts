@@ -41,6 +41,29 @@ fi
 # Check for dirty (uncommitted changes)
 DIRTY_COUNT=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
 
+# Compute line deltas (additions/deletions) vs merge-base with origin's primary branch.
+#
+# We emit *only* totals to keep output tiny (avoid output truncation in large repos).
+MERGE_BASE=$(git merge-base HEAD "origin/$PRIMARY_BRANCH" 2>/dev/null || echo "")
+
+# Outgoing: local changes vs merge-base (working tree vs base, includes uncommitted changes)
+OUTGOING_STATS="0 0"
+if [ -n "$MERGE_BASE" ]; then
+  OUTGOING_STATS=$(git diff --numstat "$MERGE_BASE" 2>/dev/null | awk '{ if ($1 == "-" || $2 == "-") next; add += $1; del += $2 } END { printf "%d %d", add+0, del+0 }')
+  if [ -z "$OUTGOING_STATS" ]; then
+    OUTGOING_STATS="0 0"
+  fi
+fi
+
+# Incoming: remote primary branch changes vs merge-base
+INCOMING_STATS="0 0"
+if [ -n "$MERGE_BASE" ]; then
+  INCOMING_STATS=$(git diff --numstat "$MERGE_BASE" "origin/$PRIMARY_BRANCH" 2>/dev/null | awk '{ if ($1 == "-" || $2 == "-") next; add += $1; del += $2 } END { printf "%d %d", add+0, del+0 }')
+  if [ -z "$INCOMING_STATS" ]; then
+    INCOMING_STATS="0 0"
+  fi
+fi
+
 # Output sections
 echo "---PRIMARY---"
 echo "$PRIMARY_BRANCH"
@@ -48,6 +71,8 @@ echo "---SHOW_BRANCH---"
 echo "$SHOW_BRANCH"
 echo "---DIRTY---"
 echo "$DIRTY_COUNT"
+echo "---LINE_DELTA---"
+echo "$OUTGOING_STATS $INCOMING_STATS"
 `;
 
 /**
@@ -58,6 +83,10 @@ export interface ParsedGitStatusOutput {
   primaryBranch: string;
   showBranchOutput: string;
   dirtyCount: number;
+  outgoingAdditions: number;
+  outgoingDeletions: number;
+  incomingAdditions: number;
+  incomingDeletions: number;
 }
 
 export function parseGitStatusScriptOutput(output: string): ParsedGitStatusOutput | null {
@@ -65,19 +94,30 @@ export function parseGitStatusScriptOutput(output: string): ParsedGitStatusOutpu
   const primaryRegex = /---PRIMARY---\s*([\s\S]*?)---SHOW_BRANCH---/;
   const showBranchRegex = /---SHOW_BRANCH---\s*([\s\S]*?)---DIRTY---/;
   const dirtyRegex = /---DIRTY---\s*(\d+)/;
+  const lineDeltaRegex = /---LINE_DELTA---\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/;
 
   const primaryMatch = primaryRegex.exec(output);
   const showBranchMatch = showBranchRegex.exec(output);
   const dirtyMatch = dirtyRegex.exec(output);
+  const lineDeltaMatch = lineDeltaRegex.exec(output);
 
   if (!primaryMatch || !showBranchMatch || !dirtyMatch) {
     return null;
   }
 
+  const outgoingAdditions = lineDeltaMatch ? parseInt(lineDeltaMatch[1], 10) : 0;
+  const outgoingDeletions = lineDeltaMatch ? parseInt(lineDeltaMatch[2], 10) : 0;
+  const incomingAdditions = lineDeltaMatch ? parseInt(lineDeltaMatch[3], 10) : 0;
+  const incomingDeletions = lineDeltaMatch ? parseInt(lineDeltaMatch[4], 10) : 0;
+
   return {
     primaryBranch: primaryMatch[1].trim(),
     showBranchOutput: showBranchMatch[1].trim(),
     dirtyCount: parseInt(dirtyMatch[1], 10),
+    outgoingAdditions,
+    outgoingDeletions,
+    incomingAdditions,
+    incomingDeletions,
   };
 }
 

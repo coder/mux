@@ -49,9 +49,23 @@ export const WorkspaceActivitySnapshotSchema = z.object({
 });
 
 export const GitStatusSchema = z.object({
+  /** Commit divergence relative to origin's primary branch */
   ahead: z.number(),
   behind: z.number(),
   dirty: z
     .boolean()
     .meta({ description: "Whether there are uncommitted changes (staged or unstaged)" }),
+
+  /**
+   * Line deltas for changes unique to this workspace.
+   * Computed vs the merge-base with origin's primary branch.
+   *
+   * Note: outgoing includes committed changes + uncommitted changes (working tree).
+   */
+  outgoingAdditions: z.number(),
+  outgoingDeletions: z.number(),
+
+  /** Line deltas for changes that exist on origin's primary branch but not locally */
+  incomingAdditions: z.number(),
+  incomingDeletions: z.number(),
 });
