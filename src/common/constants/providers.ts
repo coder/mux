@@ -69,7 +69,7 @@ export const PROVIDER_DEFINITIONS = {
     requiresApiKey: true,
   },
   bedrock: {
-    displayName: "Amazon Bedrock",
+    displayName: "Bedrock",
     import: () => import("@ai-sdk/amazon-bedrock"),
     factoryName: "createAmazonBedrock",
     requiresApiKey: false, // Uses AWS credential chain
