@@ -8,13 +8,19 @@ import {
   CheckCircle,
   XCircle,
   Plus,
-  ChevronDown,
   Server,
   Pencil,
   Check,
   X,
 } from "lucide-react";
 import { Button } from "@/browser/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/browser/components/ui/select";
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
 import type { CachedMCPTestResult } from "@/common/types/mcp";
@@ -269,24 +275,19 @@ export const ProjectSettingsSection: React.FC = () => {
     <div className="space-y-6">
       {/* Project selector */}
       <div className="space-y-1.5">
-        <label htmlFor="project-select" className="text-sm font-medium">
-          Project
-        </label>
-        <div className="relative">
-          <select
-            id="project-select"
-            value={selectedProject}
-            onChange={(e) => setSelectedProject(e.target.value)}
-            className="border-border-medium bg-secondary/30 text-foreground focus:ring-accent w-full appearance-none rounded-md border py-2 pr-8 pl-3 text-sm focus:ring-1 focus:outline-none"
-          >
+        <label className="text-sm font-medium">Project</label>
+        <Select value={selectedProject} onValueChange={setSelectedProject}>
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="Select project" />
+          </SelectTrigger>
+          <SelectContent>
             {projectList.map((path) => (
-              <option key={path} value={path}>
+              <SelectItem key={path} value={path}>
                 {projectName(path)}
-              </option>
+              </SelectItem>
             ))}
-          </select>
-          <ChevronDown className="text-muted-foreground pointer-events-none absolute top-1/2 right-2.5 h-4 w-4 -translate-y-1/2" />
-        </div>
+          </SelectContent>
+        </Select>
         <p className="text-muted-foreground truncate text-xs" title={selectedProject}>
           {selectedProject}
         </p>
