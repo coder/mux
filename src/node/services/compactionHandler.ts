@@ -7,7 +7,7 @@ import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 
-import { createMuxMessage } from "@/common/types/message";
+import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import { log } from "@/node/services/log";
 import {
   extractEditedFileDiffs,
@@ -108,7 +108,7 @@ export class CompactionHandler {
     // Mark as processed before performing compaction
     this.processedCompactionRequestIds.add(lastUserMsg.id);
 
-    const result = await this.performCompaction(summary, event.metadata);
+    const result = await this.performCompaction(summary, event.metadata, messages);
     if (!result.success) {
       log.error("Compaction failed:", result.error);
       return false;
@@ -136,7 +136,8 @@ export class CompactionHandler {
       duration?: number;
       providerMetadata?: Record<string, unknown>;
       systemMessageTokens?: number;
-    }
+    },
+    messages: MuxMessage[]
   ): Promise<Result<void, string>> {
     // CRITICAL: Delete partial.json BEFORE clearing history
     // This prevents a race condition where:
@@ -163,6 +164,10 @@ export class CompactionHandler {
     // Create summary message with metadata.
     // We omit providerMetadata because it contains cacheCreationInputTokens from the
     // pre-compaction context, which inflates context usage display.
+    // Note: We no longer store historicalUsage here. Cumulative costs are tracked in
+    // session-usage.json, which is updated on every stream-end. If that file is deleted
+    // or corrupted, pre-compaction costs are lost - this is acceptable since manual
+    // file deletion is out of scope for data recovery.
     const summaryMessage = createMuxMessage(
       `summary-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
       "assistant",

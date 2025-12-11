@@ -366,7 +366,7 @@ export const workspace = {
       output: ResultSchema(z.void(), z.string()),
     },
   },
-/**
+  /**
    * Get post-compaction context state for a workspace.
    * Returns plan path (if exists) and tracked file paths that will be injected.
    */

@@ -677,7 +677,7 @@ export const router = (authToken?: string) => {
             return { success: true, data: undefined };
           }),
       },
-getPostCompactionState: t
+      getPostCompactionState: t
         .input(schemas.workspace.getPostCompactionState.input)
         .output(schemas.workspace.getPostCompactionState.output)
         .handler(({ context, input }) => {
