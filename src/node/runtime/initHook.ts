@@ -2,9 +2,14 @@ import * as fs from "fs";
 import * as fsPromises from "fs/promises";
 import * as path from "path";
 import type { ExecOptions, ExecStream, InitLogger } from "./Runtime";
-import type { RuntimeConfig } from "@/common/types/runtime";
+import {
+  isWorktreeRuntime,
+  isSSHRuntime,
+  isDockerRuntime,
+  type RuntimeConfig,
+  type RuntimeMode,
+} from "@/common/types/runtime";
 import type { ThinkingLevel } from "@/common/types/thinking";
-import { isWorktreeRuntime, isSSHRuntime, isDockerRuntime } from "@/common/types/runtime";
 
 /**
  * Check if .mux/init hook exists and is executable
@@ -38,7 +43,7 @@ export function getInitHookPath(projectPath: string): string {
  */
 export function getMuxEnv(
   projectPath: string,
-  runtime: "local" | "worktree" | "ssh" | "docker",
+  runtime: RuntimeMode,
   workspaceName: string,
   options?: {
     modelString?: string;
@@ -73,9 +78,7 @@ export function getMuxEnv(
  * Get the effective runtime type from a RuntimeConfig.
  * Handles legacy "local" with srcBaseDir → "worktree" mapping.
  */
-export function getRuntimeType(
-  config: RuntimeConfig | undefined
-): "local" | "worktree" | "ssh" | "docker" {
+export function getRuntimeType(config: RuntimeConfig | undefined): RuntimeMode {
   if (!config) return "worktree"; // Default to worktree for undefined config
   if (isSSHRuntime(config)) return "ssh";
   if (isDockerRuntime(config)) return "docker";

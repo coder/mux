@@ -17,6 +17,18 @@ export const RUNTIME_MODE = {
   DOCKER: "docker" as const,
 } as const;
 
+/**
+ * Runtime modes that require a git repository.
+ *
+ * Worktree/SSH/Docker all depend on git operations (worktrees, clones, bundles).
+ * Local runtime can operate directly in a directory without git.
+ */
+export const RUNTIME_MODES_REQUIRING_GIT: RuntimeMode[] = [
+  RUNTIME_MODE.WORKTREE,
+  RUNTIME_MODE.SSH,
+  RUNTIME_MODE.DOCKER,
+];
+
 /** Runtime string prefix for SSH mode (e.g., "ssh hostname") */
 export const SSH_RUNTIME_PREFIX = "ssh ";
 
@@ -40,7 +52,8 @@ export type ParsedRuntime =
  * Format: "ssh <host>" -> { mode: "ssh", host: "<host>" }
  *         "docker <image>" -> { mode: "docker", image: "<image>" }
  *         "worktree" -> { mode: "worktree" }
- *         "local" or undefined -> { mode: "local" }
+ *         "local" -> { mode: "local" }
+ *         undefined/null -> { mode: "worktree" } (default)
  *
  * Note: "ssh" or "docker" without arguments returns null (invalid).
  * Use this for UI state management (localStorage, form inputs).

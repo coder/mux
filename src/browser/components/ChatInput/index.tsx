@@ -416,6 +416,23 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   );
 
   const isSendInFlight = variant === "creation" ? creationState.isSending : isSending;
+
+  const creationControlsProps =
+    variant === "creation"
+      ? ({
+          branches: creationState.branches,
+          branchesLoaded: creationState.branchesLoaded,
+          trunkBranch: creationState.trunkBranch,
+          onTrunkBranchChange: creationState.setTrunkBranch,
+          selectedRuntime: creationState.selectedRuntime,
+          defaultRuntimeMode: creationState.defaultRuntimeMode,
+          onSelectedRuntimeChange: creationState.setSelectedRuntime,
+          onSetDefaultRuntime: creationState.setDefaultRuntimeMode,
+          disabled: isSendInFlight,
+          projectName: props.projectName,
+          nameState: creationState.nameState,
+        } satisfies React.ComponentProps<typeof CreationControls>)
+      : null;
   const hasTypedText = input.trim().length > 0;
   const hasImages = imageAttachments.length > 0;
   const hasReviews = attachedReviews.length > 0;
@@ -1598,23 +1615,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           )}
 
           {/* Creation header controls - shown above textarea for creation variant */}
-          {variant === "creation" && (
-            <CreationControls
-              branches={creationState.branches}
-              branchesLoaded={creationState.branchesLoaded}
-              trunkBranch={creationState.trunkBranch}
-              onTrunkBranchChange={creationState.setTrunkBranch}
-              runtimeMode={creationState.runtimeMode}
-              defaultRuntimeMode={creationState.defaultRuntimeMode}
-              sshHost={creationState.sshHost}
-              onRuntimeModeChange={creationState.setRuntimeMode}
-              onSetDefaultRuntime={creationState.setDefaultRuntimeMode}
-              onSshHostChange={creationState.setSshHost}
-              disabled={isSendInFlight}
-              projectName={props.projectName}
-              nameState={creationState.nameState}
-            />
-          )}
+          {creationControlsProps && <CreationControls {...creationControlsProps} />}
 
           {/* Command suggestions - available in both variants */}
           {/* In creation mode, use portal (anchorRef) to escape overflow:hidden containers */}
