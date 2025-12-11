@@ -168,8 +168,8 @@ export function CreationControls(props: CreationControlsProps) {
         {/* Name input with magic wand - uses grid overlay technique for auto-sizing */}
         <div className="relative inline-grid max-w-sm items-center">
           {/* Hidden sizer span - determines width based on content, minimum is placeholder width */}
-          <span className="invisible col-start-1 row-start-1 whitespace-pre pr-6 text-lg font-semibold">
-            {nameState.name || "workspace-name"}
+          <span className="invisible col-start-1 row-start-1 whitespace-pre pr-5 text-lg font-semibold">
+            {nameState.name || "name"}
           </span>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -179,10 +179,10 @@ export function CreationControls(props: CreationControlsProps) {
                 value={nameState.name}
                 onChange={handleNameChange}
                 onFocus={handleInputFocus}
-                placeholder={nameState.isGenerating ? "Generating..." : "workspace-name"}
+                placeholder={nameState.isGenerating ? "Generating..." : "name"}
                 disabled={props.disabled}
                 className={cn(
-                  "col-start-1 row-start-1 bg-transparent border-border-medium focus:border-accent h-7 w-full rounded-md border border-transparent pr-6 text-lg font-semibold focus:border focus:bg-bg-dark focus:outline-none disabled:opacity-50",
+                  "col-start-1 row-start-1 bg-transparent border-border-medium focus:border-accent h-7 w-full rounded-md border border-transparent pr-5 text-lg font-semibold focus:border focus:bg-bg-dark focus:outline-none disabled:opacity-50",
                   nameState.autoGenerate ? "text-muted" : "text-foreground",
                   nameState.error && "border-red-500"
                 )}
