@@ -88,6 +88,8 @@ interface AgentSessionOptions {
   aiService: AIService;
   initStateManager: InitStateManager;
   backgroundProcessManager: BackgroundProcessManager;
+  /** Called after compaction completes to trigger metadata refresh */
+  onCompactionComplete?: () => void;
 }
 
 export class AgentSession {
@@ -98,6 +100,7 @@ export class AgentSession {
   private readonly aiService: AIService;
   private readonly initStateManager: InitStateManager;
   private readonly backgroundProcessManager: BackgroundProcessManager;
+  private readonly onCompactionComplete?: () => void;
   private readonly emitter = new EventEmitter();
   private readonly aiListeners: Array<{ event: string; handler: (...args: unknown[]) => void }> =
     [];
@@ -135,6 +138,7 @@ export class AgentSession {
       aiService,
       initStateManager,
       backgroundProcessManager,
+      onCompactionComplete,
     } = options;
 
     assert(typeof workspaceId === "string", "workspaceId must be a string");
@@ -148,6 +152,7 @@ export class AgentSession {
     this.aiService = aiService;
     this.initStateManager = initStateManager;
     this.backgroundProcessManager = backgroundProcessManager;
+    this.onCompactionComplete = onCompactionComplete;
 
     this.compactionHandler = new CompactionHandler({
       workspaceId: this.workspaceId,
@@ -608,6 +613,10 @@ export class AgentSession {
       const handled = await this.compactionHandler.handleCompletion(payload as StreamEndEvent);
       if (!handled) {
         this.emitChatEvent(payload);
+      } else {
+        // Compaction completed - notify to trigger metadata refresh
+        // This allows the frontend to get updated postCompaction state
+        this.onCompactionComplete?.();
       }
       // Stream end: auto-send queued messages
       this.sendQueuedMessages();

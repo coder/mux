@@ -242,6 +242,18 @@ export class WorkspaceService extends EventEmitter {
       aiService: this.aiService,
       initStateManager: this.initStateManager,
       backgroundProcessManager: this.backgroundProcessManager,
+      onCompactionComplete: () => {
+        // Emit updated metadata with postCompaction state after compaction
+        void (async () => {
+          const metadata = await this.getInfo(trimmed);
+          if (metadata) {
+            const postCompaction = await this.getPostCompactionState(trimmed);
+            const enrichedMetadata = { ...metadata, postCompaction };
+            // Look up session from map (guaranteed to exist by the time callback runs)
+            this.sessions.get(trimmed)?.emitMetadata(enrichedMetadata);
+          }
+        })();
+      },
     });
 
     const chatUnsubscribe = session.onChatEvent((event) => {
