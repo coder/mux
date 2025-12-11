@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Pencil } from "lucide-react";
+import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { GitStatusIndicator } from "./GitStatusIndicator";
 import { RuntimeBadge } from "./RuntimeBadge";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
@@ -79,7 +80,11 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           {namedWorkspacePath}
         </span>
       </div>
-      <div className="flex items-center">
+      <div className="flex min-w-0 items-center gap-2">
+        <div className="min-w-0">
+          <WorkspaceStatusIndicator workspaceId={workspaceId} />
+        </div>
+
         {editorError && <span className="text-danger-soft mr-2 text-xs">{editorError}</span>}
         <Tooltip>
           <TooltipTrigger asChild>

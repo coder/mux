@@ -246,6 +246,15 @@ export const QueuedMessageChangedEventSchema = z.object({
   imageParts: z.array(ImagePartSchema).optional(),
 });
 
+export const AgentStatusUpdateEventSchema = z.object({
+  type: z.literal("agent-status-update"),
+  workspaceId: z.string(),
+  status: z.object({
+    emoji: z.string().optional(),
+    message: z.string(),
+    url: z.string().url().optional(),
+  }),
+});
 export const RestoreToInputEventSchema = z.object({
   type: z.literal("restore-to-input"),
   workspaceId: z.string(),
@@ -277,6 +286,7 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   // Usage and queue events
   UsageDeltaEventSchema,
   QueuedMessageChangedEventSchema,
+  AgentStatusUpdateEventSchema,
   RestoreToInputEventSchema,
   // Init events
   ...WorkspaceInitEventSchema.def.options,

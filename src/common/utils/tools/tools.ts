@@ -43,6 +43,11 @@ export interface ToolConfiguration {
   mode?: UIMode;
   /** Plan file path - only this file can be edited in plan mode */
   planFilePath?: string;
+  /**
+   * Optional hook for tools to emit additional AIService events.
+   * Used for non-stream tool side channels like agent-status updates.
+   */
+  emitAIEvent?: (event: string, payload: unknown) => void;
   /** Workspace ID for tracking background processes and plan storage */
   workspaceId?: string;
   /** Callback to record file state for external edit detection (plan files) */
@@ -120,6 +125,7 @@ export async function getToolsForModel(
     bash: wrap(createBashTool(config)),
     bash_output: wrap(createBashOutputTool(config)),
     bash_background_list: wrap(createBashBackgroundListTool(config)),
+    status_set: wrap(createStatusSetTool(config)),
     bash_background_terminate: wrap(createBashBackgroundTerminateTool(config)),
     web_fetch: wrap(createWebFetchTool(config)),
   };
@@ -129,7 +135,6 @@ export async function getToolsForModel(
     propose_plan: createProposePlanTool(config),
     todo_write: createTodoWriteTool(config),
     todo_read: createTodoReadTool(config),
-    status_set: createStatusSetTool(config),
   };
 
   // Base tools available for all models

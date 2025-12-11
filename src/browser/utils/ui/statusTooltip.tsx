@@ -9,7 +9,7 @@ import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
 export function getStatusTooltip(options: {
   isStreaming: boolean;
   streamingModel: string | null;
-  agentStatus?: { emoji: string; message: string; url?: string };
+  agentStatus?: { emoji?: string; message: string; url?: string };
   isUnread?: boolean;
   recencyTimestamp?: number | null;
 }): React.ReactNode {

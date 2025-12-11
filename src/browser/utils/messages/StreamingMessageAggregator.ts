@@ -22,7 +22,13 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { TodoItem, StatusSetToolResult } from "@/common/types/tools";
 
 import type { WorkspaceChatMessage, StreamErrorMessage, DeleteMessage } from "@/common/orpc/types";
-import { isInitStart, isInitOutput, isInitEnd, isMuxMessage } from "@/common/orpc/types";
+import {
+  isInitStart,
+  isInitOutput,
+  isInitEnd,
+  isMuxMessage,
+  isAgentStatusUpdate,
+} from "@/common/orpc/types";
 import type {
   DynamicToolPart,
   DynamicToolPartPending,
@@ -37,7 +43,7 @@ import { getStatusStateKey } from "@/common/constants/storage";
 // Maximum number of messages to display in the DOM for performance
 // Full history is still maintained internally for token counting and stats
 const AgentStatusSchema = z.object({
-  emoji: z.string(),
+  emoji: z.string().optional(),
   message: z.string(),
   url: z.string().optional(),
 });
@@ -320,10 +326,9 @@ export class StreamingMessageAggregator {
     // Replay historical messages in order to reconstruct derived state
     for (const message of chronologicalMessages) {
       if (message.role === "user") {
-        // Mirror live behavior: clear stream-scoped state on new user turn
-        // but keep persisted status for fallback on reload.
+        // Mirror live behavior: clear stream-scoped state on new user turn.
+        // Agent status is NOT stream-scoped and is intentionally not cleared.
         this.currentTodos = [];
-        this.agentStatus = undefined;
         continue;
       }
 
@@ -686,8 +691,20 @@ export class StreamingMessageAggregator {
     // Update agent status if this was a successful status_set
     // agentStatus persists: update both during streaming and on historical reload
     // Use output instead of input to get the truncated message
-    if (toolName === "status_set" && hasSuccessResult(output)) {
-      const result = output as Extract<StatusSetToolResult, { success: true }>;
+    // Legacy status_set: older sessions stored status directly in the tool result.
+    // New status_set returns only { success: true } and emits agent-status-update events instead.
+    if (
+      toolName === "status_set" &&
+      hasSuccessResult(output) &&
+      typeof output === "object" &&
+      output !== null &&
+      "emoji" in output &&
+      "message" in output
+    ) {
+      const result = output as Extract<
+        StatusSetToolResult,
+        { success: true; emoji: string; message: string }
+      >;
 
       // Use the provided URL, or fall back to the last URL ever set
       const url = result.url ?? this.lastStatusUrl;
@@ -795,6 +812,22 @@ export class StreamingMessageAggregator {
     }
 
     // Handle regular messages (user messages, historical messages)
+    if (isAgentStatusUpdate(data)) {
+      const effectiveUrl = data.status.url ?? this.lastStatusUrl;
+      if (effectiveUrl) {
+        this.lastStatusUrl = effectiveUrl;
+      }
+
+      this.agentStatus = {
+        ...(data.status.emoji ? { emoji: data.status.emoji } : {}),
+        message: data.status.message,
+        ...(effectiveUrl ? { url: effectiveUrl } : {}),
+      };
+      this.savePersistedAgentStatus(this.agentStatus);
+      this.invalidateCache();
+      return;
+    }
+
     // Check if it's a MuxMessage (has role property but no type)
     if (isMuxMessage(data)) {
       const incomingMessage = data;
@@ -830,12 +863,11 @@ export class StreamingMessageAggregator {
 
       // If this is a user message, clear derived state and record timestamp
       if (incomingMessage.role === "user") {
-        // Clear derived state (todos, agentStatus) for new conversation turn
-        // This ensures consistent behavior whether loading from history or processing live events
-        // since stream-start/stream-end events are not persisted in chat.jsonl
+        // Clear derived state for new conversation turn.
+        // TODOs are stream-scoped; agent status is intentionally NOT cleared.
+        // This ensures the user can still see/click important links (e.g., PR URL)
+        // even after the assistant stops streaming or the user sends a follow-up message.
         this.currentTodos = [];
-        this.agentStatus = undefined;
-        this.clearPersistedAgentStatus();
 
         this.setPendingStreamStartTime(Date.now());
       }

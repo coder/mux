@@ -52,6 +52,42 @@ describe("StreamingMessageAggregator - Agent Status", () => {
     expect(aggregator.getAgentStatus()).toBeUndefined();
   });
 
+  it("should update agent status when receiving agent-status-update", () => {
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+
+    aggregator.handleMessage({
+      type: "agent-status-update",
+      workspaceId: "workspace1",
+      status: {
+        emoji: "🚀",
+        message: "PR #1 checks running",
+        url: "https://github.com/example/repo/pull/1",
+      },
+    });
+
+    expect(aggregator.getAgentStatus()).toEqual({
+      emoji: "🚀",
+      message: "PR #1 checks running",
+      url: "https://github.com/example/repo/pull/1",
+    });
+
+    // URL should persist when subsequent updates omit it
+    aggregator.handleMessage({
+      type: "agent-status-update",
+      workspaceId: "workspace1",
+      status: {
+        emoji: "🟡",
+        message: "PR #1 mergeable",
+      },
+    });
+
+    expect(aggregator.getAgentStatus()).toEqual({
+      emoji: "🟡",
+      message: "PR #1 mergeable",
+      url: "https://github.com/example/repo/pull/1",
+    });
+  });
+
   it("should update agent status when status_set tool succeeds", () => {
     const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
     const messageId = "msg1";
@@ -833,7 +869,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
 
     expect(aggregator.getAgentStatus()?.url).toBe(testUrl);
 
-    // User sends a new message, which clears the status
+    // User sends a new message; agent status persists across turns
     const userMessage = {
       type: "message" as const,
       id: "user1",
@@ -843,7 +879,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
     };
     aggregator.handleMessage(userMessage);
 
-    expect(aggregator.getAgentStatus()).toBeUndefined(); // Status cleared
+    expect(aggregator.getAgentStatus()?.url).toBe(testUrl);
 
     // Start second stream
     const messageId2 = "msg2";

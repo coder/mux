@@ -606,6 +606,7 @@ export class AgentSession {
     });
     forward("reasoning-delta", (payload) => this.emitChatEvent(payload));
     forward("reasoning-end", (payload) => this.emitChatEvent(payload));
+    forward("agent-status-update", (payload) => this.emitChatEvent(payload));
     forward("usage-delta", (payload) => this.emitChatEvent(payload));
     forward("stream-abort", (payload) => this.emitChatEvent(payload));
 

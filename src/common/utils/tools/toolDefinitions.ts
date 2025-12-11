@@ -10,7 +10,6 @@ import {
   BASH_HARD_MAX_LINES,
   BASH_MAX_LINE_BYTES,
   BASH_MAX_TOTAL_BYTES,
-  STATUS_MESSAGE_MAX_LENGTH,
   WEB_FETCH_MAX_OUTPUT_BYTES,
 } from "@/common/constants/toolLimits";
 import { TOOL_EDIT_WARNING } from "@/common/types/tools";
@@ -203,39 +202,51 @@ export const TOOL_DEFINITIONS = {
   },
   status_set: {
     description:
-      "Set a status indicator to show what Assistant is currently doing. The status is set IMMEDIATELY \n" +
-      "when this tool is called, even before other tool calls complete.\n" +
+      "Set a workspace status by registering a script that mux executes (optionally on an interval).\n" +
+      "The script runs in the workspace directory and should print a single line describing the status.\n" +
       "\n" +
-      "WHEN TO SET STATUS:\n" +
-      "- Set status when beginning concrete work (file edits, running tests, executing commands)\n" +
-      "- Update status as work progresses through distinct phases\n" +
-      "- Set a final status after completion, only claim success when certain (e.g., after confirming checks passed)\n" +
-      "- DO NOT set status during initial exploration, file reading, or planning phases\n" +
+      "OUTPUT FORMAT (stdout):\n" +
+      "- Optional leading emoji + whitespace, then message text\n" +
+      "- Include a URL anywhere in the line (e.g., a PR URL). mux will extract the first URL and show it as a clickable link.\n" +
+      "  The URL is removed from the displayed message to avoid redundancy.\n" +
       "\n" +
-      "The status is cleared when a new user message comes in. Validate your approach is feasible \n" +
-      "before setting status - failed tool calls after setting status indicate premature commitment.\n" +
+      "POLLING:\n" +
+      "- poll_interval_ms = 0 runs once (static status via `echo`)\n" +
+      "- poll_interval_ms > 0 re-runs the script to keep the status fresh (e.g., PR merge/check status)\n" +
       "\n" +
-      "URL PARAMETER:\n" +
-      "- Optional 'url' parameter links to external resources (e.g., PR URL: 'https://github.com/owner/repo/pull/123')\n" +
-      "- Prefer stable URLs that don't change often - saving the same URL twice is a no-op\n" +
-      "- URL persists until replaced by a new status with a different URL",
+      "NOTE: Workspace status persists after streaming completes and is not cleared on new user turns.",
     schema: z
-      .object({
-        emoji: z.string().describe("A single emoji character representing the current activity"),
-        message: z
-          .string()
-          .describe(
-            `A brief description of the current activity (auto-truncated to ${STATUS_MESSAGE_MAX_LENGTH} chars with ellipsis if needed)`
-          ),
-        url: z
-          .string()
-          .url()
-          .optional()
-          .describe(
-            "Optional URL to external resource with more details (e.g., Pull Request URL). The URL persists and is displayed to the user for easy access."
-          ),
-      })
-      .strict(),
+      .union([
+        z
+          .object({
+            script: z
+              .string()
+              .min(1)
+              .describe("Shell script to execute. Print a single status line to stdout."),
+            poll_interval_ms: z
+              .number()
+              .int()
+              .min(0)
+              .max(60_000)
+              .describe("Polling interval in milliseconds. 0 runs once."),
+          })
+          .strict()
+          .refine((data) => data.poll_interval_ms === 0 || data.poll_interval_ms >= 1000, {
+            message: "poll_interval_ms must be 0 or at least 1000",
+            path: ["poll_interval_ms"],
+          }),
+        // Legacy shape (kept for backward-compatible history rendering)
+        z
+          .object({
+            emoji: z.string(),
+            message: z.string(),
+            url: z.string().url().optional(),
+          })
+          .strict(),
+      ])
+      .describe(
+        "New shape: { script, poll_interval_ms }. Legacy shape: { emoji, message, url? } (deprecated)."
+      ),
   },
   bash_output: {
     description:

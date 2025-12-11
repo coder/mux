@@ -22,11 +22,18 @@ export const StatusSetToolCall: React.FC<StatusSetToolCallProps> = ({
       ? String(result.error)
       : undefined;
 
+  const isLegacy = "emoji" in args;
+  const iconEmoji = isLegacy ? args.emoji : "📡";
+
+  const summary = isLegacy
+    ? args.message
+    : `poll=${args.poll_interval_ms}ms: ${args.script.split(/\r?\n/)[0] ?? ""}`;
+
   return (
     <ToolContainer expanded={false}>
       <ToolHeader>
-        <ToolIcon emoji={args.emoji} toolName="status_set" />
-        <span className="text-muted-foreground italic">{args.message}</span>
+        <ToolIcon emoji={iconEmoji} toolName="status_set" />
+        <span className="text-muted-foreground italic">{summary}</span>
         {errorMessage && <span className="text-error-foreground">({errorMessage})</span>}
         <StatusIndicator status={status}>{statusDisplay}</StatusIndicator>
       </ToolHeader>

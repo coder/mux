@@ -43,7 +43,7 @@ export interface WorkspaceState {
   currentModel: string | null;
   recencyTimestamp: number | null;
   todos: TodoItem[];
-  agentStatus: { emoji: string; message: string; url?: string } | undefined;
+  agentStatus: { emoji?: string; message: string; url?: string } | undefined;
   pendingStreamStartTime: number | null;
 }
 
@@ -55,7 +55,7 @@ export interface WorkspaceSidebarState {
   canInterrupt: boolean;
   currentModel: string | null;
   recencyTimestamp: number | null;
-  agentStatus: { emoji: string; message: string; url?: string } | undefined;
+  agentStatus: { emoji?: string; message: string; url?: string } | undefined;
 }
 
 /**

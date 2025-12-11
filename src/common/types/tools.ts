@@ -220,11 +220,21 @@ export interface TodoWriteToolResult {
 }
 
 // Status Set Tool Types
-export interface StatusSetToolArgs {
-  emoji: string;
-  message: string;
-  url?: string;
-}
+// Note: status_set is transitioning from a legacy static payload to a script-based payload.
+// Keep both shapes for backward-compatible history rendering.
+export type StatusSetToolArgs =
+  | {
+      script: string;
+      poll_interval_ms: number;
+    }
+  | {
+      /** @deprecated legacy */
+      emoji: string;
+      /** @deprecated legacy */
+      message: string;
+      /** @deprecated legacy */
+      url?: string;
+    };
 
 // Bash Output Tool Types (read incremental output from background processes)
 export interface BashOutputToolArgs {
@@ -273,6 +283,11 @@ export type BashBackgroundListResult =
 
 export type StatusSetToolResult =
   | {
+      // New success shape: status_set registers a poller and returns acknowledgement.
+      success: true;
+    }
+  | {
+      // Legacy success shape (backward compatibility for older chat history)
       success: true;
       emoji: string;
       message: string;

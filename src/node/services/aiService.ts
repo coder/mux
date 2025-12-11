@@ -1153,6 +1153,7 @@ export class AIService extends EventEmitter {
             metadata.name
           ),
           runtimeTempDir,
+          emitAIEvent: (event, payload) => this.emit(event, payload),
           backgroundProcessManager: this.backgroundProcessManager,
           // Plan/exec mode configuration for plan file access.
           // - read: plan file is readable in all modes (useful context)

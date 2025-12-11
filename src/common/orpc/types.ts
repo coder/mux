@@ -115,6 +115,11 @@ export function isQueuedMessageChanged(
   return (msg as { type?: string }).type === "queued-message-changed";
 }
 
+export function isAgentStatusUpdate(
+  msg: WorkspaceChatMessage
+): msg is Extract<WorkspaceChatMessage, { type: "agent-status-update" }> {
+  return (msg as { type?: string }).type === "agent-status-update";
+}
 export function isRestoreToInput(
   msg: WorkspaceChatMessage
 ): msg is Extract<WorkspaceChatMessage, { type: "restore-to-input" }> {
