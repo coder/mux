@@ -630,10 +630,16 @@ export class WorkspaceService extends EventEmitter {
       }
 
       // Fetch post-compaction state for all workspaces in parallel
+      // Catch per-workspace errors to avoid failing the entire list if one workspace is unreachable
       return Promise.all(
         metadata.map(async (ws) => {
-          const postCompaction = await this.getPostCompactionState(ws.id);
-          return { ...ws, postCompaction };
+          try {
+            const postCompaction = await this.getPostCompactionState(ws.id);
+            return { ...ws, postCompaction };
+          } catch {
+            // Workspace runtime unavailable (e.g., SSH unreachable) - return without post-compaction state
+            return ws;
+          }
         })
       );
     } catch (error) {
