@@ -27,6 +27,8 @@ import type {
   ImagePart,
   WorkspaceChatMessage,
 } from "@/common/orpc/types";
+import type { workspace as workspaceSchemas } from "@/common/orpc/schemas/api";
+import type { z } from "zod";
 import type { SendMessageError } from "@/common/types/errors";
 import type {
   FrontendWorkspaceMetadata,
@@ -604,9 +606,23 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  async list(): Promise<FrontendWorkspaceMetadata[]> {
+  async list(
+    options?: z.infer<typeof workspaceSchemas.list.input>
+  ): Promise<FrontendWorkspaceMetadata[]> {
     try {
-      return await this.config.getAllWorkspaceMetadata();
+      const metadata = await this.config.getAllWorkspaceMetadata();
+
+      if (!options?.includePostCompaction) {
+        return metadata;
+      }
+
+      // Fetch post-compaction state for all workspaces in parallel
+      return Promise.all(
+        metadata.map(async (ws) => {
+          const postCompaction = await this.getPostCompactionState(ws.id);
+          return { ...ws, postCompaction };
+        })
+      );
     } catch (error) {
       log.error("Failed to list workspaces:", error);
       return [];

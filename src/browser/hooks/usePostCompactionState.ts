@@ -1,5 +1,6 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useAPI } from "@/browser/contexts/API";
+import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 
 interface PostCompactionState {
   planPath: string | null;
@@ -9,41 +10,39 @@ interface PostCompactionState {
 }
 
 /**
- * Hook to fetch post-compaction context state for a workspace.
- * Returns info about what will be injected after compaction.
+ * Hook to get post-compaction context state for a workspace.
+ * Reads bundled state from workspace metadata (loaded with includePostCompaction flag).
+ * Falls back to empty state if experiment is disabled or data unavailable.
  */
 export function usePostCompactionState(workspaceId: string): PostCompactionState {
   const { api } = useAPI();
+  const { workspaceMetadata } = useWorkspaceContext();
+
+  // Get bundled state from metadata (may be undefined if experiment disabled)
+  const bundledState = useMemo(() => {
+    const metadata = workspaceMetadata.get(workspaceId);
+    return metadata?.postCompaction;
+  }, [workspaceMetadata, workspaceId]);
+
   const [state, setState] = useState<{
     planPath: string | null;
     trackedFilePaths: string[];
     excludedItems: Set<string>;
-  }>({
-    planPath: null,
-    trackedFilePaths: [],
-    excludedItems: new Set(),
-  });
+  }>(() => ({
+    planPath: bundledState?.planPath ?? null,
+    trackedFilePaths: bundledState?.trackedFilePaths ?? [],
+    excludedItems: new Set(bundledState?.excludedItems ?? []),
+  }));
 
-  const fetchState = useCallback(async () => {
-    if (!api) return;
-    try {
-      const result = await api.workspace.getPostCompactionState({ workspaceId });
-      setState({
-        planPath: result.planPath,
-        trackedFilePaths: result.trackedFilePaths,
-        excludedItems: new Set(result.excludedItems),
-      });
-    } catch {
-      // Silently fail - component will show nothing if data unavailable
-    }
-  }, [api, workspaceId]);
-
+  // Sync when bundled state changes (workspace switch or metadata refresh)
+  // Clear to empty state when bundledState is undefined (experiment disabled)
   useEffect(() => {
-    void fetchState();
-    // Refetch periodically to stay up to date
-    const interval = setInterval(() => void fetchState(), 5000);
-    return () => clearInterval(interval);
-  }, [fetchState]);
+    setState({
+      planPath: bundledState?.planPath ?? null,
+      trackedFilePaths: bundledState?.trackedFilePaths ?? [],
+      excludedItems: new Set(bundledState?.excludedItems ?? []),
+    });
+  }, [bundledState]);
 
   const toggleExclusion = useCallback(
     async (itemId: string) => {
@@ -55,6 +54,7 @@ export function usePostCompactionState(workspaceId: string): PostCompactionState
         excluded: !isCurrentlyExcluded,
       });
       if (result.success) {
+        // Optimistic update for immediate UI feedback
         setState((prev) => {
           const newSet = new Set(prev.excludedItems);
           if (isCurrentlyExcluded) {

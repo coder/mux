@@ -273,8 +273,8 @@ export const router = (authToken?: string) => {
       list: t
         .input(schemas.workspace.list.input)
         .output(schemas.workspace.list.output)
-        .handler(({ context }) => {
-          return context.workspaceService.list();
+        .handler(({ context, input }) => {
+          return context.workspaceService.list(input ?? undefined);
         }),
       create: t
         .input(schemas.workspace.create.input)

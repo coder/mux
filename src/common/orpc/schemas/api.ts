@@ -177,7 +177,11 @@ export const projects = {
 // Workspace
 export const workspace = {
   list: {
-    input: z.void(),
+    input: z
+      .object({
+        includePostCompaction: z.boolean().optional(),
+      })
+      .optional(),
     output: z.array(FrontendWorkspaceMetadataSchema),
   },
   create: {

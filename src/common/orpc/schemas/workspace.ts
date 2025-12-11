@@ -40,12 +40,29 @@ export const FrontendWorkspaceMetadataSchema = WorkspaceMetadataSchema.extend({
     description:
       "If set, this workspace has an incompatible runtime configuration (e.g., from a newer version of mux). The workspace should be displayed but interactions should show this error message.",
   }),
+  postCompaction: z
+    .object({
+      planPath: z.string().nullable(),
+      trackedFilePaths: z.array(z.string()),
+      excludedItems: z.array(z.string()),
+    })
+    .optional()
+    .meta({
+      description:
+        "Post-compaction context state. Only included when requested via includePostCompaction param.",
+    }),
 });
 
 export const WorkspaceActivitySnapshotSchema = z.object({
   recency: z.number().meta({ description: "Unix ms timestamp of last user interaction" }),
   streaming: z.boolean().meta({ description: "Whether workspace currently has an active stream" }),
   lastModel: z.string().nullable().meta({ description: "Last model sent from this workspace" }),
+});
+
+export const PostCompactionStateSchema = z.object({
+  planPath: z.string().nullable(),
+  trackedFilePaths: z.array(z.string()),
+  excludedItems: z.array(z.string()),
 });
 
 export const GitStatusSchema = z.object({
