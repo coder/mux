@@ -1073,23 +1073,33 @@ export class WorkspaceService extends EventEmitter {
 
     // On full clear, also delete plan file and clear file change tracking
     if ((percentage ?? 1.0) === 1.0) {
-      // Delete plan file through runtime (supports both local and SSH)
+      // Delete plan files through runtime (supports both local and SSH)
       const metadata = await this.getInfo(workspaceId);
       if (metadata) {
         const runtime = createRuntime(metadata.runtimeConfig, {
           projectPath: metadata.projectPath,
         });
+
+        // Delete both new and legacy plan paths to handle migrated workspaces
         const planPath = getPlanFilePath(metadata.name, metadata.projectName);
+        const legacyPlanPath = getLegacyPlanFilePath(workspaceId);
+
         // Expand tilde before quoting - shellQuote uses single quotes which prevent tilde expansion
         const expandedPlanPath = expandTilde(planPath);
+        const expandedLegacyPlanPath = expandTilde(legacyPlanPath);
+
         try {
-          // Use exec to delete file since runtime doesn't have a deleteFile method
-          await runtime.exec(`rm -f ${shellQuote(expandedPlanPath)}`, {
-            cwd: metadata.projectPath,
-            timeout: 10,
-          });
+          // Use exec to delete files since runtime doesn't have a deleteFile method
+          // Delete both paths in one command for efficiency
+          await runtime.exec(
+            `rm -f ${shellQuote(expandedPlanPath)} ${shellQuote(expandedLegacyPlanPath)}`,
+            {
+              cwd: metadata.projectPath,
+              timeout: 10,
+            }
+          );
         } catch {
-          // Plan file doesn't exist or can't be deleted - ignore
+          // Plan files don't exist or can't be deleted - ignore
         }
       }
       this.sessions.get(workspaceId)?.clearFileState();
