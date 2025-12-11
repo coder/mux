@@ -30,6 +30,8 @@ interface CreationControlsProps {
 interface RuntimeButtonGroupProps {
   value: RuntimeMode;
   onChange: (mode: RuntimeMode) => void;
+  defaultMode: RuntimeMode;
+  onSetDefault: (mode: RuntimeMode) => void;
   disabled?: boolean;
   disabledModes?: RuntimeMode[];
 }
@@ -82,6 +84,7 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
     <div className="flex gap-1">
       {RUNTIME_OPTIONS.map((option) => {
         const isActive = props.value === option.value;
+        const isDefault = props.defaultMode === option.value;
         const isModeDisabled = disabledModes.includes(option.value);
         const Icon = option.Icon;
 
@@ -104,9 +107,25 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
                 {option.label}
               </button>
             </TooltipTrigger>
-            <TooltipContent align="center" side="bottom">
+            <TooltipContent
+              align="center"
+              side="bottom"
+              className="pointer-events-auto whitespace-normal"
+            >
               {option.description}
-              {isModeDisabled && <p className="mt-1 text-yellow-500">Requires git repository</p>}
+              {isModeDisabled ? (
+                <p className="mt-1 text-yellow-500">Requires git repository</p>
+              ) : (
+                <label className="mt-1.5 flex cursor-pointer items-center gap-1.5 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={isDefault}
+                    onChange={() => props.onSetDefault(option.value)}
+                    className="accent-accent h-3 w-3"
+                  />
+                  <span className="text-muted">Default for project</span>
+                </label>
+              )}
             </TooltipContent>
           </Tooltip>
         );
@@ -238,6 +257,8 @@ export function CreationControls(props: CreationControlsProps) {
           <RuntimeButtonGroup
             value={props.runtimeMode}
             onChange={props.onRuntimeModeChange}
+            defaultMode={props.defaultRuntimeMode}
+            onSetDefault={props.onSetDefaultRuntime}
             disabled={props.disabled}
             disabledModes={isNonGitRepo ? [RUNTIME_MODE.WORKTREE, RUNTIME_MODE.SSH] : undefined}
           />
