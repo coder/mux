@@ -166,7 +166,7 @@ export function CreationControls(props: CreationControlsProps) {
         <span className="text-muted-foreground mx-2 text-lg">/</span>
 
         {/* Name input with magic wand */}
-        <div className="relative min-w-0 flex-1">
+        <div className="relative min-w-0 max-w-sm flex-1">
           <Tooltip>
             <TooltipTrigger asChild>
               <input
