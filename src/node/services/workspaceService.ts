@@ -1080,10 +1080,11 @@ export class WorkspaceService extends EventEmitter {
           projectPath: metadata.projectPath,
         });
         const planPath = getPlanFilePath(metadata.name, metadata.projectName);
+        // Expand tilde before quoting - shellQuote uses single quotes which prevent tilde expansion
+        const expandedPlanPath = expandTilde(planPath);
         try {
           // Use exec to delete file since runtime doesn't have a deleteFile method
-          // The shell will expand ~ appropriately (local or remote)
-          await runtime.exec(`rm -f ${shellQuote(planPath)}`, {
+          await runtime.exec(`rm -f ${shellQuote(expandedPlanPath)}`, {
             cwd: metadata.projectPath,
             timeout: 10,
           });
