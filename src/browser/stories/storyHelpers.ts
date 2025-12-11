@@ -6,7 +6,7 @@
  */
 
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { WorkspaceChatMessage, ChatMuxMessage } from "@/common/orpc/types";
+import type { WorkspaceChatMessage, ChatMuxMessage, ProvidersConfigMap } from "@/common/orpc/types";
 import type { APIClient } from "@/browser/contexts/API";
 import {
   SELECTED_WORKSPACE_KEY,
@@ -153,7 +153,7 @@ export interface SimpleChatSetupOptions {
   projectName?: string;
   messages: ChatMuxMessage[];
   gitStatus?: GitStatusFixture;
-  providersConfig?: Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>;
+  providersConfig?: ProvidersConfigMap;
   backgroundProcesses?: BackgroundProcessFixture[];
 }
 
