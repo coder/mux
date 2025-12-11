@@ -3,7 +3,7 @@ import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
 import { Select } from "../Select";
 import { Loader2, Wand2 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent, HelpIndicator } from "../ui/tooltip";
 import { SSHIcon, WorktreeIcon, LocalIcon } from "../icons/RuntimeIcons";
 import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
 
@@ -163,9 +163,21 @@ export function CreationControls(props: CreationControlsProps) {
       {/* Project name header */}
       <h2 className="text-foreground text-lg font-semibold">{props.projectName}</h2>
 
-      {/* Workspace name and title preview row */}
+      {/* Workspace name row */}
       <div className="flex flex-col gap-1.5" data-component="WorkspaceNameGroup">
-        <label className="text-muted-foreground text-xs font-medium">Workspace</label>
+        <div className="flex items-center gap-1">
+          <label htmlFor="workspace-name" className="text-muted-foreground text-xs font-medium">
+            Name
+          </label>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <HelpIndicator>?</HelpIndicator>
+            </TooltipTrigger>
+            <TooltipContent align="start" className="max-w-64">
+              A stable identifier used for git branches, worktree folders, and session directories.
+            </TooltipContent>
+          </Tooltip>
+        </div>
         <div className="flex items-center gap-3">
           {/* Name input with magic wand */}
           <div className="relative max-w-[200px] shrink-0">
@@ -215,11 +227,6 @@ export function CreationControls(props: CreationControlsProps) {
               )}
             </div>
           </div>
-
-          {/* Title preview (read-only) */}
-          {nameState.title && (
-            <span className="text-muted-foreground truncate text-sm italic">{nameState.title}</span>
-          )}
 
           {/* Error display */}
           {nameState.error && <span className="text-xs text-red-500">{nameState.error}</span>}
