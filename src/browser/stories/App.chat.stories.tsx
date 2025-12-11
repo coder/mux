@@ -443,3 +443,58 @@ export const BackgroundProcesses: AppStory = {
     },
   },
 };
+
+/**
+ * Mode selector with HelpIndicator tooltip - verifies props forwarding for Radix asChild.
+ *
+ * Regression test: HelpIndicator must spread rest props so TooltipTrigger's asChild
+ * can attach event handlers for tooltip triggering.
+ *
+ * The fix ensures HelpIndicator forwards props (like onPointerEnter, onFocus) that
+ * Radix TooltipTrigger needs when using asChild. Without the fix, the tooltip
+ * would never appear on hover/focus.
+ */
+export const ModeHelpTooltip: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          messages: [],
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Wait for app to fully load - the chat input with mode selector should be present
+    await canvas.findAllByText("Exec", {}, { timeout: 10000 });
+
+    // Find the help indicator "?" - should be a span with cursor-help styling
+    const helpIndicators = canvas.getAllByText("?");
+    const helpIndicator = helpIndicators.find(
+      (el) => el.tagName === "SPAN" && el.className.includes("cursor-help")
+    );
+    if (!helpIndicator) throw new Error("HelpIndicator not found");
+
+    // Hover to open the tooltip and leave it visible for the visual snapshot
+    await userEvent.hover(helpIndicator);
+
+    // Wait for tooltip to fully appear (Radix has 200ms delay)
+    await waitFor(
+      () => {
+        const tooltip = document.querySelector('[role="tooltip"]');
+        if (!tooltip) throw new Error("Tooltip not visible");
+      },
+      { timeout: 2000, interval: 50 }
+    );
+  },
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Verifies the HelpIndicator tooltip works by focusing the ? icon. The tooltip should appear with Exec/Plan mode explanations.",
+      },
+    },
+  },
+};
