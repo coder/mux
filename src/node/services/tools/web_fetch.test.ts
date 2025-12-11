@@ -217,11 +217,11 @@ describe("web_fetch tool", () => {
   });
 
   // Test HTTP error handling with body parsing
-  it("should include HTTP status code in error for 404 responses", async () => {
+  it("should include HTTP status code in error for non-2xx responses", async () => {
     using testEnv = createTestWebFetchTool();
     const args: WebFetchToolArgs = {
-      // GitHub returns a proper 404 page for nonexistent users
-      url: "https://github.com/this-user-definitely-does-not-exist-12345",
+      // httpbin.dev reliably returns the requested status code
+      url: "https://httpbin.dev/status/404",
     };
 
     const result = (await testEnv.tool.execute!(args, toolCallOptions)) as WebFetchToolResult;
