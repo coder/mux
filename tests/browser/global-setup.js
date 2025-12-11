@@ -5,6 +5,15 @@
 
 // Mock import.meta.env for Vite compatibility
 // This needs to be set before any imports that use it
+
+// Polyfill ResizeObserver for Radix/layout components in jsdom
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
 globalThis.import_meta_env = {
   VITE_BACKEND_URL: undefined,
   MODE: "test",

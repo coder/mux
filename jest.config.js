@@ -48,14 +48,17 @@ module.exports = {
       testMatch: ["<rootDir>/tests/browser/**/*.test.ts"],
       setupFilesAfterEnv: ["<rootDir>/tests/setup.ts"],
     },
-    // Browser UI tests (jsdom environment) - for future use
+    // Browser UI tests (jsdom environment)
     {
       ...sharedConfig,
       displayName: "browser-ui",
       testEnvironment: "jsdom",
       testMatch: ["<rootDir>/tests/browser/**/*.test.tsx"],
       setupFiles: ["<rootDir>/tests/browser/global-setup.js"],
-      setupFilesAfterEnv: ["<rootDir>/tests/setup.ts"],
+      setupFilesAfterEnv: [
+        "<rootDir>/tests/setup.ts",
+        "<rootDir>/tests/browser/jestSetup.ts",
+      ],
     },
   ],
   collectCoverageFrom: [
@@ -66,10 +69,11 @@ module.exports = {
     "!src/cli/**/*",
     "!src/desktop/main.ts",
   ],
+  // Jest + jsdom integration tests can leave behind non-critical handles.
+  // Force-exit to keep CI stable and prevent hanging.
+  forceExit: true,
   // Run tests in parallel (use 50% of available cores, or 4 minimum)
   maxWorkers: "50%",
-  // Force exit after tests complete to avoid hanging on lingering handles
-  forceExit: true,
   // 10 minute timeout for integration tests, 10s for unit tests
   testTimeout: process.env.TEST_INTEGRATION === "1" ? 600000 : 10000,
   // Detect open handles in development (disabled by default for speed)

@@ -22,10 +22,10 @@ const describeIntegration = shouldRunIntegrationTests() ? describe : describe.sk
 describeIntegration("AppLoader React Integration", () => {
   describe("Initial Render", () => {
     test("shows loading screen initially then transitions to app", async () => {
-      const { cleanup, getByTestId, ...queries } = await renderWithBackend();
+      const { cleanup, getByText, ...queries } = await renderWithBackend();
       try {
         // Should show loading screen while fetching initial data
-        expect(getByTestId("loading-screen")).toBeInTheDocument();
+        expect(getByText(/loading workspaces/i)).toBeInTheDocument();
 
         // Wait for loading screen to disappear (app loaded from real backend)
         await waitForAppLoad(queries);

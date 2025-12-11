@@ -98,6 +98,12 @@ export async function createBrowserTestEnv(): Promise<BrowserTestEnv> {
   const api = orpc as unknown as APIClient;
 
   const cleanup = async () => {
+    try {
+      await services.shutdown();
+    } finally {
+      await services.dispose();
+    }
+
     const maxRetries = 3;
     for (let i = 0; i < maxRetries; i++) {
       try {

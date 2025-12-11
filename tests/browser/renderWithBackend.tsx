@@ -7,7 +7,7 @@
  */
 
 import React from "react";
-import { render, type RenderOptions, type RenderResult } from "@testing-library/react";
+import { act, render, type RenderOptions, type RenderResult } from "@testing-library/react";
 import { AppLoader } from "@/browser/components/AppLoader";
 import type { APIClient } from "@/browser/contexts/API";
 import { createBrowserTestEnv, type BrowserTestEnv } from "./setup";
@@ -56,7 +56,10 @@ export async function renderWithBackend(
   });
 
   const cleanup = async () => {
-    renderResult.unmount();
+    await act(async () => {
+      renderResult.unmount();
+    });
+
     // Only cleanup the env if we created it (not passed in)
     if (!existingEnv) {
       await env.cleanup();
@@ -99,7 +102,9 @@ export async function renderComponentWithBackend(
   });
 
   const cleanup = async () => {
-    renderResult.unmount();
+    await act(async () => {
+      renderResult.unmount();
+    });
     await env.cleanup();
   };
 

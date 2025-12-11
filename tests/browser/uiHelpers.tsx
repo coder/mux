@@ -17,17 +17,17 @@ type Queries = Pick<
   | "findByText"
   | "findByPlaceholderText"
   | "queryByRole"
-  | "queryByTestId"
+  | "queryByText"
   | "getByRole"
 >;
 
 /**
  * Wait for the app to finish loading (loading screen disappears).
  */
-export async function waitForAppLoad(queries: Pick<Queries, "queryByTestId">) {
+export async function waitForAppLoad(queries: Pick<Queries, "queryByText">) {
   await waitFor(
     () => {
-      expect(queries.queryByTestId("loading-screen")).not.toBeInTheDocument();
+      expect(queries.queryByText(/loading workspaces/i)).not.toBeInTheDocument();
     },
     { timeout: 5000 }
   );
