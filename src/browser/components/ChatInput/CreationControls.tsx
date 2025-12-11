@@ -165,8 +165,12 @@ export function CreationControls(props: CreationControlsProps) {
         <h2 className="text-foreground shrink-0 text-lg font-semibold">{props.projectName}</h2>
         <span className="text-muted-foreground mx-2 text-lg">/</span>
 
-        {/* Name input with magic wand */}
-        <div className="relative min-w-0 max-w-sm flex-1">
+        {/* Name input with magic wand - uses grid overlay technique for auto-sizing */}
+        <div className="relative inline-grid min-w-24 max-w-sm items-center">
+          {/* Hidden sizer span - determines width based on content */}
+          <span className="invisible col-start-1 row-start-1 whitespace-pre px-1 pr-7 text-lg font-semibold">
+            {nameState.name || (nameState.isGenerating ? "Generating..." : "workspace-name")}
+          </span>
           <Tooltip>
             <TooltipTrigger asChild>
               <input
@@ -178,7 +182,7 @@ export function CreationControls(props: CreationControlsProps) {
                 placeholder={nameState.isGenerating ? "Generating..." : "workspace-name"}
                 disabled={props.disabled}
                 className={cn(
-                  "bg-transparent border-border-medium focus:border-accent h-7 w-full rounded-md border border-transparent px-1 pr-7 text-lg font-semibold focus:border focus:bg-bg-dark focus:outline-none disabled:opacity-50",
+                  "col-start-1 row-start-1 bg-transparent border-border-medium focus:border-accent h-7 w-full rounded-md border border-transparent px-1 pr-7 text-lg font-semibold focus:border focus:bg-bg-dark focus:outline-none disabled:opacity-50",
                   nameState.autoGenerate ? "text-muted" : "text-foreground",
                   nameState.error && "border-red-500"
                 )}
@@ -189,7 +193,7 @@ export function CreationControls(props: CreationControlsProps) {
             </TooltipContent>
           </Tooltip>
           {/* Magic wand / loading indicator */}
-          <div className="absolute inset-y-0 right-0 flex items-center pr-2">
+          <div className="absolute inset-y-0 right-0 flex items-center pr-1">
             {nameState.isGenerating ? (
               <Loader2 className="text-accent h-3.5 w-3.5 animate-spin" />
             ) : (
