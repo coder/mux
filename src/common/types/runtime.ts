@@ -40,7 +40,8 @@ export type ParsedRuntime =
  * Format: "ssh <host>" -> { mode: "ssh", host: "<host>" }
  *         "docker <image>" -> { mode: "docker", image: "<image>" }
  *         "worktree" -> { mode: "worktree" }
- *         "local" or undefined -> { mode: "local" }
+ *         "local" -> { mode: "local" }
+ *         undefined/null -> { mode: "worktree" } (default)
  *
  * Note: "ssh" or "docker" without arguments returns null (invalid).
  * Use this for UI state management (localStorage, form inputs).

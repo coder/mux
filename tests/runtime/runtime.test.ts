@@ -193,6 +193,29 @@ describeIntegration("Runtime integration tests", () => {
         ); // 15 second timeout for test (includes workspace creation overhead)
       });
 
+      describe("resolvePath() - Path resolution", () => {
+        test.concurrent("expands ~ to the home directory", async () => {
+          const runtime = createRuntime();
+
+          const resolved = await runtime.resolvePath("~");
+
+          if (type === "ssh") {
+            expect(resolved).toBe("/home/testuser");
+          } else {
+            expect(resolved).toBe(os.homedir());
+          }
+        });
+
+        test.concurrent("expands ~/path by prefixing the home directory", async () => {
+          const runtime = createRuntime();
+
+          const home = await runtime.resolvePath("~");
+          const resolved = await runtime.resolvePath("~/mux");
+
+          expect(resolved).toBe(`${home}/mux`);
+        });
+      });
+
       describe("readFile() - File reading", () => {
         test.concurrent("reads file contents", async () => {
           const runtime = createRuntime();

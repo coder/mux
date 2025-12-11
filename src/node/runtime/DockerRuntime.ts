@@ -7,16 +7,14 @@
  * - Uses docker exec for command execution
  * - Hardcoded paths: srcBaseDir=/src, bgOutputDir=/tmp/mux-bashes
  * - Managed lifecycle: container created/destroyed with workspace
+ *
+ * Extends RemoteRuntime for shared exec/file operations.
  */
 
 import { spawn, exec } from "child_process";
-import { Readable, Writable } from "stream";
 import * as path from "path";
 import type {
-  Runtime,
   ExecOptions,
-  ExecStream,
-  FileStat,
   WorkspaceCreationParams,
   WorkspaceCreationResult,
   WorkspaceInitParams,
@@ -26,13 +24,10 @@ import type {
   InitLogger,
 } from "./Runtime";
 import { RuntimeError } from "./Runtime";
-import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
-import { log } from "@/node/services/log";
+import { RemoteRuntime, type SpawnResult } from "./RemoteRuntime";
 import { checkInitHookExists, getMuxEnv, runInitHookOnRuntime } from "./initHook";
-import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { getProjectName } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
-import { DisposableProcess } from "@/node/utils/disposableExec";
 import { streamToString, shescape } from "./streamUtils";
 
 /** Hardcoded source directory inside container */
@@ -125,13 +120,15 @@ export function getContainerName(projectPath: string, workspaceName: string): st
 
 /**
  * Docker runtime implementation that executes commands inside Docker containers.
+ * Extends RemoteRuntime for shared exec/file operations.
  */
-export class DockerRuntime implements Runtime {
+export class DockerRuntime extends RemoteRuntime {
   private readonly config: DockerRuntimeConfig;
   /** Container name - set during construction (for existing) or createWorkspace (for new) */
   private containerName?: string;
 
   constructor(config: DockerRuntimeConfig) {
+    super();
     this.config = config;
     // If container name is provided (existing workspace), store it
     if (config.containerName) {
@@ -146,19 +143,24 @@ export class DockerRuntime implements Runtime {
     return this.config.image;
   }
 
-  /**
-   * Execute command inside Docker container with streaming I/O
-   */
-  exec(command: string, options: ExecOptions): Promise<ExecStream> {
-    const startTime = performance.now();
+  // ===== RemoteRuntime abstract method implementations =====
 
-    // Short-circuit if already aborted
-    if (options.abortSignal?.aborted) {
-      throw new RuntimeError("Operation aborted before execution", "exec");
-    }
+  protected readonly commandPrefix = "Docker";
 
-    // Verify container name is available (set in constructor for existing workspaces,
-    // or set in createWorkspace for new workspaces)
+  protected getBasePath(): string {
+    return CONTAINER_SRC_DIR;
+  }
+
+  protected quoteForRemote(filePath: string): string {
+    return shescape.quote(filePath);
+  }
+
+  protected cdCommand(cwd: string): string {
+    return `cd ${shescape.quote(cwd)}`;
+  }
+
+  protected spawnRemoteProcess(fullCommand: string, options: ExecOptions): SpawnResult {
+    // Verify container name is available
     if (!this.containerName) {
       throw new RuntimeError(
         "Docker runtime not initialized with container name. " +
@@ -167,234 +169,28 @@ export class DockerRuntime implements Runtime {
         "exec"
       );
     }
-    const containerName = this.containerName;
-
-    // Build command parts
-    const parts: string[] = [];
-
-    // Add cd command if cwd is specified
-    parts.push(`cd ${shescape.quote(options.cwd)}`);
-
-    // Add environment variable exports (user env first, then non-interactive overrides)
-    const envVars = { ...options.env, ...NON_INTERACTIVE_ENV_VARS };
-    for (const [key, value] of Object.entries(envVars)) {
-      parts.push(`export ${key}=${shescape.quote(value)}`);
-    }
-
-    // Add the actual command
-    parts.push(command);
-
-    // Join all parts with && to ensure each step succeeds before continuing
-    let fullCommand = parts.join(" && ");
-
-    // Wrap in bash for consistent shell behavior
-    fullCommand = `bash -c ${shescape.quote(fullCommand)}`;
-
-    // Optionally wrap with timeout
-    if (options.timeout !== undefined) {
-      const remoteTimeout = Math.ceil(options.timeout) + 1;
-      fullCommand = `timeout -s KILL ${remoteTimeout} ${fullCommand}`;
-    }
 
     // Build docker exec args
     const dockerArgs: string[] = ["exec", "-i"];
 
     // Add environment variables directly to docker exec
+    const envVars = { ...options.env };
     for (const [key, value] of Object.entries(envVars)) {
       dockerArgs.push("-e", `${key}=${value}`);
     }
 
-    dockerArgs.push(containerName, "bash", "-c", fullCommand);
-
-    log.debug(`Docker command: docker ${dockerArgs.join(" ")}`);
+    dockerArgs.push(this.containerName, "bash", "-c", fullCommand);
 
     // Spawn docker exec command
-    const dockerProcess = spawn("docker", dockerArgs, {
+    const process = spawn("docker", dockerArgs, {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
 
-    // Wrap in DisposableProcess for automatic cleanup
-    const disposable = new DisposableProcess(dockerProcess);
-
-    // Convert Node.js streams to Web Streams
-    const stdout = Readable.toWeb(dockerProcess.stdout) as unknown as ReadableStream<Uint8Array>;
-    const stderr = Readable.toWeb(dockerProcess.stderr) as unknown as ReadableStream<Uint8Array>;
-    const stdin = Writable.toWeb(dockerProcess.stdin) as unknown as WritableStream<Uint8Array>;
-
-    // Track if we killed the process due to timeout or abort
-    let timedOut = false;
-    let aborted = false;
-
-    // Create promises for exit code and duration
-    const exitCode = new Promise<number>((resolve, reject) => {
-      dockerProcess.on("close", (code, signal) => {
-        if (aborted || options.abortSignal?.aborted) {
-          resolve(EXIT_CODE_ABORTED);
-          return;
-        }
-        if (timedOut) {
-          resolve(EXIT_CODE_TIMEOUT);
-          return;
-        }
-        resolve(code ?? (signal ? -1 : 0));
-      });
-
-      dockerProcess.on("error", (err) => {
-        reject(new RuntimeError(`Failed to execute Docker command: ${err.message}`, "exec", err));
-      });
-    });
-
-    const duration = exitCode.then(() => performance.now() - startTime);
-
-    // Handle abort signal
-    if (options.abortSignal) {
-      options.abortSignal.addEventListener("abort", () => {
-        aborted = true;
-        disposable[Symbol.dispose]();
-      });
-    }
-
-    // Handle timeout
-    if (options.timeout !== undefined) {
-      const timeoutHandle = setTimeout(() => {
-        timedOut = true;
-        disposable[Symbol.dispose]();
-      }, options.timeout * 1000);
-
-      void exitCode.finally(() => clearTimeout(timeoutHandle));
-    }
-
-    return Promise.resolve({ stdout, stderr, stdin, exitCode, duration });
+    return { process };
   }
 
-  /**
-   * Read file contents from container as a stream
-   */
-  readFile(filePath: string, abortSignal?: AbortSignal): ReadableStream<Uint8Array> {
-    return new ReadableStream<Uint8Array>({
-      start: async (controller: ReadableStreamDefaultController<Uint8Array>) => {
-        try {
-          const stream = await this.exec(`cat ${shescape.quote(filePath)}`, {
-            cwd: CONTAINER_SRC_DIR,
-            timeout: 300,
-            abortSignal,
-          });
-
-          const reader = stream.stdout.getReader();
-          const exitCodePromise = stream.exitCode;
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            controller.enqueue(value);
-          }
-
-          const code = await exitCodePromise;
-          if (code !== 0) {
-            const stderr = await streamToString(stream.stderr);
-            throw new RuntimeError(`Failed to read file ${filePath}: ${stderr}`, "file_io");
-          }
-
-          controller.close();
-        } catch (err) {
-          if (err instanceof RuntimeError) {
-            controller.error(err);
-          } else {
-            controller.error(
-              new RuntimeError(
-                `Failed to read file ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
-                "file_io",
-                err instanceof Error ? err : undefined
-              )
-            );
-          }
-        }
-      },
-    });
-  }
-
-  /**
-   * Write file contents to container atomically from a stream
-   */
-  writeFile(filePath: string, abortSignal?: AbortSignal): WritableStream<Uint8Array> {
-    const tempPath = `${filePath}.tmp.${Date.now()}`;
-    const writeCommand = `mkdir -p $(dirname ${shescape.quote(filePath)}) && cat > ${shescape.quote(tempPath)} && mv ${shescape.quote(tempPath)} ${shescape.quote(filePath)}`;
-
-    let execPromise: Promise<ExecStream> | null = null;
-
-    const getExecStream = () => {
-      execPromise ??= this.exec(writeCommand, {
-        cwd: CONTAINER_SRC_DIR,
-        timeout: 300,
-        abortSignal,
-      });
-      return execPromise;
-    };
-
-    return new WritableStream<Uint8Array>({
-      write: async (chunk: Uint8Array) => {
-        const stream = await getExecStream();
-        const writer = stream.stdin.getWriter();
-        try {
-          await writer.write(chunk);
-        } finally {
-          writer.releaseLock();
-        }
-      },
-      close: async () => {
-        const stream = await getExecStream();
-        await stream.stdin.close();
-        const exitCode = await stream.exitCode;
-
-        if (exitCode !== 0) {
-          const stderr = await streamToString(stream.stderr);
-          throw new RuntimeError(`Failed to write file ${filePath}: ${stderr}`, "file_io");
-        }
-      },
-      abort: async (reason?: unknown) => {
-        const stream = await getExecStream();
-        await stream.stdin.abort();
-        throw new RuntimeError(`Failed to write file ${filePath}: ${String(reason)}`, "file_io");
-      },
-    });
-  }
-
-  /**
-   * Get file statistics from container
-   */
-  async stat(filePath: string, abortSignal?: AbortSignal): Promise<FileStat> {
-    const stream = await this.exec(`stat -c '%s %Y %F' ${shescape.quote(filePath)}`, {
-      cwd: CONTAINER_SRC_DIR,
-      timeout: 10,
-      abortSignal,
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([
-      streamToString(stream.stdout),
-      streamToString(stream.stderr),
-      stream.exitCode,
-    ]);
-
-    if (exitCode !== 0) {
-      throw new RuntimeError(`Failed to stat ${filePath}: ${stderr}`, "file_io");
-    }
-
-    const parts = stdout.trim().split(" ");
-    if (parts.length < 3) {
-      throw new RuntimeError(`Failed to parse stat output for ${filePath}: ${stdout}`, "file_io");
-    }
-
-    const size = parseInt(parts[0], 10);
-    const mtime = parseInt(parts[1], 10);
-    const fileType = parts.slice(2).join(" ");
-
-    return {
-      size,
-      modifiedTime: new Date(mtime * 1000),
-      isDirectory: fileType === "directory",
-    };
-  }
+  // ===== Runtime interface implementations =====
 
   resolvePath(filePath: string): Promise<string> {
     // Inside container, paths are already absolute
@@ -402,25 +198,6 @@ export class DockerRuntime implements Runtime {
     return Promise.resolve(
       filePath.startsWith("/") ? filePath : path.posix.join(CONTAINER_SRC_DIR, filePath)
     );
-  }
-
-  normalizePath(targetPath: string, basePath: string): string {
-    const target = targetPath.trim();
-    let base = basePath.trim();
-
-    if (base.length > 1 && base.endsWith("/")) {
-      base = base.slice(0, -1);
-    }
-
-    if (target === ".") {
-      return base;
-    }
-
-    if (target.startsWith("/")) {
-      return target;
-    }
-
-    return base.endsWith("/") ? base + target : base + "/" + target;
   }
 
   getWorkspacePath(_projectPath: string, _workspaceName: string): string {
@@ -807,9 +584,5 @@ export class DockerRuntime implements Runtime {
       success: false,
       error: "Forking Docker workspaces is not yet implemented. Create a new workspace instead.",
     });
-  }
-
-  tempDir(): Promise<string> {
-    return Promise.resolve("/tmp");
   }
 }

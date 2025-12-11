@@ -1,37 +1,3 @@
-import { spawn } from "child_process";
-import { Readable, Writable } from "stream";
-import * as path from "path";
-import type {
-  Runtime,
-  ExecOptions,
-  ExecStream,
-  FileStat,
-  WorkspaceCreationParams,
-  WorkspaceCreationResult,
-  WorkspaceInitParams,
-  WorkspaceInitResult,
-  WorkspaceForkParams,
-  WorkspaceForkResult,
-  InitLogger,
-} from "./Runtime";
-import { RuntimeError as RuntimeErrorClass } from "./Runtime";
-import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
-import { log } from "@/node/services/log";
-import { checkInitHookExists, getMuxEnv, runInitHookOnRuntime } from "./initHook";
-import { expandTildeForSSH as expandHookPath } from "./tildeExpansion";
-import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
-import { streamProcessToLogger } from "./streamProcess";
-import { expandTildeForSSH, cdCommandForSSH } from "./tildeExpansion";
-import { getProjectName, execBuffered } from "@/node/utils/runtime/helpers";
-import { getErrorMessage } from "@/common/utils/errors";
-import { execAsync, DisposableProcess } from "@/node/utils/disposableExec";
-import { getControlPath, sshConnectionPool, type SSHRuntimeConfig } from "./sshConnectionPool";
-import { getBashPath } from "@/node/utils/main/bashPath";
-import { streamToString, shescape } from "./streamUtils";
-
-// Re-export SSHRuntimeConfig from connection pool (defined there to avoid circular deps)
-export type { SSHRuntimeConfig } from "./sshConnectionPool";
-
 /**
  * SSH runtime implementation that executes commands and file operations
  * over SSH using the ssh command-line tool.
@@ -45,14 +11,53 @@ export type { SSHRuntimeConfig } from "./sshConnectionPool";
  * IMPORTANT: All SSH operations MUST include a timeout to prevent hangs from network issues.
  * Timeouts should be either set literally for internal operations or forwarded from upstream
  * for user-initiated operations.
+ *
+ * Extends RemoteRuntime for shared exec/file operations.
  */
-export class SSHRuntime implements Runtime {
+
+import { spawn } from "child_process";
+import * as path from "path";
+import type {
+  ExecOptions,
+  WorkspaceCreationParams,
+  WorkspaceCreationResult,
+  WorkspaceInitParams,
+  WorkspaceInitResult,
+  WorkspaceForkParams,
+  WorkspaceForkResult,
+  InitLogger,
+} from "./Runtime";
+import { RuntimeError as RuntimeErrorClass } from "./Runtime";
+import { RemoteRuntime, type SpawnResult } from "./RemoteRuntime";
+import { log } from "@/node/services/log";
+import { checkInitHookExists, getMuxEnv, runInitHookOnRuntime } from "./initHook";
+import { expandTildeForSSH as expandHookPath } from "./tildeExpansion";
+import { streamProcessToLogger } from "./streamProcess";
+import { expandTildeForSSH, cdCommandForSSH } from "./tildeExpansion";
+import { getProjectName, execBuffered } from "@/node/utils/runtime/helpers";
+import { getErrorMessage } from "@/common/utils/errors";
+import { execAsync } from "@/node/utils/disposableExec";
+import { getControlPath, sshConnectionPool, type SSHRuntimeConfig } from "./sshConnectionPool";
+import { getBashPath } from "@/node/utils/main/bashPath";
+import { streamToString, shescape } from "./streamUtils";
+
+// Re-export SSHRuntimeConfig from connection pool (defined there to avoid circular deps)
+export type { SSHRuntimeConfig } from "./sshConnectionPool";
+
+/**
+ * SSH runtime implementation that executes commands and file operations
+ * over SSH using the ssh command-line tool.
+ *
+ * Extends RemoteRuntime for shared exec/file operations.
+ */
+export class SSHRuntime extends RemoteRuntime {
   private readonly config: SSHRuntimeConfig;
   private readonly controlPath: string;
   /** Cached resolved bgOutputDir (tilde expanded to absolute path) */
   private resolvedBgOutputDir: string | null = null;
 
   constructor(config: SSHRuntimeConfig) {
+    super();
     // Note: srcBaseDir may contain tildes - they will be resolved via resolvePath() before use
     // The WORKSPACE_CREATE IPC handler resolves paths before storing in config
     this.config = config;
@@ -99,54 +104,36 @@ export class SSHRuntime implements Runtime {
     return this.config;
   }
 
+  // ===== RemoteRuntime abstract method implementations =====
+
+  protected readonly commandPrefix = "SSH";
+
+  protected getBasePath(): string {
+    return this.config.srcBaseDir;
+  }
+
+  protected quoteForRemote(filePath: string): string {
+    return expandTildeForSSH(filePath);
+  }
+
+  protected cdCommand(cwd: string): string {
+    return cdCommandForSSH(cwd);
+  }
+
   /**
-   * Execute command over SSH with streaming I/O
+   * Handle exit codes for SSH connection pool health tracking.
    */
-  async exec(command: string, options: ExecOptions): Promise<ExecStream> {
-    const startTime = performance.now();
-
-    // Short-circuit if already aborted
-    if (options.abortSignal?.aborted) {
-      throw new RuntimeErrorClass("Operation aborted before execution", "exec");
+  protected onExitCode(exitCode: number, _options: ExecOptions): void {
+    // SSH exit code 255 indicates connection failure - report to pool for backoff
+    // This prevents thundering herd when a previously healthy host goes down
+    if (exitCode === 255) {
+      sshConnectionPool.reportFailure(this.config, "SSH connection failed (exit code 255)");
+    } else {
+      sshConnectionPool.markHealthy(this.config);
     }
+  }
 
-    // Ensure connection is healthy before executing
-    // This provides backoff protection and singleflighting for concurrent requests
-    await sshConnectionPool.acquireConnection(this.config);
-
-    // Build command parts
-    const parts: string[] = [];
-
-    // Add cd command if cwd is specified
-    parts.push(cdCommandForSSH(options.cwd));
-
-    // Add environment variable exports (user env first, then non-interactive overrides)
-    const envVars = { ...options.env, ...NON_INTERACTIVE_ENV_VARS };
-    for (const [key, value] of Object.entries(envVars)) {
-      parts.push(`export ${key}=${shescape.quote(value)}`);
-    }
-
-    // Add the actual command
-    parts.push(command);
-
-    // Join all parts with && to ensure each step succeeds before continuing
-    let fullCommand = parts.join(" && ");
-
-    // Always wrap in bash to ensure consistent shell behavior
-    // (user's login shell may be fish, zsh, etc. which have different syntax)
-    fullCommand = `bash -c ${shescape.quote(fullCommand)}`;
-
-    // Optionally wrap with timeout to ensure the command is killed on the remote side
-    // even if the local SSH client is killed but the ControlMaster connection persists
-    // Use timeout command with KILL signal
-    // Set remote timeout slightly longer (+1s) than local timeout to ensure
-    // the local timeout fires first in normal cases (for cleaner error handling)
-    // Note: Using BusyBox-compatible syntax (-s KILL) which also works with GNU timeout
-    if (options.timeout !== undefined) {
-      const remoteTimeout = Math.ceil(options.timeout) + 1;
-      fullCommand = `timeout -s KILL ${remoteTimeout} ${fullCommand}`;
-    }
-
+  protected spawnRemoteProcess(fullCommand: string, options: ExecOptions): SpawnResult {
     // Build SSH args from shared base config
     // -T: Disable pseudo-terminal allocation (default)
     // -t: Force pseudo-terminal allocation (for interactive shells)
@@ -157,11 +144,6 @@ export class SSHRuntime implements Runtime {
     // Cap at 15 seconds - users wanting long timeouts for builds shouldn't wait that long for connection
     // ServerAliveInterval: Send keepalive every 5 seconds to detect dead connections
     // ServerAliveCountMax: Consider connection dead after 2 missed keepalives (10 seconds total)
-    // Together these ensure that:
-    // 1. Connection establishment can't hang indefinitely (max 15s)
-    // 2. Established connections that die are detected quickly
-    // 3. The overall command timeout is respected from the moment ssh command starts
-    // When no timeout specified, use default 15s connect timeout to prevent hanging on connection
     const connectTimeout =
       options.timeout !== undefined ? Math.min(Math.ceil(options.timeout), 15) : 15;
     sshArgs.push("-o", `ConnectTimeout=${connectTimeout}`);
@@ -171,250 +153,64 @@ export class SSHRuntime implements Runtime {
 
     sshArgs.push(this.config.host, fullCommand);
 
-    // Debug: log the actual SSH command being executed
-    log.debug(`SSH command: ssh ${sshArgs.join(" ")}`);
-    log.debug(`Remote command: ${fullCommand}`);
-
     // Spawn ssh command
-    const sshProcess = spawn("ssh", sshArgs, {
+    const process = spawn("ssh", sshArgs, {
       stdio: ["pipe", "pipe", "pipe"],
       // Prevent console window from appearing on Windows
       windowsHide: true,
     });
 
-    // Wrap in DisposableProcess for automatic cleanup
-    const disposable = new DisposableProcess(sshProcess);
+    // Pre-exec: acquire connection from pool for backoff protection
+    const preExec = sshConnectionPool.acquireConnection(this.config);
 
-    // Convert Node.js streams to Web Streams
-    const stdout = Readable.toWeb(sshProcess.stdout) as unknown as ReadableStream<Uint8Array>;
-    const stderr = Readable.toWeb(sshProcess.stderr) as unknown as ReadableStream<Uint8Array>;
-    const stdin = Writable.toWeb(sshProcess.stdin) as unknown as WritableStream<Uint8Array>;
-
-    // No stream cleanup in DisposableProcess - streams close naturally when process exits
-    // bash.ts handles cleanup after waiting for exitCode
-
-    // Track if we killed the process due to timeout or abort
-    let timedOut = false;
-    let aborted = false;
-
-    // Create promises for exit code and duration
-    // Uses special exit codes (EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT) for expected error conditions
-    const exitCode = new Promise<number>((resolve, reject) => {
-      sshProcess.on("close", (code, signal) => {
-        // Check abort first (highest priority)
-        if (aborted || options.abortSignal?.aborted) {
-          resolve(EXIT_CODE_ABORTED);
-          return;
-        }
-        // Check if we killed the process due to timeout
-        if (timedOut) {
-          resolve(EXIT_CODE_TIMEOUT);
-          return;
-        }
-
-        const exitCode = code ?? (signal ? -1 : 0);
-
-        // SSH exit code 255 indicates connection failure - report to pool for backoff
-        // This prevents thundering herd when a previously healthy host goes down
-        // Any other exit code means the connection worked (command may have failed)
-        if (exitCode === 255) {
-          sshConnectionPool.reportFailure(this.config, "SSH connection failed (exit code 255)");
-        } else {
-          sshConnectionPool.markHealthy(this.config);
-        }
-
-        resolve(exitCode);
-        // Cleanup runs automatically via DisposableProcess
-      });
-
-      sshProcess.on("error", (err) => {
-        // Spawn errors are connection-level failures
-        sshConnectionPool.reportFailure(this.config, `SSH spawn error: ${err.message}`);
-        reject(new RuntimeErrorClass(`Failed to execute SSH command: ${err.message}`, "exec", err));
-      });
-    });
-
-    const duration = exitCode.then(() => performance.now() - startTime);
-
-    // Handle abort signal
-    if (options.abortSignal) {
-      options.abortSignal.addEventListener("abort", () => {
-        aborted = true;
-        disposable[Symbol.dispose](); // Kill process and run cleanup
-      });
-    }
-
-    // Handle timeout (only if timeout specified)
-    if (options.timeout !== undefined) {
-      const timeoutHandle = setTimeout(() => {
-        timedOut = true;
-        disposable[Symbol.dispose](); // Kill process and run cleanup
-      }, options.timeout * 1000);
-
-      // Clear timeout if process exits naturally
-      void exitCode.finally(() => clearTimeout(timeoutHandle));
-    }
-
-    return { stdout, stderr, stdin, exitCode, duration };
+    return { process, preExec };
   }
 
   /**
-   * Read file contents over SSH as a stream
+   * Override buildWriteCommand for SSH to handle symlinks and preserve permissions.
    */
-  readFile(path: string, abortSignal?: AbortSignal): ReadableStream<Uint8Array> {
-    // Return stdout, but wrap to handle errors from exec() and exit code
-    return new ReadableStream<Uint8Array>({
-      start: async (controller: ReadableStreamDefaultController<Uint8Array>) => {
-        try {
-          // Use expandTildeForSSH to handle ~ paths (shescape.quote doesn't expand tildes)
-          const stream = await this.exec(`cat ${expandTildeForSSH(path)}`, {
-            cwd: this.config.srcBaseDir,
-            timeout: 300, // 5 minutes - reasonable for large files
-            abortSignal,
-          });
-
-          const reader = stream.stdout.getReader();
-          const exitCode = stream.exitCode;
-
-          // Read all chunks
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            controller.enqueue(value);
-          }
-
-          // Check exit code after reading completes
-          const code = await exitCode;
-          if (code !== 0) {
-            const stderr = await streamToString(stream.stderr);
-            throw new RuntimeErrorClass(`Failed to read file ${path}: ${stderr}`, "file_io");
-          }
-
-          controller.close();
-        } catch (err) {
-          if (err instanceof RuntimeErrorClass) {
-            controller.error(err);
-          } else {
-            controller.error(
-              new RuntimeErrorClass(
-                `Failed to read file ${path}: ${err instanceof Error ? err.message : String(err)}`,
-                "file_io",
-                err instanceof Error ? err : undefined
-              )
-            );
-          }
-        }
-      },
-    });
-  }
-
-  /**
-   * Write file contents over SSH atomically from a stream
-   * Preserves symlinks and file permissions by resolving and copying metadata
-   */
-  writeFile(path: string, abortSignal?: AbortSignal): WritableStream<Uint8Array> {
-    // Use expandTildeForSSH to handle ~ paths (shescape.quote doesn't expand tildes)
-    const expandedPath = expandTildeForSSH(path);
-    const tempPath = `${path}.tmp.${Date.now()}`;
-    const expandedTempPath = expandTildeForSSH(tempPath);
+  protected buildWriteCommand(quotedPath: string, quotedTempPath: string): string {
     // Resolve symlinks to get the actual target path, preserving the symlink itself
     // If target exists, save its permissions to restore after write
     // If path doesn't exist, use 600 as default
     // Then write atomically using mv (all-or-nothing for readers)
-    const writeCommand = `RESOLVED=$(readlink -f ${expandedPath} 2>/dev/null || echo ${expandedPath}) && PERMS=$(stat -c '%a' "$RESOLVED" 2>/dev/null || echo 600) && mkdir -p $(dirname "$RESOLVED") && cat > ${expandedTempPath} && chmod "$PERMS" ${expandedTempPath} && mv ${expandedTempPath} "$RESOLVED"`;
-
-    // Need to get the exec stream in async callbacks
-    let execPromise: Promise<ExecStream> | null = null;
-
-    const getExecStream = () => {
-      execPromise ??= this.exec(writeCommand, {
-        cwd: this.config.srcBaseDir,
-        timeout: 300, // 5 minutes - reasonable for large files
-        abortSignal,
-      });
-      return execPromise;
-    };
-
-    // Wrap stdin to handle errors from exit code
-    return new WritableStream<Uint8Array>({
-      write: async (chunk: Uint8Array) => {
-        const stream = await getExecStream();
-        const writer = stream.stdin.getWriter();
-        try {
-          await writer.write(chunk);
-        } finally {
-          writer.releaseLock();
-        }
-      },
-      close: async () => {
-        const stream = await getExecStream();
-        // Close stdin and wait for command to complete
-        await stream.stdin.close();
-        const exitCode = await stream.exitCode;
-
-        if (exitCode !== 0) {
-          const stderr = await streamToString(stream.stderr);
-          throw new RuntimeErrorClass(`Failed to write file ${path}: ${stderr}`, "file_io");
-        }
-      },
-      abort: async (reason?: unknown) => {
-        const stream = await getExecStream();
-        await stream.stdin.abort();
-        throw new RuntimeErrorClass(`Failed to write file ${path}: ${String(reason)}`, "file_io");
-      },
-    });
+    return `RESOLVED=$(readlink -f ${quotedPath} 2>/dev/null || echo ${quotedPath}) && PERMS=$(stat -c '%a' "$RESOLVED" 2>/dev/null || echo 600) && mkdir -p $(dirname "$RESOLVED") && cat > ${quotedTempPath} && chmod "$PERMS" ${quotedTempPath} && mv ${quotedTempPath} "$RESOLVED"`;
   }
+
+  // ===== SSH-specific helper methods =====
 
   /**
-   * Get file statistics over SSH
+   * Build base SSH args shared by all SSH operations.
+   * Includes: port, identity file, LogLevel, ControlMaster options.
    */
-  async stat(path: string, abortSignal?: AbortSignal): Promise<FileStat> {
-    // Use stat with format string to get: size, mtime, type
-    // %s = size, %Y = mtime (seconds since epoch), %F = file type
-    // Use expandTildeForSSH to handle ~ paths (shescape.quote doesn't expand tildes)
-    const stream = await this.exec(`stat -c '%s %Y %F' ${expandTildeForSSH(path)}`, {
-      cwd: this.config.srcBaseDir,
-      timeout: 10, // 10 seconds - stat should be fast
-      abortSignal,
-    });
+  private buildSSHArgs(): string[] {
+    const args: string[] = [];
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      streamToString(stream.stdout),
-      streamToString(stream.stderr),
-      stream.exitCode,
-    ]);
-
-    if (exitCode !== 0) {
-      throw new RuntimeErrorClass(`Failed to stat ${path}: ${stderr}`, "file_io");
+    // Add port if specified
+    if (this.config.port) {
+      args.push("-p", this.config.port.toString());
     }
 
-    const parts = stdout.trim().split(" ");
-    if (parts.length < 3) {
-      throw new RuntimeErrorClass(`Failed to parse stat output for ${path}: ${stdout}`, "file_io");
+    // Add identity file if specified
+    if (this.config.identityFile) {
+      args.push("-i", this.config.identityFile);
+      // Disable strict host key checking for test environments
+      args.push("-o", "StrictHostKeyChecking=no");
+      args.push("-o", "UserKnownHostsFile=/dev/null");
     }
 
-    const size = parseInt(parts[0], 10);
-    const mtime = parseInt(parts[1], 10);
-    const fileType = parts.slice(2).join(" ");
+    // Suppress SSH warnings (e.g., ControlMaster messages) that would pollute command output
+    // These go to stderr and get merged with stdout in bash tool results
+    // Use FATAL (not ERROR) because mux_client_request_session messages are at ERROR level
+    args.push("-o", "LogLevel=FATAL");
 
-    return {
-      size,
-      modifiedTime: new Date(mtime * 1000),
-      isDirectory: fileType === "directory",
-    };
-  }
-  async resolvePath(filePath: string): Promise<string> {
-    // Expand tilde on the remote system.
-    // IMPORTANT: This must not single-quote a "~" path directly, because quoted tildes won't expand.
-    // We reuse expandTildeForSSH() to produce a "$HOME"-based, bash-safe expression.
-    //
-    // Note: This does not attempt to canonicalize relative paths (no filesystem access).
-    // It only ensures ~ is expanded so callers can compare against absolute paths.
-    const script = `echo ${expandTildeForSSH(filePath)}`;
-    const command = `bash -c ${shescape.quote(script)}`;
+    // Add ControlMaster options for connection multiplexing
+    // This ensures all SSH operations reuse the master connection
+    args.push("-o", "ControlMaster=auto");
+    args.push("-o", `ControlPath=${this.controlPath}`);
+    args.push("-o", "ControlPersist=60");
 
-    // Use 10 second timeout for path resolution to allow for slower SSH connections
-    return this.execSSHCommand(command, 10000);
+    return args;
   }
 
   /**
@@ -492,73 +288,34 @@ export class SSHRuntime implements Runtime {
     });
   }
 
-  normalizePath(targetPath: string, basePath: string): string {
-    // For SSH, handle paths in a POSIX-like manner without accessing the remote filesystem
-    const target = targetPath.trim();
-    let base = basePath.trim();
+  // ===== Runtime interface implementations =====
 
-    // Normalize base path - remove trailing slash (except for root "/")
-    if (base.length > 1 && base.endsWith("/")) {
-      base = base.slice(0, -1);
-    }
+  async resolvePath(filePath: string): Promise<string> {
+    // Expand ~ on the remote host.
+    // Note: `p='~/x'; echo "$p"` does NOT expand ~ (tilde expansion happens before assignment).
+    // We do explicit expansion using parameter substitution (no reliance on `realpath`, `readlink -f`, etc.).
+    const script = [
+      `p=${shescape.quote(filePath)}`,
+      'if [ "$p" = "~" ]; then',
+      '  echo "$HOME"',
+      'elif [ "${p#\\~/}" != "$p" ]; then',
+      '  echo "$HOME/${p#\\~/}"',
+      'elif [ "${p#/}" != "$p" ]; then',
+      '  echo "$p"',
+      "else",
+      '  echo "$PWD/$p"',
+      "fi",
+    ].join("\n");
 
-    // Handle special case: current directory
-    if (target === ".") {
-      return base;
-    }
+    const command = `bash -lc ${shescape.quote(script)}`;
 
-    // Handle tilde expansion - keep as-is for comparison
-    let normalizedTarget = target;
-    if (target === "~" || target.startsWith("~/")) {
-      normalizedTarget = target;
-    } else if (target.startsWith("/")) {
-      // Absolute path - use as-is
-      normalizedTarget = target;
-    } else {
-      // Relative path - resolve against base using POSIX path joining
-      normalizedTarget = base.endsWith("/") ? base + target : base + "/" + target;
-    }
-
-    // Remove trailing slash for comparison (except for root "/")
-    if (normalizedTarget.length > 1 && normalizedTarget.endsWith("/")) {
-      normalizedTarget = normalizedTarget.slice(0, -1);
-    }
-
-    return normalizedTarget;
+    // Use 10 second timeout for path resolution to allow for slower SSH connections
+    return this.execSSHCommand(command, 10000);
   }
 
-  /**
-   * Build base SSH args shared by all SSH operations.
-   * Includes: port, identity file, LogLevel, ControlMaster options.
-   */
-  private buildSSHArgs(): string[] {
-    const args: string[] = [];
-
-    // Add port if specified
-    if (this.config.port) {
-      args.push("-p", this.config.port.toString());
-    }
-
-    // Add identity file if specified
-    if (this.config.identityFile) {
-      args.push("-i", this.config.identityFile);
-      // Disable strict host key checking for test environments
-      args.push("-o", "StrictHostKeyChecking=no");
-      args.push("-o", "UserKnownHostsFile=/dev/null");
-    }
-
-    // Suppress SSH warnings (e.g., ControlMaster messages) that would pollute command output
-    // These go to stderr and get merged with stdout in bash tool results
-    // Use FATAL (not ERROR) because mux_client_request_session messages are at ERROR level
-    args.push("-o", "LogLevel=FATAL");
-
-    // Add ControlMaster options for connection multiplexing
-    // This ensures all SSH operations reuse the master connection
-    args.push("-o", "ControlMaster=auto");
-    args.push("-o", `ControlPath=${this.controlPath}`);
-    args.push("-o", "ControlPersist=60");
-
-    return args;
+  getWorkspacePath(projectPath: string, workspaceName: string): string {
+    const projectName = getProjectName(projectPath);
+    return path.posix.join(this.config.srcBaseDir, projectName, workspaceName);
   }
 
   /**
@@ -757,11 +514,6 @@ export class SSHRuntime implements Runtime {
 
       throw error;
     }
-  }
-
-  getWorkspacePath(projectPath: string, workspaceName: string): string {
-    const projectName = getProjectName(projectPath);
-    return path.posix.join(this.config.srcBaseDir, projectName, workspaceName);
   }
 
   async createWorkspace(params: WorkspaceCreationParams): Promise<WorkspaceCreationResult> {
@@ -1009,15 +761,19 @@ export class SSHRuntime implements Runtime {
         } finally {
           stderrReader.releaseLock();
         }
+
         return {
           success: false,
-          error: `Failed to rename directory: ${stderr || "Unknown error"}`,
+          error: `Failed to rename directory: ${stderr.trim() || "Unknown error"}`,
         };
       }
 
       return { success: true, oldPath, newPath };
     } catch (error) {
-      return { success: false, error: `Failed to rename directory: ${getErrorMessage(error)}` };
+      return {
+        success: false,
+        error: `Failed to rename directory: ${getErrorMessage(error)}`,
+      };
     }
   }
 
@@ -1135,29 +891,17 @@ export class SSHRuntime implements Runtime {
       if (checkExitCode === 1) {
         return {
           success: false,
-          error: `Workspace contains uncommitted changes. Use force flag to delete anyway.`,
+          error: "Workspace contains uncommitted changes. Use force flag to delete anyway.",
         };
       }
 
       if (checkExitCode === 2) {
         // Read stderr which contains the unpushed commits output
-        const stderrReader = checkStream.stderr.getReader();
-        const decoder = new TextDecoder();
-        let stderr = "";
-        try {
-          while (true) {
-            const { done, value } = await stderrReader.read();
-            if (done) break;
-            stderr += decoder.decode(value, { stream: true });
-          }
-        } finally {
-          stderrReader.releaseLock();
-        }
-
+        const stderr = await streamToString(checkStream.stderr);
         const commitList = stderr.trim();
         const errorMsg = commitList
           ? `Workspace contains unpushed commits:\n\n${commitList}`
-          : `Workspace contains unpushed commits. Use force flag to delete anyway.`;
+          : "Workspace contains unpushed commits. Use force flag to delete anyway.";
 
         return {
           success: false,
@@ -1167,21 +911,10 @@ export class SSHRuntime implements Runtime {
 
       if (checkExitCode !== 0) {
         // Unexpected error
-        const stderrReader = checkStream.stderr.getReader();
-        const decoder = new TextDecoder();
-        let stderr = "";
-        try {
-          while (true) {
-            const { done, value } = await stderrReader.read();
-            if (done) break;
-            stderr += decoder.decode(value, { stream: true });
-          }
-        } finally {
-          stderrReader.releaseLock();
-        }
+        const stderr = await streamToString(checkStream.stderr);
         return {
           success: false,
-          error: `Failed to check workspace state: ${stderr || `exit code ${checkExitCode}`}`,
+          error: `Failed to check workspace state: ${stderr.trim() || `exit code ${checkExitCode}`}`,
         };
       }
 
@@ -1202,21 +935,10 @@ export class SSHRuntime implements Runtime {
 
       if (exitCode !== 0) {
         // Read stderr for error message
-        const stderrReader = stream.stderr.getReader();
-        const decoder = new TextDecoder();
-        let stderr = "";
-        try {
-          while (true) {
-            const { done, value } = await stderrReader.read();
-            if (done) break;
-            stderr += decoder.decode(value, { stream: true });
-          }
-        } finally {
-          stderrReader.releaseLock();
-        }
+        const stderr = await streamToString(stream.stderr);
         return {
           success: false,
-          error: `Failed to delete directory: ${stderr || "Unknown error"}`,
+          error: `Failed to delete directory: ${stderr.trim() || "Unknown error"}`,
         };
       }
 
@@ -1227,26 +949,9 @@ export class SSHRuntime implements Runtime {
   }
 
   forkWorkspace(_params: WorkspaceForkParams): Promise<WorkspaceForkResult> {
-    // SSH forking is not yet implemented due to unresolved complexities:
-    // - Users expect the new workspace's filesystem state to match the remote workspace,
-    //   not the local project (which may be out of sync or on a different commit)
-    // - This requires: detecting the branch, copying remote state, handling uncommitted changes
-    // - For now, users should create a new workspace from the desired branch instead
     return Promise.resolve({
       success: false,
       error: "Forking SSH workspaces is not yet implemented. Create a new workspace instead.",
     });
   }
-
-  /**
-   * Get the runtime's temp directory (resolved absolute path on remote).
-   */
-  tempDir(): Promise<string> {
-    // Use configured bgOutputDir's parent or default /tmp
-    // The bgOutputDir is typically /tmp/mux-bashes, so we return /tmp
-    return Promise.resolve("/tmp");
-  }
 }
-
-// Re-export for backward compatibility with existing imports
-export { streamToString } from "./streamUtils";
