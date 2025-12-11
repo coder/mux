@@ -103,14 +103,13 @@ test.describe("slash command flows", () => {
     await ui.projects.openFirstWorkspace();
 
     const modeToggles = page.locator('[data-component="ChatModeToggles"]');
-    // Default model is now Opus
-    await expect(modeToggles.getByText("anthropic:claude-opus-4-5", { exact: true })).toBeVisible();
+    // Default model is now Opus - displayed as formatted name
+    await expect(modeToggles.getByText("Opus 4.5", { exact: true })).toBeVisible();
 
     await ui.chat.sendMessage("/model sonnet");
     await ui.chat.expectStatusMessageContains("Model changed to anthropic:claude-sonnet-4-5");
-    await expect(
-      modeToggles.getByText("anthropic:claude-sonnet-4-5", { exact: true })
-    ).toBeVisible();
+    // Model is displayed as formatted name
+    await expect(modeToggles.getByText("Sonnet 4.5", { exact: true })).toBeVisible();
 
     const timeline = await ui.chat.captureStreamTimeline(async () => {
       await ui.chat.sendMessage(SLASH_COMMAND_PROMPTS.MODEL_STATUS);
