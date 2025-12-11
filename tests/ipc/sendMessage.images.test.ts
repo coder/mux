@@ -68,6 +68,10 @@ describeIntegration("sendMessage image handling tests", () => {
             }
           );
 
+          // Debug: log if sendMessage failed
+          if (!result.success) {
+            console.log(`[Image Test] sendMessage failed:`, JSON.stringify(result, null, 2));
+          }
           expect(result.success).toBe(true);
 
           // Wait for stream to complete
@@ -105,6 +109,10 @@ describeIntegration("sendMessage image handling tests", () => {
             imageParts: [RED_PIXEL, BLUE_PIXEL],
           });
 
+          // Debug: log if sendMessage failed
+          if (!result.success) {
+            console.log(`[Image Test Multi] sendMessage failed:`, JSON.stringify(result, null, 2));
+          }
           expect(result.success).toBe(true);
 
           // Wait for stream to complete
