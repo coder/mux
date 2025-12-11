@@ -182,7 +182,7 @@ export function CreationControls(props: CreationControlsProps) {
                 placeholder={nameState.isGenerating ? "Generating..." : "workspace-name"}
                 disabled={props.disabled}
                 className={cn(
-                  "col-start-1 row-start-1 bg-transparent border-border-medium focus:border-accent h-7 w-full rounded-md border border-transparent pr-5 text-lg font-semibold focus:border focus:bg-bg-dark focus:outline-none disabled:opacity-50",
+                  "col-start-1 row-start-1 bg-transparent border-border-medium focus:border-accent h-7 w-full rounded-md border border-transparent pr-4 text-lg font-semibold focus:border focus:bg-bg-dark focus:outline-none disabled:opacity-50",
                   nameState.autoGenerate ? "text-muted" : "text-foreground",
                   nameState.error && "border-red-500"
                 )}
@@ -193,7 +193,7 @@ export function CreationControls(props: CreationControlsProps) {
             </TooltipContent>
           </Tooltip>
           {/* Magic wand / loading indicator */}
-          <div className="absolute inset-y-0 right-0 flex items-center pr-1">
+          <div className="absolute inset-y-0 right-0 flex items-center">
             {nameState.isGenerating ? (
               <Loader2 className="text-accent h-3.5 w-3.5 animate-spin" />
             ) : (
@@ -203,7 +203,7 @@ export function CreationControls(props: CreationControlsProps) {
                     type="button"
                     onClick={handleWandClick}
                     disabled={props.disabled}
-                    className="flex h-full items-center disabled:opacity-50"
+                    className="flex h-full items-center p-0 disabled:opacity-50"
                     aria-label={
                       nameState.autoGenerate ? "Disable auto-naming" : "Enable auto-naming"
                     }
