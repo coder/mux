@@ -1540,7 +1540,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                   onComplete={() => inputRef.current?.focus()}
                   defaultModel={defaultModel}
                   onSetDefaultModel={setDefaultModel}
-                  displayMode="wide"
                 />
                 <Tooltip>
                   <TooltipTrigger asChild>

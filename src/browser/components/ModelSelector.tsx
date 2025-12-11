@@ -22,8 +22,6 @@ interface ModelSelectorProps {
   onComplete?: () => void;
   defaultModel?: string | null;
   onSetDefaultModel?: (model: string) => void;
-  /** Display mode: "compact" shows truncated model string, "wide" shows icon + formatted name */
-  displayMode?: "compact" | "wide";
 }
 
 export interface ModelSelectorRef {
@@ -31,18 +29,7 @@ export interface ModelSelectorRef {
 }
 
 export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
-  (
-    {
-      value,
-      onChange,
-      recentModels,
-      onComplete,
-      defaultModel,
-      onSetDefaultModel,
-      displayMode = "compact",
-    },
-    ref
-  ) => {
+  ({ value, onChange, recentModels, onComplete, defaultModel, onSetDefaultModel }, ref) => {
     const { open: openSettings } = useSettings();
     const gateway = useGateway();
     const [isEditing, setIsEditing] = useState(false);
@@ -216,48 +203,6 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       const innerProvider =
         provider === "mux-gateway" && modelName.includes("/") ? modelName.split("/")[0] : provider;
 
-      if (displayMode === "wide") {
-        // Wide mode: icon + formatted model name
-        return (
-          <div ref={containerRef} className="relative flex items-center gap-1.5">
-            {gatewayActive && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <GatewayIcon className="text-accent h-3.5 w-3.5 shrink-0" active />
-                </TooltipTrigger>
-                <TooltipContent align="center">Using Mux Gateway</TooltipContent>
-              </Tooltip>
-            )}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div
-                  className="text-foreground hover:bg-hover flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-sm transition-colors duration-200"
-                  onClick={handleClick}
-                >
-                  <ProviderIcon provider={innerProvider} className="h-4 w-4 shrink-0 opacity-70" />
-                  <span className="font-medium">{formatModelDisplayName(modelName)}</span>
-                </div>
-              </TooltipTrigger>
-              <TooltipContent align="center">{value}</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => openSettings("models")}
-                  className="text-muted hover:text-foreground flex items-center justify-center rounded-sm p-0.5 transition-colors duration-150"
-                  aria-label="Manage models"
-                >
-                  <Settings className="h-3.5 w-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent align="center">Manage models</TooltipContent>
-            </Tooltip>
-          </div>
-        );
-      }
-
-      // Compact mode (default): truncated model string
       return (
         <div ref={containerRef} className="relative flex items-center gap-1">
           {gatewayActive && (
@@ -268,12 +213,18 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
               <TooltipContent align="center">Using Mux Gateway</TooltipContent>
             </Tooltip>
           )}
-          <div
-            className="text-muted-light font-monospace dir-rtl hover:bg-hover max-w-36 cursor-pointer truncate rounded-sm px-1 py-0.5 text-left font-mono text-[10px] leading-[11px] transition-colors duration-200"
-            onClick={handleClick}
-          >
-            {value}
-          </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div
+                className="text-muted-light hover:bg-hover flex cursor-pointer items-center gap-1 rounded-sm px-1 py-0.5 text-[11px] transition-colors duration-200"
+                onClick={handleClick}
+              >
+                <ProviderIcon provider={innerProvider} className="h-3 w-3 shrink-0 opacity-70" />
+                <span>{formatModelDisplayName(modelName)}</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent align="center">{value}</TooltipContent>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <button
