@@ -40,6 +40,7 @@ const RUNTIME_OPTIONS: Array<{
   value: RuntimeMode;
   label: string;
   description: string;
+  docsPath: string;
   Icon: React.FC<{ size?: number; className?: string }>;
   // Active state colors using CSS variables for theme support
   activeClass: string;
@@ -49,6 +50,7 @@ const RUNTIME_OPTIONS: Array<{
     value: RUNTIME_MODE.LOCAL,
     label: "Local",
     description: "Work directly in project directory",
+    docsPath: "/runtime/local",
     Icon: LocalIcon,
     activeClass:
       "bg-[var(--color-runtime-local)]/30 text-foreground border-[var(--color-runtime-local)]/60",
@@ -59,6 +61,7 @@ const RUNTIME_OPTIONS: Array<{
     value: RUNTIME_MODE.WORKTREE,
     label: "Worktree",
     description: "Isolated git worktree",
+    docsPath: "/runtime/worktree",
     Icon: WorktreeIcon,
     activeClass:
       "bg-[var(--color-runtime-worktree)]/20 text-[var(--color-runtime-worktree-text)] border-[var(--color-runtime-worktree)]/60",
@@ -69,6 +72,7 @@ const RUNTIME_OPTIONS: Array<{
     value: RUNTIME_MODE.SSH,
     label: "Remote",
     description: "Clone on SSH host",
+    docsPath: "/runtime/ssh",
     Icon: SSHIcon,
     activeClass:
       "bg-[var(--color-runtime-ssh)]/20 text-[var(--color-runtime-ssh-text)] border-[var(--color-runtime-ssh)]/60",
@@ -112,7 +116,17 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
               side="bottom"
               className="pointer-events-auto whitespace-normal"
             >
-              {option.description}
+              <div className="flex items-baseline justify-between gap-3">
+                <span>{option.description}</span>
+                <a
+                  href={`https://mux.coder.com${option.docsPath}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent hover:underline"
+                >
+                  docs
+                </a>
+              </div>
               {isModeDisabled ? (
                 <p className="mt-1 text-yellow-500">Requires git repository</p>
               ) : (
