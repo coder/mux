@@ -5,6 +5,7 @@
  * with runtime implementations (LocalRuntime, SSHRuntime, etc.).
  */
 
+import { RuntimeModeSchema } from "@/common/orpc/schemas";
 import type { RuntimeConfig } from "@/common/types/runtime";
 
 /**
@@ -25,11 +26,6 @@ export function isIncompatibleRuntimeConfig(config: RuntimeConfig | undefined): 
   if (!config) {
     return false;
   }
-  // All known types are compatible
-  const knownTypes = ["local", "worktree", "ssh", "docker"];
-  if (!knownTypes.includes(config.type)) {
-    // Unknown type from a future version
-    return true;
-  }
-  return false;
+  // Unknown type from a future version
+  return !RuntimeModeSchema.safeParse(config.type).success;
 }

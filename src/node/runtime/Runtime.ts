@@ -15,7 +15,7 @@
  * srcBaseDir (base directory for all workspaces):
  *   - Where mux stores ALL workspace directories
  *   - Local: ~/.mux/src (tilde expanded to full path by LocalRuntime)
- *   - SSH: /home/user/workspace (must be absolute path, no tilde allowed)
+ *   - SSH: /home/user/workspace (tilde paths are allowed and are resolved before use)
  *
  * Workspace Path Computation:
  *   {srcBaseDir}/{projectName}/{workspaceName}
