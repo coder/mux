@@ -176,6 +176,7 @@ export function CreationControls(props: CreationControlsProps) {
               <input
                 id="workspace-name"
                 type="text"
+                size={1}
                 value={nameState.name}
                 onChange={handleNameChange}
                 onFocus={handleInputFocus}
