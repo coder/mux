@@ -96,13 +96,12 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   }
 
   const outgoingLines = gitStatus.outgoingAdditions + gitStatus.outgoingDeletions;
-  const incomingLines = gitStatus.incomingAdditions + gitStatus.incomingDeletions;
 
   // Render empty placeholder when nothing to show (prevents layout shift)
   const isEmpty =
     mode === "divergence"
       ? gitStatus.ahead === 0 && gitStatus.behind === 0 && !gitStatus.dirty
-      : outgoingLines === 0 && incomingLines === 0 && !gitStatus.dirty;
+      : outgoingLines === 0 && !gitStatus.dirty;
 
   if (isEmpty) {
     return (
@@ -258,7 +257,6 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   const deletionsColor = isWorking ? "text-warning-light" : "text-muted";
 
   const outgoingHasDelta = gitStatus.outgoingAdditions > 0 || gitStatus.outgoingDeletions > 0;
-  const incomingHasDelta = gitStatus.incomingAdditions > 0 || gitStatus.incomingDeletions > 0;
 
   return (
     <>
@@ -287,8 +285,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
         ) : (
           <>
             {outgoingHasDelta && (
-              <span className="flex items-center gap-1">
-                <span className={cn("font-normal", statusColor)}>↑</span>
+              <span className="flex items-center gap-2">
                 {gitStatus.outgoingAdditions > 0 && (
                   <span className={cn("font-normal", additionsColor)}>
                     +{formatCountAbbrev(gitStatus.outgoingAdditions)}
@@ -297,21 +294,6 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
                 {gitStatus.outgoingDeletions > 0 && (
                   <span className={cn("font-normal", deletionsColor)}>
                     -{formatCountAbbrev(gitStatus.outgoingDeletions)}
-                  </span>
-                )}
-              </span>
-            )}
-            {incomingHasDelta && (
-              <span className="flex items-center gap-1">
-                <span className={cn("font-normal", statusColor)}>↓</span>
-                {gitStatus.incomingAdditions > 0 && (
-                  <span className={cn("font-normal", additionsColor)}>
-                    +{formatCountAbbrev(gitStatus.incomingAdditions)}
-                  </span>
-                )}
-                {gitStatus.incomingDeletions > 0 && (
-                  <span className={cn("font-normal", deletionsColor)}>
-                    -{formatCountAbbrev(gitStatus.incomingDeletions)}
                   </span>
                 )}
               </span>
