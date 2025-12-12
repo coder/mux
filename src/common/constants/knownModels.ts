@@ -139,6 +139,9 @@ export const MODEL_ABBREVIATIONS: Record<string, string> = Object.fromEntries(
     .sort(([a], [b]) => a.localeCompare(b))
 );
 
+/** Set of all current known model IDs - used to filter stale cached models */
+export const KNOWN_MODEL_IDS: Set<string> = new Set(Object.values(KNOWN_MODELS).map((m) => m.id));
+
 export const TOKENIZER_MODEL_OVERRIDES: Record<string, string> = Object.fromEntries(
   Object.values(KNOWN_MODELS)
     .filter((model) => Boolean(model.tokenizerOverride))

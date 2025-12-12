@@ -286,7 +286,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                     <span className="min-w-0 truncate">{model}</span>
                     <div className="flex items-center gap-0.5">
                       {/* Gateway toggle */}
-                      {gateway.canToggleModel(model) && (
+                      {gateway.shouldShowGatewayToggle(model) && (
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <button
@@ -295,18 +295,25 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                               onClick={(e) => {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                gateway.toggleModelGateway(model);
+                                if (gateway.canToggleModel(model)) {
+                                  gateway.toggleModelGateway(model);
+                                }
                               }}
+                              disabled={!gateway.canToggleModel(model)}
                               className={cn(
                                 "flex items-center justify-center rounded-sm border px-1 py-0.5 transition-colors duration-150",
-                                gateway.modelUsesGateway(model)
-                                  ? "text-accent border-accent/40"
-                                  : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
+                                !gateway.canToggleModel(model)
+                                  ? "cursor-not-allowed opacity-40 text-muted border-border-light/40"
+                                  : gateway.modelUsesGateway(model)
+                                    ? "text-accent border-accent/40"
+                                    : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
                               )}
                               aria-label={
-                                gateway.modelUsesGateway(model)
-                                  ? "Disable Mux Gateway"
-                                  : "Enable Mux Gateway"
+                                !gateway.canToggleModel(model)
+                                  ? "Configure Mux Gateway to enable"
+                                  : gateway.modelUsesGateway(model)
+                                    ? "Disable Mux Gateway"
+                                    : "Enable Mux Gateway"
                               }
                             >
                               <GatewayIcon
@@ -316,9 +323,11 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                             </button>
                           </TooltipTrigger>
                           <TooltipContent align="center">
-                            {gateway.modelUsesGateway(model)
-                              ? "Using Mux Gateway"
-                              : "Use Mux Gateway"}
+                            {!gateway.canToggleModel(model)
+                              ? "Configure Mux Gateway in Settings → Providers"
+                              : gateway.modelUsesGateway(model)
+                                ? "Using Mux Gateway"
+                                : "Use Mux Gateway"}
                           </TooltipContent>
                         </Tooltip>
                       )}

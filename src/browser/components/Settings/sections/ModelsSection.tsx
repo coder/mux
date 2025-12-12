@@ -184,7 +184,7 @@ export function ModelsSection() {
                 <SelectValue placeholder="Provider" />
               </SelectTrigger>
               <SelectContent>
-                {SUPPORTED_PROVIDERS.map((p) => (
+                {SUPPORTED_PROVIDERS.filter((p) => p !== "mux-gateway").map((p) => (
                   <SelectItem key={p} value={p}>
                     {PROVIDER_DISPLAY_NAMES[p]}
                   </SelectItem>
@@ -233,6 +233,8 @@ export function ModelsSection() {
               saving={false}
               hasActiveEdit={editing !== null}
               isGatewayEnabled={gateway.modelUsesGateway(model.fullId)}
+              showGatewayToggle={gateway.shouldShowGatewayToggle(model.fullId)}
+              gatewayToggleDisabled={!gateway.canToggleModel(model.fullId)}
               onSetDefault={() => setDefaultModel(model.fullId)}
               onStartEdit={() => handleStartEdit(model.provider, model.modelId)}
               onSaveEdit={handleSaveEdit}
@@ -241,11 +243,7 @@ export function ModelsSection() {
                 setEditing((prev) => (prev ? { ...prev, newModelId: value } : null))
               }
               onRemove={() => handleRemoveModel(model.provider, model.modelId)}
-              onToggleGateway={
-                gateway.canToggleModel(model.fullId)
-                  ? () => gateway.toggleModelGateway(model.fullId)
-                  : undefined
-              }
+              onToggleGateway={() => gateway.toggleModelGateway(model.fullId)}
             />
           );
         })}
@@ -267,12 +265,10 @@ export function ModelsSection() {
             isDefault={defaultModel === model.fullId}
             isEditing={false}
             isGatewayEnabled={gateway.modelUsesGateway(model.fullId)}
+            showGatewayToggle={gateway.shouldShowGatewayToggle(model.fullId)}
+            gatewayToggleDisabled={!gateway.canToggleModel(model.fullId)}
             onSetDefault={() => setDefaultModel(model.fullId)}
-            onToggleGateway={
-              gateway.canToggleModel(model.fullId)
-                ? () => gateway.toggleModelGateway(model.fullId)
-                : undefined
-            }
+            onToggleGateway={() => gateway.toggleModelGateway(model.fullId)}
           />
         ))}
       </div>

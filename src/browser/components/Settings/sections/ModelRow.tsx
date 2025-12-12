@@ -21,6 +21,10 @@ export interface ModelRowProps {
   hasActiveEdit?: boolean;
   /** Whether gateway mode is enabled for this model */
   isGatewayEnabled?: boolean;
+  /** Whether to show the gateway toggle button */
+  showGatewayToggle?: boolean;
+  /** Whether the gateway toggle is disabled (show but can't click) */
+  gatewayToggleDisabled?: boolean;
   onSetDefault: () => void;
   onStartEdit?: () => void;
   onSaveEdit?: () => void;
@@ -100,25 +104,38 @@ export function ModelRow(props: ModelRowProps) {
         ) : (
           <>
             {/* Gateway toggle button */}
-            {props.onToggleGateway && (
+            {props.showGatewayToggle && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
                     type="button"
-                    onClick={props.onToggleGateway}
+                    onClick={props.gatewayToggleDisabled ? undefined : props.onToggleGateway}
                     className={cn(
                       "p-0.5 transition-colors",
-                      props.isGatewayEnabled ? "text-accent" : "text-muted hover:text-accent"
+                      props.gatewayToggleDisabled
+                        ? "cursor-not-allowed text-muted opacity-40"
+                        : props.isGatewayEnabled
+                          ? "text-accent"
+                          : "text-muted hover:text-accent"
                     )}
                     aria-label={
-                      props.isGatewayEnabled ? "Disable Mux Gateway" : "Enable Mux Gateway"
+                      props.gatewayToggleDisabled
+                        ? "Configure Mux Gateway to enable"
+                        : props.isGatewayEnabled
+                          ? "Disable Mux Gateway"
+                          : "Enable Mux Gateway"
                     }
+                    disabled={props.gatewayToggleDisabled}
                   >
                     <GatewayIcon className="h-3.5 w-3.5" active={props.isGatewayEnabled} />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent align="center">
-                  {props.isGatewayEnabled ? "Using Mux Gateway" : "Use Mux Gateway"}
+                  {props.gatewayToggleDisabled
+                    ? "Configure Mux Gateway in Providers to enable"
+                    : props.isGatewayEnabled
+                      ? "Using Mux Gateway"
+                      : "Use Mux Gateway"}
                 </TooltipContent>
               </Tooltip>
             )}

@@ -128,8 +128,10 @@ export interface GatewayState {
   modelUsesGateway: (modelId: string) => boolean;
   /** Toggle gateway routing for a specific model */
   toggleModelGateway: (modelId: string) => void;
-  /** Check if gateway toggle should be shown for a model (active + provider supported) */
+  /** Check if gateway toggle should be enabled for a model (active + provider supported) */
   canToggleModel: (modelId: string) => boolean;
+  /** Check if gateway toggle should be visible for a model (provider supported, regardless of config) */
+  shouldShowGatewayToggle: (modelId: string) => boolean;
   /** Check if model is actively routing through gateway (for display) */
   isModelRoutingThroughGateway: (modelId: string) => boolean;
 }
@@ -195,6 +197,11 @@ export function useGateway(): GatewayState {
     [isActive]
   );
 
+  const shouldShowGatewayToggle = useCallback(
+    (modelId: string) => isProviderSupported(modelId),
+    []
+  );
+
   const isModelRoutingThroughGateway = useCallback(
     (modelId: string) =>
       isActive && isProviderSupported(modelId) && enabledModels.includes(modelId),
@@ -210,6 +217,7 @@ export function useGateway(): GatewayState {
       modelUsesGateway,
       toggleModelGateway,
       canToggleModel,
+      shouldShowGatewayToggle,
       isModelRoutingThroughGateway,
     }),
     [
@@ -220,6 +228,7 @@ export function useGateway(): GatewayState {
       modelUsesGateway,
       toggleModelGateway,
       canToggleModel,
+      shouldShowGatewayToggle,
       isModelRoutingThroughGateway,
     ]
   );

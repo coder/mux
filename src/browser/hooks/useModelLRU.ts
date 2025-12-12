@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePersistedState, readPersistedState, updatePersistedState } from "./usePersistedState";
-import { MODEL_ABBREVIATIONS } from "@/browser/utils/slashCommands/registry";
+import { MODEL_ABBREVIATIONS, KNOWN_MODEL_IDS } from "@/common/constants/knownModels";
 import { defaultModel } from "@/common/utils/ai/models";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useAPI } from "@/browser/contexts/API";
@@ -70,8 +70,20 @@ export function useModelLRU() {
       const migrated = prev.map((m) => migrateGatewayModel(m));
       // Remove any remaining mux-gateway entries that couldn't be migrated
       const filtered = migrated.filter((m) => !isGatewayFormat(m));
+      // Remove stale built-in models that are no longer in KNOWN_MODELS
+      // (keeps custom models like "bedrock:..." or "ollama:..." that aren't in KNOWN_MODEL_IDS)
+      const withoutStale = filtered.filter((m) => {
+        // Check if this looks like a built-in model (provider:model format with a known provider)
+        const knownProviders = ["anthropic", "openai", "google", "xai"];
+        const provider = m.split(":")[0];
+        // If it's from a known provider but not in KNOWN_MODEL_IDS, it's stale
+        if (knownProviders.includes(provider) && !KNOWN_MODEL_IDS.has(m)) {
+          return false;
+        }
+        return true;
+      });
       // Deduplicate (migration might create duplicates)
-      const deduped = [...new Set(filtered)];
+      const deduped = [...new Set(withoutStale)];
 
       // Merge defaults
       const merged = [...deduped];
