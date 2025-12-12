@@ -22,11 +22,12 @@ import { fileExists } from "@/node/utils/runtime/fileExists";
 import { expandTilde, expandTildeForSSH } from "@/node/runtime/tildeExpansion";
 
 import type { PostCompactionExclusions } from "@/common/types/attachment";
-import type {
-  SendMessageOptions,
-  DeleteMessage,
-  ImagePart,
-  WorkspaceChatMessage,
+import {
+  isAgentStatusUpdate,
+  type SendMessageOptions,
+  type DeleteMessage,
+  type ImagePart,
+  type WorkspaceChatMessage,
 } from "@/common/orpc/types";
 import type { workspace as workspaceSchemas } from "@/common/orpc/schemas/api";
 import type { z } from "zod";
@@ -166,6 +167,17 @@ export class WorkspaceService extends EventEmitter {
     this.aiService.on("stream-abort", (data: unknown) => {
       if (isStreamAbortEvent(data)) {
         void this.updateStreamingStatus(data.workspaceId, false);
+      }
+    });
+
+    // Forward agent-status-update events (from poller) to the appropriate session
+    this.aiService.on("agent-status-update", (data: unknown) => {
+      if (isAgentStatusUpdate(data as WorkspaceChatMessage)) {
+        const event = data as WorkspaceChatMessage & { workspaceId: string };
+        const session = this.sessions.get(event.workspaceId);
+        if (session) {
+          session.emitChatEvent(event);
+        }
       }
     });
   }
