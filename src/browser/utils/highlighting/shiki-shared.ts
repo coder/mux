@@ -24,6 +24,19 @@ export function mapToShikiLang(detectedLang: string): string {
  * Extract line contents from Shiki HTML output
  * Shiki wraps code in <pre><code>...</code></pre> with <span class="line">...</span> per line
  */
+function isVisuallyEmptyShikiLine(lineHtml: string): boolean {
+  // Shiki represents an empty line as something like:
+  //   <span class="line"><span style="..."></span></span>
+  // which is visually empty but non-empty as a string.
+  //
+  // We treat these as empty so callers don't render a phantom blank line.
+  const textOnly = lineHtml
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/g, "")
+    .trim();
+  return textOnly === "";
+}
+
 export function extractShikiLines(html: string): string[] {
   const codeMatch = /<code[^>]*>(.*?)<\/code>/s.exec(html);
   if (!codeMatch) return [];
@@ -35,10 +48,11 @@ export function extractShikiLines(html: string): string[] {
     const contentStart = start + '<span class="line">'.length;
     const end = chunk.lastIndexOf("</span>");
 
-    return end > contentStart ? chunk.substring(contentStart, end) : "";
+    const lineHtml = end > contentStart ? chunk.substring(contentStart, end) : "";
+    return isVisuallyEmptyShikiLine(lineHtml) ? "" : lineHtml;
   });
 
-  // Remove trailing empty lines (Shiki often adds one)
+  // Remove trailing empty lines (Shiki often adds one).
   while (lines.length > 0 && lines[lines.length - 1] === "") {
     lines.pop();
   }
