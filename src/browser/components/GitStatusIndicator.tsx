@@ -39,12 +39,9 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
     { listener: true }
   );
 
-  const handleToggleMode = useCallback(
-    (e: React.MouseEvent<HTMLButtonElement>) => {
-      // Avoid triggering workspace selection when clicking in the sidebar.
-      e.stopPropagation();
-
-      setMode((prev) => (prev === "line-delta" ? "divergence" : "line-delta"));
+  const handleModeChange = useCallback(
+    (nextMode: GitStatusIndicatorMode) => {
+      setMode(nextMode);
     },
     [setMode]
   );
@@ -138,7 +135,7 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onTooltipMouseEnter={handleTooltipMouseEnter}
-      onToggleMode={handleToggleMode}
+      onModeChange={handleModeChange}
       onTooltipMouseLeave={handleTooltipMouseLeave}
       onContainerRef={handleContainerRef}
       isWorking={isWorking}
