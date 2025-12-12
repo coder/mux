@@ -245,23 +245,22 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     >
       {/* Full view when not collapsed */}
       <div className={cn("flex-row h-full", !showCollapsed ? "flex" : "hidden")}>
-        {/* Render meter when Review tab is active */}
-        {selectedTab === "review" && (
-          <div className="bg-sidebar border-border-light flex w-5 shrink-0 flex-col border-r">
-            {verticalMeter}
-          </div>
-        )}
-
-        {/* Render resize handle to right of meter when Review tab is active */}
+        {/* Resize handle (left edge) when Review tab is active */}
         {selectedTab === "review" && onStartResize && (
           <div
             className={cn(
-              "w-1 flex-shrink-0 z-10 transition-[background] duration-150",
-              "bg-transparent cursor-col-resize hover:bg-accent",
-              isResizing && "bg-accent"
+              "w-px flex-shrink-0 z-10 transition-[background] duration-150 cursor-col-resize",
+              isResizing ? "bg-accent" : "bg-border-light hover:bg-accent"
             )}
             onMouseDown={(e) => onStartResize(e as unknown as React.MouseEvent)}
           />
+        )}
+
+        {/* Render meter when Review tab is active */}
+        {selectedTab === "review" && (
+          <div className="bg-sidebar flex w-5 shrink-0 flex-col">
+            {verticalMeter}
+          </div>
         )}
 
         <div className="flex min-w-0 flex-1 flex-col">
