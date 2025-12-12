@@ -116,7 +116,7 @@ import type { ImagePart } from "@/common/orpc/types";
 
 export type { ChatInputProps, ChatInputAPI };
 
-export const ChatInput: React.FC<ChatInputProps> = (props) => {
+const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { api } = useAPI();
   const { variant } = props;
 
@@ -1631,6 +1631,9 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     </Wrapper>
   );
 };
+
+export const ChatInput = React.memo(ChatInputInner);
+ChatInput.displayName = "ChatInput";
 
 const TokenCountDisplay: React.FC<{ reader: TokenCountReader }> = ({ reader }) => {
   const tokens = reader();
