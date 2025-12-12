@@ -158,6 +158,12 @@ export const PREFERRED_COMPACTION_MODEL_KEY = "preferredCompactionModel";
 export const VIM_ENABLED_KEY = "vimEnabled";
 
 /**
+ * Local prompt history for non-AI chat autocomplete (global)
+ * Format: "chatPromptHistory:v1"
+ */
+export const CHAT_PROMPT_HISTORY_KEY = "chatPromptHistory:v1";
+
+/**
  * Git status indicator display mode (global)
  * Stores: "line-delta" | "divergence"
  */

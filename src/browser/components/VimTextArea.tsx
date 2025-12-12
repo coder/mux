@@ -34,6 +34,12 @@ export interface VimTextAreaProps extends Omit<
   isEditing?: boolean;
   suppressKeys?: string[]; // keys for which Vim should not interfere (e.g. ["Tab","ArrowUp","ArrowDown","Escape"]) when popovers are open
   trailingAction?: React.ReactNode;
+  /**
+   * Optional full-text completion suggestion.
+   * When present, Tab can accept it (unless suppressed via suppressKeys).
+   */
+  completion?: string | null;
+  onAcceptCompletion?: (fullText: string) => void;
   /** Called when Escape is pressed in normal mode (vim) - useful for cancel edit */
   onEscapeInNormalMode?: () => void;
 }
@@ -47,6 +53,8 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
       onChange,
       mode,
       isEditing,
+      completion,
+      onAcceptCompletion,
       suppressKeys,
       onKeyDown,
       trailingAction,
@@ -129,6 +137,28 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
       // Let parent handle first (send, cancel, etc.)
       onKeyDown?.(e);
       if (e.defaultPrevented) return;
+
+      // Tab-to-accept for local chat autocomplete.
+      // Keep conservative: only accept when cursor is at end with no selection.
+      if (
+        e.key === "Tab" &&
+        !e.shiftKey &&
+        completion &&
+        onAcceptCompletion &&
+        !suppressSet.has(e.key) &&
+        (!vimEnabled || vimMode === "insert")
+      ) {
+        const el = textareaRef.current;
+        if (el) {
+          const atEnd =
+            el.selectionStart === el.value.length && el.selectionEnd === el.value.length;
+          if (atEnd) {
+            e.preventDefault();
+            onAcceptCompletion(completion);
+            return;
+          }
+        }
+      }
 
       if (!vimEnabled) return;
 

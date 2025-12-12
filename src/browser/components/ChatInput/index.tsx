@@ -53,6 +53,7 @@ import {
   isEditableElement,
 } from "@/browser/utils/ui/keybinds";
 import { ModelSelector, type ModelSelectorRef } from "../ModelSelector";
+import { useChatPromptHistory } from "@/browser/hooks/useChatPromptHistory";
 import { useModelLRU } from "@/browser/hooks/useModelLRU";
 import { SendHorizontal, X } from "lucide-react";
 import { VimTextArea } from "../VimTextArea";
@@ -155,6 +156,10 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   const handleToastDismiss = useCallback(() => {
     setToast(null);
   }, []);
+
+  const { addPrompt: addChatPrompt, getBestCompletion: getChatPromptCompletion } =
+    useChatPromptHistory();
+  const [cursorAtEnd, setCursorAtEnd] = useState(true);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const modelSelectorRef = useRef<ModelSelectorRef>(null);
 
@@ -167,6 +172,27 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   const getDraft = useCallback(
     (): DraftState => ({ text: input, images: imageAttachments }),
     [input, imageAttachments]
+  );
+
+  const updateCursorAtEnd = useCallback(() => {
+    const el = inputRef.current;
+    if (!el) {
+      return;
+    }
+    setCursorAtEnd(el.selectionStart === el.value.length && el.selectionEnd === el.value.length);
+  }, []);
+
+  const handleTextChange = useCallback(
+    (next: string) => {
+      setInput(next);
+      // Cursor position changes don't always correspond to input changes.
+      // We update our cursor-at-end heuristic opportunistically here.
+      const el = inputRef.current;
+      if (el) {
+        setCursorAtEnd(el.selectionStart === next.length && el.selectionEnd === next.length);
+      }
+    },
+    [setInput]
   );
   const setDraft = useCallback(
     (draft: DraftState) => {
@@ -651,6 +677,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
         creationImageParts.length > 0 ? creationImageParts : undefined
       );
       if (ok) {
+        addChatPrompt(messageText);
         setInput("");
         setImageAttachments([]);
         // Height is managed by VimTextArea's useLayoutEffect - clear inline style
@@ -1166,6 +1193,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           // Restore draft on error so user can try again
           setDraft(preSendDraft);
         } else {
+          addChatPrompt(messageText);
           // Track telemetry for successful message send
           telemetry.messageSent(
             props.workspaceId,
@@ -1304,7 +1332,29 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     }
   };
 
-  // Build placeholder text based on current state
+  // Derived input hints (autocomplete + placeholder)
+
+  const completionSuggestion = useMemo(() => {
+    if (voiceInput.state !== "idle") {
+      return null;
+    }
+    if (showCommandSuggestions) {
+      return null;
+    }
+
+    const prefix = input.trimStart();
+    if (prefix.length < 2) {
+      return null;
+    }
+    if (prefix.startsWith("/")) {
+      return null;
+    }
+    if (!cursorAtEnd) {
+      return null;
+    }
+
+    return getChatPromptCompletion(prefix);
+  }, [input, cursorAtEnd, showCommandSuggestions, voiceInput.state, getChatPromptCompletion]);
   const placeholder = (() => {
     // Creation variant has simple placeholder
     if (variant === "creation") {
@@ -1478,7 +1528,19 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                   value={input}
                   isEditing={!!editingMessage}
                   mode={mode}
-                  onChange={setInput}
+                  completion={completionSuggestion}
+                  onAcceptCompletion={(fullText) => {
+                    setInput(fullText);
+                    setCursorAtEnd(true);
+                    setTimeout(() => {
+                      inputRef.current?.focus();
+                      inputRef.current?.setSelectionRange(fullText.length, fullText.length);
+                    }, 0);
+                  }}
+                  onSelect={updateCursorAtEnd}
+                  onKeyUp={updateCursorAtEnd}
+                  onMouseUp={updateCursorAtEnd}
+                  onChange={handleTextChange}
                   onKeyDown={handleKeyDown}
                   onPaste={handlePaste}
                   onDragOver={handleDragOver}
@@ -1512,6 +1574,15 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
               </>
             )}
           </div>
+
+          {completionSuggestion && (
+            <div
+              className="text-muted px-1 text-[11px] leading-4 select-none"
+              data-component="ChatPromptAutocompleteHint"
+            >
+              <span className="font-medium">Tab</span> to complete: {completionSuggestion}
+            </div>
+          )}
 
           {/* Image attachments */}
           <ImageAttachments images={imageAttachments} onRemove={handleRemoveImage} />
