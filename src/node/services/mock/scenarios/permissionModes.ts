@@ -86,6 +86,7 @@ const executePlanTurn: ScenarioTurn = {
           script:
             'apply_patch <<\'PATCH\'\n*** Begin Patch\n*** Update File: src/utils/legacyFunction.ts\n@@\n-export function handleRequest(input: Request) {\n-  if (!input.userId || !input.payload) {\n-    throw new Error("Missing fields");\n-  }\n-\n-  const result = heavyFormatter(input.payload);\n-  return {\n-    id: input.userId,\n-    details: result,\n-  };\n-}\n+function verifyInputs(input: Request) {\n+  if (!input.userId || !input.payload) {\n+    throw new Error("Missing fields");\n+  }\n+}\n+\n+function buildResponse(input: Request) {\n+  const result = heavyFormatter(input.payload);\n+  return { id: input.userId, details: result };\n+}\n+\n+export function handleRequest(input: Request) {\n+  verifyInputs(input);\n+  return buildResponse(input);\n+}\n*** End Patch\nPATCH',
           timeout_secs: 10,
+          display_name: "Apply refactor",
         },
       },
       {

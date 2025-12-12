@@ -1459,6 +1459,7 @@ describe("bash tool - background execution", () => {
     const tool = testEnv.tool;
     const args: BashToolArgs = {
       script: "echo test",
+      timeout_secs: 5,
       run_in_background: true,
       display_name: "test",
     };
@@ -1508,6 +1509,7 @@ describe("bash tool - background execution", () => {
     const tool = createBashTool(config);
     const args: BashToolArgs = {
       script: "echo hello",
+      timeout_secs: 5,
       run_in_background: true,
       display_name: "test",
     };

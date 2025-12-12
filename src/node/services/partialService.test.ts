@@ -108,7 +108,7 @@ describe("PartialService - Error Recovery", () => {
           toolCallId: "call-1",
           toolName: "bash",
           state: "input-available",
-          input: { script: "echo test" },
+          input: { script: "echo test", timeout_secs: 10, display_name: "Test" },
         },
       ],
     };
