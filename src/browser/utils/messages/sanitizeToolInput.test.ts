@@ -78,7 +78,7 @@ describe("sanitizeToolInputs", () => {
             toolCallId: "toolu_02test",
             toolName: "bash",
             state: "output-available",
-            input: { script: "ls", timeout_secs: 10 },
+            input: { script: "ls", timeout_secs: 10, display_name: "Test" },
             output: { success: true },
           },
         ],
@@ -89,7 +89,7 @@ describe("sanitizeToolInputs", () => {
     const sanitized = sanitizeToolInputs(messages);
     expect(sanitized[0].parts[0]).toMatchObject({
       type: "dynamic-tool",
-      input: { script: "ls", timeout_secs: 10 },
+      input: { script: "ls", timeout_secs: 10, display_name: "Test" },
     });
   });
 

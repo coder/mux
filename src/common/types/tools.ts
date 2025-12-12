@@ -9,7 +9,7 @@ import type { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 // Bash Tool Types
 export interface BashToolArgs {
   script: string;
-  timeout_secs?: number; // Optional: defaults to 3 seconds for interactivity
+  timeout_secs: number; // Required - defaults should be applied by producers
   run_in_background?: boolean; // Run without blocking (for long-running processes)
   display_name: string; // Required - used as process identifier if sent to background
 }

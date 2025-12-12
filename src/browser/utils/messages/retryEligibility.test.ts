@@ -74,7 +74,7 @@ describe("hasInterruptedStream", () => {
         historyId: "assistant-1",
         toolName: "bash",
         toolCallId: "call-1",
-        args: { script: "echo test" },
+        args: { script: "echo test", timeout_secs: 10, display_name: "Test" },
         status: "interrupted",
         isPartial: true,
         historySequence: 2,

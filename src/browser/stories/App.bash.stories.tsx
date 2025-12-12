@@ -35,27 +35,36 @@ async function expandAllBashTools(canvasElement: HTMLElement) {
     { timeout: 5000 }
   );
 
-  // Now find and expand all tool icons
+  // Now find and expand all tool icons (scoped to the message window so we don't click unrelated ▶)
+  const messageWindow = canvasElement.querySelector('[data-testid="message-window"]');
+  if (!(messageWindow instanceof HTMLElement)) {
+    throw new Error("Message window not found");
+  }
+
+  // Wait for at least one expand icon to appear in the message window
   await waitFor(
-    async () => {
-      const allSpans = canvasElement.querySelectorAll("span");
+    () => {
+      const allSpans = messageWindow.querySelectorAll("span");
       const expandIcons = Array.from(allSpans).filter((span) => span.textContent?.trim() === "▶");
       if (expandIcons.length === 0) {
         throw new Error("No expand icons found");
-      }
-      for (const icon of expandIcons) {
-        const header = icon.closest("[class*='cursor-pointer']");
-        if (header) {
-          await userEvent.click(header as HTMLElement);
-        }
       }
     },
     { timeout: 5000 }
   );
 
-  // Wait for focus auto-select timer, then blur
-  await new Promise((resolve) => setTimeout(resolve, 150));
-  (document.activeElement as HTMLElement)?.blur();
+  const allSpans = messageWindow.querySelectorAll("span");
+  const expandIcons = Array.from(allSpans).filter((span) => span.textContent?.trim() === "▶");
+
+  for (const icon of expandIcons) {
+    const header = icon.closest("div.cursor-pointer");
+    if (header) {
+      await userEvent.click(header as HTMLElement);
+    }
+  }
+
+  // Avoid leaving focus on a tool header (some components auto-focus inputs on timers)
+  (document.activeElement as HTMLElement | null)?.blur?.();
 }
 
 export default {
