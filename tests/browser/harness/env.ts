@@ -93,6 +93,7 @@ export async function createBrowserTestEnv(): Promise<BrowserTestEnv> {
     menuEventService: services.menuEventService,
     voiceService: services.voiceService,
     telemetryService: services.telemetryService,
+    sessionUsageService: services.sessionUsageService,
   };
 
   const orpc = createOrpcTestClient(orpcContext);
