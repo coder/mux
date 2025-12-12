@@ -186,32 +186,17 @@ export const ExperimentsToggleOn: AppStory = {
     const modal = body.getByRole("dialog");
     const modalCanvas = within(modal);
 
-    // Find the switch by its role - experiments use role="switch"
-    const switches = await modalCanvas.findAllByRole("switch");
-    if (switches.length > 0) {
-      // Toggle the first experiment on
-      await userEvent.click(switches[0]);
-    }
+    // Find the experiment toggle by its aria-label (set in ExperimentsSection.tsx)
+    const toggle = await modalCanvas.findByRole("switch", { name: /Post-Compaction Context/i });
+    await userEvent.click(toggle);
   },
 };
 
-/** Experiments section - toggle experiment off (starts enabled, then toggles off) */
+/** Experiments section - shows experiment in OFF state (default) */
 export const ExperimentsToggleOff: AppStory = {
   render: () => <AppWithMocks setup={() => setupSettingsStory({})} />,
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettingsToSection(canvasElement, "experiments");
-
-    const body = within(document.body);
-    const modal = body.getByRole("dialog");
-    const modalCanvas = within(modal);
-
-    // Find the switch
-    const switches = await modalCanvas.findAllByRole("switch");
-    if (switches.length > 0) {
-      // Toggle on first
-      await userEvent.click(switches[0]);
-      // Then toggle off
-      await userEvent.click(switches[0]);
-    }
+    // Default state is OFF - no clicks needed
   },
 };
