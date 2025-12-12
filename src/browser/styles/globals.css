@@ -1414,7 +1414,7 @@ code {
 }
 
 .markdown-content pre {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--color-code-bg);
   padding: 12px;
   border-radius: 4px;
   overflow-x: auto;
