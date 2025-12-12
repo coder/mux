@@ -46,6 +46,7 @@ export class GitStatusStore {
   private fetchCache = new Map<string, FetchState>();
   private client: RouterClient<AppRouter> | null = null;
   private pollInterval: NodeJS.Timeout | null = null;
+  private immediateUpdateQueued = false;
   private workspaceMetadata = new Map<string, FrontendWorkspaceMetadata>();
   private isActive = true;
 
@@ -67,7 +68,22 @@ export class GitStatusStore {
    * Only notified when this workspace's status changes.
    */
   subscribeKey = (workspaceId: string, listener: () => void) => {
-    return this.statuses.subscribeKey(workspaceId, listener);
+    const unsubscribe = this.statuses.subscribeKey(workspaceId, listener);
+
+    // If a component subscribes after we started polling (common on initial load),
+    // kick an immediate update so the UI doesn't wait for the next interval tick.
+    //
+    // We schedule the update as a microtask to avoid doing work in the subscribe
+    // call itself, and to preserve the batching/concurrency limits of updateGitStatus().
+    if (!this.immediateUpdateQueued && this.isActive && this.client) {
+      this.immediateUpdateQueued = true;
+      queueMicrotask(() => {
+        this.immediateUpdateQueued = false;
+        void this.updateGitStatus();
+      });
+    }
+
+    return unsubscribe;
   };
 
   /**
