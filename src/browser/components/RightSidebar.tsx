@@ -258,9 +258,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
         {/* Render meter when Review tab is active */}
         {selectedTab === "review" && (
-          <div className="bg-sidebar flex w-5 shrink-0 flex-col">
-            {verticalMeter}
-          </div>
+          <div className="bg-sidebar flex w-5 shrink-0 flex-col">{verticalMeter}</div>
         )}
 
         <div className="flex min-w-0 flex-1 flex-col">
