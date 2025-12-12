@@ -17,6 +17,58 @@ const DEFAULT_MODELS = [
   ...Array.from(new Set(Object.values(MODEL_ABBREVIATIONS))).filter((m) => m !== FALLBACK_MODEL),
 ].slice(0, MAX_LRU_SIZE);
 
+function mergeLRUWithDefaults(prev: string[]): string[] {
+  // Migrate any mux-gateway:provider/model entries to canonical form
+  const migrated = prev.map((m) => migrateGatewayModel(m));
+  // Remove any remaining mux-gateway entries that couldn't be migrated
+  const filtered = migrated.filter((m) => !isGatewayFormat(m));
+
+  // Deduplicate while preserving order (migration might create duplicates)
+  const deduped: string[] = [];
+  const seen = new Set<string>();
+  for (const model of filtered) {
+    if (seen.has(model)) {
+      continue;
+    }
+    seen.add(model);
+    deduped.push(model);
+  }
+
+  // Ensure defaults are present. If the list is already full, evict non-default models
+  // (least-recent from the end) to make room for any newly added defaults.
+  const merged = [...deduped];
+  for (const defaultModel of DEFAULT_MODELS) {
+    if (!merged.includes(defaultModel)) {
+      merged.push(defaultModel);
+    }
+  }
+
+  if (merged.length <= MAX_LRU_SIZE) {
+    return merged;
+  }
+
+  const defaultSet = new Set(DEFAULT_MODELS);
+  while (merged.length > MAX_LRU_SIZE) {
+    let idxToRemove = -1;
+    for (let i = merged.length - 1; i >= 0; i--) {
+      if (!defaultSet.has(merged[i])) {
+        idxToRemove = i;
+        break;
+      }
+    }
+
+    // If everything left is a default model, fall back to truncation (should not happen
+    // since DEFAULT_MODELS is capped at MAX_LRU_SIZE).
+    if (idxToRemove === -1) {
+      return merged.slice(0, MAX_LRU_SIZE);
+    }
+
+    merged.splice(idxToRemove, 1);
+  }
+
+  return merged;
+}
+
 function persistModels(models: string[]): void {
   updatePersistedState(LRU_KEY, models.slice(0, MAX_LRU_SIZE));
 }
@@ -63,27 +115,11 @@ export function useModelLRU() {
     { listener: true }
   );
 
-  // Merge any new defaults from MODEL_ABBREVIATIONS and migrate legacy gateway models (only once on mount)
+  // Merge any new defaults from MODEL_ABBREVIATIONS and migrate legacy gateway models.
+  // This runs once on mount and guarantees new defaults show up even if the persisted list is full.
   useEffect(() => {
-    setRecentModels((prev) => {
-      // Migrate any mux-gateway:provider/model entries to canonical form
-      const migrated = prev.map((m) => migrateGatewayModel(m));
-      // Remove any remaining mux-gateway entries that couldn't be migrated
-      const filtered = migrated.filter((m) => !isGatewayFormat(m));
-      // Deduplicate (migration might create duplicates)
-      const deduped = [...new Set(filtered)];
-
-      // Merge defaults
-      const merged = [...deduped];
-      for (const defaultModel of DEFAULT_MODELS) {
-        if (!merged.includes(defaultModel)) {
-          merged.push(defaultModel);
-        }
-      }
-      return merged.slice(0, MAX_LRU_SIZE);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Only run once on mount
+    setRecentModels((prev) => mergeLRUWithDefaults(prev));
+  }, [setRecentModels]);
 
   // Fetch custom models from providers config
   useEffect(() => {

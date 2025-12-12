@@ -36,6 +36,10 @@ export function ModelsSection() {
   const [newModel, setNewModel] = useState<NewModelForm>({ provider: "", modelId: "" });
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const selectableProviders = SUPPORTED_PROVIDERS.filter(
+    (provider) => !HIDDEN_PROVIDERS.has(provider)
+  );
   const { defaultModel, setDefaultModel } = useModelLRU();
   const gateway = useGateway();
 
@@ -52,6 +56,11 @@ export function ModelsSection() {
   const handleAddModel = useCallback(() => {
     if (!config || !newModel.provider || !newModel.modelId.trim()) return;
 
+    // mux-gateway is a routing layer, not a provider users should add models under.
+    if (HIDDEN_PROVIDERS.has(newModel.provider)) {
+      setError("Mux Gateway models can't be added directly. Enable Gateway per-model instead.");
+      return;
+    }
     const trimmedModelId = newModel.modelId.trim();
 
     // Check for duplicates
@@ -184,9 +193,9 @@ export function ModelsSection() {
                 <SelectValue placeholder="Provider" />
               </SelectTrigger>
               <SelectContent>
-                {SUPPORTED_PROVIDERS.map((p) => (
-                  <SelectItem key={p} value={p}>
-                    {PROVIDER_DISPLAY_NAMES[p]}
+                {selectableProviders.map((provider) => (
+                  <SelectItem key={provider} value={provider}>
+                    {PROVIDER_DISPLAY_NAMES[provider]}
                   </SelectItem>
                 ))}
               </SelectContent>
