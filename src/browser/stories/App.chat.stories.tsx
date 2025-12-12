@@ -425,21 +425,6 @@ export const GenericTool: AppStory = {
       },
     },
   },
-  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    const canvas = within(canvasElement);
-
-    // Wait for workspace metadata to load and main content to render
-    await waitFor(
-      async () => {
-        const toolHeader = canvas.getByText("fetch_data");
-        await userEvent.click(toolHeader);
-      },
-      { timeout: 5000 }
-    );
-    // Wait for any auto-focus timers (ChatInput has 100ms delay), then blur
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    (document.activeElement as HTMLElement)?.blur();
-  },
 };
 
 /** Streaming compaction with shimmer effect - tests GPU-accelerated animation */
@@ -573,7 +558,8 @@ export const ModeHelpTooltip: AppStory = {
     />
   ),
   play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const canvas = within(storyRoot);
 
     // Wait for app to fully load - the chat input with mode selector should be present
     await canvas.findAllByText("Exec", {}, { timeout: 10000 });
