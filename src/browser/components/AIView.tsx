@@ -749,7 +749,9 @@ const AIViewInner: React.FC<AIViewProps> = ({
           attachedReviews={reviews.attachedReviews}
           onDetachReview={reviews.detachReview}
           onDetachAllReviews={reviews.detachAllAttached}
+          onCheckReview={reviews.checkReview}
           onCheckReviews={handleCheckReviews}
+          onDeleteReview={reviews.removeReview}
           onUpdateReviewNote={reviews.updateReviewNote}
         />
       </div>

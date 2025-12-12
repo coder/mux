@@ -36,8 +36,12 @@ export interface ChatInputWorkspaceVariant {
   onDetachReview?: (reviewId: string) => void;
   /** Detach all attached reviews from chat input */
   onDetachAllReviews?: () => void;
-  /** Mark reviews as checked after sending */
+  /** Mark a single review as checked (completed) */
+  onCheckReview?: (reviewId: string) => void;
+  /** Mark multiple reviews as checked after sending */
   onCheckReviews?: (reviewIds: string[]) => void;
+  /** Permanently delete a review */
+  onDeleteReview?: (reviewId: string) => void;
   /** Update a review's comment/note */
   onUpdateReviewNote?: (reviewId: string, newNote: string) => void;
 }

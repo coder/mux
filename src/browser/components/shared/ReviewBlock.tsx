@@ -7,7 +7,7 @@
  */
 
 import React, { useState, useCallback, useRef, useMemo } from "react";
-import { MessageSquare, X, Pencil, Check } from "lucide-react";
+import { MessageSquare, X, Pencil, Check, Trash2 } from "lucide-react";
 import { DiffRenderer } from "./DiffRenderer";
 import { Button } from "../ui/button";
 import { matchesKeybind, formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
@@ -22,7 +22,12 @@ interface ReviewBlockCoreProps {
   lineRange: string;
   code: string;
   comment: string;
-  onRemove?: () => void;
+  /** Detach from chat (sets status back to pending) */
+  onDetach?: () => void;
+  /** Mark as complete (checked) */
+  onComplete?: () => void;
+  /** Permanently delete the review */
+  onDelete?: () => void;
   onEditComment?: (newComment: string) => void;
 }
 
@@ -34,7 +39,9 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
   lineRange,
   code,
   comment,
-  onRemove,
+  onDetach,
+  onComplete,
+  onDelete,
   onEditComment,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
@@ -83,20 +90,42 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
 
   return (
     <div className="min-w-0 overflow-hidden rounded border border-[var(--color-review-accent)]/30 bg-[var(--color-review-accent)]/5">
-      {/* Header */}
-      <div className="flex items-center gap-1.5 border-b border-[var(--color-review-accent)]/20 bg-[var(--color-review-accent)]/10 px-2 py-1 text-xs">
+      {/* Header - actions left of file path (consistent with ReviewsBanner), trash on right */}
+      <div className="flex items-center gap-1 border-b border-[var(--color-review-accent)]/20 bg-[var(--color-review-accent)]/10 px-2 py-1 text-xs">
+        {/* Safe actions on left: complete and detach */}
+        {onComplete && (
+          <button
+            type="button"
+            onClick={onComplete}
+            className="text-muted hover:text-success flex shrink-0 items-center justify-center rounded p-0.5 transition-colors"
+            title="Mark as done"
+          >
+            <Check className="size-3" />
+          </button>
+        )}
+        {onDetach && (
+          <button
+            type="button"
+            onClick={onDetach}
+            className="text-muted hover:text-secondary flex shrink-0 items-center justify-center rounded p-0.5 transition-colors"
+            title="Detach from message"
+          >
+            <X className="size-3" />
+          </button>
+        )}
         <MessageSquare className="size-3 shrink-0 text-[var(--color-review-accent)]" />
         <span className="text-primary min-w-0 flex-1 truncate font-mono">
           {filePath}:{lineRange}
         </span>
-        {onRemove && (
+        {/* Destructive action on right */}
+        {onDelete && (
           <button
             type="button"
-            onClick={onRemove}
-            className="text-muted hover:text-error -mr-0.5 flex shrink-0 items-center justify-center rounded p-0.5 transition-colors"
-            title="Remove from message"
+            onClick={onDelete}
+            className="text-muted hover:text-error flex shrink-0 items-center justify-center rounded p-0.5 transition-colors"
+            title="Delete review"
           >
-            <X className="size-3" />
+            <Trash2 className="size-3" />
           </button>
         )}
       </div>
@@ -183,8 +212,12 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
 interface ReviewBlockFromDataProps {
   /** Structured review data (no parsing needed) */
   data: ReviewNoteDataForDisplay;
-  /** Optional callback to remove the review */
-  onRemove?: () => void;
+  /** Detach from chat (sets status back to pending) */
+  onDetach?: () => void;
+  /** Mark as complete (checked) */
+  onComplete?: () => void;
+  /** Permanently delete the review */
+  onDelete?: () => void;
   /** Optional callback to edit the comment */
   onEditComment?: (newComment: string) => void;
 }
@@ -195,7 +228,9 @@ interface ReviewBlockFromDataProps {
  */
 export const ReviewBlockFromData: React.FC<ReviewBlockFromDataProps> = ({
   data,
-  onRemove,
+  onDetach,
+  onComplete,
+  onDelete,
   onEditComment,
 }) => {
   return (
@@ -204,7 +239,9 @@ export const ReviewBlockFromData: React.FC<ReviewBlockFromDataProps> = ({
       lineRange={data.lineRange}
       code={data.selectedCode}
       comment={data.userNote}
-      onRemove={onRemove}
+      onDetach={onDetach}
+      onComplete={onComplete}
+      onDelete={onDelete}
       onEditComment={onEditComment}
     />
   );

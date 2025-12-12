@@ -1420,8 +1420,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 <ReviewBlockFromData
                   key={review.id}
                   data={review.data}
-                  onRemove={
+                  onComplete={
+                    props.onCheckReview ? () => props.onCheckReview!(review.id) : undefined
+                  }
+                  onDetach={
                     props.onDetachReview ? () => props.onDetachReview!(review.id) : undefined
+                  }
+                  onDelete={
+                    props.onDeleteReview ? () => props.onDeleteReview!(review.id) : undefined
                   }
                   onEditComment={
                     props.onUpdateReviewNote
