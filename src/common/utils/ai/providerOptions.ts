@@ -217,11 +217,12 @@ export function buildProviderOptions(
       disableAutoTruncation,
     });
 
+    const serviceTier = muxProviderOptions?.openai?.serviceTier ?? "priority";
+
     const options: ProviderOptions = {
       openai: {
         parallelToolCalls: true, // Always enable concurrent tool execution
-        // TODO: allow this to be configured
-        serviceTier: "auto", // Use "auto" to automatically select the best service tier
+        serviceTier,
         // Automatically truncate conversation to fit context window, unless disabled for testing
         truncation: disableAutoTruncation ? "disabled" : "auto",
         // Conditionally add reasoning configuration

@@ -10,6 +10,10 @@ export const MuxProviderOptionsSchema = z.object({
     .optional(),
   openai: z
     .object({
+      serviceTier: z.enum(["auto", "default", "flex", "priority"]).optional().meta({
+        description:
+          "OpenAI service tier: priority (low-latency), flex (50% cheaper, higher latency), auto/default (standard)",
+      }),
       disableAutoTruncation: z
         .boolean()
         .optional()

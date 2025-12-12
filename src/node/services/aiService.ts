@@ -498,6 +498,16 @@ export class AIService extends EventEmitter {
             provider: providerName,
           });
         }
+
+        // Extract serviceTier from config to pass through to buildProviderOptions
+        const configServiceTier = providerConfig.serviceTier as string | undefined;
+        if (configServiceTier && muxProviderOptions) {
+          muxProviderOptions.openai = {
+            ...muxProviderOptions.openai,
+            serviceTier: configServiceTier as "auto" | "default" | "flex" | "priority",
+          };
+        }
+
         const baseFetch = getProviderFetch(providerConfig);
 
         // Wrap fetch to force truncation: "auto" for OpenAI Responses API calls.
