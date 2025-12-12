@@ -505,6 +505,13 @@ export function createGitStatusOutput(fixture: GitStatusFixture): string {
   const incomingAdditions = fixture.incomingAdditions ?? behind * 10;
   const incomingDeletions = fixture.incomingDeletions ?? behind * 3;
 
+  // Deterministic hex hashes (parseGitShowBranchForStatus expects [a-f0-9]+).
+  let hashIndex = 0;
+  const nextHash = () => {
+    hashIndex++;
+    return hashIndex.toString(16).padStart(7, "0");
+  };
+
   const lines = ["---PRIMARY---", "main", "---SHOW_BRANCH---"];
   lines.push(`! [HEAD] ${headCommit}`);
   lines.push(` ! [origin/main] ${originCommit}`);
@@ -512,15 +519,15 @@ export function createGitStatusOutput(fixture: GitStatusFixture): string {
 
   // Ahead commits (local only)
   for (let i = 0; i < ahead; i++) {
-    lines.push(`-  [${randomHash()}] Local commit ${i + 1}`);
+    lines.push(`-  [${nextHash()}] Local commit ${i + 1}`);
   }
   // Behind commits (origin only)
   for (let i = 0; i < behind; i++) {
-    lines.push(` + [${randomHash()}] Origin commit ${i + 1}`);
+    lines.push(` + [${nextHash()}] Origin commit ${i + 1}`);
   }
   // Synced commit
   if (ahead === 0 && behind === 0) {
-    lines.push(`++ [${randomHash()}] ${headCommit}`);
+    lines.push(`++ [${nextHash()}] ${headCommit}`);
   }
 
   lines.push("---DIRTY---");
@@ -529,10 +536,6 @@ export function createGitStatusOutput(fixture: GitStatusFixture): string {
   lines.push(`${outgoingAdditions} ${outgoingDeletions} ${incomingAdditions} ${incomingDeletions}`);
 
   return lines.join("\n");
-}
-
-function randomHash(): string {
-  return Math.random().toString(36).substring(2, 9);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
