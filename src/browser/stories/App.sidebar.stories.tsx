@@ -197,7 +197,15 @@ export const LongWorkspaceNames: AppStory = {
   ),
 };
 
-/** All git status indicator variations */
+/**
+ * Git status indicator variations showing line deltas and commit divergence.
+ * Demonstrates both modes (toggle in tooltip) with various states:
+ * - Clean: no changes
+ * - Ahead: local commits with line additions
+ * - Behind: only behind remote (shows muted ↓N in line-delta mode)
+ * - Dirty: uncommitted changes
+ * - Diverged: ahead, behind, and dirty with large line counts (tests abbreviation)
+ */
 export const GitStatusVariations: AppStory = {
   render: () => (
     <AppWithMocks
@@ -242,14 +250,28 @@ export const GitStatusVariations: AppStory = {
           }),
         ];
 
+        // Line deltas show in line-delta mode; ahead/behind show in divergence mode
         const gitStatus = new Map<string, GitStatusFixture>([
           ["ws-clean", {}],
-          ["ws-ahead", { ahead: 2, headCommit: "Add new dashboard" }],
-          ["ws-behind", { behind: 3, originCommit: "Latest API changes" }],
-          ["ws-dirty", { dirty: 7 }],
-          ["ws-diverged", { ahead: 2, behind: 1, dirty: 5 }],
-          ["ws-ssh", { ahead: 1 }],
+          [
+            "ws-ahead",
+            {
+              ahead: 2,
+              outgoingAdditions: 150,
+              outgoingDeletions: 30,
+              headCommit: "Add new dashboard",
+            },
+          ],
+          ["ws-behind", { behind: 5, originCommit: "Latest API changes" }],
+          ["ws-dirty", { dirty: 7, outgoingAdditions: 42, outgoingDeletions: 8 }],
+          [
+            "ws-diverged",
+            { ahead: 3, behind: 2, dirty: 5, outgoingAdditions: 12313, outgoingDeletions: 1231 },
+          ],
+          ["ws-ssh", { ahead: 1, outgoingAdditions: 25 }],
         ]);
+
+        expandProjects(["/home/user/projects/my-app"]);
 
         return createMockORPCClient({
           projects: groupWorkspacesByProject(workspaces),
