@@ -376,10 +376,12 @@ export function ProvidersSection() {
                                 <span className="font-semibold">auto</span>: standard behavior.
                               </div>
                               <div>
-                                <span className="font-semibold">priority</span>: lower latency, higher cost.
+                                <span className="font-semibold">priority</span>: lower latency,
+                                higher cost.
                               </div>
                               <div>
-                                <span className="font-semibold">flex</span>: lower cost, higher latency.
+                                <span className="font-semibold">flex</span>: lower cost, higher
+                                latency.
                               </div>
                             </div>
                           </TooltipContent>
