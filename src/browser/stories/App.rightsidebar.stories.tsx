@@ -16,10 +16,10 @@ export default {
   title: "App/RightSidebar",
   parameters: {
     ...appMeta.parameters,
-    // Disable theme modes to allow custom viewport for RightSidebar visibility
     chromatic: {
       modes: {
-        dark: { viewport: 1600 },
+        dark: { theme: "dark", viewport: 1600 },
+        light: { theme: "light", viewport: 1600 },
       },
     },
   },
@@ -73,6 +73,14 @@ export const CostsTab: AppStory = {
       }}
     />
   ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Session usage is fetched async via WorkspaceStore; wait to avoid snapshot races.
+    await waitFor(() => {
+      canvas.getByRole("tab", { name: /costs.*\$0\.56/i });
+    });
+  },
 };
 
 /**
@@ -100,13 +108,16 @@ export const ReviewTab: AppStory = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    // Click Review tab to switch
-    await waitFor(
-      async () => {
-        const reviewTab = canvas.getByRole("tab", { name: /review/i });
-        await userEvent.click(reviewTab);
-      },
-      { timeout: 5000 }
-    );
+    // Wait for session usage to land (avoid theme/mode snapshots diverging on timing).
+    await waitFor(() => {
+      canvas.getByRole("tab", { name: /costs.*\$0\.42/i });
+    });
+
+    const reviewTab = canvas.getByRole("tab", { name: /^review/i });
+    await userEvent.click(reviewTab);
+
+    await waitFor(() => {
+      canvas.getByRole("tab", { name: /^review/i, selected: true });
+    });
   },
 };

@@ -1003,7 +1003,8 @@ body {
 /* Root container */
 html,
 body,
-#root {
+#root,
+#storybook-root {
   height: 100dvh;
   overflow: hidden;
 }
@@ -1079,7 +1080,8 @@ body,
 /* Ensure the app uses the full viewport height accounting for browser chrome */
 html,
 body,
-#root {
+#root,
+#storybook-root {
   /* Use dvh (dynamic viewport height) on supported browsers - this accounts for
      mobile browser chrome and keyboard accessory bars */
   min-height: 100dvh;
@@ -1090,7 +1092,8 @@ body,
 /* Handle safe areas for notched devices and keyboard accessory bars */
 @supports (padding: env(safe-area-inset-top)) {
   /* Apply padding to account for iOS safe areas (notch at top, home indicator at bottom) */
-  #root {
+  #root,
+  #storybook-root {
     padding-top: env(safe-area-inset-top, 0);
     padding-bottom: env(safe-area-inset-bottom, 0);
     padding-left: env(safe-area-inset-left, 0);
