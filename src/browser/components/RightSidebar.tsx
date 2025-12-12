@@ -288,7 +288,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
                 >
                   Costs
                   {sessionCost !== null && (
-                    <span className="bg-background/50 text-muted-foreground rounded px-1 py-0.5 text-[10px]">
+                    <span className="text-muted text-[10px]">
                       ${sessionCost < 0.01 ? "<0.01" : sessionCost.toFixed(2)}
                     </span>
                   )}
@@ -318,10 +318,10 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
                   {reviewStats !== null && reviewStats.total > 0 && (
                     <span
                       className={cn(
-                        "bg-background/50 rounded px-1 py-0.5 text-[10px]",
+                        "text-[10px]",
                         reviewStats.read === reviewStats.total
                           ? "text-muted" // All read - dimmed
-                          : "text-muted-foreground"
+                          : "text-muted"
                       )}
                     >
                       {reviewStats.read}/{reviewStats.total}
