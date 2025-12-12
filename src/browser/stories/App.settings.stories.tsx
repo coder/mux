@@ -66,10 +66,10 @@ async function openSettingsToSection(canvasElement: HTMLElement, section?: strin
   if (section && section !== "general") {
     const modal = body.getByRole("dialog");
     const modalCanvas = within(modal);
-    // Find the nav section button (exact text match)
+    // Find the nav section button by matching the section label within the button text
     const navButtons = await modalCanvas.findAllByRole("button");
-    const sectionButton = navButtons.find(
-      (btn) => btn.textContent?.toLowerCase().trim() === section.toLowerCase()
+    const sectionButton = navButtons.find((btn) =>
+      btn.textContent?.toLowerCase().includes(section.toLowerCase())
     );
     if (!sectionButton) throw new Error(`Section button "${section}" not found`);
     await userEvent.click(sectionButton);
