@@ -68,7 +68,7 @@ export const OPENAI_REASONING_EFFORT: Record<ThinkingLevel, string | undefined> 
   low: "low",
   medium: "medium",
   high: "high",
-  xhigh: "xhigh", // Extra High - only supported by gpt-5.1-codex-max
+  xhigh: "xhigh", // Extra High - supported by models that expose xhigh (e.g., gpt-5.1-codex-max, gpt-5.2)
 };
 
 /**

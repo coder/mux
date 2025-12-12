@@ -64,6 +64,36 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
+  test("returns 5 levels including xhigh for gpt-5.2", () => {
+    expect(getThinkingPolicyForModel("openai:gpt-5.2")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+  });
+
+  test("returns 5 levels including xhigh for gpt-5.2 behind mux-gateway", () => {
+    expect(getThinkingPolicyForModel("mux-gateway:openai/gpt-5.2")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+  });
+
+  test("returns 5 levels including xhigh for gpt-5.2 with version suffix", () => {
+    expect(getThinkingPolicyForModel("openai:gpt-5.2-2025-12-11")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+  });
+
   test("returns 5 levels including xhigh for gpt-5.1-codex-max behind mux-gateway", () => {
     expect(getThinkingPolicyForModel("mux-gateway:openai/gpt-5.1-codex-max")).toEqual([
       "off",
@@ -202,6 +232,20 @@ describe("enforceThinkingPolicy", () => {
 
     test("allows xhigh for versioned model", () => {
       expect(enforceThinkingPolicy("openai:gpt-5.1-codex-max-2025-12-01", "xhigh")).toBe("xhigh");
+    });
+  });
+
+  describe("GPT-5.2 (5 levels including xhigh)", () => {
+    test("allows xhigh for base model", () => {
+      expect(enforceThinkingPolicy("openai:gpt-5.2", "xhigh")).toBe("xhigh");
+    });
+
+    test("allows xhigh behind mux-gateway", () => {
+      expect(enforceThinkingPolicy("mux-gateway:openai/gpt-5.2", "xhigh")).toBe("xhigh");
+    });
+
+    test("allows xhigh for versioned model", () => {
+      expect(enforceThinkingPolicy("openai:gpt-5.2-2025-12-11", "xhigh")).toBe("xhigh");
     });
   });
 

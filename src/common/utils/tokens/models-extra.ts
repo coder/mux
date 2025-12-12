@@ -43,6 +43,7 @@ export const modelsExtra: Record<string, ModelData> = {
   // GPT-5.2 - Released December 11, 2025
   // $1.75/M input, $14/M output
   // Cached input: $0.175/M
+  // Supports off, low, medium, high, xhigh reasoning levels
   "gpt-5.2": {
     max_input_tokens: 400000,
     max_output_tokens: 128000,

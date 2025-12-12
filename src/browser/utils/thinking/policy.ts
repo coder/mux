@@ -25,10 +25,11 @@ export type ThinkingPolicy = readonly ThinkingLevel[];
  *
  * Rules:
  * - openai:gpt-5.1-codex-max → ["off", "low", "medium", "high", "xhigh"] (5 levels including xhigh)
+ * - openai:gpt-5.2 → ["off", "low", "medium", "high", "xhigh"] (5 levels including xhigh)
  * - openai:gpt-5.2-pro → ["medium", "high", "xhigh"] (3 levels)
  * - openai:gpt-5-pro → ["high"] (only supported level, legacy)
  * - gemini-3 → ["low", "high"] (thinking level only)
- * - default → ["off", "low", "medium", "high"] (standard 4 levels)
+ * - default → ["off", "low", "medium", "high"] (standard 4 levels; xhigh is opt-in per model)
  *
  * Tolerates version suffixes (e.g., gpt-5-pro-2025-10-06).
  * Does NOT match gpt-5-pro-mini (uses negative lookahead).
@@ -55,6 +56,11 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
     return ["medium", "high", "xhigh"];
   }
 
+  // gpt-5.2 supports 5 reasoning levels including xhigh (Extra High)
+  if (/^gpt-5\.2(?!-[a-z])/.test(withoutProviderNamespace)) {
+    return ["off", "low", "medium", "high", "xhigh"];
+  }
+
   // gpt-5-pro (legacy) only supports high
   if (/^gpt-5-pro(?!-[a-z])/.test(withoutProviderNamespace)) {
     return ["high"];
@@ -65,7 +71,7 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
     return ["low", "high"];
   }
 
-  // Default policy: standard 4 levels (xhigh only for codex-max)
+  // Default policy: standard 4 levels (off/low/medium/high). Models with xhigh must opt in above.
   return ["off", "low", "medium", "high"];
 }
 
