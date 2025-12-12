@@ -53,6 +53,9 @@ import { movePlanFile } from "@/node/utils/runtime/helpers";
 /** Maximum number of retry attempts when workspace name collides */
 const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
 
+// Keep short to feel instant, but debounce bursts of file_edit_* tool calls.
+const POST_COMPACTION_METADATA_REFRESH_DEBOUNCE_MS = 100;
+
 /**
  * Checks if an error indicates a workspace name collision
  */
@@ -90,6 +93,9 @@ export class WorkspaceService extends EventEmitter {
     string,
     { chat: () => void; metadata: () => void }
   >();
+
+  // Debounce post-compaction metadata refreshes (file_edit_* can fire rapidly)
+  private readonly postCompactionRefreshTimers = new Map<string, NodeJS.Timeout>();
   // Tracks workspaces currently being renamed to prevent streaming during rename
   private readonly renamingWorkspaces = new Set<string>();
 
@@ -224,6 +230,45 @@ export class WorkspaceService extends EventEmitter {
     };
   }
 
+  private schedulePostCompactionMetadataRefresh(workspaceId: string): void {
+    assert(typeof workspaceId === "string", "workspaceId must be a string");
+    const trimmed = workspaceId.trim();
+    assert(trimmed.length > 0, "workspaceId must not be empty");
+
+    const existing = this.postCompactionRefreshTimers.get(trimmed);
+    if (existing) {
+      clearTimeout(existing);
+    }
+
+    const timer = setTimeout(() => {
+      this.postCompactionRefreshTimers.delete(trimmed);
+      void this.emitPostCompactionMetadata(trimmed);
+    }, POST_COMPACTION_METADATA_REFRESH_DEBOUNCE_MS);
+
+    this.postCompactionRefreshTimers.set(trimmed, timer);
+  }
+
+  private async emitPostCompactionMetadata(workspaceId: string): Promise<void> {
+    try {
+      const session = this.sessions.get(workspaceId);
+      if (!session) {
+        return;
+      }
+
+      const metadata = await this.getInfo(workspaceId);
+      if (!metadata) {
+        return;
+      }
+
+      const postCompaction = await this.getPostCompactionState(workspaceId);
+      const enrichedMetadata = { ...metadata, postCompaction };
+      session.emitMetadata(enrichedMetadata);
+    } catch (error) {
+      // Workspace runtime unavailable (e.g., SSH unreachable) - skip emitting post-compaction state.
+      log.debug("Failed to emit post-compaction metadata", { workspaceId, error });
+    }
+  }
+
   public getOrCreateSession(workspaceId: string): AgentSession {
     assert(typeof workspaceId === "string", "workspaceId must be a string");
     const trimmed = workspaceId.trim();
@@ -243,16 +288,10 @@ export class WorkspaceService extends EventEmitter {
       initStateManager: this.initStateManager,
       backgroundProcessManager: this.backgroundProcessManager,
       onCompactionComplete: () => {
-        // Emit updated metadata with postCompaction state after compaction
-        void (async () => {
-          const metadata = await this.getInfo(trimmed);
-          if (metadata) {
-            const postCompaction = await this.getPostCompactionState(trimmed);
-            const enrichedMetadata = { ...metadata, postCompaction };
-            // Look up session from map (guaranteed to exist by the time callback runs)
-            this.sessions.get(trimmed)?.emitMetadata(enrichedMetadata);
-          }
-        })();
+        this.schedulePostCompactionMetadataRefresh(trimmed);
+      },
+      onPostCompactionStateChange: () => {
+        this.schedulePostCompactionMetadataRefresh(trimmed);
       },
     });
 
@@ -277,20 +316,27 @@ export class WorkspaceService extends EventEmitter {
   }
 
   public disposeSession(workspaceId: string): void {
-    const session = this.sessions.get(workspaceId);
+    const trimmed = workspaceId.trim();
+    const session = this.sessions.get(trimmed);
+    const refreshTimer = this.postCompactionRefreshTimers.get(trimmed);
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+      this.postCompactionRefreshTimers.delete(trimmed);
+    }
+
     if (!session) {
       return;
     }
 
-    const subscriptions = this.sessionSubscriptions.get(workspaceId);
+    const subscriptions = this.sessionSubscriptions.get(trimmed);
     if (subscriptions) {
       subscriptions.chat();
       subscriptions.metadata();
-      this.sessionSubscriptions.delete(workspaceId);
+      this.sessionSubscriptions.delete(trimmed);
     }
 
     session.dispose();
-    this.sessions.delete(workspaceId);
+    this.sessions.delete(trimmed);
   }
 
   /**
