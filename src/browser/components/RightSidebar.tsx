@@ -249,7 +249,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         {selectedTab === "review" && onStartResize && (
           <div
             className={cn(
-              "w-px flex-shrink-0 z-10 transition-[background] duration-150 cursor-col-resize",
+              "w-0.5 flex-shrink-0 z-10 transition-[background] duration-150 cursor-col-resize",
               isResizing ? "bg-accent" : "bg-border-light hover:bg-accent"
             )}
             onMouseDown={(e) => onStartResize(e as unknown as React.MouseEvent)}
