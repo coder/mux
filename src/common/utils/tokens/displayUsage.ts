@@ -6,9 +6,48 @@
  */
 
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
+import type { ModelStats } from "./modelStats";
 import { getModelStats } from "./modelStats";
 import type { ChatUsageDisplay } from "./usageAggregator";
 import { normalizeGatewayModel } from "../ai/models";
+
+/**
+ * Get tier-adjusted costs from model stats based on OpenAI service tier.
+ * Falls back to standard pricing if tier-specific costs aren't available.
+ */
+function getTierCosts(
+  modelStats: ModelStats,
+  serviceTier: string | undefined
+): {
+  inputCost: number;
+  outputCost: number;
+  cacheReadCost: number;
+} {
+  const standardCosts = {
+    inputCost: modelStats.input_cost_per_token,
+    outputCost: modelStats.output_cost_per_token,
+    cacheReadCost: modelStats.cache_read_input_token_cost ?? 0,
+  };
+
+  if (serviceTier === "flex") {
+    return {
+      inputCost: modelStats.input_cost_per_token_flex ?? standardCosts.inputCost,
+      outputCost: modelStats.output_cost_per_token_flex ?? standardCosts.outputCost,
+      cacheReadCost: modelStats.cache_read_input_token_cost_flex ?? standardCosts.cacheReadCost,
+    };
+  }
+
+  if (serviceTier === "priority") {
+    return {
+      inputCost: modelStats.input_cost_per_token_priority ?? standardCosts.inputCost,
+      outputCost: modelStats.output_cost_per_token_priority ?? standardCosts.outputCost,
+      cacheReadCost: modelStats.cache_read_input_token_cost_priority ?? standardCosts.cacheReadCost,
+    };
+  }
+
+  // "default", "auto", or undefined → standard pricing
+  return standardCosts;
+}
 
 /**
  * Create a display-friendly usage object from AI SDK usage
@@ -60,11 +99,11 @@ export function createDisplayUsage(
   // Get model stats for cost calculation
   const modelStats = getModelStats(model);
 
-  // TODO: Adjust costs based on OpenAI service_tier from providerMetadata.openai.serviceTier
-  // - flex: ~50% cheaper (Batch API rates)
-  // - priority: premium pricing (~1.5x for some models)
-  // - default/auto: standard pricing
-  // The actual tier used is in the API response, not the requested tier.
+  // Extract OpenAI service tier from response metadata (actual tier used, not requested)
+  // AI SDK returns serviceTier in providerMetadata.openai.serviceTier
+  const serviceTier = isOpenAI
+    ? (providerMetadata?.openai as { serviceTier?: string } | undefined)?.serviceTier
+    : undefined;
 
   // Calculate costs based on model stats (undefined if model unknown)
   let inputCost: number | undefined;
@@ -74,11 +113,14 @@ export function createDisplayUsage(
   let reasoningCost: number | undefined;
 
   if (modelStats) {
-    inputCost = inputTokens * modelStats.input_cost_per_token;
-    cachedCost = cachedTokens * (modelStats.cache_read_input_token_cost ?? 0);
+    // Get tier-adjusted costs (flex ~50% cheaper, priority ~2x)
+    const tierCosts = getTierCosts(modelStats, serviceTier);
+
+    inputCost = inputTokens * tierCosts.inputCost;
+    cachedCost = cachedTokens * tierCosts.cacheReadCost;
     cacheCreateCost = cacheCreateTokens * (modelStats.cache_creation_input_token_cost ?? 0);
-    outputCost = outputWithoutReasoning * modelStats.output_cost_per_token;
-    reasoningCost = reasoningTokens * modelStats.output_cost_per_token;
+    outputCost = outputWithoutReasoning * tierCosts.outputCost;
+    reasoningCost = reasoningTokens * tierCosts.outputCost;
   }
 
   return {

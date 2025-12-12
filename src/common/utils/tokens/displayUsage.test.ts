@@ -195,4 +195,90 @@ describe("createDisplayUsage", () => {
       expect(result!.cacheCreate.tokens).toBe(1500);
     });
   });
+
+  describe("OpenAI service tier cost adjustments", () => {
+    // gpt-5 has tier-specific pricing in models.json:
+    // - standard: input $1.25/M, output $10/M
+    // - flex: input $0.625/M, output $5/M (~50% cheaper)
+    // - priority: input $2.50/M, output $20/M (~2x)
+    const usage: LanguageModelV2Usage = {
+      inputTokens: 1000000, // 1M tokens for easy math
+      outputTokens: 100000, // 100K tokens
+      totalTokens: 1100000,
+    };
+
+    test("applies standard pricing when serviceTier is undefined", () => {
+      const result = createDisplayUsage(usage, "openai:gpt-5");
+
+      expect(result).toBeDefined();
+      // Standard: $1.25/M input = $1.25 for 1M tokens
+      expect(result!.input.cost_usd).toBeCloseTo(1.25, 2);
+      // Standard: $10/M output = $1.00 for 100K tokens
+      expect(result!.output.cost_usd).toBeCloseTo(1.0, 2);
+    });
+
+    test("applies standard pricing when serviceTier is 'default'", () => {
+      const result = createDisplayUsage(usage, "openai:gpt-5", {
+        openai: { serviceTier: "default" },
+      });
+
+      expect(result).toBeDefined();
+      expect(result!.input.cost_usd).toBeCloseTo(1.25, 2);
+      expect(result!.output.cost_usd).toBeCloseTo(1.0, 2);
+    });
+
+    test("applies flex pricing when serviceTier is 'flex'", () => {
+      const result = createDisplayUsage(usage, "openai:gpt-5", {
+        openai: { serviceTier: "flex" },
+      });
+
+      expect(result).toBeDefined();
+      // Flex: $0.625/M input = $0.625 for 1M tokens
+      expect(result!.input.cost_usd).toBeCloseTo(0.625, 3);
+      // Flex: $5/M output = $0.50 for 100K tokens
+      expect(result!.output.cost_usd).toBeCloseTo(0.5, 2);
+    });
+
+    test("applies priority pricing when serviceTier is 'priority'", () => {
+      const result = createDisplayUsage(usage, "openai:gpt-5", {
+        openai: { serviceTier: "priority" },
+      });
+
+      expect(result).toBeDefined();
+      // Priority: $2.50/M input = $2.50 for 1M tokens
+      expect(result!.input.cost_usd).toBeCloseTo(2.5, 2);
+      // Priority: $20/M output = $2.00 for 100K tokens
+      expect(result!.output.cost_usd).toBeCloseTo(2.0, 2);
+    });
+
+    test("ignores serviceTier for non-OpenAI models", () => {
+      // Even if serviceTier is present, non-OpenAI models should use standard pricing
+      const result = createDisplayUsage(usage, "anthropic:claude-sonnet-4-5", {
+        openai: { serviceTier: "flex" }, // Should be ignored
+      });
+
+      expect(result).toBeDefined();
+      // Anthropic pricing shouldn't change based on OpenAI serviceTier
+      // Just verify tokens are correct (pricing varies by model)
+      expect(result!.input.tokens).toBe(1000000);
+      expect(result!.output.tokens).toBe(100000);
+    });
+
+    test("applies flex pricing to cached tokens", () => {
+      const usageWithCache: LanguageModelV2Usage = {
+        inputTokens: 1000000, // Includes cached
+        outputTokens: 100000,
+        totalTokens: 1100000,
+        cachedInputTokens: 500000, // 500K cached
+      };
+
+      const result = createDisplayUsage(usageWithCache, "openai:gpt-5", {
+        openai: { serviceTier: "flex" },
+      });
+
+      expect(result).toBeDefined();
+      // Flex cache: $0.0625/M = $0.03125 for 500K tokens
+      expect(result!.cached.cost_usd).toBeCloseTo(0.03125, 4);
+    });
+  });
 });

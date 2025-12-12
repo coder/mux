@@ -9,6 +9,13 @@ export interface ModelStats {
   output_cost_per_token: number;
   cache_creation_input_token_cost?: number;
   cache_read_input_token_cost?: number;
+  // OpenAI service tier-specific costs (flex ~50% cheaper, priority ~2x)
+  input_cost_per_token_flex?: number;
+  output_cost_per_token_flex?: number;
+  cache_read_input_token_cost_flex?: number;
+  input_cost_per_token_priority?: number;
+  output_cost_per_token_priority?: number;
+  cache_read_input_token_cost_priority?: number;
 }
 
 interface RawModelData {
@@ -18,6 +25,13 @@ interface RawModelData {
   output_cost_per_token?: number;
   cache_creation_input_token_cost?: number;
   cache_read_input_token_cost?: number;
+  // OpenAI service tier-specific costs
+  input_cost_per_token_flex?: number;
+  output_cost_per_token_flex?: number;
+  cache_read_input_token_cost_flex?: number;
+  input_cost_per_token_priority?: number;
+  output_cost_per_token_priority?: number;
+  cache_read_input_token_cost_priority?: number;
   [key: string]: unknown;
 }
 
@@ -51,6 +65,31 @@ function extractModelStats(data: RawModelData): ModelStats {
     cache_read_input_token_cost:
       typeof data.cache_read_input_token_cost === "number"
         ? data.cache_read_input_token_cost
+        : undefined,
+    // OpenAI service tier-specific costs
+    input_cost_per_token_flex:
+      typeof data.input_cost_per_token_flex === "number"
+        ? data.input_cost_per_token_flex
+        : undefined,
+    output_cost_per_token_flex:
+      typeof data.output_cost_per_token_flex === "number"
+        ? data.output_cost_per_token_flex
+        : undefined,
+    cache_read_input_token_cost_flex:
+      typeof data.cache_read_input_token_cost_flex === "number"
+        ? data.cache_read_input_token_cost_flex
+        : undefined,
+    input_cost_per_token_priority:
+      typeof data.input_cost_per_token_priority === "number"
+        ? data.input_cost_per_token_priority
+        : undefined,
+    output_cost_per_token_priority:
+      typeof data.output_cost_per_token_priority === "number"
+        ? data.output_cost_per_token_priority
+        : undefined,
+    cache_read_input_token_cost_priority:
+      typeof data.cache_read_input_token_cost_priority === "number"
+        ? data.cache_read_input_token_cost_priority
         : undefined,
   };
   /* eslint-enable @typescript-eslint/non-nullable-type-assertion-style */
