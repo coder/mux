@@ -53,7 +53,7 @@ import {
   isEditableElement,
 } from "@/browser/utils/ui/keybinds";
 import { ModelSelector, type ModelSelectorRef } from "../ModelSelector";
-import { useModelLRU } from "@/browser/hooks/useModelLRU";
+import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { SendHorizontal, X } from "lucide-react";
 import { VimTextArea } from "../VimTextArea";
 import { ImageAttachments, type ImageAttachment } from "../ImageAttachments";
@@ -180,7 +180,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { open } = useSettings();
   const { selectedWorkspace } = useWorkspaceContext();
   const [mode, setMode] = useMode();
-  const { recentModels, addModel, defaultModel, setDefaultModel } = useModelLRU();
+  const {
+    models,
+    customModels,
+    hiddenModels,
+    hideModel,
+    unhideModel,
+    ensureModelInSettings,
+    defaultModel,
+    setDefaultModel,
+  } = useModelsFromSettings();
   const commandListId = useId();
   const telemetry = useTelemetry();
   const [vimEnabled, setVimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, {
@@ -229,6 +238,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // - baseModel: canonical format for UI display and policy checks (e.g., ThinkingSlider)
   const preferredModel = sendMessageOptions.model;
   const baseModel = sendMessageOptions.baseModel;
+
+  const setPreferredModel = useCallback(
+    (model: string) => {
+      ensureModelInSettings(model); // Ensure model exists in Settings
+      updatePersistedState(storageKeys.modelKey, model); // Update workspace or project-specific
+    },
+    [storageKeys.modelKey, ensureModelInSettings]
+  );
   const deferredModel = useDeferredValue(preferredModel);
   const deferredInput = useDeferredValue(input);
   const tokenCountPromise = useMemo(() => {
@@ -243,15 +260,29 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [tokenCountPromise]
   );
 
-  // Setter for model - updates localStorage directly so useSendMessageOptions picks it up
-  const setPreferredModel = useCallback(
-    (model: string) => {
-      addModel(model); // Update LRU
-      updatePersistedState(storageKeys.modelKey, model); // Update workspace or project-specific
-    },
-    [storageKeys.modelKey, addModel]
+  // Model cycling candidates. Prefer the user's custom model list (as configured in Settings).
+  // If no custom models are configured, fall back to the full suggested list.
+  const cycleModels = useMemo(
+    () => (customModels.length > 0 ? customModels : models),
+    [customModels, models]
   );
 
+  const cycleToNextModel = useCallback(() => {
+    if (cycleModels.length < 2) {
+      return;
+    }
+
+    const currentIndex = cycleModels.indexOf(baseModel);
+    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % cycleModels.length;
+    const nextModel = cycleModels[nextIndex];
+    if (nextModel) {
+      setPreferredModel(nextModel);
+    }
+  }, [baseModel, cycleModels, setPreferredModel]);
+
+  const openModelSelector = useCallback(() => {
+    modelSelectorRef.current?.open();
+  }, []);
   // Creation-specific state (hook always called, but only used when variant === "creation")
   // This avoids conditional hook calls which violate React rules
   const creationState = useCreationWorkspace(
@@ -388,6 +419,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       if (matchesKeybind(event, KEYBINDS.FOCUS_INPUT_A)) {
         event.preventDefault();
         focusMessageInput();
+        return;
+      }
+
+      if (matchesKeybind(event, KEYBINDS.CYCLE_MODEL)) {
+        event.preventDefault();
+        focusMessageInput();
+        cycleToNextModel();
       }
     };
 
@@ -395,7 +433,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     return () => {
       window.removeEventListener("keydown", handleGlobalKeyDown);
     };
-  }, [focusMessageInput]);
+  }, [cycleToNextModel, focusMessageInput, openModelSelector]);
 
   // When entering editing mode, save current draft and populate with message content
   useEffect(() => {
@@ -1221,10 +1259,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return;
     }
 
-    // Handle open model selector
-    if (matchesKeybind(e, KEYBINDS.OPEN_MODEL_SELECTOR)) {
+    // Cycle models (Ctrl+/)
+    if (matchesKeybind(e, KEYBINDS.CYCLE_MODEL)) {
       e.preventDefault();
-      modelSelectorRef.current?.open();
+      cycleToNextModel();
       return;
     }
 
@@ -1306,7 +1344,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       hints.push(`${formatKeybind(interruptKeybind)} to interrupt`);
     }
     hints.push(`${formatKeybind(KEYBINDS.SEND_MESSAGE)} to ${canInterrupt ? "queue" : "send"}`);
-    hints.push(`${formatKeybind(KEYBINDS.OPEN_MODEL_SELECTOR)} to change model`);
+    hints.push(`Click model to choose, ${formatKeybind(KEYBINDS.CYCLE_MODEL)} to cycle`);
     hints.push(`/vim to toggle Vim mode (${vimEnabled ? "on" : "off"})`);
 
     return `Type a message... (${hints.join(", ")})`;
@@ -1500,18 +1538,23 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   ref={modelSelectorRef}
                   value={baseModel}
                   onChange={setPreferredModel}
-                  recentModels={recentModels}
+                  models={models}
                   onComplete={() => inputRef.current?.focus()}
                   defaultModel={defaultModel}
                   onSetDefaultModel={setDefaultModel}
+                  onHideModel={hideModel}
+                  hiddenModels={hiddenModels}
+                  onUnhideModel={unhideModel}
+                  onOpenSettings={() => open("models")}
                 />
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <HelpIndicator>?</HelpIndicator>
                   </TooltipTrigger>
                   <TooltipContent align="start" className="max-w-80 whitespace-normal">
-                    <strong>Click to edit</strong> or use{" "}
-                    {formatKeybind(KEYBINDS.OPEN_MODEL_SELECTOR)}
+                    <strong>Click to edit</strong>
+                    <br />
+                    <strong>{formatKeybind(KEYBINDS.CYCLE_MODEL)}</strong> to cycle models
                     <br />
                     <br />
                     <strong>Abbreviations:</strong>

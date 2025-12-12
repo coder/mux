@@ -54,10 +54,20 @@ if (subcommand === "run") {
 } else {
   // No subcommand (non-Electron), flags (--help, --version), or unknown commands
   const program = new Command();
+
+  // VERSION comes from generated src/version.ts during builds.
+  // For lint/typecheck contexts where that file may be missing or not fully type-resolved,
+  // treat it as unknown and parse defensively.
+  const versionRecord = VERSION as Record<string, unknown>;
+  const gitDescribe =
+    typeof versionRecord.git_describe === "string" ? versionRecord.git_describe : "unknown";
+  const gitCommit =
+    typeof versionRecord.git_commit === "string" ? versionRecord.git_commit : "unknown";
+
   program
     .name("mux")
     .description("Mux - AI agent orchestration")
-    .version(`${VERSION.git_describe} (${VERSION.git_commit})`, "-v, --version");
+    .version(`${gitDescribe} (${gitCommit})`, "-v, --version");
 
   // Register subcommand stubs for help display (actual implementations are above)
   program.command("run").description("Run a one-off agent task");

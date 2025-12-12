@@ -1,5 +1,5 @@
 import React from "react";
-import { Check, Pencil, Star, Trash2, X } from "lucide-react";
+import { Check, Eye, Pencil, Star, Trash2, X } from "lucide-react";
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { GatewayIcon } from "@/browser/components/icons/GatewayIcon";
 import { cn } from "@/common/lib/utils";
@@ -21,6 +21,8 @@ export interface ModelRowProps {
   hasActiveEdit?: boolean;
   /** Whether gateway mode is enabled for this model */
   isGatewayEnabled?: boolean;
+  /** Whether this model is hidden from the selector */
+  isHiddenFromSelector?: boolean;
   onSetDefault: () => void;
   onStartEdit?: () => void;
   onSaveEdit?: () => void;
@@ -29,6 +31,8 @@ export interface ModelRowProps {
   onRemove?: () => void;
   /** Toggle gateway mode for this model */
   onToggleGateway?: () => void;
+  /** Toggle visibility in model selector */
+  onToggleVisibility?: () => void;
 }
 
 export function ModelRow(props: ModelRowProps) {
@@ -99,6 +103,43 @@ export function ModelRow(props: ModelRowProps) {
           </>
         ) : (
           <>
+            {/* Visibility toggle button */}
+            {props.onToggleVisibility && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={props.onToggleVisibility}
+                    className={cn(
+                      "relative p-0.5 transition-colors",
+                      props.isHiddenFromSelector
+                        ? "text-muted-light"
+                        : "text-muted hover:text-foreground"
+                    )}
+                    aria-label={
+                      props.isHiddenFromSelector
+                        ? "Show in model selector"
+                        : "Hide from model selector"
+                    }
+                  >
+                    <Eye
+                      className={cn(
+                        "h-3.5 w-3.5",
+                        props.isHiddenFromSelector ? "opacity-30" : "opacity-70"
+                      )}
+                    />
+                    {props.isHiddenFromSelector && (
+                      <span className="bg-muted-light absolute inset-0 m-auto h-px w-4 rotate-45" />
+                    )}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent align="center">
+                  {props.isHiddenFromSelector
+                    ? "Hidden from selector (click to show)"
+                    : "Hide from model selector"}
+                </TooltipContent>
+              </Tooltip>
+            )}
             {/* Gateway toggle button */}
             {props.onToggleGateway && (
               <Tooltip>

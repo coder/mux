@@ -318,7 +318,7 @@ export class WorkspaceStore {
   // Track workspaces currently replaying buffered history (to avoid O(N) scheduling)
   private replayingHistory = new Set<string>();
 
-  // Track model usage (injected dependency for useModelLRU integration)
+  // Track model usage (optional integration point for model bookkeeping)
   private readonly onModelUsed?: (model: string) => void;
 
   constructor(onModelUsed?: (model: string) => void) {

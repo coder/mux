@@ -1,7 +1,7 @@
 import { useThinkingLevel } from "./useThinkingLevel";
 import { useMode } from "@/browser/contexts/ModeContext";
 import { usePersistedState } from "./usePersistedState";
-import { getDefaultModel } from "./useModelLRU";
+import { getDefaultModel } from "./useModelsFromSettings";
 import { migrateGatewayModel, useGateway, isProviderSupported } from "./useGatewayModels";
 import { modeToToolPolicy } from "@/common/utils/ui/modeUtils";
 import { getModelKey } from "@/common/constants/storage";
@@ -103,7 +103,7 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
   const defaultModel = getDefaultModel();
   const [preferredModel] = usePersistedState<string>(
     getModelKey(workspaceId),
-    defaultModel, // Default to most recently used model
+    defaultModel, // Default to the Settings default model
     { listener: true } // Listen for changes from ModelSelector and other sources
   );
 

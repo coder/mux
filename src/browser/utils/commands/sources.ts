@@ -419,7 +419,6 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         id: CommandIds.modelChange(),
         title: "Change Model…",
         section: section.mode,
-        shortcutHint: formatKeybind(KEYBINDS.OPEN_MODEL_SELECTOR),
         run: () => {
           window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_MODEL_SELECTOR));
         },

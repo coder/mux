@@ -7,7 +7,7 @@ import React, {
   forwardRef,
 } from "react";
 import { cn } from "@/common/lib/utils";
-import { Settings, Star } from "lucide-react";
+import { Eye, Settings, Star } from "lucide-react";
 import { GatewayIcon } from "./icons/GatewayIcon";
 import { ProviderIcon } from "./ProviderIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
@@ -18,10 +18,14 @@ import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 interface ModelSelectorProps {
   value: string;
   onChange: (value: string) => void;
-  recentModels: string[];
+  models: string[];
+  hiddenModels?: string[];
   onComplete?: () => void;
   defaultModel?: string | null;
   onSetDefaultModel?: (model: string) => void;
+  onHideModel?: (model: string) => void;
+  onUnhideModel?: (model: string) => void;
+  onOpenSettings?: () => void;
 }
 
 export interface ModelSelectorRef {
@@ -29,13 +33,28 @@ export interface ModelSelectorRef {
 }
 
 export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
-  ({ value, onChange, recentModels, onComplete, defaultModel, onSetDefaultModel }, ref) => {
-    const { open: openSettings } = useSettings();
+  (
+    {
+      value,
+      onChange,
+      models,
+      hiddenModels = [],
+      onComplete,
+      defaultModel,
+      onSetDefaultModel,
+      onHideModel,
+      onUnhideModel,
+      onOpenSettings,
+    },
+    ref
+  ) => {
+    useSettings(); // Context must be available for nested components
     const gateway = useGateway();
     const [isEditing, setIsEditing] = useState(false);
     const [inputValue, setInputValue] = useState(value);
     const [error, setError] = useState<string | null>(null);
     const [showDropdown, setShowDropdown] = useState(false);
+    const [showAllModels, setShowAllModels] = useState(false);
     const [highlightedIndex, setHighlightedIndex] = useState<number>(-1);
     const inputRef = useRef<HTMLInputElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -61,6 +80,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       setInputValue(value);
       setError(null);
       setShowDropdown(false);
+      setShowAllModels(false);
       setHighlightedIndex(-1);
     }, [value]);
 
@@ -78,12 +98,28 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       return () => document.removeEventListener("mousedown", handleClickOutside);
     }, [isEditing, handleCancel]);
 
-    // Filter recent models based on input (show all if empty) and sort lexicographically
-    const filteredModels = (
+    // Build model list: visible models + (if showAllModels) hidden models
+    const baseModels = showAllModels ? [...models, ...hiddenModels] : models;
+
+    // Filter models based on input (show all if empty). Preserve order from Settings.
+    const filteredModels =
       inputValue.trim() === ""
-        ? recentModels
-        : recentModels.filter((model) => model.toLowerCase().includes(inputValue.toLowerCase()))
-    ).sort();
+        ? baseModels
+        : baseModels.filter((model) => model.toLowerCase().includes(inputValue.toLowerCase()));
+
+    // Track which models are hidden (for rendering)
+    const hiddenSet = new Set(hiddenModels);
+
+    // If the list shrinks (e.g., a model is hidden), keep the highlight in-bounds.
+    useEffect(() => {
+      if (filteredModels.length === 0) {
+        setHighlightedIndex(-1);
+        return;
+      }
+      if (highlightedIndex >= filteredModels.length) {
+        setHighlightedIndex(filteredModels.length - 1);
+      }
+    }, [filteredModels.length, highlightedIndex]);
 
     const handleSave = () => {
       // No matches - do nothing, let user keep typing or cancel
@@ -137,15 +173,14 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       // Auto-highlight first filtered result
       const filtered =
         newValue.trim() === ""
-          ? recentModels
-          : recentModels.filter((model) => model.toLowerCase().includes(newValue.toLowerCase()));
-      const sortedFiltered = filtered.sort();
+          ? models
+          : models.filter((model) => model.toLowerCase().includes(newValue.toLowerCase()));
 
       // Highlight first result if any, otherwise no highlight
-      setHighlightedIndex(sortedFiltered.length > 0 ? 0 : -1);
+      setHighlightedIndex(filtered.length > 0 ? 0 : -1);
 
-      // Keep dropdown visible if there are recent models (filtering happens automatically)
-      setShowDropdown(recentModels.length > 0);
+      // Keep dropdown visible if there are models (filtering happens automatically)
+      setShowDropdown(models.length > 0);
     };
 
     const handleSelectModel = (model: string) => {
@@ -159,13 +194,12 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     const handleClick = useCallback(() => {
       setIsEditing(true);
       setInputValue(""); // Clear input to show all models
-      setShowDropdown(recentModels.length > 0);
+      setShowDropdown(models.length > 0);
 
       // Start with current value highlighted
-      const sortedModels = [...recentModels].sort();
-      const currentIndex = sortedModels.indexOf(value);
+      const currentIndex = models.indexOf(value);
       setHighlightedIndex(currentIndex);
-    }, [recentModels, value]);
+    }, [models, value]);
 
     const handleSetDefault = (e: React.MouseEvent, model: string) => {
       e.preventDefault();
@@ -230,19 +264,6 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
             </TooltipTrigger>
             <TooltipContent align="center">{value}</TooltipContent>
           </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={() => openSettings("models")}
-                className="text-muted-light hover:text-foreground flex items-center justify-center rounded-sm p-0.5 transition-colors duration-150"
-                aria-label="Manage models"
-              >
-                <Settings className="h-3 w-3" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent align="center">Manage models</TooltipContent>
-          </Tooltip>
         </div>
       );
     }
@@ -276,54 +297,108 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                   className={cn(
                     "text-[11px] font-monospace py-1.5 px-2.5 cursor-pointer transition-colors duration-100",
                     "first:rounded-t last:rounded-b",
+                    hiddenSet.has(model) && "opacity-50",
                     index === highlightedIndex
                       ? "text-foreground bg-hover"
                       : "text-light bg-transparent hover:bg-hover hover:text-foreground"
                   )}
                   onClick={() => handleSelectModel(model)}
                 >
-                  <div className="grid w-full grid-cols-[1fr_auto] items-center gap-2">
+                  {/* Grid: model name | gateway | visibility | default */}
+                  <div className="grid w-full grid-cols-[1fr_20px_20px_20px] items-center gap-1">
                     <span className="min-w-0 truncate">{model}</span>
-                    <div className="flex items-center gap-0.5">
-                      {/* Gateway toggle */}
-                      {gateway.canToggleModel(model) && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              onMouseDown={(e) => e.preventDefault()}
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                gateway.toggleModelGateway(model);
-                              }}
-                              className={cn(
-                                "flex items-center justify-center rounded-sm border px-1 py-0.5 transition-colors duration-150",
-                                gateway.modelUsesGateway(model)
-                                  ? "text-accent border-accent/40"
-                                  : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
-                              )}
-                              aria-label={
-                                gateway.modelUsesGateway(model)
-                                  ? "Disable Mux Gateway"
-                                  : "Enable Mux Gateway"
+                    {/* Gateway toggle */}
+                    {gateway.canToggleModel(model) ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              gateway.toggleModelGateway(model);
+                            }}
+                            className={cn(
+                              "flex h-5 w-5 items-center justify-center rounded-sm border transition-colors duration-150",
+                              gateway.modelUsesGateway(model)
+                                ? "text-accent border-accent/40"
+                                : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
+                            )}
+                            aria-label={
+                              gateway.modelUsesGateway(model)
+                                ? "Disable Mux Gateway"
+                                : "Enable Mux Gateway"
+                            }
+                          >
+                            <GatewayIcon
+                              className="h-3 w-3"
+                              active={gateway.modelUsesGateway(model)}
+                            />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent align="center">
+                          {gateway.modelUsesGateway(model)
+                            ? "Using Mux Gateway"
+                            : "Use Mux Gateway"}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      <span /> // Empty cell for alignment
+                    )}
+                    {/* Visibility toggle - Eye with line-through when hidden */}
+                    {(onHideModel ?? onUnhideModel) ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              if (hiddenSet.has(model)) {
+                                onUnhideModel?.(model);
+                              } else {
+                                onHideModel?.(model);
                               }
-                            >
-                              <GatewayIcon
-                                className="h-3 w-3"
-                                active={gateway.modelUsesGateway(model)}
-                              />
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent align="center">
-                            {gateway.modelUsesGateway(model)
-                              ? "Using Mux Gateway"
-                              : "Use Mux Gateway"}
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                      {/* Default model toggle */}
-                      {onSetDefaultModel && (
+                            }}
+                            className={cn(
+                              "relative flex h-5 w-5 items-center justify-center rounded-sm border transition-colors duration-150",
+                              hiddenSet.has(model)
+                                ? "text-muted-light border-muted-light/40"
+                                : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
+                            )}
+                            aria-label={
+                              hiddenSet.has(model)
+                                ? "Show model in selector"
+                                : "Hide model from selector"
+                            }
+                          >
+                            <Eye
+                              className={cn(
+                                "h-3 w-3",
+                                hiddenSet.has(model) ? "opacity-30" : "opacity-70"
+                              )}
+                            />
+                            {hiddenSet.has(model) && (
+                              <span className="bg-muted-light absolute h-px w-3 rotate-45" />
+                            )}
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent align="center">
+                          {hiddenSet.has(model)
+                            ? "Show model in selector"
+                            : "Hide model from selector"}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      <span /> // Empty cell for alignment
+                    )}
+                    {/* Default star */}
+                    {onSetDefaultModel ? (
+                      hiddenSet.has(model) ? (
+                        <span /> // Empty cell - can't set hidden model as default
+                      ) : (
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <button
@@ -331,7 +406,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                               onMouseDown={(e) => e.preventDefault()}
                               onClick={(e) => handleSetDefault(e, model)}
                               className={cn(
-                                "flex items-center justify-center rounded-sm border px-1 py-0.5 transition-colors duration-150",
+                                "flex h-5 w-5 items-center justify-center rounded-sm border transition-colors duration-150",
                                 defaultModel === model
                                   ? "text-yellow-400 border-yellow-400/40 cursor-default"
                                   : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
@@ -352,11 +427,53 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                               : "Set as default model"}
                           </TooltipContent>
                         </Tooltip>
-                      )}
-                    </div>
+                      )
+                    ) : (
+                      <span /> // Empty cell for alignment
+                    )}
                   </div>
                 </div>
               ))
+            )}
+
+            {/* Footer actions */}
+            {(hiddenModels.length > 0 || onOpenSettings) && (
+              <div className="border-border-light flex items-center justify-between gap-2 border-t px-2.5 py-1.5">
+                {hiddenModels.length > 0 && (
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setShowAllModels((prev) => !prev);
+                    }}
+                    className="text-muted-light hover:text-foreground text-[10px] transition-colors"
+                  >
+                    {showAllModels ? "Show fewer models" : "Show all models…"}
+                  </button>
+                )}
+                {onOpenSettings && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onOpenSettings();
+                        }}
+                        className="text-muted-light hover:text-foreground ml-auto flex items-center text-[10px] transition-colors"
+                        aria-label="Model Settings"
+                      >
+                        <Settings className="h-3 w-3" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent align="center">Model Settings</TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
             )}
           </div>
         )}

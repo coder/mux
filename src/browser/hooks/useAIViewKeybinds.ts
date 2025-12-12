@@ -6,7 +6,7 @@ import { updatePersistedState, readPersistedState } from "@/browser/hooks/usePer
 import type { ThinkingLevel, ThinkingLevelOn } from "@/common/types/thinking";
 import { DEFAULT_THINKING_LEVEL } from "@/common/types/thinking";
 import { getThinkingPolicyForModel } from "@/browser/utils/thinking/policy";
-import { getDefaultModel } from "@/browser/hooks/useModelLRU";
+import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { isCompactingStream, cancelCompaction } from "@/browser/utils/compaction/handler";
 import { useAPI } from "@/browser/contexts/API";
@@ -104,7 +104,7 @@ export function useAIViewKeybinds({
         e.preventDefault();
 
         // Get selected model from localStorage (what user sees in UI)
-        // Fall back to message history model, then to most recent model from LRU
+        // Fall back to message history model, then to the Settings default model
         // This matches the same logic as useSendMessageOptions
         const selectedModel = readPersistedState<string | null>(getModelKey(workspaceId), null);
         const modelToUse = selectedModel ?? currentModel ?? getDefaultModel();

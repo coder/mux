@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { usePersistedState } from "./usePersistedState";
 import { useThinkingLevel } from "./useThinkingLevel";
 import { useMode } from "@/browser/contexts/ModeContext";
-import { useModelLRU } from "./useModelLRU";
+import { getDefaultModel } from "./useModelsFromSettings";
 import {
   type RuntimeMode,
   parseRuntimeModeAndHost,
@@ -63,12 +63,11 @@ export function useDraftWorkspaceSettings(
   // Global AI settings (read-only from global state)
   const [thinkingLevel] = useThinkingLevel();
   const [mode] = useMode();
-  const { recentModels } = useModelLRU();
 
   // Project-scoped model preference (persisted per project)
   const [model] = usePersistedState<string>(
     getModelKey(getProjectScopeId(projectPath)),
-    recentModels[0],
+    getDefaultModel(),
     { listener: true }
   );
 

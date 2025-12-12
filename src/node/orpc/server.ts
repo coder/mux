@@ -114,10 +114,14 @@ export async function createOrpcServer({
 
   // OpenAPI spec endpoint
   app.get("/api/spec.json", async (_req, res) => {
+    const versionRecord = VERSION as Record<string, unknown>;
+    const gitDescribe =
+      typeof versionRecord.git_describe === "string" ? versionRecord.git_describe : "unknown";
+
     const spec = await openAPIGenerator.generate(orpcRouter, {
       info: {
         title: "Mux API",
-        version: VERSION.git_describe,
+        version: gitDescribe,
         description: "API for Mux",
       },
       servers: [{ url: "/api" }],

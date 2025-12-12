@@ -1,7 +1,7 @@
 import { getModelKey, getThinkingLevelKey, getModeKey } from "@/common/constants/storage";
 import { modeToToolPolicy } from "@/common/utils/ui/modeUtils";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
-import { getDefaultModel } from "@/browser/hooks/useModelLRU";
+import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { toGatewayModel, migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { UIMode } from "@/common/types/mode";
@@ -40,7 +40,7 @@ function getProviderOptions(): MuxProviderOptions {
  * This ensures DRY - single source of truth for option extraction.
  */
 export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptions {
-  // Read model preference (workspace-specific), fallback to LRU default
+  // Read model preference (workspace-specific), fallback to the Settings default
   const rawModel = readPersistedState<string>(getModelKey(workspaceId), getDefaultModel());
   // Migrate any legacy mux-gateway:provider/model format to canonical form
   const baseModel = migrateGatewayModel(rawModel);

@@ -50,7 +50,6 @@ import type { DisplayedMessage } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
 import { useAIViewKeybinds } from "@/browser/hooks/useAIViewKeybinds";
-import { evictModelFromLRU } from "@/browser/hooks/useModelLRU";
 import { QueuedMessage } from "./Messages/QueuedMessage";
 import { CompactionWarning } from "./CompactionWarning";
 import { ConcurrentLocalWarning } from "./ConcurrentLocalWarning";
@@ -145,33 +144,6 @@ const AIViewInner: React.FC<AIViewProps> = ({
     workspaceId,
     pendingModel
   );
-  const handledModelErrorsRef = useRef<Set<string>>(new Set());
-
-  useEffect(() => {
-    handledModelErrorsRef.current.clear();
-  }, [workspaceId]);
-
-  useEffect(() => {
-    if (!workspaceState) {
-      return;
-    }
-
-    for (const message of workspaceState.messages) {
-      if (message.type !== "stream-error") {
-        continue;
-      }
-      if (message.errorType !== "model_not_found") {
-        continue;
-      }
-      if (handledModelErrorsRef.current.has(message.id)) {
-        continue;
-      }
-      handledModelErrorsRef.current.add(message.id);
-      if (message.model) {
-        evictModelFromLRU(message.model);
-      }
-    }
-  }, [workspaceState, workspaceId]);
 
   const [editingMessage, setEditingMessage] = useState<{ id: string; content: string } | undefined>(
     undefined

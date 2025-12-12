@@ -1,0 +1,161 @@
+import { useCallback, useMemo } from "react";
+import { readPersistedState, usePersistedState } from "./usePersistedState";
+import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { useProvidersConfig } from "./useProvidersConfig";
+import { useAPI } from "@/browser/contexts/API";
+import { migrateGatewayModel } from "./useGatewayModels";
+import { isValidProvider } from "@/common/constants/providers";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
+
+const HIDDEN_MODELS_KEY = "hidden-models";
+const DEFAULT_MODEL_KEY = "model-default";
+
+const BUILT_IN_MODELS: string[] = Object.values(KNOWN_MODELS).map((m) => m.id);
+const BUILT_IN_MODEL_SET = new Set<string>(BUILT_IN_MODELS);
+
+function getCustomModels(config: ProvidersConfigMap | null): string[] {
+  if (!config) return [];
+  const models: string[] = [];
+  for (const [provider, info] of Object.entries(config)) {
+    // Skip mux-gateway - those models are accessed via the cloud toggle, not listed separately
+    if (provider === "mux-gateway") continue;
+    if (!info.models) continue;
+    for (const modelId of info.models) {
+      models.push(`${provider}:${modelId}`);
+    }
+  }
+  return models;
+}
+
+export function filterHiddenModels(models: string[], hiddenModels: string[]): string[] {
+  if (hiddenModels.length === 0) {
+    return models;
+  }
+
+  const hidden = new Set(hiddenModels);
+  return models.filter((m) => !hidden.has(m));
+}
+function dedupeKeepFirst(models: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const m of models) {
+    if (seen.has(m)) continue;
+    seen.add(m);
+    out.push(m);
+  }
+  return out;
+}
+
+export function getSuggestedModels(config: ProvidersConfigMap | null): string[] {
+  const customModels = getCustomModels(config);
+  return dedupeKeepFirst([...customModels, ...BUILT_IN_MODELS]);
+}
+
+export function getDefaultModel(): string {
+  const fallback = WORKSPACE_DEFAULTS.model;
+  const persisted = readPersistedState<string | null>(DEFAULT_MODEL_KEY, null);
+  if (!persisted) return fallback;
+  // Migrate legacy mux-gateway format to canonical form
+  return migrateGatewayModel(persisted);
+}
+
+/**
+ * Source-of-truth for selectable models.
+ *
+ * The model selector should be driven by Settings (built-in + custom).
+ * When a model is selected that isn't built-in, we persist it into Settings so it becomes
+ * discoverable/manageable there.
+ */
+export function useModelsFromSettings() {
+  const { api } = useAPI();
+  const { config, refresh } = useProvidersConfig();
+
+  const [defaultModel, setDefaultModel] = usePersistedState<string>(
+    DEFAULT_MODEL_KEY,
+    WORKSPACE_DEFAULTS.model,
+    { listener: true }
+  );
+
+  const [hiddenModels, setHiddenModels] = usePersistedState<string[]>(HIDDEN_MODELS_KEY, [], {
+    listener: true,
+  });
+
+  const customModels = useMemo(
+    () => filterHiddenModels(getCustomModels(config), hiddenModels),
+    [config, hiddenModels]
+  );
+  const models = useMemo(
+    () => filterHiddenModels(getSuggestedModels(config), hiddenModels),
+    [config, hiddenModels]
+  );
+
+  /**
+   * If a model is selected that isn't built-in, persist it as a provider custom model.
+   */
+  const ensureModelInSettings = useCallback(
+    (modelString: string) => {
+      if (!api) return;
+
+      const canonical = migrateGatewayModel(modelString).trim();
+      if (!canonical) return;
+      if (BUILT_IN_MODEL_SET.has(canonical)) return;
+
+      const colonIndex = canonical.indexOf(":");
+      if (colonIndex === -1) return;
+
+      const provider = canonical.slice(0, colonIndex);
+      const modelId = canonical.slice(colonIndex + 1);
+      if (!provider || !modelId) return;
+      if (provider === "mux-gateway") return;
+      if (!isValidProvider(provider)) return;
+
+      const run = async () => {
+        const providerConfig = config ?? (await api.providers.getConfig());
+        const existingModels = providerConfig[provider]?.models ?? [];
+        if (existingModels.includes(modelId)) return;
+
+        await api.providers.setModels({ provider, models: [...existingModels, modelId] });
+        await refresh();
+      };
+
+      run().catch(() => {
+        // Ignore failures - user can still manage models via Settings
+      });
+    },
+    [api, config, refresh]
+  );
+
+  const hideModel = useCallback(
+    (modelString: string) => {
+      const canonical = migrateGatewayModel(modelString).trim();
+      if (!canonical) {
+        return;
+      }
+      setHiddenModels((prev) => (prev.includes(canonical) ? prev : [...prev, canonical]));
+    },
+    [setHiddenModels]
+  );
+
+  const unhideModel = useCallback(
+    (modelString: string) => {
+      const canonical = migrateGatewayModel(modelString).trim();
+      if (!canonical) {
+        return;
+      }
+      setHiddenModels((prev) => prev.filter((m) => m !== canonical));
+    },
+    [setHiddenModels]
+  );
+
+  return {
+    ensureModelInSettings,
+    models,
+    customModels,
+    hiddenModels,
+    hideModel,
+    unhideModel,
+    defaultModel,
+    setDefaultModel,
+  };
+}

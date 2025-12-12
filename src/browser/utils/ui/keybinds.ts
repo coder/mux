@@ -237,8 +237,8 @@ export const KEYBINDS = {
   // macOS: Cmd+P, Win/Linux: Ctrl+P
   TOGGLE_SIDEBAR: { key: "P", ctrl: true },
 
-  /** Open model selector */
-  OPEN_MODEL_SELECTOR: { key: "/", ctrl: true },
+  /** Cycle through configured models */
+  CYCLE_MODEL: { key: "/", ctrl: true },
 
   /** Open workspace in terminal */
   // macOS: Cmd+T, Win/Linux: Ctrl+T

@@ -2,7 +2,7 @@ import React, { useState, useCallback } from "react";
 import { Plus, Loader2 } from "lucide-react";
 import { SUPPORTED_PROVIDERS, PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import { useModelLRU } from "@/browser/hooks/useModelLRU";
+import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { useGateway } from "@/browser/hooks/useGatewayModels";
 import { ModelRow } from "./ModelRow";
 import { useAPI } from "@/browser/contexts/API";
@@ -40,7 +40,8 @@ export function ModelsSection() {
   const selectableProviders = SUPPORTED_PROVIDERS.filter(
     (provider) => !HIDDEN_PROVIDERS.has(provider)
   );
-  const { defaultModel, setDefaultModel } = useModelLRU();
+  const { defaultModel, setDefaultModel, hiddenModels, hideModel, unhideModel } =
+    useModelsFromSettings();
   const gateway = useGateway();
 
   // Check if a model already exists (for duplicate prevention)
@@ -250,6 +251,12 @@ export function ModelsSection() {
                 setEditing((prev) => (prev ? { ...prev, newModelId: value } : null))
               }
               onRemove={() => handleRemoveModel(model.provider, model.modelId)}
+              isHiddenFromSelector={hiddenModels.includes(model.fullId)}
+              onToggleVisibility={() =>
+                hiddenModels.includes(model.fullId)
+                  ? unhideModel(model.fullId)
+                  : hideModel(model.fullId)
+              }
               onToggleGateway={
                 gateway.canToggleModel(model.fullId)
                   ? () => gateway.toggleModelGateway(model.fullId)
@@ -277,6 +284,12 @@ export function ModelsSection() {
             isEditing={false}
             isGatewayEnabled={gateway.modelUsesGateway(model.fullId)}
             onSetDefault={() => setDefaultModel(model.fullId)}
+            isHiddenFromSelector={hiddenModels.includes(model.fullId)}
+            onToggleVisibility={() =>
+              hiddenModels.includes(model.fullId)
+                ? unhideModel(model.fullId)
+                : hideModel(model.fullId)
+            }
             onToggleGateway={
               gateway.canToggleModel(model.fullId)
                 ? () => gateway.toggleModelGateway(model.fullId)
