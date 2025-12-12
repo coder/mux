@@ -9,6 +9,7 @@ import { log } from "@/node/services/log";
 import { AgentSession } from "@/node/services/agentSession";
 import type { HistoryService } from "@/node/services/historyService";
 import type { PartialService } from "@/node/services/partialService";
+import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { AIService } from "@/node/services/aiService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
@@ -100,7 +101,8 @@ export class WorkspaceService extends EventEmitter {
     private readonly aiService: AIService,
     private readonly initStateManager: InitStateManager,
     private readonly extensionMetadata: ExtensionMetadataService,
-    private readonly backgroundProcessManager: BackgroundProcessManager
+    private readonly backgroundProcessManager: BackgroundProcessManager,
+    private readonly sessionUsageService: SessionUsageService
   ) {
     super();
     this.setupMetadataListeners();
@@ -238,6 +240,7 @@ export class WorkspaceService extends EventEmitter {
       workspaceId: trimmed,
       config: this.config,
       historyService: this.historyService,
+      sessionUsageService: this.sessionUsageService,
       partialService: this.partialService,
       aiService: this.aiService,
       initStateManager: this.initStateManager,

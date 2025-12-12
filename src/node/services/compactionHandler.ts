@@ -5,6 +5,8 @@ import type { StreamEndEvent } from "@/common/types/stream";
 import type { WorkspaceChatMessage, DeleteMessage } from "@/common/orpc/types";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
+import type { SessionUsageService } from "./sessionUsageService";
+import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
@@ -16,6 +18,7 @@ import {
 
 interface CompactionHandlerOptions {
   workspaceId: string;
+  sessionUsageService?: SessionUsageService;
   historyService: HistoryService;
   partialService: PartialService;
   emitter: EventEmitter;
@@ -31,6 +34,7 @@ interface CompactionHandlerOptions {
  */
 export class CompactionHandler {
   private readonly workspaceId: string;
+  private readonly sessionUsageService?: SessionUsageService;
   private readonly historyService: HistoryService;
   private readonly partialService: PartialService;
   private readonly emitter: EventEmitter;
@@ -42,6 +46,7 @@ export class CompactionHandler {
   private cachedFileDiffs: FileEditDiff[] = [];
 
   constructor(options: CompactionHandlerOptions) {
+    this.sessionUsageService = options.sessionUsageService;
     this.workspaceId = options.workspaceId;
     this.historyService = options.historyService;
     this.partialService = options.partialService;
@@ -134,6 +139,7 @@ export class CompactionHandler {
       model: string;
       usage?: LanguageModelV2Usage;
       duration?: number;
+      contextProviderMetadata?: Record<string, unknown>;
       providerMetadata?: Record<string, unknown>;
       systemMessageTokens?: number;
     },
@@ -152,6 +158,17 @@ export class CompactionHandler {
     }
 
     // Extract diffs BEFORE clearing history (they'll be gone after clear)
+
+    // Snapshot cumulative usage BEFORE clearing history.
+    // This preserves pre-compaction costs if session-usage.json is missing/corrupted
+    // and needs to be rebuilt from chat.jsonl.
+    const historicalUsage = await (async () => {
+      if (!this.sessionUsageService) return undefined;
+      const sessionUsage = await this.sessionUsageService.getSessionUsage(this.workspaceId);
+      if (!sessionUsage) return undefined;
+      const values = Object.values(sessionUsage.byModel);
+      return values.length > 0 ? sumUsageHistory(values) : undefined;
+    })();
     this.cachedFileDiffs = extractEditedFileDiffs(messages);
 
     // Clear entire history and get deleted sequences
@@ -162,12 +179,8 @@ export class CompactionHandler {
     const deletedSequences = clearResult.data;
 
     // Create summary message with metadata.
-    // We omit providerMetadata because it contains cacheCreationInputTokens from the
-    // pre-compaction context, which inflates context usage display.
-    // Note: We no longer store historicalUsage here. Cumulative costs are tracked in
-    // session-usage.json, which is updated on every stream-end. If that file is deleted
-    // or corrupted, pre-compaction costs are lost - this is acceptable since manual
-    // file deletion is out of scope for data recovery.
+    // - providerMetadata: needed for accurate cost reconstruction (cacheCreate tokens, serviceTier, etc.)
+    // - historicalUsage: snapshot of cumulative pre-compaction costs/tokens for rebuildFromMessages()
     const summaryMessage = createMuxMessage(
       `summary-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
       "assistant",
@@ -176,6 +189,9 @@ export class CompactionHandler {
         timestamp: Date.now(),
         compacted: true,
         model: metadata.model,
+        historicalUsage,
+        providerMetadata: metadata.providerMetadata,
+        contextProviderMetadata: metadata.contextProviderMetadata,
         usage: metadata.usage,
         duration: metadata.duration,
         systemMessageTokens: metadata.systemMessageTokens,
