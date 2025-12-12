@@ -12,6 +12,7 @@ import type { WorkspaceMetadata } from "@/common/types/workspace";
 import {
   PROVIDER_REGISTRY,
   PROVIDER_DEFINITIONS,
+  isValidServiceTier,
   type ProviderName,
 } from "@/common/constants/providers";
 
@@ -502,11 +503,10 @@ export class AIService extends EventEmitter {
         }
 
         // Extract serviceTier from config to pass through to buildProviderOptions
-        const configServiceTier = providerConfig.serviceTier as string | undefined;
-        if (configServiceTier && muxProviderOptions) {
+        if (isValidServiceTier(providerConfig.serviceTier) && muxProviderOptions) {
           muxProviderOptions.openai = {
             ...muxProviderOptions.openai,
-            serviceTier: configServiceTier as "auto" | "default" | "flex" | "priority",
+            serviceTier: providerConfig.serviceTier,
           };
         }
 

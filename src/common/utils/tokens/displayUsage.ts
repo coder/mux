@@ -60,6 +60,12 @@ export function createDisplayUsage(
   // Get model stats for cost calculation
   const modelStats = getModelStats(model);
 
+  // TODO: Adjust costs based on OpenAI service_tier from providerMetadata.openai.serviceTier
+  // - flex: ~50% cheaper (Batch API rates)
+  // - priority: premium pricing (~1.5x for some models)
+  // - default/auto: standard pricing
+  // The actual tier used is in the API response, not the requested tier.
+
   // Calculate costs based on model stats (undefined if model unknown)
   let inputCost: number | undefined;
   let cachedCost: number | undefined;
