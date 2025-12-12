@@ -62,17 +62,28 @@ async function openSettingsToSection(canvasElement: HTMLElement, section?: strin
   );
 
   // Navigate to specific section if requested
-  // The sidebar nav has buttons with exact section names
   if (section && section !== "general") {
     const modal = body.getByRole("dialog");
     const modalCanvas = within(modal);
-    // Find the nav section button by matching the section label within the button text
-    const navButtons = await modalCanvas.findAllByRole("button");
-    const sectionButton = navButtons.find((btn) =>
-      btn.textContent?.toLowerCase().includes(section.toLowerCase())
-    );
-    if (!sectionButton) throw new Error(`Section button "${section}" not found`);
+
+    // Use findByRole with name to get the section button - this has built-in waiting
+    // Capitalize first letter to match the button text (e.g., "experiments" -> "Experiments")
+    const sectionLabel = section.charAt(0).toUpperCase() + section.slice(1);
+    const sectionButton = await modalCanvas.findByRole("button", {
+      name: new RegExp(sectionLabel, "i"),
+    });
     await userEvent.click(sectionButton);
+
+    // Wait for section content to be visible (the section header shows current section name)
+    await waitFor(
+      () => {
+        const sectionHeader = modal.querySelector(".text-foreground.text-sm.font-medium");
+        if (!sectionHeader?.textContent?.toLowerCase().includes(section.toLowerCase())) {
+          throw new Error(`Section "${section}" not yet active`);
+        }
+      },
+      { timeout: 3000 }
+    );
   }
 }
 
