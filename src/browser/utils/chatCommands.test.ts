@@ -266,6 +266,7 @@ describe("handlePlanOpenCommand", () => {
       api: {
         workspace: {
           getPlanContent: mock(() => Promise.resolve(getPlanContentResult)),
+          getInfo: mock(() => Promise.resolve(null)),
         },
         general: {
           openInEditor: mock(() =>
@@ -298,6 +299,7 @@ describe("handlePlanOpenCommand", () => {
         message: "No plan found for this workspace",
       })
     );
+    expect(context.api.workspace.getInfo).not.toHaveBeenCalled();
     // Should not attempt to open editor
     expect(context.api.general.openInEditor).not.toHaveBeenCalled();
   });
@@ -313,6 +315,9 @@ describe("handlePlanOpenCommand", () => {
     expect(result.clearInput).toBe(true);
     expect(context.setInput).toHaveBeenCalledWith("");
     expect(context.api.workspace.getPlanContent).toHaveBeenCalledWith({
+      workspaceId: "test-workspace-id",
+    });
+    expect(context.api.workspace.getInfo).toHaveBeenCalledWith({
       workspaceId: "test-workspace-id",
     });
     expect(context.api.general.openInEditor).toHaveBeenCalledWith({

@@ -25,19 +25,13 @@ import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOpt
 import { resolveCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
 import type { ImageAttachment } from "../components/ImageAttachments";
 import { dispatchWorkspaceSwitch } from "./workspaceEvents";
-import {
-  getRuntimeKey,
-  copyWorkspaceStorage,
-  EDITOR_CONFIG_KEY,
-  DEFAULT_EDITOR_CONFIG,
-  type EditorConfig,
-} from "@/common/constants/storage";
+import { getRuntimeKey, copyWorkspaceStorage } from "@/common/constants/storage";
 import {
   DEFAULT_COMPACTION_WORD_TARGET,
   WORDS_TO_TOKENS_RATIO,
   buildCompactionPrompt,
 } from "@/common/constants/ui";
-import { readPersistedState } from "@/browser/hooks/usePersistedState";
+import { openInEditor } from "@/browser/utils/openInEditor";
 
 // ============================================================================
 // Workspace Creation
@@ -975,14 +969,12 @@ export async function handlePlanOpenCommand(
     return { clearInput: true, toastShown: true };
   }
 
-  // Read editor config from localStorage
-  const editorConfig = readPersistedState<EditorConfig>(EDITOR_CONFIG_KEY, DEFAULT_EDITOR_CONFIG);
-
-  // Open in editor (runtime-aware)
-  const openResult = await api.general.openInEditor({
+  const workspaceInfo = await api.workspace.getInfo({ workspaceId });
+  const openResult = await openInEditor({
+    api,
     workspaceId,
     targetPath: planResult.data.path,
-    editorConfig,
+    runtimeConfig: workspaceInfo?.runtimeConfig,
   });
 
   if (!openResult.success) {
