@@ -1156,23 +1156,39 @@ export class WorkspaceService extends EventEmitter {
       ? expandTildeForSSH(legacyPlanPath)
       : shellQuote(expandTilde(legacyPlanPath));
 
-    // Delete plan files through runtime (supports both local and SSH)
-    const runtime = createRuntime(metadata.runtimeConfig, {
-      projectPath: metadata.projectPath,
-    });
-
-    try {
-      // Use exec to delete files since runtime doesn't have a deleteFile method.
-      // Delete both paths in one command for efficiency.
-      const execStream = await runtime.exec(`rm -f ${quotedPlanPath} ${quotedLegacyPlanPath}`, {
-        cwd: metadata.projectPath,
-        timeout: 10,
+// SSH runtime: delete via remote shell so $HOME expands on the remote.
+    if (isSSHRuntime(metadata.runtimeConfig)) {
+      const runtime = createRuntime(metadata.runtimeConfig, {
+        projectPath: metadata.projectPath,
       });
-      // Wait for completion so callers can rely on the plan file actually being removed.
-      await execStream.exitCode;
-    } catch {
-      // Plan files don't exist or can't be deleted - ignore
+
+      try {
+        // Use exec to delete files since runtime doesn't have a deleteFile method.
+        // Delete both paths in one command for efficiency.
+        const execStream = await runtime.exec(
+          `rm -f ${quotedPlanPath} ${quotedLegacyPlanPath}`,
+          {
+            cwd: metadata.projectPath,
+            timeout: 10,
+          }
+        );
+        // Wait for completion so callers can rely on the plan file actually being removed.
+        await execStream.exitCode;
+      } catch {
+        // Plan files don't exist or can't be deleted - ignore
+      }
+
+      return;
     }
+
+    // Local runtimes: delete directly on the local filesystem.
+    const planPathAbs = expandTilde(planPath);
+    const legacyPlanPathAbs = expandTilde(legacyPlanPath);
+
+    await Promise.allSettled([
+      fsPromises.rm(planPathAbs, { force: true }),
+      fsPromises.rm(legacyPlanPathAbs, { force: true }),
+    ]);
   }
 
   async truncateHistory(workspaceId: string, percentage?: number): Promise<Result<void>> {
