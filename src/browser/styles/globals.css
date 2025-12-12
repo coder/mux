@@ -1424,6 +1424,7 @@ code {
 .markdown-content pre code {
   background: none;
   padding: 0;
+  margin: 0;
   color: var(--color-foreground);
 }
 

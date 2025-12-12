@@ -107,6 +107,12 @@ Text code blocks (regression: no phantom trailing blank line after highlighting)
 
 \`\`\`text
 https://github.com/coder/mux/pull/new/chat-autocomplete-b24r
+\`\`\`
+
+Code blocks without language (regression: avoid extra vertical spacing):
+
+\`\`\`
+65d02772b 🤖 feat: Settings-driven model selector with visibility controls
 \`\`\``;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -209,6 +215,25 @@ export const CodeBlocks: AppStory = {
       { timeout: 5000 }
     );
 
+    const noLangLine = "65d02772b 🤖 feat: Settings-driven model selector with visibility controls";
+
+    const codeEl = await waitFor(
+      () => {
+        const candidates = Array.from(
+          canvasElement.querySelectorAll(".markdown-content pre > code")
+        );
+        const found = candidates.find((el) => el.textContent?.includes(noLangLine));
+        if (!found) {
+          throw new Error("No-language code block not found");
+        }
+        return found;
+      },
+      { timeout: 5000 }
+    );
+
+    const style = window.getComputedStyle(codeEl);
+    await expect(style.marginTop).toBe("0px");
+    await expect(style.marginBottom).toBe("0px");
     // Regression: Shiki can emit a visually-empty trailing line (<span></span>), which would render
     // as a phantom extra line in our line-numbered code blocks.
     await expect(container.querySelectorAll(".line-number").length).toBe(1);
