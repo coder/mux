@@ -9,7 +9,15 @@ description: Agent instructions for AI assistants working on the mux codebase
 
 - `mux`: Electron + React desktop app for parallel agent workflows; UX must be fast, responsive, predictable.
 - Minor breaking changes are expected, but critical flows must allow upgrade↔downgrade without friction; skip migrations when breakage is tightly scoped.
-- Public work (issues/PRs/commits) must use 🤖 in the title and include "_Generated with `mux`_" in the body when applicable.
+- Public work (issues/PRs/commits) must use 🤖 in the title and include this footer in the body:
+
+  ```md
+  ---
+  _Generated with `mux` • Model: `<modelString>` • Thinking: `<thinkingLevel>`_
+  <!-- mux-attribution: model=<modelString> thinking=<thinkingLevel> -->
+  ```
+
+  Prefer sourcing values from `$MUX_MODEL_STRING` and `$MUX_THINKING_LEVEL` (bash tool env).
 
 ## PR + Release Workflow
 

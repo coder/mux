@@ -1150,7 +1150,11 @@ export class AIService extends EventEmitter {
           muxEnv: getMuxEnv(
             metadata.projectPath,
             getRuntimeType(metadata.runtimeConfig),
-            metadata.name
+            metadata.name,
+            {
+              modelString,
+              thinkingLevel: thinkingLevel ?? "off",
+            }
           ),
           runtimeTempDir,
           backgroundProcessManager: this.backgroundProcessManager,

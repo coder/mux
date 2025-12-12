@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { LineBuffer, createLineBufferedLoggers } from "./initHook";
+import { LineBuffer, createLineBufferedLoggers, getMuxEnv } from "./initHook";
 import type { InitLogger } from "./Runtime";
 
 describe("LineBuffer", () => {
@@ -53,6 +53,7 @@ describe("LineBuffer", () => {
   });
 });
 
+// getMuxEnv tests are placed here because initHook.ts owns the implementation.
 describe("createLineBufferedLoggers", () => {
   it("should create separate buffers for stdout and stderr", () => {
     const stdoutLines: string[] = [];
@@ -107,5 +108,37 @@ describe("createLineBufferedLoggers", () => {
 
     loggers.stderr.flush();
     expect(stderrLines).toEqual(["also incomplete"]);
+  });
+});
+
+describe("getMuxEnv", () => {
+  it("should include base MUX_ environment variables", () => {
+    const env = getMuxEnv("/path/to/project", "worktree", "feature-branch");
+
+    expect(env.MUX_PROJECT_PATH).toBe("/path/to/project");
+    expect(env.MUX_RUNTIME).toBe("worktree");
+    expect(env.MUX_WORKSPACE_NAME).toBe("feature-branch");
+    expect(env.MUX_MODEL_STRING).toBeUndefined();
+    expect(env.MUX_THINKING_LEVEL).toBeUndefined();
+  });
+
+  it("should include model + thinking env vars when provided", () => {
+    const env = getMuxEnv("/path/to/project", "worktree", "feature-branch", {
+      modelString: "openai:gpt-5.2-pro",
+      thinkingLevel: "medium",
+    });
+
+    expect(env.MUX_MODEL_STRING).toBe("openai:gpt-5.2-pro");
+    expect(env.MUX_THINKING_LEVEL).toBe("medium");
+  });
+
+  it("should allow explicit thinkingLevel=off", () => {
+    const env = getMuxEnv("/path/to/project", "local", "main", {
+      modelString: "anthropic:claude-3-5-sonnet",
+      thinkingLevel: "off",
+    });
+
+    expect(env.MUX_MODEL_STRING).toBe("anthropic:claude-3-5-sonnet");
+    expect(env.MUX_THINKING_LEVEL).toBe("off");
   });
 });
