@@ -70,6 +70,16 @@ describe("AgentSession post-compaction refresh trigger", () => {
       type: "tool-call-end",
       workspaceId: "ws",
       messageId: "m1",
+      toolCallId: "t1b",
+      toolName: "file_edit_replace_lines",
+      result: {},
+      timestamp: Date.now(),
+    });
+
+    toolEnd!({
+      type: "tool-call-end",
+      workspaceId: "ws",
+      messageId: "m1",
       toolCallId: "t1",
       toolName: "file_edit_insert",
       result: {},
@@ -86,7 +96,7 @@ describe("AgentSession post-compaction refresh trigger", () => {
       timestamp: Date.now(),
     });
 
-    expect(onPostCompactionStateChange).toHaveBeenCalledTimes(1);
+    expect(onPostCompactionStateChange).toHaveBeenCalledTimes(2);
 
     session.dispose();
   });
