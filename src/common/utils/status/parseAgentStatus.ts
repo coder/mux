@@ -32,7 +32,7 @@ function isSingleEmojiGrapheme(str: string): boolean {
 
 function sanitizeUrl(url: string): string {
   // Trim common trailing punctuation that often follows URLs in prose.
-  return url.replace(/[])}.,;:!?]+$/g, "");
+  return url.replace(/[\])}.,;:!?]+$/g, "");
 }
 
 /**
