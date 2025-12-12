@@ -49,7 +49,7 @@ import { createBashTool } from "@/node/services/tools/bash";
 import type { BashToolResult } from "@/common/types/tools";
 import { secretsToRecord } from "@/common/types/secrets";
 
-import { movePlanFile } from "@/node/utils/runtime/helpers";
+import { execBuffered, movePlanFile } from "@/node/utils/runtime/helpers";
 
 /** Maximum number of retry attempts when workspace name collides */
 const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
@@ -1110,7 +1110,7 @@ export class WorkspaceService extends EventEmitter {
     try {
       // Use exec to delete files since runtime doesn't have a deleteFile method
       // Delete both paths in one command for efficiency
-      await runtime.exec(`rm -f ${quotedPlanPath} ${quotedLegacyPlanPath}`, {
+      await execBuffered(runtime, `rm -f ${quotedPlanPath} ${quotedLegacyPlanPath}`, {
         cwd: metadata.projectPath,
         timeout: 10,
       });
