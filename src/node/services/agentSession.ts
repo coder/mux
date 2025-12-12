@@ -169,6 +169,12 @@ export class AgentSession {
     if (this.disposed) {
       return;
     }
+    // Detach listeners first so stopStream() can't emit events into a disposed session.
+    for (const { event, handler } of this.aiListeners) {
+      this.aiService.off(event, handler as never);
+    }
+    this.aiListeners.length = 0;
+
     this.disposed = true;
 
     // Stop any active stream (fire and forget - disposal shouldn't block)
@@ -176,10 +182,6 @@ export class AgentSession {
     // Terminate background processes for this workspace
     void this.backgroundProcessManager.cleanup(this.workspaceId);
 
-    for (const { event, handler } of this.aiListeners) {
-      this.aiService.off(event, handler as never);
-    }
-    this.aiListeners.length = 0;
     for (const { event, handler } of this.initListeners) {
       this.initStateManager.off(event, handler as never);
     }
