@@ -236,7 +236,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
         <div className="flex min-w-0 flex-1 flex-col">
           <div
-            className="bg-background-secondary border-border flex border-b [&>*]:flex-1"
+            className="border-border-light flex gap-1 border-b px-2 py-1.5"
             role="tablist"
             aria-label="Metadata views"
           >
@@ -244,10 +244,10 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
               <TooltipTrigger asChild>
                 <button
                   className={cn(
-                    "w-full py-2.5 px-[15px] border-none border-solid cursor-pointer font-primary text-[13px] font-medium transition-all duration-200",
+                    "rounded-md px-3 py-1 text-xs font-medium transition-all duration-150",
                     selectedTab === "costs"
-                      ? "bg-separator border-b-2 border-b-plan-mode text-[var(--color-sidebar-tab-active)]"
-                      : "bg-transparent text-secondary border-b-2 border-b-transparent hover:bg-background-secondary hover:text-foreground"
+                      ? "bg-hover text-foreground"
+                      : "bg-transparent text-muted hover:bg-hover/50 hover:text-foreground"
                   )}
                   onClick={() => setSelectedTab("costs")}
                   id={costsTabId}
@@ -267,10 +267,10 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
               <TooltipTrigger asChild>
                 <button
                   className={cn(
-                    "w-full py-2.5 px-[15px] border-none border-solid cursor-pointer font-primary text-[13px] font-medium transition-all duration-200",
+                    "rounded-md px-3 py-1 text-xs font-medium transition-all duration-150",
                     selectedTab === "review"
-                      ? "bg-separator border-b-2 border-b-plan-mode text-[var(--color-sidebar-tab-active)]"
-                      : "bg-transparent text-secondary border-b-2 border-b-transparent hover:bg-background-secondary hover:text-foreground"
+                      ? "bg-hover text-foreground"
+                      : "bg-transparent text-muted hover:bg-hover/50 hover:text-foreground"
                   )}
                   onClick={() => setSelectedTab("review")}
                   id={reviewTabId}
