@@ -17,7 +17,7 @@ import {
 } from "./mockFactory";
 import { expandProjects } from "./storyHelpers";
 import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
-import { GIT_STATUS_INDICATOR_MODE_KEY } from "@/common/constants/storage";
+
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 
 export default {
@@ -270,125 +270,6 @@ export const GitStatusVariations: AppStory = {
  *
  * The streaming workspaces show the "working" state with pulse animation.
  */
-export const GitStatusIndicatorBusyLineDelta: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() => {
-        // Ensure persisted mode is set before the app mounts.
-        window.localStorage.setItem(GIT_STATUS_INDICATOR_MODE_KEY, "line-delta");
-
-        const worktreeWorking = createWorkspace({
-          id: "ws-worktree-working",
-          name: "worktree-working",
-          projectName: "git-status-demo",
-        });
-
-        const gitExecutor = createGitStatusExecutor(
-          new Map([
-            [
-              "ws-worktree-working",
-              {
-                // Busy + non-trivial deltas (exercise abbreviation)
-                ahead: 12,
-                behind: 3,
-                dirty: 1,
-                outgoingAdditions: 12313,
-                outgoingDeletions: 1231,
-              },
-            ],
-          ])
-        );
-
-        const workingMessage = createUserMessage("msg-1", "Working on task...", {
-          historySequence: 1,
-          timestamp: STABLE_TIMESTAMP,
-        });
-
-        const chatHandlers = new Map<string, ChatHandler>([
-          [
-            "ws-worktree-working",
-            createStreamingChatHandler({
-              messages: [workingMessage],
-              streamingMessageId: "stream-worktree",
-              model: "claude-sonnet-4-20250514",
-              historySequence: 2,
-              streamText: "Processing worktree task...",
-            }),
-          ],
-        ]);
-
-        expandProjects(["/home/user/projects/git-status-demo"]);
-
-        return createMockORPCClient({
-          projects: groupWorkspacesByProject([worktreeWorking]),
-          workspaces: [worktreeWorking],
-          onChat: createOnChatAdapter(chatHandlers),
-          executeBash: gitExecutor,
-        });
-      }}
-    />
-  ),
-};
-
-export const GitStatusIndicatorBusyDivergence: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() => {
-        // Ensure persisted mode is set before the app mounts.
-        window.localStorage.setItem(GIT_STATUS_INDICATOR_MODE_KEY, "divergence");
-
-        const worktreeWorking = createWorkspace({
-          id: "ws-worktree-working",
-          name: "worktree-working",
-          projectName: "git-status-demo",
-        });
-
-        const gitExecutor = createGitStatusExecutor(
-          new Map([
-            [
-              "ws-worktree-working",
-              {
-                ahead: 12,
-                behind: 3,
-                dirty: 1,
-                outgoingAdditions: 12313,
-                outgoingDeletions: 1231,
-              },
-            ],
-          ])
-        );
-
-        const workingMessage = createUserMessage("msg-1", "Working on task...", {
-          historySequence: 1,
-          timestamp: STABLE_TIMESTAMP,
-        });
-
-        const chatHandlers = new Map<string, ChatHandler>([
-          [
-            "ws-worktree-working",
-            createStreamingChatHandler({
-              messages: [workingMessage],
-              streamingMessageId: "stream-worktree",
-              model: "claude-sonnet-4-20250514",
-              historySequence: 2,
-              streamText: "Processing worktree task...",
-            }),
-          ],
-        ]);
-
-        expandProjects(["/home/user/projects/git-status-demo"]);
-
-        return createMockORPCClient({
-          projects: groupWorkspacesByProject([worktreeWorking]),
-          workspaces: [worktreeWorking],
-          onChat: createOnChatAdapter(chatHandlers),
-          executeBash: gitExecutor,
-        });
-      }}
-    />
-  ),
-};
-
 export const RuntimeBadgeVariations: AppStory = {
   render: () => (
     <AppWithMocks
