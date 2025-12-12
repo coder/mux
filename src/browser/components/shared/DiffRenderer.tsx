@@ -23,51 +23,64 @@ import type { ReviewNoteData } from "@/common/types/review";
 // Shared type for diff line types
 export type DiffLineType = "add" | "remove" | "context" | "header";
 
-// Helper function for getting diff line background color
+// Helper function for getting diff line background color.
+// Keep backgrounds subtle so the diff reads like a code block, not a highlighter.
 const getDiffLineBackground = (type: DiffLineType): string => {
   switch (type) {
     case "add":
-      return "rgba(46, 160, 67, 0.15)";
+      return "color-mix(in srgb, var(--color-success), transparent 90%)";
     case "remove":
-      return "rgba(248, 81, 73, 0.15)";
+      return "color-mix(in srgb, var(--color-danger), transparent 90%)";
+    case "header":
+      return "color-mix(in srgb, var(--color-accent), transparent 92%)";
+    case "context":
     default:
       return "transparent";
   }
 };
 
-// Helper function for getting diff line text color
-const getDiffLineColor = (type: DiffLineType): string => {
+const getDiffLineBorderColor = (type: DiffLineType): string => {
   switch (type) {
     case "add":
-      return "#4caf50";
+      return "color-mix(in srgb, var(--color-success), transparent 35%)";
     case "remove":
-      return "#f44336";
+      return "color-mix(in srgb, var(--color-danger), transparent 35%)";
     case "header":
-      return "#2196f3";
+      return "color-mix(in srgb, var(--color-accent), transparent 45%)";
     case "context":
+    default:
+      return "transparent";
+  }
+};
+
+// Helper function for getting line content color.
+// Only headers/context are tinted; actual code stays the normal foreground color.
+const getLineContentColor = (type: DiffLineType): string => {
+  switch (type) {
+    case "header":
+      return "var(--color-accent-light)";
+    case "context":
+      return "var(--color-text-secondary)";
+    case "add":
+    case "remove":
     default:
       return "var(--color-text)";
   }
 };
 
-// Helper function for getting line content color
-const getLineContentColor = (type: DiffLineType): string => {
-  switch (type) {
-    case "header":
-      return "#2196f3";
-    case "context":
-      return "var(--color-text-secondary)";
-    case "add":
-    case "remove":
-      return "var(--color-text)";
-  }
-};
-
-// Helper function for computing contrast color for add/remove indicators
+// Used for the +/- marker and line numbers.
 const getContrastColor = (type: DiffLineType): string => {
-  return type === "add" || type === "remove"
-    ? "color-mix(in srgb, var(--color-text-secondary), white 50%)"
-    : "var(--color-text-secondary)";
+  switch (type) {
+    case "add":
+      return "var(--color-success-light)";
+    case "remove":
+      return "var(--color-danger-soft)";
+    case "header":
+      return "var(--color-accent-light)";
+    case "context":
+    default:
+      return "var(--color-text-secondary)";
+  }
 };
 
 /**
@@ -115,7 +128,12 @@ export const DiffContainer: React.FC<
   const showOverflowControls = clampContent && isOverflowing;
 
   return (
-    <div className={cn("relative m-0 rounded bg-code-bg py-1.5 [&_*]:text-[inherit]", className)}>
+    <div
+      className={cn(
+        "relative m-0 rounded-sm border border-border-light bg-code-bg py-1.5 [&_*]:text-[inherit]",
+        className
+      )}
+    >
       <div
         ref={contentRef}
         className={cn(
@@ -271,12 +289,15 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
           return (
             <div
               key={line.originalIndex}
-              className="block w-full"
-              style={{ background: getDiffLineBackground(chunk.type) }}
+              className="block w-full border-l-2 border-transparent"
+              style={{
+                background: getDiffLineBackground(chunk.type),
+                borderLeftColor: getDiffLineBorderColor(chunk.type),
+              }}
             >
               <div
-                className="flex px-2 font-mono whitespace-pre"
-                style={{ color: getDiffLineColor(chunk.type) }}
+                className="font-monospace flex px-2 whitespace-pre"
+                style={{ color: "var(--color-text)" }}
               >
                 <span
                   className="inline-block w-1 shrink-0 text-center"
@@ -451,6 +472,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     filePath,
     fontSize,
     maxHeight,
+    className,
     onReviewNote,
     onLineClick,
     searchConfig,
@@ -556,7 +578,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     // Show loading state while highlighting
     if (!highlightedChunks || highlightedLineData.length === 0) {
       return (
-        <DiffContainer fontSize={fontSize} maxHeight={maxHeight}>
+        <DiffContainer fontSize={fontSize} maxHeight={maxHeight} className={className}>
           <div style={{ opacity: 0.5, padding: "8px" }}>Processing...</div>
         </DiffContainer>
       );
@@ -566,7 +588,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     const lines = content.split("\n").filter((line) => line.length > 0);
 
     return (
-      <DiffContainer fontSize={fontSize} maxHeight={maxHeight}>
+      <DiffContainer fontSize={fontSize} maxHeight={maxHeight} className={className}>
         {highlightedLineData.map((lineInfo, displayIndex) => {
           const isSelected = isLineSelected(displayIndex);
           const indicator = lineInfo.type === "add" ? "+" : lineInfo.type === "remove" ? "-" : " ";
@@ -576,12 +598,13 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
               <div
                 className={cn(
                   SELECTABLE_DIFF_LINE_CLASS,
-                  "block w-full relative cursor-text group"
+                  "block w-full relative cursor-text group border-l-2 border-transparent"
                 )}
                 style={{
                   background: isSelected
                     ? "hsl(from var(--color-review-accent) h s l / 0.2)"
                     : getDiffLineBackground(lineInfo.type),
+                  borderLeftColor: getDiffLineBorderColor(lineInfo.type),
                 }}
               >
                 <span className="absolute top-1/2 left-1 z-[1] -translate-y-1/2">
@@ -618,8 +641,8 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                   </Tooltip>
                 </span>
                 <div
-                  className="flex px-2 font-mono whitespace-pre"
-                  style={{ color: getDiffLineColor(lineInfo.type) }}
+                  className="font-monospace flex px-2 whitespace-pre"
+                  style={{ color: "var(--color-text)" }}
                 >
                   <span
                     className="inline-block w-1 shrink-0 text-center"

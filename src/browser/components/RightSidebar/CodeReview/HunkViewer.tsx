@@ -248,25 +248,25 @@ export const HunkViewer = React.memo<HunkViewerProps>(
             Renamed from <code>{hunk.oldPath}</code>
           </div>
         ) : isExpanded ? (
-          <div className="font-monospace bg-code-bg grid grid-cols-[minmax(min-content,1fr)] overflow-x-auto px-2 py-1.5 text-[11px] leading-[1.4]">
-            <SelectableDiffRenderer
-              content={hunk.content}
-              filePath={hunk.filePath}
-              oldStart={hunk.oldStart}
-              newStart={hunk.newStart}
-              maxHeight="none"
-              onReviewNote={onReviewNote}
-              onLineClick={() => {
-                // Create synthetic event with data-hunk-id for parent handler
-                const syntheticEvent = {
-                  currentTarget: { dataset: { hunkId } },
-                } as unknown as React.MouseEvent<HTMLElement>;
-                onClick?.(syntheticEvent);
-              }}
-              searchConfig={searchConfig}
-              enableHighlighting={isVisible}
-            />
-          </div>
+          <SelectableDiffRenderer
+            content={hunk.content}
+            filePath={hunk.filePath}
+            oldStart={hunk.oldStart}
+            newStart={hunk.newStart}
+            fontSize="11px"
+            maxHeight="none"
+            className="rounded-none border-0"
+            onReviewNote={onReviewNote}
+            onLineClick={() => {
+              // Create synthetic event with data-hunk-id for parent handler
+              const syntheticEvent = {
+                currentTarget: { dataset: { hunkId } },
+              } as unknown as React.MouseEvent<HTMLElement>;
+              onClick?.(syntheticEvent);
+            }}
+            searchConfig={searchConfig}
+            enableHighlighting={isVisible}
+          />
         ) : (
           <div
             className="text-muted hover:text-foreground cursor-pointer px-3 py-2 text-center text-[11px] italic"

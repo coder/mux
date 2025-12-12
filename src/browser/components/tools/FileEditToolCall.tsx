@@ -160,15 +160,17 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
                 </DetailSection>
               )}
 
-              {result.success && result.diff && (
-                <DiffContainer>
-                  {showRaw ? (
-                    <pre className="m-0 break-words whitespace-pre-wrap">{result.diff}</pre>
-                  ) : (
-                    renderDiff(result.diff, filePath, onReviewNote)
-                  )}
-                </DiffContainer>
-              )}
+              {result.success &&
+                result.diff &&
+                (showRaw ? (
+                  <DiffContainer>
+                    <pre className="font-monospace m-0 text-[11px] leading-[1.4] break-words whitespace-pre-wrap">
+                      {result.diff}
+                    </pre>
+                  </DiffContainer>
+                ) : (
+                  renderDiff(result.diff, filePath, onReviewNote)
+                ))}
             </>
           )}
 
