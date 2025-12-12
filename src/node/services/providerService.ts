@@ -1,6 +1,6 @@
 import { EventEmitter } from "events";
 import type { Config } from "@/node/config";
-import { SUPPORTED_PROVIDERS, isValidServiceTier } from "@/common/constants/providers";
+import { SUPPORTED_PROVIDERS, isValidOpenAIServiceTier } from "@/common/constants/providers";
 import type { Result } from "@/common/types/result";
 import type {
   AWSCredentialStatus,
@@ -65,7 +65,7 @@ export class ProviderService {
       };
 
       // OpenAI-specific fields
-      if (provider === "openai" && isValidServiceTier(config.serviceTier)) {
+      if (provider === "openai" && isValidOpenAIServiceTier(config.serviceTier)) {
         providerInfo.serviceTier = config.serviceTier;
       }
 

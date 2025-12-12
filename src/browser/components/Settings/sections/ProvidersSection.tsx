@@ -5,7 +5,7 @@ import {
   SUPPORTED_PROVIDERS,
   OPENAI_SERVICE_TIERS,
   OPENAI_DEFAULT_SERVICE_TIER,
-  isValidServiceTier,
+  isValidOpenAIServiceTier,
 } from "@/common/constants/providers";
 import type { ProviderName } from "@/common/constants/providers";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
@@ -397,7 +397,7 @@ export function ProvidersSection() {
                       value={config?.openai?.serviceTier ?? OPENAI_DEFAULT_SERVICE_TIER}
                       onValueChange={(next) => {
                         if (!api) return;
-                        if (!isValidServiceTier(next)) return;
+                        if (!isValidOpenAIServiceTier(next)) return;
 
                         updateOptimistically("openai", { serviceTier: next });
                         void api.providers.setProviderConfig({

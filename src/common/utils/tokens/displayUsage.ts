@@ -6,47 +6,23 @@
  */
 
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
-import type { ModelStats } from "./modelStats";
 import { getModelStats } from "./modelStats";
 import type { ChatUsageDisplay } from "./usageAggregator";
 import { normalizeGatewayModel } from "../ai/models";
+import {
+  OPENAI_SERVICE_TIER_COST_MULTIPLIERS,
+  isValidOpenAIServiceTier,
+} from "@/common/constants/providers";
 
 /**
- * Get tier-adjusted costs from model stats based on OpenAI service tier.
- * Falls back to standard pricing if tier-specific costs aren't available.
+ * Get cost multiplier for OpenAI service tier.
+ * Returns 1.0 for unknown tiers (standard pricing).
  */
-function getTierCosts(
-  modelStats: ModelStats,
-  serviceTier: string | undefined
-): {
-  inputCost: number;
-  outputCost: number;
-  cacheReadCost: number;
-} {
-  const standardCosts = {
-    inputCost: modelStats.input_cost_per_token,
-    outputCost: modelStats.output_cost_per_token,
-    cacheReadCost: modelStats.cache_read_input_token_cost ?? 0,
-  };
-
-  if (serviceTier === "flex") {
-    return {
-      inputCost: modelStats.input_cost_per_token_flex ?? standardCosts.inputCost,
-      outputCost: modelStats.output_cost_per_token_flex ?? standardCosts.outputCost,
-      cacheReadCost: modelStats.cache_read_input_token_cost_flex ?? standardCosts.cacheReadCost,
-    };
+function getServiceTierMultiplier(serviceTier: string | undefined): number {
+  if (serviceTier && isValidOpenAIServiceTier(serviceTier)) {
+    return OPENAI_SERVICE_TIER_COST_MULTIPLIERS[serviceTier];
   }
-
-  if (serviceTier === "priority") {
-    return {
-      inputCost: modelStats.input_cost_per_token_priority ?? standardCosts.inputCost,
-      outputCost: modelStats.output_cost_per_token_priority ?? standardCosts.outputCost,
-      cacheReadCost: modelStats.cache_read_input_token_cost_priority ?? standardCosts.cacheReadCost,
-    };
-  }
-
-  // "default", "auto", or undefined → standard pricing
-  return standardCosts;
+  return 1.0;
 }
 
 /**
@@ -113,14 +89,14 @@ export function createDisplayUsage(
   let reasoningCost: number | undefined;
 
   if (modelStats) {
-    // Get tier-adjusted costs (flex ~50% cheaper, priority ~2x)
-    const tierCosts = getTierCosts(modelStats, serviceTier);
+    // Get tier multiplier (flex ~50% cheaper, priority ~2x)
+    const tierMultiplier = getServiceTierMultiplier(serviceTier);
 
-    inputCost = inputTokens * tierCosts.inputCost;
-    cachedCost = cachedTokens * tierCosts.cacheReadCost;
+    inputCost = inputTokens * modelStats.input_cost_per_token * tierMultiplier;
+    cachedCost = cachedTokens * (modelStats.cache_read_input_token_cost ?? 0) * tierMultiplier;
     cacheCreateCost = cacheCreateTokens * (modelStats.cache_creation_input_token_cost ?? 0);
-    outputCost = outputWithoutReasoning * tierCosts.outputCost;
-    reasoningCost = reasoningTokens * tierCosts.outputCost;
+    outputCost = outputWithoutReasoning * modelStats.output_cost_per_token * tierMultiplier;
+    reasoningCost = reasoningTokens * modelStats.output_cost_per_token * tierMultiplier;
   }
 
   return {

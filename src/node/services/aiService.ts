@@ -12,7 +12,7 @@ import type { WorkspaceMetadata } from "@/common/types/workspace";
 import {
   PROVIDER_REGISTRY,
   PROVIDER_DEFINITIONS,
-  isValidServiceTier,
+  isValidOpenAIServiceTier,
   type ProviderName,
 } from "@/common/constants/providers";
 
@@ -503,7 +503,7 @@ export class AIService extends EventEmitter {
         }
 
         // Extract serviceTier from config to pass through to buildProviderOptions
-        if (isValidServiceTier(providerConfig.serviceTier) && muxProviderOptions) {
+        if (isValidOpenAIServiceTier(providerConfig.serviceTier) && muxProviderOptions) {
           muxProviderOptions.openai = {
             ...muxProviderOptions.openai,
             serviceTier: providerConfig.serviceTier,
