@@ -99,10 +99,11 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   const outgoingLines = gitStatus.outgoingAdditions + gitStatus.outgoingDeletions;
 
   // Render empty placeholder when nothing to show (prevents layout shift)
+  // In line-delta mode, also show if behind so users can toggle to divergence view
   const isEmpty =
     mode === "divergence"
       ? gitStatus.ahead === 0 && gitStatus.behind === 0 && !gitStatus.dirty
-      : outgoingLines === 0 && !gitStatus.dirty;
+      : outgoingLines === 0 && !gitStatus.dirty && gitStatus.behind === 0;
 
   if (isEmpty) {
     return (
@@ -324,7 +325,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
           </>
         ) : (
           <>
-            {outgoingHasDelta && (
+            {outgoingHasDelta ? (
               <span className="flex items-center gap-2">
                 {gitStatus.outgoingAdditions > 0 && (
                   <span className={cn("font-normal", additionsColor)}>
@@ -337,6 +338,14 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
                   </span>
                 )}
               </span>
+            ) : (
+              // No outgoing lines but behind remote - show muted behind indicator
+              // so users know they can hover to toggle to divergence view
+              gitStatus.behind > 0 && (
+                <span className="text-muted flex items-center font-normal">
+                  ↓{formatCountAbbrev(gitStatus.behind)}
+                </span>
+              )
             )}
           </>
         )}
