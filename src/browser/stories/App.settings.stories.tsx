@@ -189,6 +189,9 @@ export const ExperimentsToggleOn: AppStory = {
     // Find the experiment toggle by its aria-label (set in ExperimentsSection.tsx)
     const toggle = await modalCanvas.findByRole("switch", { name: /Post-Compaction Context/i });
     await userEvent.click(toggle);
+
+    // Wait for toggle to be checked before Chromatic snapshot
+    await modalCanvas.findByRole("switch", { name: /Post-Compaction Context/i, checked: true });
   },
 };
 
