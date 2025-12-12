@@ -20,6 +20,8 @@ export class StatusScriptPoller {
   private running = false;
   private generation = 0;
   private lastUrl: string | undefined;
+  private lastEmitted: ParsedAgentStatus | undefined;
+  private lastScript: string | undefined;
 
   constructor(private readonly onStatus: (status: ParsedAgentStatus) => void) {}
 
@@ -38,9 +40,21 @@ export class StatusScriptPoller {
     this.generation++;
     const gen = this.generation;
 
+    // If the caller changes the script, don't leak the previous script's URL.
+    if (this.lastScript !== config.script) {
+      this.lastScript = config.script;
+      this.lastUrl = undefined;
+      this.lastEmitted = undefined;
+    }
+
     this.stop();
 
-    const run = () => void this.runOnce(config, gen);
+    const run = () => {
+      // Intentionally fire-and-forget; runOnce is internally serialized via this.running.
+      this.runOnce(config, gen).catch(() => {
+        // Ignore status script errors; keep last known status.
+      });
+    };
 
     // Run immediately (even if pollIntervalMs === 0)
     run();
@@ -48,6 +62,10 @@ export class StatusScriptPoller {
     if (config.pollIntervalMs > 0) {
       this.timer = setInterval(run, config.pollIntervalMs);
     }
+  }
+
+  private statusesEqual(a: ParsedAgentStatus | undefined, b: ParsedAgentStatus): boolean {
+    return a?.emoji === b.emoji && a?.message === b.message && a?.url === b.url;
   }
 
   private async runOnce(config: StatusScriptPollerConfig, gen: number): Promise<void> {
@@ -90,10 +108,18 @@ export class StatusScriptPoller {
         this.lastUrl = url;
       }
 
-      this.onStatus({
+      const nextStatus: ParsedAgentStatus = {
         ...parsed,
         ...(url ? { url } : {}),
-      });
+      };
+
+      // Avoid re-emitting the same status every poll interval.
+      if (this.statusesEqual(this.lastEmitted, nextStatus)) {
+        return;
+      }
+      this.lastEmitted = nextStatus;
+
+      this.onStatus(nextStatus);
     } catch {
       // Ignore status script errors; keep last known status.
     } finally {

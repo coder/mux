@@ -262,6 +262,15 @@ export class WorkspaceStore {
       aggregator.handleUsageDelta(data as never);
       this.usageStore.bump(workspaceId);
     },
+    "agent-status-update": (workspaceId, aggregator, data) => {
+      // Agent status updates are delivered as chat events (not persisted in history).
+      // They must:
+      // 1) be buffered during initial history replay (so they aren't dropped), and
+      // 2) bump UI state so sidebar/header indicators update immediately.
+      aggregator.handleMessage(data);
+      this.states.bump(workspaceId);
+    },
+
     "init-start": (workspaceId, aggregator, data) => {
       aggregator.handleMessage(data);
       this.states.bump(workspaceId);
@@ -943,7 +952,7 @@ export class WorkspaceStore {
 
   /**
    * Check if data is a buffered event type by checking the handler map.
-   * This ensures isStreamEvent() and processStreamEvent() can never fall out of sync.
+   * This ensures buffering and processStreamEvent() can never fall out of sync.
    */
   private isBufferedEvent(data: WorkspaceChatMessage): boolean {
     return "type" in data && data.type in this.bufferedEventHandlers;

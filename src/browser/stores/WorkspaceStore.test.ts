@@ -219,6 +219,34 @@ describe("WorkspaceStore", () => {
     });
   });
 
+  describe("agent status updates", () => {
+    it("should surface agent-status-update events in workspace sidebar state", async () => {
+      const workspaceId = "status-workspace";
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        await Promise.resolve();
+        yield { type: "caught-up" };
+        yield {
+          type: "agent-status-update",
+          workspaceId,
+          status: { message: "Building", url: "https://example.com/pr/1" },
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      // Wait for the async iterator loop to process yields
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const state = store.getWorkspaceSidebarState(workspaceId);
+      expect(state.agentStatus).toEqual({ message: "Building", url: "https://example.com/pr/1" });
+    });
+  });
+
   describe("syncWorkspaces", () => {
     it("should add new workspaces", () => {
       const metadata1: FrontendWorkspaceMetadata = {
