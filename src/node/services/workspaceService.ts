@@ -1056,6 +1056,45 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  /**
+   * Best-effort delete of plan files (new + legacy paths) for a workspace.
+   *
+   * Why best-effort: plan files may not exist yet, or deletion may fail due to permissions.
+   */
+  private async deletePlanFilesForWorkspace(
+    workspaceId: string,
+    metadata: FrontendWorkspaceMetadata
+  ): Promise<void> {
+    // Delete both new and legacy plan paths to handle migrated workspaces
+    const planPath = getPlanFilePath(metadata.name, metadata.projectName);
+    const legacyPlanPath = getLegacyPlanFilePath(workspaceId);
+
+    // For SSH: use $HOME expansion so remote shell resolves to remote home directory
+    // For local: expand tilde locally since shellQuote prevents shell expansion
+    const quotedPlanPath = isSSHRuntime(metadata.runtimeConfig)
+      ? expandTildeForSSH(planPath)
+      : shellQuote(expandTilde(planPath));
+    const quotedLegacyPlanPath = isSSHRuntime(metadata.runtimeConfig)
+      ? expandTildeForSSH(legacyPlanPath)
+      : shellQuote(expandTilde(legacyPlanPath));
+
+    // Delete plan files through runtime (supports both local and SSH)
+    const runtime = createRuntime(metadata.runtimeConfig, {
+      projectPath: metadata.projectPath,
+    });
+
+    try {
+      // Use exec to delete files since runtime doesn't have a deleteFile method
+      // Delete both paths in one command for efficiency
+      await runtime.exec(`rm -f ${quotedPlanPath} ${quotedLegacyPlanPath}`, {
+        cwd: metadata.projectPath,
+        timeout: 10,
+      });
+    } catch {
+      // Plan files don't exist or can't be deleted - ignore
+    }
+  }
+
   async truncateHistory(workspaceId: string, percentage?: number): Promise<Result<void>> {
     if (this.aiService.isStreaming(workspaceId)) {
       return Err(
@@ -1089,36 +1128,9 @@ export class WorkspaceService extends EventEmitter {
 
     // On full clear, also delete plan file and clear file change tracking
     if ((percentage ?? 1.0) === 1.0) {
-      // Delete plan files through runtime (supports both local and SSH)
       const metadata = await this.getInfo(workspaceId);
       if (metadata) {
-        const runtime = createRuntime(metadata.runtimeConfig, {
-          projectPath: metadata.projectPath,
-        });
-
-        // Delete both new and legacy plan paths to handle migrated workspaces
-        const planPath = getPlanFilePath(metadata.name, metadata.projectName);
-        const legacyPlanPath = getLegacyPlanFilePath(workspaceId);
-
-        // For SSH: use $HOME expansion so remote shell resolves to remote home directory
-        // For local: expand tilde locally since shellQuote prevents shell expansion
-        const quotedPlanPath = isSSHRuntime(metadata.runtimeConfig)
-          ? expandTildeForSSH(planPath)
-          : shellQuote(expandTilde(planPath));
-        const quotedLegacyPlanPath = isSSHRuntime(metadata.runtimeConfig)
-          ? expandTildeForSSH(legacyPlanPath)
-          : shellQuote(expandTilde(legacyPlanPath));
-
-        try {
-          // Use exec to delete files since runtime doesn't have a deleteFile method
-          // Delete both paths in one command for efficiency
-          await runtime.exec(`rm -f ${quotedPlanPath} ${quotedLegacyPlanPath}`, {
-            cwd: metadata.projectPath,
-            timeout: 10,
-          });
-        } catch {
-          // Plan files don't exist or can't be deleted - ignore
-        }
+        await this.deletePlanFilesForWorkspace(workspaceId, metadata);
       }
       this.sessions.get(workspaceId)?.clearFileState();
     }
@@ -1126,7 +1138,11 @@ export class WorkspaceService extends EventEmitter {
     return Ok(undefined);
   }
 
-  async replaceHistory(workspaceId: string, summaryMessage: MuxMessage): Promise<Result<void>> {
+  async replaceHistory(
+    workspaceId: string,
+    summaryMessage: MuxMessage,
+    options?: { deletePlanFile?: boolean }
+  ): Promise<Result<void>> {
     const isCompaction = summaryMessage.metadata?.compacted === true;
     if (!isCompaction && this.aiService.isStreaming(workspaceId)) {
       return Err(
@@ -1166,6 +1182,16 @@ export class WorkspaceService extends EventEmitter {
         session.emitChatEvent(typedSummaryMessage);
       } else {
         this.emit("chat", { workspaceId, message: typedSummaryMessage });
+      }
+
+      // Optional cleanup: delete plan file when caller explicitly requests it.
+      // Used by propose_plan "Start Here" to prevent stale plans from lingering on disk.
+      if (options?.deletePlanFile === true) {
+        const metadata = await this.getInfo(workspaceId);
+        if (metadata) {
+          await this.deletePlanFilesForWorkspace(workspaceId, metadata);
+        }
+        this.sessions.get(workspaceId)?.clearFileState();
       }
 
       return Ok(undefined);

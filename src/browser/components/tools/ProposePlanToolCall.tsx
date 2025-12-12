@@ -223,7 +223,8 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   } = useStartHere(
     workspaceId,
     startHereContent,
-    false // Plans are never already compacted
+    false, // Plans are never already compacted
+    { deletePlanFile: true }
   );
 
   // Copy to clipboard with feedback

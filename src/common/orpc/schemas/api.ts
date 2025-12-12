@@ -270,6 +270,8 @@ export const workspace = {
     input: z.object({
       workspaceId: z.string(),
       summaryMessage: MuxMessageSchema,
+      /** When true, delete the plan file (new + legacy paths) and clear plan tracking state. */
+      deletePlanFile: z.boolean().optional(),
     }),
     output: ResultSchema(z.void(), z.string()),
   },

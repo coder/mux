@@ -416,10 +416,15 @@ export class SSHRuntime implements Runtime {
     };
   }
   async resolvePath(filePath: string): Promise<string> {
-    // Use shell to expand tildes on remote system
-    // Bash will expand ~ automatically when we echo the unquoted variable
-    // This works with BusyBox (doesn't require GNU coreutils)
-    const command = `bash -c 'p=${shescape.quote(filePath)}; echo $p'`;
+    // Expand tilde on the remote system.
+    // IMPORTANT: This must not single-quote a "~" path directly, because quoted tildes won't expand.
+    // We reuse expandTildeForSSH() to produce a "$HOME"-based, bash-safe expression.
+    //
+    // Note: This does not attempt to canonicalize relative paths (no filesystem access).
+    // It only ensures ~ is expanded so callers can compare against absolute paths.
+    const script = `echo ${expandTildeForSSH(filePath)}`;
+    const command = `bash -c ${shescape.quote(script)}`;
+
     // Use 10 second timeout for path resolution to allow for slower SSH connections
     return this.execSSHCommand(command, 10000);
   }

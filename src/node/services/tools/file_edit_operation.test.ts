@@ -216,6 +216,36 @@ describe("executeFileEditOperation plan mode enforcement", () => {
     expect(await fs.readFile(testFile, "utf-8")).toBe("const x = 2;\n");
   });
 
+  test("should block editing the plan file outside plan mode (integration)", async () => {
+    using tempDir = new TestTempDir("exec-plan-readonly-test");
+
+    const planPath = path.join(tempDir.path, "plan.md");
+    await fs.writeFile(planPath, "# Plan\n");
+
+    const workspaceCwd = path.join(tempDir.path, "workspace");
+    await fs.mkdir(workspaceCwd);
+
+    const result = await executeFileEditOperation({
+      config: {
+        cwd: workspaceCwd,
+        runtime: new LocalRuntime(workspaceCwd),
+        runtimeTempDir: tempDir.path,
+        mode: "exec",
+        planFilePath: planPath,
+      },
+      filePath: planPath,
+      operation: () => ({ success: true, newContent: "# Updated\n", metadata: {} }),
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("read-only outside plan mode");
+    }
+
+    // Verify file was not modified
+    expect(await fs.readFile(planPath, "utf-8")).toBe("# Plan\n");
+  });
+
   test("should handle relative path to plan file in plan mode", async () => {
     // When user provides a relative path that resolves to the plan file,
     // it should still be allowed

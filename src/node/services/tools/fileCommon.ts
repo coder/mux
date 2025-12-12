@@ -30,22 +30,25 @@ export function generateDiff(filePath: string, oldContent: string, newContent: s
 }
 
 /**
- * Check if a file path is the plan file in plan mode.
+ * Check if a file path is the configured plan file (any mode).
  * Uses runtime.resolvePath to properly expand tildes for comparison.
  *
+ * Why mode-agnostic: the plan file is useful context in both plan + exec modes,
+ * but should only be writable in plan mode.
+ *
  * @param targetPath - The path being accessed (may contain ~ or be absolute)
- * @param config - Tool configuration containing mode and planFilePath
- * @returns true if this is the plan file in plan mode
+ * @param config - Tool configuration containing planFilePath
+ * @returns true if this is the configured plan file
  */
 export async function isPlanFilePath(
   targetPath: string,
   config: ToolConfiguration
 ): Promise<boolean> {
-  if (config.mode !== "plan" || !config.planFilePath) {
+  if (!config.planFilePath) {
     return false;
   }
-  // Resolve both paths to absolute form for proper comparison
-  // This handles cases where one path uses ~ and the other is fully expanded
+  // Resolve both paths to absolute form for proper comparison.
+  // This handles cases where one path uses ~ and the other is fully expanded.
   const [resolvedTarget, resolvedPlan] = await Promise.all([
     config.runtime.resolvePath(targetPath),
     config.runtime.resolvePath(config.planFilePath),

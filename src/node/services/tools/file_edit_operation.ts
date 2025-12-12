@@ -56,6 +56,15 @@ export async function executeFileEditOperation<TMetadata>({
     // This ensures path resolution uses runtime-specific semantics instead of Node.js path module
     const resolvedPath = config.runtime.normalizePath(filePath, config.cwd);
 
+    // Plan file is always read-only outside plan mode.
+    // This is especially important for SSH runtimes, where cwd validation is intentionally skipped.
+    if ((await isPlanFilePath(filePath, config)) && config.mode !== "plan") {
+      return {
+        success: false,
+        error: `Plan file is read-only outside plan mode: ${filePath}`,
+      };
+    }
+
     // Plan mode restriction: only allow editing the plan file
     if (config.mode === "plan" && config.planFilePath) {
       if (!(await isPlanFilePath(filePath, config))) {

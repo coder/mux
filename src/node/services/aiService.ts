@@ -1154,9 +1154,11 @@ export class AIService extends EventEmitter {
           ),
           runtimeTempDir,
           backgroundProcessManager: this.backgroundProcessManager,
-          // Plan mode configuration for path enforcement
+          // Plan/exec mode configuration for plan file access.
+          // - read: plan file is readable in all modes (useful context)
+          // - write: enforced by file_edit_* tools (plan file is read-only outside plan mode)
           mode: mode as UIMode | undefined,
-          planFilePath: mode === "plan" ? planFilePath : undefined,
+          planFilePath,
           workspaceId,
           // External edit detection callback
           recordFileState,

@@ -14,6 +14,7 @@ import type { TestEnvironment } from "./setup";
 import { createTempGitRepo, cleanupTempGitRepo, generateBranchName } from "./helpers";
 import { detectDefaultTrunkBranch } from "../../src/node/git";
 import { getPlanFilePath } from "../../src/common/utils/planStorage";
+import { createMuxMessage } from "../../src/common/types/message";
 import { expandTilde } from "../../src/node/runtime/tildeExpansion";
 
 // Skip all tests if TEST_INTEGRATION is not set
@@ -138,6 +139,58 @@ describeIntegration("Plan Commands Integration", () => {
         if (result.success) {
           expect(result.data.content).toBe("");
         }
+      } finally {
+        await env.orpc.workspace.remove({ workspaceId });
+      }
+    }, 30000);
+  });
+
+  describe("replaceChatHistory", () => {
+    it("should delete plan file when deletePlanFile is true", async () => {
+      const branchName = generateBranchName("start-here-delete-plan");
+      const trunkBranch = await detectDefaultTrunkBranch(repoPath);
+
+      const createResult = await env.orpc.workspace.create({
+        projectPath: repoPath,
+        branchName,
+        trunkBranch,
+      });
+
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Failed to create workspace");
+
+      const workspaceId = createResult.metadata.id;
+      const workspaceName = createResult.metadata.name;
+      const projectName = createResult.metadata.projectName;
+
+      try {
+        // Create a plan file at the canonical path
+        const planPath = getPlanFilePath(workspaceName, projectName);
+        const expandedPlanPath = expandTilde(planPath);
+        await fs.mkdir(path.dirname(expandedPlanPath), { recursive: true });
+        await fs.writeFile(expandedPlanPath, "# Test Plan\n");
+
+        const summaryMessage = createMuxMessage(
+          `start-here-test-${Date.now()}`,
+          "assistant",
+          "summary",
+          { timestamp: Date.now(), compacted: true }
+        );
+
+        const replaceResult = await env.orpc.workspace.replaceChatHistory({
+          workspaceId,
+          summaryMessage,
+          deletePlanFile: true,
+        });
+
+        expect(replaceResult.success).toBe(true);
+
+        // Plan file should be deleted
+        await expect(fs.stat(expandedPlanPath)).rejects.toThrow();
+
+        // And the plan content API should report it missing
+        const getPlanResult = await env.orpc.workspace.getPlanContent({ workspaceId });
+        expect(getPlanResult.success).toBe(false);
       } finally {
         await env.orpc.workspace.remove({ workspaceId });
       }

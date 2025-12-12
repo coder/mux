@@ -64,6 +64,14 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
         );
         file_path = correctedPath;
 
+        // Plan file is always read-only outside plan mode.
+        // This is especially important for SSH runtimes, where cwd validation is intentionally skipped.
+        if ((await isPlanFilePath(file_path, config)) && config.mode !== "plan") {
+          return {
+            success: false,
+            error: `Plan file is read-only outside plan mode: ${file_path}`,
+          };
+        }
         const resolvedPath = config.runtime.normalizePath(file_path, config.cwd);
 
         // Plan mode restriction: only allow editing/creating the plan file

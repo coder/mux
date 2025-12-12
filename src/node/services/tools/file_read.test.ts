@@ -414,4 +414,35 @@ describe("file_read tool", () => {
       expect(result.content).toContain("content in subdir");
     }
   });
+
+  it("should allow reading the configured plan file outside cwd in exec mode", async () => {
+    const planDir = await fs.mkdtemp(path.join(os.tmpdir(), "planFile-exec-read-"));
+    const planPath = path.join(planDir, "plan.md");
+
+    try {
+      const planContent = "# Plan\n\n- Step 1";
+      await fs.writeFile(planPath, planContent);
+
+      const tool = createFileReadTool({
+        ...getTestDeps(),
+        cwd: testDir,
+        runtime: new LocalRuntime(testDir),
+        runtimeTempDir: testDir,
+        mode: "exec",
+        planFilePath: planPath,
+      });
+
+      const result = (await tool.execute!(
+        { filePath: planPath },
+        mockToolCallOptions
+      )) as FileReadToolResult;
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.content).toContain("# Plan");
+      }
+    } finally {
+      await fs.rm(planDir, { recursive: true, force: true });
+    }
+  });
 });

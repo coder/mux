@@ -409,7 +409,8 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           const result = await context.workspaceService.replaceHistory(
             input.workspaceId,
-            input.summaryMessage
+            input.summaryMessage,
+            { deletePlanFile: input.deletePlanFile }
           );
           if (!result.success) {
             return { success: false, error: result.error };

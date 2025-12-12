@@ -12,11 +12,13 @@ import { useAPI } from "@/browser/contexts/API";
  * @param workspaceId - Current workspace ID (required for operation)
  * @param content - Content to use as the new conversation starting point
  * @param isCompacted - Whether the message is already compacted (disables button if true)
+ * @param options - Optional behavior flags for this Start Here action
  */
 export function useStartHere(
   workspaceId: string | undefined,
   content: string,
-  isCompacted = false
+  isCompacted = false,
+  options?: { deletePlanFile?: boolean }
 ) {
   const { api } = useAPI();
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -52,6 +54,7 @@ export function useStartHere(
       const result = await api.workspace.replaceChatHistory({
         workspaceId,
         summaryMessage,
+        deletePlanFile: options?.deletePlanFile,
       });
 
       if (!result.success) {
