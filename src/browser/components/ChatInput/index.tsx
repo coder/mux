@@ -1446,12 +1446,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               branchesLoaded={creationState.branchesLoaded}
               trunkBranch={creationState.trunkBranch}
               onTrunkBranchChange={creationState.setTrunkBranch}
-              runtimeMode={creationState.runtimeMode}
+              selectedRuntime={creationState.selectedRuntime}
               defaultRuntimeMode={creationState.defaultRuntimeMode}
-              sshHost={creationState.sshHost}
-              onRuntimeModeChange={creationState.setRuntimeMode}
+              onSelectedRuntimeChange={creationState.setSelectedRuntime}
               onSetDefaultRuntime={creationState.setDefaultRuntimeMode}
-              onSshHostChange={creationState.setSshHost}
               disabled={isSendInFlight}
               projectName={props.projectName}
               nameState={creationState.nameState}

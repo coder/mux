@@ -565,7 +565,7 @@ export class WorkspaceService extends EventEmitter {
 
         const runtime = createRuntime(
           metadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
-          { projectPath }
+          { projectPath, workspaceName: metadata.name }
         );
 
         // Delete workspace from runtime
@@ -696,7 +696,7 @@ export class WorkspaceService extends EventEmitter {
 
       const runtime = createRuntime(
         oldMetadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
-        { projectPath }
+        { projectPath, workspaceName: oldName }
       );
 
       const renameResult = await runtime.renameWorkspace(projectPath, oldName, newName);
@@ -813,7 +813,10 @@ export class WorkspaceService extends EventEmitter {
         type: "local",
         srcBaseDir: this.config.srcDir,
       };
-      const runtime = createRuntime(sourceRuntimeConfig);
+      const runtime = createRuntime(sourceRuntimeConfig, {
+        projectPath: foundProjectPath,
+        workspaceName: sourceMetadata.name,
+      });
 
       const newWorkspaceId = this.config.generateStableId();
 
@@ -1084,11 +1087,24 @@ export class WorkspaceService extends EventEmitter {
     });
 
     try {
-      // Use exec to delete files since runtime doesn't have a deleteFile method
-      // Delete both paths in one command for efficiency
-      await runtime.exec(`rm -f ${quotedPlanPath} ${quotedLegacyPlanPath}`, {
+      // Use exec to delete files since runtime doesn't have a deleteFile method.
+      // Delete both paths in one command for efficiency.
+      //
+      // IMPORTANT: runtime.exec() returns streams immediately; we must wait for completion
+      // so callers can safely assume the plan file is gone when this function resolves.
+      const stream = await runtime.exec(`rm -f ${quotedPlanPath} ${quotedLegacyPlanPath}`, {
         cwd: metadata.projectPath,
         timeout: 10,
+      });
+
+      try {
+        await stream.stdin.close();
+      } catch {
+        // Ignore stdin-close errors (e.g. already closed).
+      }
+
+      await stream.exitCode.catch(() => {
+        // Best-effort: ignore failures.
       });
     } catch {
       // Plan files don't exist or can't be deleted - ignore
@@ -1268,7 +1284,10 @@ export class WorkspaceService extends EventEmitter {
         type: "local" as const,
         srcBaseDir: this.config.srcDir,
       };
-      const runtime = createRuntime(runtimeConfig, { projectPath: metadata.projectPath });
+      const runtime = createRuntime(runtimeConfig, {
+        projectPath: metadata.projectPath,
+        workspaceName: metadata.name,
+      });
       const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
 
       // Create bash tool

@@ -21,7 +21,9 @@ module.exports = {
   // Transform ESM modules to CommonJS for Jest
   transformIgnorePatterns: ["node_modules/(?!(@orpc|shiki|json-schema-typed|rou3)/)"],
   // Run tests in parallel (use 50% of available cores, or 4 minimum)
-  maxWorkers: "50%",
+  // CI runners often have a low core count; "50%" can result in a single Jest worker,
+  // which can push the integration job over its 10-minute timeout.
+  maxWorkers: process.env.CI ? 4 : "50%",  
   // Force exit after tests complete to avoid hanging on lingering handles
   forceExit: true,
   // 10 minute timeout for integration tests, 10s for unit tests

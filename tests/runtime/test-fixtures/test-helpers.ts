@@ -8,6 +8,7 @@ import * as os from "os";
 import * as path from "path";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
+import { DockerRuntime } from "@/node/runtime/DockerRuntime";
 import { SSHRuntime } from "@/node/runtime/SSHRuntime";
 import type { SSHServerConfig } from "./ssh-fixture";
 
@@ -15,7 +16,12 @@ import type { SSHServerConfig } from "./ssh-fixture";
  * Runtime type for test matrix
  * Note: "local" here means worktree runtime (isolated git worktrees), not project-dir runtime
  */
-export type RuntimeType = "local" | "ssh";
+
+export interface DockerRuntimeTestConfig {
+  image: string;
+  containerName: string;
+}
+export type RuntimeType = "local" | "ssh" | "docker";
 
 /**
  * Create runtime instance based on type
@@ -23,7 +29,8 @@ export type RuntimeType = "local" | "ssh";
 export function createTestRuntime(
   type: RuntimeType,
   workdir: string,
-  sshConfig?: SSHServerConfig
+  sshConfig?: SSHServerConfig,
+  dockerConfig?: DockerRuntimeTestConfig
 ): Runtime {
   switch (type) {
     case "local": {
@@ -41,6 +48,15 @@ export function createTestRuntime(
         srcBaseDir: sshConfig.workdir,
         identityFile: sshConfig.privateKeyPath,
         port: sshConfig.port,
+      });
+    }
+    case "docker": {
+      if (!dockerConfig) {
+        throw new Error("Docker config required for Docker runtime");
+      }
+      return new DockerRuntime({
+        image: dockerConfig.image,
+        containerName: dockerConfig.containerName,
       });
     }
   }
@@ -64,18 +80,20 @@ export class TestWorkspace {
    * Create a test workspace with isolated directory
    */
   static async create(runtime: Runtime, type: RuntimeType): Promise<TestWorkspace> {
-    const isRemote = type === "ssh";
+    const isRemote = type !== "local";
 
     if (isRemote) {
-      // For SSH, create subdirectory in remote workdir
-      // The path is already set in SSHRuntime config
-      // Create a unique subdirectory
+      // For SSH/Docker, create a unique subdirectory in the runtime's filesystem.
       const testId = `test-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-      const workspacePath = `/home/testuser/workspace/${testId}`;
+
+      const workspacePath =
+        type === "ssh" ? `/home/testuser/workspace/${testId}` : `/src/${testId}`;
+
+      const cwd = type === "ssh" ? "/home/testuser" : "/";
 
       // Create directory on remote
       const stream = await runtime.exec(`mkdir -p ${workspacePath}`, {
-        cwd: "/home/testuser",
+        cwd,
         timeout: 30,
       });
       await stream.stdin.close();
@@ -102,8 +120,9 @@ export class TestWorkspace {
     if (this.isRemote) {
       // Remove remote directory
       try {
+        const cwd = this.path.startsWith("/home/testuser") ? "/home/testuser" : "/";
         const stream = await this.runtime.exec(`rm -rf ${this.path}`, {
-          cwd: "/home/testuser",
+          cwd,
           timeout: 60,
         });
         await stream.stdin.close();
