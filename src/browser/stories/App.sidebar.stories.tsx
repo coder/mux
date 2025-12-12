@@ -16,6 +16,9 @@ import {
   type GitStatusFixture,
 } from "./mockFactory";
 import { expandProjects } from "./storyHelpers";
+import { GIT_STATUS_INDICATOR_MODE_KEY } from "@/common/constants/storage";
+import { within, userEvent, waitFor } from "@storybook/test";
+
 import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
 
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
@@ -39,14 +42,86 @@ function createOnChatAdapter(chatHandlers: Map<string, ChatHandler>) {
   };
 }
 
-/** Creates an executeBash function that returns git status output for workspaces */
+/**
+ * Creates an executeBash function that returns deterministic git outputs for Storybook.
+ *
+ * NOTE: This is only used in full-app stories to make GitStatusIndicator + tooltip stable.
+ */
 function createGitStatusExecutor(gitStatus?: Map<string, GitStatusFixture>) {
+  const buildBranchDetailsOutput = (status: GitStatusFixture): string => {
+    const ahead = status.ahead ?? 0;
+    const behind = status.behind ?? 0;
+    const dirtyCount = status.dirty ?? 0;
+    const headCommit = status.headCommit ?? "Latest commit";
+    const originCommit = status.originCommit ?? "Latest commit";
+
+    let hashIndex = 0;
+    const nextHash = () => {
+      hashIndex++;
+      return hashIndex.toString(16).padStart(7, "0");
+    };
+
+    const commitHashes: string[] = [];
+
+    const showBranchLines: string[] = [];
+    showBranchLines.push(`! [HEAD] ${headCommit}`);
+    showBranchLines.push(` ! [origin/main] ${originCommit}`);
+    showBranchLines.push("--");
+
+    for (let i = 0; i < ahead; i++) {
+      const hash = nextHash();
+      commitHashes.push(hash);
+      showBranchLines.push(`+  [${hash}] Local commit ${i + 1}`);
+    }
+
+    for (let i = 0; i < behind; i++) {
+      const hash = nextHash();
+      commitHashes.push(hash);
+      showBranchLines.push(` + [${hash}] Origin commit ${i + 1}`);
+    }
+
+    // Always include at least one shared commit so the tooltip has stable structure.
+    const sharedHash = nextHash();
+    commitHashes.push(sharedHash);
+    showBranchLines.push(`++ [${sharedHash}] Shared commit`);
+
+    const dates = commitHashes
+      .map((hash, index) => `${hash}|Nov 14 0${(index % 9) + 1}:0${index % 6} PM`)
+      .join("\n");
+
+    const dirtyFiles =
+      dirtyCount > 0
+        ? [" M src/App.tsx", " M src/browser/components/GitStatusIndicatorView.tsx"].join("\n")
+        : "";
+
+    return [
+      "__MUX_BRANCH_DATA__BEGIN_SHOW_BRANCH__",
+      showBranchLines.join("\n"),
+      "__MUX_BRANCH_DATA__END_SHOW_BRANCH__",
+      "__MUX_BRANCH_DATA__BEGIN_DATES__",
+      dates,
+      "__MUX_BRANCH_DATA__END_DATES__",
+      "__MUX_BRANCH_DATA__BEGIN_DIRTY_FILES__",
+      dirtyFiles,
+      "__MUX_BRANCH_DATA__END_DIRTY_FILES__",
+    ].join("\n");
+  };
+
   return (workspaceId: string, script: string) => {
-    if (script.includes("git status") || script.includes("git show-branch")) {
-      const status = gitStatus?.get(workspaceId) ?? {};
+    const status = gitStatus?.get(workspaceId) ?? {};
+
+    // useGitBranchDetails consolidated script (tooltip content)
+    if (script.includes("__MUX_BRANCH_DATA__BEGIN_SHOW_BRANCH__")) {
+      const output = buildBranchDetailsOutput(status);
+      return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
+    }
+
+    // GitStatusStore consolidated status script
+    if (script.includes("PRIMARY_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD")) {
       const output = createGitStatusOutput(status);
       return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
     }
+
     return Promise.resolve({
       success: true as const,
       output: "",
@@ -210,6 +285,8 @@ export const GitStatusVariations: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
+        window.localStorage.setItem(GIT_STATUS_INDICATOR_MODE_KEY, JSON.stringify("line-delta"));
+
         const workspaces = [
           createWorkspace({
             id: "ws-clean",
@@ -281,6 +358,52 @@ export const GitStatusVariations: AppStory = {
       }}
     />
   ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    // Wait for git status to render (fetched async via GitStatusStore polling)
+    await waitFor(
+      () => {
+        const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-diverged"]');
+        if (!row) throw new Error("ws-diverged row not found");
+        within(row).getByText("+12.3k");
+      },
+      { timeout: 5000 }
+    );
+
+    const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-diverged"]')!;
+    const plus = within(row).getByText("+12.3k");
+
+    // Hover to open tooltip
+    await userEvent.hover(plus);
+
+    const getVisibleTooltip = () =>
+      document.body.querySelector<HTMLElement>(".bg-modal-bg.opacity-100.visible");
+
+    // Wait for tooltip (portaled) and toggle to commits mode
+    await waitFor(
+      () => {
+        const tooltip = getVisibleTooltip();
+        if (!tooltip) throw new Error("git status tooltip not visible");
+        within(tooltip).getByText("Commits");
+      },
+      { timeout: 5000 }
+    );
+
+    const tooltip = getVisibleTooltip()!;
+    await userEvent.click(within(tooltip).getByText("Commits"));
+
+    // Verify indicator switches to divergence view for the same workspace row
+    await waitFor(
+      () => {
+        const updatedRow = canvasElement.querySelector<HTMLElement>(
+          '[data-workspace-id="ws-diverged"]'
+        );
+        if (!updatedRow) throw new Error("ws-diverged row not found");
+        within(updatedRow).getByText("↑3");
+        within(updatedRow).getByText("↓2");
+      },
+      { timeout: 2000 }
+    );
+  },
 };
 
 /**

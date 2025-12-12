@@ -71,7 +71,7 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 
 ### Storybook
 
-- Prefer full-app stories (`App.stories.tsx`) to isolated component stories. This tests components in their real context with proper providers, state management, and styling.
+- **Only** add full-app stories (`App.*.stories.tsx`). Do not add isolated component stories, even for small UI changes (they are not used/accepted in this repo).
 - Use play functions with `@storybook/test` utilities (`within`, `userEvent`, `waitFor`) to interact with the UI and set up the desired visual state. Do not add props to production components solely for storybook convenience.
 - Keep story data deterministic: avoid `Math.random()`, `Date.now()`, or other non-deterministic values in story setup. Pass explicit values when ordering or timing matters for visual stability.
 
