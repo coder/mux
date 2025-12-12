@@ -11,9 +11,10 @@ import { waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 import { shouldRunIntegrationTests } from "../testUtils";
-import { renderWithBackend } from "./renderWithBackend";
-import { createTempGitRepo, cleanupTempGitRepo } from "./setup";
 import {
+  renderWithBackend,
+  createTempGitRepo,
+  cleanupTempGitRepo,
   waitForAppLoad,
   addProjectViaUI,
   expandProject,
@@ -23,7 +24,7 @@ import {
   removeWorkspaceViaUI,
   clickNewChat,
   getProjectName,
-} from "./uiHelpers";
+} from "./harness";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 

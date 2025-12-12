@@ -14,7 +14,7 @@ import type { BrowserWindow, WebContents } from "electron";
 import { Config } from "@/node/config";
 import { ServiceContainer } from "@/node/services/serviceContainer";
 import type { ORPCContext } from "@/node/orpc/context";
-import { createOrpcTestClient, type OrpcTestClient } from "../ipc/orpcTestClient";
+import { createOrpcTestClient, type OrpcTestClient } from "../../ipc/orpcTestClient";
 import type { APIClient } from "@/browser/contexts/API";
 
 const execAsync = promisify(exec);

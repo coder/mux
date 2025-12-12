@@ -8,13 +8,14 @@
  * Use these instead of direct oRPC calls to keep tests UI-driven.
  */
 
-import { waitFor, type RenderResult } from "@testing-library/react";
+import { waitFor, within, type RenderResult } from "@testing-library/react";
 import type { UserEvent } from "@testing-library/user-event";
 
 type Queries = Pick<
   RenderResult,
   | "findByRole"
   | "findByText"
+  | "findByTestId"
   | "findByPlaceholderText"
   | "queryByRole"
   | "queryByText"
@@ -27,10 +28,49 @@ type Queries = Pick<
 export async function waitForAppLoad(queries: Pick<Queries, "queryByText">) {
   await waitFor(
     () => {
-      expect(queries.queryByText(/loading workspaces/i)).not.toBeInTheDocument();
+      expect(queries.queryByText(/loading workspaces/i)).toBeNull();
     },
     { timeout: 5000 }
   );
+}
+
+/**
+ * Open the Settings modal.
+ *
+ * Note: the Dialog is rendered in a portal; queries must search `document.body`.
+ * RTL's render() uses `document.body` as baseElement by default, so RenderResult
+ * queries work fine.
+ */
+export async function openSettingsModal(
+  user: UserEvent,
+  queries: Pick<Queries, "findByTestId" | "findByRole">
+): Promise<HTMLElement> {
+  const settingsButton = await queries.findByTestId("settings-button");
+  await user.click(settingsButton);
+
+  const modal = await queries.findByRole("dialog");
+  expect(modal).toBeTruthy();
+  return modal;
+}
+
+/**
+ * Open the Settings modal and navigate to a particular section.
+ */
+export async function openSettingsToSection(
+  user: UserEvent,
+  queries: Pick<Queries, "findByTestId" | "findByRole">,
+  sectionLabel: "General" | "Providers" | "Projects" | "Models"
+): Promise<HTMLElement> {
+  const modal = await openSettingsModal(user, queries);
+
+  if (sectionLabel !== "General") {
+    const sectionButton = within(modal).getByRole("button", {
+      name: new RegExp(`^${sectionLabel}$`, "i"),
+    });
+    await user.click(sectionButton);
+  }
+
+  return modal;
 }
 
 /**
@@ -56,7 +96,7 @@ export async function addProjectViaUI(
 
   // Wait for modal to open
   const modal = await queries.findByRole("dialog");
-  expect(modal).toBeInTheDocument();
+  expect(modal).toBeTruthy();
 
   // Type the project path in the input
   const pathInput = await queries.findByPlaceholderText(/home.*project|path/i);
@@ -71,7 +111,7 @@ export async function addProjectViaUI(
   await waitFor(
     () => {
       // Modal should close on success
-      expect(queries.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(queries.queryByRole("dialog")).toBeNull();
     },
     { timeout: 5000 }
   );
@@ -142,7 +182,7 @@ export async function removeProjectViaUI(
   await waitFor(() => {
     expect(
       queries.queryByRole("button", { name: new RegExp(`project ${projectName}`, "i") })
-    ).not.toBeInTheDocument();
+    ).toBeNull();
   });
 }
 
@@ -210,7 +250,7 @@ export async function removeWorkspaceViaUI(
   await waitFor(() => {
     expect(
       queries.queryByRole("button", { name: `Select workspace ${workspaceName}` })
-    ).not.toBeInTheDocument();
+    ).toBeNull();
   });
 }
 

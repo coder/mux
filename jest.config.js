@@ -54,10 +54,10 @@ module.exports = {
       displayName: "browser-ui",
       testEnvironment: "jsdom",
       testMatch: ["<rootDir>/tests/browser/**/*.test.tsx"],
-      setupFiles: ["<rootDir>/tests/browser/global-setup.js"],
+      setupFiles: ["<rootDir>/tests/browser/harness/global-setup.js"],
       setupFilesAfterEnv: [
         "<rootDir>/tests/setup.ts",
-        "<rootDir>/tests/browser/jestSetup.ts",
+        "<rootDir>/tests/browser/harness/jestSetup.ts",
       ],
     },
   ],

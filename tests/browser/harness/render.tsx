@@ -10,7 +10,7 @@ import React from "react";
 import { act, render, type RenderOptions, type RenderResult } from "@testing-library/react";
 import { AppLoader } from "@/browser/components/AppLoader";
 import type { APIClient } from "@/browser/contexts/API";
-import { createBrowserTestEnv, type BrowserTestEnv } from "./setup";
+import { createBrowserTestEnv, type BrowserTestEnv } from "./env";
 
 export interface RenderWithBackendResult extends RenderResult {
   /** Test environment with real backend */
