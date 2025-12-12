@@ -244,7 +244,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
       onMouseLeave={onTooltipMouseLeave}
     >
       <div className="border-separator-light mb-2 flex flex-col gap-1 border-b pb-2">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
           <span className="text-muted-light">Divergence:</span>
           <ToggleGroup
             type="single"
