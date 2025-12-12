@@ -43,6 +43,12 @@ import { applyFrontendFilters } from "@/browser/utils/review/filterHunks";
 import { cn } from "@/common/lib/utils";
 import { useAPI } from "@/browser/contexts/API";
 
+/** Stats reported to parent for tab display */
+interface ReviewPanelStats {
+  total: number;
+  read: number;
+}
+
 interface ReviewPanelProps {
   workspaceId: string;
   workspacePath: string;
@@ -51,6 +57,8 @@ interface ReviewPanelProps {
   focusTrigger?: number;
   /** Workspace is still being created (git operations in progress) */
   isCreating?: boolean;
+  /** Callback to report stats changes (for tab badge) */
+  onStatsChange?: (stats: ReviewPanelStats) => void;
 }
 
 interface ReviewSearchState {
@@ -85,6 +93,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   onReviewNote,
   focusTrigger,
   isCreating = false,
+  onStatsChange,
 }) => {
   const { api } = useAPI();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -506,6 +515,11 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       unread: total - read,
     };
   }, [hunks, isRead]);
+
+  // Report stats to parent for tab badge
+  useEffect(() => {
+    onStatsChange?.({ total: stats.total, read: stats.read });
+  }, [stats.total, stats.read, onStatsChange]);
 
   // Scroll selected hunk into view
   useEffect(() => {
