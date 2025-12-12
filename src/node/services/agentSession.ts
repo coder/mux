@@ -35,6 +35,7 @@ import { AttachmentService } from "./attachmentService";
 import type { PostCompactionAttachment, PostCompactionExclusions } from "@/common/types/attachment";
 import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
 import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
+import { isValidModelFormat } from "@/common/utils/ai/models";
 
 /**
  * Tracked file state for detecting external edits.
@@ -410,6 +411,21 @@ export class AgentSession {
     // muxMetadata is z.any() in schema - cast to proper type
     const typedMuxMetadata = options?.muxMetadata as MuxFrontendMetadata | undefined;
 
+    // Validate model BEFORE persisting message to prevent orphaned messages on invalid model
+    if (!options?.model || options.model.trim().length === 0) {
+      return Err(
+        createUnknownSendMessageError("No model specified. Please select a model using /model.")
+      );
+    }
+
+    // Validate model string format (must be "provider:model-id")
+    if (!isValidModelFormat(options.model)) {
+      return Err({
+        type: "invalid_model_string",
+        message: `Invalid model string format: "${options.model}". Expected "provider:model-id"`,
+      });
+    }
+
     const userMessage = createMuxMessage(
       messageId,
       "user",
@@ -473,12 +489,6 @@ export class AgentSession {
 
       this.messageQueue.add(finalText, sanitizedOptions);
       this.emitQueuedMessageChanged();
-    }
-
-    if (!options?.model || options.model.trim().length === 0) {
-      return Err(
-        createUnknownSendMessageError("No model specified. Please select a model using /model.")
-      );
     }
 
     return this.streamWithHistory(options.model, options);

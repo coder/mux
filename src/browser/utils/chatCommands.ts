@@ -22,7 +22,10 @@ import { WORKSPACE_ONLY_COMMANDS } from "@/constants/slashCommands";
 import type { Toast } from "@/browser/components/ChatInputToast";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
-import { resolveCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
+import {
+  resolveCompactionModel,
+  isValidModelFormat,
+} from "@/browser/utils/messages/compactionModelPreference";
 import type { ImageAttachment } from "../components/ImageAttachments";
 import { dispatchWorkspaceSwitch } from "./workspaceEvents";
 import { getRuntimeKey, copyWorkspaceStorage } from "@/common/constants/storage";
@@ -37,7 +40,10 @@ import { openInEditor } from "@/browser/utils/openInEditor";
 // Workspace Creation
 // ============================================================================
 
-import { createCommandToast } from "@/browser/components/ChatInputToasts";
+import {
+  createCommandToast,
+  createInvalidCompactModelToast,
+} from "@/browser/components/ChatInputToasts";
 import { trackCommandUsed, trackProviderConfigured } from "@/common/telemetry";
 import { addEphemeralMessage } from "@/browser/stores/WorkspaceStore";
 
@@ -850,6 +856,12 @@ export async function handleCompactCommand(
     setToast,
     onCancelEdit,
   } = context;
+
+  // Validate model format early - fail fast before sending to backend
+  if (parsed.model && !isValidModelFormat(parsed.model)) {
+    setToast(createInvalidCompactModelToast(parsed.model));
+    return { clearInput: false, toastShown: true };
+  }
 
   setInput("");
   setImageAttachments([]);

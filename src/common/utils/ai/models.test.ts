@@ -1,5 +1,10 @@
 import { describe, it, expect } from "bun:test";
-import { normalizeGatewayModel, getModelName, supports1MContext } from "./models";
+import {
+  normalizeGatewayModel,
+  getModelName,
+  supports1MContext,
+  isValidModelFormat,
+} from "./models";
 
 describe("normalizeGatewayModel", () => {
   it("should convert mux-gateway:provider/model to provider:model", () => {
@@ -61,5 +66,30 @@ describe("supports1MContext", () => {
     expect(supports1MContext("anthropic:claude-opus-4-5")).toBe(false);
     expect(supports1MContext("anthropic:claude-haiku-4-5")).toBe(false);
     expect(supports1MContext("mux-gateway:anthropic/claude-opus-4-5")).toBe(false);
+  });
+});
+
+describe("isValidModelFormat", () => {
+  it("returns true for valid model formats", () => {
+    expect(isValidModelFormat("anthropic:claude-sonnet-4-5")).toBe(true);
+    expect(isValidModelFormat("openai:gpt-5.2")).toBe(true);
+    expect(isValidModelFormat("google:gemini-3-pro-preview")).toBe(true);
+    expect(isValidModelFormat("mux-gateway:anthropic/claude-opus-4-5")).toBe(true);
+    // Ollama-style model names with colons in the model ID
+    expect(isValidModelFormat("ollama:gpt-oss:20b")).toBe(true);
+  });
+
+  it("returns false for invalid model formats", () => {
+    // Missing colon
+    expect(isValidModelFormat("gpt")).toBe(false);
+    expect(isValidModelFormat("sonnet")).toBe(false);
+    expect(isValidModelFormat("badmodel")).toBe(false);
+
+    // Colon at start or end
+    expect(isValidModelFormat(":model")).toBe(false);
+    expect(isValidModelFormat("provider:")).toBe(false);
+
+    // Empty string
+    expect(isValidModelFormat("")).toBe(false);
   });
 });

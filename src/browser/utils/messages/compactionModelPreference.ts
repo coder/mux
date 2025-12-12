@@ -6,16 +6,17 @@
 
 import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
 
+// Re-export for convenience - validation used in /compact handler
+export { isValidModelFormat } from "@/common/utils/ai/models";
+
 /**
- * Resolve the effective compaction model, saving preference if a model is specified.
+ * Resolve the effective compaction model to use for compaction.
  *
  * @param requestedModel - Model specified in /compact -m flag (if any)
  * @returns The model to use for compaction, or undefined to use workspace default
  */
 export function resolveCompactionModel(requestedModel: string | undefined): string | undefined {
   if (requestedModel) {
-    // User specified a model with -m flag, save it as the new preference
-    localStorage.setItem(PREFERRED_COMPACTION_MODEL_KEY, requestedModel);
     return requestedModel;
   }
 

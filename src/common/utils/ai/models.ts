@@ -6,6 +6,15 @@ import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 
 export const defaultModel = DEFAULT_MODEL;
 
+/**
+ * Validate model string format (must be "provider:model-id").
+ * Supports colons in the model ID (e.g., "ollama:gpt-oss:20b").
+ */
+export function isValidModelFormat(model: string): boolean {
+  const colonIndex = model.indexOf(":");
+  return colonIndex > 0 && colonIndex < model.length - 1;
+}
+
 const MUX_GATEWAY_PREFIX = "mux-gateway:";
 
 /**

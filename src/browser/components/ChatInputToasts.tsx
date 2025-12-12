@@ -1,9 +1,31 @@
 import React from "react";
 import type { Toast } from "./ChatInputToast";
 import { SolutionLabel } from "./ChatInputToast";
+import { DocsLink } from "./DocsLink";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import type { SendMessageError as SendMessageErrorType } from "@/common/types/errors";
 import { formatSendMessageError } from "@/common/utils/errors/formatSendError";
+
+export function createInvalidCompactModelToast(model: string): Toast {
+  return {
+    id: Date.now().toString(),
+    type: "error",
+    title: "Invalid Model",
+    message: `Invalid model format: "${model}". Use an alias or provider:model-id.`,
+    solution: (
+      <>
+        <SolutionLabel>Try an alias:</SolutionLabel>
+        /compact -m sonnet
+        <br />
+        /compact -m gpt
+        <br />
+        <br />
+        <SolutionLabel>Supported models:</SolutionLabel>
+        <DocsLink path="/models">mux.coder.com/models</DocsLink>
+      </>
+    ),
+  };
+}
 
 /**
  * Creates a toast message for command-related errors and help messages

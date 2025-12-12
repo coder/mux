@@ -79,17 +79,21 @@ describeIntegration("sendMessage error handling tests", () => {
 
   describe("model errors", () => {
     test.concurrent(
-      "should fail with invalid model format",
+      "should fail with invalid model format (model validation happens before message is persisted)",
       async () => {
         await withSharedWorkspace("openai", async ({ env, workspaceId }) => {
           const result = await sendMessage(env, workspaceId, "Hello", {
             model: "invalid-model-without-provider",
           });
 
+          // Should fail synchronously with invalid_model_string error
+          // This happens BEFORE the message is persisted to history
           expect(result.success).toBe(false);
           if (!result.success) {
-            // Should indicate invalid model
-            expect(result.error.type).toBeDefined();
+            expect(result.error.type).toBe("invalid_model_string");
+            if (result.error.type === "invalid_model_string") {
+              expect(result.error.message).toContain("provider:model-id");
+            }
           }
         });
       },
