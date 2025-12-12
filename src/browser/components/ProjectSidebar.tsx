@@ -627,7 +627,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               // Empty tiers are skipped automatically
                               const renderTier = (tierIndex: number): React.ReactNode => {
                                 const bucket = buckets[tierIndex];
-                                // Sum remaining workspaces from this tier onward
+                                // Sum remaining workspaces from this tier onward (for collapsed state)
                                 const remainingCount = buckets
                                   .slice(tierIndex)
                                   .reduce((sum, b) => sum + b.length, 0);
@@ -638,6 +638,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 const isExpanded = expandedOldWorkspaces[key] ?? false;
                                 const thresholdDays = AGE_THRESHOLDS_DAYS[tierIndex];
                                 const thresholdLabel = formatDaysThreshold(thresholdDays);
+                                // When expanded, show only this tier's count; when collapsed, show cumulative
+                                const displayCount = isExpanded ? bucket.length : remainingCount;
 
                                 return (
                                   <>
@@ -654,7 +656,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       <div className="flex items-center gap-1.5">
                                         <span>Older than {thresholdLabel}</span>
                                         <span className="text-dim font-normal">
-                                          ({remainingCount})
+                                          ({displayCount})
                                         </span>
                                       </div>
                                       <span
