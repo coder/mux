@@ -137,17 +137,20 @@ const ReviewItem: React.FC<ReviewItemProps> = ({
     [handleSaveEdit, handleCancelEdit]
   );
 
-  // Format code for diff display - add diff markers if not present
+  // Prefer selectedDiff (raw diff) when available so reviewers see syntax highlighting consistently.
   const diffContent = useMemo(() => {
+    if (review.data.selectedDiff) {
+      return review.data.selectedDiff;
+    }
+
+    // Legacy: selectedCode may be plain code or diff-ish text.
     const lines = review.data.selectedCode.split("\n");
-    // Check if lines already have diff markers
     const hasDiffMarkers = lines.some((l) => /^[+-\s]/.test(l));
     if (hasDiffMarkers) {
       return review.data.selectedCode;
     }
-    // Add context markers
     return lines.map((l) => ` ${l}`).join("\n");
-  }, [review.data.selectedCode]);
+  }, [review.data.selectedCode, review.data.selectedDiff]);
 
   const age = formatRelativeTime(review.createdAt);
 
@@ -245,7 +248,13 @@ const ReviewItem: React.FC<ReviewItemProps> = ({
         <div className="border-border-light border-t">
           {/* Code diff */}
           <div className="max-h-32 overflow-auto text-[11px]">
-            <DiffRenderer content={diffContent} showLineNumbers={false} fontSize="11px" />
+            <DiffRenderer
+              content={diffContent}
+              showLineNumbers={Boolean(review.data.selectedDiff)}
+              oldStart={review.data.oldStart ?? 1}
+              newStart={review.data.newStart ?? 1}
+              fontSize="11px"
+            />
           </div>
 
           {/* Comment section */}

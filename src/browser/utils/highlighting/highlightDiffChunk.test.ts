@@ -12,7 +12,8 @@ describe("highlightDiffChunk", () => {
     type: "add",
     lines: ["const x = 1;", "const y = 2;"],
     startIndex: 0,
-    lineNumbers: [1, 2],
+    oldLineNumbers: [null, null],
+    newLineNumbers: [1, 2],
   };
 
   describe("plain text files", () => {
@@ -23,7 +24,8 @@ describe("highlightDiffChunk", () => {
       expect(result.usedFallback).toBe(false);
       expect(result.lines).toHaveLength(2);
       expect(result.lines[0].html).toBe("const x = 1;");
-      expect(result.lines[0].lineNumber).toBe(1);
+      expect(result.lines[0].oldLineNumber).toBeNull();
+      expect(result.lines[0].newLineNumber).toBe(1);
     });
 
     it("should escape HTML in plain text fallback", async () => {
@@ -31,7 +33,8 @@ describe("highlightDiffChunk", () => {
         type: "add",
         lines: ['<script>alert("xss")</script>'],
         startIndex: 0,
-        lineNumbers: [1],
+        oldLineNumbers: [null],
+        newLineNumbers: [1],
       };
 
       const result = await highlightDiffChunk(htmlChunk, "text");
@@ -42,9 +45,11 @@ describe("highlightDiffChunk", () => {
     it("should preserve line numbers and original indices for text files", async () => {
       const result = await highlightDiffChunk(mockChunk, "text");
 
-      expect(result.lines[0].lineNumber).toBe(1);
+      expect(result.lines[0].oldLineNumber).toBeNull();
+      expect(result.lines[0].newLineNumber).toBe(1);
       expect(result.lines[0].originalIndex).toBe(0);
-      expect(result.lines[1].lineNumber).toBe(2);
+      expect(result.lines[1].oldLineNumber).toBeNull();
+      expect(result.lines[1].newLineNumber).toBe(2);
       expect(result.lines[1].originalIndex).toBe(1);
     });
 
@@ -53,13 +58,15 @@ describe("highlightDiffChunk", () => {
         type: "context",
         lines: [""],
         startIndex: 0,
-        lineNumbers: [1],
+        oldLineNumbers: [1],
+        newLineNumbers: [1],
       };
 
       const result = await highlightDiffChunk(emptyChunk, "text");
 
       expect(result.lines).toHaveLength(1);
-      expect(result.lines[0].lineNumber).toBe(1);
+      expect(result.lines[0].oldLineNumber).toBe(1);
+      expect(result.lines[0].newLineNumber).toBe(1);
     });
 
     it("should handle multiple line types", async () => {
@@ -67,7 +74,8 @@ describe("highlightDiffChunk", () => {
         type: "remove",
         lines: ["old code"],
         startIndex: 5,
-        lineNumbers: [10],
+        oldLineNumbers: [10],
+        newLineNumbers: [null],
       };
 
       const result = await highlightDiffChunk(removeChunk, "text");
@@ -81,7 +89,8 @@ describe("highlightDiffChunk", () => {
         type: "add",
         lines: ["    const x = 1;", "        const y = 2;", "  const z = 3;"],
         startIndex: 0,
-        lineNumbers: [1, 2, 3],
+        oldLineNumbers: [null, null, null],
+        newLineNumbers: [1, 2, 3],
       };
 
       const result = await highlightDiffChunk(indentedChunk, "text");
@@ -98,7 +107,8 @@ describe("highlightDiffChunk", () => {
         type: "add",
         lines: ["const x  =  1;", "if (x    &&    y)"],
         startIndex: 0,
-        lineNumbers: [1, 2],
+        oldLineNumbers: [null, null],
+        newLineNumbers: [1, 2],
       };
 
       const result = await highlightDiffChunk(spacedChunk, "text");
@@ -120,7 +130,8 @@ describe("highlightDiffChunk", () => {
         type: "add",
         lines: ["    const x = 1;", "        const y = 2;", "  const z = 3;"],
         startIndex: 0,
-        lineNumbers: [1, 2, 3],
+        oldLineNumbers: [null, null, null],
+        newLineNumbers: [1, 2, 3],
       };
 
       const result = await highlightDiffChunk(chunk, "typescript");
@@ -144,7 +155,8 @@ describe("highlightDiffChunk", () => {
         type: "add",
         lines: ["const x = 1;", "const y = 2;"],
         startIndex: 0,
-        lineNumbers: [1, 2],
+        oldLineNumbers: [null, null],
+        newLineNumbers: [1, 2],
       };
 
       const result = await highlightDiffChunk(chunk, "typescript");
@@ -164,7 +176,8 @@ describe("highlightDiffChunk", () => {
         type: "add",
         lines: ['const str = "unclosed'],
         startIndex: 0,
-        lineNumbers: [1],
+        oldLineNumbers: [null],
+        newLineNumbers: [1],
       };
 
       const result = await highlightDiffChunk(chunk, "typescript");
@@ -180,7 +193,8 @@ describe("highlightDiffChunk", () => {
         type: "context",
         lines: ["", "const y = 2;", ""],
         startIndex: 0,
-        lineNumbers: [1, 2, 3],
+        oldLineNumbers: [1, 2, 3],
+        newLineNumbers: [1, 2, 3],
       };
 
       const result = await highlightDiffChunk(chunk, "typescript");
@@ -199,7 +213,8 @@ describe("highlightDiffChunk", () => {
         type: "add",
         lines: ["if (x && y) { return true; }"],
         startIndex: 0,
-        lineNumbers: [1],
+        oldLineNumbers: [null],
+        newLineNumbers: [1],
       };
 
       const result = await highlightDiffChunk(chunk, "typescript");
@@ -215,7 +230,8 @@ describe("highlightDiffChunk", () => {
         type: "add",
         lines: ["const obj = { nested: { value: 1 } };"],
         startIndex: 0,
-        lineNumbers: [1],
+        oldLineNumbers: [null],
+        newLineNumbers: [1],
       };
 
       const result = await highlightDiffChunk(chunk, "typescript");
@@ -234,14 +250,18 @@ describe("highlightDiffChunk", () => {
         type: "remove",
         lines: ["const a = 1;", "const b = 2;", "const c = 3;"],
         startIndex: 10,
-        lineNumbers: [15, 16, 17],
+        oldLineNumbers: [15, 16, 17],
+        newLineNumbers: [null, null, null],
       };
 
       const result = await highlightDiffChunk(chunk, "typescript");
 
-      expect(result.lines[0].lineNumber).toBe(15);
-      expect(result.lines[1].lineNumber).toBe(16);
-      expect(result.lines[2].lineNumber).toBe(17);
+      expect(result.lines[0].oldLineNumber).toBe(15);
+      expect(result.lines[1].oldLineNumber).toBe(16);
+      expect(result.lines[2].oldLineNumber).toBe(17);
+      expect(result.lines[0].newLineNumber).toBeNull();
+      expect(result.lines[1].newLineNumber).toBeNull();
+      expect(result.lines[2].newLineNumber).toBeNull();
       expect(result.lines[0].originalIndex).toBe(10);
       expect(result.lines[1].originalIndex).toBe(11);
       expect(result.lines[2].originalIndex).toBe(12);
@@ -252,7 +272,8 @@ describe("highlightDiffChunk", () => {
         type: "add",
         lines: ["function test() {", "  return 42;", "}"],
         startIndex: 0,
-        lineNumbers: [1, 2, 3],
+        oldLineNumbers: [null, null, null],
+        newLineNumbers: [1, 2, 3],
       };
 
       const result = await highlightDiffChunk(chunk, "typescript");
@@ -273,7 +294,8 @@ describe("highlightDiffChunk", () => {
           type: "add",
           lines: ["def hello():", '    print("world")'],
           startIndex: 0,
-          lineNumbers: [1, 2],
+          oldLineNumbers: [null, null],
+          newLineNumbers: [1, 2],
         };
 
         // Python might not be loaded yet
@@ -290,7 +312,8 @@ describe("highlightDiffChunk", () => {
           type: "add",
           lines: ["some code in unknown language"],
           startIndex: 0,
-          lineNumbers: [1],
+          oldLineNumbers: [null],
+          newLineNumbers: [1],
         };
 
         const result = await highlightDiffChunk(chunk, "totally-fake-language");
@@ -306,14 +329,16 @@ describe("highlightDiffChunk", () => {
           type: "add",
           lines: ["const x = 1;"],
           startIndex: 0,
-          lineNumbers: [1],
+          oldLineNumbers: [null],
+          newLineNumbers: [1],
         };
 
         const chunk2: DiffChunk = {
           type: "add",
           lines: ["const y = 2;"],
           startIndex: 0,
-          lineNumbers: [1],
+          oldLineNumbers: [null],
+          newLineNumbers: [1],
         };
 
         // Highlight both concurrently - should handle race safely

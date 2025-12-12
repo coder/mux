@@ -21,6 +21,9 @@ interface ReviewBlockCoreProps {
   filePath: string;
   lineRange: string;
   code: string;
+  diff?: string;
+  oldStart?: number;
+  newStart?: number;
   comment: string;
   /** Detach from chat (sets status back to pending) */
   onDetach?: () => void;
@@ -38,6 +41,9 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
   filePath,
   lineRange,
   code,
+  diff,
+  oldStart,
+  newStart,
   comment,
   onDetach,
   onComplete,
@@ -48,13 +54,13 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
   const [editValue, setEditValue] = useState(comment);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Format code for diff display - add context markers if needed
-  const diffContent = useMemo(() => {
-    if (!code) return "";
-    const lines = code.split("\n");
-    const hasDiffMarkers = lines.some((l) => /^[+-\s]/.test(l));
-    if (hasDiffMarkers) return code;
-    return lines.map((l) => ` ${l}`).join("\n");
+  // Check if code has embedded line numbers (from review selection)
+  // Format: "12 14 + content" or " 1  2   content"
+  const hasEmbeddedLineNumbers = useMemo(() => {
+    if (!code) return false;
+    const firstLine = code.split("\n")[0] ?? "";
+    // Match: optional digits, space, optional digits, space, then +/-/space
+    return /^\s*\d*\s+\d*\s+[+-\s]/.test(firstLine);
   }, [code]);
 
   const handleStartEdit = useCallback(() => {
@@ -131,16 +137,35 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
       </div>
 
       {/* Code snippet - horizontal scroll for long lines, vertical scroll limited to max-h-64 */}
-      {code && (
+      {(diff ?? code) && (
         <div className="max-h-64 overflow-auto border-b border-[var(--color-review-accent)]/20 text-[11px]">
-          <DiffRenderer
-            content={diffContent}
-            showLineNumbers={false}
-            fontSize="11px"
-            filePath={filePath}
-            maxHeight="none"
-            className="min-w-fit rounded-none"
-          />
+          {diff ? (
+            <DiffRenderer
+              content={diff}
+              showLineNumbers={true}
+              oldStart={oldStart ?? 1}
+              newStart={newStart ?? 1}
+              fontSize="11px"
+              filePath={filePath}
+              maxHeight="none"
+              className="min-w-fit rounded-none"
+            />
+          ) : hasEmbeddedLineNumbers ? (
+            // Legacy: code with embedded line numbers - render as plain monospace
+            <pre className="font-monospace bg-code-bg p-1.5 text-[11px] leading-[1.4] whitespace-pre">
+              {code}
+            </pre>
+          ) : (
+            // Standard diff format (without reliable start numbers) - highlight but omit gutters
+            <DiffRenderer
+              content={code}
+              showLineNumbers={false}
+              fontSize="11px"
+              filePath={filePath}
+              maxHeight="none"
+              className="min-w-fit rounded-none"
+            />
+          )}
         </div>
       )}
 
@@ -238,6 +263,9 @@ export const ReviewBlockFromData: React.FC<ReviewBlockFromDataProps> = ({
       filePath={data.filePath}
       lineRange={data.lineRange}
       code={data.selectedCode}
+      diff={data.selectedDiff}
+      oldStart={data.oldStart}
+      newStart={data.newStart}
       comment={data.userNote}
       onDetach={onDetach}
       onComplete={onComplete}

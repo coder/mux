@@ -4,7 +4,8 @@ export interface DiffChunk {
   type: Exclude<DiffLineType, "header">; // 'add' | 'remove' | 'context'
   lines: string[]; // Line content (without +/- prefix)
   startIndex: number; // Original line index in diff
-  lineNumbers: number[]; // Line numbers for display
+  oldLineNumbers: Array<number | null>;
+  newLineNumbers: Array<number | null>;
 }
 
 /**
@@ -40,21 +41,23 @@ export function groupDiffLines(lines: string[], oldStart: number, newStart: numb
       continue;
     }
 
-    // Determine line type and number
+    // Determine line type and line numbers.
     let type: Exclude<DiffLineType, "header">;
-    let lineNum: number;
+    let oldLineNumber: number | null;
+    let newLineNumber: number | null;
 
     if (firstChar === "+") {
       type = "add";
-      lineNum = newLineNum++;
+      oldLineNumber = null;
+      newLineNumber = newLineNum++;
     } else if (firstChar === "-") {
       type = "remove";
-      lineNum = oldLineNum++;
+      oldLineNumber = oldLineNum++;
+      newLineNumber = null;
     } else {
       type = "context";
-      lineNum = oldLineNum;
-      oldLineNum++;
-      newLineNum++;
+      oldLineNumber = oldLineNum++;
+      newLineNumber = newLineNum++;
     }
 
     // Start new chunk if type changed or no current chunk
@@ -69,13 +72,15 @@ export function groupDiffLines(lines: string[], oldStart: number, newStart: numb
         type,
         lines: [],
         startIndex: i,
-        lineNumbers: [],
+        oldLineNumbers: [],
+        newLineNumbers: [],
       };
     }
 
     // Add line to current chunk (without +/- prefix)
     currentChunk.lines.push(line.slice(1));
-    currentChunk.lineNumbers.push(lineNum);
+    currentChunk.oldLineNumbers.push(oldLineNumber);
+    currentChunk.newLineNumbers.push(newLineNumber);
   }
 
   // Flush final chunk
