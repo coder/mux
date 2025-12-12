@@ -9,13 +9,14 @@ import { setupSimpleChatStory } from "./storyHelpers";
 import { createUserMessage, createAssistantMessage } from "./mockFactory";
 import { within, userEvent, waitFor } from "@storybook/test";
 import { RIGHT_SIDEBAR_TAB_KEY } from "@/common/constants/storage";
+import type { ComponentType } from "react";
 import type { MockSessionUsage } from "../../../.storybook/mocks/orpc";
 
 export default {
   ...appMeta,
   title: "App/RightSidebar",
   decorators: [
-    (Story) => (
+    (Story: ComponentType) => (
       <div style={{ width: 1600, height: "100dvh" }}>
         <Story />
       </div>
