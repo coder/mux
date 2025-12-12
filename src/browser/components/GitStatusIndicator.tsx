@@ -30,7 +30,7 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
     left: 0,
   });
   const hideTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const containerRef = useRef<HTMLButtonElement | null>(null);
+  const containerRef = useRef<HTMLSpanElement | null>(null);
   const trimmedWorkspaceId = workspaceId.trim();
 
   const [mode, setMode] = usePersistedState<GitStatusIndicatorMode>(
@@ -110,7 +110,7 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
     setShowTooltip(false);
   };
 
-  const handleContainerRef = (el: HTMLButtonElement | null) => {
+  const handleContainerRef = (el: HTMLSpanElement | null) => {
     containerRef.current = el;
   };
 

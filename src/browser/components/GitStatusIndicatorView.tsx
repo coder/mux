@@ -18,6 +18,24 @@ const getIndicatorColor = (branch: number): string => {
   }
 };
 
+function formatCountAbbrev(count: number): string {
+  const abs = Math.abs(count);
+
+  if (abs < 1000) {
+    return String(count);
+  }
+
+  if (abs < 1_000_000) {
+    const raw = (abs / 1000).toFixed(1);
+    const normalized = raw.endsWith(".0") ? raw.slice(0, -2) : raw;
+    return `${count < 0 ? "-" : ""}${normalized}k`;
+  }
+
+  const raw = (abs / 1_000_000).toFixed(1);
+  const normalized = raw.endsWith(".0") ? raw.slice(0, -2) : raw;
+  return `${count < 0 ? "-" : ""}${normalized}m`;
+}
+
 export type GitStatusIndicatorMode = "divergence" | "line-delta";
 
 export interface GitStatusIndicatorViewProps {
@@ -38,7 +56,7 @@ export interface GitStatusIndicatorViewProps {
   onTooltipMouseEnter: () => void;
   onTooltipMouseLeave: () => void;
   onToggleMode: (e: React.MouseEvent<HTMLButtonElement>) => void;
-  onContainerRef: (el: HTMLButtonElement | null) => void;
+  onContainerRef: (el: HTMLSpanElement | null) => void;
   /** When true, shows blue pulsing styling to indicate agent is working */
   isWorking?: boolean;
 }
@@ -201,6 +219,8 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   };
 
   // Render tooltip via portal to bypass overflow constraints
+  const toggleLabel = mode === "divergence" ? "Switch to line delta" : "Switch to divergence";
+
   const tooltipElement = (
     <div
       className={cn(
@@ -215,6 +235,17 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
       onMouseEnter={onTooltipMouseEnter}
       onMouseLeave={onTooltipMouseLeave}
     >
+      <div className="border-separator-light mb-2 flex items-center justify-between border-b pb-2">
+        <span className="text-muted-light">View:</span>
+        <button
+          type="button"
+          className="text-muted hover:text-foreground cursor-pointer border-0 bg-transparent p-0 font-mono"
+          onClick={onToggleMode}
+        >
+          {toggleLabel}
+        </button>
+      </div>
+
       {renderTooltipContent()}
     </div>
   );
@@ -223,47 +254,74 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   // Idle: muted/grayscale, Working: original accent colors
   const statusColor = isWorking ? "text-accent" : "text-muted";
   const dirtyColor = isWorking ? "text-git-dirty" : "text-muted";
+  const additionsColor = isWorking ? "text-success-light" : "text-muted";
+  const deletionsColor = isWorking ? "text-warning-light" : "text-muted";
 
-  const toggleLabel = mode === "divergence" ? "Show line delta" : "Show divergence (ahead/behind)";
+  const outgoingHasDelta = gitStatus.outgoingAdditions > 0 || gitStatus.outgoingDeletions > 0;
+  const incomingHasDelta = gitStatus.incomingAdditions > 0 || gitStatus.incomingDeletions > 0;
 
   return (
     <>
-      <button
-        type="button"
+      <span
         ref={onContainerRef}
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
-        onClick={onToggleMode}
         className={cn(
-          "relative mr-1.5 flex items-center gap-1 font-mono text-[11px] transition-colors bg-transparent border-0 p-0",
+          "relative mr-1.5 flex items-center gap-1 font-mono text-[11px] transition-colors",
           statusColor
         )}
-        aria-label={`Git status indicator. ${toggleLabel}.`}
-        title={`Click to toggle view (${toggleLabel})`}
       >
         {mode === "divergence" ? (
           <>
             {gitStatus.ahead > 0 && (
-              <span className="flex items-center font-normal">↑{gitStatus.ahead}</span>
+              <span className="flex items-center font-normal">
+                ↑{formatCountAbbrev(gitStatus.ahead)}
+              </span>
             )}
             {gitStatus.behind > 0 && (
-              <span className="flex items-center font-normal">↓{gitStatus.behind}</span>
+              <span className="flex items-center font-normal">
+                ↓{formatCountAbbrev(gitStatus.behind)}
+              </span>
             )}
           </>
         ) : (
           <>
-            {outgoingLines > 0 && (
-              <span className="flex items-center font-normal">↑{outgoingLines}L</span>
+            {outgoingHasDelta && (
+              <span className="flex items-center gap-1">
+                <span className={cn("font-normal", statusColor)}>↑</span>
+                {gitStatus.outgoingAdditions > 0 && (
+                  <span className={cn("font-normal", additionsColor)}>
+                    +{formatCountAbbrev(gitStatus.outgoingAdditions)}
+                  </span>
+                )}
+                {gitStatus.outgoingDeletions > 0 && (
+                  <span className={cn("font-normal", deletionsColor)}>
+                    -{formatCountAbbrev(gitStatus.outgoingDeletions)}
+                  </span>
+                )}
+              </span>
             )}
-            {incomingLines > 0 && (
-              <span className="flex items-center font-normal">↓{incomingLines}L</span>
+            {incomingHasDelta && (
+              <span className="flex items-center gap-1">
+                <span className={cn("font-normal", statusColor)}>↓</span>
+                {gitStatus.incomingAdditions > 0 && (
+                  <span className={cn("font-normal", additionsColor)}>
+                    +{formatCountAbbrev(gitStatus.incomingAdditions)}
+                  </span>
+                )}
+                {gitStatus.incomingDeletions > 0 && (
+                  <span className={cn("font-normal", deletionsColor)}>
+                    -{formatCountAbbrev(gitStatus.incomingDeletions)}
+                  </span>
+                )}
+              </span>
             )}
           </>
         )}
         {gitStatus.dirty && (
           <span className={cn("flex items-center leading-none font-normal", dirtyColor)}>*</span>
         )}
-      </button>
+      </span>
 
       {createPortal(tooltipElement, document.body)}
     </>
