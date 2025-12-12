@@ -22,8 +22,35 @@ import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { getBashPath } from "@/node/utils/main/bashPath";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { DisposableProcess } from "@/node/utils/disposableExec";
-import { expandTilde } from "./tildeExpansion";
 import { getInitHookPath, createLineBufferedLoggers } from "./initHook";
+import { expandTilde } from "./tildeExpansion";
+
+let cachedNicePath: string | null | undefined;
+
+async function resolveNicePath(): Promise<string | null> {
+  if (cachedNicePath !== undefined) {
+    return cachedNicePath;
+  }
+
+  try {
+    await fsPromises.access("/usr/bin/nice");
+    cachedNicePath = "/usr/bin/nice";
+    return cachedNicePath;
+  } catch {
+    // continue
+  }
+
+  try {
+    await fsPromises.access("/bin/nice");
+    cachedNicePath = "/bin/nice";
+    return cachedNicePath;
+  } catch {
+    // continue
+  }
+
+  cachedNicePath = null;
+  return cachedNicePath;
+}
 
 /**
  * Abstract base class for local runtimes (both WorktreeRuntime and LocalRuntime).
@@ -70,13 +97,7 @@ export abstract class LocalBaseRuntime implements Runtime {
     const bashPath = getBashPath();
 
     const shouldNice = options.niceness !== undefined && !isWindows;
-    const nicePath = shouldNice
-      ? fs.existsSync("/usr/bin/nice")
-        ? "/usr/bin/nice"
-        : fs.existsSync("/bin/nice")
-          ? "/bin/nice"
-          : null
-      : null;
+    const nicePath = shouldNice ? await resolveNicePath() : null;
 
     const spawnCommand = nicePath ?? bashPath;
     const spawnArgs =
