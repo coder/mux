@@ -26,7 +26,7 @@ import {
   createGitStatusOutput,
   type GitStatusFixture,
 } from "./mockFactory";
-import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
+import { createMockORPCClient, type MockSessionUsage } from "../../../.storybook/mocks/orpc";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // WORKSPACE SELECTION
@@ -155,6 +155,8 @@ export interface SimpleChatSetupOptions {
   gitStatus?: GitStatusFixture;
   providersConfig?: ProvidersConfigMap;
   backgroundProcesses?: BackgroundProcessFixture[];
+  /** Session usage data for Costs tab */
+  sessionUsage?: MockSessionUsage;
 }
 
 /**
@@ -184,6 +186,11 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
     ? new Map([[workspaceId, opts.backgroundProcesses]])
     : undefined;
 
+  // Set up session usage map
+  const sessionUsageMap = opts.sessionUsage
+    ? new Map([[workspaceId, opts.sessionUsage]])
+    : undefined;
+
   // Return ORPC client
   return createMockORPCClient({
     projects: groupWorkspacesByProject(workspaces),
@@ -192,6 +199,7 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
     executeBash: createGitStatusExecutor(gitStatus),
     providersConfig: opts.providersConfig,
     backgroundProcesses: bgProcesses,
+    sessionUsage: sessionUsageMap,
   });
 }
 

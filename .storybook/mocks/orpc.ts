@@ -11,6 +11,34 @@ import type { ChatStats } from "@/common/types/chatStats";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 
+/** Session usage data structure matching SessionUsageFileSchema */
+export interface MockSessionUsage {
+  byModel: Record<
+    string,
+    {
+      input: { tokens: number; cost_usd?: number };
+      cached: { tokens: number; cost_usd?: number };
+      cacheCreate: { tokens: number; cost_usd?: number };
+      output: { tokens: number; cost_usd?: number };
+      reasoning: { tokens: number; cost_usd?: number };
+      model?: string;
+    }
+  >;
+  lastRequest?: {
+    model: string;
+    usage: {
+      input: { tokens: number; cost_usd?: number };
+      cached: { tokens: number; cost_usd?: number };
+      cacheCreate: { tokens: number; cost_usd?: number };
+      output: { tokens: number; cost_usd?: number };
+      reasoning: { tokens: number; cost_usd?: number };
+      model?: string;
+    };
+    timestamp: number;
+  };
+  version: 1;
+}
+
 export interface MockORPCClientOptions {
   projects?: Map<string, ProjectConfig>;
   workspaces?: FrontendWorkspaceMetadata[];
@@ -40,6 +68,8 @@ export interface MockORPCClientOptions {
       exitCode?: number;
     }>
   >;
+  /** Session usage data per workspace (for Costs tab) */
+  sessionUsage?: Map<string, MockSessionUsage>;
 }
 
 /**
@@ -69,6 +99,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     providersList = [],
     onProjectRemove,
     backgroundProcesses = new Map(),
+    sessionUsage = new Map(),
   } = options;
 
   const workspaceMap = new Map(workspaces.map((w) => [w.id, w]));
@@ -207,7 +238,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         terminate: async () => ({ success: true, data: undefined }),
         sendToBackground: async () => ({ success: true, data: undefined }),
       },
-      getSessionUsage: async () => undefined,
+      getSessionUsage: async (input: { workspaceId: string }) => sessionUsage.get(input.workspaceId),
     },
     window: {
       setTitle: async () => undefined,
