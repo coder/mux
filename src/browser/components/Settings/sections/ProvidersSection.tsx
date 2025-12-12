@@ -8,6 +8,13 @@ import { useAPI } from "@/browser/contexts/API";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useGateway } from "@/browser/hooks/useGatewayModels";
 import { Button } from "@/browser/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/browser/components/ui/select";
 import { Switch } from "@/browser/components/ui/switch";
 
 interface FieldConfig {
@@ -345,6 +352,46 @@ export function ProvidersSection() {
                   );
                 })}
 
+                {/* OpenAI service tier dropdown */}
+                {provider === "openai" && (
+                  <div className="border-border-light border-t pt-3">
+                    <label className="text-muted mb-1 block text-xs">Service tier</label>
+                    <Select
+                      value={config?.openai?.serviceTier ?? "auto"}
+                      onValueChange={(next) => {
+                        if (!api) return;
+                        if (
+                          next !== "auto" &&
+                          next !== "default" &&
+                          next !== "flex" &&
+                          next !== "priority"
+                        ) {
+                          return;
+                        }
+
+                        updateOptimistically("openai", { serviceTier: next });
+                        void api.providers.setProviderConfig({
+                          provider: "openai",
+                          keyPath: ["serviceTier"],
+                          value: next,
+                        });
+                      }}
+                    >
+                      <SelectTrigger className="w-40">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="auto">auto</SelectItem>
+                        <SelectItem value="default">default</SelectItem>
+                        <SelectItem value="flex">flex</SelectItem>
+                        <SelectItem value="priority">priority</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {!config?.openai?.serviceTier && (
+                      <p className="text-dim mt-1 text-xs">Mux default (not saved): auto</p>
+                    )}
+                  </div>
+                )}
                 {/* Gateway enabled toggle - only for mux-gateway when configured */}
                 {provider === "mux-gateway" && gateway.isConfigured && (
                   <div className="border-border-light flex items-center justify-between border-t pt-3">

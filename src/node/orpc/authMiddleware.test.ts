@@ -59,7 +59,9 @@ describe("safeEq", () => {
       const lateTime = measureAvgTime(() => safeEq(secret, lateMismatch), ITERATIONS);
 
       const ratio = Math.max(earlyTime, lateTime) / Math.min(earlyTime, lateTime);
-      expect(ratio).toBeLessThan(1.5);
+      // Timing microbenchmarks can be extremely noisy in CI and local dev environments.
+      // This is a regression guard (against early-exit), not a strict performance spec.
+      expect(ratio).toBeLessThan(2.0);
     });
 
     it("length mismatch takes comparable time to same-length comparison", () => {

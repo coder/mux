@@ -217,7 +217,7 @@ export function buildProviderOptions(
       disableAutoTruncation,
     });
 
-    const serviceTier = muxProviderOptions?.openai?.serviceTier ?? "priority";
+    const serviceTier = muxProviderOptions?.openai?.serviceTier ?? "auto";
 
     const options: ProviderOptions = {
       openai: {

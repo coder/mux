@@ -83,6 +83,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
       apiKeySet: true,
       baseUrl: "https://custom.endpoint.com",
       models: ["claude-3-opus", "claude-3-sonnet"],
+      serviceTier: "flex",
       aws: {
         region: "ap-northeast-1",
         bearerTokenSet: true,
@@ -101,6 +102,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
     expect(parsed.apiKeySet).toBe(full.apiKeySet);
     expect(parsed.baseUrl).toBe(full.baseUrl);
     expect(parsed.models).toEqual(full.models);
+    expect(parsed.serviceTier).toBe(full.serviceTier);
     expect(parsed.aws).toEqual(full.aws);
     expect(parsed.couponCodeSet).toBe(full.couponCodeSet);
   });
@@ -110,6 +112,10 @@ describe("ProviderConfigInfoSchema conformance", () => {
       anthropic: {
         apiKeySet: true,
         models: ["claude-3-opus"],
+      },
+      openai: {
+        apiKeySet: true,
+        serviceTier: "auto",
       },
       bedrock: {
         apiKeySet: false,

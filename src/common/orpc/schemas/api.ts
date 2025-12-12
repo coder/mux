@@ -70,6 +70,8 @@ export const ProviderConfigInfoSchema = z.object({
   apiKeySet: z.boolean(),
   baseUrl: z.string().optional(),
   models: z.array(z.string()).optional(),
+  /** OpenAI-specific fields */
+  serviceTier: z.enum(["auto", "default", "flex", "priority"]).optional(),
   /** AWS-specific fields (only present for bedrock provider) */
   aws: AWSCredentialStatusSchema.optional(),
   /** Mux Gateway-specific fields */

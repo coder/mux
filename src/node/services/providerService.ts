@@ -51,6 +51,7 @@ export class ProviderService {
         apiKey?: string;
         baseUrl?: string;
         models?: string[];
+        serviceTier?: unknown;
         region?: string;
         bearerToken?: string;
         accessKeyId?: string;
@@ -62,6 +63,18 @@ export class ProviderService {
         baseUrl: config.baseUrl,
         models: config.models,
       };
+
+      // OpenAI-specific fields
+      const serviceTier = config.serviceTier;
+      if (
+        provider === "openai" &&
+        (serviceTier === "auto" ||
+          serviceTier === "default" ||
+          serviceTier === "flex" ||
+          serviceTier === "priority")
+      ) {
+        providerInfo.serviceTier = serviceTier;
+      }
 
       // AWS/Bedrock-specific fields
       if (provider === "bedrock") {
