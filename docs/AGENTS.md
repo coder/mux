@@ -21,9 +21,6 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 ./scripts/wait_pr_checks.sh <pr_number>
 ```
 
-- While waiting on long-running operations (CI, builds, formatting/typecheck/test loops), keep the user informed via `status_set` **with `poll_interval_s`** and a dynamic script (avoid chat spam).
-  - Use a short poll interval (e.g., 5–15s).
-  - Include the PR URL when relevant so it stays clickable.
 - Generally run `wait_pr_checks` after submitting a PR to ensure CI passes.
 - Status decoding: `mergeable=MERGEABLE` clean; `CONFLICTING` needs resolution. `mergeStateStatus=CLEAN` ready, `BLOCKED` waiting for CI, `BEHIND` rebase, `DIRTY` conflicts.
 - If behind: `git fetch origin && git rebase origin/main && git push --force-with-lease`.
