@@ -29,13 +29,34 @@ This means you can make edits in your preferred editor, return to mux, send a me
 
 ## Plan File Location
 
-Plans are stored in a dedicated directory:
+Plans are stored in a dedicated directory under your Mux home:
 
 ```
-~/.mux/plans/<workspace-id>.md
+~/.mux/plans/<project>/<workspace-name>.md
 ```
 
-The file is created when the agent first writes a plan and persists across sessions.
+Notes:
+
+- `<workspace-name>` includes the random suffix (e.g. `feature-x7k2`), so it’s globally unique with high probability.
+
+## ask_user_question (Plan Mode Only)
+
+In plan mode, the agent may call `ask_user_question` to ask up to 4 structured multiple-choice questions when it needs clarification before finalizing a plan.
+
+What you’ll see:
+
+- An inline “tool call card” in the chat with a small form (single-select or multi-select).
+- An always-available **Other** option for free-form answers.
+
+How to respond:
+
+- **Recommended:** answer in the form and click **Submit answers**.
+- **Optional:** you can also just type a normal chat message. This will **cancel** the pending `ask_user_question` tool call and your message will be sent as a regular chat message.
+
+Availability:
+
+- `ask_user_question` is only registered for the agent in **Plan Mode**.
+- In Exec Mode, the agent cannot call `ask_user_question`.
 
 ## UI Features
 
@@ -55,7 +76,7 @@ User: "Add user authentication to the app"
          ▼
 ┌─────────────────────────────────────┐
 │  Agent reads codebase, writes plan  │
-│  to ~/.mux/plans/<id>.md            │
+│  to ~/.mux/plans/<project>/<name>.md│
 └─────────────────────────────────────┘
          │
          ▼
