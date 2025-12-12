@@ -47,7 +47,12 @@ import {
 import type { UIMode } from "@/common/types/mode";
 import type { MuxMessage } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
-import { hasSrcBaseDir, getSrcBaseDir, isSSHRuntime } from "@/common/types/runtime";
+import {
+  hasSrcBaseDir,
+  getSrcBaseDir,
+  isSSHRuntime,
+  isDockerRuntime,
+} from "@/common/types/runtime";
 import { defaultModel, isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
 import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
@@ -1979,17 +1984,19 @@ export class WorkspaceService extends EventEmitter {
     const planPath = getPlanFilePath(metadata.name, metadata.projectName);
     const legacyPlanPath = getLegacyPlanFilePath(workspaceId);
 
-    // For SSH: use $HOME expansion so remote shell resolves to remote home directory
-    // For local: expand tilde locally since shellQuote prevents shell expansion
-    const quotedPlanPath = isSSHRuntime(metadata.runtimeConfig)
+    const isRemoteRuntime =
+      isSSHRuntime(metadata.runtimeConfig) || isDockerRuntime(metadata.runtimeConfig);
+
+    // For SSH/Docker: use $HOME expansion so the runtime shell resolves to the runtime home directory.
+    // For local: expand tilde locally since shellQuote prevents shell expansion.
+    const quotedPlanPath = isRemoteRuntime
       ? expandTildeForSSH(planPath)
       : shellQuote(expandTilde(planPath));
-    const quotedLegacyPlanPath = isSSHRuntime(metadata.runtimeConfig)
+    const quotedLegacyPlanPath = isRemoteRuntime
       ? expandTildeForSSH(legacyPlanPath)
       : shellQuote(expandTilde(legacyPlanPath));
 
-    // SSH runtime: delete via remote shell so $HOME expands on the remote.
-    if (isSSHRuntime(metadata.runtimeConfig)) {
+    if (isRemoteRuntime) {
       const runtime = createRuntime(metadata.runtimeConfig, {
         projectPath: metadata.projectPath,
       });
@@ -2001,8 +2008,16 @@ export class WorkspaceService extends EventEmitter {
           cwd: metadata.projectPath,
           timeout: 10,
         });
-        // Wait for completion so callers can rely on the plan file actually being removed.
-        await execStream.exitCode;
+
+        try {
+          await execStream.stdin.close();
+        } catch {
+          // Ignore stdin-close errors (e.g. already closed).
+        }
+
+        await execStream.exitCode.catch(() => {
+          // Best-effort: ignore failures.
+        });
       } catch {
         // Plan files don't exist or can't be deleted - ignore
       }
