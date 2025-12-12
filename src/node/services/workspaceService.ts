@@ -1130,12 +1130,14 @@ export class WorkspaceService extends EventEmitter {
     });
 
     try {
-      // Use exec to delete files since runtime doesn't have a deleteFile method
-      // Delete both paths in one command for efficiency
-      await runtime.exec(`rm -f ${quotedPlanPath} ${quotedLegacyPlanPath}`, {
+      // Use exec to delete files since runtime doesn't have a deleteFile method.
+      // Delete both paths in one command for efficiency.
+      const execStream = await runtime.exec(`rm -f ${quotedPlanPath} ${quotedLegacyPlanPath}`, {
         cwd: metadata.projectPath,
         timeout: 10,
       });
+      // Wait for completion so callers can rely on the plan file actually being removed.
+      await execStream.exitCode;
     } catch {
       // Plan files don't exist or can't be deleted - ignore
     }
