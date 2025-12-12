@@ -14,7 +14,8 @@ import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
 import { selectWorkspace } from "./storyHelpers";
 import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
-import { within, userEvent, screen } from "@storybook/test";
+import { within, userEvent } from "@storybook/test";
+import { getExperimentKey, EXPERIMENT_IDS } from "@/common/constants/experiments";
 
 export default {
   ...appMeta,
@@ -29,10 +30,20 @@ export default {
 function setupSettingsStory(options: {
   providersConfig?: Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>;
   providersList?: string[];
+  /** Pre-set experiment states in localStorage before render */
+  experiments?: Partial<Record<string, boolean>>;
 }): APIClient {
   const workspaces = [createWorkspace({ id: "ws-1", name: "main", projectName: "my-app" })];
 
   selectWorkspace(workspaces[0]);
+
+  // Pre-set experiment states if provided
+  if (options.experiments) {
+    for (const [experimentId, enabled] of Object.entries(options.experiments)) {
+      const key = getExperimentKey(experimentId as typeof EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
+      window.localStorage.setItem(key, JSON.stringify(enabled));
+    }
+  }
 
   return createMockORPCClient({
     projects: groupWorkspacesByProject(workspaces),
@@ -45,19 +56,21 @@ function setupSettingsStory(options: {
 /** Open settings modal and optionally navigate to a section */
 async function openSettingsToSection(canvasElement: HTMLElement, section?: string): Promise<void> {
   const canvas = within(canvasElement);
+  // Use ownerDocument.body to scope to iframe, not parent Storybook UI
+  const body = within(canvasElement.ownerDocument.body);
 
   // Wait for app to fully load (sidebar with settings button should appear)
   const settingsButton = await canvas.findByTestId("settings-button", {}, { timeout: 10000 });
   await userEvent.click(settingsButton);
 
-  // Wait for dialog to appear (portal renders outside canvasElement)
-  await screen.findByRole("dialog");
+  // Wait for dialog to appear (portal renders outside canvasElement but inside iframe body)
+  await body.findByRole("dialog");
 
   // Navigate to specific section if requested
   if (section && section !== "general") {
     // Capitalize first letter to match the button text (e.g., "experiments" -> "Experiments")
     const sectionLabel = section.charAt(0).toUpperCase() + section.slice(1);
-    const sectionButton = await screen.findByRole("button", {
+    const sectionButton = await body.findByRole("button", {
       name: new RegExp(sectionLabel, "i"),
     });
     await userEvent.click(sectionButton);
@@ -163,18 +176,19 @@ export const Experiments: AppStory = {
   },
 };
 
-/** Experiments section - toggle experiment on */
+/** Experiments section - shows experiment in ON state (pre-enabled via localStorage) */
 export const ExperimentsToggleOn: AppStory = {
-  render: () => <AppWithMocks setup={() => setupSettingsStory({})} />,
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSettingsStory({
+          experiments: { [EXPERIMENT_IDS.POST_COMPACTION_CONTEXT]: true },
+        })
+      }
+    />
+  ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettingsToSection(canvasElement, "experiments");
-
-    // Find and click the switch to toggle it on (dialog is a portal, use screen)
-    const toggle = await screen.findByRole("switch", { name: /Post-Compaction Context/i });
-    await userEvent.click(toggle);
-
-    // Wait for toggle to be checked before Chromatic snapshot
-    await screen.findByRole("switch", { name: /Post-Compaction Context/i, checked: true });
   },
 };
 
