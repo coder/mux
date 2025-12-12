@@ -35,20 +35,16 @@ import type {
   DynamicToolPartAvailable,
 } from "@/common/types/toolParts";
 import { isDynamicToolPart } from "@/common/types/toolParts";
-import { z } from "zod";
 import { createDeltaStorage, type DeltaRecordStorage } from "./StreamingTPSCalculator";
 import { computeRecencyTimestamp } from "./recency";
-import { getStatusStateKey } from "@/common/constants/storage";
 
 // Maximum number of messages to display in the DOM for performance
 // Full history is still maintained internally for token counting and stats
-const AgentStatusSchema = z.object({
-  emoji: z.string().optional(),
-  message: z.string(),
-  url: z.string().optional(),
-});
-
-type AgentStatus = z.infer<typeof AgentStatusSchema>;
+interface AgentStatus {
+  emoji?: string;
+  message: string;
+  url?: string;
+}
 const MAX_DISPLAYED_MESSAGES = 128;
 
 interface StreamingContext {
@@ -116,9 +112,6 @@ export class StreamingMessageAggregator {
   // Last URL set via status_set - kept in memory to reuse when later calls omit url
   private lastStatusUrl: string | undefined = undefined;
 
-  // Workspace ID for localStorage persistence
-  private readonly workspaceId: string | undefined;
-
   // Workspace init hook state (ephemeral, not persisted to history)
   private initState: {
     status: "running" | "success" | "error";
@@ -139,54 +132,9 @@ export class StreamingMessageAggregator {
   // REQUIRED: Backend guarantees every workspace has createdAt via config.ts
   private readonly createdAt: string;
 
-  constructor(createdAt: string, workspaceId?: string) {
+  constructor(createdAt: string, _workspaceId?: string) {
     this.createdAt = createdAt;
-    this.workspaceId = workspaceId;
-    // Load persisted agent status from localStorage
-    if (workspaceId) {
-      const persistedStatus = this.loadPersistedAgentStatus();
-      if (persistedStatus) {
-        this.agentStatus = persistedStatus;
-        this.lastStatusUrl = persistedStatus.url;
-      }
-    }
     this.updateRecency();
-  }
-
-  /** Load persisted agent status from localStorage */
-  private loadPersistedAgentStatus(): AgentStatus | undefined {
-    if (!this.workspaceId) return undefined;
-    try {
-      const stored = localStorage.getItem(getStatusStateKey(this.workspaceId));
-      if (!stored) return undefined;
-      const parsed = AgentStatusSchema.safeParse(JSON.parse(stored));
-      return parsed.success ? parsed.data : undefined;
-    } catch {
-      // Ignore localStorage errors or JSON parse failures
-    }
-    return undefined;
-  }
-
-  /** Persist agent status to localStorage */
-  private savePersistedAgentStatus(status: AgentStatus): void {
-    if (!this.workspaceId) return;
-    const parsed = AgentStatusSchema.safeParse(status);
-    if (!parsed.success) return;
-    try {
-      localStorage.setItem(getStatusStateKey(this.workspaceId), JSON.stringify(parsed.data));
-    } catch {
-      // Ignore localStorage errors
-    }
-  }
-
-  /** Remove persisted agent status from localStorage */
-  private clearPersistedAgentStatus(): void {
-    if (!this.workspaceId) return;
-    try {
-      localStorage.removeItem(getStatusStateKey(this.workspaceId));
-    } catch {
-      // Ignore localStorage errors
-    }
   }
   private invalidateCache(): void {
     this.cachedAllMessages = null;
@@ -338,15 +286,6 @@ export class StreamingMessageAggregator {
             this.processToolResult(part.toolName, part.input, part.output, context);
           }
         }
-      }
-    }
-
-    // If history was compacted away from the last status_set, fall back to persisted status
-    if (!this.agentStatus) {
-      const persistedStatus = this.loadPersistedAgentStatus();
-      if (persistedStatus) {
-        this.agentStatus = persistedStatus;
-        this.lastStatusUrl = persistedStatus.url;
       }
     }
 
@@ -794,7 +733,6 @@ export class StreamingMessageAggregator {
         message: data.status.message,
         ...(effectiveUrl ? { url: effectiveUrl } : {}),
       };
-      this.savePersistedAgentStatus(this.agentStatus);
       this.invalidateCache();
       return;
     }

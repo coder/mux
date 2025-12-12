@@ -198,7 +198,7 @@ export const Comprehensive: AppStory = {
               createStatusTool(
                 "call-4",
                 "echo '🚀 PR #1234 waiting for CI https://github.com/example/repo/pull/1234'",
-                5000
+                5
               ),
             ],
           }),

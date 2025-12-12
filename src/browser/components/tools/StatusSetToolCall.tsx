@@ -24,7 +24,8 @@ export const StatusSetToolCall: React.FC<StatusSetToolCallProps> = ({
 
   const iconEmoji = "📡";
 
-  const summary = `poll=${args.poll_interval_ms}ms: ${args.script.split(/\r?\n/)[0] ?? ""}`;
+  const pollLabel = args.poll_interval_s === undefined ? "once" : `${args.poll_interval_s}s`;
+  const summary = `poll=${pollLabel}: ${args.script.split(/\r?\n/)[0] ?? ""}`;
 
   return (
     <ToolContainer expanded={false}>

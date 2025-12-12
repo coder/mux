@@ -1,5 +1,3 @@
-import { STATUS_MESSAGE_MAX_LENGTH } from "@/common/constants/toolLimits";
-
 export interface ParsedAgentStatus {
   emoji?: string;
   message: string;
@@ -45,10 +43,7 @@ function sanitizeUrl(url: string): string {
  * 2) Extract leading emoji (if present)
  * 3) Truncate AFTER extraction
  */
-export function parseAgentStatusFromLine(
-  rawLine: string,
-  maxLength: number = STATUS_MESSAGE_MAX_LENGTH
-): ParsedAgentStatus {
+export function parseAgentStatusFromLine(rawLine: string, maxLength: number): ParsedAgentStatus {
   let line = rawLine.trim();
 
   // URL extraction (first URL only)

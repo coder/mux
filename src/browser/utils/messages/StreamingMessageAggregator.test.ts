@@ -312,7 +312,7 @@ describe("StreamingMessageAggregator", () => {
             toolCallId: "tool2",
             toolName: "status_set",
             state: "output-available" as const,
-            input: { script: "echo 'Working on it'", poll_interval_ms: 0 },
+            input: { script: "echo 'Working on it'" },
             output: { success: true },
           },
         ],

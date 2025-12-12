@@ -222,7 +222,11 @@ export interface TodoWriteToolResult {
 // Status Set Tool Types
 export interface StatusSetToolArgs {
   script: string;
-  poll_interval_ms: number;
+  /**
+   * Optional polling interval in seconds.
+   * If omitted, mux runs the script once.
+   */
+  poll_interval_s?: number;
 }
 
 // Bash Output Tool Types (read incremental output from background processes)

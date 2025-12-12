@@ -77,7 +77,7 @@ export const createStatusSetTool: ToolFactory = (config: ToolConfiguration) => {
         cwd: config.cwd,
         env,
         script: args.script,
-        pollIntervalMs: args.poll_interval_ms,
+        pollIntervalMs: (args.poll_interval_s ?? 0) * 1000,
       });
 
       return { success: true };

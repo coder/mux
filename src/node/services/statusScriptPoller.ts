@@ -1,5 +1,6 @@
 import type { Runtime } from "@/node/runtime/Runtime";
 import { execBuffered } from "@/node/utils/runtime/helpers";
+import { STATUS_MESSAGE_MAX_LENGTH } from "@/common/constants/toolLimits";
 import {
   parseAgentStatusFromLine,
   type ParsedAgentStatus,
@@ -81,7 +82,7 @@ export class StatusScriptPoller {
         return;
       }
 
-      const parsed = parseAgentStatusFromLine(firstNonEmptyLine);
+      const parsed = parseAgentStatusFromLine(firstNonEmptyLine, STATUS_MESSAGE_MAX_LENGTH);
 
       // Preserve last URL if subsequent updates omit it.
       const url = parsed.url ?? this.lastUrl;

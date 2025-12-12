@@ -39,7 +39,6 @@ describe("status_set tool", () => {
       await tool.execute!(
         {
           script: "echo '🚀 PR #123 waiting https://github.com/example/repo/pull/123'",
-          poll_interval_ms: 0,
         },
         mockToolCallOptions
       )

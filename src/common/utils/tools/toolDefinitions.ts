@@ -211,8 +211,8 @@ export const TOOL_DEFINITIONS = {
       "  The URL is removed from the displayed message to avoid redundancy.\n" +
       "\n" +
       "POLLING:\n" +
-      "- poll_interval_ms = 0 runs once (static status via `echo`)\n" +
-      "- poll_interval_ms > 0 re-runs the script to keep the status fresh (e.g., PR merge/check status)\n" +
+      "- poll_interval_s omitted: runs once (static status via `echo`)\n" +
+      "- poll_interval_s set: re-runs the script to keep the status fresh (e.g., PR merge/check status)\n" +
       "\n" +
       "NOTE: Workspace status persists after streaming completes and is not cleared on new user turns.",
     schema: z
@@ -221,18 +221,15 @@ export const TOOL_DEFINITIONS = {
           .string()
           .min(1)
           .describe("Shell script to execute. Print a single status line to stdout."),
-        poll_interval_ms: z
+        poll_interval_s: z
           .number()
           .int()
-          .min(0)
-          .max(60_000)
-          .describe("Polling interval in milliseconds. 0 runs once."),
+          .min(1)
+          .max(30)
+          .optional()
+          .describe("Optional polling interval in seconds. If omitted, runs once."),
       })
-      .strict()
-      .refine((data) => data.poll_interval_ms === 0 || data.poll_interval_ms >= 1000, {
-        message: "poll_interval_ms must be 0 or at least 1000",
-        path: ["poll_interval_ms"],
-      }),
+      .strict(),
   },
   bash_output: {
     description:

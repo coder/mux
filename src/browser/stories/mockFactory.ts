@@ -292,14 +292,14 @@ export function createTerminalTool(
 export function createStatusTool(
   toolCallId: string,
   script: string,
-  pollIntervalMs: number
+  pollIntervalS?: number
 ): MuxPart {
   return {
     type: "dynamic-tool",
     toolCallId,
     toolName: "status_set",
     state: "output-available",
-    input: { script, poll_interval_ms: pollIntervalMs },
+    input: { script, ...(pollIntervalS !== undefined ? { poll_interval_s: pollIntervalS } : {}) },
     output: { success: true },
   };
 }
