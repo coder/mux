@@ -1,3 +1,4 @@
+import type { ImagePart } from "@/common/orpc/types";
 import type { ImageAttachment } from "@/browser/components/ImageAttachments";
 
 /**
@@ -22,6 +23,46 @@ function getMimeTypeFromExtension(filename: string): string {
     svg: "image/svg+xml",
   };
   return mimeTypes[ext ?? ""] ?? "image/png";
+}
+
+/**
+ * Convert ImageAttachment[] → ImagePart[] for API calls.
+ *
+ * Kept in imageHandling to ensure creation + send flows stay aligned.
+ */
+export function imageAttachmentsToImageParts(
+  attachments: ImageAttachment[],
+  options?: { validate?: boolean }
+): ImagePart[] {
+  const validate = options?.validate ?? false;
+
+  return attachments.map((img, index) => {
+    if (validate) {
+      // Validate before sending to help with debugging
+      if (!img.url || typeof img.url !== "string") {
+        console.error(
+          `Image attachment [${index}] has invalid url:`,
+          typeof img.url,
+          (img as { url?: unknown }).url
+        );
+      }
+      if (typeof img.url === "string" && !img.url.startsWith("data:")) {
+        console.error(`Image attachment [${index}] url is not a data URL:`, img.url.slice(0, 100));
+      }
+      if (!img.mediaType || typeof img.mediaType !== "string") {
+        console.error(
+          `Image attachment [${index}] has invalid mediaType:`,
+          typeof img.mediaType,
+          (img as { mediaType?: unknown }).mediaType
+        );
+      }
+    }
+
+    return {
+      url: img.url,
+      mediaType: img.mediaType,
+    };
+  });
 }
 
 /**

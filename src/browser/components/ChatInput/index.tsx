@@ -60,6 +60,7 @@ import { ImageAttachments, type ImageAttachment } from "../ImageAttachments";
 import {
   extractImagesFromClipboard,
   extractImagesFromDrop,
+  imageAttachmentsToImageParts,
   processImageFiles,
 } from "@/browser/utils/imageHandling";
 
@@ -241,10 +242,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     () => createTokenCountResource(tokenCountPromise),
     [tokenCountPromise]
   );
-  const hasTypedText = input.trim().length > 0;
-  const hasImages = imageAttachments.length > 0;
-  const hasReviews = attachedReviews.length > 0;
-  const canSend = (hasTypedText || hasImages || hasReviews) && !disabled && !isSending;
+
   // Setter for model - updates localStorage directly so useSendMessageOptions picks it up
   const setPreferredModel = useCallback(
     (model: string) => {
@@ -271,6 +269,12 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           message: "",
         }
   );
+
+  const isSendInFlight = variant === "creation" ? creationState.isSending : isSending;
+  const hasTypedText = input.trim().length > 0;
+  const hasImages = imageAttachments.length > 0;
+  const hasReviews = attachedReviews.length > 0;
+  const canSend = (hasTypedText || hasImages || hasReviews) && !disabled && !isSendInFlight;
 
   // When entering creation mode, initialize the project-scoped model to the
   // default so previous manual picks don't bleed into new creation flows.
@@ -640,12 +644,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
     // Route to creation handler for creation variant
     if (variant === "creation") {
       // Creation variant: simple message send + workspace creation
-      setIsSending(true);
-      // Convert image attachments to image parts
-      const creationImageParts = imageAttachments.map((img) => ({
-        url: img.url,
-        mediaType: img.mediaType,
-      }));
+      const creationImageParts = imageAttachmentsToImageParts(imageAttachments);
       const ok = await creationState.handleSend(
         messageText,
         creationImageParts.length > 0 ? creationImageParts : undefined
@@ -659,7 +658,6 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
           inputRef.current.style.height = "";
         }
       }
-      setIsSending(false);
       return;
     }
 
@@ -1066,33 +1064,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
 
       try {
         // Prepare image parts if any
-        const imageParts = imageAttachments.map((img, index) => {
-          // Validate before sending to help with debugging
-          if (!img.url || typeof img.url !== "string") {
-            console.error(
-              `Image attachment [${index}] has invalid url:`,
-              typeof img.url,
-              img.url?.slice(0, 50)
-            );
-          }
-          if (!img.url?.startsWith("data:")) {
-            console.error(
-              `Image attachment [${index}] url is not a data URL:`,
-              img.url?.slice(0, 100)
-            );
-          }
-          if (!img.mediaType || typeof img.mediaType !== "string") {
-            console.error(
-              `Image attachment [${index}] has invalid mediaType:`,
-              typeof img.mediaType,
-              img.mediaType
-            );
-          }
-          return {
-            url: img.url,
-            mediaType: img.mediaType,
-          };
-        });
+        const imageParts = imageAttachmentsToImageParts(imageAttachments, { validate: true });
 
         // When editing a /compact command, regenerate the actual summarization request
         let actualMessageText = messageText;
@@ -1308,7 +1280,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
   const placeholder = (() => {
     // Creation variant has simple placeholder
     if (variant === "creation") {
-      return `Type your first message to create a workspace... (${formatKeybind(KEYBINDS.SEND_MESSAGE)} to send, Esc to cancel)`;
+      return `Type your first message to create a workspace... (${formatKeybind(KEYBINDS.SEND_MESSAGE)} to send, ${formatKeybind(KEYBINDS.CANCEL)} to cancel)`;
     }
 
     // Workspace variant placeholders
@@ -1353,17 +1325,9 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
       {variant === "creation" && (
         <CreationCenterContent
           projectName={props.projectName}
-          isSending={creationState.isSending || isSending}
-          workspaceName={
-            creationState.isSending || isSending
-              ? creationState.creatingWithIdentity?.name
-              : undefined
-          }
-          workspaceTitle={
-            creationState.isSending || isSending
-              ? creationState.creatingWithIdentity?.title
-              : undefined
-          }
+          isSending={isSendInFlight}
+          workspaceName={isSendInFlight ? creationState.creatingWithIdentity?.name : undefined}
+          workspaceTitle={isSendInFlight ? creationState.creatingWithIdentity?.title : undefined}
         />
       )}
 
@@ -1444,7 +1408,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
               onRuntimeModeChange={creationState.setRuntimeMode}
               onSetDefaultRuntime={creationState.setDefaultRuntimeMode}
               onSshHostChange={creationState.setSshHost}
-              disabled={creationState.isSending || isSending}
+              disabled={isSendInFlight}
               projectName={props.projectName}
               nameState={creationState.nameState}
             />
@@ -1486,7 +1450,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                   onEscapeInNormalMode={handleEscapeInNormalMode}
                   suppressKeys={showCommandSuggestions ? COMMAND_SUGGESTION_KEYS : undefined}
                   placeholder={placeholder}
-                  disabled={!editingMessage && (disabled || isSending)}
+                  disabled={!editingMessage && (disabled || isSendInFlight)}
                   aria-label={editingMessage ? "Edit your last message" : "Message Claude"}
                   aria-autocomplete="list"
                   aria-controls={
@@ -1505,7 +1469,7 @@ export const ChatInput: React.FC<ChatInputProps> = (props) => {
                     shouldShowUI={voiceInput.shouldShowUI}
                     requiresSecureContext={voiceInput.requiresSecureContext}
                     onToggle={voiceInput.toggle}
-                    disabled={disabled || isSending}
+                    disabled={disabled || isSendInFlight}
                     mode={mode}
                   />
                 </div>
