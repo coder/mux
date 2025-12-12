@@ -78,6 +78,17 @@ export function getMuxSessionsDir(rootDir?: string): string {
 }
 
 /**
+ * Get the directory where user-installed extensions live.
+ * Example: ~/.mux/ext
+ *
+ * @param rootDir - Optional root directory (defaults to getMuxHome())
+ */
+export function getMuxExtDir(rootDir?: string): string {
+  const root = rootDir ?? getMuxHome();
+  return join(root, "ext");
+}
+
+/**
  * Get the directory where plan files are stored.
  * Example: ~/.mux/plans/workspace-id.md
  *
