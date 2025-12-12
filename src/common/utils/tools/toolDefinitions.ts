@@ -212,7 +212,12 @@ export const TOOL_DEFINITIONS = {
       "\n" +
       "POLLING:\n" +
       "- poll_interval_s omitted: runs once (static status via `echo`)\n" +
-      "- poll_interval_s set: re-runs the script to keep the status fresh (e.g., PR merge/check status)\n" +
+      "- poll_interval_s set: re-runs the script to keep the status fresh\n" +
+      "\n" +
+      "BEST PRACTICES:\n" +
+      "- For long-running / multi-step work, prefer poll_interval_s (e.g., 5-15s) and a *dynamic* script so the user sees progress without extra chat messages.\n" +
+      "- Keep the script fast and single-line (it runs with a short timeout).\n" +
+      "- Include the most relevant URL (PR, CI run, etc.) so it's always clickable.\n" +
       "\n" +
       "NOTE: Workspace status persists after streaming completes and is not cleared on new user turns.",
     schema: z
@@ -227,7 +232,10 @@ export const TOOL_DEFINITIONS = {
           .min(1)
           .max(30)
           .optional()
-          .describe("Optional polling interval in seconds. If omitted, runs once."),
+          .describe(
+            "Optional polling interval in seconds. If omitted, runs once. " +
+              "Use this for tasks that take time (builds/tests/CI wait) so the status updates automatically."
+          ),
       })
       .strict(),
   },
