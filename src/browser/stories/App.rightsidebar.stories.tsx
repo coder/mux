@@ -14,6 +14,13 @@ import type { MockSessionUsage } from "../../../.storybook/mocks/orpc";
 export default {
   ...appMeta,
   title: "App/RightSidebar",
+  decorators: [
+    (Story) => (
+      <div style={{ width: 1600, height: "100dvh" }}>
+        <Story />
+      </div>
+    ),
+  ],
   parameters: {
     ...appMeta.parameters,
     chromatic: {
@@ -77,9 +84,12 @@ export const CostsTab: AppStory = {
     const canvas = within(canvasElement);
 
     // Session usage is fetched async via WorkspaceStore; wait to avoid snapshot races.
-    await waitFor(() => {
-      canvas.getByRole("tab", { name: /costs.*\$0\.56/i });
-    });
+    await waitFor(
+      () => {
+        canvas.getByRole("tab", { name: /costs.*\$0\.56/i });
+      },
+      { timeout: 5000 }
+    );
   },
 };
 
@@ -109,9 +119,12 @@ export const ReviewTab: AppStory = {
     const canvas = within(canvasElement);
 
     // Wait for session usage to land (avoid theme/mode snapshots diverging on timing).
-    await waitFor(() => {
-      canvas.getByRole("tab", { name: /costs.*\$0\.42/i });
-    });
+    await waitFor(
+      () => {
+        canvas.getByRole("tab", { name: /costs.*\$0\.42/i });
+      },
+      { timeout: 5000 }
+    );
 
     const reviewTab = canvas.getByRole("tab", { name: /^review/i });
     await userEvent.click(reviewTab);
