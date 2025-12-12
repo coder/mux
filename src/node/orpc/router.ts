@@ -455,6 +455,14 @@ export const router = (authToken?: string) => {
             push(message);
           });
 
+          // Rehydrate persisted status_set polling and send a snapshot for renderer reloads.
+          // (agent-status-update is not persisted in chat.jsonl)
+          await context.workspaceService.ensureStatusSetRunning(input.workspaceId);
+          const statusSnapshot = context.workspaceService.getStatusSetSnapshot(input.workspaceId);
+          if (statusSnapshot) {
+            push(statusSnapshot);
+          }
+
           // 2. Replay history (sends caught-up at the end)
           await session.replayHistory(({ message }) => {
             push(message);

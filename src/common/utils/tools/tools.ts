@@ -16,6 +16,7 @@ import { log } from "@/node/services/log";
 import type { Runtime } from "@/node/runtime/Runtime";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
+import type { StatusSetService } from "@/node/services/statusSetService";
 import type { UIMode } from "@/common/types/mode";
 import type { FileState } from "@/node/services/agentSession";
 
@@ -50,6 +51,12 @@ export interface ToolConfiguration {
   emitAIEvent?: (event: string, payload: unknown) => void;
   /** Workspace ID for tracking background processes and plan storage */
   workspaceId?: string;
+  /**
+   * StatusSetService - persists and rehydrates status_set polling across restarts.
+   * Provided by AIService so the status_set tool stays thin.
+   */
+  statusSetService?: StatusSetService;
+
   /** Callback to record file state for external edit detection (plan files) */
   recordFileState?: (filePath: string, state: FileState) => void;
 }

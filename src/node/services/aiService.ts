@@ -26,6 +26,7 @@ import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import { secretsToRecord } from "@/common/types/secrets";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import { StatusSetService } from "@/node/services/statusSetService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { FileState, EditedFileAttachment } from "@/node/services/agentSession";
 import { log } from "./log";
@@ -278,6 +279,7 @@ export class AIService extends EventEmitter {
   private readonly initStateManager: InitStateManager;
   private readonly mockModeEnabled: boolean;
   private readonly mockScenarioPlayer?: MockScenarioPlayer;
+  private readonly statusSetService: StatusSetService;
   private readonly backgroundProcessManager?: BackgroundProcessManager;
 
   constructor(
@@ -296,6 +298,9 @@ export class AIService extends EventEmitter {
     this.historyService = historyService;
     this.partialService = partialService;
     this.initStateManager = initStateManager;
+    this.statusSetService = new StatusSetService(this.config, (event, payload) =>
+      this.emit(event, payload)
+    );
     this.backgroundProcessManager = backgroundProcessManager;
     this.streamManager = new StreamManager(historyService, partialService, sessionUsageService);
     void this.ensureSessionsDir();
@@ -362,6 +367,17 @@ export class AIService extends EventEmitter {
     }
   }
 
+  async ensureStatusSetRunning(workspaceId: string): Promise<void> {
+    await this.statusSetService.ensureRunning(workspaceId);
+  }
+
+  getStatusSetSnapshot(workspaceId: string) {
+    return this.statusSetService.getSnapshot(workspaceId);
+  }
+
+  stopStatusSet(workspaceId: string): void {
+    this.statusSetService.stop(workspaceId);
+  }
   isMockModeEnabled(): boolean {
     return this.mockModeEnabled;
   }
@@ -1153,6 +1169,7 @@ export class AIService extends EventEmitter {
             metadata.name
           ),
           runtimeTempDir,
+          statusSetService: this.statusSetService,
           emitAIEvent: (event, payload) => this.emit(event, payload),
           backgroundProcessManager: this.backgroundProcessManager,
           // Plan/exec mode configuration for plan file access.

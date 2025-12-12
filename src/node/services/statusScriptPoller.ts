@@ -1,6 +1,7 @@
 import type { Runtime } from "@/node/runtime/Runtime";
 import { execBuffered } from "@/node/utils/runtime/helpers";
 import { STATUS_MESSAGE_MAX_LENGTH } from "@/common/constants/toolLimits";
+import { log } from "@/node/services/log";
 import {
   parseAgentStatusFromLine,
   type ParsedAgentStatus,
@@ -23,7 +24,7 @@ export class StatusScriptPoller {
   private lastEmitted: ParsedAgentStatus | undefined;
   private lastScript: string | undefined;
 
-  constructor(private readonly onStatus: (status: ParsedAgentStatus) => void) {}
+  constructor(private readonly onStatus: (status: ParsedAgentStatus) => void | Promise<void>) {}
 
   stop(): void {
     if (this.timer) {
@@ -119,9 +120,14 @@ export class StatusScriptPoller {
       }
       this.lastEmitted = nextStatus;
 
-      this.onStatus(nextStatus);
-    } catch {
+      await this.onStatus(nextStatus);
+    } catch (error) {
       // Ignore status script errors; keep last known status.
+      // Only log in debug mode to avoid noisy console output for user scripts.
+      log.debug("status_set: status script failed", {
+        workspaceId: config.workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     } finally {
       this.running = false;
     }

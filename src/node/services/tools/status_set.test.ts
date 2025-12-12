@@ -1,8 +1,13 @@
 import { describe, it, expect } from "bun:test";
+import * as fs from "fs/promises";
+import * as path from "path";
 import type { ToolCallOptions } from "ai";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
 import { createStatusSetTool } from "./status_set";
+import { StatusSetService } from "@/node/services/statusSetService";
+import { Config } from "@/node/config";
+import { TestTempDir } from "./testHelpers";
 
 async function waitFor(predicate: () => boolean, timeoutMs = 500): Promise<void> {
   const start = Date.now();
@@ -16,23 +21,36 @@ async function waitFor(predicate: () => boolean, timeoutMs = 500): Promise<void>
 }
 
 describe("status_set tool", () => {
-  const emitted: Array<{ event: string; payload: unknown }> = [];
-
-  const mockConfig: ToolConfiguration = {
-    cwd: "/tmp",
-    runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
-    runtimeTempDir: "/tmp",
-    workspaceId: "test-workspace",
-    emitAIEvent: (event, payload) => emitted.push({ event, payload }),
-  };
-
   const mockToolCallOptions: ToolCallOptions = {
     toolCallId: "test-call-id",
     messages: [],
   };
 
-  it("registers a script status and emits agent-status-update", async () => {
-    emitted.length = 0;
+  it("registers a script status, persists it, and rehydrates snapshot", async () => {
+    using tempRoot = new TestTempDir("status-set-root");
+    using tempProject = new TestTempDir("status-set-project");
+
+    const emitted: Array<{ event: string; payload: unknown }> = [];
+
+    const config = new Config(tempRoot.path);
+    // Ensure sessions dir exists for SessionFileManager
+    await fs.mkdir(config.sessionsDir, { recursive: true });
+
+    const statusSetService = new StatusSetService(config, (event, payload) => {
+      emitted.push({ event, payload });
+    });
+
+    const workspaceId = "test-workspace";
+
+    // Tool calls run in a real runtime context. Use LocalRuntime for deterministic cwd.
+    const mockConfig: ToolConfiguration = {
+      cwd: tempProject.path,
+      runtime: createRuntime({ type: "local" }, { projectPath: tempProject.path }),
+      runtimeTempDir: tempProject.path,
+      workspaceId,
+      statusSetService,
+    };
+
     const tool = createStatusSetTool(mockConfig);
 
     expect(
@@ -59,11 +77,32 @@ describe("status_set tool", () => {
     };
 
     expect(payload.type).toBe("agent-status-update");
-    expect(payload.workspaceId).toBe("test-workspace");
+    expect(payload.workspaceId).toBe(workspaceId);
     expect(payload.status).toEqual({
       emoji: "🚀",
       message: "PR #123 waiting",
       url: "https://github.com/example/repo/pull/123",
+    });
+
+    // Persisted state should include the script, and lastStatus for restart robustness.
+    const persistedPath = path.join(config.getSessionDir(workspaceId), "status_set.json");
+    const persistedRaw = await fs.readFile(persistedPath, "utf-8");
+    const persisted = JSON.parse(persistedRaw) as {
+      script: string;
+      lastStatus?: { message: string; url?: string; emoji?: string };
+    };
+
+    expect(persisted.script).toContain("PR #123");
+    expect(persisted.lastStatus).toEqual(payload.status);
+
+    // Simulate restart: new service instance should load snapshot from disk.
+    const statusSetService2 = new StatusSetService(config, () => undefined);
+    await statusSetService2.ensureRunning(workspaceId);
+
+    expect(statusSetService2.getSnapshot(workspaceId)).toEqual({
+      type: "agent-status-update",
+      workspaceId,
+      status: payload.status,
     });
   });
 });

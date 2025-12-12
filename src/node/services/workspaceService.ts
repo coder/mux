@@ -288,6 +288,16 @@ export class WorkspaceService extends EventEmitter {
     return session;
   }
 
+  async ensureStatusSetRunning(workspaceId: string): Promise<void> {
+    await this.aiService.ensureStatusSetRunning(workspaceId);
+  }
+
+  getStatusSetSnapshot(workspaceId: string): WorkspaceChatMessage | null {
+    return (
+      (this.aiService.getStatusSetSnapshot(workspaceId) as WorkspaceChatMessage | null) ?? null
+    );
+  }
+
   public disposeSession(workspaceId: string): void {
     const session = this.sessions.get(workspaceId);
     if (!session) {
@@ -301,6 +311,8 @@ export class WorkspaceService extends EventEmitter {
       this.sessionSubscriptions.delete(workspaceId);
     }
 
+    // Stop any status_set pollers for this workspace to avoid leaks.
+    this.aiService.stopStatusSet(workspaceId);
     session.dispose();
     this.sessions.delete(workspaceId);
   }
