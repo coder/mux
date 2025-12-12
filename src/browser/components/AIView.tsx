@@ -181,6 +181,13 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const [expandedBashGroups, setExpandedBashGroups] = useState<Set<string>>(new Set());
 
   // Extract state from workspace state
+
+  // Keep a ref to the latest workspace state so event handlers (passed to memoized children)
+  // can stay referentially stable during streaming while still reading fresh data.
+  const workspaceStateRef = useRef(workspaceState);
+  useEffect(() => {
+    workspaceStateRef.current = workspaceState;
+  }, [workspaceState]);
   const { messages, canInterrupt, isCompacting, loading, currentModel } = workspaceState;
 
   // Apply message transformations:
@@ -203,11 +210,9 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Get active stream message ID for token counting
   const activeStreamMessageId = aggregator?.getActiveStreamMessageId();
 
-  const autoCompactionResult = checkAutoCompaction(
-    workspaceUsage,
-    pendingModel,
-    use1M,
-    autoCompactionThreshold / 100
+  const autoCompactionResult = useMemo(
+    () => checkAutoCompaction(workspaceUsage, pendingModel, use1M, autoCompactionThreshold / 100),
+    [workspaceUsage, pendingModel, use1M, autoCompactionThreshold]
   );
 
   // Show warning when: shouldShowWarning flag is true AND not currently compacting
@@ -265,7 +270,16 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
   // Handler for review notes from Code Review tab - adds review (starts attached)
   // Depend only on addReview (not whole reviews object) to keep callback stable
-  const { addReview } = reviews;
+  const { addReview, checkReview } = reviews;
+
+  const handleCheckReviews = useCallback(
+    (ids: string[]) => {
+      for (const id of ids) {
+        checkReview(id);
+      }
+    },
+    [checkReview]
+  );
   const handleReviewNote = useCallback(
     (data: ReviewNoteData) => {
       addReview(data);
@@ -310,31 +324,47 @@ const AIViewInner: React.FC<AIViewProps> = ({
   }, [api, workspaceId, workspaceState?.queuedMessage, workspaceState?.canInterrupt]);
 
   const handleEditLastUserMessage = useCallback(async () => {
-    if (!workspaceState) return;
+    const current = workspaceStateRef.current;
+    if (!current) return;
 
-    if (workspaceState.queuedMessage) {
-      await handleEditQueuedMessage();
+    if (current.queuedMessage) {
+      const queuedMessage = current.queuedMessage;
+
+      await api?.workspace.clearQueue({ workspaceId });
+      chatInputAPI.current?.restoreText(queuedMessage.content);
+
+      // Restore images if present
+      if (queuedMessage.imageParts && queuedMessage.imageParts.length > 0) {
+        chatInputAPI.current?.restoreImages(queuedMessage.imageParts);
+      }
       return;
     }
 
     // Otherwise, edit last user message
-    const transformedMessages = mergeConsecutiveStreamErrors(workspaceState.messages);
+    const transformedMessages = mergeConsecutiveStreamErrors(current.messages);
     const lastUserMessage = [...transformedMessages]
       .reverse()
       .find((msg): msg is Extract<DisplayedMessage, { type: "user" }> => msg.type === "user");
-    if (lastUserMessage) {
-      setEditingMessage({ id: lastUserMessage.historyId, content: lastUserMessage.content });
-      setAutoScroll(false); // Show jump-to-bottom indicator
 
-      // Scroll to the message being edited
-      requestAnimationFrame(() => {
-        const element = contentRef.current?.querySelector(
-          `[data-message-id="${lastUserMessage.historyId}"]`
-        );
-        element?.scrollIntoView({ behavior: "smooth", block: "center" });
-      });
+    if (!lastUserMessage) {
+      return;
     }
-  }, [workspaceState, contentRef, setAutoScroll, handleEditQueuedMessage]);
+
+    setEditingMessage({ id: lastUserMessage.historyId, content: lastUserMessage.content });
+    setAutoScroll(false); // Show jump-to-bottom indicator
+
+    // Scroll to the message being edited
+    requestAnimationFrame(() => {
+      const element = contentRef.current?.querySelector(
+        `[data-message-id="${lastUserMessage.historyId}"]`
+      );
+      element?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }, [api, workspaceId, chatInputAPI, contentRef, setAutoScroll]);
+
+  const handleEditLastUserMessageClick = useCallback(() => {
+    void handleEditLastUserMessage();
+  }, [handleEditLastUserMessage]);
 
   const handleCancelEdit = useCallback(() => {
     setEditingMessage(undefined);
@@ -740,14 +770,14 @@ const AIViewInner: React.FC<AIViewProps> = ({
           isCompacting={isCompacting}
           editingMessage={editingMessage}
           onCancelEdit={handleCancelEdit}
-          onEditLastUserMessage={() => void handleEditLastUserMessage()}
+          onEditLastUserMessage={handleEditLastUserMessageClick}
           canInterrupt={canInterrupt}
           onReady={handleChatInputReady}
           autoCompactionCheck={autoCompactionResult}
           attachedReviews={reviews.attachedReviews}
           onDetachReview={reviews.detachReview}
           onDetachAllReviews={reviews.detachAllAttached}
-          onCheckReviews={(ids) => ids.forEach((id) => reviews.checkReview(id))}
+          onCheckReviews={handleCheckReviews}
           onUpdateReviewNote={reviews.updateReviewNote}
         />
       </div>
