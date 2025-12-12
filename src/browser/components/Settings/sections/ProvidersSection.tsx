@@ -16,6 +16,13 @@ import {
   SelectValue,
 } from "@/browser/components/ui/select";
 import { Switch } from "@/browser/components/ui/switch";
+import {
+  HelpIndicator,
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/browser/components/ui/tooltip";
 
 interface FieldConfig {
   key: string;
@@ -355,7 +362,30 @@ export function ProvidersSection() {
                 {/* OpenAI service tier dropdown */}
                 {provider === "openai" && (
                   <div className="border-border-light border-t pt-3">
-                    <label className="text-muted mb-1 block text-xs">Service tier</label>
+                    <div className="mb-1 flex items-center gap-1">
+                      <label className="text-muted block text-xs">Service tier</label>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <HelpIndicator aria-label="OpenAI service tier help">?</HelpIndicator>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <div className="max-w-[260px]">
+                              <div className="font-semibold">OpenAI service tier</div>
+                              <div className="mt-1">
+                                <span className="font-semibold">auto</span>: standard behavior.
+                              </div>
+                              <div>
+                                <span className="font-semibold">priority</span>: lower latency, higher cost.
+                              </div>
+                              <div>
+                                <span className="font-semibold">flex</span>: lower cost, higher latency.
+                              </div>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
                     <Select
                       value={config?.openai?.serviceTier ?? "auto"}
                       onValueChange={(next) => {
@@ -387,9 +417,6 @@ export function ProvidersSection() {
                         <SelectItem value="priority">priority</SelectItem>
                       </SelectContent>
                     </Select>
-                    {!config?.openai?.serviceTier && (
-                      <p className="text-dim mt-1 text-xs">Mux default (not saved): auto</p>
-                    )}
                   </div>
                 )}
                 {/* Gateway enabled toggle - only for mux-gateway when configured */}
