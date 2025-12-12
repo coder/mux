@@ -38,6 +38,35 @@ function isMediaItem(item: unknown): item is MediaItem {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+type WorkspaceEvent = ReturnType<StreamCollector["getEvents"]>[number];
+type ToolCallEndEvent = Extract<WorkspaceEvent, { type: "tool-call-end" }>;
+
+async function waitForToolCallEnd(
+  collector: StreamCollector,
+  toolName: string,
+  timeoutMs: number
+): Promise<ToolCallEndEvent | undefined> {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeoutMs) {
+    const toolCallEnds = collector
+      .getEvents()
+      .filter((e): e is ToolCallEndEvent => e.type === "tool-call-end");
+
+    const match = toolCallEnds.find((e) => e.toolName === toolName);
+    if (match) {
+      return match;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  return undefined;
+}
 function isTextItem(item: unknown): item is TextItem {
   return (
     typeof item === "object" &&
@@ -240,15 +269,20 @@ describeIntegration("MCP server integration with model", () => {
         await collector.waitForEvent("stream-end", 120000);
         assertStreamSuccess(collector);
 
-        // Find screenshot tool result
-        const events = collector.getEvents();
-        const toolCallEnds = events.filter(
-          (e): e is Extract<typeof e, { type: "tool-call-end" }> => e.type === "tool-call-end"
+        // Find screenshot tool result.
+        //
+        // NOTE: tool-call-end can occasionally arrive *after* stream-end, so poll briefly.
+        const screenshotResult = await waitForToolCallEnd(
+          collector,
+          "chrome_take_screenshot",
+          20000
         );
-        const screenshotResult = toolCallEnds.find((e) => e.toolName === "chrome_take_screenshot");
 
         // Debug: log tool calls if screenshot not found
         if (!screenshotResult) {
+          const toolCallEnds = collector
+            .getEvents()
+            .filter((e): e is ToolCallEndEvent => e.type === "tool-call-end");
           const toolNames = toolCallEnds.map((e) => e.toolName);
           const deltas = collector.getDeltas();
           const responseText = extractTextFromEvents(deltas);
