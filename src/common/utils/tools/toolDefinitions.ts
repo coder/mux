@@ -17,6 +17,71 @@ import { TOOL_EDIT_WARNING } from "@/common/types/tools";
 
 import { zodToJsonSchema } from "zod-to-json-schema";
 
+// -----------------------------------------------------------------------------
+// ask_user_question (plan-mode interactive questions)
+// -----------------------------------------------------------------------------
+
+export const AskUserQuestionOptionSchema = z
+  .object({
+    label: z.string().min(1),
+    description: z.string().min(1),
+  })
+  .strict();
+
+export const AskUserQuestionQuestionSchema = z
+  .object({
+    question: z.string().min(1),
+    header: z.string().min(1).max(12),
+    options: z.array(AskUserQuestionOptionSchema).min(2).max(4),
+    multiSelect: z.boolean(),
+  })
+  .strict()
+  .superRefine((question, ctx) => {
+    const labels = question.options.map((o) => o.label);
+    const labelSet = new Set(labels);
+    if (labelSet.size !== labels.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Option labels must be unique within a question",
+        path: ["options"],
+      });
+    }
+
+    // Claude Code provides "Other" automatically; do not include it explicitly.
+    if (labels.some((label) => label.trim().toLowerCase() === "other")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Do not include an 'Other' option; it is provided automatically",
+        path: ["options"],
+      });
+    }
+  });
+
+export const AskUserQuestionToolArgsSchema = z
+  .object({
+    questions: z.array(AskUserQuestionQuestionSchema).min(1).max(4),
+    // Optional prefilled answers (Claude Code supports this, though Mux typically won't use it)
+    answers: z.record(z.string(), z.string()).optional(),
+  })
+  .strict()
+  .superRefine((args, ctx) => {
+    const questionTexts = args.questions.map((q) => q.question);
+    const questionTextSet = new Set(questionTexts);
+    if (questionTextSet.size !== questionTexts.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Question text must be unique across questions",
+        path: ["questions"],
+      });
+    }
+  });
+
+export const AskUserQuestionToolResultSchema = z
+  .object({
+    questions: z.array(AskUserQuestionQuestionSchema),
+    answers: z.record(z.string(), z.string()),
+  })
+  .strict();
 const FILE_EDIT_FILE_PATH = z
   .string()
   .describe("Path to the file to edit (absolute or relative to the current workspace)");
@@ -159,6 +224,13 @@ export const TOOL_DEFINITIONS = {
         message: "Provide only one of before or after (not both).",
         path: ["before"],
       }),
+  },
+  ask_user_question: {
+    description:
+      "Ask 1–4 multiple-choice questions (with optional multi-select) and wait for the user's answers. " +
+      "This tool is intended for plan mode and should be used when proceeding requires clarification. " +
+      "Each question must include 2–4 options; an 'Other' choice is provided automatically.",
+    schema: AskUserQuestionToolArgsSchema,
   },
   propose_plan: {
     description:
@@ -344,6 +416,7 @@ export function getAvailableTools(modelString: string): string[] {
     "file_edit_replace_string",
     // "file_edit_replace_lines", // DISABLED: causes models to break repo state
     "file_edit_insert",
+    "ask_user_question",
     "propose_plan",
     "todo_write",
     "todo_read",

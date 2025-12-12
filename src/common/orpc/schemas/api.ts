@@ -237,6 +237,16 @@ export const workspace = {
     }),
     output: ResultSchema(z.object({}), SendMessageErrorSchema),
   },
+  answerAskUserQuestion: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+        toolCallId: z.string(),
+        answers: z.record(z.string(), z.string()),
+      })
+      .strict(),
+    output: ResultSchema(z.void(), z.string()),
+  },
   resumeStream: {
     input: z.object({
       workspaceId: z.string(),

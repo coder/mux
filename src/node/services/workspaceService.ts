@@ -5,6 +5,7 @@ import assert from "@/common/utils/assert";
 import type { Config } from "@/node/config";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
+import { askUserQuestionManager } from "@/node/services/askUserQuestionManager";
 import { log } from "@/node/services/log";
 import { AgentSession } from "@/node/services/agentSession";
 import type { HistoryService } from "@/node/services/historyService";
@@ -977,6 +978,23 @@ export class WorkspaceService extends EventEmitter {
       void this.updateRecencyTimestamp(workspaceId);
 
       if (this.aiService.isStreaming(workspaceId) && !options?.editMessageId) {
+        const pendingAskUserQuestion = askUserQuestionManager.getLatestPending(workspaceId);
+        if (pendingAskUserQuestion) {
+          try {
+            askUserQuestionManager.cancel(
+              workspaceId,
+              pendingAskUserQuestion.toolCallId,
+              "User responded in chat; questions canceled"
+            );
+          } catch (error) {
+            log.debug("Failed to cancel pending ask_user_question", {
+              workspaceId,
+              toolCallId: pendingAskUserQuestion.toolCallId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+
         session.queueMessage(message, options);
         return Ok(undefined);
       }
@@ -1087,6 +1105,20 @@ export class WorkspaceService extends EventEmitter {
       const errorMessage = error instanceof Error ? error.message : String(error);
       log.error("Unexpected error in interruptStream handler:", error);
       return Err(`Failed to interrupt stream: ${errorMessage}`);
+    }
+  }
+
+  answerAskUserQuestion(
+    workspaceId: string,
+    toolCallId: string,
+    answers: Record<string, string>
+  ): Result<void> {
+    try {
+      askUserQuestionManager.answer(workspaceId, toolCallId, answers);
+      return Ok(undefined);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return Err(errorMessage);
     }
   }
 

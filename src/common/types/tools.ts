@@ -4,7 +4,12 @@
  */
 
 import type { z } from "zod";
-import type { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+import type {
+  AskUserQuestionOptionSchema,
+  AskUserQuestionQuestionSchema,
+  AskUserQuestionToolResultSchema,
+  TOOL_DEFINITIONS,
+} from "@/common/utils/tools/toolDefinitions";
 
 // Bash Tool Types
 export interface BashToolArgs {
@@ -161,10 +166,26 @@ export const NOTE_READ_FILE_AGAIN_RETRY = "Read the file again and retry.";
 export const TOOL_EDIT_WARNING =
   "Always check the tool result before proceeding with other operations.";
 
+// Generic tool error shape emitted via streamManager on tool-error parts.
+export interface ToolErrorResult {
+  success: false;
+  error: string;
+}
 export type FileEditToolArgs =
   | FileEditReplaceStringToolArgs
   | FileEditReplaceLinesToolArgs
   | FileEditInsertToolArgs;
+
+// Ask User Question Tool Types
+// Args derived from schema (avoid drift)
+export type AskUserQuestionToolArgs = z.infer<typeof TOOL_DEFINITIONS.ask_user_question.schema>;
+
+export type AskUserQuestionOption = z.infer<typeof AskUserQuestionOptionSchema>;
+export type AskUserQuestionQuestion = z.infer<typeof AskUserQuestionQuestionSchema>;
+
+export type AskUserQuestionToolSuccessResult = z.infer<typeof AskUserQuestionToolResultSchema>;
+
+export type AskUserQuestionToolResult = AskUserQuestionToolSuccessResult | ToolErrorResult;
 
 // Propose Plan Tool Types
 // Args derived from schema

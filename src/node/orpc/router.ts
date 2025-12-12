@@ -350,6 +350,22 @@ export const router = (authToken?: string) => {
 
           return { success: true, data: {} };
         }),
+      answerAskUserQuestion: t
+        .input(schemas.workspace.answerAskUserQuestion.input)
+        .output(schemas.workspace.answerAskUserQuestion.output)
+        .handler(({ context, input }) => {
+          const result = context.workspaceService.answerAskUserQuestion(
+            input.workspaceId,
+            input.toolCallId,
+            input.answers
+          );
+
+          if (!result.success) {
+            return { success: false, error: result.error };
+          }
+
+          return { success: true, data: undefined };
+        }),
       resumeStream: t
         .input(schemas.workspace.resumeStream.input)
         .output(schemas.workspace.resumeStream.output)

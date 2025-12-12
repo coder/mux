@@ -270,6 +270,112 @@ export const Streaming: AppStory = {
   ),
 };
 
+/** Streaming/working state with ask_user_question pending */
+export const AskUserQuestionPending: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupStreamingChatStory({
+          messages: [
+            createUserMessage("msg-1", "Please implement the feature", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 3000,
+            }),
+          ],
+          streamingMessageId: "msg-2",
+          historySequence: 2,
+          streamText: "I have a few clarifying questions.",
+          pendingTool: {
+            toolCallId: "call-ask-1",
+            toolName: "ask_user_question",
+            args: {
+              questions: [
+                {
+                  question: "Which approach should we take?",
+                  header: "Approach",
+                  options: [
+                    { label: "A", description: "Approach A" },
+                    { label: "B", description: "Approach B" },
+                  ],
+                  multiSelect: false,
+                },
+                {
+                  question: "Which platforms do we need to support?",
+                  header: "Platforms",
+                  options: [
+                    { label: "macOS", description: "Apple macOS" },
+                    { label: "Windows", description: "Microsoft Windows" },
+                    { label: "Linux", description: "Linux desktops" },
+                  ],
+                  multiSelect: true,
+                },
+              ],
+            },
+          },
+          gitStatus: { dirty: 1 },
+        })
+      }
+    />
+  ),
+};
+
+/** Completed ask_user_question tool call */
+export const AskUserQuestionCompleted: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          messages: [
+            createUserMessage("msg-1", "Please implement the feature", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 60000,
+            }),
+            createAssistantMessage("msg-2", "I asked some questions.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 55000,
+              toolCalls: [
+                createGenericTool(
+                  "call-ask-1",
+                  "ask_user_question",
+                  {
+                    questions: [
+                      {
+                        question: "Which approach should we take?",
+                        header: "Approach",
+                        options: [
+                          { label: "A", description: "Approach A" },
+                          { label: "B", description: "Approach B" },
+                        ],
+                        multiSelect: false,
+                      },
+                    ],
+                  },
+                  {
+                    questions: [
+                      {
+                        question: "Which approach should we take?",
+                        header: "Approach",
+                        options: [
+                          { label: "A", description: "Approach A" },
+                          { label: "B", description: "Approach B" },
+                        ],
+                        multiSelect: false,
+                      },
+                    ],
+                    answers: {
+                      "Which approach should we take?": "A",
+                    },
+                  }
+                ),
+              ],
+            }),
+          ],
+        })
+      }
+    />
+  ),
+};
+
 /** Generic tool call with JSON-highlighted arguments and results */
 export const GenericTool: AppStory = {
   render: () => (

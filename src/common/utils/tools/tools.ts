@@ -7,6 +7,7 @@ import { createBashBackgroundTerminateTool } from "@/node/services/tools/bash_ba
 import { createFileEditReplaceStringTool } from "@/node/services/tools/file_edit_replace_string";
 // DISABLED: import { createFileEditReplaceLinesTool } from "@/node/services/tools/file_edit_replace_lines";
 import { createFileEditInsertTool } from "@/node/services/tools/file_edit_insert";
+import { createAskUserQuestionTool } from "@/node/services/tools/ask_user_question";
 import { createProposePlanTool } from "@/node/services/tools/propose_plan";
 import { createTodoWriteTool, createTodoReadTool } from "@/node/services/tools/todo";
 import { createStatusSetTool } from "@/node/services/tools/status_set";
@@ -126,6 +127,7 @@ export async function getToolsForModel(
 
   // Non-runtime tools execute immediately (no init wait needed)
   const nonRuntimeTools: Record<string, Tool> = {
+    ...(config.mode === "plan" ? { ask_user_question: createAskUserQuestionTool(config) } : {}),
     propose_plan: createProposePlanTool(config),
     todo_write: createTodoWriteTool(config),
     todo_read: createTodoReadTool(config),
