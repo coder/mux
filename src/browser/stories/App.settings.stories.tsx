@@ -14,7 +14,7 @@ import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
 import { selectWorkspace } from "./storyHelpers";
 import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
-import { within, waitFor, userEvent } from "@storybook/test";
+import { within, userEvent, screen } from "@storybook/test";
 
 export default {
   ...appMeta,
@@ -47,43 +47,20 @@ async function openSettingsToSection(canvasElement: HTMLElement, section?: strin
   const canvas = within(canvasElement);
 
   // Wait for app to fully load (sidebar with settings button should appear)
-  // Use longer timeout since app initialization can take time
   const settingsButton = await canvas.findByTestId("settings-button", {}, { timeout: 10000 });
   await userEvent.click(settingsButton);
 
-  // Wait for modal to appear - Radix Dialog uses a portal so we need to search the entire document
-  const body = within(document.body);
-  await waitFor(
-    () => {
-      const modal = body.getByRole("dialog");
-      if (!modal) throw new Error("Settings modal not found");
-    },
-    { timeout: 5000 }
-  );
+  // Wait for dialog to appear (portal renders outside canvasElement)
+  await screen.findByRole("dialog");
 
   // Navigate to specific section if requested
   if (section && section !== "general") {
-    const modal = body.getByRole("dialog");
-    const modalCanvas = within(modal);
-
-    // Use findByRole with name to get the section button - this has built-in waiting
     // Capitalize first letter to match the button text (e.g., "experiments" -> "Experiments")
     const sectionLabel = section.charAt(0).toUpperCase() + section.slice(1);
-    const sectionButton = await modalCanvas.findByRole("button", {
+    const sectionButton = await screen.findByRole("button", {
       name: new RegExp(sectionLabel, "i"),
     });
     await userEvent.click(sectionButton);
-
-    // Wait for section content to be visible (the section header shows current section name)
-    await waitFor(
-      () => {
-        const sectionHeader = modal.querySelector(".text-foreground.text-sm.font-medium");
-        if (!sectionHeader?.textContent?.toLowerCase().includes(section.toLowerCase())) {
-          throw new Error(`Section "${section}" not yet active`);
-        }
-      },
-      { timeout: 3000 }
-    );
   }
 }
 
@@ -192,17 +169,12 @@ export const ExperimentsToggleOn: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettingsToSection(canvasElement, "experiments");
 
-    // Find and click the switch to toggle it on
-    const body = within(document.body);
-    const modal = body.getByRole("dialog");
-    const modalCanvas = within(modal);
-
-    // Find the experiment toggle by its aria-label (set in ExperimentsSection.tsx)
-    const toggle = await modalCanvas.findByRole("switch", { name: /Post-Compaction Context/i });
+    // Find and click the switch to toggle it on (dialog is a portal, use screen)
+    const toggle = await screen.findByRole("switch", { name: /Post-Compaction Context/i });
     await userEvent.click(toggle);
 
     // Wait for toggle to be checked before Chromatic snapshot
-    await modalCanvas.findByRole("switch", { name: /Post-Compaction Context/i, checked: true });
+    await screen.findByRole("switch", { name: /Post-Compaction Context/i, checked: true });
   },
 };
 
