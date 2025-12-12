@@ -205,17 +205,27 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
 
       return (
         <div ref={containerRef} className="relative flex items-center gap-1">
-          {gatewayActive && (
+          {gateway.canToggleModel(value) && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <GatewayIcon
-                  className="text-accent h-3 w-3 shrink-0"
-                  active
-                  role="img"
-                  aria-label="Using Mux Gateway"
-                />
+                <button
+                  type="button"
+                  onClick={() => gateway.toggleModelGateway(value)}
+                  className="flex items-center justify-center"
+                  aria-label={gatewayActive ? "Disable Mux Gateway" : "Enable Mux Gateway"}
+                >
+                  <GatewayIcon
+                    className={cn(
+                      "h-3 w-3 shrink-0 transition-colors",
+                      gatewayActive ? "text-accent" : "text-muted-light hover:text-accent"
+                    )}
+                    active={gatewayActive}
+                  />
+                </button>
               </TooltipTrigger>
-              <TooltipContent align="center">Using Mux Gateway</TooltipContent>
+              <TooltipContent align="center">
+                {gatewayActive ? "Using Mux Gateway (click to disable)" : "Enable Mux Gateway"}
+              </TooltipContent>
             </Tooltip>
           )}
           <Tooltip>

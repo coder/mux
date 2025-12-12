@@ -1,4 +1,4 @@
-import React from "react";
+import React, { forwardRef } from "react";
 
 interface GatewayIconProps extends React.SVGProps<SVGSVGElement> {
   className?: string;
@@ -10,11 +10,12 @@ interface GatewayIconProps extends React.SVGProps<SVGSVGElement> {
  * Gateway icon - represents routing through Mux Gateway.
  * Circle with M logo. Active state adds outer ring.
  */
-export function GatewayIcon(props: GatewayIconProps) {
+export const GatewayIcon = forwardRef<SVGSVGElement, GatewayIconProps>((props, ref) => {
   const { active, ...svgProps } = props;
 
   return (
     <svg
+      ref={ref}
       xmlns="http://www.w3.org/2000/svg"
       viewBox="0 0 24 24"
       fill="none"
@@ -32,4 +33,6 @@ export function GatewayIcon(props: GatewayIconProps) {
       <path d="M8 16V8l4 5 4-5v8" />
     </svg>
   );
-}
+});
+
+GatewayIcon.displayName = "GatewayIcon";
