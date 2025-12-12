@@ -38,9 +38,11 @@ export interface RenderWithBackendOptions extends Omit<RenderOptions, "wrapper">
  * With pre-existing env (for setup before render):
  * ```tsx
  * const env = await createBrowserTestEnv();
- * await env.orpc.projects.create({ projectPath: '/some/path' });
  * const { cleanup, getByText } = await renderWithBackend({ env });
  * ```
+ *
+ * Note: tests should prefer UI-driven setup. `env.orpc` exists for rare cases where
+ * the UI cannot reasonably reach a state.
  */
 export async function renderWithBackend(
   options?: RenderWithBackendOptions

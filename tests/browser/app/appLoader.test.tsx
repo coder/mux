@@ -7,16 +7,15 @@
 
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
-import { shouldRunIntegrationTests } from "../testUtils";
+import { shouldRunIntegrationTests } from "../../testUtils";
 import {
   renderWithBackend,
   createTempGitRepo,
   cleanupTempGitRepo,
   waitForAppLoad,
   addProjectViaUI,
-  expandProject,
   getProjectName,
-} from "./harness";
+} from "../harness";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
@@ -76,39 +75,6 @@ describeIntegration("AppLoader React Integration", () => {
       }
     });
 
-    test("workspace appears under project when expanded", async () => {
-      const user = userEvent.setup();
-      const gitRepo = await createTempGitRepo();
-      const { cleanup, env, ...queries } = await renderWithBackend();
-      try {
-        await waitForAppLoad(queries);
-
-        // Add project via UI
-        await addProjectViaUI(user, queries, gitRepo);
-        const projectName = getProjectName(gitRepo);
-
-        // Create workspace via oRPC (UI flow requires sending a chat message)
-        const workspaceResult = await env.orpc.workspace.create({
-          projectPath: gitRepo,
-          branchName: "test-branch",
-          trunkBranch: "main",
-        });
-        expect(workspaceResult.success).toBe(true);
-        if (!workspaceResult.success) throw new Error("Workspace creation failed");
-
-        // Expand project via UI
-        await expandProject(user, queries, projectName);
-
-        // Workspace should be visible
-        const workspaceElement = await queries.findByRole("button", {
-          name: `Select workspace ${workspaceResult.metadata.name}`,
-        });
-        expect(workspaceElement).toBeInTheDocument();
-      } finally {
-        await cleanupTempGitRepo(gitRepo);
-        await cleanup();
-      }
-    });
   });
 
   describe("User Interactions", () => {

@@ -17,10 +17,15 @@ type Queries = Pick<
   | "findByText"
   | "findByTestId"
   | "findByPlaceholderText"
+  | "queryByPlaceholderText"
   | "queryByRole"
   | "queryByText"
   | "getByRole"
 >;
+
+function escapeForRegex(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 /**
  * Wait for the app to finish loading (loading screen disappears).
@@ -118,6 +123,34 @@ export async function addProjectViaUI(
 }
 
 /**
+ * Ensure a project is expanded in the sidebar (no-op if already expanded).
+ */
+export async function ensureProjectExpanded(
+  user: UserEvent,
+  queries: Queries,
+  projectName: string
+): Promise<void> {
+  const expandLabel = `Expand project ${projectName}`;
+  const collapseLabel = `Collapse project ${projectName}`;
+
+  if (queries.queryByRole("button", { name: collapseLabel })) {
+    return;
+  }
+
+  const expandButton = queries.queryByRole("button", { name: expandLabel });
+  if (expandButton) {
+    await user.click(expandButton);
+  }
+
+  await waitFor(
+    () => {
+      expect(queries.queryByRole("button", { name: collapseLabel })).toBeTruthy();
+    },
+    { timeout: 5000 }
+  );
+}
+
+/**
  * Expand a project in the sidebar to reveal its workspaces.
  */
 export async function expandProject(
@@ -204,8 +237,19 @@ export async function selectWorkspace(
     // Already expanded, continue
   }
 
-  // Click the workspace
-  const workspaceButton = await queries.findByRole("button", {
+  // Wait for the workspace to be ready (not in "creating" state).
+  await waitFor(
+    () => {
+      expect(
+        queries.queryByRole("button", {
+          name: `Select workspace ${workspaceName}`,
+        })
+      ).toBeTruthy();
+    },
+    { timeout: 30000 }
+  );
+
+  const workspaceButton = queries.getByRole("button", {
     name: `Select workspace ${workspaceName}`,
   });
   await user.click(workspaceButton);
@@ -230,8 +274,18 @@ export async function removeWorkspaceViaUI(
     // Already expanded, continue
   }
 
-  // Click the remove button
-  const removeButton = await queries.findByRole("button", {
+  await waitFor(
+    () => {
+      expect(
+        queries.queryByRole("button", {
+          name: `Remove workspace ${workspaceName}`,
+        })
+      ).toBeTruthy();
+    },
+    { timeout: 30000 }
+  );
+
+  const removeButton = queries.getByRole("button", {
     name: `Remove workspace ${workspaceName}`,
   });
   await user.click(removeButton);
@@ -246,12 +300,18 @@ export async function removeWorkspaceViaUI(
     // No modal appeared, removal was immediate
   }
 
+  const workspaceLabel = new RegExp(
+    `^(select|creating|deleting) workspace ${escapeForRegex(workspaceName)}$`,
+    "i"
+  );
+
   // Wait for workspace to disappear
-  await waitFor(() => {
-    expect(
-      queries.queryByRole("button", { name: `Select workspace ${workspaceName}` })
-    ).toBeNull();
-  });
+  await waitFor(
+    () => {
+      expect(queries.queryByRole("button", { name: workspaceLabel })).toBeNull();
+    },
+    { timeout: 30000 }
+  );
 }
 
 /**
@@ -278,8 +338,184 @@ export async function clickNewChat(
 }
 
 /**
+ * A workspace created through the UI.
+ */
+export type CreatedWorkspace = {
+  workspaceId: string;
+  workspaceTitle: string;
+};
+
+function getWorkspaceButtons(): HTMLButtonElement[] {
+  return Array.from(document.querySelectorAll("button[data-workspace-id]")).filter(
+    (button): button is HTMLButtonElement => {
+      const label = button.getAttribute("aria-label") ?? "";
+      return /^(select|creating) workspace /i.test(label);
+    }
+  );
+}
+
+function getWorkspaceTitleFromAriaLabel(label: string): string {
+  return label.replace(/^(select|creating) workspace\s+/i, "");
+}
+
+/**
+ * Create a workspace via the UI by opening the creation view, setting the workspace
+ * name manually (to avoid requiring name-generation), and sending the first message.
+ */
+const DEFAULT_WORKSPACE_CREATION_PROMPTS = [
+  "What's in README.md?",
+  "What files are in the current directory?",
+  "Explain quicksort algorithm step by step",
+  "Create a file called test.txt with 'hello' in it",
+  "Now read that file",
+  "What did it contain?",
+  "Let's summarize the current branches.",
+] as const;
+
+let defaultWorkspacePromptIndex = 0;
+
+function getDefaultWorkspaceCreationPrompt(): string {
+  const prompt =
+    DEFAULT_WORKSPACE_CREATION_PROMPTS[
+      defaultWorkspacePromptIndex % DEFAULT_WORKSPACE_CREATION_PROMPTS.length
+    ];
+  defaultWorkspacePromptIndex += 1;
+  return prompt;
+}
+
+export async function createWorkspaceViaUI(
+  user: UserEvent,
+  queries: Queries,
+  projectName: string,
+  options: {
+    workspaceName: string;
+    firstMessage?: string;
+  }
+): Promise<CreatedWorkspace> {
+  const firstMessage = options.firstMessage ?? getDefaultWorkspaceCreationPrompt();
+
+  const previousHash = window.location.hash;
+
+  // Open creation UI
+  await clickNewChat(user, queries, projectName);
+
+  // Disable auto-naming by focusing the name input.
+  const nameInput = await queries.findByPlaceholderText(/workspace-name/i);
+  await user.click(nameInput);
+  await user.clear(nameInput);
+  await user.type(nameInput, options.workspaceName);
+
+  // Send the first message (this triggers workspace creation).
+  const messageInput = await queries.findByPlaceholderText(
+    /type your first message to create a workspace/i
+  );
+  await user.click(messageInput);
+  await user.type(messageInput, firstMessage);
+
+  const sendButton = await queries.findByRole("button", { name: "Send message" });
+  await user.click(sendButton);
+
+  await waitFor(
+    () => {
+      expect(window.location.hash).toMatch(/^#workspace=/);
+      expect(window.location.hash).not.toBe(previousHash);
+    },
+    { timeout: 30000 }
+  );
+
+  const match = window.location.hash.match(/^#workspace=(.*)$/);
+  if (!match) {
+    throw new Error(`Expected workspace hash, got: ${window.location.hash}`);
+  }
+
+  const workspaceId = decodeURIComponent(match[1]);
+
+  // Wait for the stream to fully settle so the test doesn't leak async work into
+  // subsequent tests (MockScenarioPlayer schedules delayed events).
+  await waitFor(
+    () => {
+      const input = queries.queryByPlaceholderText(/type a message/i);
+      expect(input).toBeTruthy();
+      const placeholder = input?.getAttribute("placeholder")?.toLowerCase() ?? "";
+      expect(placeholder).toContain("to send");
+    },
+    { timeout: 30000 }
+  );
+
+  return {
+    workspaceId,
+    workspaceTitle: document.title.split(" - ")[0] ?? "",
+  };
+
+}
+
+export async function selectWorkspaceById(
+  user: UserEvent,
+  workspaceId: string
+): Promise<void> {
+  await waitFor(
+    () => {
+      const button = document.querySelector(
+        `[data-workspace-id="${workspaceId}"][aria-label^="Select workspace"]`
+      );
+      expect(button).toBeTruthy();
+    },
+    { timeout: 30000 }
+  );
+
+  const button = document.querySelector(
+    `[data-workspace-id="${workspaceId}"][aria-label^="Select workspace"]`
+  ) as HTMLElement;
+  await user.click(button);
+}
+
+export async function removeWorkspaceById(
+  user: UserEvent,
+  queries: Queries,
+  workspaceId: string
+): Promise<void> {
+  await waitFor(
+    () => {
+      const removeButton = document.querySelector(
+        `button[data-workspace-id="${workspaceId}"][aria-label^="Remove workspace"]`
+      );
+      expect(removeButton).toBeTruthy();
+    },
+    { timeout: 30000 }
+  );
+
+  const removeButton = document.querySelector(
+    `button[data-workspace-id="${workspaceId}"][aria-label^="Remove workspace"]`
+  ) as HTMLButtonElement;
+  await user.click(removeButton);
+
+  // If a force delete confirmation modal appears, click it.
+  try {
+    const modal = await queries.findByRole("dialog");
+    if (modal.textContent?.includes("Force delete")) {
+      const forceDeleteButton = within(modal).getByRole("button", {
+        name: /force delete/i,
+      });
+      await user.click(forceDeleteButton);
+    }
+  } catch {
+    // No modal, continue
+  }
+
+  await waitFor(
+    () => {
+      expect(
+        document.querySelector(`button[data-workspace-id="${workspaceId}"]`)
+      ).toBeNull();
+    },
+    { timeout: 30000 }
+  );
+}
+
+/**
  * Get the project name from a full path.
  */
 export function getProjectName(projectPath: string): string {
   return projectPath.split("/").pop()!;
 }
+

@@ -64,6 +64,10 @@ function createMockBrowserWindow(): BrowserWindow {
  */
 export async function createBrowserTestEnv(): Promise<BrowserTestEnv> {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-browser-test-"));
+  // Prevent browser UI tests from making real network calls for AI.
+  // This keeps tests hermetic even if the environment has provider credentials.
+  const previousMockAI = process.env.MUX_MOCK_AI;
+  process.env.MUX_MOCK_AI = "1";
 
   const config = new Config(tempDir);
   const mockWindow = createMockBrowserWindow();
@@ -105,6 +109,13 @@ export async function createBrowserTestEnv(): Promise<BrowserTestEnv> {
     }
 
     const maxRetries = 3;
+
+    // Restore process env to avoid leaking mock mode across unrelated tests.
+    if (previousMockAI === undefined) {
+      delete process.env.MUX_MOCK_AI;
+    } else {
+      process.env.MUX_MOCK_AI = previousMockAI;
+    }
     for (let i = 0; i < maxRetries; i++) {
       try {
         await fs.rm(tempDir, { recursive: true, force: true });
