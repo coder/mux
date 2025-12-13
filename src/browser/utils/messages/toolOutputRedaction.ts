@@ -11,6 +11,7 @@
  */
 
 import type {
+  AskUserQuestionToolSuccessResult,
   FileEditInsertToolResult,
   FileEditReplaceStringToolResult,
   FileEditReplaceLinesToolResult,
@@ -103,9 +104,46 @@ function redactFileEditInsert(output: unknown): unknown {
   return output;
 }
 
+function isAskUserQuestionToolSuccessResult(val: unknown): val is AskUserQuestionToolSuccessResult {
+  if (!val || typeof val !== "object") return false;
+  const record = val as Record<string, unknown>;
+
+  if (!Array.isArray(record.questions)) return false;
+  if (!record.answers || typeof record.answers !== "object") return false;
+
+  // answers is Record<string,string>
+  for (const [k, v] of Object.entries(record.answers as Record<string, unknown>)) {
+    if (typeof k !== "string" || typeof v !== "string") return false;
+  }
+
+  return true;
+}
+
+function redactAskUserQuestion(output: unknown): unknown {
+  const unwrapped = unwrapJsonContainer(output);
+  const val = unwrapped.value;
+
+  if (!isAskUserQuestionToolSuccessResult(val)) {
+    return output;
+  }
+
+  const pairs = Object.entries(val.answers)
+    .map(([question, answer]) => `"${question}"="${answer}"`)
+    .join(", ");
+
+  const summary =
+    pairs.length > 0
+      ? `User has answered your questions: ${pairs}. You can now continue with the user's answers in mind.`
+      : "User has answered your questions. You can now continue with the user's answers in mind.";
+
+  return rewrapJsonContainer(unwrapped.wrapped, summary);
+}
+
 // Public API - registry entrypoint. Add new tools here as needed.
 export function redactToolOutput(toolName: string, output: unknown): unknown {
   switch (toolName) {
+    case "ask_user_question":
+      return redactAskUserQuestion(output);
     case "file_edit_replace_string":
     case "file_edit_replace_lines":
       return redactFileEditReplace(output);

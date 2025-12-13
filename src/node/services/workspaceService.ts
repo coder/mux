@@ -5,6 +5,7 @@ import assert from "@/common/utils/assert";
 import type { Config } from "@/node/config";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
+import { askUserQuestionManager } from "@/node/services/askUserQuestionManager";
 import { log } from "@/node/services/log";
 import { AgentSession } from "@/node/services/agentSession";
 import type { HistoryService } from "@/node/services/historyService";
@@ -931,6 +932,23 @@ export class WorkspaceService extends EventEmitter {
       void this.updateRecencyTimestamp(workspaceId);
 
       if (this.aiService.isStreaming(workspaceId) && !options?.editMessageId) {
+        const pendingAskUserQuestion = askUserQuestionManager.getLatestPending(workspaceId);
+        if (pendingAskUserQuestion) {
+          try {
+            askUserQuestionManager.cancel(
+              workspaceId,
+              pendingAskUserQuestion.toolCallId,
+              "User responded in chat; questions canceled"
+            );
+          } catch (error) {
+            log.debug("Failed to cancel pending ask_user_question", {
+              workspaceId,
+              toolCallId: pendingAskUserQuestion.toolCallId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+
         session.queueMessage(message, options);
         return Ok(undefined);
       }
@@ -1044,6 +1062,20 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  answerAskUserQuestion(
+    workspaceId: string,
+    toolCallId: string,
+    answers: Record<string, string>
+  ): Result<void> {
+    try {
+      askUserQuestionManager.answer(workspaceId, toolCallId, answers);
+      return Ok(undefined);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return Err(errorMessage);
+    }
+  }
+
   clearQueue(workspaceId: string): Result<void> {
     try {
       const session = this.getOrCreateSession(workspaceId);
@@ -1078,21 +1110,32 @@ export class WorkspaceService extends EventEmitter {
       ? expandTildeForSSH(legacyPlanPath)
       : shellQuote(expandTilde(legacyPlanPath));
 
-    // Delete plan files through runtime (supports both local and SSH)
-    const runtime = createRuntime(metadata.runtimeConfig, {
-      projectPath: metadata.projectPath,
-    });
-
-    try {
-      // Use exec to delete files since runtime doesn't have a deleteFile method
-      // Delete both paths in one command for efficiency
-      await runtime.exec(`rm -f ${quotedPlanPath} ${quotedLegacyPlanPath}`, {
-        cwd: metadata.projectPath,
-        timeout: 10,
+    // SSH runtime: delete via remote shell so $HOME expands on the remote.
+    if (isSSHRuntime(metadata.runtimeConfig)) {
+      const runtime = createRuntime(metadata.runtimeConfig, {
+        projectPath: metadata.projectPath,
       });
-    } catch {
-      // Plan files don't exist or can't be deleted - ignore
+
+      try {
+        await runtime.exec(`rm -f ${quotedPlanPath} ${quotedLegacyPlanPath}`, {
+          cwd: metadata.projectPath,
+          timeout: 10,
+        });
+      } catch {
+        // Plan files don't exist or can't be deleted - ignore
+      }
+
+      return;
     }
+
+    // Local runtimes: delete directly on the local filesystem.
+    const planPathAbs = expandTilde(planPath);
+    const legacyPlanPathAbs = expandTilde(legacyPlanPath);
+
+    await Promise.allSettled([
+      fsPromises.rm(planPathAbs, { force: true }),
+      fsPromises.rm(legacyPlanPathAbs, { force: true }),
+    ]);
   }
 
   async truncateHistory(workspaceId: string, percentage?: number): Promise<Result<void>> {

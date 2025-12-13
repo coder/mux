@@ -5,6 +5,7 @@ import { GenericToolCall } from "../tools/GenericToolCall";
 import { BashToolCall } from "../tools/BashToolCall";
 import { FileEditToolCall } from "../tools/FileEditToolCall";
 import { FileReadToolCall } from "../tools/FileReadToolCall";
+import { AskUserQuestionToolCall } from "../tools/AskUserQuestionToolCall";
 import { ProposePlanToolCall } from "../tools/ProposePlanToolCall";
 import { TodoToolCall } from "../tools/TodoToolCall";
 import { StatusSetToolCall } from "../tools/StatusSetToolCall";
@@ -29,6 +30,8 @@ import type {
   FileEditReplaceStringToolResult,
   FileEditReplaceLinesToolArgs,
   FileEditReplaceLinesToolResult,
+  AskUserQuestionToolArgs,
+  AskUserQuestionToolResult,
   ProposePlanToolArgs,
   ProposePlanToolResult,
   TodoWriteToolArgs,
@@ -88,6 +91,11 @@ function isFileEditReplaceLinesTool(
 function isFileEditInsertTool(toolName: string, args: unknown): args is FileEditInsertToolArgs {
   if (toolName !== "file_edit_insert") return false;
   return TOOL_DEFINITIONS.file_edit_insert.schema.safeParse(args).success;
+}
+
+function isAskUserQuestionTool(toolName: string, args: unknown): args is AskUserQuestionToolArgs {
+  if (toolName !== "ask_user_question") return false;
+  return TOOL_DEFINITIONS.ask_user_question.schema.safeParse(args).success;
 }
 
 function isProposePlanTool(toolName: string, args: unknown): args is ProposePlanToolArgs {
@@ -208,6 +216,20 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
           result={message.result as FileEditReplaceLinesToolResult | undefined}
           status={message.status}
           onReviewNote={onReviewNote}
+        />
+      </div>
+    );
+  }
+
+  if (isAskUserQuestionTool(message.toolName, message.args)) {
+    return (
+      <div className={className}>
+        <AskUserQuestionToolCall
+          args={message.args}
+          result={(message.result as AskUserQuestionToolResult | undefined) ?? null}
+          status={message.status}
+          toolCallId={message.toolCallId}
+          workspaceId={workspaceId}
         />
       </div>
     );

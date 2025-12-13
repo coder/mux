@@ -270,6 +270,112 @@ export const Streaming: AppStory = {
   ),
 };
 
+/** Streaming/working state with ask_user_question pending */
+export const AskUserQuestionPending: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupStreamingChatStory({
+          messages: [
+            createUserMessage("msg-1", "Please implement the feature", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 3000,
+            }),
+          ],
+          streamingMessageId: "msg-2",
+          historySequence: 2,
+          streamText: "I have a few clarifying questions.",
+          pendingTool: {
+            toolCallId: "call-ask-1",
+            toolName: "ask_user_question",
+            args: {
+              questions: [
+                {
+                  question: "Which approach should we take?",
+                  header: "Approach",
+                  options: [
+                    { label: "A", description: "Approach A" },
+                    { label: "B", description: "Approach B" },
+                  ],
+                  multiSelect: false,
+                },
+                {
+                  question: "Which platforms do we need to support?",
+                  header: "Platforms",
+                  options: [
+                    { label: "macOS", description: "Apple macOS" },
+                    { label: "Windows", description: "Microsoft Windows" },
+                    { label: "Linux", description: "Linux desktops" },
+                  ],
+                  multiSelect: true,
+                },
+              ],
+            },
+          },
+          gitStatus: { dirty: 1 },
+        })
+      }
+    />
+  ),
+};
+
+/** Completed ask_user_question tool call */
+export const AskUserQuestionCompleted: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          messages: [
+            createUserMessage("msg-1", "Please implement the feature", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 60000,
+            }),
+            createAssistantMessage("msg-2", "I asked some questions.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 55000,
+              toolCalls: [
+                createGenericTool(
+                  "call-ask-1",
+                  "ask_user_question",
+                  {
+                    questions: [
+                      {
+                        question: "Which approach should we take?",
+                        header: "Approach",
+                        options: [
+                          { label: "A", description: "Approach A" },
+                          { label: "B", description: "Approach B" },
+                        ],
+                        multiSelect: false,
+                      },
+                    ],
+                  },
+                  {
+                    questions: [
+                      {
+                        question: "Which approach should we take?",
+                        header: "Approach",
+                        options: [
+                          { label: "A", description: "Approach A" },
+                          { label: "B", description: "Approach B" },
+                        ],
+                        multiSelect: false,
+                      },
+                    ],
+                    answers: {
+                      "Which approach should we take?": "A",
+                    },
+                  }
+                ),
+              ],
+            }),
+          ],
+        })
+      }
+    />
+  ),
+};
+
 /** Generic tool call with JSON-highlighted arguments and results */
 export const GenericTool: AppStory = {
   render: () => (
@@ -318,21 +424,6 @@ export const GenericTool: AppStory = {
         story: "Generic tool call with JSON syntax highlighting and 100+ lines.",
       },
     },
-  },
-  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    const canvas = within(canvasElement);
-
-    // Wait for workspace metadata to load and main content to render
-    await waitFor(
-      async () => {
-        const toolHeader = canvas.getByText("fetch_data");
-        await userEvent.click(toolHeader);
-      },
-      { timeout: 5000 }
-    );
-    // Wait for any auto-focus timers (ChatInput has 100ms delay), then blur
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    (document.activeElement as HTMLElement)?.blur();
   },
 };
 
@@ -467,7 +558,8 @@ export const ModeHelpTooltip: AppStory = {
     />
   ),
   play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const canvas = within(storyRoot);
 
     // Wait for app to fully load - the chat input with mode selector should be present
     await canvas.findAllByText("Exec", {}, { timeout: 10000 });
