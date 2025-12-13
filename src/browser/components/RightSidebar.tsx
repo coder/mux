@@ -271,7 +271,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
               <TooltipTrigger asChild>
                 <button
                   className={cn(
-                    "rounded-md px-3 py-1 text-xs font-medium transition-all duration-150 flex items-center gap-1.5",
+                    "rounded-md px-3 py-1 text-xs font-medium transition-all duration-150 flex items-baseline gap-1.5",
                     selectedTab === "costs"
                       ? "bg-hover text-foreground"
                       : "bg-transparent text-muted hover:bg-hover/50 hover:text-foreground"
@@ -299,7 +299,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
               <TooltipTrigger asChild>
                 <button
                   className={cn(
-                    "rounded-md px-3 py-1 text-xs font-medium transition-all duration-150 flex items-center gap-1.5",
+                    "rounded-md px-3 py-1 text-xs font-medium transition-all duration-150 flex items-baseline gap-1.5",
                     selectedTab === "review"
                       ? "bg-hover text-foreground"
                       : "bg-transparent text-muted hover:bg-hover/50 hover:text-foreground"
