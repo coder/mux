@@ -22,4 +22,8 @@ module.exports = {
       },
     ],
   ],
+  plugins: [
+    // Transform import.meta.env to process.env for Jest compatibility
+    "babel-plugin-transform-vite-meta-env",
+  ],
 };

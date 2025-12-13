@@ -22,8 +22,35 @@ import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { getBashPath } from "@/node/utils/main/bashPath";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { DisposableProcess } from "@/node/utils/disposableExec";
-import { expandTilde } from "./tildeExpansion";
 import { getInitHookPath, createLineBufferedLoggers } from "./initHook";
+import { expandTilde } from "./tildeExpansion";
+
+let cachedNicePath: string | null | undefined;
+
+async function resolveNicePath(): Promise<string | null> {
+  if (cachedNicePath !== undefined) {
+    return cachedNicePath;
+  }
+
+  try {
+    await fsPromises.access("/usr/bin/nice");
+    cachedNicePath = "/usr/bin/nice";
+    return cachedNicePath;
+  } catch {
+    // continue
+  }
+
+  try {
+    await fsPromises.access("/bin/nice");
+    cachedNicePath = "/bin/nice";
+    return cachedNicePath;
+  } catch {
+    // continue
+  }
+
+  cachedNicePath = null;
+  return cachedNicePath;
+}
 
 /**
  * Abstract base class for local runtimes (both WorktreeRuntime and LocalRuntime).
@@ -63,14 +90,19 @@ export abstract class LocalBaseRuntime implements Runtime {
       );
     }
 
-    // If niceness is specified on Unix/Linux, spawn nice directly to avoid escaping issues
-    // Windows doesn't have nice command, so just spawn bash directly
+    // If niceness is specified on Unix/Linux, try to spawn `nice` directly to avoid
+    // escaping issues. Some minimal environments may not have `nice` on PATH, so
+    // fall back to running bash directly.
     const isWindows = process.platform === "win32";
     const bashPath = getBashPath();
-    const spawnCommand = options.niceness !== undefined && !isWindows ? "nice" : bashPath;
+
+    const shouldNice = options.niceness !== undefined && !isWindows;
+    const nicePath = shouldNice ? await resolveNicePath() : null;
+
+    const spawnCommand = nicePath ?? bashPath;
     const spawnArgs =
-      options.niceness !== undefined && !isWindows
-        ? ["-n", options.niceness.toString(), bashPath, "-c", command]
+      nicePath !== null
+        ? ["-n", options.niceness!.toString(), bashPath, "-c", command]
         : ["-c", command];
 
     const childProcess = spawn(spawnCommand, spawnArgs, {
@@ -145,7 +177,12 @@ export abstract class LocalBaseRuntime implements Runtime {
       });
     });
 
-    const duration = exitCode.then(() => performance.now() - startTime);
+    // Always resolve duration even if exitCode rejects (e.g. spawn errors).
+    // Consumers frequently ignore duration; rejecting would surface as an unhandled rejection.
+    const duration = exitCode.then(
+      () => performance.now() - startTime,
+      () => performance.now() - startTime
+    );
 
     // Register process group cleanup with DisposableProcess
     // This ensures ALL background children are killed when process exits
@@ -175,8 +212,13 @@ export abstract class LocalBaseRuntime implements Runtime {
         disposable[Symbol.dispose](); // Kill process and run cleanup
       }, options.timeout * 1000);
 
-      // Clear timeout if process exits naturally
-      void exitCode.finally(() => clearTimeout(timeoutHandle));
+      // Clear timeout if process exits naturally.
+      // Swallow rejections to avoid unhandled promise noise on spawn errors.
+      exitCode
+        .finally(() => clearTimeout(timeoutHandle))
+        .catch(() => {
+          /* ignore */
+        });
     }
 
     return { stdout, stderr, stdin, exitCode, duration };

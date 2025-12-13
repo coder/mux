@@ -6,6 +6,11 @@
 import assert from "assert";
 import "disposablestack/auto";
 
+// Required by React to avoid noisy act(...) warnings in tests.
+// @testing-library/react sets this in many setups, but being explicit keeps
+// our Jest environment consistent across projects.
+(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
 assert.equal(typeof Symbol.dispose, "symbol");
 // Use fast approximate token counting in Jest to avoid 10s WASM cold starts
 // Individual tests can override with MUX_FORCE_REAL_TOKENIZER=1
