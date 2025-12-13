@@ -523,4 +523,52 @@ describe("HistoryService", () => {
       }
     });
   });
+
+  describe("deleteMessageBySequence", () => {
+    it("should delete message by historySequence", async () => {
+      const workspaceId = "workspace-delete";
+      const msg1 = createMuxMessage("msg1", "user", "Hello");
+      const msg2 = createMuxMessage("msg2", "assistant", "Hi");
+      const msg3 = createMuxMessage("msg3", "user", "Bye");
+
+      await service.appendToHistory(workspaceId, msg1);
+      await service.appendToHistory(workspaceId, msg2);
+      await service.appendToHistory(workspaceId, msg3);
+
+      // Delete the middle message (sequence 1)
+      const result = await service.deleteMessageBySequence(workspaceId, 1);
+      expect(result.success).toBe(true);
+
+      const history = await service.getHistory(workspaceId);
+      if (history.success) {
+        expect(history.data).toHaveLength(2);
+        expect(history.data[0].metadata?.historySequence).toBe(0);
+        expect(history.data[1].metadata?.historySequence).toBe(2);
+      }
+    });
+
+    it("should return success if message not found (idempotent)", async () => {
+      const workspaceId = "workspace-delete-idempotent";
+      const msg1 = createMuxMessage("msg1", "user", "Hello");
+
+      await service.appendToHistory(workspaceId, msg1);
+
+      // Try to delete non-existent sequence
+      const result = await service.deleteMessageBySequence(workspaceId, 999);
+      expect(result.success).toBe(true);
+
+      // History should be unchanged
+      const history = await service.getHistory(workspaceId);
+      if (history.success) {
+        expect(history.data).toHaveLength(1);
+      }
+    });
+
+    it("should handle deleting from empty workspace", async () => {
+      const workspaceId = "workspace-delete-empty";
+
+      const result = await service.deleteMessageBySequence(workspaceId, 0);
+      expect(result.success).toBe(true);
+    });
+  });
 });
