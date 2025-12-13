@@ -69,11 +69,11 @@ describe("projectOrdering", () => {
       expect(result).toEqual(["/a", "/b"]);
     });
 
-    it("appends new projects to the end", () => {
+    it("prepends new projects to the front", () => {
       const projects = createProjects(["/a", "/b", "/c", "/d"]);
       const order = ["/b", "/a"];
       const result = normalizeOrder(order, projects);
-      expect(result).toEqual(["/b", "/a", "/c", "/d"]);
+      expect(result).toEqual(["/c", "/d", "/b", "/a"]);
     });
 
     it("preserves order of existing projects", () => {
@@ -130,13 +130,13 @@ describe("projectOrdering", () => {
       // After projects load, normalization should work normally:
       // 1. projectOrder is still ["/a", "/b", "/c"] from localStorage
       // 2. Projects are now loaded with an additional project ["/d"]
-      // 3. Normalization should append the new project
+      // 3. Normalization should treat the new project as "most recent" and put it first
       const projectOrder = ["/a", "/b", "/c"];
       const loadedProjects = createProjects(["/a", "/b", "/c", "/d"]);
 
       const result = normalizeOrder(projectOrder, loadedProjects);
 
-      expect(result).toEqual(["/a", "/b", "/c", "/d"]);
+      expect(result).toEqual(["/d", "/a", "/b", "/c"]);
     });
   });
 });

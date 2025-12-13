@@ -36,6 +36,23 @@ export type { WorkspaceSelection } from "./WorkspaceListItem";
 // Draggable project item moved to module scope to avoid remounting on every parent render.
 // Defining components inside another component causes a new function identity each render,
 // which forces React to unmount/remount the subtree. That led to hover flicker and high CPU.
+
+const PROJECT_ITEM_BASE_CLASS =
+  "py-2 px-3 flex items-center border-l-[3px] border-l-transparent bg-sidebar transition-colors duration-150";
+
+function getProjectItemClassName(opts: {
+  isDragging: boolean;
+  isOver: boolean;
+  selected: boolean;
+}): string {
+  return cn(
+    PROJECT_ITEM_BASE_CLASS,
+    opts.isDragging ? "cursor-grabbing opacity-35 [&_*]:!cursor-grabbing" : "cursor-grab",
+    opts.isOver && "bg-accent/[0.08]",
+    opts.selected && "bg-hover border-l-accent",
+    "hover:[&_button]:opacity-100 hover:[&_[data-drag-handle]]:opacity-100"
+  );
+}
 type DraggableProjectItemProps = React.PropsWithChildren<{
   projectPath: string;
   onReorder: (draggedPath: string, targetPath: string) => void;
@@ -87,13 +104,11 @@ const DraggableProjectItemBase: React.FC<DraggableProjectItemProps> = ({
   return (
     <div
       ref={(node) => drag(drop(node))}
-      className={cn(
-        "py-2 px-3 flex items-center border-l-transparent transition-all duration-150 bg-sidebar",
-        isDragging ? "cursor-grabbing opacity-40 [&_*]:!cursor-grabbing" : "cursor-grab",
-        isOver && "bg-accent/[0.08]",
-        selected && "bg-hover border-l-accent",
-        "hover:[&_button]:opacity-100 hover:[&_[data-drag-handle]]:opacity-100"
-      )}
+      className={getProjectItemClassName({
+        isDragging,
+        isOver,
+        selected: !!selected,
+      })}
       {...rest}
     >
       {children}
@@ -141,17 +156,22 @@ const ProjectDragLayer: React.FC = () => {
   if (!isDragging || !currentOffset || !item?.projectPath) return null;
 
   const abbrevPath = PlatformPaths.abbreviate(item.projectPath);
-  const { dirPath, basename } = PlatformPaths.splitAbbreviated(abbrevPath);
+  const { basename } = PlatformPaths.splitAbbreviated(abbrevPath);
 
   return (
     <div className="pointer-events-none fixed inset-0 z-[9999] cursor-grabbing">
       <div style={{ transform: `translate(${currentOffset.x + 10}px, ${currentOffset.y + 10}px)` }}>
-        <div className="bg-hover/95 text-foreground border-l-accent flex w-fit max-w-72 min-w-44 items-center rounded border-l-[3px] px-3 py-1.5 shadow-[0_6px_24px_rgba(0,0,0,0.4)]">
-          <span className="text-muted mr-2 text-xs">▶</span>
-          <div className="min-w-0 flex-1">
-            <div className="text-muted-dark font-monospace truncate text-sm leading-tight">
-              <span>{dirPath}</span>
-              <span className="text-foreground font-medium">{basename}</span>
+        <div
+          className={cn(
+            PROJECT_ITEM_BASE_CLASS,
+            "w-fit max-w-72 min-w-44 rounded-md border border-border-light shadow-[0_6px_24px_rgba(0,0,0,0.35)]",
+            "bg-hover/95 border-l-[3px] border-l-accent"
+          )}
+        >
+          <ChevronRight size={12} className="mr-2 opacity-60" />
+          <div className="flex min-w-0 flex-1 items-center pr-2">
+            <div className="text-muted-dark flex gap-2 truncate text-sm">
+              <span className="text-foreground truncate font-medium">{basename}</span>
             </div>
           </div>
         </div>
