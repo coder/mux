@@ -888,7 +888,9 @@ function createMockAPI(options: MockAPIOptions = {}) {
 
   const projects = {
     list: mock(options.projects?.list ?? (() => Promise.resolve([]))),
-    listBranches: mock(() => Promise.resolve({ branches: ["main"], recommendedTrunk: "main" })),
+    listBranches: mock(() =>
+      Promise.resolve({ branches: ["main"], remoteBranches: [], recommendedTrunk: "main" })
+    ),
     secrets: {
       get: mock(() => Promise.resolve([])),
     },

@@ -127,12 +127,18 @@ export function ProjectProvider(props: { children: ReactNode }) {
   const getBranchesForProject = useCallback(
     async (projectPath: string): Promise<BranchListResult> => {
       if (!api) {
-        return { branches: [], recommendedTrunk: "" };
+        return { branches: [], remoteBranches: [], recommendedTrunk: "" };
       }
       const branchResult = await api.projects.listBranches({ projectPath });
       const branches = branchResult.branches;
       const sanitizedBranches = Array.isArray(branches)
         ? branches.filter((branch): branch is string => typeof branch === "string")
+        : [];
+
+      const sanitizedRemoteBranches = Array.isArray(branchResult.remoteBranches)
+        ? branchResult.remoteBranches.filter(
+            (branch): branch is string => typeof branch === "string"
+          )
         : [];
 
       const recommended =
@@ -143,6 +149,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
 
       return {
         branches: sanitizedBranches,
+        remoteBranches: sanitizedRemoteBranches,
         recommendedTrunk: recommended,
       };
     },

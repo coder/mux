@@ -58,6 +58,26 @@ export async function listLocalBranches(projectPath: string): Promise<string[]> 
     .sort((a, b) => a.localeCompare(b));
 }
 
+/**
+ * List remote branches (from origin) without the origin/ prefix.
+ * Returns branch names like ["feature-x", "fix-bug-123", ...]
+ */
+export async function listRemoteBranches(projectPath: string): Promise<string[]> {
+  using proc = execAsync(
+    `git -C "${projectPath}" for-each-ref --format="%(refname:short)" refs/remotes/origin`
+  );
+  const { stdout } = await proc.result;
+  return (
+    stdout
+      .split("\n")
+      .map((line) => line.trim())
+      // Remove "origin/" prefix and filter out HEAD
+      .map((line) => line.replace(/^origin\//, ""))
+      .filter((line) => line.length > 0 && line !== "HEAD")
+      .sort((a, b) => a.localeCompare(b))
+  );
+}
+
 export async function getCurrentBranch(projectPath: string): Promise<string | null> {
   try {
     using proc = execAsync(`git -C "${projectPath}" rev-parse --abbrev-ref HEAD`);

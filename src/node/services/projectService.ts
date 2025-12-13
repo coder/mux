@@ -1,6 +1,7 @@
 import type { Config, ProjectConfig } from "@/node/config";
 import { validateProjectPath, isGitRepository } from "@/node/utils/pathUtils";
-import { listLocalBranches, detectDefaultTrunkBranch } from "@/node/git";
+import { listLocalBranches, listRemoteBranches, detectDefaultTrunkBranch } from "@/node/git";
+import { execAsync } from "@/node/utils/disposableExec";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { Secret } from "@/common/types/secrets";
@@ -141,12 +142,25 @@ export class ProjectService {
 
       // Non-git repos return empty branches - they're restricted to local runtime only
       if (!(await isGitRepository(normalizedPath))) {
-        return { branches: [], recommendedTrunk: null };
+        return { branches: [], remoteBranches: [], recommendedTrunk: null };
+      }
+
+      // Best-effort fetch - ensures newly pushed PR branches are visible
+      try {
+        using proc = execAsync(`git -C "${normalizedPath}" fetch --prune`);
+        await proc.result;
+      } catch {
+        // Fetch failed (offline, no remote, etc.) - continue with cached remotes
+        log.debug("Failed to fetch remotes, continuing with cached branches");
       }
 
       const branches = await listLocalBranches(normalizedPath);
+      const allRemoteBranches = await listRemoteBranches(normalizedPath);
+      // Exclude remote branches that already exist locally
+      const localBranchSet = new Set(branches);
+      const remoteBranches = allRemoteBranches.filter((b) => !localBranchSet.has(b));
       const recommendedTrunk = await detectDefaultTrunkBranch(normalizedPath, branches);
-      return { branches, recommendedTrunk };
+      return { branches, remoteBranches, recommendedTrunk };
     } catch (error) {
       log.error("Failed to list branches:", error);
       throw error instanceof Error ? error : new Error(String(error));

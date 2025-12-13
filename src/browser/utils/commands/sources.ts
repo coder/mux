@@ -31,6 +31,8 @@ export interface BuildSourcesParams {
   onSetThinkingLevel: (workspaceId: string, level: ThinkingLevel) => void;
 
   onStartWorkspaceCreation: (projectPath: string) => void;
+  /** Start workspace creation flow with an existing branch pre-selected */
+  onStartWorkspaceCreationWithBranch: (projectPath: string, branchName: string) => void;
   getBranchesForProject: (projectPath: string) => Promise<BranchListResult>;
   onSelectWorkspace: (sel: {
     projectPath: string;
@@ -108,6 +110,39 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     const selected = p.selectedWorkspace;
     if (selected) {
       list.push(createWorkspaceForSelectedProjectAction(selected));
+
+      // Open Branch as Workspace - opens creation flow with existing branch pre-selected
+      list.push({
+        id: CommandIds.workspaceOpenBranch(),
+        title: "Open Branch as Workspace…",
+        subtitle: `for ${selected.projectName}`,
+        section: section.workspaces,
+        run: () => undefined,
+        prompt: {
+          title: "Open Branch as Workspace",
+          fields: [
+            {
+              type: "select",
+              name: "branch",
+              label: "Branch",
+              placeholder: "Search branches…",
+              getOptions: async () => {
+                const result = await p.getBranchesForProject(selected.projectPath);
+                // Combine local and remote branches, local first
+                const allBranches = [...result.branches, ...result.remoteBranches];
+                return allBranches.map((b) => ({
+                  id: b,
+                  label: b,
+                  keywords: result.remoteBranches.includes(b) ? [b, "remote"] : [b],
+                }));
+              },
+            },
+          ],
+          onSubmit: (vals) => {
+            p.onStartWorkspaceCreationWithBranch(selected.projectPath, vals.branch);
+          },
+        },
+      });
     }
 
     // Switch to workspace

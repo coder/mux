@@ -173,6 +173,15 @@ export function getTrunkBranchKey(projectPath: string): string {
 }
 
 /**
+ * Get the localStorage key for a pre-filled existing branch during workspace creation.
+ * This is a one-time prefill that should be cleared after reading.
+ * Format: "prefilledExistingBranch:{projectPath}"
+ */
+export function getPrefilledExistingBranchKey(projectPath: string): string {
+  return `prefilledExistingBranch:${projectPath}`;
+}
+
+/**
  * Get the localStorage key for last SSH host preference for a project
  * Stores the last entered SSH host separately from runtime mode
  * so it persists when switching between runtime modes
