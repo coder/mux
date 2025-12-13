@@ -40,7 +40,8 @@ describe("ProjectContext", () => {
     const projectsApi = createMockAPI({
       list: () => Promise.resolve(initialProjects),
       remove: () => Promise.resolve({ success: true as const, data: undefined }),
-      listBranches: () => Promise.resolve({ branches: ["main"], recommendedTrunk: "main" }),
+      listBranches: () =>
+        Promise.resolve({ branches: ["main"], remoteBranches: [], recommendedTrunk: "main" }),
       secrets: {
         get: () => Promise.resolve([{ key: "A", value: "1" }]),
         update: () => Promise.resolve({ success: true as const, data: undefined }),
@@ -73,7 +74,8 @@ describe("ProjectContext", () => {
     createMockAPI({
       list: () => Promise.resolve([]),
       remove: () => Promise.resolve({ success: true as const, data: undefined }),
-      listBranches: () => Promise.resolve({ branches: ["main"], recommendedTrunk: "main" }),
+      listBranches: () =>
+        Promise.resolve({ branches: ["main"], remoteBranches: [], recommendedTrunk: "main" }),
       secrets: {
         get: () => Promise.resolve([]),
         update: () => Promise.resolve({ success: true as const, data: undefined }),
@@ -101,7 +103,12 @@ describe("ProjectContext", () => {
     createMockAPI({
       list: () => Promise.resolve([]),
       remove: () => Promise.resolve({ success: true as const, data: undefined }),
-      listBranches: () => Promise.resolve({ branches: ["main", "feat"], recommendedTrunk: "main" }),
+      listBranches: () =>
+        Promise.resolve({
+          branches: ["main", "feat"],
+          remoteBranches: [],
+          recommendedTrunk: "main",
+        }),
       secrets: {
         get: () => Promise.resolve([]),
         update: () => Promise.resolve({ success: true as const, data: undefined }),
@@ -158,7 +165,8 @@ describe("ProjectContext", () => {
     const projectsApi = createMockAPI({
       list: () => Promise.resolve([]),
       remove: () => Promise.resolve({ success: true as const, data: undefined }),
-      listBranches: () => Promise.resolve({ branches: ["main"], recommendedTrunk: "main" }),
+      listBranches: () =>
+        Promise.resolve({ branches: ["main"], remoteBranches: [], recommendedTrunk: "main" }),
       secrets: {
         get: () => Promise.resolve([{ key: "A", value: "1" }]),
         update: () => Promise.resolve({ success: true as const, data: undefined }),
@@ -182,7 +190,8 @@ describe("ProjectContext", () => {
     const projectsApi = createMockAPI({
       list: () => Promise.resolve([]),
       remove: () => Promise.resolve({ success: true as const, data: undefined }),
-      listBranches: () => Promise.resolve({ branches: ["main"], recommendedTrunk: "main" }),
+      listBranches: () =>
+        Promise.resolve({ branches: ["main"], remoteBranches: [], recommendedTrunk: "main" }),
       secrets: {
         get: () => Promise.resolve([]),
         update: () => Promise.resolve({ success: false, error: "something went wrong" }),
@@ -203,7 +212,8 @@ describe("ProjectContext", () => {
     createMockAPI({
       list: () => Promise.reject(new Error("network failure")),
       remove: () => Promise.resolve({ success: true as const, data: undefined }),
-      listBranches: () => Promise.resolve({ branches: ["main"], recommendedTrunk: "main" }),
+      listBranches: () =>
+        Promise.resolve({ branches: ["main"], remoteBranches: [], recommendedTrunk: "main" }),
       secrets: {
         get: () => Promise.resolve([]),
         update: () => Promise.resolve({ success: true as const, data: undefined }),
@@ -225,6 +235,7 @@ describe("ProjectContext", () => {
       listBranches: () =>
         Promise.resolve({
           branches: ["main", 123, null, "dev", undefined, { name: "feat" }] as unknown as string[],
+          remoteBranches: [],
           recommendedTrunk: "main",
         }),
       secrets: {
@@ -248,6 +259,7 @@ describe("ProjectContext", () => {
       listBranches: () =>
         Promise.resolve({
           branches: null as unknown as string[],
+          remoteBranches: [],
           recommendedTrunk: "main",
         }),
       secrets: {
@@ -270,6 +282,7 @@ describe("ProjectContext", () => {
       listBranches: () =>
         Promise.resolve({
           branches: ["main", "dev"],
+          remoteBranches: [],
           recommendedTrunk: "nonexistent",
         }),
       secrets: {
@@ -288,13 +301,19 @@ describe("ProjectContext", () => {
 
   test("openWorkspaceModal cancels stale requests (race condition)", async () => {
     let projectAResolver:
-      | ((value: { branches: string[]; recommendedTrunk: string }) => void)
+      | ((value: {
+          branches: string[];
+          remoteBranches: string[];
+          recommendedTrunk: string;
+        }) => void)
       | null = null;
-    const projectAPromise = new Promise<{ branches: string[]; recommendedTrunk: string }>(
-      (resolve) => {
-        projectAResolver = resolve;
-      }
-    );
+    const projectAPromise = new Promise<{
+      branches: string[];
+      remoteBranches: string[];
+      recommendedTrunk: string;
+    }>((resolve) => {
+      projectAResolver = resolve;
+    });
 
     createMockAPI({
       list: () => Promise.resolve([]),
@@ -303,7 +322,11 @@ describe("ProjectContext", () => {
         if (projectPath === "/project-a") {
           return projectAPromise;
         }
-        return Promise.resolve({ branches: ["main-b"], recommendedTrunk: "main-b" });
+        return Promise.resolve({
+          branches: ["main-b"],
+          remoteBranches: [],
+          recommendedTrunk: "main-b",
+        });
       },
       secrets: {
         get: () => Promise.resolve([]),
@@ -321,7 +344,7 @@ describe("ProjectContext", () => {
       await ctx().openWorkspaceModal("/project-b");
 
       // Now resolve project A
-      projectAResolver!({ branches: ["main-a"], recommendedTrunk: "main-a" });
+      projectAResolver!({ branches: ["main-a"], remoteBranches: [], recommendedTrunk: "main-a" });
       await openA;
     });
 
@@ -360,7 +383,8 @@ function createMockAPI(overrides: RecursivePartial<APIClient["projects"]>) {
     ),
     list: mock(overrides.list ?? (() => Promise.resolve([]))),
     listBranches: mock(
-      overrides.listBranches ?? (() => Promise.resolve({ branches: [], recommendedTrunk: "main" }))
+      overrides.listBranches ??
+        (() => Promise.resolve({ branches: [], remoteBranches: [], recommendedTrunk: "main" }))
     ),
     remove: mock(
       overrides.remove ??

@@ -367,13 +367,24 @@ function AppInner() {
     [startWorkspaceCreation]
   );
 
+  const openBranchAsWorkspaceFromPalette = useCallback(
+    (projectPath: string, branchName: string) => {
+      startWorkspaceCreation(projectPath, { projectPath, existingBranch: branchName });
+    },
+    [startWorkspaceCreation]
+  );
+
   const getBranchesForProject = useCallback(
     async (projectPath: string): Promise<BranchListResult> => {
       if (!api) {
-        return { branches: [], recommendedTrunk: null };
+        return { branches: [], remoteBranches: [], recommendedTrunk: null };
       }
       const branchResult = await api.projects.listBranches({ projectPath });
       const sanitizedBranches = branchResult.branches.filter(
+        (branch): branch is string => typeof branch === "string"
+      );
+
+      const sanitizedRemoteBranches = branchResult.remoteBranches.filter(
         (branch): branch is string => typeof branch === "string"
       );
 
@@ -384,6 +395,7 @@ function AppInner() {
 
       return {
         branches: sanitizedBranches,
+        remoteBranches: sanitizedRemoteBranches,
         recommendedTrunk: recommended,
       };
     },
@@ -437,6 +449,7 @@ function AppInner() {
     getThinkingLevel: getThinkingLevelForWorkspace,
     onSetThinkingLevel: setThinkingLevelFromPalette,
     onStartWorkspaceCreation: openNewWorkspaceFromPalette,
+    onStartWorkspaceCreationWithBranch: openBranchAsWorkspaceFromPalette,
     getBranchesForProject,
     onSelectWorkspace: selectWorkspaceFromPalette,
     onRemoveWorkspace: removeWorkspaceFromPalette,
