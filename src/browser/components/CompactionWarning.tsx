@@ -47,7 +47,7 @@ export const CompactionWarning: React.FC<{
   }
 
   return (
-    <div className="mx-4 mt-2 mb-1 text-right text-[10px]">
+    <div className="mx-auto mb-1 w-full max-w-4xl px-[15px] text-right text-[10px]">
       <button
         type="button"
         onClick={props.onCompactClick}
