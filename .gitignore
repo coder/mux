@@ -109,6 +109,8 @@ runs/
 __pycache__
 
 tmpfork
+.cmux/*.tmp.*
+.mux/*.tmp.*
 .mux-agent-cli
 storybook-static/
 *.tgz
