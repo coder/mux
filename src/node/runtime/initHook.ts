@@ -3,6 +3,7 @@ import * as fsPromises from "fs/promises";
 import * as path from "path";
 import type { InitLogger } from "./Runtime";
 import type { RuntimeConfig } from "@/common/types/runtime";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import { isWorktreeRuntime, isSSHRuntime } from "@/common/types/runtime";
 
 /**
@@ -38,13 +39,34 @@ export function getInitHookPath(projectPath: string): string {
 export function getMuxEnv(
   projectPath: string,
   runtime: "local" | "worktree" | "ssh",
-  workspaceName: string
+  workspaceName: string,
+  options?: {
+    modelString?: string;
+    thinkingLevel?: ThinkingLevel;
+  }
 ): Record<string, string> {
-  return {
+  if (!projectPath) {
+    throw new Error("getMuxEnv: projectPath is required");
+  }
+  if (!workspaceName) {
+    throw new Error("getMuxEnv: workspaceName is required");
+  }
+
+  const env: Record<string, string> = {
     MUX_PROJECT_PATH: projectPath,
     MUX_RUNTIME: runtime,
     MUX_WORKSPACE_NAME: workspaceName,
   };
+
+  if (options?.modelString) {
+    env.MUX_MODEL_STRING = options.modelString;
+  }
+
+  if (options?.thinkingLevel !== undefined) {
+    env.MUX_THINKING_LEVEL = options.thinkingLevel;
+  }
+
+  return env;
 }
 
 /**
