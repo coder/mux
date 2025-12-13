@@ -1,15 +1,19 @@
 import React, { useCallback, useEffect } from "react";
 import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
 import { Select } from "../Select";
-import { Loader2, Wand2 } from "lucide-react";
+import { Loader2, Wand2, GitBranch } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { SSHIcon, WorktreeIcon, LocalIcon } from "../icons/RuntimeIcons";
 import { DocsLink } from "../DocsLink";
 import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
 
+export type BranchMode = "new" | "existing";
+
 interface CreationControlsProps {
   branches: string[];
+  /** Remote-only branches (not in local branches) */
+  remoteBranches: string[];
   /** Whether branches have finished loading (to distinguish loading vs non-git repo) */
   branchesLoaded: boolean;
   trunkBranch: string;
@@ -25,6 +29,12 @@ interface CreationControlsProps {
   projectName: string;
   /** Workspace name/title generation state and actions */
   nameState: WorkspaceNameState;
+  /** Branch mode: "new" creates a new branch, "existing" uses an existing branch */
+  branchMode: BranchMode;
+  onBranchModeChange: (mode: BranchMode) => void;
+  /** Selected existing branch (when branchMode is "existing") */
+  selectedExistingBranch: string;
+  onSelectedExistingBranchChange: (branch: string) => void;
 }
 
 /** Runtime type button group with icons and colors */
@@ -166,6 +176,10 @@ export function CreationControls(props: CreationControlsProps) {
     }
   }, [isNonGitRepo, runtimeMode, onRuntimeModeChange]);
 
+  // All existing branches (local + remote)
+  const allExistingBranches = [...props.branches, ...props.remoteBranches];
+  const hasExistingBranches = allExistingBranches.length > 0;
+
   const handleNameChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       nameState.setName(e.target.value);
@@ -187,75 +201,126 @@ export function CreationControls(props: CreationControlsProps) {
 
   return (
     <div className="mb-3 flex flex-col gap-4">
+      {/* Branch mode toggle - only show for git repos with existing branches */}
+      {hasExistingBranches && (
+        <div className="flex items-center gap-3" data-component="BranchModeGroup">
+          <button
+            type="button"
+            onClick={() => props.onBranchModeChange("new")}
+            disabled={props.disabled}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-all duration-150",
+              props.branchMode === "new"
+                ? "bg-accent/20 text-accent-foreground border-accent/60"
+                : "bg-transparent text-muted border-transparent hover:border-accent/40"
+            )}
+          >
+            <Wand2 size={12} />
+            New branch
+          </button>
+          <button
+            type="button"
+            onClick={() => props.onBranchModeChange("existing")}
+            disabled={props.disabled}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-all duration-150",
+              props.branchMode === "existing"
+                ? "bg-accent/20 text-accent-foreground border-accent/60"
+                : "bg-transparent text-muted border-transparent hover:border-accent/40"
+            )}
+          >
+            <GitBranch size={12} />
+            Existing branch
+          </button>
+        </div>
+      )}
+
       {/* Project name / workspace name header row */}
       <div className="flex items-center" data-component="WorkspaceNameGroup">
         <h2 className="text-foreground shrink-0 text-lg font-semibold">{props.projectName}</h2>
         <span className="text-muted-foreground mx-2 text-lg">/</span>
 
-        {/* Name input with magic wand - uses grid overlay technique for auto-sizing */}
-        <div className="relative inline-grid items-center">
-          {/* Hidden sizer span - determines width based on content, minimum is placeholder width */}
-          <span className="invisible col-start-1 row-start-1 pr-7 text-lg font-semibold whitespace-pre">
-            {nameState.name || "workspace-name"}
-          </span>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <input
-                id="workspace-name"
-                type="text"
-                size={1}
-                value={nameState.name}
-                onChange={handleNameChange}
-                onFocus={handleInputFocus}
-                placeholder={nameState.isGenerating ? "Generating..." : "workspace-name"}
-                disabled={props.disabled}
-                className={cn(
-                  "col-start-1 row-start-1 min-w-0 bg-transparent border-border-medium focus:border-accent h-7 w-full rounded-md border border-transparent text-lg font-semibold focus:border focus:bg-bg-dark focus:outline-none disabled:opacity-50",
-                  nameState.autoGenerate ? "text-muted" : "text-foreground",
-                  nameState.error && "border-red-500"
-                )}
-              />
-            </TooltipTrigger>
-            <TooltipContent align="start" className="max-w-64">
-              A stable identifier used for git branches, worktree folders, and session directories.
-            </TooltipContent>
-          </Tooltip>
-          {/* Magic wand / loading indicator */}
-          <div className="absolute inset-y-0 right-0 flex items-center pr-2">
-            {nameState.isGenerating ? (
-              <Loader2 className="text-accent h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={handleWandClick}
-                    disabled={props.disabled}
-                    className="flex h-full items-center disabled:opacity-50"
-                    aria-label={
-                      nameState.autoGenerate ? "Disable auto-naming" : "Enable auto-naming"
-                    }
-                  >
-                    <Wand2
-                      className={cn(
-                        "h-3.5 w-3.5 transition-colors",
-                        nameState.autoGenerate
-                          ? "text-accent"
-                          : "text-muted-foreground opacity-50 hover:opacity-75"
-                      )}
-                    />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent align="center">
-                  {nameState.autoGenerate ? "Auto-naming enabled" : "Click to enable auto-naming"}
-                </TooltipContent>
-              </Tooltip>
-            )}
+        {/* New branch mode: Name input with magic wand */}
+        {props.branchMode === "new" && (
+          <div className="relative inline-grid items-center">
+            {/* Hidden sizer span - determines width based on content, minimum is placeholder width */}
+            <span className="invisible col-start-1 row-start-1 pr-7 text-lg font-semibold whitespace-pre">
+              {nameState.name || "workspace-name"}
+            </span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <input
+                  id="workspace-name"
+                  type="text"
+                  size={1}
+                  value={nameState.name}
+                  onChange={handleNameChange}
+                  onFocus={handleInputFocus}
+                  placeholder={nameState.isGenerating ? "Generating..." : "workspace-name"}
+                  disabled={props.disabled}
+                  className={cn(
+                    "col-start-1 row-start-1 min-w-0 bg-transparent border-border-medium focus:border-accent h-7 w-full rounded-md border border-transparent text-lg font-semibold focus:border focus:bg-bg-dark focus:outline-none disabled:opacity-50",
+                    nameState.autoGenerate ? "text-muted" : "text-foreground",
+                    nameState.error && "border-red-500"
+                  )}
+                />
+              </TooltipTrigger>
+              <TooltipContent align="start" className="max-w-64">
+                A stable identifier used for git branches, worktree folders, and session
+                directories.
+              </TooltipContent>
+            </Tooltip>
+            {/* Magic wand / loading indicator */}
+            <div className="absolute inset-y-0 right-0 flex items-center pr-2">
+              {nameState.isGenerating ? (
+                <Loader2 className="text-accent h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={handleWandClick}
+                      disabled={props.disabled}
+                      className="flex h-full items-center disabled:opacity-50"
+                      aria-label={
+                        nameState.autoGenerate ? "Disable auto-naming" : "Enable auto-naming"
+                      }
+                    >
+                      <Wand2
+                        className={cn(
+                          "h-3.5 w-3.5 transition-colors",
+                          nameState.autoGenerate
+                            ? "text-accent"
+                            : "text-muted-foreground opacity-50 hover:opacity-75"
+                        )}
+                      />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent align="center">
+                    {nameState.autoGenerate ? "Auto-naming enabled" : "Click to enable auto-naming"}
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* Existing branch mode: Branch selector */}
+        {props.branchMode === "existing" && (
+          <Select
+            id="existing-branch"
+            value={props.selectedExistingBranch}
+            options={allExistingBranches}
+            onChange={props.onSelectedExistingBranchChange}
+            disabled={props.disabled}
+            className="h-8 min-w-[200px] text-lg font-semibold"
+          />
+        )}
 
         {/* Error display */}
-        {nameState.error && <span className="text-xs text-red-500">{nameState.error}</span>}
+        {nameState.error && props.branchMode === "new" && (
+          <span className="text-xs text-red-500">{nameState.error}</span>
+        )}
       </div>
 
       {/* Runtime type - button group */}

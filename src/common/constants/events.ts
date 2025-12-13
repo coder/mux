@@ -99,6 +99,8 @@ export interface CustomEventPayloads {
     model?: string;
     trunkBranch?: string;
     runtime?: string;
+    /** Pre-select an existing branch (switches to "existing branch" mode) */
+    existingBranch?: string;
   };
   [CUSTOM_EVENTS.TOGGLE_VOICE_INPUT]: never; // No payload
 }

@@ -9,6 +9,7 @@ import {
   getPendingScopeId,
   getProjectScopeId,
   getTrunkBranchKey,
+  getPrefilledExistingBranchKey,
 } from "@/common/constants/storage";
 
 export type StartWorkspaceCreationDetail =
@@ -43,6 +44,14 @@ export function persistWorkspaceCreationPrefill(
     persist(
       getTrunkBranchKey(projectPath),
       normalizedTrunk.length > 0 ? normalizedTrunk : undefined
+    );
+  }
+
+  if (detail.existingBranch !== undefined) {
+    const normalizedBranch = detail.existingBranch.trim();
+    persist(
+      getPrefilledExistingBranchKey(projectPath),
+      normalizedBranch.length > 0 ? normalizedBranch : undefined
     );
   }
 
