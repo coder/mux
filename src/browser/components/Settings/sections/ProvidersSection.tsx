@@ -1,7 +1,12 @@
 import React, { useState, useCallback } from "react";
 import { ChevronDown, ChevronRight, Check, X, Eye, EyeOff } from "lucide-react";
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
-import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
+import {
+  SUPPORTED_PROVIDERS,
+  OPENAI_SERVICE_TIERS,
+  OPENAI_DEFAULT_SERVICE_TIER,
+  isValidOpenAIServiceTier,
+} from "@/common/constants/providers";
 import type { ProviderName } from "@/common/constants/providers";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import { useAPI } from "@/browser/contexts/API";
@@ -389,17 +394,10 @@ export function ProvidersSection() {
                       </TooltipProvider>
                     </div>
                     <Select
-                      value={config?.openai?.serviceTier ?? "auto"}
+                      value={config?.openai?.serviceTier ?? OPENAI_DEFAULT_SERVICE_TIER}
                       onValueChange={(next) => {
                         if (!api) return;
-                        if (
-                          next !== "auto" &&
-                          next !== "default" &&
-                          next !== "flex" &&
-                          next !== "priority"
-                        ) {
-                          return;
-                        }
+                        if (!isValidOpenAIServiceTier(next)) return;
 
                         updateOptimistically("openai", { serviceTier: next });
                         void api.providers.setProviderConfig({
@@ -413,10 +411,11 @@ export function ProvidersSection() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="auto">auto</SelectItem>
-                        <SelectItem value="default">default</SelectItem>
-                        <SelectItem value="flex">flex</SelectItem>
-                        <SelectItem value="priority">priority</SelectItem>
+                        {OPENAI_SERVICE_TIERS.map((tier) => (
+                          <SelectItem key={tier} value={tier}>
+                            {tier}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>

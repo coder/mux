@@ -1,5 +1,6 @@
 import { eventIterator } from "@orpc/server";
 import { z } from "zod";
+import { OPENAI_SERVICE_TIERS } from "@/common/constants/providers";
 import { ChatStatsSchema, SessionUsageFileSchema } from "./chatStats";
 import { SendMessageErrorSchema } from "./errors";
 import { BranchListResultSchema, ImagePartSchema, MuxMessageSchema } from "./message";
@@ -71,7 +72,7 @@ export const ProviderConfigInfoSchema = z.object({
   baseUrl: z.string().optional(),
   models: z.array(z.string()).optional(),
   /** OpenAI-specific fields */
-  serviceTier: z.enum(["auto", "default", "flex", "priority"]).optional(),
+  serviceTier: z.enum(OPENAI_SERVICE_TIERS).optional(),
   /** AWS-specific fields (only present for bedrock provider) */
   aws: AWSCredentialStatusSchema.optional(),
   /** Mux Gateway-specific fields */

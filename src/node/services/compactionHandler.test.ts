@@ -3,6 +3,8 @@ import { CompactionHandler } from "./compactionHandler";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
 import type { EventEmitter } from "events";
+import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
+import type { SessionUsageService } from "./sessionUsageService";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import type { StreamEndEvent } from "@/common/types/stream";
 import { Ok, Err, type Result } from "@/common/types/result";
@@ -102,6 +104,14 @@ const createStreamEndEvent = (
 });
 
 // DRY helper to set up successful compaction scenario
+const createChatUsage = (input: number, output: number): ChatUsageDisplay => ({
+  input: { tokens: input },
+  cached: { tokens: 0 },
+  cacheCreate: { tokens: 0 },
+  output: { tokens: output },
+  reasoning: { tokens: 0 },
+});
+
 const setupSuccessfulCompaction = (
   mockHistoryService: ReturnType<typeof createMockHistoryService>,
   messages: MuxMessage[] = [createCompactionRequest()],
@@ -289,15 +299,49 @@ describe("CompactionHandler", () => {
       });
       expect(summaryEvent).toBeDefined();
       const sevt = summaryEvent?.data.message as MuxMessage;
-      // providerMetadata is omitted to avoid inflating context with pre-compaction cacheCreationInputTokens
       expect(sevt.metadata).toMatchObject({
         model: "claude-3-5-sonnet-20241022",
         usage,
         duration: 2000,
         systemMessageTokens: 100,
         compacted: true,
+        providerMetadata: { anthropic: { cacheCreationInputTokens: 50000 } },
       });
-      expect(sevt.metadata?.providerMetadata).toBeUndefined();
+    });
+
+    it("should store historicalUsage snapshot on compaction summary when available", async () => {
+      const compactionReq = createCompactionRequest();
+      setupSuccessfulCompaction(mockHistoryService, [compactionReq]);
+
+      const sessionUsage = {
+        byModel: {
+          "openai:gpt-5": createChatUsage(100, 50),
+          "anthropic:claude-sonnet-4-5": createChatUsage(200, 75),
+        },
+        version: 1 as const,
+      };
+
+      const mockSessionUsageService: Pick<SessionUsageService, "getSessionUsage"> = {
+        getSessionUsage: mock(() => Promise.resolve(sessionUsage)),
+      };
+
+      handler = new CompactionHandler({
+        workspaceId,
+        historyService: mockHistoryService as unknown as HistoryService,
+        partialService: mockPartialService as unknown as PartialService,
+        emitter: mockEmitter,
+        sessionUsageService: mockSessionUsageService as unknown as SessionUsageService,
+      });
+
+      const event = createStreamEndEvent("Summary");
+      await handler.handleCompletion(event);
+
+      const appendedMsg = mockHistoryService.appendToHistory.mock.calls[0][1] as MuxMessage;
+      expect(appendedMsg.metadata?.historicalUsage).toBeDefined();
+      expect(appendedMsg.metadata?.historicalUsage).toMatchObject({
+        input: { tokens: 300 },
+        output: { tokens: 125 },
+      });
     });
 
     it("should emit stream-end event to frontend", async () => {

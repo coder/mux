@@ -28,6 +28,7 @@ import { prepareUserMessageForSend } from "@/common/types/message";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { MessageQueue } from "./messageQueue";
 import type { StreamEndEvent } from "@/common/types/stream";
+import type { SessionUsageService } from "./sessionUsageService";
 import { CompactionHandler } from "./compactionHandler";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import { computeDiff } from "@/node/utils/diff";
@@ -86,6 +87,7 @@ interface AgentSessionOptions {
   config: Config;
   historyService: HistoryService;
   partialService: PartialService;
+  sessionUsageService?: SessionUsageService;
   aiService: AIService;
   initStateManager: InitStateManager;
   backgroundProcessManager: BackgroundProcessManager;
@@ -135,6 +137,7 @@ export class AgentSession {
       workspaceId,
       config,
       historyService,
+      sessionUsageService,
       partialService,
       aiService,
       initStateManager,
@@ -157,6 +160,7 @@ export class AgentSession {
 
     this.compactionHandler = new CompactionHandler({
       workspaceId: this.workspaceId,
+      sessionUsageService,
       historyService: this.historyService,
       partialService: this.partialService,
       emitter: this.emitter,

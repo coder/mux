@@ -18,6 +18,7 @@ import {
   OPENROUTER_REASONING_EFFORT,
 } from "@/common/types/thinking";
 import { log } from "@/node/services/log";
+import { OPENAI_DEFAULT_SERVICE_TIER } from "@/common/constants/providers";
 import type { MuxMessage } from "@/common/types/message";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 import { normalizeGatewayModel } from "./models";
@@ -217,7 +218,7 @@ export function buildProviderOptions(
       disableAutoTruncation,
     });
 
-    const serviceTier = muxProviderOptions?.openai?.serviceTier ?? "auto";
+    const serviceTier = muxProviderOptions?.openai?.serviceTier ?? OPENAI_DEFAULT_SERVICE_TIER;
 
     const options: ProviderOptions = {
       openai: {

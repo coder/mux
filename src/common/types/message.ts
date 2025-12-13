@@ -1,4 +1,5 @@
 import type { UIMessage } from "ai";
+import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { StreamErrorType } from "./errors";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
@@ -101,6 +102,13 @@ export interface MuxMetadata {
   usage?: LanguageModelV2Usage;
   // Last step's usage only (for context window display - inputTokens = current context size)
   contextUsage?: LanguageModelV2Usage;
+  /**
+   * Snapshot of cumulative costs/tokens from before a compaction.
+   *
+   * This is only set on compaction summary messages so we can rebuild session usage
+   * from chat.jsonl if session-usage.json is missing/corrupted.
+   */
+  historicalUsage?: ChatUsageDisplay;
   // Aggregated provider metadata across all steps (for cost calculation)
   providerMetadata?: Record<string, unknown>;
   // Last step's provider metadata (for context window cache display)

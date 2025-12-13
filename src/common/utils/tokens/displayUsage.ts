@@ -9,6 +9,21 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { getModelStats } from "./modelStats";
 import type { ChatUsageDisplay } from "./usageAggregator";
 import { normalizeGatewayModel } from "../ai/models";
+import {
+  OPENAI_SERVICE_TIER_COST_MULTIPLIERS,
+  isValidOpenAIServiceTier,
+} from "@/common/constants/providers";
+
+/**
+ * Get cost multiplier for OpenAI service tier.
+ * Returns 1.0 for unknown tiers (standard pricing).
+ */
+function getServiceTierMultiplier(serviceTier: string | undefined): number {
+  if (serviceTier && isValidOpenAIServiceTier(serviceTier)) {
+    return OPENAI_SERVICE_TIER_COST_MULTIPLIERS[serviceTier];
+  }
+  return 1.0;
+}
 
 /**
  * Create a display-friendly usage object from AI SDK usage
@@ -60,6 +75,12 @@ export function createDisplayUsage(
   // Get model stats for cost calculation
   const modelStats = getModelStats(model);
 
+  // Extract OpenAI service tier from response metadata (actual tier used, not requested)
+  // AI SDK returns serviceTier in providerMetadata.openai.serviceTier
+  const serviceTier = isOpenAI
+    ? (providerMetadata?.openai as { serviceTier?: string } | undefined)?.serviceTier
+    : undefined;
+
   // Calculate costs based on model stats (undefined if model unknown)
   let inputCost: number | undefined;
   let cachedCost: number | undefined;
@@ -68,11 +89,14 @@ export function createDisplayUsage(
   let reasoningCost: number | undefined;
 
   if (modelStats) {
-    inputCost = inputTokens * modelStats.input_cost_per_token;
-    cachedCost = cachedTokens * (modelStats.cache_read_input_token_cost ?? 0);
+    // Get tier multiplier (flex ~50% cheaper, priority ~2x)
+    const tierMultiplier = getServiceTierMultiplier(serviceTier);
+
+    inputCost = inputTokens * modelStats.input_cost_per_token * tierMultiplier;
+    cachedCost = cachedTokens * (modelStats.cache_read_input_token_cost ?? 0) * tierMultiplier;
     cacheCreateCost = cacheCreateTokens * (modelStats.cache_creation_input_token_cost ?? 0);
-    outputCost = outputWithoutReasoning * modelStats.output_cost_per_token;
-    reasoningCost = reasoningTokens * modelStats.output_cost_per_token;
+    outputCost = outputWithoutReasoning * modelStats.output_cost_per_token * tierMultiplier;
+    reasoningCost = reasoningTokens * modelStats.output_cost_per_token * tierMultiplier;
   }
 
   return {

@@ -85,6 +85,39 @@ export const PROVIDER_DEFINITIONS = {
 /**
  * Union type of all supported provider names
  */
+/**
+ * OpenAI service tier options for API requests.
+ * - priority: Low-latency responses (default)
+ * - flex: 50% cheaper, higher latency (o3, o4-mini, gpt-5)
+ * - auto: Let OpenAI select appropriate tier
+ * - default: Standard processing
+ */
+export const OPENAI_SERVICE_TIERS = ["auto", "default", "flex", "priority"] as const;
+export type OpenAIServiceTier = (typeof OPENAI_SERVICE_TIERS)[number];
+
+/** Default service tier for OpenAI requests */
+export const OPENAI_DEFAULT_SERVICE_TIER: OpenAIServiceTier = "auto";
+
+/**
+ * Type guard to check if a string is a valid OpenAI service tier
+ */
+export function isValidOpenAIServiceTier(tier: unknown): tier is OpenAIServiceTier {
+  return typeof tier === "string" && OPENAI_SERVICE_TIERS.includes(tier as OpenAIServiceTier);
+}
+
+/**
+ * Cost multipliers for OpenAI service tiers relative to standard pricing.
+ * - flex: 50% cheaper (0.5x)
+ * - priority: 2x premium
+ * - default/auto: standard pricing (1x)
+ */
+export const OPENAI_SERVICE_TIER_COST_MULTIPLIERS: Record<OpenAIServiceTier, number> = {
+  flex: 0.5,
+  priority: 2.0,
+  default: 1.0,
+  auto: 1.0,
+};
+
 export type ProviderName = keyof typeof PROVIDER_DEFINITIONS;
 
 /**

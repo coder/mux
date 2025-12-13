@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { OPENAI_SERVICE_TIERS } from "@/common/constants/providers";
 
 export const MuxProviderOptionsSchema = z.object({
   anthropic: z
@@ -10,7 +11,7 @@ export const MuxProviderOptionsSchema = z.object({
     .optional(),
   openai: z
     .object({
-      serviceTier: z.enum(["auto", "default", "flex", "priority"]).optional().meta({
+      serviceTier: z.enum(OPENAI_SERVICE_TIERS).optional().meta({
         description:
           "OpenAI service tier: priority (low-latency), flex (50% cheaper, higher latency), auto/default (standard)",
       }),

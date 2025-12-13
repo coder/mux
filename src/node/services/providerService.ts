@@ -1,6 +1,6 @@
 import { EventEmitter } from "events";
 import type { Config } from "@/node/config";
-import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
+import { SUPPORTED_PROVIDERS, isValidOpenAIServiceTier } from "@/common/constants/providers";
 import type { Result } from "@/common/types/result";
 import type {
   AWSCredentialStatus,
@@ -65,15 +65,8 @@ export class ProviderService {
       };
 
       // OpenAI-specific fields
-      const serviceTier = config.serviceTier;
-      if (
-        provider === "openai" &&
-        (serviceTier === "auto" ||
-          serviceTier === "default" ||
-          serviceTier === "flex" ||
-          serviceTier === "priority")
-      ) {
-        providerInfo.serviceTier = serviceTier;
+      if (provider === "openai" && isValidOpenAIServiceTier(config.serviceTier)) {
+        providerInfo.serviceTier = config.serviceTier;
       }
 
       // AWS/Bedrock-specific fields
