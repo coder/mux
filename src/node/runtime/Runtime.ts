@@ -65,6 +65,20 @@ export interface ExecOptions {
   abortSignal?: AbortSignal;
   /** Force PTY allocation (SSH only - adds -t flag) */
   forcePTY?: boolean;
+
+  /**
+   * SSH only: how to handle SSHConnectionPool backoff.
+   *
+   * - "fail-fast" (default): throw immediately when in backoff
+   * - "wait": wait through backoff (bounded by connectionMaxWaitMs)
+   */
+  connectionMode?: "fail-fast" | "wait";
+
+  /** SSH only: max time to wait (ms) when connectionMode="wait". */
+  connectionMaxWaitMs?: number;
+
+  /** SSH only: invoked when waiting due to SSH backoff. */
+  onConnectionWait?: (waitMs: number) => void;
 }
 
 /**

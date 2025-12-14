@@ -231,6 +231,40 @@ describe("SSHConnectionPool", () => {
       expect(elapsed).toBeLessThan(50);
     });
 
+    test("wait mode waits through backoff (bounded) instead of throwing", async () => {
+      const pool = new SSHConnectionPool();
+      const config: SSHRuntimeConfig = {
+        host: "test.example.com",
+        srcBaseDir: "/work",
+      };
+
+      // Put host into backoff without doing a real probe.
+      pool.reportFailure(config, "Connection refused");
+      expect(pool.getConnectionHealth(config)?.backoffUntil).toBeDefined();
+
+      const sleepCalls: number[] = [];
+      const onWaitCalls: number[] = [];
+
+      await pool.acquireConnection(config, {
+        mode: "wait",
+        maxWaitMs: 60_000,
+        onWait: (ms) => {
+          onWaitCalls.push(ms);
+        },
+        sleep: (ms) => {
+          sleepCalls.push(ms);
+          // Simulate time passing / recovery.
+          pool.markHealthy(config);
+          return Promise.resolve();
+        },
+      });
+
+      expect(sleepCalls.length).toBe(1);
+      expect(onWaitCalls.length).toBe(1);
+      expect(sleepCalls[0]).toBeGreaterThan(0);
+      expect(onWaitCalls[0]).toBe(sleepCalls[0]);
+      expect(pool.getConnectionHealth(config)?.status).toBe("healthy");
+    });
     test("throws immediately when in backoff", async () => {
       const pool = new SSHConnectionPool();
       const config: SSHRuntimeConfig = {

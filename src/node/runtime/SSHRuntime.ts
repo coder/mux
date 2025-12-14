@@ -26,7 +26,6 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { execAsync, DisposableProcess } from "@/node/utils/disposableExec";
 import { getControlPath, sshConnectionPool, type SSHRuntimeConfig } from "./sshConnectionPool";
 import { getBashPath } from "@/node/utils/main/bashPath";
-import { retrySSHForInit } from "./sshInitRetry";
 
 /**
  * Shell-escape helper for remote bash.
@@ -41,6 +40,11 @@ const shescape = {
     return "'" + s.replace(/'/g, "'\"'\"'") + "'";
   },
 };
+
+function logSSHBackoffWait(initLogger: InitLogger, waitMs: number): void {
+  const secs = Math.max(1, Math.ceil(waitMs / 1000));
+  initLogger.logStep(`SSH unavailable; retrying in ${secs}s...`);
+}
 
 // Re-export SSHRuntimeConfig from connection pool (defined there to avoid circular deps)
 export type { SSHRuntimeConfig } from "./sshConnectionPool";
@@ -123,9 +127,18 @@ export class SSHRuntime implements Runtime {
       throw new RuntimeErrorClass("Operation aborted before execution", "exec");
     }
 
-    // Ensure connection is healthy before executing
-    // This provides backoff protection and singleflighting for concurrent requests
-    await sshConnectionPool.acquireConnection(this.config);
+    // Ensure connection is healthy before executing.
+    // This provides backoff protection and singleflighting for concurrent requests.
+    if (options.connectionMode === "wait") {
+      await sshConnectionPool.acquireConnection(this.config, {
+        mode: "wait",
+        maxWaitMs: options.connectionMaxWaitMs,
+        abortSignal: options.abortSignal,
+        onWait: options.onConnectionWait,
+      });
+    } else {
+      await sshConnectionPool.acquireConnection(this.config);
+    }
 
     // Build command parts
     const parts: string[] = [];
@@ -438,7 +451,7 @@ export class SSHRuntime implements Runtime {
    */
   private async execSSHCommand(command: string, timeoutMs: number): Promise<string> {
     // Ensure connection is healthy before executing
-    await sshConnectionPool.acquireConnection(this.config, timeoutMs);
+    await sshConnectionPool.acquireConnection(this.config, { timeoutMs });
 
     const sshArgs = this.buildSSHArgs();
     sshArgs.push(this.config.host, command);
@@ -625,9 +638,11 @@ export class SSHRuntime implements Runtime {
       }
 
       // Step 2: Ensure the SSH host is reachable before doing expensive local work
-      await retrySSHForInit(() => sshConnectionPool.acquireConnection(this.config), {
+      await sshConnectionPool.acquireConnection(this.config, {
+        mode: "wait",
+        maxWaitMs: 2 * 60 * 1000,
         abortSignal,
-        initLogger,
+        onWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
       });
 
       // Step 3: Create bundle locally and pipe to remote file via SSH
@@ -694,6 +709,9 @@ export class SSHRuntime implements Runtime {
         cwd: "~",
         timeout: 300, // 5 minutes for clone
         abortSignal,
+        connectionMode: "wait",
+        connectionMaxWaitMs: 2 * 60 * 1000,
+        onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
       });
 
       const [cloneStdout, cloneStderr, cloneExitCode] = await Promise.all([
@@ -716,6 +734,9 @@ export class SSHRuntime implements Runtime {
           cwd: "~",
           timeout: 30,
           abortSignal,
+          connectionMode: "wait",
+          connectionMaxWaitMs: 2 * 60 * 1000,
+          onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
         }
       );
       await createTrackingBranchesStream.exitCode;
@@ -730,6 +751,9 @@ export class SSHRuntime implements Runtime {
             cwd: "~",
             timeout: 10,
             abortSignal,
+            connectionMode: "wait",
+            connectionMaxWaitMs: 2 * 60 * 1000,
+            onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
           }
         );
 
@@ -748,6 +772,9 @@ export class SSHRuntime implements Runtime {
             cwd: "~",
             timeout: 10,
             abortSignal,
+            connectionMode: "wait",
+            connectionMaxWaitMs: 2 * 60 * 1000,
+            onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
           }
         );
         await removeOriginStream.exitCode;
@@ -759,6 +786,9 @@ export class SSHRuntime implements Runtime {
         cwd: "~",
         timeout: 10,
         abortSignal,
+        connectionMode: "wait",
+        connectionMaxWaitMs: 2 * 60 * 1000,
+        onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
       });
 
       const rmExitCode = await rmStream.exitCode;
@@ -774,6 +804,9 @@ export class SSHRuntime implements Runtime {
           cwd: "~",
           timeout: 10,
           abortSignal,
+          connectionMode: "wait",
+          connectionMaxWaitMs: 2 * 60 * 1000,
+          onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
         });
         await rmStream.exitCode;
       } catch {
@@ -812,6 +845,9 @@ export class SSHRuntime implements Runtime {
       timeout: 3600, // 1 hour - generous timeout for init hooks
       abortSignal,
       env: muxEnv,
+      connectionMode: "wait",
+      connectionMaxWaitMs: 2 * 60 * 1000,
+      onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
     });
 
     // Create line-buffered loggers
@@ -881,15 +917,14 @@ export class SSHRuntime implements Runtime {
         const expandedParentDir = expandTildeForSSH(parentDir);
         const parentDirCommand = `mkdir -p ${expandedParentDir}`;
 
-        const mkdirStream = await retrySSHForInit(
-          () =>
-            this.exec(parentDirCommand, {
-              cwd: "/tmp",
-              timeout: 10,
-              abortSignal,
-            }),
-          { abortSignal, initLogger }
-        );
+        const mkdirStream = await this.exec(parentDirCommand, {
+          cwd: "/tmp",
+          timeout: 10,
+          abortSignal,
+          connectionMode: "wait",
+          connectionMaxWaitMs: 2 * 60 * 1000,
+          onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
+        });
         const mkdirExitCode = await mkdirStream.exitCode;
         if (mkdirExitCode !== 0) {
           const stderr = await streamToString(mkdirStream.stderr);
@@ -926,10 +961,7 @@ export class SSHRuntime implements Runtime {
       // 1. Sync project to remote (opportunistic rsync with scp fallback)
       initLogger.logStep("Syncing project files to remote...");
       try {
-        await retrySSHForInit(
-          () => this.syncProjectToRemote(projectPath, workspacePath, initLogger, abortSignal),
-          { abortSignal, initLogger }
-        );
+        await this.syncProjectToRemote(projectPath, workspacePath, initLogger, abortSignal);
       } catch (error) {
         const errorMsg = getErrorMessage(error);
         initLogger.logStderr(`Failed to sync project: ${errorMsg}`);
@@ -950,15 +982,14 @@ export class SSHRuntime implements Runtime {
       // Since we've created local branches for all remote refs, we can use branch names directly
       const checkoutCmd = `git checkout ${shescape.quote(branchName)} 2>/dev/null || git checkout -b ${shescape.quote(branchName)} ${shescape.quote(trunkBranch)}`;
 
-      const checkoutStream = await retrySSHForInit(
-        () =>
-          this.exec(checkoutCmd, {
-            cwd: workspacePath, // Use the full workspace path for git operations
-            timeout: 300, // 5 minutes for git checkout (can be slow on large repos)
-            abortSignal,
-          }),
-        { abortSignal, initLogger }
-      );
+      const checkoutStream = await this.exec(checkoutCmd, {
+        cwd: workspacePath, // Use the full workspace path for git operations
+        timeout: 300, // 5 minutes for git checkout (can be slow on large repos)
+        abortSignal,
+        connectionMode: "wait",
+        connectionMaxWaitMs: 2 * 60 * 1000,
+        onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
+      });
 
       const [stdout, stderr, exitCode] = await Promise.all([
         streamToString(checkoutStream.stdout),
@@ -1022,6 +1053,9 @@ export class SSHRuntime implements Runtime {
         cwd: workspacePath,
         timeout: 120, // 2 minutes for network operation
         abortSignal,
+        connectionMode: "wait",
+        connectionMaxWaitMs: 2 * 60 * 1000,
+        onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
       });
 
       const fetchExitCode = await fetchStream.exitCode;
@@ -1041,6 +1075,9 @@ export class SSHRuntime implements Runtime {
         cwd: workspacePath,
         timeout: 60, // 1 minute for fast-forward merge
         abortSignal,
+        connectionMode: "wait",
+        connectionMaxWaitMs: 2 * 60 * 1000,
+        onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
       });
 
       const [mergeStderr, mergeExitCode] = await Promise.all([

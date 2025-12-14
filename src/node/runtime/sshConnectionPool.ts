@@ -64,6 +64,68 @@ const BACKOFF_SCHEDULE = [1, 5, 10, 20, 40, 60];
  */
 const HEALTHY_TTL_MS = 15 * 1000; // 15 seconds
 
+const DEFAULT_PROBE_TIMEOUT_MS = 10_000;
+
+export type SSHConnectionMode = "fail-fast" | "wait";
+
+export interface AcquireConnectionOptions {
+  /** Timeout for the health check probe. */
+  timeoutMs?: number;
+
+  /** How to handle a host that is currently in backoff. */
+  mode?: SSHConnectionMode;
+
+  /**
+   * Only used when mode="wait".
+   * Upper bound on wall clock time spent trying to acquire a healthy connection
+   * (waits + probes).
+   */
+  maxWaitMs?: number;
+
+  /** Optional abort signal to cancel any waiting. */
+  abortSignal?: AbortSignal;
+
+  /**
+   * Called when acquireConnection is waiting due to backoff.
+   *
+   * Useful for user-facing progress logs (e.g. workspace init).
+   */
+  onWait?: (waitMs: number) => void;
+
+  /**
+   * Test seam.
+   *
+   * If provided, this is used for sleeping between wait cycles.
+   */
+  sleep?: (ms: number, abortSignal?: AbortSignal) => Promise<void>;
+}
+
+async function sleepWithAbort(ms: number, abortSignal?: AbortSignal): Promise<void> {
+  if (ms <= 0) return;
+  if (abortSignal?.aborted) {
+    throw new Error("Operation aborted");
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+
+    const onAbort = () => {
+      cleanup();
+      reject(new Error("Operation aborted"));
+    };
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      abortSignal?.removeEventListener("abort", onAbort);
+    };
+
+    abortSignal?.addEventListener("abort", onAbort);
+  });
+}
+
 /**
  * SSH Connection Pool
  *
@@ -80,51 +142,114 @@ export class SSHConnectionPool {
   /**
    * Ensure connection is healthy before proceeding.
    *
-   * @param config SSH configuration
-   * @param timeoutMs Timeout for health check probe (default: 10s)
-   * @throws Error if connection is in backoff or health check fails
+   * The pool is intentionally conservative by default (fail-fast) to avoid turning
+   * an SSH outage into app-wide latency regressions.
+   *
+   * For user-initiated flows where waiting is preferable to an immediate error
+   * (workspace init, terminal spawn, explicit user commands), callers can opt in
+   * to waiting through backoff via `{ mode: "wait" }`.
    */
-  async acquireConnection(config: SSHRuntimeConfig, timeoutMs = 10000): Promise<void> {
+  async acquireConnection(config: SSHRuntimeConfig, timeoutMs?: number): Promise<void>;
+  async acquireConnection(
+    config: SSHRuntimeConfig,
+    options?: AcquireConnectionOptions
+  ): Promise<void>;
+  async acquireConnection(
+    config: SSHRuntimeConfig,
+    timeoutMsOrOptions: number | AcquireConnectionOptions = DEFAULT_PROBE_TIMEOUT_MS
+  ): Promise<void> {
+    const options =
+      typeof timeoutMsOrOptions === "number"
+        ? ({
+            timeoutMs: timeoutMsOrOptions,
+            mode: "fail-fast",
+          } satisfies AcquireConnectionOptions)
+        : timeoutMsOrOptions;
+
+    const mode = options.mode ?? "fail-fast";
+    const timeoutMs = options.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
+    const maxWaitMs = options.maxWaitMs ?? 60_000;
+    const sleep = options.sleep ?? sleepWithAbort;
+
     const key = makeConnectionKey(config);
-    const health = this.health.get(key);
+    const startTime = Date.now();
 
-    // Check if in backoff
-    if (health?.backoffUntil && health.backoffUntil > new Date()) {
-      const remainingSecs = Math.ceil((health.backoffUntil.getTime() - Date.now()) / 1000);
-      throw new Error(
-        `SSH connection to ${config.host} is in backoff for ${remainingSecs}s. ` +
-          `Last error: ${health.lastError ?? "unknown"}`
-      );
-    }
-
-    // Return immediately if known healthy and not stale
-    if (health?.status === "healthy") {
-      const age = Date.now() - (health.lastSuccess?.getTime() ?? 0);
-      if (age < HEALTHY_TTL_MS) {
-        log.debug(`SSH connection to ${config.host} is known healthy, skipping probe`);
-        return;
+    while (true) {
+      if (options.abortSignal?.aborted) {
+        throw new Error("Operation aborted");
       }
-      log.debug(
-        `SSH connection to ${config.host} health is stale (${Math.round(age / 1000)}s), re-probing`
-      );
-    }
 
-    // Check for inflight probe - singleflighting
-    const existing = this.inflight.get(key);
-    if (existing) {
-      log.debug(`SSH connection to ${config.host} has inflight probe, waiting...`);
-      return existing;
-    }
+      const health = this.health.get(key);
 
-    // Start new probe
-    log.debug(`SSH connection to ${config.host} needs probe, starting health check`);
-    const probe = this.probeConnection(config, timeoutMs, key);
-    this.inflight.set(key, probe);
+      // If in backoff: either fail fast or wait (bounded).
+      if (health?.backoffUntil && health.backoffUntil > new Date()) {
+        const remainingMs = health.backoffUntil.getTime() - Date.now();
+        const remainingSecs = Math.ceil(remainingMs / 1000);
 
-    try {
-      await probe;
-    } finally {
-      this.inflight.delete(key);
+        if (mode === "fail-fast") {
+          throw new Error(
+            `SSH connection to ${config.host} is in backoff for ${remainingSecs}s. ` +
+              `Last error: ${health.lastError ?? "unknown"}`
+          );
+        }
+
+        const elapsedMs = Date.now() - startTime;
+        const budgetMs = Math.max(0, maxWaitMs - elapsedMs);
+        if (budgetMs <= 0) {
+          throw new Error(
+            `SSH connection to ${config.host} did not become healthy within ${maxWaitMs}ms. ` +
+              `Last error: ${health.lastError ?? "unknown"}`
+          );
+        }
+
+        const waitMs = Math.min(remainingMs, budgetMs);
+        options.onWait?.(waitMs);
+        await sleep(waitMs, options.abortSignal);
+        continue;
+      }
+
+      // Return immediately if known healthy and not stale.
+      if (health?.status === "healthy") {
+        const age = Date.now() - (health.lastSuccess?.getTime() ?? 0);
+        if (age < HEALTHY_TTL_MS) {
+          log.debug(`SSH connection to ${config.host} is known healthy, skipping probe`);
+          return;
+        }
+        log.debug(
+          `SSH connection to ${config.host} health is stale (${Math.round(age / 1000)}s), re-probing`
+        );
+      }
+
+      // Check for inflight probe - singleflighting.
+      const existing = this.inflight.get(key);
+      if (existing) {
+        log.debug(`SSH connection to ${config.host} has inflight probe, waiting...`);
+        try {
+          await existing;
+          return;
+        } catch {
+          // Probe failed; if we're in wait mode we'll loop and sleep through the backoff.
+          continue;
+        }
+      }
+
+      // Start new probe.
+      log.debug(`SSH connection to ${config.host} needs probe, starting health check`);
+      const probe = this.probeConnection(config, timeoutMs, key);
+      this.inflight.set(key, probe);
+
+      try {
+        await probe;
+        return;
+      } catch (error) {
+        if (mode === "fail-fast") {
+          throw error;
+        }
+        // In wait mode: probeConnection() recorded backoff; loop and wait.
+        continue;
+      } finally {
+        this.inflight.delete(key);
+      }
     }
   }
 
