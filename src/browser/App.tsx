@@ -7,7 +7,11 @@ import { LeftSidebar } from "./components/LeftSidebar";
 import { ProjectCreateModal } from "./components/ProjectCreateModal";
 import { AIView } from "./components/AIView";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { usePersistedState, updatePersistedState } from "./hooks/usePersistedState";
+import {
+  usePersistedState,
+  updatePersistedState,
+  readPersistedState,
+} from "./hooks/usePersistedState";
 import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
 import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
 import { useResumeManager } from "./hooks/useResumeManager";
@@ -279,10 +283,7 @@ function AppInner() {
         return "off";
       }
       const model = getModelForWorkspace(workspaceId);
-      const level = readPersistedState<ThinkingLevel>(
-        getThinkingLevelByModelKey(model),
-        "off"
-      );
+      const level = readPersistedState<ThinkingLevel>(getThinkingLevelByModelKey(model), "off");
       return THINKING_LEVELS.includes(level) ? level : "off";
     },
     [getModelForWorkspace]

@@ -128,7 +128,7 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 ## Component State & Storage
 
 - Parent components own localStorage interactions; children announce intent only.
-- Use `usePersistedState`/`readPersistedState`/`updatePersistedState` helpers—never call `localStorage` directly.
+- **Never call `localStorage` directly** — always use `usePersistedState`/`readPersistedState`/`updatePersistedState` helpers. This includes inside `useCallback`, event handlers, and non-React functions. The helpers handle JSON parsing, error recovery, and cross-component sync.
 - When a component needs to read persisted state it doesn't own (to avoid layout flash), use `readPersistedState` in `useState` initializer: `useState(() => readPersistedState(key, default))`.
 - When multiple components need the same persisted value, use `usePersistedState` with identical keys and `{ listener: true }` for automatic cross-component sync.
 - Avoid destructuring props in function signatures; access via `props.field` to keep rename-friendly code.
