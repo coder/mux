@@ -27,8 +27,6 @@ export interface ChatInputWorkspaceVariant {
   onCancelEdit?: () => void;
   onEditLastUserMessage?: () => void;
   canInterrupt?: boolean;
-  /** True when the active stream is blocked on ask_user_question */
-  awaitingUserQuestion?: boolean;
   disabled?: boolean;
   onReady?: (api: ChatInputAPI) => void;
   autoCompactionCheck?: AutoCompactionCheckResult; // Computed in parent (AIView) to avoid duplicate calculation
