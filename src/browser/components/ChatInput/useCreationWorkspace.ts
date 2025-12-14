@@ -14,7 +14,6 @@ import {
   getProjectScopeId,
 } from "@/common/constants/storage";
 import type { Toast } from "@/browser/components/ChatInputToast";
-import { createErrorToast } from "@/browser/components/ChatInputToasts";
 import { useAPI } from "@/browser/contexts/API";
 import type { ImagePart } from "@/common/orpc/types";
 import {
@@ -196,8 +195,21 @@ export function useCreationWorkspace({
 
         const { metadata } = createResult;
 
-        // Now send the message to the newly created workspace
-        const result = await api.workspace.sendMessage({
+        // Sync preferences immediately (before switching)
+        syncCreationPreferences(projectPath, metadata.id);
+        if (projectPath) {
+          const pendingInputKey = getInputKey(getPendingScopeId(projectPath));
+          updatePersistedState(pendingInputKey, "");
+        }
+
+        // Switch to the workspace IMMEDIATELY after creation to exit splash faster.
+        // The user sees the workspace UI while sendMessage kicks off the stream.
+        onWorkspaceCreated(metadata);
+        setIsSending(false);
+
+        // Fire sendMessage in the background - stream errors will be shown in the workspace UI
+        // via the normal stream-error event handling. We don't await this.
+        void api.workspace.sendMessage({
           workspaceId: metadata.id,
           message: messageText,
           options: {
@@ -206,22 +218,6 @@ export function useCreationWorkspace({
           },
         });
 
-        if (!result.success) {
-          setToast(createErrorToast(result.error));
-          setIsSending(false);
-          return false;
-        }
-
-        // Sync preferences and complete
-        syncCreationPreferences(projectPath, metadata.id);
-        if (projectPath) {
-          const pendingInputKey = getInputKey(getPendingScopeId(projectPath));
-          updatePersistedState(pendingInputKey, "");
-        }
-        // Settings are already persisted via useDraftWorkspaceSettings
-        // Notify parent to switch workspace (clears input via parent unmount)
-        onWorkspaceCreated(metadata);
-        setIsSending(false);
         return true;
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
