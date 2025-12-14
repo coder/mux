@@ -235,6 +235,25 @@ export class StreamingMessageAggregator {
   }
 
   /**
+   * Check if there's an executing ask_user_question tool awaiting user input.
+   * Used to show "Awaiting your input" instead of "streaming..." in the UI.
+   */
+  hasAwaitingUserQuestion(): boolean {
+    // Scan displayed messages for an ask_user_question tool in "executing" state
+    const displayed = this.getDisplayedMessages();
+    for (const msg of displayed) {
+      if (
+        msg.type === "tool" &&
+        msg.toolName === "ask_user_question" &&
+        msg.status === "executing"
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * Extract compaction summary text from a completed assistant message.
    * Used when a compaction stream completes to get the summary for history replacement.
    * @param messageId The ID of the assistant message to extract text from

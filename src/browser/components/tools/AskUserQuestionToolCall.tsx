@@ -151,12 +151,6 @@ function draftToAnswerString(question: AskUserQuestionQuestion, draft: DraftAnsw
   return parts.join(", ");
 }
 
-function formatAnswerSummary(result: AskUserQuestionToolSuccessResult): string {
-  return Object.entries(result.answers)
-    .map(([question, answer]) => `${question}: ${answer}`)
-    .join(" | ");
-}
-
 export function AskUserQuestionToolCall(props: {
   args: AskUserQuestionToolArgs;
   result: AskUserQuestionToolResult | null;
@@ -209,9 +203,19 @@ export function AskUserQuestionToolCall(props: {
     });
   }, [draftAnswers, props.args.questions]);
 
-  const currentQuestion =
-    props.args.questions[Math.min(activeIndex, props.args.questions.length - 1)];
+  const summaryIndex = props.args.questions.length;
+  const isOnSummary = activeIndex === summaryIndex;
+  const currentQuestion = isOnSummary
+    ? null
+    : props.args.questions[Math.min(activeIndex, props.args.questions.length - 1)];
   const currentDraft = currentQuestion ? draftAnswers[currentQuestion.question] : undefined;
+
+  const unansweredCount = useMemo(() => {
+    return props.args.questions.filter((q) => {
+      const draft = draftAnswers[q.question];
+      return !draft || !isQuestionAnswered(q, draft);
+    }).length;
+  }, [draftAnswers, props.args.questions]);
 
   const handleSubmit = (): void => {
     setIsSubmitting(true);
@@ -223,11 +227,12 @@ export function AskUserQuestionToolCall(props: {
       answers = {};
       for (const q of props.args.questions) {
         const draft = draftAnswers[q.question];
-        assert(draft, "Missing draft answer for question");
-        if (!isQuestionAnswered(q, draft)) {
-          throw new Error("Please answer all questions before submitting");
+        if (draft && isQuestionAnswered(q, draft)) {
+          answers[q.question] = draftToAnswerString(q, draft);
+        } else {
+          // Unanswered questions get empty string
+          answers[q.question] = "";
         }
-        answers[q.question] = draftToAnswerString(q, draft);
       }
 
       assert(api, "API not connected");
@@ -276,7 +281,7 @@ export function AskUserQuestionToolCall(props: {
       {expanded && (
         <ToolDetails>
           <div className="flex flex-col gap-4">
-            {props.status === "executing" && currentQuestion && currentDraft && (
+            {props.status === "executing" && (
               <div className="flex flex-col gap-4">
                 <div className="flex flex-wrap gap-2">
                   {props.args.questions.map((q, idx) => {
@@ -291,7 +296,9 @@ export function AskUserQuestionToolCall(props: {
                           "text-xs px-2 py-1 rounded border " +
                           (isActive
                             ? "bg-primary text-primary-foreground border-primary"
-                            : "bg-muted text-muted-foreground border-border")
+                            : answered
+                              ? "bg-green-900/30 text-green-400 border-green-700"
+                              : "bg-muted text-foreground border-border")
                         }
                         onClick={() => setActiveIndex(idx)}
                       >
@@ -300,148 +307,214 @@ export function AskUserQuestionToolCall(props: {
                       </button>
                     );
                   })}
+                  <button
+                    type="button"
+                    className={
+                      "text-xs px-2 py-1 rounded border " +
+                      (isOnSummary
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : isComplete
+                          ? "bg-green-900/30 text-green-400 border-green-700"
+                          : "bg-muted text-foreground border-border")
+                    }
+                    onClick={() => setActiveIndex(summaryIndex)}
+                  >
+                    Summary{isComplete ? " ✓" : ""}
+                  </button>
                 </div>
 
-                <div>
-                  <div className="text-sm font-medium">{currentQuestion.question}</div>
-                </div>
+                {!isOnSummary && currentQuestion && currentDraft && (
+                  <>
+                    <div>
+                      <div className="text-sm font-medium">{currentQuestion.question}</div>
+                    </div>
 
-                <div className="flex flex-col gap-3">
-                  {currentQuestion.options.map((opt) => {
-                    const checked = currentDraft.selected.includes(opt.label);
+                    <div className="flex flex-col gap-3">
+                      {currentQuestion.options.map((opt) => {
+                        const checked = currentDraft.selected.includes(opt.label);
 
-                    const toggle = () => {
-                      setDraftAnswers((prev) => {
-                        const next = { ...prev };
-                        const draft = next[currentQuestion.question] ?? {
-                          selected: [],
-                          otherText: "",
+                        const toggle = () => {
+                          setDraftAnswers((prev) => {
+                            const next = { ...prev };
+                            const draft = next[currentQuestion.question] ?? {
+                              selected: [],
+                              otherText: "",
+                            };
+
+                            if (currentQuestion.multiSelect) {
+                              const selected = new Set(draft.selected);
+                              if (selected.has(opt.label)) {
+                                selected.delete(opt.label);
+                              } else {
+                                selected.add(opt.label);
+                              }
+                              next[currentQuestion.question] = {
+                                ...draft,
+                                selected: Array.from(selected),
+                              };
+                            } else {
+                              next[currentQuestion.question] = {
+                                selected: checked ? [] : [opt.label],
+                                otherText: "",
+                              };
+                            }
+
+                            return next;
+                          });
                         };
 
-                        if (currentQuestion.multiSelect) {
-                          const selected = new Set(draft.selected);
-                          if (selected.has(opt.label)) {
-                            selected.delete(opt.label);
-                          } else {
-                            selected.add(opt.label);
-                          }
-                          next[currentQuestion.question] = {
-                            ...draft,
-                            selected: Array.from(selected),
-                          };
-                        } else {
-                          next[currentQuestion.question] = {
-                            selected: checked ? [] : [opt.label],
-                            otherText: "",
-                          };
-                        }
-
-                        return next;
-                      });
-                    };
-
-                    return (
-                      <div
-                        key={opt.label}
-                        role="button"
-                        tabIndex={0}
-                        className="flex cursor-pointer items-start gap-2 select-none"
-                        onClick={toggle}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            toggle();
-                          }
-                        }}
-                      >
-                        <Checkbox
-                          checked={checked}
-                          onCheckedChange={toggle}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                        <div className="flex flex-col">
-                          <div className="text-sm">{opt.label}</div>
-                          <div className="text-muted-foreground text-xs">{opt.description}</div>
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  {(() => {
-                    const checked = currentDraft.selected.includes(OTHER_VALUE);
-                    const toggle = () => {
-                      setDraftAnswers((prev) => {
-                        const next = { ...prev };
-                        const draft = next[currentQuestion.question] ?? {
-                          selected: [],
-                          otherText: "",
-                        };
-                        const selected = new Set(draft.selected);
-                        if (selected.has(OTHER_VALUE)) {
-                          selected.delete(OTHER_VALUE);
-                          next[currentQuestion.question] = {
-                            ...draft,
-                            selected: Array.from(selected),
-                          };
-                        } else {
-                          if (!currentQuestion.multiSelect) {
-                            selected.clear();
-                          }
-                          selected.add(OTHER_VALUE);
-                          next[currentQuestion.question] = {
-                            ...draft,
-                            selected: Array.from(selected),
-                          };
-                        }
-                        return next;
-                      });
-                    };
-
-                    return (
-                      <div
-                        role="button"
-                        tabIndex={0}
-                        className="flex cursor-pointer items-start gap-2 select-none"
-                        onClick={toggle}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            toggle();
-                          }
-                        }}
-                      >
-                        <Checkbox
-                          checked={checked}
-                          onCheckedChange={toggle}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                        <div className="flex flex-col">
-                          <div className="text-sm">Other</div>
-                          <div className="text-muted-foreground text-xs">
-                            Provide a custom answer.
+                        return (
+                          <div
+                            key={opt.label}
+                            role="button"
+                            tabIndex={0}
+                            className="flex cursor-pointer items-start gap-2 select-none"
+                            onClick={toggle}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                toggle();
+                              }
+                            }}
+                          >
+                            <Checkbox
+                              checked={checked}
+                              onCheckedChange={toggle}
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                            <div className="flex flex-col">
+                              <div className="text-sm">{opt.label}</div>
+                              <div className="text-muted-foreground text-xs">{opt.description}</div>
+                            </div>
                           </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
+                        );
+                      })}
 
-                  {currentDraft.selected.includes(OTHER_VALUE) && (
-                    <Input
-                      placeholder="Type your answer"
-                      value={currentDraft.otherText}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        setDraftAnswers((prev) => ({
-                          ...prev,
-                          [currentQuestion.question]: {
-                            ...(prev[currentQuestion.question] ?? { selected: [], otherText: "" }),
-                            otherText: value,
-                          },
-                        }));
-                      }}
-                    />
-                  )}
-                </div>
+                      {(() => {
+                        const checked = currentDraft.selected.includes(OTHER_VALUE);
+                        const toggle = () => {
+                          setDraftAnswers((prev) => {
+                            const next = { ...prev };
+                            const draft = next[currentQuestion.question] ?? {
+                              selected: [],
+                              otherText: "",
+                            };
+                            const selected = new Set(draft.selected);
+                            if (selected.has(OTHER_VALUE)) {
+                              selected.delete(OTHER_VALUE);
+                              next[currentQuestion.question] = {
+                                ...draft,
+                                selected: Array.from(selected),
+                              };
+                            } else {
+                              if (!currentQuestion.multiSelect) {
+                                selected.clear();
+                              }
+                              selected.add(OTHER_VALUE);
+                              next[currentQuestion.question] = {
+                                ...draft,
+                                selected: Array.from(selected),
+                              };
+                            }
+                            return next;
+                          });
+                        };
+
+                        return (
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            className="flex cursor-pointer items-start gap-2 select-none"
+                            onClick={toggle}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                toggle();
+                              }
+                            }}
+                          >
+                            <Checkbox
+                              checked={checked}
+                              onCheckedChange={toggle}
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                            <div className="flex flex-col">
+                              <div className="text-sm">Other</div>
+                              <div className="text-muted-foreground text-xs">
+                                Provide a custom answer.
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {currentDraft.selected.includes(OTHER_VALUE) && (
+                        <Input
+                          placeholder="Type your answer"
+                          value={currentDraft.otherText}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setDraftAnswers((prev) => ({
+                              ...prev,
+                              [currentQuestion.question]: {
+                                ...(prev[currentQuestion.question] ?? {
+                                  selected: [],
+                                  otherText: "",
+                                }),
+                                otherText: value,
+                              },
+                            }));
+                          }}
+                        />
+                      )}
+                    </div>
+                  </>
+                )}
+
+                {isOnSummary && (
+                  <div className="flex flex-col gap-2">
+                    <div className="text-sm font-medium">Review your answers</div>
+                    {unansweredCount > 0 && (
+                      <div className="text-xs text-yellow-500">
+                        ⚠️ {unansweredCount} question{unansweredCount > 1 ? "s" : ""} not answered
+                      </div>
+                    )}
+                    <div className="flex flex-col gap-1">
+                      {props.args.questions.map((q, idx) => {
+                        const draft = draftAnswers[q.question];
+                        const answered = draft ? isQuestionAnswered(q, draft) : false;
+                        const answerText = answered ? draftToAnswerString(q, draft) : null;
+                        return (
+                          <div
+                            key={q.question}
+                            role="button"
+                            tabIndex={0}
+                            className="hover:bg-muted/50 -ml-2 cursor-pointer rounded px-2 py-1"
+                            onClick={() => setActiveIndex(idx)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                setActiveIndex(idx);
+                              }
+                            }}
+                          >
+                            {answered ? (
+                              <span className="text-green-400">✓</span>
+                            ) : (
+                              <span className="text-yellow-500">⚠️</span>
+                            )}{" "}
+                            <span className="font-medium">{q.header}:</span>{" "}
+                            {answered ? (
+                              <span className="text-muted-foreground">{answerText}</span>
+                            ) : (
+                              <span className="text-muted-foreground italic">Not answered</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 <div className="text-muted-foreground text-xs">
                   Tip: you can also just type a message to respond in chat (this will cancel these
@@ -455,8 +528,13 @@ export function AskUserQuestionToolCall(props: {
             {props.status !== "executing" && (
               <div className="flex flex-col gap-2">
                 {successResult && (
-                  <div className="text-muted-foreground text-sm">
-                    User answered: {formatAnswerSummary(successResult)}
+                  <div className="text-muted-foreground flex flex-col gap-1 text-sm">
+                    <div>User answered:</div>
+                    {Object.entries(successResult.answers).map(([question, answer]) => (
+                      <div key={question} className="ml-4">
+                        • <span className="font-medium">{question}:</span> {answer}
+                      </div>
+                    ))}
                   </div>
                 )}
 
@@ -466,9 +544,13 @@ export function AskUserQuestionToolCall(props: {
 
             {props.status === "executing" && (
               <div className="flex justify-end">
-                <Button disabled={!isComplete || isSubmitting} onClick={handleSubmit}>
-                  {isSubmitting ? "Submitting…" : "Submit answers"}
-                </Button>
+                {isOnSummary ? (
+                  <Button disabled={isSubmitting} onClick={handleSubmit}>
+                    {isSubmitting ? "Submitting…" : "Submit answers"}
+                  </Button>
+                ) : (
+                  <Button onClick={() => setActiveIndex(activeIndex + 1)}>Next</Button>
+                )}
               </div>
             )}
           </div>

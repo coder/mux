@@ -160,7 +160,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
   useEffect(() => {
     workspaceStateRef.current = workspaceState;
   }, [workspaceState]);
-  const { messages, canInterrupt, isCompacting, loading, currentModel } = workspaceState;
+  const { messages, canInterrupt, isCompacting, awaitingUserQuestion, loading, currentModel } =
+    workspaceState;
 
   // Apply message transformations:
   // 1. Merge consecutive identical stream errors
@@ -673,24 +674,34 @@ const AIViewInner: React.FC<AIViewProps> = ({
               {canInterrupt && (
                 <StreamingBarrier
                   statusText={
-                    isCompacting
-                      ? currentModel
-                        ? `${getModelName(currentModel)} compacting...`
-                        : "compacting..."
-                      : currentModel
-                        ? `${getModelName(currentModel)} streaming...`
-                        : "streaming..."
+                    awaitingUserQuestion
+                      ? "Awaiting your input..."
+                      : isCompacting
+                        ? currentModel
+                          ? `${getModelName(currentModel)} compacting...`
+                          : "compacting..."
+                        : currentModel
+                          ? `${getModelName(currentModel)} streaming...`
+                          : "streaming..."
                   }
-                  cancelText={`hit ${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} to cancel`}
+                  cancelText={
+                    awaitingUserQuestion
+                      ? "type a message to respond"
+                      : `hit ${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} to cancel`
+                  }
                   tokenCount={
-                    activeStreamMessageId
-                      ? aggregator?.getStreamingTokenCount(activeStreamMessageId)
-                      : undefined
+                    awaitingUserQuestion
+                      ? undefined
+                      : activeStreamMessageId
+                        ? aggregator?.getStreamingTokenCount(activeStreamMessageId)
+                        : undefined
                   }
                   tps={
-                    activeStreamMessageId
-                      ? aggregator?.getStreamingTPS(activeStreamMessageId)
-                      : undefined
+                    awaitingUserQuestion
+                      ? undefined
+                      : activeStreamMessageId
+                        ? aggregator?.getStreamingTPS(activeStreamMessageId)
+                        : undefined
                   }
                 />
               )}

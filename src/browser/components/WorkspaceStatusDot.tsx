@@ -11,10 +11,10 @@ export const WorkspaceStatusDot = memo<{
   size?: number;
 }>(
   ({ workspaceId, lastReadTimestamp, onClick, size = 8 }) => {
-    const { canInterrupt, currentModel, agentStatus, recencyTimestamp } =
+    const { canInterrupt, awaitingUserQuestion, currentModel, agentStatus, recencyTimestamp } =
       useWorkspaceSidebarState(workspaceId);
 
-    const streaming = canInterrupt;
+    const streaming = canInterrupt && !awaitingUserQuestion;
 
     // Compute unread status if lastReadTimestamp provided (sidebar only)
     const unread = useMemo(() => {
@@ -27,12 +27,13 @@ export const WorkspaceStatusDot = memo<{
       () =>
         getStatusTooltip({
           isStreaming: streaming,
+          isAwaitingInput: awaitingUserQuestion,
           streamingModel: currentModel,
           agentStatus,
           isUnread: unread,
           recencyTimestamp,
         }),
-      [streaming, currentModel, agentStatus, unread, recencyTimestamp]
+      [streaming, awaitingUserQuestion, currentModel, agentStatus, unread, recencyTimestamp]
     );
 
     const bgColor = canInterrupt ? "bg-blue-400" : unread ? "bg-gray-300" : "bg-muted-dark";

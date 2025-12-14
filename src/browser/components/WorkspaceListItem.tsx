@@ -99,7 +99,8 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
     }
   };
 
-  const { canInterrupt } = useWorkspaceSidebarState(workspaceId);
+  const { canInterrupt, awaitingUserQuestion } = useWorkspaceSidebarState(workspaceId);
+  const isWorking = canInterrupt && !awaitingUserQuestion;
 
   return (
     <React.Fragment>
@@ -167,7 +168,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                 <TooltipContent align="start">Remove workspace</TooltipContent>
               </Tooltip>
             )}
-            <RuntimeBadge runtimeConfig={metadata.runtimeConfig} isWorking={canInterrupt} />
+            <RuntimeBadge runtimeConfig={metadata.runtimeConfig} isWorking={isWorking} />
             {isEditing ? (
               <input
                 className="bg-input-bg text-input-text border-input-border font-inherit focus:border-input-border-focus col-span-2 min-w-0 flex-1 rounded-sm border px-1 text-left text-[13px] outline-none"
@@ -195,7 +196,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                     }}
                     title={isDisabled ? undefined : "Double-click to edit title"}
                   >
-                    {canInterrupt || isCreating ? (
+                    {isWorking || isCreating ? (
                       <Shimmer className="w-full truncate" colorClass="var(--color-foreground)">
                         {displayTitle}
                       </Shimmer>
@@ -213,7 +214,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                 gitStatus={gitStatus}
                 workspaceId={workspaceId}
                 tooltipPosition="right"
-                isWorking={canInterrupt}
+                isWorking={isWorking}
               />
             )}
           </div>

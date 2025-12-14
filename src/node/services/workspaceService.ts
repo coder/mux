@@ -1156,7 +1156,7 @@ export class WorkspaceService extends EventEmitter {
       ? expandTildeForSSH(legacyPlanPath)
       : shellQuote(expandTilde(legacyPlanPath));
 
-// SSH runtime: delete via remote shell so $HOME expands on the remote.
+    // SSH runtime: delete via remote shell so $HOME expands on the remote.
     if (isSSHRuntime(metadata.runtimeConfig)) {
       const runtime = createRuntime(metadata.runtimeConfig, {
         projectPath: metadata.projectPath,
@@ -1165,13 +1165,10 @@ export class WorkspaceService extends EventEmitter {
       try {
         // Use exec to delete files since runtime doesn't have a deleteFile method.
         // Delete both paths in one command for efficiency.
-        const execStream = await runtime.exec(
-          `rm -f ${quotedPlanPath} ${quotedLegacyPlanPath}`,
-          {
-            cwd: metadata.projectPath,
-            timeout: 10,
-          }
-        );
+        const execStream = await runtime.exec(`rm -f ${quotedPlanPath} ${quotedLegacyPlanPath}`, {
+          cwd: metadata.projectPath,
+          timeout: 10,
+        });
         // Wait for completion so callers can rely on the plan file actually being removed.
         await execStream.exitCode;
       } catch {

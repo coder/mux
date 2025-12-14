@@ -38,6 +38,7 @@ export interface WorkspaceState {
   queuedMessage: QueuedMessage | null;
   canInterrupt: boolean;
   isCompacting: boolean;
+  awaitingUserQuestion: boolean;
   loading: boolean;
   muxMessages: MuxMessage[];
   currentModel: string | null;
@@ -53,6 +54,7 @@ export interface WorkspaceState {
  */
 export interface WorkspaceSidebarState {
   canInterrupt: boolean;
+  awaitingUserQuestion: boolean;
   currentModel: string | null;
   recencyTimestamp: number | null;
   agentStatus: { emoji: string; message: string; url?: string } | undefined;
@@ -480,6 +482,7 @@ export class WorkspaceStore {
         queuedMessage: this.queuedMessages.get(workspaceId) ?? null,
         canInterrupt: activeStreams.length > 0,
         isCompacting: aggregator.isCompacting(),
+        awaitingUserQuestion: aggregator.hasAwaitingUserQuestion(),
         loading: !hasMessages && !isCaughtUp,
         muxMessages: messages,
         currentModel: aggregator.getCurrentModel() ?? null,
@@ -507,6 +510,7 @@ export class WorkspaceStore {
     if (
       cached &&
       cached.canInterrupt === fullState.canInterrupt &&
+      cached.awaitingUserQuestion === fullState.awaitingUserQuestion &&
       cached.currentModel === fullState.currentModel &&
       cached.recencyTimestamp === fullState.recencyTimestamp &&
       cached.agentStatus === fullState.agentStatus
@@ -517,6 +521,7 @@ export class WorkspaceStore {
     // Create and cache new state
     const newState: WorkspaceSidebarState = {
       canInterrupt: fullState.canInterrupt,
+      awaitingUserQuestion: fullState.awaitingUserQuestion,
       currentModel: fullState.currentModel,
       recencyTimestamp: fullState.recencyTimestamp,
       agentStatus: fullState.agentStatus,
