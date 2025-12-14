@@ -663,3 +663,95 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
     },
   },
 };
+
+/**
+ * Editing message state - shows the edit cutoff barrier and amber-styled input.
+ * Demonstrates the UI when a user clicks "Edit" on a previous message.
+ */
+export const EditingMessage: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-editing",
+          messages: [
+            createUserMessage("msg-1", "Add authentication to the user API endpoint", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 300000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "I'll help you add authentication. Let me check the current implementation and add JWT validation.",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 290000,
+                toolCalls: [
+                  createFileReadTool(
+                    "call-1",
+                    "src/api/users.ts",
+                    "export function getUser(req, res) {\n  const user = db.users.find(req.params.id);\n  res.json(user);\n}"
+                  ),
+                ],
+              }
+            ),
+            createUserMessage("msg-3", "Actually, can you use a different approach?", {
+              historySequence: 3,
+              timestamp: STABLE_TIMESTAMP - 280000,
+            }),
+            createAssistantMessage(
+              "msg-4",
+              "Of course! I can use a different authentication approach. What would you prefer?",
+              {
+                historySequence: 4,
+                timestamp: STABLE_TIMESTAMP - 270000,
+              }
+            ),
+          ],
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const canvas = within(storyRoot);
+
+    // Wait for messages to render
+    await canvas.findByText("Add authentication to the user API endpoint", {}, { timeout: 10000 });
+
+    // Find the first user message and click the Edit button
+    const editButtons = await canvas.findAllByLabelText("Edit");
+    if (editButtons.length === 0) throw new Error("No edit buttons found");
+
+    // Click edit on the first user message
+    await userEvent.click(editButtons[0]);
+
+    // Wait for the editing state to be applied - look for the amber border and edit indicator
+    await waitFor(
+      () => {
+        // The input should have the editing class
+        const textarea = storyRoot.querySelector("textarea");
+        if (!textarea?.className.includes("border-editing-mode")) {
+          throw new Error("Textarea not in editing state");
+        }
+      },
+      { timeout: 2000 }
+    );
+
+    // Verify the edit cutoff barrier appears
+    await waitFor(
+      () => {
+        const barrier = storyRoot.querySelector('[class*="edit-mode"]');
+        if (!barrier) throw new Error("Edit cutoff barrier not found");
+      },
+      { timeout: 1000 }
+    );
+  },
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Shows the editing message state with the amber-styled input border and edit cutoff barrier indicating messages that will be removed.",
+      },
+    },
+  },
+};

@@ -53,13 +53,15 @@
     --color-exec-mode-hover: hsl(268.56 94.04% 67%);
     --color-exec-mode-light: hsl(268.56 94.04% 78%);
 
-    --color-edit-mode: hsl(120 50% 35%);
-    --color-edit-mode-hover: hsl(120 50% 47%);
-    --color-edit-mode-light: hsl(120 50% 62%);
+    /* Edit mode: amber/gold for editing warnings and barriers */
+    --color-edit-mode: hsl(38 80% 45%);
+    --color-edit-mode-hover: hsl(38 80% 55%);
+    --color-edit-mode-light: hsl(38 80% 65%);
 
     --color-read: hsl(210 70% 40%);
-    --color-editing-mode: hsl(30 100% 50%);
-    --color-editing-mode-alpha: hsla(30 100% 50% / 0.1);
+    /* Editing state: subtle amber border when editing a message */
+    --color-editing-mode: hsl(38 70% 50%);
+    --color-editing-mode-alpha: hsla(38 70% 50% / 0.08);
     --color-pending: hsl(30 100% 70%);
 
     --color-debug-mode: hsl(214 100% 64%);
@@ -300,13 +302,13 @@
   --color-exec-mode-hover: hsl(268.56 94.04% 67%);
   --color-exec-mode-light: hsl(268.56 94.04% 78%);
 
-  --color-edit-mode: hsl(120 50% 35%);
-  --color-edit-mode-hover: hsl(120 50% 45%);
-  --color-edit-mode-light: hsl(120 50% 60%);
+  --color-edit-mode: hsl(38 80% 45%);
+  --color-edit-mode-hover: hsl(38 80% 55%);
+  --color-edit-mode-light: hsl(38 80% 65%);
 
   --color-read: hsl(210 70% 40%);
-  --color-editing-mode: hsl(30 100% 50%);
-  --color-editing-mode-alpha: hsla(30 100% 50% / 0.08);
+  --color-editing-mode: hsl(38 70% 50%);
+  --color-editing-mode-alpha: hsla(38 70% 50% / 0.08);
   --color-pending: hsl(30 100% 64%);
 
   --color-debug-mode: hsl(214 100% 56%);
@@ -532,13 +534,13 @@
   --color-exec-mode-hover: hsl(237 43% 70%);
   --color-exec-mode-light: hsl(237 43% 78%);
 
-  --color-edit-mode: hsl(68 100% 30%); /* green */
-  --color-edit-mode-hover: hsl(68 100% 40%);
-  --color-edit-mode-light: hsl(68 100% 52%);
+  --color-edit-mode: hsl(38 80% 40%); /* amber */
+  --color-edit-mode-hover: hsl(38 80% 50%);
+  --color-edit-mode-light: hsl(38 80% 60%);
 
   --color-read: hsl(205 69% 49%);
-  --color-editing-mode: hsl(45 100% 35%); /* yellow */
-  --color-editing-mode-alpha: hsla(45 100% 35% / 0.1);
+  --color-editing-mode: hsl(38 70% 45%); /* amber */
+  --color-editing-mode-alpha: hsla(38 70% 45% / 0.1);
   --color-pending: hsl(18 89% 44%); /* orange */
 
   --color-debug-mode: hsl(205 69% 49%);
@@ -747,13 +749,13 @@
   --color-exec-mode-hover: hsl(237 43% 70%);
   --color-exec-mode-light: hsl(237 43% 78%);
 
-  --color-edit-mode: hsl(68 100% 30%); /* green */
-  --color-edit-mode-hover: hsl(68 100% 40%);
-  --color-edit-mode-light: hsl(68 100% 52%);
+  --color-edit-mode: hsl(38 80% 40%); /* amber */
+  --color-edit-mode-hover: hsl(38 80% 50%);
+  --color-edit-mode-light: hsl(38 80% 60%);
 
   --color-read: hsl(205 69% 49%);
-  --color-editing-mode: hsl(45 100% 35%); /* yellow */
-  --color-editing-mode-alpha: hsla(45 100% 35% / 0.1);
+  --color-editing-mode: hsl(38 70% 45%); /* amber */
+  --color-editing-mode-alpha: hsla(38 70% 45% / 0.1);
   --color-pending: hsl(18 89% 44%); /* orange */
 
   --color-debug-mode: hsl(205 69% 49%);

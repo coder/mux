@@ -10,6 +10,7 @@ import React, {
 import { cn } from "@/common/lib/utils";
 import { MessageRenderer } from "./Messages/MessageRenderer";
 import { InterruptedBarrier } from "./Messages/ChatBarrier/InterruptedBarrier";
+import { EditCutoffBarrier } from "./Messages/ChatBarrier/EditCutoffBarrier";
 import { StreamingBarrier } from "./Messages/ChatBarrier/StreamingBarrier";
 import { RetryBarrier } from "./Messages/ChatBarrier/RetryBarrier";
 import { PinnedTodoList } from "./PinnedTodoList";
@@ -657,11 +658,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
                             }}
                           />
                         )}
-                        {isAtCutoff && (
-                          <div className="edit-cutoff-divider text-edit-mode bg-edit-mode/10 my-5 px-[15px] py-3 text-center text-xs font-medium">
-                            ⚠️ Messages below this line will be removed when you submit the edit
-                          </div>
-                        )}
+                        {isAtCutoff && <EditCutoffBarrier />}
                         {shouldShowInterruptedBarrier(msg) && <InterruptedBarrier />}
                       </React.Fragment>
                     );
