@@ -26,6 +26,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { execAsync, DisposableProcess } from "@/node/utils/disposableExec";
 import { getControlPath, sshConnectionPool, type SSHRuntimeConfig } from "./sshConnectionPool";
 import { getBashPath } from "@/node/utils/main/bashPath";
+import { retrySSHForInit } from "./sshInitRetry";
 
 /**
  * Shell-escape helper for remote bash.
@@ -623,7 +624,13 @@ export class SSHRuntime implements Runtime {
         initLogger.logStderr(`Could not get origin URL: ${getErrorMessage(error)}`);
       }
 
-      // Step 2: Create bundle locally and pipe to remote file via SSH
+      // Step 2: Ensure the SSH host is reachable before doing expensive local work
+      await retrySSHForInit(() => sshConnectionPool.acquireConnection(this.config), {
+        abortSignal,
+        initLogger,
+      });
+
+      // Step 3: Create bundle locally and pipe to remote file via SSH
       initLogger.logStep(`Creating git bundle...`);
 
       // Ensure SSH connection is established before starting the bundle transfer
@@ -676,7 +683,7 @@ export class SSHRuntime implements Runtime {
         });
       });
 
-      // Step 3: Clone from bundle on remote using this.exec
+      // Step 4: Clone from bundle on remote using this.exec
       initLogger.logStep(`Cloning repository on remote...`);
 
       // Expand tilde in destination path for git clone
@@ -699,7 +706,7 @@ export class SSHRuntime implements Runtime {
         throw new Error(`Failed to clone repository: ${cloneStderr || cloneStdout}`);
       }
 
-      // Step 4: Create local tracking branches for all remote branches
+      // Step 5: Create local tracking branches for all remote branches
       // This ensures that branch names like "custom-trunk" can be used directly
       // in git checkout commands, rather than needing "origin/custom-trunk"
       initLogger.logStep(`Creating local tracking branches...`);
@@ -714,7 +721,7 @@ export class SSHRuntime implements Runtime {
       await createTrackingBranchesStream.exitCode;
       // Don't fail if this fails - some branches may already exist
 
-      // Step 5: Update origin remote if we have an origin URL
+      // Step 6: Update origin remote if we have an origin URL
       if (originUrl) {
         initLogger.logStep(`Setting origin remote to ${originUrl}...`);
         const setOriginStream = await this.exec(
@@ -746,7 +753,7 @@ export class SSHRuntime implements Runtime {
         await removeOriginStream.exitCode;
       }
 
-      // Step 5: Remove bundle file
+      // Step 7: Remove bundle file
       initLogger.logStep(`Cleaning up bundle file...`);
       const rmStream = await this.exec(`rm ${bundleTempPath}`, {
         cwd: "~",
@@ -874,11 +881,15 @@ export class SSHRuntime implements Runtime {
         const expandedParentDir = expandTildeForSSH(parentDir);
         const parentDirCommand = `mkdir -p ${expandedParentDir}`;
 
-        const mkdirStream = await this.exec(parentDirCommand, {
-          cwd: "/tmp",
-          timeout: 10,
-          abortSignal,
-        });
+        const mkdirStream = await retrySSHForInit(
+          () =>
+            this.exec(parentDirCommand, {
+              cwd: "/tmp",
+              timeout: 10,
+              abortSignal,
+            }),
+          { abortSignal, initLogger }
+        );
         const mkdirExitCode = await mkdirStream.exitCode;
         if (mkdirExitCode !== 0) {
           const stderr = await streamToString(mkdirStream.stderr);
@@ -915,7 +926,10 @@ export class SSHRuntime implements Runtime {
       // 1. Sync project to remote (opportunistic rsync with scp fallback)
       initLogger.logStep("Syncing project files to remote...");
       try {
-        await this.syncProjectToRemote(projectPath, workspacePath, initLogger, abortSignal);
+        await retrySSHForInit(
+          () => this.syncProjectToRemote(projectPath, workspacePath, initLogger, abortSignal),
+          { abortSignal, initLogger }
+        );
       } catch (error) {
         const errorMsg = getErrorMessage(error);
         initLogger.logStderr(`Failed to sync project: ${errorMsg}`);
@@ -936,11 +950,15 @@ export class SSHRuntime implements Runtime {
       // Since we've created local branches for all remote refs, we can use branch names directly
       const checkoutCmd = `git checkout ${shescape.quote(branchName)} 2>/dev/null || git checkout -b ${shescape.quote(branchName)} ${shescape.quote(trunkBranch)}`;
 
-      const checkoutStream = await this.exec(checkoutCmd, {
-        cwd: workspacePath, // Use the full workspace path for git operations
-        timeout: 300, // 5 minutes for git checkout (can be slow on large repos)
-        abortSignal,
-      });
+      const checkoutStream = await retrySSHForInit(
+        () =>
+          this.exec(checkoutCmd, {
+            cwd: workspacePath, // Use the full workspace path for git operations
+            timeout: 300, // 5 minutes for git checkout (can be slow on large repos)
+            abortSignal,
+          }),
+        { abortSignal, initLogger }
+      );
 
       const [stdout, stderr, exitCode] = await Promise.all([
         streamToString(checkoutStream.stdout),
