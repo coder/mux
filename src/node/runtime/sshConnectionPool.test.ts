@@ -193,7 +193,9 @@ describe("SSHConnectionPool", () => {
       };
 
       // Trigger a failure via acquireConnection (will fail to connect)
-      await expect(pool.acquireConnection(config, 1000)).rejects.toThrow();
+      await expect(
+        pool.acquireConnection(config, { timeoutMs: 1000, maxWaitMs: 0 })
+      ).rejects.toThrow();
 
       // Verify we're now in backoff
       const healthBefore = pool.getConnectionHealth(config);
@@ -231,7 +233,7 @@ describe("SSHConnectionPool", () => {
       expect(elapsed).toBeLessThan(50);
     });
 
-    test("wait mode waits through backoff (bounded) instead of throwing", async () => {
+    test("waits through backoff (bounded) instead of throwing", async () => {
       const pool = new SSHConnectionPool();
       const config: SSHRuntimeConfig = {
         host: "test.example.com",
@@ -246,7 +248,6 @@ describe("SSHConnectionPool", () => {
       const onWaitCalls: number[] = [];
 
       await pool.acquireConnection(config, {
-        maxWaitMs: 60_000,
         onWait: (ms) => {
           onWaitCalls.push(ms);
         },
@@ -272,10 +273,12 @@ describe("SSHConnectionPool", () => {
       };
 
       // Trigger a failure to put connection in backoff
-      await expect(pool.acquireConnection(config, 1000)).rejects.toThrow();
+      await expect(
+        pool.acquireConnection(config, { timeoutMs: 1000, maxWaitMs: 0 })
+      ).rejects.toThrow();
 
       // Second call should throw immediately with backoff message
-      await expect(pool.acquireConnection(config)).rejects.toThrow(/in backoff/);
+      await expect(pool.acquireConnection(config, { maxWaitMs: 0 })).rejects.toThrow(/in backoff/);
     });
 
     test("getControlPath returns deterministic path", () => {
@@ -303,9 +306,9 @@ describe("SSHConnectionPool", () => {
 
       // All concurrent calls should share the same probe and get same result
       const results = await Promise.allSettled([
-        pool.acquireConnection(config, 1000),
-        pool.acquireConnection(config, 1000),
-        pool.acquireConnection(config, 1000),
+        pool.acquireConnection(config, { timeoutMs: 1000, maxWaitMs: 0 }),
+        pool.acquireConnection(config, { timeoutMs: 1000, maxWaitMs: 0 }),
+        pool.acquireConnection(config, { timeoutMs: 1000, maxWaitMs: 0 }),
       ]);
 
       // All should be rejected (connection fails)

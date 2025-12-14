@@ -65,14 +65,17 @@ const BACKOFF_SCHEDULE = [1, 5, 10, 20, 40, 60];
 const HEALTHY_TTL_MS = 15 * 1000; // 15 seconds
 
 const DEFAULT_PROBE_TIMEOUT_MS = 10_000;
+const DEFAULT_MAX_WAIT_MS = 2 * 60 * 1000; // 2 minutes
 
 export interface AcquireConnectionOptions {
   /** Timeout for the health check probe. */
   timeoutMs?: number;
 
   /**
-   * If set (>0), acquireConnection will wait through backoff (bounded by maxWaitMs)
-   * instead of throwing immediately.
+   * Max time to wait (ms) for a host to become healthy (waits + probes).
+   *
+   * - Omit to use the default (waits through backoff).
+   * - Set to 0 to fail fast.
    */
   maxWaitMs?: number;
 
@@ -136,12 +139,10 @@ export class SSHConnectionPool {
   /**
    * Ensure connection is healthy before proceeding.
    *
-   * The pool is intentionally conservative by default (fail-fast) to avoid turning
-   * an SSH outage into app-wide latency regressions.
+   * By default, acquireConnection waits through backoff (bounded) so user-facing
+   * actions don’t immediately fail during transient SSH outages.
    *
-   * For user-initiated flows where waiting is preferable to an immediate error
-   * (workspace init, terminal spawn, explicit user commands), callers can opt in
-   * to waiting through backoff by providing `maxWaitMs`.
+   * Callers can opt into fail-fast behavior by passing `{ maxWaitMs: 0 }`.
    */
   async acquireConnection(config: SSHRuntimeConfig, timeoutMs?: number): Promise<void>;
   async acquireConnection(
@@ -160,8 +161,8 @@ export class SSHConnectionPool {
     const timeoutMs = options.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
     const sleep = options.sleep ?? sleepWithAbort;
 
-    const shouldWait = options.maxWaitMs !== undefined && options.maxWaitMs > 0;
-    const maxWaitMs = options.maxWaitMs ?? 0;
+    const maxWaitMs = options.maxWaitMs ?? DEFAULT_MAX_WAIT_MS;
+    const shouldWait = maxWaitMs > 0;
 
     const key = makeConnectionKey(config);
     const startTime = Date.now();

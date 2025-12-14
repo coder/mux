@@ -216,7 +216,7 @@ export class PTYService {
 
       // Ensure connection is healthy before spawning terminal
       // This provides backoff protection and singleflighting for concurrent requests
-      await sshConnectionPool.acquireConnection(sshConfig, { maxWaitMs: 30_000 });
+      await sshConnectionPool.acquireConnection(sshConfig);
 
       const sshArgs = buildSSHArgs(sshConfig, workspacePath);
 
