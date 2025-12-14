@@ -88,15 +88,16 @@ type DiffState =
   | { status: "loaded"; hunks: DiffHunk[]; truncationWarning: string | null }
   | { status: "error"; message: string };
 
-const REVIEW_PANEL_CACHE_MAX_ENTRIES = 10;
-const REVIEW_PANEL_DIFF_CACHE_MAX_SIZE_BYTES = 16 * 1024 * 1024; // 16MB
-const REVIEW_PANEL_TREE_CACHE_MAX_SIZE_BYTES = 4 * 1024 * 1024; // 4MB
+const REVIEW_PANEL_CACHE_MAX_ENTRIES = 20;
+const REVIEW_PANEL_CACHE_MAX_SIZE_BYTES = 20 * 1024 * 1024; // 20MB
 
 interface ReviewPanelDiffCacheValue {
   hunks: DiffHunk[];
   truncationWarning: string | null;
   diagnosticInfo: DiagnosticInfo | null;
 }
+
+type ReviewPanelCacheValue = ReviewPanelDiffCacheValue | FileTreeNode;
 
 function estimateJsonSizeBytes(value: unknown): number {
   // Rough bytes for JS strings (UTF-16). Used only for LRU sizing.
@@ -108,16 +109,10 @@ function estimateJsonSizeBytes(value: unknown): number {
   }
 }
 
-const reviewPanelDiffCache = new LRUCache<string, ReviewPanelDiffCacheValue>({
+const reviewPanelCache = new LRUCache<string, ReviewPanelCacheValue>({
   max: REVIEW_PANEL_CACHE_MAX_ENTRIES,
-  maxSize: REVIEW_PANEL_DIFF_CACHE_MAX_SIZE_BYTES,
+  maxSize: REVIEW_PANEL_CACHE_MAX_SIZE_BYTES,
   sizeCalculation: (value) => estimateJsonSizeBytes(value),
-});
-
-const reviewPanelFileTreeCache = new LRUCache<string, FileTreeNode>({
-  max: REVIEW_PANEL_CACHE_MAX_ENTRIES,
-  maxSize: REVIEW_PANEL_TREE_CACHE_MAX_SIZE_BYTES,
-  sizeCalculation: (node) => estimateJsonSizeBytes(node),
 });
 
 function makeReviewPanelCacheKey(params: {
@@ -126,23 +121,17 @@ function makeReviewPanelCacheKey(params: {
   gitCommand: string;
 }): string {
   // Key off the actual git command to avoid forgetting to include new inputs.
-  return [
-    "review-panel-cache:v1",
-    params.workspaceId,
-    params.workspacePath,
-    params.gitCommand,
-  ].join("\u0000");
+  return [params.workspaceId, params.workspacePath, params.gitCommand].join("\u0000");
 }
 
 type ExecuteBashResult = Awaited<ReturnType<APIClient["workspace"]["executeBash"]>>;
 type ExecuteBashSuccess = Extract<ExecuteBashResult, { success: true }>;
 
-async function executeWorkspaceBashAndCache<T extends object>(params: {
+async function executeWorkspaceBashAndCache<T extends ReviewPanelCacheValue>(params: {
   api: APIClient;
   workspaceId: string;
   script: string;
   cacheKey: string;
-  cache: LRUCache<string, T>;
   timeoutSecs: number;
   parse: (result: ExecuteBashSuccess) => T;
 }): Promise<T> {
@@ -157,7 +146,7 @@ async function executeWorkspaceBashAndCache<T extends object>(params: {
   }
 
   const value = params.parse(result);
-  params.cache.set(params.cacheKey, value);
+  reviewPanelCache.set(params.cacheKey, value);
   return value;
 }
 
@@ -276,7 +265,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
     // Fast path: use cached tree when switching workspaces (unless user explicitly refreshed).
     if (!isManualRefresh) {
-      const cachedTree = reviewPanelFileTreeCache.get(cacheKey);
+      const cachedTree = reviewPanelCache.get(cacheKey) as FileTreeNode | undefined;
       if (cachedTree) {
         setFileTree(cachedTree);
         setIsLoadingTree(false);
@@ -294,7 +283,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           workspaceId,
           script: numstatCommand,
           cacheKey,
-          cache: reviewPanelFileTreeCache,
           timeoutSecs: 30,
           parse: (result) => {
             const numstatOutput = result.data.output ?? "";
@@ -358,7 +346,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
     // Fast path: use cached diff when switching workspaces (unless user explicitly refreshed).
     if (!isManualRefresh) {
-      const cached = reviewPanelDiffCache.get(cacheKey);
+      const cached = reviewPanelCache.get(cacheKey) as ReviewPanelDiffCacheValue | undefined;
       if (cached) {
         setDiagnosticInfo(cached.diagnosticInfo);
         setDiffState({
@@ -403,7 +391,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           workspaceId,
           script: diffCommand,
           cacheKey,
-          cache: reviewPanelDiffCache,
           timeoutSecs: 30,
           parse: (result) => {
             const diffOutput = result.data.output ?? "";
