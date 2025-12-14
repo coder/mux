@@ -53,6 +53,17 @@ interface StreamingContext {
   model: string;
 }
 
+type InFlightStreamState =
+  | {
+      phase: "pending";
+      pendingAt: number;
+      model: string;
+    }
+  | {
+      phase: "active";
+      context: StreamingContext;
+    };
+
 /**
  * Check if a tool result indicates success (for tools that return { success: boolean })
  */
@@ -136,11 +147,10 @@ function mergeAdjacentParts(parts: MuxMessage["parts"]): MuxMessage["parts"] {
 }
 
 export class StreamingMessageAggregator {
-  // Streams that have emitted `stream-pending` but not `stream-start` yet.
-  // This is the "connecting" phase: abort should work, but no deltas have started.
-  private pendingStreams = new Map<string, { startTime: number; model: string }>();
   private messages = new Map<string, MuxMessage>();
-  private activeStreams = new Map<string, StreamingContext>();
+
+  // Streams that are in-flight (pending: `stream-pending` received; active: `stream-start` received).
+  private inFlightStreams = new Map<string, InFlightStreamState>();
 
   // Simple cache for derived values (invalidated on every mutation)
   private cachedAllMessages: MuxMessage[] | null = null;
@@ -340,15 +350,14 @@ export class StreamingMessageAggregator {
    * Called by handleStreamEnd, handleStreamAbort, and handleStreamError.
    *
    * Clears:
-   * - Active stream tracking (this.activeStreams)
+   * - In-flight stream tracking (this.inFlightStreams)
    * - Current TODOs (this.currentTodos) - reconstructed from history on reload
    *
    * Does NOT clear:
    * - agentStatus - persists after stream completion to show last activity
    */
   private cleanupStreamState(messageId: string): void {
-    this.activeStreams.delete(messageId);
-    this.pendingStreams.delete(messageId);
+    this.inFlightStreams.delete(messageId);
     // Clear todos when stream ends - they're stream-scoped state
     // On reload, todos will be reconstructed from completed tool_write calls in history
     this.currentTodos = [];
@@ -466,11 +475,15 @@ export class StreamingMessageAggregator {
     this.pendingStreamStartTime = time;
   }
 
-  hasPendingStreams(): boolean {
-    return this.pendingStreams.size > 0;
+  hasInFlightStreams(): boolean {
+    return this.inFlightStreams.size > 0;
   }
   getActiveStreams(): StreamingContext[] {
-    return Array.from(this.activeStreams.values());
+    const active: StreamingContext[] = [];
+    for (const stream of this.inFlightStreams.values()) {
+      if (stream.phase === "active") active.push(stream.context);
+    }
+    return active;
   }
 
   /**
@@ -478,12 +491,15 @@ export class StreamingMessageAggregator {
    * Returns undefined if no streams are active
    */
   getActiveStreamMessageId(): string | undefined {
-    return this.activeStreams.keys().next().value;
+    for (const [messageId, stream] of this.inFlightStreams.entries()) {
+      if (stream.phase === "active") return messageId;
+    }
+    return undefined;
   }
 
   isCompacting(): boolean {
-    for (const context of this.activeStreams.values()) {
-      if (context.isCompacting) {
+    for (const stream of this.inFlightStreams.values()) {
+      if (stream.phase === "active" && stream.context.isCompacting) {
         return true;
       }
     }
@@ -492,13 +508,13 @@ export class StreamingMessageAggregator {
 
   getCurrentModel(): string | undefined {
     // If there's an active stream, return its model
-    for (const context of this.activeStreams.values()) {
-      return context.model;
+    for (const stream of this.inFlightStreams.values()) {
+      if (stream.phase === "active") return stream.context.model;
     }
 
-    // If we're connecting (stream-pending), return that model
-    for (const context of this.pendingStreams.values()) {
-      return context.model;
+    // If we're pending (stream-pending), return that model
+    for (const stream of this.inFlightStreams.values()) {
+      if (stream.phase === "pending") return stream.model;
     }
 
     // Otherwise, return the model from the most recent assistant message
@@ -514,13 +530,14 @@ export class StreamingMessageAggregator {
   }
 
   clearActiveStreams(): void {
-    this.activeStreams.clear();
+    this.setPendingStreamStartTime(null);
+    this.inFlightStreams.clear();
+    this.invalidateCache();
   }
 
   clear(): void {
     this.messages.clear();
-    this.activeStreams.clear();
-    this.pendingStreams.clear();
+    this.inFlightStreams.clear();
     this.invalidateCache();
   }
 
@@ -547,14 +564,21 @@ export class StreamingMessageAggregator {
     // Clear pending stream start timestamp - backend has accepted the request.
     this.setPendingStreamStartTime(null);
 
-    this.pendingStreams.set(data.messageId, { startTime: Date.now(), model: data.model });
+    const existing = this.inFlightStreams.get(data.messageId);
+    if (existing?.phase === "active") return;
+
+    this.inFlightStreams.set(data.messageId, {
+      phase: "pending",
+      pendingAt: Date.now(),
+      model: data.model,
+    });
+
     this.invalidateCache();
   }
 
   handleStreamStart(data: StreamStartEvent): void {
-    // Clear pending/connecting state - stream has started.
+    // Clear pending stream start timestamp - stream has started.
     this.setPendingStreamStartTime(null);
-    this.pendingStreams.delete(data.messageId);
 
     // NOTE: We do NOT clear agentStatus or currentTodos here.
     // They are cleared when a new user message arrives (see handleMessage),
@@ -574,7 +598,7 @@ export class StreamingMessageAggregator {
 
     // Use messageId as key - ensures only ONE stream per message
     // If called twice (e.g., during replay), second call safely overwrites first
-    this.activeStreams.set(data.messageId, context);
+    this.inFlightStreams.set(data.messageId, { phase: "active", context });
 
     // Create initial streaming message with empty parts (deltas will append)
     const streamingMessage = createMuxMessage(data.messageId, "assistant", "", {
@@ -606,7 +630,8 @@ export class StreamingMessageAggregator {
 
   handleStreamEnd(data: StreamEndEvent): void {
     // Direct lookup by messageId - O(1) instead of O(n) find
-    const activeStream = this.activeStreams.get(data.messageId);
+    const stream = this.inFlightStreams.get(data.messageId);
+    const activeStream = stream?.phase === "active" ? stream.context : undefined;
 
     if (activeStream) {
       // Normal streaming case: we've been tracking this stream from the start
@@ -673,7 +698,8 @@ export class StreamingMessageAggregator {
 
   handleStreamAbort(data: StreamAbortEvent): void {
     // Direct lookup by messageId
-    const activeStream = this.activeStreams.get(data.messageId);
+    const stream = this.inFlightStreams.get(data.messageId);
+    const activeStream = stream?.phase === "active" ? stream.context : undefined;
 
     if (activeStream) {
       // Mark the message as interrupted and merge metadata (consistent with handleStreamEnd)
@@ -696,8 +722,7 @@ export class StreamingMessageAggregator {
   }
 
   handleStreamError(data: StreamErrorMessage): void {
-    const isTrackedStream =
-      this.activeStreams.has(data.messageId) || this.pendingStreams.has(data.messageId);
+    const isTrackedStream = this.inFlightStreams.has(data.messageId);
 
     if (isTrackedStream) {
       // Mark the message with error metadata
@@ -868,7 +893,7 @@ export class StreamingMessageAggregator {
 
   handleReasoningEnd(_data: ReasoningEndEvent): void {
     // Reasoning-end is just a signal - no state to update
-    // Streaming status is inferred from activeStreams in getDisplayedMessages
+    // Streaming status is inferred from inFlightStreams in getDisplayedMessages
     this.invalidateCache();
   }
 
@@ -1059,7 +1084,7 @@ export class StreamingMessageAggregator {
 
           // Check if this message has an active stream (for inferring streaming status)
           // Direct Map.has() check - O(1) instead of O(n) iteration
-          const hasActiveStream = this.activeStreams.has(message.id);
+          const hasActiveStream = this.inFlightStreams.get(message.id)?.phase === "active";
 
           // Merge adjacent text/reasoning parts for display
           const mergedParts = mergeAdjacentParts(message.parts);
