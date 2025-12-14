@@ -959,30 +959,58 @@ export class StreamingMessageAggregator {
 
           // Merge adjacent parts of same type (text with text, reasoning with reasoning)
           // This is where all merging happens - streaming just appends raw deltas
+          // Uses array accumulation + join() to avoid O(n²) string allocations from repeated + concatenation
           const mergedParts: typeof message.parts = [];
-          for (const part of message.parts) {
-            const lastMerged = mergedParts[mergedParts.length - 1];
+          let pendingTexts: string[] = [];
+          let pendingTextTimestamp: number | undefined;
+          let pendingReasonings: string[] = [];
+          let pendingReasoningTimestamp: number | undefined;
 
-            // Try to merge with last part if same type
-            if (lastMerged?.type === "text" && part.type === "text") {
-              // Merge text parts, preserving the first timestamp
-              mergedParts[mergedParts.length - 1] = {
+          const flushPendingText = () => {
+            if (pendingTexts.length > 0) {
+              mergedParts.push({
                 type: "text",
-                text: lastMerged.text + part.text,
-                timestamp: lastMerged.timestamp ?? part.timestamp,
-              };
-            } else if (lastMerged?.type === "reasoning" && part.type === "reasoning") {
-              // Merge reasoning parts, preserving the first timestamp
-              mergedParts[mergedParts.length - 1] = {
+                text: pendingTexts.join(""),
+                timestamp: pendingTextTimestamp,
+              });
+              pendingTexts = [];
+              pendingTextTimestamp = undefined;
+            }
+          };
+
+          const flushPendingReasoning = () => {
+            if (pendingReasonings.length > 0) {
+              mergedParts.push({
                 type: "reasoning",
-                text: lastMerged.text + part.text,
-                timestamp: lastMerged.timestamp ?? part.timestamp,
-              };
+                text: pendingReasonings.join(""),
+                timestamp: pendingReasoningTimestamp,
+              });
+              pendingReasonings = [];
+              pendingReasoningTimestamp = undefined;
+            }
+          };
+
+          for (const part of message.parts) {
+            if (part.type === "text") {
+              // Flush any pending reasoning before accumulating text
+              flushPendingReasoning();
+              pendingTexts.push(part.text);
+              pendingTextTimestamp ??= part.timestamp;
+            } else if (part.type === "reasoning") {
+              // Flush any pending text before accumulating reasoning
+              flushPendingText();
+              pendingReasonings.push(part.text);
+              pendingReasoningTimestamp ??= part.timestamp;
             } else {
-              // Different type or tool part - add new part
+              // Tool part - flush both pending buffers and add directly
+              flushPendingText();
+              flushPendingReasoning();
               mergedParts.push(part);
             }
           }
+          // Flush any remaining pending parts
+          flushPendingText();
+          flushPendingReasoning();
 
           // Find the last part that will produce a DisplayedMessage
           // (reasoning, text parts with content, OR tool parts)
