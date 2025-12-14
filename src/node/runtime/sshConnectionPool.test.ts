@@ -246,7 +246,6 @@ describe("SSHConnectionPool", () => {
       const onWaitCalls: number[] = [];
 
       await pool.acquireConnection(config, {
-        mode: "wait",
         maxWaitMs: 60_000,
         onWait: (ms) => {
           onWaitCalls.push(ms);

@@ -67,14 +67,10 @@ export interface ExecOptions {
   forcePTY?: boolean;
 
   /**
-   * SSH only: how to handle SSHConnectionPool backoff.
+   * SSH only: if set (>0), wait through SSHConnectionPool backoff (bounded).
    *
-   * - "fail-fast" (default): throw immediately when in backoff
-   * - "wait": wait through backoff (bounded by connectionMaxWaitMs)
+   * If not set, SSH operations fail fast when the host is in backoff.
    */
-  connectionMode?: "fail-fast" | "wait";
-
-  /** SSH only: max time to wait (ms) when connectionMode="wait". */
   connectionMaxWaitMs?: number;
 
   /** SSH only: invoked when waiting due to SSH backoff. */

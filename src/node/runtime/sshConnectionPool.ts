@@ -66,19 +66,13 @@ const HEALTHY_TTL_MS = 15 * 1000; // 15 seconds
 
 const DEFAULT_PROBE_TIMEOUT_MS = 10_000;
 
-export type SSHConnectionMode = "fail-fast" | "wait";
-
 export interface AcquireConnectionOptions {
   /** Timeout for the health check probe. */
   timeoutMs?: number;
 
-  /** How to handle a host that is currently in backoff. */
-  mode?: SSHConnectionMode;
-
   /**
-   * Only used when mode="wait".
-   * Upper bound on wall clock time spent trying to acquire a healthy connection
-   * (waits + probes).
+   * If set (>0), acquireConnection will wait through backoff (bounded by maxWaitMs)
+   * instead of throwing immediately.
    */
   maxWaitMs?: number;
 
@@ -147,7 +141,7 @@ export class SSHConnectionPool {
    *
    * For user-initiated flows where waiting is preferable to an immediate error
    * (workspace init, terminal spawn, explicit user commands), callers can opt in
-   * to waiting through backoff via `{ mode: "wait" }`.
+   * to waiting through backoff by providing `maxWaitMs`.
    */
   async acquireConnection(config: SSHRuntimeConfig, timeoutMs?: number): Promise<void>;
   async acquireConnection(
@@ -158,18 +152,16 @@ export class SSHConnectionPool {
     config: SSHRuntimeConfig,
     timeoutMsOrOptions: number | AcquireConnectionOptions = DEFAULT_PROBE_TIMEOUT_MS
   ): Promise<void> {
-    const options =
+    const options: AcquireConnectionOptions =
       typeof timeoutMsOrOptions === "number"
-        ? ({
-            timeoutMs: timeoutMsOrOptions,
-            mode: "fail-fast",
-          } satisfies AcquireConnectionOptions)
-        : timeoutMsOrOptions;
+        ? { timeoutMs: timeoutMsOrOptions }
+        : (timeoutMsOrOptions ?? {});
 
-    const mode = options.mode ?? "fail-fast";
     const timeoutMs = options.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
-    const maxWaitMs = options.maxWaitMs ?? 60_000;
     const sleep = options.sleep ?? sleepWithAbort;
+
+    const shouldWait = options.maxWaitMs !== undefined && options.maxWaitMs > 0;
+    const maxWaitMs = options.maxWaitMs ?? 0;
 
     const key = makeConnectionKey(config);
     const startTime = Date.now();
@@ -186,7 +178,7 @@ export class SSHConnectionPool {
         const remainingMs = health.backoffUntil.getTime() - Date.now();
         const remainingSecs = Math.ceil(remainingMs / 1000);
 
-        if (mode === "fail-fast") {
+        if (!shouldWait) {
           throw new Error(
             `SSH connection to ${config.host} is in backoff for ${remainingSecs}s. ` +
               `Last error: ${health.lastError ?? "unknown"}`
@@ -227,8 +219,11 @@ export class SSHConnectionPool {
         try {
           await existing;
           return;
-        } catch {
+        } catch (error) {
           // Probe failed; if we're in wait mode we'll loop and sleep through the backoff.
+          if (!shouldWait) {
+            throw error;
+          }
           continue;
         }
       }
@@ -242,7 +237,7 @@ export class SSHConnectionPool {
         await probe;
         return;
       } catch (error) {
-        if (mode === "fail-fast") {
+        if (!shouldWait) {
           throw error;
         }
         // In wait mode: probeConnection() recorded backoff; loop and wait.

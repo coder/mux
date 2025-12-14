@@ -129,9 +129,8 @@ export class SSHRuntime implements Runtime {
 
     // Ensure connection is healthy before executing.
     // This provides backoff protection and singleflighting for concurrent requests.
-    if (options.connectionMode === "wait") {
+    if (options.connectionMaxWaitMs !== undefined && options.connectionMaxWaitMs > 0) {
       await sshConnectionPool.acquireConnection(this.config, {
-        mode: "wait",
         maxWaitMs: options.connectionMaxWaitMs,
         abortSignal: options.abortSignal,
         onWait: options.onConnectionWait,
@@ -639,7 +638,6 @@ export class SSHRuntime implements Runtime {
 
       // Step 2: Ensure the SSH host is reachable before doing expensive local work
       await sshConnectionPool.acquireConnection(this.config, {
-        mode: "wait",
         maxWaitMs: 2 * 60 * 1000,
         abortSignal,
         onWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
@@ -709,7 +707,6 @@ export class SSHRuntime implements Runtime {
         cwd: "~",
         timeout: 300, // 5 minutes for clone
         abortSignal,
-        connectionMode: "wait",
         connectionMaxWaitMs: 2 * 60 * 1000,
         onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
       });
@@ -734,7 +731,6 @@ export class SSHRuntime implements Runtime {
           cwd: "~",
           timeout: 30,
           abortSignal,
-          connectionMode: "wait",
           connectionMaxWaitMs: 2 * 60 * 1000,
           onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
         }
@@ -751,7 +747,6 @@ export class SSHRuntime implements Runtime {
             cwd: "~",
             timeout: 10,
             abortSignal,
-            connectionMode: "wait",
             connectionMaxWaitMs: 2 * 60 * 1000,
             onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
           }
@@ -772,7 +767,6 @@ export class SSHRuntime implements Runtime {
             cwd: "~",
             timeout: 10,
             abortSignal,
-            connectionMode: "wait",
             connectionMaxWaitMs: 2 * 60 * 1000,
             onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
           }
@@ -786,7 +780,6 @@ export class SSHRuntime implements Runtime {
         cwd: "~",
         timeout: 10,
         abortSignal,
-        connectionMode: "wait",
         connectionMaxWaitMs: 2 * 60 * 1000,
         onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
       });
@@ -804,7 +797,6 @@ export class SSHRuntime implements Runtime {
           cwd: "~",
           timeout: 10,
           abortSignal,
-          connectionMode: "wait",
           connectionMaxWaitMs: 2 * 60 * 1000,
           onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
         });
@@ -845,7 +837,6 @@ export class SSHRuntime implements Runtime {
       timeout: 3600, // 1 hour - generous timeout for init hooks
       abortSignal,
       env: muxEnv,
-      connectionMode: "wait",
       connectionMaxWaitMs: 2 * 60 * 1000,
       onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
     });
@@ -921,7 +912,6 @@ export class SSHRuntime implements Runtime {
           cwd: "/tmp",
           timeout: 10,
           abortSignal,
-          connectionMode: "wait",
           connectionMaxWaitMs: 2 * 60 * 1000,
           onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
         });
@@ -986,7 +976,6 @@ export class SSHRuntime implements Runtime {
         cwd: workspacePath, // Use the full workspace path for git operations
         timeout: 300, // 5 minutes for git checkout (can be slow on large repos)
         abortSignal,
-        connectionMode: "wait",
         connectionMaxWaitMs: 2 * 60 * 1000,
         onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
       });
@@ -1053,7 +1042,6 @@ export class SSHRuntime implements Runtime {
         cwd: workspacePath,
         timeout: 120, // 2 minutes for network operation
         abortSignal,
-        connectionMode: "wait",
         connectionMaxWaitMs: 2 * 60 * 1000,
         onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
       });
@@ -1075,7 +1063,6 @@ export class SSHRuntime implements Runtime {
         cwd: workspacePath,
         timeout: 60, // 1 minute for fast-forward merge
         abortSignal,
-        connectionMode: "wait",
         connectionMaxWaitMs: 2 * 60 * 1000,
         onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
       });
