@@ -190,7 +190,10 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Show warning when: shouldShowWarning flag is true AND not currently compacting
   const shouldShowCompactionWarning = !isCompacting && autoCompactionResult.shouldShowWarning;
 
-  // Handle force compaction callback - memoized to avoid effect re-runs
+  // Handle force compaction callback - memoized to avoid effect re-runs.
+  // We pass a default continueMessage of "Continue" as a resume sentinel so the backend can
+  // auto-send it after compaction. The compaction prompt builder special-cases this sentinel
+  // to avoid injecting it into the summarization request.
   const handleForceCompaction = useCallback(() => {
     if (!api) return;
     void executeCompaction({

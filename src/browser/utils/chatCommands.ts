@@ -632,9 +632,11 @@ export function prepareCompactionMessage(options: CompactionOptions): {
     options.continueMessage?.imageParts && options.continueMessage.imageParts.length > 0;
   const hasReviews = options.continueMessage?.reviews && options.continueMessage.reviews.length > 0;
 
-  // When the user didn't supply a follow-up message (we inject a default "Continue"),
-  // avoid polluting the compaction prompt with that control text.
-  // We still keep continueMessage in metadata so it will be auto-sent after compaction.
+  // continueMessage is a follow-up user message that will be auto-sent after compaction.
+  // For forced compaction (no explicit follow-up), we inject a short resume sentinel ("Continue").
+  // Keep that sentinel out of the *compaction prompt* (summarization request), otherwise the model can
+  // misread it as a competing instruction. We still keep it in metadata so the backend resumes.
+  // Only treat it as the default resume when there's no other queued content (images/reviews).
   const isDefaultResume =
     typeof continueText === "string" &&
     continueText.trim() === "Continue" &&
