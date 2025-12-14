@@ -22,6 +22,7 @@
  * - Frontend filtering is fast even for 1000+ hunks (<5ms)
  */
 
+import { LRUCache } from "lru-cache";
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { HunkViewer } from "./HunkViewer";
 import { ReviewControls } from "./ReviewControls";
@@ -88,6 +89,8 @@ type DiffState =
   | { status: "error"; message: string };
 
 const REVIEW_PANEL_CACHE_MAX_ENTRIES = 10;
+const REVIEW_PANEL_DIFF_CACHE_MAX_SIZE_BYTES = 16 * 1024 * 1024; // 16MB
+const REVIEW_PANEL_TREE_CACHE_MAX_SIZE_BYTES = 4 * 1024 * 1024; // 4MB
 
 interface ReviewPanelDiffCacheValue {
   hunks: DiffHunk[];
@@ -95,27 +98,62 @@ interface ReviewPanelDiffCacheValue {
   diagnosticInfo: DiagnosticInfo | null;
 }
 
-const reviewPanelDiffCache = new Map<string, ReviewPanelDiffCacheValue>();
-const reviewPanelFileTreeCache = new Map<string, FileTreeNode>();
-
-function evictOldestCacheEntry(map: Map<string, unknown>): void {
-  const first = map.keys().next();
-  if (!first.done) {
-    map.delete(first.value);
+function estimateHunksSizeBytes(hunks: DiffHunk[]): number {
+  // Rough bytes for JS strings (UTF-16) + a small constant per object.
+  let bytes = hunks.length * 64;
+  for (const hunk of hunks) {
+    bytes +=
+      (hunk.id.length +
+        hunk.filePath.length +
+        hunk.content.length +
+        hunk.header.length +
+        (hunk.oldPath?.length ?? 0) +
+        (hunk.changeType?.length ?? 0)) *
+      2;
   }
+  return bytes;
 }
 
-function setCacheWithEviction<T>(map: Map<string, T>, key: string, value: T): void {
-  // Refresh insertion order so eviction behaves roughly like LRU.
-  if (map.has(key)) {
-    map.delete(key);
+function estimateDiffCacheValueSizeBytes(value: ReviewPanelDiffCacheValue): number {
+  let bytes = estimateHunksSizeBytes(value.hunks);
+  bytes += (value.truncationWarning?.length ?? 0) * 2;
+  if (value.diagnosticInfo) {
+    bytes +=
+      (value.diagnosticInfo.command.length +
+        value.diagnosticInfo.outputLength.toString().length +
+        value.diagnosticInfo.fileDiffCount.toString().length +
+        value.diagnosticInfo.hunkCount.toString().length) *
+      2;
   }
-  map.set(key, value);
-
-  if (map.size > REVIEW_PANEL_CACHE_MAX_ENTRIES) {
-    evictOldestCacheEntry(map);
-  }
+  return bytes;
 }
+
+function estimateFileTreeSizeBytes(node: FileTreeNode): number {
+  // Rough bytes for JS strings + a constant per node.
+  let bytes = 64 + (node.name.length + node.path.length) * 2;
+  if (node.stats) {
+    bytes += node.stats.filePath.length * 2;
+  }
+  if (node.totalStats) {
+    bytes += node.totalStats.filePath.length * 2;
+  }
+  for (const child of node.children) {
+    bytes += estimateFileTreeSizeBytes(child);
+  }
+  return bytes;
+}
+
+const reviewPanelDiffCache = new LRUCache<string, ReviewPanelDiffCacheValue>({
+  max: REVIEW_PANEL_CACHE_MAX_ENTRIES,
+  maxSize: REVIEW_PANEL_DIFF_CACHE_MAX_SIZE_BYTES,
+  sizeCalculation: (value) => estimateDiffCacheValueSizeBytes(value),
+});
+
+const reviewPanelFileTreeCache = new LRUCache<string, FileTreeNode>({
+  max: REVIEW_PANEL_CACHE_MAX_ENTRIES,
+  maxSize: REVIEW_PANEL_TREE_CACHE_MAX_SIZE_BYTES,
+  sizeCalculation: (node) => estimateFileTreeSizeBytes(node),
+});
 
 function makeReviewDiffCacheKey(params: {
   workspaceId: string;
@@ -295,7 +333,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         // Build tree with original paths (needed for git commands)
         const tree = buildFileTree(fileStats);
 
-        setCacheWithEviction(reviewPanelFileTreeCache, cacheKey, tree);
+        reviewPanelFileTreeCache.set(cacheKey, tree);
 
         if (cancelled) return;
         setFileTree(tree);
@@ -429,7 +467,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
             ? `Diff truncated (${truncationInfo.reason}). Filter by file to see more.`
             : null;
 
-        setCacheWithEviction(reviewPanelDiffCache, cacheKey, {
+        reviewPanelDiffCache.set(cacheKey, {
           hunks: allHunks,
           truncationWarning,
           diagnosticInfo: nextDiagnosticInfo,
