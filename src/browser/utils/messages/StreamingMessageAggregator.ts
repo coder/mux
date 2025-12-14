@@ -136,9 +136,9 @@ function mergeAdjacentParts(parts: MuxMessage["parts"]): MuxMessage["parts"] {
 }
 
 export class StreamingMessageAggregator {
-  // Streams that have been registered/started in the backend but haven't emitted stream-start yet.
+  // Streams that have emitted `stream-pending` but not `stream-start` yet.
   // This is the "connecting" phase: abort should work, but no deltas have started.
-  private connectingStreams = new Map<string, { startTime: number; model: string }>();
+  private pendingStreams = new Map<string, { startTime: number; model: string }>();
   private messages = new Map<string, MuxMessage>();
   private activeStreams = new Map<string, StreamingContext>();
 
@@ -348,7 +348,7 @@ export class StreamingMessageAggregator {
    */
   private cleanupStreamState(messageId: string): void {
     this.activeStreams.delete(messageId);
-    this.connectingStreams.delete(messageId);
+    this.pendingStreams.delete(messageId);
     // Clear todos when stream ends - they're stream-scoped state
     // On reload, todos will be reconstructed from completed tool_write calls in history
     this.currentTodos = [];
@@ -466,8 +466,8 @@ export class StreamingMessageAggregator {
     this.pendingStreamStartTime = time;
   }
 
-  hasConnectingStreams(): boolean {
-    return this.connectingStreams.size > 0;
+  hasPendingStreams(): boolean {
+    return this.pendingStreams.size > 0;
   }
   getActiveStreams(): StreamingContext[] {
     return Array.from(this.activeStreams.values());
@@ -497,7 +497,7 @@ export class StreamingMessageAggregator {
     }
 
     // If we're connecting (stream-pending), return that model
-    for (const context of this.connectingStreams.values()) {
+    for (const context of this.pendingStreams.values()) {
       return context.model;
     }
 
@@ -520,7 +520,7 @@ export class StreamingMessageAggregator {
   clear(): void {
     this.messages.clear();
     this.activeStreams.clear();
-    this.connectingStreams.clear();
+    this.pendingStreams.clear();
     this.invalidateCache();
   }
 
@@ -547,14 +547,14 @@ export class StreamingMessageAggregator {
     // Clear pending stream start timestamp - backend has accepted the request.
     this.setPendingStreamStartTime(null);
 
-    this.connectingStreams.set(data.messageId, { startTime: Date.now(), model: data.model });
+    this.pendingStreams.set(data.messageId, { startTime: Date.now(), model: data.model });
     this.invalidateCache();
   }
 
   handleStreamStart(data: StreamStartEvent): void {
     // Clear pending/connecting state - stream has started.
     this.setPendingStreamStartTime(null);
-    this.connectingStreams.delete(data.messageId);
+    this.pendingStreams.delete(data.messageId);
 
     // NOTE: We do NOT clear agentStatus or currentTodos here.
     // They are cleared when a new user message arrives (see handleMessage),
@@ -697,7 +697,7 @@ export class StreamingMessageAggregator {
 
   handleStreamError(data: StreamErrorMessage): void {
     const isTrackedStream =
-      this.activeStreams.has(data.messageId) || this.connectingStreams.has(data.messageId);
+      this.activeStreams.has(data.messageId) || this.pendingStreams.has(data.messageId);
 
     if (isTrackedStream) {
       // Mark the message with error metadata

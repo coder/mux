@@ -493,7 +493,7 @@ export class WorkspaceStore {
         name: metadata?.name ?? workspaceId, // Fall back to ID if metadata missing
         messages: aggregator.getDisplayedMessages(),
         queuedMessage: this.queuedMessages.get(workspaceId) ?? null,
-        canInterrupt: activeStreams.length > 0 || aggregator.hasConnectingStreams(),
+        canInterrupt: activeStreams.length > 0 || aggregator.hasPendingStreams(),
         isCompacting: aggregator.isCompacting(),
         awaitingUserQuestion: aggregator.hasAwaitingUserQuestion(),
         loading: !hasMessages && !isCaughtUp,
