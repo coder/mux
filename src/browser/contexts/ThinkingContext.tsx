@@ -13,6 +13,30 @@ interface ThinkingContextType {
 
 const ThinkingContext = createContext<ThinkingContextType | undefined>(undefined);
 
+interface ThinkingProviderInnerProps {
+  thinkingKey: string;
+  children: ReactNode;
+}
+
+const ThinkingProviderInner: React.FC<ThinkingProviderInnerProps> = (props) => {
+  const [thinkingLevel, setThinkingLevel] = usePersistedState<ThinkingLevel>(
+    props.thinkingKey,
+    "off",
+    { listener: true }
+  );
+
+  // Memoize context value to prevent unnecessary re-renders of consumers
+  const contextValue = useMemo(
+    () => ({ thinkingLevel, setThinkingLevel }),
+    [thinkingLevel, setThinkingLevel]
+  );
+
+  return (
+    <ThinkingContext.Provider value={contextValue}>
+      {props.children}
+    </ThinkingContext.Provider>
+  );
+};
 interface ThinkingProviderProps {
   workspaceId?: string; // For existing workspaces
   projectPath?: string; // For workspace creation (uses project-scoped model key)
@@ -38,27 +62,24 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = ({
   const defaultModel = getDefaultModel();
   const modelKey = useModelKey(workspaceId, projectPath);
 
-  // Subscribe to model changes so we update thinking level when model changes
+  // Subscribe to model changes so we update thinking level when model changes.
+  // This uses a fallback key to satisfy hooks rules; it should be unused in practice
+  // because ThinkingProvider is expected to have either workspaceId or projectPath.
   const [rawModel] = usePersistedState<string>(modelKey ?? "model:__unused__", defaultModel, {
     listener: true,
   });
 
-  // Derive the thinking level key from the current model
   const thinkingKey = useMemo(() => {
     const model = migrateGatewayModel(rawModel || defaultModel);
     return getThinkingLevelByModelKey(model);
   }, [rawModel, defaultModel]);
 
-  const [thinkingLevel, setThinkingLevel] = usePersistedState<ThinkingLevel>(
-    thinkingKey,
-    "off",
-    { listener: true } // Listen for changes from command palette and other sources
-  );
-
+  // Key the inner provider by thinkingKey so switching models re-mounts and
+  // synchronously reads the new key's value (avoids one-render stale state).
   return (
-    <ThinkingContext.Provider value={{ thinkingLevel, setThinkingLevel }}>
+    <ThinkingProviderInner key={thinkingKey} thinkingKey={thinkingKey}>
       {children}
-    </ThinkingContext.Provider>
+    </ThinkingProviderInner>
   );
 };
 
