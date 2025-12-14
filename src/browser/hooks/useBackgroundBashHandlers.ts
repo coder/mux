@@ -108,7 +108,14 @@ export function useBackgroundBashHandlers(
           if (signal.aborted) break;
 
           setProcesses(state.processes);
-          setForegroundToolCallIds(new Set(state.foregroundToolCallIds));
+          // Only update if contents changed to avoid invalidating React Compiler memoization
+          setForegroundToolCallIds((prev) => {
+            const arr = state.foregroundToolCallIds;
+            if (prev.size === arr.length && arr.every((id) => prev.has(id))) {
+              return prev;
+            }
+            return new Set(arr);
+          });
 
           // Clear terminating IDs for processes that are no longer running
           // (killed/exited/failed should clear so new processes with same name aren't affected)
