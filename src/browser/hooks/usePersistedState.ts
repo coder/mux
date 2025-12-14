@@ -1,8 +1,58 @@
 import type { Dispatch, SetStateAction } from "react";
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useCallback, useRef, useSyncExternalStore } from "react";
 import { getStorageChangeEvent } from "@/common/constants/events";
 
 type SetValue<T> = T | ((prev: T) => T);
+
+interface Subscriber {
+  callback: () => void;
+  componentId: string;
+  listener: boolean;
+}
+
+const subscribersByKey = new Map<string, Set<Subscriber>>();
+
+function addSubscriber(key: string, subscriber: Subscriber): () => void {
+  const subs = subscribersByKey.get(key) ?? new Set<Subscriber>();
+  subs.add(subscriber);
+  subscribersByKey.set(key, subs);
+
+  return () => {
+    const current = subscribersByKey.get(key);
+    if (!current) return;
+    current.delete(subscriber);
+    if (current.size === 0) {
+      subscribersByKey.delete(key);
+    }
+  };
+}
+
+function notifySubscribers(key: string, origin?: string) {
+  const subs = subscribersByKey.get(key);
+  if (!subs) return;
+
+  for (const sub of subs) {
+    // If listener=false, only react to updates originating from this hook instance.
+    if (!sub.listener) {
+      if (!origin || origin !== sub.componentId) continue;
+    }
+    sub.callback();
+  }
+}
+
+let storageListenerInstalled = false;
+function ensureStorageListenerInstalled() {
+  if (storageListenerInstalled) return;
+  if (typeof window === "undefined") return;
+
+  window.addEventListener("storage", (e: StorageEvent) => {
+    if (!e.key) return;
+    // Cross-tab update: only listener=true subscribers should react.
+    notifySubscribers(e.key);
+  });
+
+  storageListenerInstalled = true;
+}
 /**
  * Read a persisted state value from localStorage (non-hook version)
  * Mirrors the reading logic from usePersistedState
@@ -60,8 +110,11 @@ export function updatePersistedState<T>(
       window.localStorage.setItem(key, JSON.stringify(newValue));
     }
 
-    // Dispatch custom event for same-tab synchronization
-    // No origin since this is an external update - all listeners should receive it
+    // Notify same-tab subscribers (usePersistedState) immediately.
+    notifySubscribers(key);
+
+    // Dispatch custom event for same-tab synchronization for non-hook listeners.
+    // No origin since this is an external update - all listeners should receive it.
     const customEvent = new CustomEvent(getStorageChangeEvent(key), {
       detail: { key, newValue },
     });
@@ -90,144 +143,101 @@ export function usePersistedState<T>(
   initialValue: T,
   options?: UsePersistedStateOptions
 ): [T, Dispatch<SetStateAction<T>>] {
-  // Unique component ID to prevent echo when listening to own updates
+  // Unique component ID for distinguishing self-updates.
   const componentIdRef = useRef(Math.random().toString(36));
 
-  // Lazy initialization - only runs on first render
-  const [state, setState] = useState<T>(() => {
-    // Handle SSR and environments without localStorage
+  ensureStorageListenerInstalled();
+
+  const subscribe = useCallback(
+    (callback: () => void) => {
+      return addSubscriber(key, {
+        callback,
+        componentId: componentIdRef.current,
+        listener: Boolean(options?.listener),
+      });
+    },
+    [key, options?.listener]
+  );
+
+  // Match the previous `usePersistedState` behavior: `initialValue` is only used
+  // as the default when no value is stored; changes to `initialValue` should not
+  // reinitialize state.
+  const initialValueRef = useRef(initialValue);
+
+  // useSyncExternalStore requires getSnapshot() to be referentially stable when
+  // the underlying store value is unchanged. Since localStorage values are JSON,
+  // we cache the parsed value by raw string.
+  const snapshotRef = useRef<{ key: string; raw: string | null; value: T } | null>(null);
+
+  const getSnapshot = useCallback((): T => {
     if (typeof window === "undefined" || !window.localStorage) {
-      return initialValue;
+      return initialValueRef.current;
     }
 
     try {
-      const storedValue = window.localStorage.getItem(key);
-      if (storedValue === null) {
-        return initialValue;
+      const raw = window.localStorage.getItem(key);
+
+      if (raw === null || raw === "undefined") {
+        if (snapshotRef.current?.key === key && snapshotRef.current.raw === null) {
+          return snapshotRef.current.value;
+        }
+
+        snapshotRef.current = {
+          key,
+          raw: null,
+          value: initialValueRef.current,
+        };
+
+        return initialValueRef.current;
       }
 
-      // Handle 'undefined' string case
-      if (storedValue === "undefined") {
-        return initialValue;
+      if (snapshotRef.current?.key === key && snapshotRef.current.raw === raw) {
+        return snapshotRef.current.value;
       }
 
-      return JSON.parse(storedValue) as T;
+      const parsed = JSON.parse(raw) as T;
+      snapshotRef.current = { key, raw, value: parsed };
+      return parsed;
     } catch (error) {
       console.warn(`Error reading localStorage key "${key}":`, error);
-      return initialValue;
+      return initialValueRef.current;
     }
-  });
+  }, [key]);
 
-  // Re-initialize state when key changes (e.g., when switching workspaces)
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.localStorage) {
-      return;
-    }
+  const getServerSnapshot = useCallback(() => initialValueRef.current, []);
 
-    try {
-      const storedValue = window.localStorage.getItem(key);
-      if (storedValue === null || storedValue === "undefined") {
-        setState(initialValue);
+  const state = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+
+  const setPersistedState = useCallback(
+    (value: SetValue<T>) => {
+      if (typeof window === "undefined" || !window.localStorage) {
         return;
       }
 
-      const parsedValue = JSON.parse(storedValue) as T;
-      setState(parsedValue);
-    } catch (error) {
-      console.warn(`Error reading localStorage key "${key}" on key change:`, error);
-      setState(initialValue);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]); // Only depend on key, not initialValue (to avoid infinite loops)
-
-  // Enhanced setState that supports functional updates
-  const setPersistedState = useCallback(
-    (value: SetValue<T>) => {
-      setState((prevState) => {
+      try {
+        const prevState = readPersistedState<T>(key, initialValueRef.current);
         const newValue = value instanceof Function ? value(prevState) : value;
 
-        // Write to localStorage synchronously to ensure data persists
-        // even if app closes immediately after (e.g., Electron quit, crash).
-        // This fixes race condition where queueMicrotask deferred writes could be lost.
-        if (typeof window !== "undefined" && window.localStorage) {
-          try {
-            if (newValue === undefined || newValue === null) {
-              window.localStorage.removeItem(key);
-            } else {
-              window.localStorage.setItem(key, JSON.stringify(newValue));
-            }
-
-            // Dispatch custom event for same-tab synchronization
-            // Include origin marker to prevent echo
-            const customEvent = new CustomEvent(getStorageChangeEvent(key), {
-              detail: { key, newValue, origin: componentIdRef.current },
-            });
-            window.dispatchEvent(customEvent);
-          } catch (error) {
-            console.warn(`Error writing to localStorage key "${key}":`, error);
-          }
+        if (newValue === undefined || newValue === null) {
+          window.localStorage.removeItem(key);
+        } else {
+          window.localStorage.setItem(key, JSON.stringify(newValue));
         }
 
-        return newValue;
-      });
+        // Notify hook subscribers synchronously (keeps UI responsive).
+        notifySubscribers(key, componentIdRef.current);
+
+        // Dispatch custom event for same-tab synchronization for non-hook listeners.
+        const customEvent = new CustomEvent(getStorageChangeEvent(key), {
+          detail: { key, newValue, origin: componentIdRef.current },
+        });
+        window.dispatchEvent(customEvent);
+      } catch (error) {
+        console.warn(`Error writing to localStorage key "${key}":`, error);
+      }
     },
     [key]
   );
-
-  // Listen for storage changes when listener option is enabled
-  useEffect(() => {
-    if (!options?.listener) return;
-
-    let rafId: number | null = null;
-
-    const handleStorageChange = (e: Event) => {
-      // Cancel any pending update
-      if (rafId !== null) {
-        cancelAnimationFrame(rafId);
-      }
-
-      // Batch update to next animation frame to prevent jittery scroll
-      rafId = requestAnimationFrame(() => {
-        rafId = null;
-
-        if (e instanceof StorageEvent) {
-          // Cross-tab storage event
-          if (e.key === key && e.newValue !== null) {
-            try {
-              const newValue = JSON.parse(e.newValue) as T;
-              setState(newValue);
-            } catch (error) {
-              console.warn(`Error parsing storage event for key "${key}":`, error);
-            }
-          }
-        } else if (e instanceof CustomEvent) {
-          // Same-tab custom event
-          const detail = e.detail as { key: string; newValue: T; origin?: string };
-          if (detail.key === key) {
-            // Skip if this update originated from this component (prevent echo)
-            if (detail.origin && detail.origin === componentIdRef.current) {
-              return;
-            }
-            setState(detail.newValue);
-          }
-        }
-      });
-    };
-
-    // Listen to both storage events (cross-tab) and custom events (same-tab)
-    const storageChangeEvent = getStorageChangeEvent(key);
-    window.addEventListener("storage", handleStorageChange);
-    window.addEventListener(storageChangeEvent, handleStorageChange);
-
-    return () => {
-      // Cancel pending animation frame
-      if (rafId !== null) {
-        cancelAnimationFrame(rafId);
-      }
-      window.removeEventListener("storage", handleStorageChange);
-      window.removeEventListener(storageChangeEvent, handleStorageChange);
-    };
-  }, [key, options?.listener]);
 
   return [state, setPersistedState];
 }

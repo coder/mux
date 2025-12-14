@@ -13,30 +13,6 @@ interface ThinkingContextType {
 
 const ThinkingContext = createContext<ThinkingContextType | undefined>(undefined);
 
-interface ThinkingProviderInnerProps {
-  thinkingKey: string;
-  children: ReactNode;
-}
-
-const ThinkingProviderInner: React.FC<ThinkingProviderInnerProps> = (props) => {
-  const [thinkingLevel, setThinkingLevel] = usePersistedState<ThinkingLevel>(
-    props.thinkingKey,
-    "off",
-    { listener: true }
-  );
-
-  // Memoize context value to prevent unnecessary re-renders of consumers
-  const contextValue = useMemo(
-    () => ({ thinkingLevel, setThinkingLevel }),
-    [thinkingLevel, setThinkingLevel]
-  );
-
-  return (
-    <ThinkingContext.Provider value={contextValue}>
-      {props.children}
-    </ThinkingContext.Provider>
-  );
-};
 interface ThinkingProviderProps {
   workspaceId?: string; // For existing workspaces
   projectPath?: string; // For workspace creation (uses project-scoped model key)
@@ -74,13 +50,17 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = ({
     return getThinkingLevelByModelKey(model);
   }, [rawModel, defaultModel]);
 
-  // Key the inner provider by thinkingKey so switching models re-mounts and
-  // synchronously reads the new key's value (avoids one-render stale state).
-  return (
-    <ThinkingProviderInner key={thinkingKey} thinkingKey={thinkingKey}>
-      {children}
-    </ThinkingProviderInner>
+  const [thinkingLevel, setThinkingLevel] = usePersistedState<ThinkingLevel>(thinkingKey, "off", {
+    listener: true,
+  });
+
+  // Memoize context value to prevent unnecessary re-renders of consumers.
+  const contextValue = useMemo(
+    () => ({ thinkingLevel, setThinkingLevel }),
+    [thinkingLevel, setThinkingLevel]
   );
+
+  return <ThinkingContext.Provider value={contextValue}>{children}</ThinkingContext.Provider>;
 };
 
 export const useThinking = () => {
