@@ -6,7 +6,6 @@ import {
   getModeKey,
   getPendingScopeId,
   getProjectScopeId,
-  getThinkingLevelKey,
 } from "@/common/constants/storage";
 import type { SendMessageError as _SendMessageError } from "@/common/types/errors";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
@@ -404,7 +403,6 @@ describe("useCreationWorkspace", () => {
     });
 
     persistedPreferences[getModeKey(getProjectScopeId(TEST_PROJECT_PATH))] = "plan";
-    persistedPreferences[getThinkingLevelKey(getProjectScopeId(TEST_PROJECT_PATH))] = "high";
     // Set model preference for the project scope (read by getSendOptionsFromStorage)
     persistedPreferences[getModelKey(getProjectScopeId(TEST_PROJECT_PATH))] = "gpt-4";
 
@@ -460,15 +458,12 @@ describe("useCreationWorkspace", () => {
     expect(onWorkspaceCreated.mock.calls[0][0]).toEqual(TEST_METADATA);
 
     const projectModeKey = getModeKey(getProjectScopeId(TEST_PROJECT_PATH));
-    const projectThinkingKey = getThinkingLevelKey(getProjectScopeId(TEST_PROJECT_PATH));
     expect(readPersistedStateCalls).toContainEqual([projectModeKey, null]);
-    expect(readPersistedStateCalls).toContainEqual([projectThinkingKey, null]);
 
     const modeKey = getModeKey(TEST_WORKSPACE_ID);
-    const thinkingKey = getThinkingLevelKey(TEST_WORKSPACE_ID);
     const pendingInputKey = getInputKey(getPendingScopeId(TEST_PROJECT_PATH));
     expect(updatePersistedStateCalls).toContainEqual([modeKey, "plan"]);
-    expect(updatePersistedStateCalls).toContainEqual([thinkingKey, "high"]);
+    // Note: thinking level is no longer synced per-workspace, it's stored per-model globally
     expect(updatePersistedStateCalls).toContainEqual([pendingInputKey, ""]);
   });
 

@@ -30,7 +30,9 @@ import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sour
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
-import { getThinkingLevelKey } from "@/common/constants/storage";
+import { getThinkingLevelByModelKey, getModelKey } from "@/common/constants/storage";
+import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
+import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import type { BranchListResult } from "@/common/orpc/types";
 import { useTelemetry } from "./hooks/useTelemetry";
 import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
@@ -262,50 +264,68 @@ function AppInner() {
     close: closeCommandPalette,
   } = useCommandRegistry();
 
-  const getThinkingLevelForWorkspace = useCallback((workspaceId: string): ThinkingLevel => {
-    if (!workspaceId) {
-      return "off";
-    }
-
-    if (typeof window === "undefined" || !window.localStorage) {
-      return "off";
-    }
-
+  /**
+   * Get model for a workspace, returning canonical format.
+   */
+  const getModelForWorkspace = useCallback((workspaceId: string): string => {
+    const defaultModel = getDefaultModel();
     try {
-      const key = getThinkingLevelKey(workspaceId);
-      const stored = window.localStorage.getItem(key);
-      if (!stored || stored === "undefined") {
+      const raw = window.localStorage?.getItem(getModelKey(workspaceId));
+      const model = raw ? (JSON.parse(raw) as string) : defaultModel;
+      return migrateGatewayModel(model || defaultModel);
+    } catch {
+      return defaultModel;
+    }
+  }, []);
+
+  const getThinkingLevelForWorkspace = useCallback(
+    (workspaceId: string): ThinkingLevel => {
+      if (!workspaceId || typeof window === "undefined" || !window.localStorage) {
         return "off";
       }
-      const parsed = JSON.parse(stored) as ThinkingLevel;
-      return THINKING_LEVELS.includes(parsed) ? parsed : "off";
-    } catch (error) {
-      console.warn("Failed to read thinking level", error);
-      return "off";
-    }
-  }, []);
 
-  const setThinkingLevelFromPalette = useCallback((workspaceId: string, level: ThinkingLevel) => {
-    if (!workspaceId) {
-      return;
-    }
+      try {
+        const model = getModelForWorkspace(workspaceId);
+        const key = getThinkingLevelByModelKey(model);
+        const stored = window.localStorage.getItem(key);
+        if (!stored || stored === "undefined") {
+          return "off";
+        }
+        const parsed = JSON.parse(stored) as ThinkingLevel;
+        return THINKING_LEVELS.includes(parsed) ? parsed : "off";
+      } catch (error) {
+        console.warn("Failed to read thinking level", error);
+        return "off";
+      }
+    },
+    [getModelForWorkspace]
+  );
 
-    const normalized = THINKING_LEVELS.includes(level) ? level : "off";
-    const key = getThinkingLevelKey(workspaceId);
+  const setThinkingLevelFromPalette = useCallback(
+    (workspaceId: string, level: ThinkingLevel) => {
+      if (!workspaceId) {
+        return;
+      }
 
-    // Use the utility function which handles localStorage and event dispatch
-    // ThinkingProvider will pick this up via its listener
-    updatePersistedState(key, normalized);
+      const normalized = THINKING_LEVELS.includes(level) ? level : "off";
+      const model = getModelForWorkspace(workspaceId);
+      const key = getThinkingLevelByModelKey(model);
 
-    // Dispatch toast notification event for UI feedback
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(
-        new CustomEvent(CUSTOM_EVENTS.THINKING_LEVEL_TOAST, {
-          detail: { workspaceId, level: normalized },
-        })
-      );
-    }
-  }, []);
+      // Use the utility function which handles localStorage and event dispatch
+      // ThinkingProvider will pick this up via its listener
+      updatePersistedState(key, normalized);
+
+      // Dispatch toast notification event for UI feedback
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent(CUSTOM_EVENTS.THINKING_LEVEL_TOAST, {
+            detail: { workspaceId, level: normalized },
+          })
+        );
+      }
+    },
+    [getModelForWorkspace]
+  );
 
   const registerParamsRef = useRef<BuildSourcesParams | null>(null);
 

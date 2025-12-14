@@ -1,10 +1,9 @@
 import { useEffect } from "react";
 import type { ChatInputAPI } from "@/browser/components/ChatInput";
 import { matchesKeybind, KEYBINDS, isEditableElement } from "@/browser/utils/ui/keybinds";
-import { getLastThinkingByModelKey, getModelKey } from "@/common/constants/storage";
-import { updatePersistedState, readPersistedState } from "@/browser/hooks/usePersistedState";
-import type { ThinkingLevel, ThinkingLevelOn } from "@/common/types/thinking";
-import { DEFAULT_THINKING_LEVEL } from "@/common/types/thinking";
+import { getModelKey } from "@/common/constants/storage";
+import { readPersistedState } from "@/browser/hooks/usePersistedState";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import { getThinkingPolicyForModel } from "@/browser/utils/thinking/policy";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
@@ -32,7 +31,7 @@ interface UseAIViewKeybindsParams {
  * Manages keyboard shortcuts for AIView:
  * - Esc (non-vim) or Ctrl+C (vim): Interrupt stream (always, regardless of selection)
  * - Ctrl+I: Focus chat input
- * - Ctrl+Shift+T: Toggle thinking level
+ * - Ctrl+Shift+T: Cycle thinking level through allowed values for current model
  * - Ctrl+G: Jump to bottom
  * - Ctrl+T: Open terminal
  * - Ctrl+Shift+E: Open in editor
@@ -99,40 +98,25 @@ export function useAIViewKeybinds({
         return;
       }
 
-      // Toggle thinking works even when focused in input fields
+      // Cycle thinking level - works even when focused in input fields
       if (matchesKeybind(e, KEYBINDS.TOGGLE_THINKING)) {
         e.preventDefault();
 
         // Get selected model from localStorage (what user sees in UI)
         // Fall back to message history model, then to the Settings default model
-        // This matches the same logic as useSendMessageOptions
         const selectedModel = readPersistedState<string | null>(getModelKey(workspaceId), null);
         const modelToUse = selectedModel ?? currentModel ?? getDefaultModel();
 
-        // Storage key for remembering this model's last-used active thinking level
-        const lastThinkingKey = getLastThinkingByModelKey(modelToUse);
-
-        // Special-case: if model has single-option policy (e.g., gpt-5-pro only supports HIGH),
-        // the toggle is a no-op to avoid confusing state transitions.
+        // Get allowed levels for this model
         const allowed = getThinkingPolicyForModel(modelToUse);
-        if (allowed.length === 1) {
-          return; // No toggle for single-option policies
+        if (allowed.length <= 1) {
+          return; // No cycling for single-option policies
         }
 
-        if (currentWorkspaceThinking !== "off") {
-          // Thinking is currently ON - save the level for this model and turn it off
-          // Type system ensures we can only store active levels (not "off")
-          const activeLevel: ThinkingLevelOn = currentWorkspaceThinking;
-          updatePersistedState(lastThinkingKey, activeLevel);
-          setThinkingLevel("off");
-        } else {
-          // Thinking is currently OFF - restore the last level used for this model
-          const lastUsedThinkingForModel = readPersistedState<ThinkingLevelOn>(
-            lastThinkingKey,
-            DEFAULT_THINKING_LEVEL
-          );
-          setThinkingLevel(lastUsedThinkingForModel);
-        }
+        // Cycle to the next allowed level
+        const currentIndex = allowed.indexOf(currentWorkspaceThinking);
+        const nextIndex = (currentIndex + 1) % allowed.length;
+        setThinkingLevel(allowed[nextIndex]);
         return;
       }
 

@@ -58,10 +58,12 @@ export function getMCPTestResultsKey(projectPath: string): string {
 }
 
 /**
- * Helper to create a thinking level storage key for a workspace
- * Format: "thinkingLevel:{workspaceId}"
+ * Get the localStorage key for thinking level preference per model (global)
+ * Format: "thinkingLevel:model:{modelName}"
  */
-export const getThinkingLevelKey = (workspaceId: string): string => `thinkingLevel:${workspaceId}`;
+export function getThinkingLevelByModelKey(modelName: string): string {
+  return `thinkingLevel:model:${modelName}`;
+}
 
 /**
  * Get the localStorage key for the user's preferred model for a workspace
@@ -90,15 +92,6 @@ export function getAutoRetryKey(workspaceId: string): string {
  */
 export function getRetryStateKey(workspaceId: string): string {
   return `${workspaceId}-retryState`;
-}
-
-/**
- * Get the localStorage key for the last active thinking level used for a model
- * Stores only active levels ("low" | "medium" | "high"), never "off"
- * Format: "lastThinkingByModel:{modelName}"
- */
-export function getLastThinkingByModelKey(modelName: string): string {
-  return `lastThinkingByModel:${modelName}`;
 }
 
 /**
@@ -288,7 +281,6 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getModelKey,
   getInputKey,
   getModeKey,
-  getThinkingLevelKey,
   getAutoRetryKey,
   getRetryStateKey,
   getReviewStateKey,
@@ -298,7 +290,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getReviewsKey,
   getAutoCompactionEnabledKey,
   getStatusStateKey,
-  // Note: getAutoCompactionThresholdKey is per-model, not per-workspace
+  // Note: thinking level and auto-compaction threshold are per-model, not per-workspace
 ];
 
 /**
