@@ -148,14 +148,16 @@ function getSystemDirectory(): string {
  * @param globalInstructions Global instructions from ~/.mux/AGENTS.md
  * @param contextInstructions Context instructions from workspace/project AGENTS.md
  * @param modelString Active model identifier to determine available tools
+ * @param mode Optional mode ("plan" | "exec") - affects which tools are available
  * @returns Map of tool names to their additional instructions
  */
 export function extractToolInstructions(
   globalInstructions: string | null,
   contextInstructions: string | null,
-  modelString: string
+  modelString: string,
+  mode?: "plan" | "exec"
 ): Record<string, string> {
-  const availableTools = getAvailableTools(modelString);
+  const availableTools = getAvailableTools(modelString, mode);
   const toolInstructions: Record<string, string> = {};
 
   for (const toolName of availableTools) {
@@ -181,13 +183,15 @@ export function extractToolInstructions(
  * @param runtime - Runtime for reading workspace files (supports SSH)
  * @param workspacePath - Workspace directory path
  * @param modelString - Active model identifier to determine available tools
+ * @param mode Optional mode ("plan" | "exec") - affects which tools are available
  * @returns Map of tool names to their additional instructions
  */
 export async function readToolInstructions(
   metadata: WorkspaceMetadata,
   runtime: Runtime,
   workspacePath: string,
-  modelString: string
+  modelString: string,
+  mode?: "plan" | "exec"
 ): Promise<Record<string, string>> {
   const [globalInstructions, contextInstructions] = await readInstructionSources(
     metadata,
@@ -195,7 +199,7 @@ export async function readToolInstructions(
     workspacePath
   );
 
-  return extractToolInstructions(globalInstructions, contextInstructions, modelString);
+  return extractToolInstructions(globalInstructions, contextInstructions, modelString, mode);
 }
 
 /**

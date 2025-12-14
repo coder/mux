@@ -1173,11 +1173,13 @@ export class AIService extends EventEmitter {
       const runtimeTempDir = await this.streamManager.createTempDirForStream(streamToken, runtime);
 
       // Extract tool-specific instructions from AGENTS.md files
+      // Pass uiMode so ask_user_question is included in plan mode
       const toolInstructions = await readToolInstructions(
         metadata,
         runtime,
         workspacePath,
-        modelString
+        modelString,
+        uiMode === "plan" ? "plan" : "exec"
       );
 
       // Get model-specific tools with workspace path (correct for local or remote)
