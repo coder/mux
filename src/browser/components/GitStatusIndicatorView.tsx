@@ -90,7 +90,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   if (!gitStatus) {
     return (
       <span
-        className="text-accent relative mr-1.5 flex items-center gap-1 font-mono text-[11px]"
+        className="text-accent relative flex items-center gap-1 font-mono text-[11px]"
         aria-hidden="true"
       />
     );
@@ -108,7 +108,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   if (isEmpty) {
     return (
       <span
-        className="text-accent relative mr-1.5 flex items-center gap-1 font-mono text-[11px]"
+        className="text-accent relative flex items-center gap-1 font-mono text-[11px]"
         aria-hidden="true"
       />
     );
@@ -306,7 +306,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
         className={cn(
-          "relative mr-1.5 flex items-center gap-1 font-mono text-[11px] transition-colors",
+          "relative flex items-center gap-1 font-mono text-[11px] transition-colors",
           statusColor
         )}
       >

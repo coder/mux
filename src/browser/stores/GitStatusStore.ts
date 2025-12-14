@@ -102,6 +102,19 @@ export class GitStatusStore {
     });
   }
 
+  /**
+   * Invalidate status for a workspace, clearing cache and triggering immediate refresh.
+   * Call after operations that change git state (e.g., branch switch).
+   */
+  invalidateWorkspace(workspaceId: string): void {
+    // Set status to null immediately (shows loading state)
+    this.statusCache.set(workspaceId, null);
+    // Bump version to notify subscribers of the null state
+    this.statuses.bump(workspaceId);
+    // Trigger immediate update to fetch fresh status
+    void this.updateGitStatus();
+  }
+
   private statusCache = new Map<string, GitStatus | null>();
 
   /**
@@ -488,4 +501,13 @@ export function useGitStatus(workspaceId: string): GitStatus | null {
  */
 export function useGitStatusStoreRaw(): GitStatusStore {
   return getGitStoreInstance();
+}
+
+/**
+ * Invalidate git status for a workspace, triggering an immediate refresh.
+ * Call this after operations that change git state (e.g., branch switch).
+ */
+export function invalidateGitStatus(workspaceId: string): void {
+  const store = getGitStoreInstance();
+  store.invalidateWorkspace(workspaceId);
 }

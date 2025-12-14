@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Pencil } from "lucide-react";
 import { GitStatusIndicator } from "./GitStatusIndicator";
 import { RuntimeBadge } from "./RuntimeBadge";
+import { BranchSelector } from "./BranchSelector";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
@@ -64,20 +65,22 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
 
   return (
     <div className="bg-sidebar border-border-light flex h-8 items-center justify-between border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:flex-wrap [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:py-2 [@media(max-width:768px)]:pl-[60px]">
-      <div className="text-foreground flex min-w-0 items-center gap-2 overflow-hidden font-semibold">
-        <RuntimeBadge runtimeConfig={runtimeConfig} isWorking={canInterrupt} />
-        <GitStatusIndicator
-          gitStatus={gitStatus}
-          workspaceId={workspaceId}
-          tooltipPosition="bottom"
+      <div className="text-foreground flex min-w-0 items-center gap-2.5 overflow-hidden font-semibold">
+        <RuntimeBadge
+          runtimeConfig={runtimeConfig}
           isWorking={canInterrupt}
+          workspacePath={namedWorkspacePath}
         />
-        <span className="min-w-0 truncate font-mono text-xs">
-          {projectName} / {branch}
-        </span>
-        <span className="text-muted min-w-0 truncate font-mono text-[11px] font-normal">
-          {namedWorkspacePath}
-        </span>
+        <span className="min-w-0 truncate font-mono text-xs">{projectName}</span>
+        <div className="flex items-center gap-1">
+          <BranchSelector workspaceId={workspaceId} workspaceName={branch} />
+          <GitStatusIndicator
+            gitStatus={gitStatus}
+            workspaceId={workspaceId}
+            tooltipPosition="bottom"
+            isWorking={canInterrupt}
+          />
+        </div>
       </div>
       <div className="flex items-center">
         {editorError && <span className="text-danger-soft mr-2 text-xs">{editorError}</span>}
