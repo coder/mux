@@ -16,7 +16,7 @@ import {
 } from "./mockFactory";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getModelKey } from "@/common/constants/storage";
-import { setupSimpleChatStory, setupStreamingChatStory } from "./storyHelpers";
+import { setupSimpleChatStory, setupStreamingChatStory, setWorkspaceInput } from "./storyHelpers";
 import { within, userEvent, waitFor } from "@storybook/test";
 
 export default {
@@ -671,9 +671,15 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
 export const EditingMessage: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-editing",
+      setup={() => {
+        const workspaceId = "ws-editing";
+
+        // Ensure a deterministic starting state (Chromatic/Storybook can preserve localStorage
+        // across story runs in the same session).
+        setWorkspaceInput(workspaceId, "");
+
+        return setupSimpleChatStory({
+          workspaceId,
           messages: [
             createUserMessage("msg-1", "Add authentication to the user API endpoint", {
               historySequence: 1,
@@ -707,30 +713,26 @@ export const EditingMessage: AppStory = {
               }
             ),
           ],
-        })
-      }
+        });
+      }}
     />
   ),
   play: async ({ canvasElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
     const canvas = within(storyRoot);
 
-    // Wait for messages to render
-    await canvas.findByText("Add authentication to the user API endpoint", {}, { timeout: 10000 });
-
-    // Find the first user message and click the Edit button
-    const editButtons = await canvas.findAllByLabelText("Edit");
+    // Wait for user message actions to render (Edit buttons only appear on user messages)
+    const editButtons = await canvas.findAllByLabelText("Edit", {}, { timeout: 10000 });
     if (editButtons.length === 0) throw new Error("No edit buttons found");
 
     // Click edit on the first user message
     await userEvent.click(editButtons[0]);
 
-    // Wait for the editing state to be applied - look for the amber border and edit indicator
+    // Wait for the editing state to be applied
     await waitFor(
       () => {
-        // The input should have the editing class
-        const textarea = storyRoot.querySelector("textarea");
-        if (!textarea?.className.includes("border-editing-mode")) {
+        const textarea = canvas.getByLabelText("Edit your last message");
+        if (!textarea.className.includes("border-editing-mode")) {
           throw new Error("Textarea not in editing state");
         }
       },
@@ -738,12 +740,10 @@ export const EditingMessage: AppStory = {
     );
 
     // Verify the edit cutoff barrier appears
-    await waitFor(
-      () => {
-        const barrier = storyRoot.querySelector('[class*="edit-mode"]');
-        if (!barrier) throw new Error("Edit cutoff barrier not found");
-      },
-      { timeout: 1000 }
+    await canvas.findByText(
+      "Messages below will be removed when you submit",
+      {},
+      { timeout: 2000 }
     );
   },
   parameters: {
