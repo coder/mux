@@ -1604,13 +1604,13 @@ span.search-highlight {
   padding: 0;
 }
 
-/* Reusable copy button styles */
+/* Reusable copy button styles - reuses line-number colors for theme consistency */
 .copy-button {
   padding: 6px 8px;
-  background: rgba(0, 0, 0, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--color-line-number-bg);
+  border: 1px solid var(--color-line-number-border);
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--color-line-number-text);
   cursor: pointer;
   transition:
     color 0.2s,
@@ -1623,9 +1623,9 @@ span.search-highlight {
 }
 
 .copy-button:hover {
-  background: rgba(0, 0, 0, 0.8);
-  color: rgba(255, 255, 255, 0.9);
-  border-color: rgba(255, 255, 255, 0.2);
+  background: var(--color-code-bg);
+  color: var(--color-foreground);
+  border-color: var(--color-foreground);
 }
 
 .copy-icon {
@@ -1635,7 +1635,7 @@ span.search-highlight {
 
 .copy-feedback {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--color-foreground);
 }
 
 /* Code block specific positioning */
@@ -1649,6 +1649,19 @@ span.search-highlight {
 
 .code-block-wrapper:hover .code-copy-button {
   opacity: 1;
+}
+
+/* Single-line code block: inline copy button at top-right */
+.code-block-single-line .code-copy-button {
+  top: 50%;
+  bottom: auto;
+  transform: translateY(-50%);
+  padding: 2px 4px;
+}
+
+.code-block-single-line .code-copy-button .copy-icon {
+  width: 12px;
+  height: 12px;
 }
 
 /* Markdown code blocks (fallback for non-highlighted blocks) */

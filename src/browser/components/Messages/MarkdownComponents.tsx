@@ -81,9 +81,10 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
   }, [code, language, themeMode]);
 
   const lines = highlightedLines ?? plainLines;
+  const isSingleLine = lines.length === 1;
 
   return (
-    <div className="code-block-wrapper">
+    <div className={`code-block-wrapper${isSingleLine ? " code-block-single-line" : ""}`}>
       <div className="code-block-container">
         {lines.map((content, idx) => (
           <React.Fragment key={idx}>

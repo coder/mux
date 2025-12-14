@@ -75,6 +75,18 @@ ORDER BY time
 \`\`\`
 `;
 
+const SINGLE_LINE_CODE = `Here's a one-liner:
+
+\`\`\`bash
+npm install mux
+\`\`\`
+
+And another:
+
+\`\`\`typescript
+const x = 42;
+\`\`\``;
+
 const CODE_CONTENT = `Here's the implementation:
 
 \`\`\`typescript
@@ -140,6 +152,59 @@ export const Tables: AppStory = {
       }
     />
   ),
+};
+
+/** Single-line code blocks - copy button should be compact */
+export const SingleLineCodeBlocks: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-single-line",
+          messages: [
+            createUserMessage("msg-1", "Show me single-line code", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 100000,
+            }),
+            createAssistantMessage("msg-2", SINGLE_LINE_CODE, {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 90000,
+            }),
+          ],
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await waitForChatMessagesLoaded(canvasElement);
+
+    // Wait for code blocks to render with highlighting
+    const codeWrappers = await waitFor(
+      () => {
+        const candidates = Array.from(canvasElement.querySelectorAll(".code-block-wrapper"));
+        if (candidates.length < 2) {
+          throw new Error("Not all code blocks rendered yet");
+        }
+        return candidates as HTMLElement[];
+      },
+      { timeout: 5000 }
+    );
+
+    // Verify the first code block wrapper has only one line
+    const lineNumbers = codeWrappers[0].querySelectorAll(".line-number");
+    await expect(lineNumbers.length).toBe(1);
+
+    // Verify the single-line class is applied for compact styling
+    await expect(codeWrappers[0].classList.contains("code-block-single-line")).toBe(true);
+
+    // Force copy buttons visible for screenshot (normally shown on hover)
+    for (const wrapper of codeWrappers) {
+      const copyButton = wrapper.querySelector<HTMLElement>(".code-copy-button");
+      if (copyButton) {
+        copyButton.style.opacity = "1";
+      }
+    }
+  },
 };
 
 /** SQL with double underscores in code block - tests for bug where __ leaks to end */
