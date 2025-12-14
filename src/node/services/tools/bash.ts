@@ -257,7 +257,8 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
           script,
           {
             cwd: config.cwd,
-            env: config.secrets,
+            // Match foreground bash behavior: muxEnv is present and secrets override it.
+            env: { ...(config.muxEnv ?? {}), ...(config.secrets ?? {}) },
             niceness: config.niceness,
             displayName: display_name,
             isForeground: false, // Explicit background

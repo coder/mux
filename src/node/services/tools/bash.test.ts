@@ -1519,12 +1519,55 @@ describe("bash tool - background execution", () => {
     expect(result.success).toBe(true);
     if (result.success && "backgroundProcessId" in result) {
       expect(result.backgroundProcessId).toBeDefined();
+
       // Process ID is now the display name directly
       expect(result.backgroundProcessId).toBe("test");
     } else {
       throw new Error("Expected background process ID in result");
     }
 
+    tempDir[Symbol.dispose]();
+  });
+
+  it("should inject muxEnv environment variables in background mode", async () => {
+    const manager = new BackgroundProcessManager("/tmp/mux-test-bg");
+
+    const tempDir = new TestTempDir("test-bash-bg-mux-env");
+    const config = createTestToolConfig(tempDir.path);
+    config.backgroundProcessManager = manager;
+    config.muxEnv = {
+      MUX_MODEL_STRING: "openai:gpt-5.2",
+      MUX_THINKING_LEVEL: "medium",
+    };
+
+    const tool = createBashTool(config);
+    const args: BashToolArgs = {
+      script: 'echo "MODEL:$MUX_MODEL_STRING THINKING:$MUX_THINKING_LEVEL"',
+      timeout_secs: 5,
+      run_in_background: true,
+      display_name: "test-mux-env-bg",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(true);
+    if (result.success && "backgroundProcessId" in result) {
+      const outputResult = await manager.getOutput(
+        result.backgroundProcessId,
+        undefined,
+        undefined,
+        2
+      );
+      expect(outputResult.success).toBe(true);
+      if (outputResult.success) {
+        expect(outputResult.output).toContain("MODEL:openai:gpt-5.2");
+        expect(outputResult.output).toContain("THINKING:medium");
+      }
+    } else {
+      throw new Error("Expected background process ID in result");
+    }
+
+    await manager.terminateAll();
     tempDir[Symbol.dispose]();
   });
 });
