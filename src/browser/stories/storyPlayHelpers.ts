@@ -1,8 +1,3 @@
-/**
- * Helpers intended for Storybook play() functions only.
- * Keeping these separate avoids pulling @storybook/test into render-time story setup helpers.
- */
-
 import { waitFor } from "@storybook/test";
 
 export async function waitForChatInputAutofocusDone(canvasElement: HTMLElement): Promise<void> {
