@@ -860,6 +860,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
             <React.Fragment key={displayIndex}>
               <div
                 className={cn(SELECTABLE_DIFF_LINE_CLASS, "flex w-full relative cursor-text group")}
+                data-selected={isSelected ? "true" : "false"}
                 style={{
                   background: isSelected
                     ? "hsl(from var(--color-review-accent) h s l / 0.16)"

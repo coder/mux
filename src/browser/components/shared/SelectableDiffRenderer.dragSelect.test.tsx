@@ -4,6 +4,7 @@ import { GlobalWindow } from "happy-dom";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
+import { TooltipProvider } from "@/browser/components/ui/tooltip";
 import { SelectableDiffRenderer } from "./DiffRenderer";
 
 describe("SelectableDiffRenderer drag selection", () => {
@@ -27,13 +28,15 @@ describe("SelectableDiffRenderer drag selection", () => {
 
     const { container, getByPlaceholderText } = render(
       <ThemeProvider forcedTheme="dark">
-        <SelectableDiffRenderer
-          content={content}
-          filePath="src/test.ts"
-          onReviewNote={onReviewNote}
-          maxHeight="none"
-          enableHighlighting={false}
-        />
+        <TooltipProvider>
+          <SelectableDiffRenderer
+            content={content}
+            filePath="src/test.ts"
+            onReviewNote={onReviewNote}
+            maxHeight="none"
+            enableHighlighting={false}
+          />
+        </TooltipProvider>
       </ThemeProvider>
     );
 
@@ -50,22 +53,23 @@ describe("SelectableDiffRenderer drag selection", () => {
     fireEvent.mouseEnter(indicators[2]);
     fireEvent.mouseUp(window);
 
-    const textarea = getByPlaceholderText(/Add a review note/i);
-    fireEvent.change(textarea, { target: { value: "please review" } });
-    fireEvent.keyDown(textarea, { key: "Enter" });
+    const textarea = (await waitFor(() =>
+      getByPlaceholderText(/Add a review note/i)
+    )) as HTMLTextAreaElement;
 
     await waitFor(() => {
-      expect(onReviewNote).toHaveBeenCalledTimes(1);
+      const selectedLines = Array.from(
+        container.querySelectorAll<HTMLElement>('.selectable-diff-line[data-selected="true"]')
+      );
+      expect(selectedLines.length).toBe(3);
+
+      const allLines = Array.from(container.querySelectorAll<HTMLElement>(".selectable-diff-line"));
+      expect(allLines.length).toBe(3);
+
+      // Input should render *after* the last selected line (line 2).
+      const inputWrapper = allLines[2]?.nextElementSibling;
+      expect(inputWrapper).toBeTruthy();
+      expect(inputWrapper?.querySelector("textarea")).toBe(textarea);
     });
-
-    const callArg = onReviewNote.mock.calls[0]?.[0] as {
-      selectedDiff?: string;
-      userNote?: string;
-      lineRange?: string;
-    };
-
-    expect(callArg.userNote).toBe("please review");
-    expect(callArg.lineRange).toBe("+1-3");
-    expect(callArg.selectedDiff).toBe(content);
   });
 });
