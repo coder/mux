@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
-import React, { createContext, useContext } from "react";
+import React, { createContext, useContext, useMemo } from "react";
 import type { ThinkingLevel } from "@/common/types/thinking";
-import { usePersistedState, readPersistedState } from "@/browser/hooks/usePersistedState";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getThinkingLevelByModelKey, getModelKey } from "@/common/constants/storage";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
@@ -20,25 +20,14 @@ interface ThinkingProviderProps {
 }
 
 /**
- * Reads the current model from localStorage for the given scope.
- * Returns canonical model format (after gateway migration).
+ * Hook to get the model key for the current scope.
  */
-function getScopedModel(workspaceId?: string, projectPath?: string): string {
-  const defaultModel = getDefaultModel();
-  // Use workspace-scoped model key if available, otherwise project-scoped
-  const modelKey = workspaceId
+function useModelKey(workspaceId?: string, projectPath?: string): string | null {
+  return workspaceId
     ? getModelKey(workspaceId)
     : projectPath
       ? getModelKey(`__project__/${projectPath}`)
       : null;
-
-  if (!modelKey) {
-    return defaultModel;
-  }
-
-  const rawModel = readPersistedState<string>(modelKey, defaultModel);
-  // Normalize to canonical format (e.g., strip legacy gateway prefix)
-  return migrateGatewayModel(rawModel || defaultModel);
 }
 
 export const ThinkingProvider: React.FC<ThinkingProviderProps> = ({
@@ -46,11 +35,22 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = ({
   projectPath,
   children,
 }) => {
-  // Read current model from localStorage (non-reactive, re-reads on each render)
-  const modelString = getScopedModel(workspaceId, projectPath);
-  const key = getThinkingLevelByModelKey(modelString);
+  const defaultModel = getDefaultModel();
+  const modelKey = useModelKey(workspaceId, projectPath);
+
+  // Subscribe to model changes so we update thinking level when model changes
+  const [rawModel] = usePersistedState<string>(modelKey ?? "model:__unused__", defaultModel, {
+    listener: true,
+  });
+
+  // Derive the thinking level key from the current model
+  const thinkingKey = useMemo(() => {
+    const model = migrateGatewayModel(rawModel || defaultModel);
+    return getThinkingLevelByModelKey(model);
+  }, [rawModel, defaultModel]);
+
   const [thinkingLevel, setThinkingLevel] = usePersistedState<ThinkingLevel>(
-    key,
+    thinkingKey,
     "off",
     { listener: true } // Listen for changes from command palette and other sources
   );
