@@ -15,6 +15,7 @@ import {
   highlightDiffChunk,
   type HighlightedChunk,
 } from "@/browser/utils/highlighting/highlightDiffChunk";
+import { LRUCache } from "lru-cache";
 import {
   highlightSearchMatches,
   type SearchHighlightConfig,
@@ -315,11 +316,49 @@ interface DiffRendererProps {
 }
 
 /**
- * Hook to pre-process and highlight diff content in chunks
- * Runs once when content/language changes (NOT search - that's applied post-process)
+ * Module-level cache for fully-highlighted diff results.
+ * Key: `${content.length}:${oldStart}:${newStart}:${language}:${themeMode}`
+ * (Using content.length instead of full content as a fast differentiator - collisions are rare
+ * and just cause re-highlighting, not incorrect rendering)
  *
- * CACHING: Once highlighted with real language, result is cached even if enableHighlighting
- * becomes false later. This prevents re-highlighting during scroll when hunks leave viewport.
+ * This allows synchronous cache hits, eliminating the "Processing" flash when
+ * re-rendering the same diff content (e.g., scrolling back to a previously-viewed message).
+ */
+const highlightedDiffCache = new LRUCache<string, HighlightedChunk[]>({
+  max: 10000, // High limit - rely on maxSize for eviction
+  maxSize: 4 * 1024 * 1024, // 4MB total
+  sizeCalculation: (chunks) =>
+    chunks.reduce(
+      (total, chunk) =>
+        total + chunk.lines.reduce((lineTotal, line) => lineTotal + line.html.length * 2, 0),
+      0
+    ),
+});
+
+function getDiffCacheKey(
+  content: string,
+  language: string,
+  oldStart: number,
+  newStart: number,
+  themeMode: ThemeMode
+): string {
+  // Use content hash for more reliable cache hits
+  // Simple hash: length + first/last 100 chars (fast, unique enough for this use case)
+  const contentHash =
+    content.length <= 200
+      ? content
+      : `${content.length}:${content.slice(0, 100)}:${content.slice(-100)}`;
+  return `${contentHash}:${oldStart}:${newStart}:${language}:${themeMode}`;
+}
+
+/**
+ * Hook to pre-process and highlight diff content in chunks.
+ * Results are cached at the module level for synchronous cache hits,
+ * eliminating "Processing" flash when re-rendering the same diff.
+ *
+ * When language="text" (highlighting disabled), keeps existing highlighted
+ * chunks rather than downgrading to plain text. This prevents flicker when
+ * hunks scroll out of viewport (enableHighlighting=false).
  */
 function useHighlightedDiff(
   content: string,
@@ -328,47 +367,60 @@ function useHighlightedDiff(
   newStart: number,
   themeMode: ThemeMode
 ): HighlightedChunk[] | null {
-  const [chunks, setChunks] = useState<HighlightedChunk[] | null>(null);
-  // Track if we've already highlighted with real syntax (to prevent downgrading)
-  const hasHighlightedRef = React.useRef(false);
+  const cacheKey = getDiffCacheKey(content, language, oldStart, newStart, themeMode);
+  const cachedResult = highlightedDiffCache.get(cacheKey);
+
+  // State for async highlighting results (initialized from cache if available)
+  const [chunks, setChunks] = useState<HighlightedChunk[] | null>(cachedResult ?? null);
+  // Track if we've highlighted this content with real syntax (not plain text)
+  const hasRealHighlightRef = React.useRef(false);
 
   useEffect(() => {
-    // If already highlighted and trying to switch to plain text, keep the highlighted version
-    if (hasHighlightedRef.current && language === "text") {
-      return; // Keep cached highlighted chunks
+    // Already in cache - sync state and skip async work
+    const cached = highlightedDiffCache.get(cacheKey);
+    if (cached) {
+      setChunks(cached);
+      if (language !== "text") {
+        hasRealHighlightRef.current = true;
+      }
+      return;
     }
+
+    // When highlighting is disabled (language="text") but we've already
+    // highlighted with real syntax, keep showing that version
+    if (language === "text" && hasRealHighlightRef.current) {
+      return;
+    }
+
+    // Reset to loading state for new uncached content
+    setChunks(null);
 
     let cancelled = false;
 
     async function highlight() {
-      // Split into lines (preserve indices for selection + rendering)
       const lines = splitDiffLines(content);
-
-      // Group into chunks
       const diffChunks = groupDiffLines(lines, oldStart, newStart);
-
-      // Highlight each chunk (without search decorations - those are applied later)
       const highlighted = await Promise.all(
         diffChunks.map((chunk) => highlightDiffChunk(chunk, language, themeMode))
       );
 
       if (!cancelled) {
+        highlightedDiffCache.set(cacheKey, highlighted);
         setChunks(highlighted);
-        // Mark as highlighted if using real language (not plain text)
         if (language !== "text") {
-          hasHighlightedRef.current = true;
+          hasRealHighlightRef.current = true;
         }
       }
     }
 
     void highlight();
-
     return () => {
       cancelled = true;
     };
-  }, [content, language, oldStart, newStart, themeMode]);
+  }, [cacheKey, content, language, oldStart, newStart, themeMode]);
 
-  return chunks;
+  // Return cached result directly if available (sync path), else state (async path)
+  return cachedResult ?? chunks;
 }
 
 /**

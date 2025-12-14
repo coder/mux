@@ -1,38 +1,18 @@
 /**
- * Syntax highlighting client with LRU caching
+ * Syntax highlighting client
  *
  * Provides async API for off-main-thread syntax highlighting via Web Worker.
- * Results are cached to avoid redundant highlighting of identical code.
- *
  * Falls back to main-thread highlighting in test environments where
  * Web Workers aren't available.
+ *
+ * Note: Caching happens at the caller level (DiffRenderer's highlightedDiffCache)
+ * to enable synchronous cache hits and avoid "Processing" flash.
  */
 
-import { LRUCache } from "lru-cache";
 import * as Comlink from "comlink";
 import type { Highlighter } from "shiki";
 import type { HighlightWorkerAPI } from "@/browser/workers/highlightWorker";
 import { mapToShikiLang, SHIKI_DARK_THEME, SHIKI_LIGHT_THEME } from "./shiki-shared";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// LRU Cache with SHA-256 hashing
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Cache for highlighted HTML results
- * Key: First 64 bits of SHA-256 hash (hex string)
- * Value: Shiki HTML output
- */
-const highlightCache = new LRUCache<string, string>({
-  max: 10000, // High limit — rely on maxSize for eviction
-  maxSize: 8 * 1024 * 1024, // 8MB total
-  sizeCalculation: (html) => html.length * 2, // Rough bytes for JS strings
-});
-
-async function getCacheKey(code: string, language: string, theme: string): Promise<string> {
-  const { hashKey } = await import("@/common/lib/hashKey");
-  return hashKey(`${language}:${theme}:${code}`);
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main-thread Shiki (fallback only)
@@ -133,9 +113,8 @@ async function highlightMainThread(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Highlight code with syntax highlighting (cached, off-main-thread)
+ * Highlight code with syntax highlighting (off-main-thread)
  *
- * Results are cached by (code, language, theme) to avoid redundant work.
  * Highlighting runs in a Web Worker to avoid blocking the main thread.
  *
  * @param code - Source code to highlight
@@ -149,22 +128,9 @@ export async function highlightCode(
   language: string,
   theme: "dark" | "light"
 ): Promise<string> {
-  // Check cache first
-  const cacheKey = await getCacheKey(code, language, theme);
-  const cached = highlightCache.get(cacheKey);
-  if (cached) return cached;
-
-  // Dispatch to worker or main-thread fallback
   const api = getWorkerAPI();
-  let html: string;
-
   if (!api) {
-    html = await highlightMainThread(code, language, theme);
-  } else {
-    html = await api.highlight(code, language, theme);
+    return highlightMainThread(code, language, theme);
   }
-
-  // Cache result
-  highlightCache.set(cacheKey, html);
-  return html;
+  return api.highlight(code, language, theme);
 }
