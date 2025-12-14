@@ -166,6 +166,35 @@ describe("prepareCompactionMessage", () => {
     expect(metadata.parsed.continueMessage?.text).toBe("Continue with this");
   });
 
+  test("omits default resume text from compaction prompt", () => {
+    const sendMessageOptions = createBaseOptions();
+    const { messageText, metadata } = prepareCompactionMessage({
+      workspaceId: "ws-1",
+      continueMessage: { text: "Continue" },
+      sendMessageOptions,
+    });
+
+    expect(messageText).not.toContain("The user wants to continue with: Continue");
+
+    if (metadata.type !== "compaction-request") {
+      throw new Error("Expected compaction metadata");
+    }
+
+    // Still queued for auto-send after compaction
+    expect(metadata.parsed.continueMessage?.text).toBe("Continue");
+  });
+
+  test("includes non-default continue text in compaction prompt", () => {
+    const sendMessageOptions = createBaseOptions();
+    const { messageText } = prepareCompactionMessage({
+      workspaceId: "ws-1",
+      continueMessage: { text: "fix tests" },
+      sendMessageOptions,
+    });
+
+    expect(messageText).toContain("The user wants to continue with: fix tests");
+  });
+
   test("creates continueMessage when images are provided without text", () => {
     const sendMessageOptions = createBaseOptions();
     const { metadata } = prepareCompactionMessage({

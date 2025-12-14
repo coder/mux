@@ -627,7 +627,21 @@ export function prepareCompactionMessage(options: CompactionOptions): {
   // Build compaction message with optional continue context
   let messageText = buildCompactionPrompt(targetWords);
 
-  if (options.continueMessage) {
+  const continueText = options.continueMessage?.text;
+  const hasImages =
+    options.continueMessage?.imageParts && options.continueMessage.imageParts.length > 0;
+  const hasReviews = options.continueMessage?.reviews && options.continueMessage.reviews.length > 0;
+
+  // When the user didn't supply a follow-up message (we inject a default "Continue"),
+  // avoid polluting the compaction prompt with that control text.
+  // We still keep continueMessage in metadata so it will be auto-sent after compaction.
+  const isDefaultResume =
+    typeof continueText === "string" &&
+    continueText.trim() === "Continue" &&
+    !hasImages &&
+    !hasReviews;
+
+  if (options.continueMessage && !isDefaultResume) {
     messageText += `\n\nThe user wants to continue with: ${options.continueMessage.text}`;
   }
 
@@ -636,10 +650,7 @@ export function prepareCompactionMessage(options: CompactionOptions): {
 
   // Create compaction metadata (will be stored in user message)
   // Only include continueMessage if there's text, images, or reviews to queue after compaction
-  const hasText = options.continueMessage?.text;
-  const hasImages =
-    options.continueMessage?.imageParts && options.continueMessage.imageParts.length > 0;
-  const hasReviews = options.continueMessage?.reviews && options.continueMessage.reviews.length > 0;
+  const hasText = continueText;
   const compactData: CompactionRequestData = {
     model: effectiveModel,
     maxOutputTokens: options.maxOutputTokens,

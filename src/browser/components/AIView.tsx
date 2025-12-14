@@ -197,7 +197,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
       api,
       workspaceId,
       sendMessageOptions: pendingSendOptions,
-      continueMessage: { text: "Continue with the current task" },
+      continueMessage: { text: "Continue" },
     });
   }, [api, workspaceId, pendingSendOptions]);
 
