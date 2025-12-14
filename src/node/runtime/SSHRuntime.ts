@@ -47,6 +47,17 @@ function logSSHBackoffWait(initLogger: InitLogger, waitMs: number): void {
 }
 
 // Re-export SSHRuntimeConfig from connection pool (defined there to avoid circular deps)
+const USER_INITIATED_SSH_MAX_WAIT_MS = 2 * 60 * 1000;
+
+function userInitiatedSSHWaitExecOptions(
+  initLogger: InitLogger
+): Pick<ExecOptions, "connectionMaxWaitMs" | "onConnectionWait"> {
+  return {
+    connectionMaxWaitMs: USER_INITIATED_SSH_MAX_WAIT_MS,
+    onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
+  };
+}
+
 export type { SSHRuntimeConfig } from "./sshConnectionPool";
 
 /**
@@ -638,7 +649,7 @@ export class SSHRuntime implements Runtime {
 
       // Step 2: Ensure the SSH host is reachable before doing expensive local work
       await sshConnectionPool.acquireConnection(this.config, {
-        maxWaitMs: 2 * 60 * 1000,
+        maxWaitMs: USER_INITIATED_SSH_MAX_WAIT_MS,
         abortSignal,
         onWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
       });
@@ -707,8 +718,7 @@ export class SSHRuntime implements Runtime {
         cwd: "~",
         timeout: 300, // 5 minutes for clone
         abortSignal,
-        connectionMaxWaitMs: 2 * 60 * 1000,
-        onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
+        ...userInitiatedSSHWaitExecOptions(initLogger),
       });
 
       const [cloneStdout, cloneStderr, cloneExitCode] = await Promise.all([
@@ -731,8 +741,7 @@ export class SSHRuntime implements Runtime {
           cwd: "~",
           timeout: 30,
           abortSignal,
-          connectionMaxWaitMs: 2 * 60 * 1000,
-          onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
+          ...userInitiatedSSHWaitExecOptions(initLogger),
         }
       );
       await createTrackingBranchesStream.exitCode;
@@ -747,8 +756,7 @@ export class SSHRuntime implements Runtime {
             cwd: "~",
             timeout: 10,
             abortSignal,
-            connectionMaxWaitMs: 2 * 60 * 1000,
-            onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
+            ...userInitiatedSSHWaitExecOptions(initLogger),
           }
         );
 
@@ -767,8 +775,7 @@ export class SSHRuntime implements Runtime {
             cwd: "~",
             timeout: 10,
             abortSignal,
-            connectionMaxWaitMs: 2 * 60 * 1000,
-            onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
+            ...userInitiatedSSHWaitExecOptions(initLogger),
           }
         );
         await removeOriginStream.exitCode;
@@ -780,8 +787,7 @@ export class SSHRuntime implements Runtime {
         cwd: "~",
         timeout: 10,
         abortSignal,
-        connectionMaxWaitMs: 2 * 60 * 1000,
-        onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
+        ...userInitiatedSSHWaitExecOptions(initLogger),
       });
 
       const rmExitCode = await rmStream.exitCode;
@@ -797,8 +803,7 @@ export class SSHRuntime implements Runtime {
           cwd: "~",
           timeout: 10,
           abortSignal,
-          connectionMaxWaitMs: 2 * 60 * 1000,
-          onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
+          ...userInitiatedSSHWaitExecOptions(initLogger),
         });
         await rmStream.exitCode;
       } catch {
@@ -837,8 +842,7 @@ export class SSHRuntime implements Runtime {
       timeout: 3600, // 1 hour - generous timeout for init hooks
       abortSignal,
       env: muxEnv,
-      connectionMaxWaitMs: 2 * 60 * 1000,
-      onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
+      ...userInitiatedSSHWaitExecOptions(initLogger),
     });
 
     // Create line-buffered loggers
@@ -912,8 +916,7 @@ export class SSHRuntime implements Runtime {
           cwd: "/tmp",
           timeout: 10,
           abortSignal,
-          connectionMaxWaitMs: 2 * 60 * 1000,
-          onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
+          ...userInitiatedSSHWaitExecOptions(initLogger),
         });
         const mkdirExitCode = await mkdirStream.exitCode;
         if (mkdirExitCode !== 0) {
@@ -976,8 +979,7 @@ export class SSHRuntime implements Runtime {
         cwd: workspacePath, // Use the full workspace path for git operations
         timeout: 300, // 5 minutes for git checkout (can be slow on large repos)
         abortSignal,
-        connectionMaxWaitMs: 2 * 60 * 1000,
-        onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
+        ...userInitiatedSSHWaitExecOptions(initLogger),
       });
 
       const [stdout, stderr, exitCode] = await Promise.all([
@@ -1042,8 +1044,7 @@ export class SSHRuntime implements Runtime {
         cwd: workspacePath,
         timeout: 120, // 2 minutes for network operation
         abortSignal,
-        connectionMaxWaitMs: 2 * 60 * 1000,
-        onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
+        ...userInitiatedSSHWaitExecOptions(initLogger),
       });
 
       const fetchExitCode = await fetchStream.exitCode;
@@ -1063,8 +1064,7 @@ export class SSHRuntime implements Runtime {
         cwd: workspacePath,
         timeout: 60, // 1 minute for fast-forward merge
         abortSignal,
-        connectionMaxWaitMs: 2 * 60 * 1000,
-        onConnectionWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
+        ...userInitiatedSSHWaitExecOptions(initLogger),
       });
 
       const [mergeStderr, mergeExitCode] = await Promise.all([
