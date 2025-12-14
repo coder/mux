@@ -766,6 +766,7 @@ export class AgentSession {
       queuedMessages: this.messageQueue.getMessages(),
       displayText: this.messageQueue.getDisplayText(),
       imageParts: this.messageQueue.getImageParts(),
+      reviews: this.messageQueue.getReviews(),
     });
   }
 

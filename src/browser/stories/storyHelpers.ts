@@ -157,6 +157,8 @@ export interface SimpleChatSetupOptions {
   backgroundProcesses?: BackgroundProcessFixture[];
   /** Session usage data for Costs tab */
   sessionUsage?: MockSessionUsage;
+  /** Optional custom chat handler for emitting additional events (e.g., queued-message-changed) */
+  onChat?: (workspaceId: string, emit: (msg: WorkspaceChatMessage) => void) => void;
 }
 
 /**
@@ -191,11 +193,21 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
     ? new Map([[workspaceId, opts.sessionUsage]])
     : undefined;
 
+  // Create onChat handler that combines static messages with custom handler
+  const baseOnChat = createOnChatAdapter(chatHandlers);
+  const onChat = opts.onChat
+    ? (wsId: string, emit: (msg: WorkspaceChatMessage) => void) => {
+        const cleanup = baseOnChat(wsId, emit);
+        opts.onChat!(wsId, emit);
+        return cleanup;
+      }
+    : baseOnChat;
+
   // Return ORPC client
   return createMockORPCClient({
     projects: groupWorkspacesByProject(workspaces),
     workspaces,
-    onChat: createOnChatAdapter(chatHandlers),
+    onChat,
     executeBash: createGitStatusExecutor(gitStatus),
     providersConfig: opts.providersConfig,
     backgroundProcesses: bgProcesses,

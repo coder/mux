@@ -1,7 +1,8 @@
 import React from "react";
-import type { DisplayedMessage, ReviewNoteDataForDisplay } from "@/common/types/message";
+import type { DisplayedMessage } from "@/common/types/message";
 import type { ButtonConfig } from "./MessageWindow";
 import { MessageWindow } from "./MessageWindow";
+import { UserMessageContent } from "./UserMessageContent";
 import { TerminalOutput } from "./TerminalOutput";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
@@ -9,24 +10,6 @@ import { copyToClipboard } from "@/browser/utils/clipboard";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { Clipboard, ClipboardCheck, Pencil } from "lucide-react";
-import { ReviewBlockFromData } from "../shared/ReviewBlock";
-
-/** Helper component to render reviews from structured data with optional text */
-const ReviewsWithText: React.FC<{
-  reviews: ReviewNoteDataForDisplay[];
-  textContent: string;
-}> = ({ reviews, textContent }) => (
-  <div className="space-y-2">
-    {reviews.map((review, idx) => (
-      <ReviewBlockFromData key={idx} data={review} />
-    ))}
-    {textContent && (
-      <pre className="font-primary m-0 leading-6 break-words whitespace-pre-wrap text-[var(--color-user-text)]">
-        {textContent}
-      </pre>
-    )}
-  </div>
-);
 
 interface UserMessageProps {
   message: DisplayedMessage & { type: "user" };
@@ -107,15 +90,6 @@ export const UserMessage: React.FC<UserMessageProps> = ({
     );
   }
 
-  // Check if we have structured review data in metadata
-  const hasReviews = message.reviews && message.reviews.length > 0;
-
-  // Extract plain text content (without review tags) for display alongside review blocks
-  const plainTextContent = hasReviews
-    ? content.replace(/<review>[\s\S]*?<\/review>\s*/g, "").trim()
-    : content;
-
-  // Otherwise, render as normal user message
   return (
     <MessageWindow
       label={null}
@@ -124,29 +98,12 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       className={className}
       variant="user"
     >
-      {hasReviews ? (
-        // Use structured review data from metadata
-        <ReviewsWithText reviews={message.reviews!} textContent={plainTextContent} />
-      ) : (
-        // No reviews - just plain text
-        content && (
-          <pre className="font-primary m-0 leading-6 break-words whitespace-pre-wrap text-[var(--color-user-text)]">
-            {content}
-          </pre>
-        )
-      )}
-      {message.imageParts && message.imageParts.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-3">
-          {message.imageParts.map((img, idx) => (
-            <img
-              key={idx}
-              src={img.url}
-              alt={`Attachment ${idx + 1}`}
-              className="max-h-[300px] max-w-72 rounded-xl border border-[var(--color-attachment-border)] object-cover"
-            />
-          ))}
-        </div>
-      )}
+      <UserMessageContent
+        content={content}
+        reviews={message.reviews}
+        imageParts={message.imageParts}
+        variant="sent"
+      />
     </MessageWindow>
   );
 };

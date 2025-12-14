@@ -1,4 +1,5 @@
 import type { ImagePart, SendMessageOptions } from "@/common/orpc/types";
+import type { ReviewNoteData } from "@/common/types/review";
 
 // Type guard for compaction request metadata (for display text)
 interface CompactionMetadata {
@@ -10,6 +11,17 @@ function isCompactionMetadata(meta: unknown): meta is CompactionMetadata {
   if (typeof meta !== "object" || meta === null) return false;
   const obj = meta as Record<string, unknown>;
   return obj.type === "compaction-request" && typeof obj.rawCommand === "string";
+}
+
+// Type guard for metadata with reviews
+interface MetadataWithReviews {
+  reviews?: ReviewNoteData[];
+}
+
+function hasReviews(meta: unknown): meta is MetadataWithReviews {
+  if (typeof meta !== "object" || meta === null) return false;
+  const obj = meta as Record<string, unknown>;
+  return Array.isArray(obj.reviews);
 }
 
 /**
@@ -116,6 +128,16 @@ export class MessageQueue {
    */
   getImageParts(): ImagePart[] {
     return [...this.accumulatedImages];
+  }
+
+  /**
+   * Get reviews from metadata for display.
+   */
+  getReviews(): ReviewNoteData[] | undefined {
+    if (hasReviews(this.firstMuxMetadata) && this.firstMuxMetadata.reviews?.length) {
+      return this.firstMuxMetadata.reviews;
+    }
+    return undefined;
   }
 
   /**

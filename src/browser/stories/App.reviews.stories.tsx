@@ -7,6 +7,7 @@ import { setupSimpleChatStory, setReviews, createReview } from "./storyHelpers";
 import { blurActiveElement, waitForChatInputAutofocusDone } from "./storyPlayHelpers.js";
 import { createUserMessage, createAssistantMessage } from "./mockFactory";
 import { within, userEvent, waitFor } from "@storybook/test";
+import type { WorkspaceChatMessage } from "@/common/orpc/types";
 
 export default {
   ...appMeta,
@@ -275,6 +276,66 @@ export const BulkReviewActions: AppStory = {
     });
 
     // Wait for ChatInput's auto-focus attempt to finish, then blur
+    await waitForChatInputAutofocusDone(canvasElement);
+    blurActiveElement();
+  },
+};
+
+/**
+ * Shows reviews in a queued message with nice formatting.
+ * The queued message appears when the user sends a message while the assistant is busy.
+ * Reviews are displayed with proper formatting (file path, line range, code snippet, comment).
+ */
+export const QueuedMessageWithReviews: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaceId = "ws-queued-reviews";
+
+        return setupSimpleChatStory({
+          workspaceId,
+          workspaceName: "feature/auth",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Help me fix authentication", { historySequence: 1 }),
+            createAssistantMessage("msg-2", "I'll analyze the code and help you fix it...", {
+              historySequence: 2,
+            }),
+          ],
+          onChat: (wsId, emit) => {
+            // Emit the queued message with reviews (simulating user queued a message with reviews)
+            emit({
+              type: "queued-message-changed",
+              workspaceId: wsId,
+              queuedMessages: ["Please also check this issue"],
+              displayText: "Please also check this issue",
+              reviews: [
+                {
+                  filePath: "src/api/auth.ts",
+                  lineRange: "42-48",
+                  selectedCode:
+                    "const token = generateToken();\nconst expiry = Date.now() + 3600000;",
+                  userNote: "Consider using a constant for the token expiry duration",
+                },
+                {
+                  filePath: "src/utils/helpers.ts",
+                  lineRange: "15",
+                  selectedCode: "function validate(input) { return input.length > 0; }",
+                  userNote: "This validation could be more robust",
+                },
+              ],
+            } as WorkspaceChatMessage);
+          },
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    // Wait for the queued message to appear
+    const canvas = within(canvasElement);
+    await waitFor(() => {
+      canvas.getByText("Queued");
+    });
     await waitForChatInputAutofocusDone(canvasElement);
     blurActiveElement();
   },

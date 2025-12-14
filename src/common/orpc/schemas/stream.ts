@@ -238,12 +238,24 @@ export const ChatMuxMessageSchema = MuxMessageSchema.extend({
   type: z.literal("message"),
 });
 
+// Review data schema for queued message display
+export const ReviewNoteDataSchema = z.object({
+  filePath: z.string(),
+  lineRange: z.string(),
+  selectedCode: z.string(),
+  selectedDiff: z.string().optional(),
+  oldStart: z.number().optional(),
+  newStart: z.number().optional(),
+  userNote: z.string(),
+});
+
 export const QueuedMessageChangedEventSchema = z.object({
   type: z.literal("queued-message-changed"),
   workspaceId: z.string(),
   queuedMessages: z.array(z.string()),
   displayText: z.string(),
   imageParts: z.array(ImagePartSchema).optional(),
+  reviews: z.array(ReviewNoteDataSchema).optional(),
 });
 
 export const RestoreToInputEventSchema = z.object({

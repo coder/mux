@@ -253,6 +253,8 @@ export interface QueuedMessage {
   id: string;
   content: string;
   imageParts?: ImagePart[];
+  /** Structured review data for rich UI display (from muxMetadata) */
+  reviews?: ReviewNoteDataForDisplay[];
 }
 
 // Helper to create a simple text message

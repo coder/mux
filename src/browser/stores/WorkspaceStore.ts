@@ -281,13 +281,17 @@ export class WorkspaceStore {
 
       // Create QueuedMessage once here instead of on every render
       // Use displayText which handles slash commands (shows /compact instead of expanded prompt)
-      // Show queued message if there's text OR images (support image-only queued messages)
-      const hasContent = data.queuedMessages.length > 0 || (data.imageParts?.length ?? 0) > 0;
+      // Show queued message if there's text OR images OR reviews (support review-only queued messages)
+      const hasContent =
+        data.queuedMessages.length > 0 ||
+        (data.imageParts?.length ?? 0) > 0 ||
+        (data.reviews?.length ?? 0) > 0;
       const queuedMessage: QueuedMessage | null = hasContent
         ? {
             id: `queued-${workspaceId}`,
             content: data.displayText,
             imageParts: data.imageParts,
+            reviews: data.reviews,
           }
         : null;
 
