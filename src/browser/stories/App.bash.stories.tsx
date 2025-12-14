@@ -63,7 +63,10 @@ async function expandAllBashTools(canvasElement: HTMLElement) {
     }
   }
 
-  // Avoid leaving focus on a tool header (some components auto-focus inputs on timers)
+  // Avoid leaving focus on a tool header.
+  // ChatInput also auto-focuses on a 100ms timer on mount/workspace changes; wait for
+  // that to fire before blurring so Storybook screenshots are deterministic.
+  await new Promise((resolve) => setTimeout(resolve, 150));
   (document.activeElement as HTMLElement | null)?.blur?.();
 }
 
