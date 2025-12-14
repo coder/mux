@@ -74,6 +74,66 @@ function hasFailureResult(result: unknown): boolean {
   return false;
 }
 
+/**
+ * Merge adjacent text/reasoning parts using array accumulation + join().
+ * Avoids O(n²) string allocations from repeated concatenation.
+ * Tool parts are preserved as-is between merged text/reasoning runs.
+ */
+function mergeAdjacentParts(parts: MuxMessage["parts"]): MuxMessage["parts"] {
+  if (parts.length <= 1) return parts;
+
+  const merged: MuxMessage["parts"] = [];
+  let pendingTexts: string[] = [];
+  let pendingTextTimestamp: number | undefined;
+  let pendingReasonings: string[] = [];
+  let pendingReasoningTimestamp: number | undefined;
+
+  const flushText = () => {
+    if (pendingTexts.length > 0) {
+      merged.push({
+        type: "text",
+        text: pendingTexts.join(""),
+        timestamp: pendingTextTimestamp,
+      });
+      pendingTexts = [];
+      pendingTextTimestamp = undefined;
+    }
+  };
+
+  const flushReasoning = () => {
+    if (pendingReasonings.length > 0) {
+      merged.push({
+        type: "reasoning",
+        text: pendingReasonings.join(""),
+        timestamp: pendingReasoningTimestamp,
+      });
+      pendingReasonings = [];
+      pendingReasoningTimestamp = undefined;
+    }
+  };
+
+  for (const part of parts) {
+    if (part.type === "text") {
+      flushReasoning();
+      pendingTexts.push(part.text);
+      pendingTextTimestamp ??= part.timestamp;
+    } else if (part.type === "reasoning") {
+      flushText();
+      pendingReasonings.push(part.text);
+      pendingReasoningTimestamp ??= part.timestamp;
+    } else {
+      // Tool part - flush and keep as-is
+      flushText();
+      flushReasoning();
+      merged.push(part);
+    }
+  }
+  flushText();
+  flushReasoning();
+
+  return merged;
+}
+
 export class StreamingMessageAggregator {
   private messages = new Map<string, MuxMessage>();
   private activeStreams = new Map<string, StreamingContext>();
@@ -286,6 +346,15 @@ export class StreamingMessageAggregator {
     // Clear todos when stream ends - they're stream-scoped state
     // On reload, todos will be reconstructed from completed tool_write calls in history
     this.currentTodos = [];
+  }
+
+  /**
+   * Compact a message's parts array by merging adjacent text/reasoning parts.
+   * Called when streaming ends to convert thousands of delta parts into single strings.
+   * This reduces memory from O(deltas) small objects to O(content_types) merged objects.
+   */
+  private compactMessageParts(message: MuxMessage): void {
+    message.parts = mergeAdjacentParts(message.parts);
   }
 
   addMessage(message: MuxMessage): void {
@@ -545,6 +614,10 @@ export class StreamingMessageAggregator {
             }
           }
         }
+
+        // Compact parts to merge adjacent text/reasoning deltas into single strings
+        // This reduces memory from thousands of small delta objects to a few merged objects
+        this.compactMessageParts(message);
       }
 
       // Clean up stream-scoped state (active stream tracking, TODOs)
@@ -587,6 +660,9 @@ export class StreamingMessageAggregator {
           partial: true,
           ...data.metadata, // Spread abort metadata (usage, duration)
         };
+
+        // Compact parts even on abort - still reduces memory for partial messages
+        this.compactMessageParts(message);
       }
 
       // Clean up stream-scoped state (active stream tracking, TODOs)
@@ -606,6 +682,9 @@ export class StreamingMessageAggregator {
         message.metadata.partial = true;
         message.metadata.error = data.error;
         message.metadata.errorType = data.errorType;
+
+        // Compact parts even on error - still reduces memory for partial messages
+        this.compactMessageParts(message);
       }
 
       // Clean up stream-scoped state (active stream tracking, TODOs)
@@ -957,60 +1036,8 @@ export class StreamingMessageAggregator {
           // Direct Map.has() check - O(1) instead of O(n) iteration
           const hasActiveStream = this.activeStreams.has(message.id);
 
-          // Merge adjacent parts of same type (text with text, reasoning with reasoning)
-          // This is where all merging happens - streaming just appends raw deltas
-          // Uses array accumulation + join() to avoid O(n²) string allocations from repeated + concatenation
-          const mergedParts: typeof message.parts = [];
-          let pendingTexts: string[] = [];
-          let pendingTextTimestamp: number | undefined;
-          let pendingReasonings: string[] = [];
-          let pendingReasoningTimestamp: number | undefined;
-
-          const flushPendingText = () => {
-            if (pendingTexts.length > 0) {
-              mergedParts.push({
-                type: "text",
-                text: pendingTexts.join(""),
-                timestamp: pendingTextTimestamp,
-              });
-              pendingTexts = [];
-              pendingTextTimestamp = undefined;
-            }
-          };
-
-          const flushPendingReasoning = () => {
-            if (pendingReasonings.length > 0) {
-              mergedParts.push({
-                type: "reasoning",
-                text: pendingReasonings.join(""),
-                timestamp: pendingReasoningTimestamp,
-              });
-              pendingReasonings = [];
-              pendingReasoningTimestamp = undefined;
-            }
-          };
-
-          for (const part of message.parts) {
-            if (part.type === "text") {
-              // Flush any pending reasoning before accumulating text
-              flushPendingReasoning();
-              pendingTexts.push(part.text);
-              pendingTextTimestamp ??= part.timestamp;
-            } else if (part.type === "reasoning") {
-              // Flush any pending text before accumulating reasoning
-              flushPendingText();
-              pendingReasonings.push(part.text);
-              pendingReasoningTimestamp ??= part.timestamp;
-            } else {
-              // Tool part - flush both pending buffers and add directly
-              flushPendingText();
-              flushPendingReasoning();
-              mergedParts.push(part);
-            }
-          }
-          // Flush any remaining pending parts
-          flushPendingText();
-          flushPendingReasoning();
+          // Merge adjacent text/reasoning parts for display
+          const mergedParts = mergeAdjacentParts(message.parts);
 
           // Find the last part that will produce a DisplayedMessage
           // (reasoning, text parts with content, OR tool parts)
