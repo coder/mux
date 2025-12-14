@@ -42,7 +42,7 @@ import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { applyFrontendFilters } from "@/browser/utils/review/filterHunks";
 import { cn } from "@/common/lib/utils";
-import { useAPI } from "@/browser/contexts/API";
+import { useAPI, type APIClient } from "@/browser/contexts/API";
 
 /** Stats reported to parent for tab display */
 interface ReviewPanelStats {
@@ -156,13 +156,44 @@ const reviewPanelFileTreeCache = new LRUCache<string, FileTreeNode>({
 });
 
 function makeReviewPanelCacheKey(params: {
-  scope: "review-panel-diff:v1" | "review-panel-tree:v1";
   workspaceId: string;
   workspacePath: string;
   gitCommand: string;
 }): string {
   // Key off the actual git command to avoid forgetting to include new inputs.
-  return [params.scope, params.workspaceId, params.workspacePath, params.gitCommand].join("\u0000");
+  return [
+    "review-panel-cache:v1",
+    params.workspaceId,
+    params.workspacePath,
+    params.gitCommand,
+  ].join("\u0000");
+}
+
+type ExecuteBashResult = Awaited<ReturnType<APIClient["workspace"]["executeBash"]>>;
+type ExecuteBashSuccess = Extract<ExecuteBashResult, { success: true }>;
+
+async function executeWorkspaceBashAndCache<T extends object>(params: {
+  api: APIClient;
+  workspaceId: string;
+  script: string;
+  cacheKey: string;
+  cache: LRUCache<string, T>;
+  timeoutSecs: number;
+  parse: (result: ExecuteBashSuccess) => T;
+}): Promise<T> {
+  const result = await params.api.workspace.executeBash({
+    workspaceId: params.workspaceId,
+    script: params.script,
+    options: { timeout_secs: params.timeoutSecs },
+  });
+
+  if (!result.success) {
+    throw new Error(result.error ?? "Unknown error");
+  }
+
+  const value = params.parse(result);
+  params.cache.set(params.cacheKey, value);
+  return value;
 }
 
 export const ReviewPanel: React.FC<ReviewPanelProps> = ({
@@ -273,7 +304,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     );
 
     const cacheKey = makeReviewPanelCacheKey({
-      scope: "review-panel-tree:v1",
       workspaceId,
       workspacePath,
       gitCommand: numstatCommand,
@@ -294,23 +324,21 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     const loadFileTree = async () => {
       setIsLoadingTree(true);
       try {
-        const numstatResult = await api.workspace.executeBash({
+        const tree = await executeWorkspaceBashAndCache({
+          api,
           workspaceId,
           script: numstatCommand,
-          options: { timeout_secs: 30 },
+          cacheKey,
+          cache: reviewPanelFileTreeCache,
+          timeoutSecs: 30,
+          parse: (result) => {
+            const numstatOutput = result.data.output ?? "";
+            const fileStats = parseNumstat(numstatOutput);
+
+            // Build tree with original paths (needed for git commands)
+            return buildFileTree(fileStats);
+          },
         });
-
-        if (!numstatResult.success) {
-          throw new Error(numstatResult.error ?? "Unknown error");
-        }
-
-        const numstatOutput = numstatResult.data.output ?? "";
-        const fileStats = parseNumstat(numstatOutput);
-
-        // Build tree with original paths (needed for git commands)
-        const tree = buildFileTree(fileStats);
-
-        reviewPanelFileTreeCache.set(cacheKey, tree);
 
         if (cancelled) return;
         setFileTree(tree);
@@ -358,7 +386,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     );
 
     const cacheKey = makeReviewPanelCacheKey({
-      scope: "review-panel-diff:v1",
       workspaceId,
       workspacePath,
       gitCommand: diffCommand,
@@ -406,60 +433,55 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         // - includeUncommitted: include working directory changes
         // - selectedFilePath: ESSENTIAL for truncation - if full diff is cut off,
         //   path filter lets us retrieve specific file's hunks
-        // Fetch diff
-        const diffResult = await api.workspace.executeBash({
+        const data = await executeWorkspaceBashAndCache({
+          api,
           workspaceId,
           script: diffCommand,
-          options: { timeout_secs: 30 },
+          cacheKey,
+          cache: reviewPanelDiffCache,
+          timeoutSecs: 30,
+          parse: (result) => {
+            const diffOutput = result.data.output ?? "";
+            const truncationInfo = "truncated" in result.data ? result.data.truncated : undefined;
+
+            const fileDiffs = parseDiff(diffOutput);
+            const allHunks = extractAllHunks(fileDiffs);
+
+            const diagnosticInfo: DiagnosticInfo = {
+              command: diffCommand,
+              outputLength: diffOutput.length,
+              fileDiffCount: fileDiffs.length,
+              hunkCount: allHunks.length,
+            };
+
+            // Build truncation warning (only when not filtering by path)
+            const truncationWarning =
+              truncationInfo && !selectedFilePath
+                ? `Diff truncated (${truncationInfo.reason}). Filter by file to see more.`
+                : null;
+
+            return { hunks: allHunks, truncationWarning, diagnosticInfo };
+          },
         });
 
         if (cancelled) return;
 
-        if (!diffResult.success) {
-          // Real error (not truncation-related)
-          console.error("Git diff failed:", diffResult.error);
-          setDiffState({ status: "error", message: diffResult.error ?? "Unknown error" });
-          setDiagnosticInfo(null);
-          return;
-        }
-
-        const diffOutput = diffResult.data.output ?? "";
-        const truncationInfo =
-          "truncated" in diffResult.data ? diffResult.data.truncated : undefined;
-
-        const fileDiffs = parseDiff(diffOutput);
-        const allHunks = extractAllHunks(fileDiffs);
-
-        const nextDiagnosticInfo: DiagnosticInfo = {
-          command: diffCommand,
-          outputLength: diffOutput.length,
-          fileDiffCount: fileDiffs.length,
-          hunkCount: allHunks.length,
-        };
-
-        // Build truncation warning (only when not filtering by path)
-        const truncationWarning =
-          truncationInfo && !selectedFilePath
-            ? `Diff truncated (${truncationInfo.reason}). Filter by file to see more.`
-            : null;
-
-        reviewPanelDiffCache.set(cacheKey, {
-          hunks: allHunks,
-          truncationWarning,
-          diagnosticInfo: nextDiagnosticInfo,
+        setDiagnosticInfo(data.diagnosticInfo);
+        setDiffState({
+          status: "loaded",
+          hunks: data.hunks,
+          truncationWarning: data.truncationWarning,
         });
 
-        setDiagnosticInfo(nextDiagnosticInfo);
-        setDiffState({ status: "loaded", hunks: allHunks, truncationWarning });
-
-        if (allHunks.length > 0) {
-          setSelectedHunkId((prev) => prev ?? allHunks[0].id);
+        if (data.hunks.length > 0) {
+          setSelectedHunkId((prev) => prev ?? data.hunks[0].id);
         }
       } catch (err) {
         if (cancelled) return;
         const errorMsg = `Failed to load diff: ${err instanceof Error ? err.message : String(err)}`;
         console.error(errorMsg);
         setDiffState({ status: "error", message: errorMsg });
+        setDiagnosticInfo(null);
       }
     };
 
