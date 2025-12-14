@@ -60,6 +60,7 @@ import { EnvHttpProxyAgent, type Dispatcher } from "undici";
 import { getPlanFilePath } from "@/common/utils/planStorage";
 import { getPlanModeInstruction } from "@/common/utils/ui/modeUtils";
 import type { UIMode } from "@/common/types/mode";
+import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
 
 // Export a standalone version of getToolsForModel for use in backend
@@ -236,6 +237,35 @@ export function buildAnthropicHeaders(
     return { ...existingHeaders, "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER };
   }
   return { "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER };
+}
+
+/**
+ * Build app attribution headers used by OpenRouter (and other compatible platforms).
+ *
+ * Attribution docs:
+ * - OpenRouter: https://openrouter.ai/docs/app-attribution
+ * - Vercel AI Gateway: https://vercel.com/docs/ai-gateway/app-attribution
+ *
+ * Exported for testing.
+ */
+export function buildAppAttributionHeaders(
+  existingHeaders: Record<string, string> | undefined
+): Record<string, string> {
+  // Clone to avoid mutating caller-provided objects.
+  const headers: Record<string, string> = existingHeaders ? { ...existingHeaders } : {};
+
+  // Header names are case-insensitive. Preserve user-provided values by never overwriting.
+  const existingLowercaseKeys = new Set(Object.keys(headers).map((key) => key.toLowerCase()));
+
+  if (!existingLowercaseKeys.has("http-referer")) {
+    headers["HTTP-Referer"] = MUX_APP_ATTRIBUTION_URL;
+  }
+
+  if (!existingLowercaseKeys.has("x-title")) {
+    headers["X-Title"] = MUX_APP_ATTRIBUTION_TITLE;
+  }
+
+  return headers;
 }
 
 /**
@@ -434,6 +464,13 @@ export class AIService extends EventEmitter {
       providerConfig = baseUrl
         ? { ...configWithoutBaseUrl, baseURL: baseUrl }
         : configWithoutBaseUrl;
+
+      // Inject app attribution headers (used by OpenRouter and other compatible platforms).
+      // We never overwrite user-provided values (case-insensitive header matching).
+      providerConfig = {
+        ...providerConfig,
+        headers: buildAppAttributionHeaders(providerConfig.headers),
+      };
 
       // Handle Anthropic provider
       if (providerName === "anthropic") {
