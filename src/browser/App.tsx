@@ -269,34 +269,21 @@ function AppInner() {
    */
   const getModelForWorkspace = useCallback((workspaceId: string): string => {
     const defaultModel = getDefaultModel();
-    try {
-      const raw = window.localStorage?.getItem(getModelKey(workspaceId));
-      const model = raw ? (JSON.parse(raw) as string) : defaultModel;
-      return migrateGatewayModel(model || defaultModel);
-    } catch {
-      return defaultModel;
-    }
+    const rawModel = readPersistedState<string>(getModelKey(workspaceId), defaultModel);
+    return migrateGatewayModel(rawModel || defaultModel);
   }, []);
 
   const getThinkingLevelForWorkspace = useCallback(
     (workspaceId: string): ThinkingLevel => {
-      if (!workspaceId || typeof window === "undefined" || !window.localStorage) {
+      if (!workspaceId) {
         return "off";
       }
-
-      try {
-        const model = getModelForWorkspace(workspaceId);
-        const key = getThinkingLevelByModelKey(model);
-        const stored = window.localStorage.getItem(key);
-        if (!stored || stored === "undefined") {
-          return "off";
-        }
-        const parsed = JSON.parse(stored) as ThinkingLevel;
-        return THINKING_LEVELS.includes(parsed) ? parsed : "off";
-      } catch (error) {
-        console.warn("Failed to read thinking level", error);
-        return "off";
-      }
+      const model = getModelForWorkspace(workspaceId);
+      const level = readPersistedState<ThinkingLevel>(
+        getThinkingLevelByModelKey(model),
+        "off"
+      );
+      return THINKING_LEVELS.includes(level) ? level : "off";
     },
     [getModelForWorkspace]
   );
