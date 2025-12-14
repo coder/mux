@@ -15,6 +15,8 @@ export function getPlanModeInstruction(planFilePath: string, planExists: boolean
 You should build your plan incrementally by writing to or editing this file.
 NOTE that this is the only file you are allowed to edit - other than this you are only allowed to take READ-ONLY actions.
 
+Keep the plan crisp and focused on actionable recommendations. Put historical context, alternatives considered, or lengthy rationale into collapsible \`<details>/<summary>\` blocks so the core plan stays scannable.
+
 When you have finished writing your plan and are ready for user approval, call the propose_plan tool.
 Do not make other edits in plan mode. You may have tools like bash but only use them for read-only operations.
 
