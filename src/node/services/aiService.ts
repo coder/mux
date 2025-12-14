@@ -348,6 +348,7 @@ export class AIService extends EventEmitter {
    * Forward all stream events from StreamManager to AIService consumers
    */
   private setupStreamEventForwarding(): void {
+    this.streamManager.on("stream-pending", (data) => this.emit("stream-pending", data));
     this.streamManager.on("stream-start", (data) => this.emit("stream-start", data));
     this.streamManager.on("stream-delta", (data) => this.emit("stream-delta", data));
     this.streamManager.on("stream-end", (data) => this.emit("stream-end", data));

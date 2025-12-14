@@ -2,6 +2,7 @@ import type { z } from "zod";
 import type * as schemas from "./schemas";
 
 import type {
+  StreamPendingEvent,
   StreamStartEvent,
   StreamDeltaEvent,
   StreamEndEvent,
@@ -41,6 +42,10 @@ export function isCaughtUpMessage(msg: WorkspaceChatMessage): msg is CaughtUpMes
 
 export function isStreamError(msg: WorkspaceChatMessage): msg is StreamErrorMessage {
   return (msg as { type?: string }).type === "stream-error";
+}
+
+export function isStreamPending(msg: WorkspaceChatMessage): msg is StreamPendingEvent {
+  return (msg as { type?: string }).type === "stream-pending";
 }
 
 export function isDeleteMessage(msg: WorkspaceChatMessage): msg is DeleteMessage {

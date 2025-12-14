@@ -27,6 +27,17 @@ export const DeleteMessageSchema = z.object({
   historySequences: z.array(z.number()),
 });
 
+// Emitted when a stream has been registered and is abortable, but before streaming begins.
+// This prevents RetryBarrier flash during slow provider connection/setup.
+export const StreamPendingEventSchema = z.object({
+  type: z.literal("stream-pending"),
+  workspaceId: z.string(),
+  messageId: z.string(),
+  model: z.string(),
+  historySequence: z.number().meta({
+    description: "Backend assigns global message ordering",
+  }),
+});
 export const StreamStartEventSchema = z.object({
   type: z.literal("stream-start"),
   workspaceId: z.string(),
@@ -273,6 +284,7 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   CaughtUpMessageSchema,
   StreamErrorMessageSchema,
   DeleteMessageSchema,
+  StreamPendingEventSchema,
   StreamStartEventSchema,
   StreamDeltaEventSchema,
   StreamEndEventSchema,

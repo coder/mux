@@ -619,6 +619,7 @@ export class AgentSession {
       this.aiService.on(event, wrapped as never);
     };
 
+    forward("stream-pending", (payload) => this.emitChatEvent(payload));
     forward("stream-start", (payload) => this.emitChatEvent(payload));
     forward("stream-delta", (payload) => this.emitChatEvent(payload));
     forward("tool-call-start", (payload) => this.emitChatEvent(payload));

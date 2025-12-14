@@ -7,6 +7,7 @@ import type {
 } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type {
+  StreamPendingEvent,
   StreamStartEvent,
   StreamDeltaEvent,
   UsageDeltaEvent,
@@ -135,6 +136,9 @@ function mergeAdjacentParts(parts: MuxMessage["parts"]): MuxMessage["parts"] {
 }
 
 export class StreamingMessageAggregator {
+  // Streams that have been registered/started in the backend but haven't emitted stream-start yet.
+  // This is the "connecting" phase: abort should work, but no deltas have started.
+  private connectingStreams = new Map<string, { startTime: number; model: string }>();
   private messages = new Map<string, MuxMessage>();
   private activeStreams = new Map<string, StreamingContext>();
 
@@ -344,6 +348,7 @@ export class StreamingMessageAggregator {
    */
   private cleanupStreamState(messageId: string): void {
     this.activeStreams.delete(messageId);
+    this.connectingStreams.delete(messageId);
     // Clear todos when stream ends - they're stream-scoped state
     // On reload, todos will be reconstructed from completed tool_write calls in history
     this.currentTodos = [];
@@ -461,6 +466,9 @@ export class StreamingMessageAggregator {
     this.pendingStreamStartTime = time;
   }
 
+  hasConnectingStreams(): boolean {
+    return this.connectingStreams.size > 0;
+  }
   getActiveStreams(): StreamingContext[] {
     return Array.from(this.activeStreams.values());
   }
@@ -488,6 +496,11 @@ export class StreamingMessageAggregator {
       return context.model;
     }
 
+    // If we're connecting (stream-pending), return that model
+    for (const context of this.connectingStreams.values()) {
+      return context.model;
+    }
+
     // Otherwise, return the model from the most recent assistant message
     const messages = this.getAllMessages();
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -507,6 +520,7 @@ export class StreamingMessageAggregator {
   clear(): void {
     this.messages.clear();
     this.activeStreams.clear();
+    this.connectingStreams.clear();
     this.invalidateCache();
   }
 
@@ -529,9 +543,30 @@ export class StreamingMessageAggregator {
   }
 
   // Unified event handlers that encapsulate all complex logic
-  handleStreamStart(data: StreamStartEvent): void {
-    // Clear pending stream start timestamp - stream has started
+  handleStreamPending(data: StreamPendingEvent): void {
+    // Clear pending stream start timestamp - backend has accepted the request.
     this.setPendingStreamStartTime(null);
+
+    this.connectingStreams.set(data.messageId, { startTime: Date.now(), model: data.model });
+
+    // Create a placeholder assistant message (kept invisible until parts arrive)
+    // so that out-of-order deltas (if they ever occur) have somewhere to attach.
+    if (!this.messages.has(data.messageId)) {
+      const connectingMessage = createMuxMessage(data.messageId, "assistant", "", {
+        historySequence: data.historySequence,
+        timestamp: Date.now(),
+        model: data.model,
+      });
+      this.messages.set(data.messageId, connectingMessage);
+    }
+
+    this.invalidateCache();
+  }
+
+  handleStreamStart(data: StreamStartEvent): void {
+    // Clear pending/connecting state - stream has started.
+    this.setPendingStreamStartTime(null);
+    this.connectingStreams.delete(data.messageId);
 
     // NOTE: We do NOT clear agentStatus or currentTodos here.
     // They are cleared when a new user message arrives (see handleMessage),
@@ -673,10 +708,10 @@ export class StreamingMessageAggregator {
   }
 
   handleStreamError(data: StreamErrorMessage): void {
-    // Direct lookup by messageId
-    const activeStream = this.activeStreams.get(data.messageId);
+    const isTrackedStream =
+      this.activeStreams.has(data.messageId) || this.connectingStreams.has(data.messageId);
 
-    if (activeStream) {
+    if (isTrackedStream) {
       // Mark the message with error metadata
       const message = this.messages.get(data.messageId);
       if (message?.metadata) {
@@ -688,32 +723,33 @@ export class StreamingMessageAggregator {
         this.compactMessageParts(message);
       }
 
-      // Clean up stream-scoped state (active stream tracking, TODOs)
+      // Clean up stream-scoped state (active/connecting tracking, TODOs)
       this.cleanupStreamState(data.messageId);
       this.invalidateCache();
-    } else {
-      // Pre-stream error (e.g., API key not configured before streaming starts)
-      // Create a synthetic error message since there's no active stream to attach to
-      // Get the highest historySequence from existing messages so this appears at the end
-      const maxSequence = Math.max(
-        0,
-        ...Array.from(this.messages.values()).map((m) => m.metadata?.historySequence ?? 0)
-      );
-      const errorMessage: MuxMessage = {
-        id: data.messageId,
-        role: "assistant",
-        parts: [],
-        metadata: {
-          partial: true,
-          error: data.error,
-          errorType: data.errorType,
-          timestamp: Date.now(),
-          historySequence: maxSequence + 1,
-        },
-      };
-      this.messages.set(data.messageId, errorMessage);
-      this.invalidateCache();
+      return;
     }
+
+    // Pre-stream error (e.g., API key not configured before streaming starts)
+    // Create a synthetic error message since there's no tracked stream to attach to.
+    // Get the highest historySequence from existing messages so this appears at the end.
+    const maxSequence = Math.max(
+      0,
+      ...Array.from(this.messages.values()).map((m) => m.metadata?.historySequence ?? 0)
+    );
+    const errorMessage: MuxMessage = {
+      id: data.messageId,
+      role: "assistant",
+      parts: [],
+      metadata: {
+        partial: true,
+        error: data.error,
+        errorType: data.errorType,
+        timestamp: Date.now(),
+        historySequence: maxSequence + 1,
+      },
+    };
+    this.messages.set(data.messageId, errorMessage);
+    this.invalidateCache();
   }
 
   handleToolCallStart(data: ToolCallStartEvent): void {

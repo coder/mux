@@ -20,7 +20,8 @@ test.describe("permission mode behavior", () => {
     }
 
     const eventTypes = timeline.events.map((event) => event.type);
-    expect(eventTypes[0]).toBe("stream-start");
+    expect(eventTypes[0]).toBe("stream-pending");
+    expect(eventTypes.indexOf("stream-start")).toBeGreaterThan(0);
     expect(eventTypes[eventTypes.length - 1]).toBe("stream-end");
     expect(eventTypes.includes("tool-call-start")).toBe(false);
     expect(eventTypes.includes("tool-call-end")).toBe(false);

@@ -16,6 +16,7 @@ import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import { log } from "./log";
 import type {
+  StreamPendingEvent,
   StreamStartEvent,
   StreamEndEvent,
   UsageDeltaEvent,
@@ -1440,6 +1441,16 @@ export class StreamManager extends EventEmitter {
         maxOutputTokens,
         toolPolicy
       );
+
+      // Emit stream-pending as soon as the stream is registered and abortable.
+      // This lets the frontend suppress RetryBarrier while providers are slow to produce stream-start.
+      this.emit("stream-pending", {
+        type: "stream-pending",
+        workspaceId,
+        messageId: streamInfo.messageId,
+        model: streamInfo.model,
+        historySequence,
+      } satisfies StreamPendingEvent);
 
       // Step 5: Track the processing promise for guaranteed cleanup
       // This allows cancelStreamSafely to wait for full exit

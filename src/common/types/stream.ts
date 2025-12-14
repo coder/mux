@@ -11,6 +11,7 @@ import type {
   StreamAbortEventSchema,
   StreamDeltaEventSchema,
   StreamEndEventSchema,
+  StreamPendingEventSchema,
   StreamStartEventSchema,
   ToolCallDeltaEventSchema,
   ToolCallEndEventSchema,
@@ -22,6 +23,7 @@ import type {
  * Completed message part (reasoning, text, or tool) suitable for serialization
  * Used in StreamEndEvent and partial message storage
  */
+export type StreamPendingEvent = z.infer<typeof StreamPendingEventSchema>;
 export type CompletedMessagePart = MuxReasoningPart | MuxTextPart | MuxToolPart;
 
 export type StreamStartEvent = z.infer<typeof StreamStartEventSchema>;
@@ -45,6 +47,7 @@ export type ReasoningEndEvent = z.infer<typeof ReasoningEndEventSchema>;
 export type UsageDeltaEvent = z.infer<typeof UsageDeltaEventSchema>;
 
 export type AIServiceEvent =
+  | StreamPendingEvent
   | StreamStartEvent
   | StreamDeltaEvent
   | StreamEndEvent

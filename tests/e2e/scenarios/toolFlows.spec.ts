@@ -121,7 +121,10 @@ test.describe("tool and reasoning flows", () => {
     if (finalTimeline.events.length === 0) {
       throw new Error("Recall turn produced no events");
     }
-    expect(finalTimeline.events[0]?.type).toBe("stream-start");
+    expect(finalTimeline.events[0]?.type).toBe("stream-pending");
+    expect(
+      finalTimeline.events.findIndex((event) => event.type === "stream-start")
+    ).toBeGreaterThan(0);
     expect(finalTimeline.events.some((event) => event.type === "tool-call-start")).toBeFalsy();
 
     await ui.chat.expectTranscriptContains("contains the line 'hello'");
