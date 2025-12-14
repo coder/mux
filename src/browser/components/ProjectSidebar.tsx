@@ -38,7 +38,7 @@ export type { WorkspaceSelection } from "./WorkspaceListItem";
 // which forces React to unmount/remount the subtree. That led to hover flicker and high CPU.
 
 const PROJECT_ITEM_BASE_CLASS =
-  "py-2 px-3 flex items-center border-l-[3px] border-l-transparent bg-sidebar transition-colors duration-150";
+  "py-2 px-3 flex items-center border-l-transparent bg-sidebar transition-colors duration-150";
 
 function getProjectItemClassName(opts: {
   isDragging: boolean;
@@ -161,12 +161,7 @@ const ProjectDragLayer: React.FC = () => {
   return (
     <div className="pointer-events-none fixed inset-0 z-[9999] cursor-grabbing">
       <div style={{ transform: `translate(${currentOffset.x + 10}px, ${currentOffset.y + 10}px)` }}>
-        <div
-          className={cn(
-            PROJECT_ITEM_BASE_CLASS,
-            "w-fit max-w-64 rounded-sm border-l-accent bg-sidebar shadow-lg"
-          )}
-        >
+        <div className={cn(PROJECT_ITEM_BASE_CLASS, "w-fit max-w-64 rounded-sm shadow-lg")}>
           <span className="text-secondary mr-2 flex h-5 w-5 shrink-0 items-center justify-center">
             <ChevronRight size={12} />
           </span>
