@@ -331,8 +331,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const handleChatInputSectionRef = useCallback((el: HTMLDivElement | null) => {
     chatInputSectionRef.current = el;
     // Set an initial value once (avoid overriding later transitions).
+    // Default to "done" so non-workspace variants (or stories that don't rely on this)
+    // never get stuck waiting for a focus attempt that won't run.
     if (el && !el.hasAttribute("data-autofocus-state")) {
-      el.setAttribute("data-autofocus-state", "pending");
+      el.setAttribute("data-autofocus-state", "done");
     }
   }, []);
 
@@ -643,9 +645,31 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       if (cancelled) return;
 
       attempts += 1;
-      focusMessageInput();
 
       const input = inputRef.current;
+      const active = document.activeElement;
+
+      // If something else already took focus (e.g. a modal, command palette, or a user click),
+      // do not keep fighting it across frames.
+      if (
+        active instanceof HTMLElement &&
+        active !== document.body &&
+        active !== document.documentElement
+      ) {
+        const isWithinChatInput = !!chatInputSectionRef.current?.contains(active);
+        const isInput = !!input && active === input;
+
+        // If something else already took focus (e.g. a modal, command palette, or a user click),
+        // do not keep fighting it across frames.
+        if (!isWithinChatInput && !isInput) {
+          setChatInputAutoFocusState("done");
+          return;
+        }
+      }
+
+      // Try focusing; if the input isn't mounted yet, we'll retry on the next frame.
+      focusMessageInput();
+
       const isFocused = !!input && document.activeElement === input;
       const isDone = isFocused || attempts >= maxFrames;
 
