@@ -679,11 +679,11 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     enableHighlighting = true,
   }) => {
     const dragAnchorRef = React.useRef<number | null>(null);
-    const isDraggingRef = React.useRef(false);
+    const [isDragging, setIsDragging] = React.useState(false);
 
     React.useEffect(() => {
       const stopDragging = () => {
-        isDraggingRef.current = false;
+        setIsDragging(false);
         dragAnchorRef.current = null;
       };
 
@@ -791,19 +791,22 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
 
         const anchor = shiftKey && selection ? selection.startIndex : lineIndex;
         dragAnchorRef.current = anchor;
-        isDraggingRef.current = true;
+        setIsDragging(true);
         setSelection({ startIndex: anchor, endIndex: lineIndex });
       },
       [onLineClick, onReviewNote, selection]
     );
 
-    const updateDragSelection = React.useCallback((lineIndex: number) => {
-      if (!isDraggingRef.current || dragAnchorRef.current === null) {
-        return;
-      }
+    const updateDragSelection = React.useCallback(
+      (lineIndex: number) => {
+        if (!isDragging || dragAnchorRef.current === null) {
+          return;
+        }
 
-      setSelection({ startIndex: dragAnchorRef.current, endIndex: lineIndex });
-    }, []);
+        setSelection({ startIndex: dragAnchorRef.current, endIndex: lineIndex });
+      },
+      [isDragging]
+    );
 
     const handleCommentButtonClick = (lineIndex: number, shiftKey: boolean) => {
       // Notify parent that this hunk should become active
@@ -898,7 +901,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                     }}
                     reviewButton={
                       onReviewNote && (
-                        <Tooltip open={selection ? false : undefined}>
+                        <Tooltip {...(selection || isDragging ? { open: false } : {})}>
                           <TooltipTrigger asChild>
                             <button
                               className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 hover:text-[var(--color-review-accent)] active:scale-90"
