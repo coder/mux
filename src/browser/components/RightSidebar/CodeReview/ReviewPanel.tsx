@@ -163,7 +163,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Unified diff state - discriminated union makes invalid states unrepresentable
-  // Note: Parent renders with key={workspaceId}, so component remounts on workspace change
+  // Note: Parent renders with key={workspaceId}, so component remounts on workspace change.
   const [diffState, setDiffState] = useState<DiffState>({ status: "loading" });
 
   const [selectedHunkId, setSelectedHunkId] = useState<string | null>(null);
