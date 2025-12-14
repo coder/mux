@@ -117,7 +117,9 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         title: `${isCurrent ? "• " : ""}Switch to ${meta.name}`,
         subtitle: `${meta.projectName}${isStreaming ? " • streaming" : ""}`,
         section: section.workspaces,
-        keywords: [meta.name, meta.projectName, meta.namedWorkspacePath],
+        keywords: [meta.name, meta.projectName, meta.namedWorkspacePath, meta.title].filter(
+          (k): k is string => !!k
+        ),
         run: () =>
           p.onSelectWorkspace({
             projectPath: meta.projectPath,
@@ -200,7 +202,13 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                   return {
                     id: meta.id,
                     label,
-                    keywords: [meta.name, meta.projectName, meta.namedWorkspacePath, meta.id],
+                    keywords: [
+                      meta.name,
+                      meta.projectName,
+                      meta.namedWorkspacePath,
+                      meta.id,
+                      meta.title,
+                    ].filter((k): k is string => !!k),
                   };
                 }),
             },
@@ -230,7 +238,13 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                   return {
                     id: meta.id,
                     label,
-                    keywords: [meta.name, meta.projectName, meta.namedWorkspacePath, meta.id],
+                    keywords: [
+                      meta.name,
+                      meta.projectName,
+                      meta.namedWorkspacePath,
+                      meta.id,
+                      meta.title,
+                    ].filter((k): k is string => !!k),
                   };
                 }),
             },
@@ -272,7 +286,13 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                   return {
                     id: meta.id,
                     label,
-                    keywords: [meta.name, meta.projectName, meta.namedWorkspacePath, meta.id],
+                    keywords: [
+                      meta.name,
+                      meta.projectName,
+                      meta.namedWorkspacePath,
+                      meta.id,
+                      meta.title,
+                    ].filter((k): k is string => !!k),
                   };
                 }),
             },
