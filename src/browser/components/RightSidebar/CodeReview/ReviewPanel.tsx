@@ -98,61 +98,26 @@ interface ReviewPanelDiffCacheValue {
   diagnosticInfo: DiagnosticInfo | null;
 }
 
-function estimateHunksSizeBytes(hunks: DiffHunk[]): number {
-  // Rough bytes for JS strings (UTF-16) + a small constant per object.
-  let bytes = hunks.length * 64;
-  for (const hunk of hunks) {
-    bytes +=
-      (hunk.id.length +
-        hunk.filePath.length +
-        hunk.content.length +
-        hunk.header.length +
-        (hunk.oldPath?.length ?? 0) +
-        (hunk.changeType?.length ?? 0)) *
-      2;
+function estimateJsonSizeBytes(value: unknown): number {
+  // Rough bytes for JS strings (UTF-16). Used only for LRU sizing.
+  try {
+    return JSON.stringify(value).length * 2;
+  } catch {
+    // If we ever hit an unserializable structure, treat it as huge so it won't stick in cache.
+    return Number.MAX_SAFE_INTEGER;
   }
-  return bytes;
-}
-
-function estimateDiffCacheValueSizeBytes(value: ReviewPanelDiffCacheValue): number {
-  let bytes = estimateHunksSizeBytes(value.hunks);
-  bytes += (value.truncationWarning?.length ?? 0) * 2;
-  if (value.diagnosticInfo) {
-    bytes +=
-      (value.diagnosticInfo.command.length +
-        value.diagnosticInfo.outputLength.toString().length +
-        value.diagnosticInfo.fileDiffCount.toString().length +
-        value.diagnosticInfo.hunkCount.toString().length) *
-      2;
-  }
-  return bytes;
-}
-
-function estimateFileTreeSizeBytes(node: FileTreeNode): number {
-  // Rough bytes for JS strings + a constant per node.
-  let bytes = 64 + (node.name.length + node.path.length) * 2;
-  if (node.stats) {
-    bytes += node.stats.filePath.length * 2;
-  }
-  if (node.totalStats) {
-    bytes += node.totalStats.filePath.length * 2;
-  }
-  for (const child of node.children) {
-    bytes += estimateFileTreeSizeBytes(child);
-  }
-  return bytes;
 }
 
 const reviewPanelDiffCache = new LRUCache<string, ReviewPanelDiffCacheValue>({
   max: REVIEW_PANEL_CACHE_MAX_ENTRIES,
   maxSize: REVIEW_PANEL_DIFF_CACHE_MAX_SIZE_BYTES,
-  sizeCalculation: (value) => estimateDiffCacheValueSizeBytes(value),
+  sizeCalculation: (value) => estimateJsonSizeBytes(value),
 });
 
 const reviewPanelFileTreeCache = new LRUCache<string, FileTreeNode>({
   max: REVIEW_PANEL_CACHE_MAX_ENTRIES,
   maxSize: REVIEW_PANEL_TREE_CACHE_MAX_SIZE_BYTES,
-  sizeCalculation: (node) => estimateFileTreeSizeBytes(node),
+  sizeCalculation: (node) => estimateJsonSizeBytes(node),
 });
 
 function makeReviewPanelCacheKey(params: {
