@@ -155,37 +155,14 @@ const reviewPanelFileTreeCache = new LRUCache<string, FileTreeNode>({
   sizeCalculation: (node) => estimateFileTreeSizeBytes(node),
 });
 
-function makeReviewDiffCacheKey(params: {
+function makeReviewPanelCacheKey(params: {
+  scope: "review-panel-diff:v1" | "review-panel-tree:v1";
   workspaceId: string;
   workspacePath: string;
-  diffBase: string;
-  includeUncommitted: boolean;
-  selectedFilePath: string | null;
+  gitCommand: string;
 }): string {
-  // Null byte separator avoids accidental collisions.
-  return [
-    "review-panel-diff:v1",
-    params.workspaceId,
-    params.workspacePath,
-    params.diffBase,
-    params.includeUncommitted ? "1" : "0",
-    params.selectedFilePath ?? "",
-  ].join("\u0000");
-}
-
-function makeReviewFileTreeCacheKey(params: {
-  workspaceId: string;
-  workspacePath: string;
-  diffBase: string;
-  includeUncommitted: boolean;
-}): string {
-  return [
-    "review-panel-tree:v1",
-    params.workspaceId,
-    params.workspacePath,
-    params.diffBase,
-    params.includeUncommitted ? "1" : "0",
-  ].join("\u0000");
+  // Key off the actual git command to avoid forgetting to include new inputs.
+  return [params.scope, params.workspaceId, params.workspacePath, params.gitCommand].join("\u0000");
 }
 
 export const ReviewPanel: React.FC<ReviewPanelProps> = ({
@@ -288,11 +265,18 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     lastFileTreeRefreshTriggerRef.current = refreshTrigger;
     const isManualRefresh = prevRefreshTrigger !== null && prevRefreshTrigger !== refreshTrigger;
 
-    const cacheKey = makeReviewFileTreeCacheKey({
+    const numstatCommand = buildGitDiffCommand(
+      filters.diffBase,
+      filters.includeUncommitted,
+      "", // No path filter for file tree
+      "numstat"
+    );
+
+    const cacheKey = makeReviewPanelCacheKey({
+      scope: "review-panel-tree:v1",
       workspaceId,
       workspacePath,
-      diffBase: filters.diffBase,
-      includeUncommitted: filters.includeUncommitted,
+      gitCommand: numstatCommand,
     });
 
     // Fast path: use cached tree when switching workspaces (unless user explicitly refreshed).
@@ -310,13 +294,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     const loadFileTree = async () => {
       setIsLoadingTree(true);
       try {
-        const numstatCommand = buildGitDiffCommand(
-          filters.diffBase,
-          filters.includeUncommitted,
-          "", // No path filter for file tree
-          "numstat"
-        );
-
         const numstatResult = await api.workspace.executeBash({
           workspaceId,
           script: numstatCommand,
@@ -371,12 +348,20 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     lastDiffRefreshTriggerRef.current = refreshTrigger;
     const isManualRefresh = prevRefreshTrigger !== null && prevRefreshTrigger !== refreshTrigger;
 
-    const cacheKey = makeReviewDiffCacheKey({
+    const pathFilter = selectedFilePath ? ` -- "${extractNewPath(selectedFilePath)}"` : "";
+
+    const diffCommand = buildGitDiffCommand(
+      filters.diffBase,
+      filters.includeUncommitted,
+      pathFilter,
+      "diff"
+    );
+
+    const cacheKey = makeReviewPanelCacheKey({
+      scope: "review-panel-diff:v1",
       workspaceId,
       workspacePath,
-      diffBase: filters.diffBase,
-      includeUncommitted: filters.includeUncommitted,
-      selectedFilePath,
+      gitCommand: diffCommand,
     });
 
     // Fast path: use cached diff when switching workspaces (unless user explicitly refreshed).
@@ -421,15 +406,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         // - includeUncommitted: include working directory changes
         // - selectedFilePath: ESSENTIAL for truncation - if full diff is cut off,
         //   path filter lets us retrieve specific file's hunks
-        const pathFilter = selectedFilePath ? ` -- "${extractNewPath(selectedFilePath)}"` : "";
-
-        const diffCommand = buildGitDiffCommand(
-          filters.diffBase,
-          filters.includeUncommitted,
-          pathFilter,
-          "diff"
-        );
-
         // Fetch diff
         const diffResult = await api.workspace.executeBash({
           workspaceId,
