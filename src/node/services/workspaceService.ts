@@ -36,6 +36,11 @@ import type {
   FrontendWorkspaceMetadata,
   WorkspaceActivitySnapshot,
 } from "@/common/types/workspace";
+import { isDynamicToolPart } from "@/common/types/toolParts";
+import {
+  AskUserQuestionToolArgsSchema,
+  AskUserQuestionToolResultSchema,
+} from "@/common/utils/tools/toolDefinitions";
 import type { MuxMessage } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { hasSrcBaseDir, getSrcBaseDir, isSSHRuntime } from "@/common/types/runtime";
@@ -46,7 +51,7 @@ import type { BackgroundProcessManager } from "@/node/services/backgroundProcess
 
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { createBashTool } from "@/node/services/tools/bash";
-import type { BashToolResult } from "@/common/types/tools";
+import type { AskUserQuestionToolSuccessResult, BashToolResult } from "@/common/types/tools";
 import { secretsToRecord } from "@/common/types/secrets";
 
 import { movePlanFile } from "@/node/utils/runtime/helpers";
@@ -1108,17 +1113,181 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  answerAskUserQuestion(
+  async answerAskUserQuestion(
     workspaceId: string,
     toolCallId: string,
     answers: Record<string, string>
-  ): Result<void> {
+  ): Promise<Result<void>> {
     try {
+      // Fast path: normal in-memory execution (stream still running, tool is awaiting input).
       askUserQuestionManager.answer(workspaceId, toolCallId, answers);
       return Ok(undefined);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      return Err(errorMessage);
+      // Fallback path: app restart (or other process death) means the in-memory
+      // AskUserQuestionManager has no pending entry anymore.
+      //
+      // In that case we persist the tool result into partial.json or chat.jsonl,
+      // then emit a synthetic tool-call-end so the renderer updates immediately.
+      try {
+        // Helper: update a message in-place if it contains this ask_user_question tool call.
+        const tryFinalizeMessage = (
+          msg: MuxMessage
+        ): Result<{ updated: MuxMessage; output: AskUserQuestionToolSuccessResult }> => {
+          let foundToolCall = false;
+          let output: AskUserQuestionToolSuccessResult | null = null;
+          let errorMessage: string | null = null;
+
+          const updatedParts = msg.parts.map((part) => {
+            if (!isDynamicToolPart(part) || part.toolCallId !== toolCallId) {
+              return part;
+            }
+
+            foundToolCall = true;
+
+            if (part.toolName !== "ask_user_question") {
+              errorMessage = `toolCallId=${toolCallId} is toolName=${part.toolName}, expected ask_user_question`;
+              return part;
+            }
+
+            // Already answered - treat as idempotent.
+            if (part.state === "output-available") {
+              const parsedOutput = AskUserQuestionToolResultSchema.safeParse(part.output);
+              if (!parsedOutput.success) {
+                errorMessage = `ask_user_question output validation failed: ${parsedOutput.error.message}`;
+                return part;
+              }
+              output = parsedOutput.data;
+              return part;
+            }
+
+            const parsedArgs = AskUserQuestionToolArgsSchema.safeParse(part.input);
+            if (!parsedArgs.success) {
+              errorMessage = `ask_user_question input validation failed: ${parsedArgs.error.message}`;
+              return part;
+            }
+
+            const nextOutput: AskUserQuestionToolSuccessResult = {
+              questions: parsedArgs.data.questions,
+              answers,
+            };
+            output = nextOutput;
+
+            return {
+              ...part,
+              state: "output-available" as const,
+              output: nextOutput,
+            };
+          });
+
+          if (errorMessage) {
+            return Err(errorMessage);
+          }
+          if (!foundToolCall) {
+            return Err("ask_user_question toolCallId not found in message");
+          }
+          if (!output) {
+            return Err("ask_user_question output missing after update");
+          }
+
+          return Ok({ updated: { ...msg, parts: updatedParts }, output });
+        };
+
+        // 1) Prefer partial.json (most common after restart while waiting)
+        const partial = await this.partialService.readPartial(workspaceId);
+        if (partial) {
+          const finalized = tryFinalizeMessage(partial);
+          if (finalized.success) {
+            const writeResult = await this.partialService.writePartial(
+              workspaceId,
+              finalized.data.updated
+            );
+            if (!writeResult.success) {
+              return Err(writeResult.error);
+            }
+
+            const session = this.getOrCreateSession(workspaceId);
+            session.emitChatEvent({
+              type: "tool-call-end",
+              workspaceId,
+              messageId: finalized.data.updated.id,
+              toolCallId,
+              toolName: "ask_user_question",
+              result: finalized.data.output,
+              timestamp: Date.now(),
+            });
+
+            return Ok(undefined);
+          }
+        }
+
+        // 2) Fall back to chat history (partial may have already been committed)
+        const historyResult = await this.historyService.getHistory(workspaceId);
+        if (!historyResult.success) {
+          return Err(historyResult.error);
+        }
+
+        // Find the newest message containing this tool call.
+        let best: MuxMessage | null = null;
+        let bestSeq = -Infinity;
+        for (const msg of historyResult.data) {
+          const seq = msg.metadata?.historySequence;
+          if (seq === undefined) continue;
+
+          const hasTool = msg.parts.some(
+            (p) => isDynamicToolPart(p) && p.toolCallId === toolCallId
+          );
+          if (hasTool && seq > bestSeq) {
+            best = msg;
+            bestSeq = seq;
+          }
+        }
+
+        if (!best) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          return Err(`Failed to answer ask_user_question: ${errorMessage}`);
+        }
+
+        // Guard against answering stale tool calls.
+        const maxSeq = Math.max(
+          ...historyResult.data
+            .map((m) => m.metadata?.historySequence)
+            .filter((n): n is number => typeof n === "number")
+        );
+        if (bestSeq !== maxSeq) {
+          return Err(
+            `Refusing to answer ask_user_question: tool call is not the latest message (toolSeq=${bestSeq}, latestSeq=${maxSeq})`
+          );
+        }
+
+        const finalized = tryFinalizeMessage(best);
+        if (!finalized.success) {
+          return Err(finalized.error);
+        }
+
+        const updateResult = await this.historyService.updateHistory(
+          workspaceId,
+          finalized.data.updated
+        );
+        if (!updateResult.success) {
+          return Err(updateResult.error);
+        }
+
+        const session = this.getOrCreateSession(workspaceId);
+        session.emitChatEvent({
+          type: "tool-call-end",
+          workspaceId,
+          messageId: finalized.data.updated.id,
+          toolCallId,
+          toolName: "ask_user_question",
+          result: finalized.data.output,
+          timestamp: Date.now(),
+        });
+
+        return Ok(undefined);
+      } catch (innerError) {
+        const errorMessage = innerError instanceof Error ? innerError.message : String(innerError);
+        return Err(errorMessage);
+      }
     }
   }
 

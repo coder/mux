@@ -9,6 +9,7 @@ import { CommandIds } from "@/browser/utils/commandIds";
 import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { BranchListResult } from "@/common/orpc/types";
+import type { WorkspaceState } from "@/browser/stores/WorkspaceStore";
 import type { RuntimeConfig } from "@/common/types/runtime";
 
 export interface BuildSourcesParams {
@@ -17,6 +18,7 @@ export interface BuildSourcesParams {
   /** Map of workspace ID to workspace metadata (keyed by metadata.id, not path) */
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>;
   theme: ThemeMode;
+  selectedWorkspaceState?: WorkspaceState | null;
   selectedWorkspace: {
     projectPath: string;
     projectName: string;
@@ -393,6 +395,9 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         title: "Interrupt Streaming",
         section: section.chat,
         run: async () => {
+          if (p.selectedWorkspaceState?.awaitingUserQuestion) {
+            return;
+          }
           await p.api?.workspace.interruptStream({ workspaceId: id });
         },
       });

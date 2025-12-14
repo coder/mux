@@ -299,18 +299,19 @@ export class StreamingMessageAggregator {
    * Used to show "Awaiting your input" instead of "streaming..." in the UI.
    */
   hasAwaitingUserQuestion(): boolean {
-    // Scan displayed messages for an ask_user_question tool in "executing" state
+    // Only treat the workspace as "awaiting input" when the *latest* displayed
+    // message is an executing ask_user_question tool.
+    //
+    // This avoids false positives from stale historical partials if the user
+    // continued the chat after skipping/canceling the questions.
     const displayed = this.getDisplayedMessages();
-    for (const msg of displayed) {
-      if (
-        msg.type === "tool" &&
-        msg.toolName === "ask_user_question" &&
-        msg.status === "executing"
-      ) {
-        return true;
-      }
+    const last = displayed[displayed.length - 1];
+
+    if (last?.type !== "tool") {
+      return false;
     }
-    return false;
+
+    return last.toolName === "ask_user_question" && last.status === "executing";
   }
 
   /**
@@ -1095,10 +1096,18 @@ export class StreamingMessageAggregator {
               if (part.state === "output-available") {
                 // Check if result indicates failure (for tools that return { success: boolean })
                 status = hasFailureResult(part.output) ? "failed" : "completed";
-              } else if (part.state === "input-available" && message.metadata?.partial) {
-                status = "interrupted";
               } else if (part.state === "input-available") {
-                status = "executing";
+                // Most unfinished tool calls in partial messages represent an interruption.
+                // ask_user_question is different: it's intentionally waiting on user input,
+                // so after restart we should keep it answerable ("executing") instead of
+                // showing retry/auto-resume UX.
+                if (part.toolName === "ask_user_question") {
+                  status = "executing";
+                } else if (message.metadata?.partial) {
+                  status = "interrupted";
+                } else {
+                  status = "executing";
+                }
               } else {
                 status = "pending";
               }

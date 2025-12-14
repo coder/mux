@@ -59,6 +59,32 @@ describe("hasInterruptedStream", () => {
     expect(hasInterruptedStream(messages)).toBe(true);
   });
 
+  it("returns false for executing ask_user_question (waiting state)", () => {
+    const messages: DisplayedMessage[] = [
+      {
+        type: "user",
+        id: "user-1",
+        historyId: "user-1",
+        content: "Hello",
+        historySequence: 1,
+      },
+      {
+        type: "tool",
+        id: "tool-1",
+        historyId: "assistant-1",
+        toolName: "ask_user_question",
+        toolCallId: "call-1",
+        args: { questions: [] },
+        status: "executing",
+        isPartial: true,
+        historySequence: 2,
+        streamSequence: 0,
+        isLastPartOfMessage: true,
+      },
+    ];
+
+    expect(hasInterruptedStream(messages)).toBe(false);
+  });
   it("returns true for partial tool message", () => {
     const messages: DisplayedMessage[] = [
       {

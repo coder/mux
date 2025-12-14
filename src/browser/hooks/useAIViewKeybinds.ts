@@ -67,6 +67,12 @@ export function useAIViewKeybinds({
       // Interrupt stream: Ctrl+C in vim mode, Esc in normal mode
       // Only intercept if actively compacting (otherwise allow browser default for copy in vim mode)
       if (matchesKeybind(e, interruptKeybind)) {
+        // ask_user_question is a special waiting state: don't interrupt it with Esc/Ctrl+C.
+        // Users can still respond via the questions UI, or type in chat to cancel.
+        if (aggregator?.hasAwaitingUserQuestion()) {
+          return;
+        }
+
         if (canInterrupt && aggregator && isCompactingStream(aggregator)) {
           // Ctrl+C during compaction: restore original state and enter edit mode
           // Stores cancellation marker in localStorage (persists across reloads)

@@ -54,6 +54,13 @@ export function shouldShowInterruptedBarrier(msg: DisplayedMessage): boolean {
   )
     return false;
 
+  // ask_user_question is intentionally a "waiting for input" state. Even if the
+  // underlying message is a persisted partial (e.g. after app restart), we keep
+  // it answerable instead of showing "Interrupted".
+  if (msg.type === "tool" && msg.toolName === "ask_user_question" && msg.status === "executing") {
+    return false;
+  }
+
   // Only show on the last part of multi-part messages
   if (!msg.isLastPartOfMessage) return false;
 

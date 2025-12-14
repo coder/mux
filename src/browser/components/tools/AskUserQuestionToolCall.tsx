@@ -2,6 +2,7 @@ import assert from "@/common/utils/assert";
 
 import { useMemo, useState } from "react";
 
+import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { useAPI } from "@/browser/contexts/API";
 import { Checkbox } from "@/browser/components/ui/checkbox";
 import { Input } from "@/browser/components/ui/input";
@@ -222,6 +223,7 @@ export function AskUserQuestionToolCall(props: {
     setSubmitError(null);
 
     let answers: Record<string, string>;
+    let workspaceId: string;
 
     try {
       answers = {};
@@ -237,6 +239,7 @@ export function AskUserQuestionToolCall(props: {
 
       assert(api, "API not connected");
       assert(props.workspaceId, "workspaceId is required");
+      workspaceId = props.workspaceId;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       setSubmitError(errorMessage);
@@ -246,14 +249,24 @@ export function AskUserQuestionToolCall(props: {
 
     api.workspace
       .answerAskUserQuestion({
-        workspaceId: props.workspaceId,
+        workspaceId,
         toolCallId: props.toolCallId,
         answers,
       })
       .then((result) => {
         if (!result.success) {
           setSubmitError(result.error);
+          return;
         }
+
+        // If the stream was interrupted (e.g. app restart) we need to explicitly
+        // kick the resume manager so the assistant continues after answers.
+        window.dispatchEvent(
+          createCustomEvent(CUSTOM_EVENTS.RESUME_CHECK_REQUESTED, {
+            workspaceId,
+            isManual: true,
+          })
+        );
       })
       .catch((error) => {
         const errorMessage = error instanceof Error ? error.message : String(error);

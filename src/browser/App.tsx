@@ -416,6 +416,9 @@ function AppInner() {
 
       // Compute streaming models here (only when command palette opens)
       const allStates = workspaceStore.getAllStates();
+      const selectedWorkspaceState = params.selectedWorkspace
+        ? (allStates.get(params.selectedWorkspace.workspaceId) ?? null)
+        : null;
       const streamingModels = new Map<string, string>();
       for (const [workspaceId, state] of allStates) {
         if (state.canInterrupt && state.currentModel) {
@@ -423,7 +426,11 @@ function AppInner() {
         }
       }
 
-      const factories = buildCoreSources({ ...params, streamingModels });
+      const factories = buildCoreSources({
+        ...params,
+        streamingModels,
+        selectedWorkspaceState,
+      });
       const actions: CommandAction[] = [];
       for (const factory of factories) {
         actions.push(...factory());

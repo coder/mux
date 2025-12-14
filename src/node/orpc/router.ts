@@ -353,8 +353,8 @@ export const router = (authToken?: string) => {
       answerAskUserQuestion: t
         .input(schemas.workspace.answerAskUserQuestion.input)
         .output(schemas.workspace.answerAskUserQuestion.output)
-        .handler(({ context, input }) => {
-          const result = context.workspaceService.answerAskUserQuestion(
+        .handler(async ({ context, input }) => {
+          const result = await context.workspaceService.answerAskUserQuestion(
             input.workspaceId,
             input.toolCallId,
             input.answers

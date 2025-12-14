@@ -124,6 +124,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // Extract workspace-specific props with defaults
   const disabled = props.disabled ?? false;
   const editingMessage = variant === "workspace" ? props.editingMessage : undefined;
+  const awaitingUserQuestion =
+    variant === "workspace" ? (props.awaitingUserQuestion ?? false) : false;
   const isCompacting = variant === "workspace" ? (props.isCompacting ?? false) : false;
   const canInterrupt = variant === "workspace" ? (props.canInterrupt ?? false) : false;
   // runtimeType for telemetry - defaults to "worktree" if not provided
@@ -1307,13 +1309,25 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     // Build hints for normal input
     const hints: string[] = [];
-    if (canInterrupt) {
+
+    if (awaitingUserQuestion) {
+      hints.push("Answer above to continue");
+    }
+
+    // Interrupting is disabled while we're awaiting ask_user_question input.
+    if (canInterrupt && !awaitingUserQuestion) {
       const interruptKeybind = vimEnabled
         ? KEYBINDS.INTERRUPT_STREAM_VIM
         : KEYBINDS.INTERRUPT_STREAM_NORMAL;
       hints.push(`${formatKeybind(interruptKeybind)} to interrupt`);
     }
-    hints.push(`${formatKeybind(KEYBINDS.SEND_MESSAGE)} to ${canInterrupt ? "queue" : "send"}`);
+
+    if (awaitingUserQuestion) {
+      hints.push(`${formatKeybind(KEYBINDS.SEND_MESSAGE)} to respond (cancels questions)`);
+    } else {
+      hints.push(`${formatKeybind(KEYBINDS.SEND_MESSAGE)} to ${canInterrupt ? "queue" : "send"}`);
+    }
+
     hints.push(`Click model to choose, ${formatKeybind(KEYBINDS.CYCLE_MODEL)} to cycle`);
     hints.push(`/vim to toggle Vim mode (${vimEnabled ? "on" : "off"})`);
 

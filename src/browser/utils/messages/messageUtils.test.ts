@@ -1,7 +1,46 @@
 import { describe, it, expect } from "@jest/globals";
+
+import { shouldShowInterruptedBarrier } from "./messageUtils";
 import { mergeConsecutiveStreamErrors, computeBashOutputGroupInfo } from "./messageUtils";
 import type { DisplayedMessage } from "@/common/types/message";
 
+describe("shouldShowInterruptedBarrier", () => {
+  it("returns false for executing ask_user_question", () => {
+    const msg: DisplayedMessage = {
+      type: "tool",
+      id: "tool-1",
+      historyId: "assistant-1",
+      toolName: "ask_user_question",
+      toolCallId: "call-1",
+      args: { questions: [] },
+      status: "executing",
+      isPartial: true,
+      historySequence: 2,
+      streamSequence: 0,
+      isLastPartOfMessage: true,
+    };
+
+    expect(shouldShowInterruptedBarrier(msg)).toBe(false);
+  });
+
+  it("returns true for interrupted tool (non ask_user_question)", () => {
+    const msg: DisplayedMessage = {
+      type: "tool",
+      id: "tool-1",
+      historyId: "assistant-1",
+      toolName: "bash",
+      toolCallId: "call-1",
+      args: { script: "echo hi", timeout_secs: 1, display_name: "test" },
+      status: "interrupted",
+      isPartial: true,
+      historySequence: 2,
+      streamSequence: 0,
+      isLastPartOfMessage: true,
+    };
+
+    expect(shouldShowInterruptedBarrier(msg)).toBe(true);
+  });
+});
 describe("mergeConsecutiveStreamErrors", () => {
   it("returns empty array for empty input", () => {
     const result = mergeConsecutiveStreamErrors([]);

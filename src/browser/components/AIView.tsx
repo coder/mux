@@ -754,6 +754,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
           editingMessage={editingMessage}
           onCancelEdit={handleCancelEdit}
           onEditLastUserMessage={handleEditLastUserMessageClick}
+          awaitingUserQuestion={awaitingUserQuestion}
           canInterrupt={canInterrupt}
           onReady={handleChatInputReady}
           autoCompactionCheck={autoCompactionResult}

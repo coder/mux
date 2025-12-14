@@ -46,6 +46,55 @@ afterAll(() => {
   }
 });
 
+describe("ask_user_question waiting state", () => {
+  it("treats partial ask_user_question as executing (waiting) not interrupted", () => {
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+
+    aggregator.loadHistoricalMessages([
+      {
+        id: "assistant-1",
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "call-ask-1",
+            toolName: "ask_user_question",
+            state: "input-available" as const,
+            input: {
+              questions: [
+                {
+                  header: "Approach",
+                  question: "Which approach should we take?",
+                  options: [
+                    { label: "A", description: "Approach A" },
+                    { label: "B", description: "Approach B" },
+                  ],
+                  multiSelect: false,
+                },
+              ],
+            },
+          },
+        ],
+        metadata: {
+          timestamp: 1000,
+          historySequence: 1,
+          partial: true,
+        },
+      },
+    ]);
+
+    const displayed = aggregator.getDisplayedMessages();
+    const toolMsg = displayed.find((m) => m.type === "tool" && m.toolName === "ask_user_question");
+    expect(toolMsg).toBeDefined();
+    if (toolMsg?.type === "tool") {
+      expect(toolMsg.status).toBe("executing");
+      expect(toolMsg.isPartial).toBe(true);
+    }
+
+    expect(aggregator.hasAwaitingUserQuestion()).toBe(true);
+  });
+});
+
 describe("StreamingMessageAggregator - Agent Status", () => {
   it("should start with undefined agent status", () => {
     const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
