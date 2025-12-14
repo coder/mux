@@ -64,9 +64,19 @@ async function expandAllBashTools(canvasElement: HTMLElement) {
   }
 
   // Avoid leaving focus on a tool header.
-  // ChatInput also auto-focuses on a 100ms timer on mount/workspace changes; wait for
-  // that to fire before blurring so Storybook screenshots are deterministic.
-  await new Promise((resolve) => setTimeout(resolve, 150));
+  // Wait for ChatInput's auto-focus attempt to finish (no timing-based sleeps).
+  await waitFor(
+    () => {
+      const state = canvasElement
+        .querySelector('[data-component="ChatInputSection"]')
+        ?.getAttribute("data-autofocus-state");
+      if (state !== "done") {
+        throw new Error("ChatInput auto-focus not finished");
+      }
+    },
+    { timeout: 5000 }
+  );
+
   (document.activeElement as HTMLElement | null)?.blur?.();
 }
 

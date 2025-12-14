@@ -325,6 +325,21 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     }
   }, [variant, defaultModel, storageKeys.modelKey]);
 
+  // ChatInputSection is always present and is a convenient place to surface focus scheduling
+  // state for Storybook/tests without adding story-only props.
+  const chatInputSectionRef = useRef<HTMLDivElement | null>(null);
+  const handleChatInputSectionRef = useCallback((el: HTMLDivElement | null) => {
+    chatInputSectionRef.current = el;
+    // Set an initial value once (avoid overriding later transitions).
+    if (el && !el.hasAttribute("data-autofocus-state")) {
+      el.setAttribute("data-autofocus-state", "pending");
+    }
+  }, []);
+
+  const setChatInputAutoFocusState = useCallback((state: "pending" | "done") => {
+    chatInputSectionRef.current?.setAttribute("data-autofocus-state", state);
+  }, []);
+
   const focusMessageInput = useCallback(() => {
     const element = inputRef.current;
     if (!element || element.disabled) {
@@ -610,16 +625,50 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   }, [voiceInput, setToast]);
 
   // Auto-focus chat input when workspace changes (workspace only)
+  //
+  // This is intentionally NOT a setTimeout-based delay. Fixed sleeps are prone to races
+  // (especially in Storybook) and can still fire after other UI interactions.
   const workspaceIdForFocus = variant === "workspace" ? props.workspaceId : null;
   useEffect(() => {
     if (variant !== "workspace") return;
 
-    // Small delay to ensure DOM is ready and other components have settled
-    const timer = setTimeout(() => {
+    const maxFrames = 10;
+    setChatInputAutoFocusState("pending");
+
+    let cancelled = false;
+    let rafId: number | null = null;
+    let attempts = 0;
+
+    const step = () => {
+      if (cancelled) return;
+
+      attempts += 1;
       focusMessageInput();
-    }, 100);
-    return () => clearTimeout(timer);
-  }, [variant, workspaceIdForFocus, focusMessageInput]);
+
+      const input = inputRef.current;
+      const isFocused = !!input && document.activeElement === input;
+      const isDone = isFocused || attempts >= maxFrames;
+
+      if (isDone) {
+        setChatInputAutoFocusState("done");
+        return;
+      }
+
+      rafId = requestAnimationFrame(step);
+    };
+
+    // Start on the next frame so the textarea is mounted and ready.
+    rafId = requestAnimationFrame(step);
+
+    return () => {
+      cancelled = true;
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+      }
+      // Ensure we never leave the attribute stuck in "pending".
+      setChatInputAutoFocusState("done");
+    };
+  }, [variant, workspaceIdForFocus, focusMessageInput, setChatInputAutoFocusState]);
 
   // Handle paste events to extract images
   const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -1371,6 +1420,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
       {/* Input section - centered card for creation, bottom bar for workspace */}
       <div
+        ref={handleChatInputSectionRef}
         className={cn(
           "relative flex flex-col gap-1",
           variant === "creation"

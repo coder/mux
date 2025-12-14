@@ -16,6 +16,7 @@ import {
 } from "./mockFactory";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getModelKey } from "@/common/constants/storage";
+import { blurActiveElement, waitForChatInputAutofocusDone } from "./storyPlayHelpers.js";
 import { setupSimpleChatStory, setupStreamingChatStory } from "./storyHelpers";
 import { within, userEvent, waitFor } from "@storybook/test";
 
@@ -424,6 +425,21 @@ export const GenericTool: AppStory = {
         story: "Generic tool call with JSON syntax highlighting and 100+ lines.",
       },
     },
+  },
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const canvas = within(canvasElement);
+
+    // Wait for workspace metadata to load and main content to render
+    await waitFor(
+      async () => {
+        const toolHeader = canvas.getByText("fetch_data");
+        await userEvent.click(toolHeader);
+      },
+      { timeout: 5000 }
+    );
+
+    await waitForChatInputAutofocusDone(canvasElement);
+    blurActiveElement();
   },
 };
 

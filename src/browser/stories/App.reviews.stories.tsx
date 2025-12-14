@@ -273,8 +273,18 @@ export const BulkReviewActions: AppStory = {
       await userEvent.click(bannerButton);
     });
 
-    // Wait for any auto-focus timers, then blur
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    // Wait for ChatInput's auto-focus attempt to finish (no timing-based sleeps), then blur
+    await waitFor(
+      () => {
+        const state = canvasElement
+          .querySelector('[data-component="ChatInputSection"]')
+          ?.getAttribute("data-autofocus-state");
+        if (state !== "done") {
+          throw new Error("ChatInput auto-focus not finished");
+        }
+      },
+      { timeout: 5000 }
+    );
     (document.activeElement as HTMLElement)?.blur();
   },
 };
