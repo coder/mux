@@ -901,7 +901,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                     }}
                     reviewButton={
                       onReviewNote && (
-                        <Tooltip {...(selection || isDragging ? { open: false } : {})}>
+                        <Tooltip open={selection || isDragging ? false : undefined}>
                           <TooltipTrigger asChild>
                             <button
                               className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 hover:text-[var(--color-review-accent)] active:scale-90"
