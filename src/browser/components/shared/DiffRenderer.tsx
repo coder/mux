@@ -216,8 +216,29 @@ const DiffIndicator: React.FC<DiffIndicatorProps> = ({
  * Used by FileEditToolCall for wrapping custom diff content
  */
 export const DiffContainer: React.FC<
-  React.PropsWithChildren<{ fontSize?: string; maxHeight?: string; className?: string }>
-> = ({ children, fontSize, maxHeight, className }) => {
+  React.PropsWithChildren<{
+    fontSize?: string;
+    maxHeight?: string;
+    className?: string;
+    /** Type of the first line in the diff (for top padding background) */
+    firstLineType?: DiffLineType;
+    /** Type of the last line in the diff (for bottom padding background) */
+    lastLineType?: DiffLineType;
+    /** Line number column widths for accurate gutter sizing */
+    lineNumberWidths?: { oldWidthCh: number; newWidthCh: number };
+    /** Whether line numbers are shown (affects gutter width calculation) */
+    showLineNumbers?: boolean;
+  }>
+> = ({
+  children,
+  fontSize,
+  maxHeight,
+  className,
+  firstLineType,
+  lastLineType,
+  lineNumberWidths,
+  showLineNumbers = true,
+}) => {
   const resolvedMaxHeight = maxHeight ?? "400px";
   const [isExpanded, setIsExpanded] = React.useState(false);
   const contentRef = React.useRef<HTMLDivElement>(null);
@@ -255,13 +276,39 @@ export const DiffContainer: React.FC<
 
   const showOverflowControls = clampContent && isOverflowing;
 
+  // Calculate gutter width to match DiffLineGutter layout:
+  // px-1 (4px) + oldWidthCh + gap-0.5 (2px) + ml-3 (12px) + newWidthCh + px-1 (4px)
+  // When line numbers hidden, gutter is just px-1 (8px total)
+  const gutterWidth =
+    showLineNumbers && lineNumberWidths
+      ? `calc(8px + ${lineNumberWidths.oldWidthCh}ch + 14px + ${lineNumberWidths.newWidthCh}ch)`
+      : "8px";
+
+  // Padding strip mirrors gutter/content background split of diff lines
+  const PaddingStrip = ({ lineType }: { lineType?: DiffLineType }) => (
+    <div className="flex h-1.5">
+      <div
+        className="shrink-0"
+        style={{
+          width: gutterWidth,
+          background: lineType ? getDiffLineGutterBackground(lineType) : undefined,
+        }}
+      />
+      <div
+        className="flex-1"
+        style={{ background: lineType ? getDiffLineBackground(lineType) : undefined }}
+      />
+    </div>
+  );
+
   return (
     <div
       className={cn(
-        "relative m-0 rounded-sm border border-border-light bg-code-bg py-1.5 [&_*]:text-[inherit]",
+        "relative m-0 rounded-sm border border-border-light bg-code-bg [&_*]:text-[inherit]",
         className
       )}
     >
+      <PaddingStrip lineType={firstLineType} />
       <div
         ref={contentRef}
         className={cn(
@@ -278,6 +325,7 @@ export const DiffContainer: React.FC<
       >
         {children}
       </div>
+      <PaddingStrip lineType={lastLineType} />
 
       {showOverflowControls && (
         <>
@@ -485,8 +533,20 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
     );
   }
 
+  // Get first and last line types for padding background colors
+  const firstLineType = highlightedChunks[0]?.type;
+  const lastLineType = highlightedChunks[highlightedChunks.length - 1]?.type;
+
   return (
-    <DiffContainer fontSize={fontSize} maxHeight={maxHeight} className={className}>
+    <DiffContainer
+      fontSize={fontSize}
+      maxHeight={maxHeight}
+      className={className}
+      firstLineType={firstLineType}
+      lastLineType={lastLineType}
+      lineNumberWidths={lineNumberWidths}
+      showLineNumbers={showLineNumbers}
+    >
       {highlightedChunks.flatMap((chunk) =>
         chunk.lines.map((line) => {
           return (
@@ -906,8 +966,20 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       );
     }
 
+    // Get first and last line types for padding background colors
+    const firstLineType = highlightedLineData[0]?.type;
+    const lastLineType = highlightedLineData[highlightedLineData.length - 1]?.type;
+
     return (
-      <DiffContainer fontSize={fontSize} maxHeight={maxHeight} className={className}>
+      <DiffContainer
+        fontSize={fontSize}
+        maxHeight={maxHeight}
+        className={className}
+        firstLineType={firstLineType}
+        lastLineType={lastLineType}
+        lineNumberWidths={lineNumberWidths}
+        showLineNumbers={showLineNumbers}
+      >
         {highlightedLineData.map((lineInfo, displayIndex) => {
           const isSelected = isLineSelected(displayIndex);
 

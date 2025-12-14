@@ -170,6 +170,7 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 
 - Prefer fixes that simplify existing code; such simplifications often do not need new tests.
 - When adding complexity, add or extend tests. If coverage requires new infrastructure, propose the harness and then add the tests there.
+- When asked to reduce LoC, focus on simplifying production logic—not stripping comments, docs, or tests.
 
 ## Mode: Exec
 

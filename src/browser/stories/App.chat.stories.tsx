@@ -755,3 +755,96 @@ export const EditingMessage: AppStory = {
     },
   },
 };
+
+/**
+ * Diff padding colors - verifies that the top/bottom padding of diff blocks
+ * matches the first/last line type (addition=green, deletion=red, context=default).
+ *
+ * This story shows three diffs:
+ * 1. Diff starting with addition (green top padding)
+ * 2. Diff ending with deletion (red bottom padding)
+ * 3. Diff with context lines at both ends (default padding)
+ */
+export const DiffPaddingColors: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-diff-padding",
+          messages: [
+            createUserMessage("msg-1", "Show me different diff edge cases", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 100000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "Here are diffs with different first/last line types:",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 90000,
+                toolCalls: [
+                  // Diff starting with addition - top padding should be green
+                  createFileEditTool(
+                    "call-1",
+                    "src/addition-first.ts",
+                    [
+                      "--- src/addition-first.ts",
+                      "+++ src/addition-first.ts",
+                      "@@ -1,3 +1,5 @@",
+                      "+import { newModule } from './new';",
+                      "+import { anotherNew } from './another';",
+                      " export function existing() {",
+                      "   return 'unchanged';",
+                      " }",
+                    ].join("\n")
+                  ),
+                  // Diff ending with deletion - bottom padding should be red
+                  createFileEditTool(
+                    "call-2",
+                    "src/deletion-last.ts",
+                    [
+                      "--- src/deletion-last.ts",
+                      "+++ src/deletion-last.ts",
+                      "@@ -1,6 +1,3 @@",
+                      " export function keep() {",
+                      "   return 'still here';",
+                      " }",
+                      "-export function remove() {",
+                      "-  return 'goodbye';",
+                      "-}",
+                    ].join("\n")
+                  ),
+                  // Diff with context at both ends - default padding
+                  createFileEditTool(
+                    "call-3",
+                    "src/context-both.ts",
+                    [
+                      "--- src/context-both.ts",
+                      "+++ src/context-both.ts",
+                      "@@ -1,4 +1,4 @@",
+                      " function before() {",
+                      "+  console.log('added');",
+                      "-  console.log('removed');",
+                      " }",
+                    ].join("\n")
+                  ),
+                ],
+              }
+            ),
+          ],
+        })
+      }
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Verifies diff container padding colors match first/last line types. " +
+          "The first diff should have green top padding (starts with +), " +
+          "the second should have red bottom padding (ends with -), " +
+          "and the third should have default padding (context at both ends).",
+      },
+    },
+  },
+};
