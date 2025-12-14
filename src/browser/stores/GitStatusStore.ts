@@ -107,6 +107,9 @@ export class GitStatusStore {
    * Call after operations that change git state (e.g., branch switch).
    */
   invalidateWorkspace(workspaceId: string): void {
+    // Increment generation to mark any in-flight status checks as stale
+    const currentGen = this.invalidationGeneration.get(workspaceId) ?? 0;
+    this.invalidationGeneration.set(workspaceId, currentGen + 1);
     // Set status to null immediately (shows loading state)
     this.statusCache.set(workspaceId, null);
     // Bump version to notify subscribers of the null state
@@ -116,6 +119,9 @@ export class GitStatusStore {
   }
 
   private statusCache = new Map<string, GitStatus | null>();
+  // Generation counter to detect and ignore stale status updates after invalidation.
+  // Incremented on invalidate; status updates check generation to avoid race conditions.
+  private invalidationGeneration = new Map<string, number>();
 
   /**
    * Sync workspaces with metadata.
@@ -135,6 +141,7 @@ export class GitStatusStore {
     for (const id of Array.from(this.statusCache.keys())) {
       if (!metadata.has(id)) {
         this.statusCache.delete(id);
+        this.invalidationGeneration.delete(id);
         this.statuses.delete(id); // Also clean up reactive state
       }
     }
@@ -190,6 +197,12 @@ export class GitStatusStore {
       return;
     }
 
+    // Capture current generation for each workspace to detect stale results
+    const generationSnapshot = new Map<string, number>();
+    for (const ws of workspaces) {
+      generationSnapshot.set(ws.id, this.invalidationGeneration.get(ws.id) ?? 0);
+    }
+
     // Try to fetch workspaces that need it (background, non-blocking)
     const workspacesMap = new Map(workspaces.map((ws) => [ws.id, ws]));
     this.tryFetchWorkspaces(workspacesMap);
@@ -212,6 +225,14 @@ export class GitStatusStore {
 
     // Update statuses - bump version if changed
     for (const [workspaceId, newStatus] of results) {
+      // Skip stale results: if generation changed since we started, the result is outdated
+      const snapshotGen = generationSnapshot.get(workspaceId) ?? 0;
+      const currentGen = this.invalidationGeneration.get(workspaceId) ?? 0;
+      if (snapshotGen !== currentGen) {
+        // Status was invalidated during check - discard this stale result
+        continue;
+      }
+
       const oldStatus = this.statusCache.get(workspaceId) ?? null;
 
       // Check if status actually changed (cheap for simple objects)
