@@ -16,7 +16,7 @@ const QUESTIONS = [
 
 describe("AskUserQuestionManager", () => {
   it("resolves when answered", async () => {
-    const manager = new AskUserQuestionManager({ timeoutMs: 1000 });
+    const manager = new AskUserQuestionManager();
 
     const promise = manager.registerPending("ws", "tool-1", [...QUESTIONS]);
     manager.answer("ws", "tool-1", { "What should we do?": "A" });
@@ -27,7 +27,7 @@ describe("AskUserQuestionManager", () => {
   });
 
   it("rejects when canceled", async () => {
-    const manager = new AskUserQuestionManager({ timeoutMs: 1000 });
+    const manager = new AskUserQuestionManager();
 
     const promise = manager.registerPending("ws", "tool-1", [...QUESTIONS]);
 
@@ -43,7 +43,7 @@ describe("AskUserQuestionManager", () => {
   });
 
   it("tracks latest pending per workspace", async () => {
-    const manager = new AskUserQuestionManager({ timeoutMs: 1000 });
+    const manager = new AskUserQuestionManager();
 
     const promise1 = manager.registerPending("ws", "tool-1", [...QUESTIONS]);
     await new Promise((r) => setTimeout(r, 5));
@@ -63,23 +63,5 @@ describe("AskUserQuestionManager", () => {
 
     expect(error1).toBeInstanceOf(Error);
     expect(error2).toBeInstanceOf(Error);
-  });
-
-  it("times out and cleans up", async () => {
-    const manager = new AskUserQuestionManager({ timeoutMs: 10 });
-
-    const promise = manager.registerPending("ws", "tool-1", [...QUESTIONS]);
-
-    let error: unknown;
-    try {
-      await promise;
-      throw new Error("Expected promise to reject");
-    } catch (err) {
-      error = err;
-    }
-
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain("Timed out");
-    expect(manager.getLatestPending("ws")).toBeNull();
   });
 });

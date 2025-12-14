@@ -11,16 +11,10 @@ interface PendingAskUserQuestionInternal extends PendingAskUserQuestion {
   createdAt: number;
   resolve: (answers: Record<string, string>) => void;
   reject: (error: Error) => void;
-  timeoutId: ReturnType<typeof setTimeout>;
 }
 
 export class AskUserQuestionManager {
   private pendingByWorkspace = new Map<string, Map<string, PendingAskUserQuestionInternal>>();
-  private readonly timeoutMs: number;
-
-  constructor(options?: { timeoutMs?: number }) {
-    this.timeoutMs = options?.timeoutMs ?? 30 * 60 * 1000; // 30 minutes
-  }
 
   registerPending(
     workspaceId: string,
@@ -38,23 +32,12 @@ export class AskUserQuestionManager {
     );
 
     return new Promise<Record<string, string>>((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        this.cancel(workspaceId, toolCallId, "Timed out waiting for user answers");
-      }, this.timeoutMs);
-
       const entry: PendingAskUserQuestionInternal = {
         toolCallId,
         questions,
         createdAt: Date.now(),
-        resolve: (answers) => {
-          clearTimeout(timeoutId);
-          resolve(answers);
-        },
-        reject: (error) => {
-          clearTimeout(timeoutId);
-          reject(error);
-        },
-        timeoutId,
+        resolve,
+        reject,
       };
 
       workspaceMap.set(toolCallId, entry);
