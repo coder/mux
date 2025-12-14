@@ -19,6 +19,11 @@ const config: StorybookConfig = {
           // src/version.ts in the Chromatic CI workflow, not via alias here
         },
       },
+      // Prevent Vite from discovering new deps mid-test and forcing a full reload (test-storybook
+      // interprets reloads as navigations and flakes). Keep this list minimal.
+      optimizeDeps: {
+        include: ["@radix-ui/react-checkbox"],
+      },
     });
   },
 };
