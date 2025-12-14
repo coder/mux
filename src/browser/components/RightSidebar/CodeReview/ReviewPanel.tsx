@@ -39,6 +39,19 @@ import type {
 } from "@/common/types/review";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
+import {
+  getCachedReviewDiff,
+  getCachedReviewFileTree,
+  getInFlightReviewDiff,
+  getInFlightReviewFileTree,
+  makeReviewDiffCacheKey,
+  makeReviewFileTreeCacheKey,
+  setCachedReviewDiff,
+  setCachedReviewFileTree,
+  setInFlightReviewDiff,
+  setInFlightReviewFileTree,
+} from "@/browser/utils/review/reviewPanelCache";
+import type { ReviewPanelDiagnosticInfo } from "@/browser/utils/review/reviewPanelCache";
 import { applyFrontendFilters } from "@/browser/utils/review/filterHunks";
 import { cn } from "@/common/lib/utils";
 import { useAPI } from "@/browser/contexts/API";
@@ -67,12 +80,7 @@ interface ReviewSearchState {
   matchCase: boolean;
 }
 
-interface DiagnosticInfo {
-  command: string;
-  outputLength: number;
-  fileDiffCount: number;
-  hunkCount: number;
-}
+type DiagnosticInfo = ReviewPanelDiagnosticInfo;
 
 /**
  * Discriminated union for diff loading state.
@@ -109,8 +117,14 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   const [isPanelFocused, setIsPanelFocused] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [fileTree, setFileTree] = useState<FileTreeNode | null>(null);
+
   // Map of hunkId -> toggle function for expand/collapse
   const toggleExpandFnsRef = useRef<Map<string, () => void>>(new Map());
+
+  // Track refresh trigger changes so we can distinguish initial mount vs manual refresh.
+  // Each effect gets its own ref to avoid cross-effect interference.
+  const lastDiffRefreshTriggerRef = useRef<number | null>(null);
+  const lastFileTreeRefreshTriggerRef = useRef<number | null>(null);
 
   // Unified search state (per-workspace persistence)
   const [searchState, setSearchState] = usePersistedState<ReviewSearchState>(
@@ -177,40 +191,96 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     if (!api || isCreating) return;
     let cancelled = false;
 
-    const loadFileTree = async () => {
-      setIsLoadingTree(true);
-      try {
-        const numstatCommand = buildGitDiffCommand(
-          filters.diffBase,
-          filters.includeUncommitted,
-          "", // No path filter for file tree
-          "numstat"
-        );
+    const prevRefreshTrigger = lastFileTreeRefreshTriggerRef.current;
+    lastFileTreeRefreshTriggerRef.current = refreshTrigger;
+    const isManualRefresh = prevRefreshTrigger !== null && prevRefreshTrigger !== refreshTrigger;
 
-        const numstatResult = await api.workspace.executeBash({
-          workspaceId,
-          script: numstatCommand,
-          options: { timeout_secs: 30 },
+    const cacheKey = makeReviewFileTreeCacheKey({
+      workspaceId,
+      workspacePath,
+      diffBase: filters.diffBase,
+      includeUncommitted: filters.includeUncommitted,
+    });
+
+    // Fast path: use cached tree when switching workspaces (unless user explicitly refreshed).
+    if (!isManualRefresh) {
+      const cached = getCachedReviewFileTree(cacheKey);
+      if (cached) {
+        setFileTree(cached.fileTree);
+        setIsLoadingTree(false);
+        return () => {
+          cancelled = true;
+        };
+      }
+    }
+
+    // If another panel instance is already loading this tree, reuse it.
+    const inFlight = getInFlightReviewFileTree(cacheKey);
+    if (inFlight) {
+      setIsLoadingTree(true);
+      void inFlight
+        .then((data) => {
+          if (cancelled) return;
+          setFileTree(data.fileTree);
+        })
+        .catch((err) => {
+          console.error("Failed to load file tree:", err);
+        })
+        .finally(() => {
+          if (cancelled) return;
+          setIsLoadingTree(false);
         });
 
-        if (cancelled) return;
+      return () => {
+        cancelled = true;
+      };
+    }
 
-        if (numstatResult.success) {
-          const numstatOutput = numstatResult.data.output ?? "";
-          const fileStats = parseNumstat(numstatOutput);
+    setIsLoadingTree(true);
 
-          // Build tree with original paths (needed for git commands)
-          const tree = buildFileTree(fileStats);
-          setFileTree(tree);
-        }
-      } catch (err) {
-        console.error("Failed to load file tree:", err);
-      } finally {
-        setIsLoadingTree(false);
+    const loadPromise = (async () => {
+      const numstatCommand = buildGitDiffCommand(
+        filters.diffBase,
+        filters.includeUncommitted,
+        "", // No path filter for file tree
+        "numstat"
+      );
+
+      const numstatResult = await api.workspace.executeBash({
+        workspaceId,
+        script: numstatCommand,
+        options: { timeout_secs: 30 },
+      });
+
+      if (!numstatResult.success) {
+        throw new Error(numstatResult.error ?? "Unknown error");
       }
-    };
 
-    void loadFileTree();
+      const numstatOutput = numstatResult.data.output ?? "";
+      const fileStats = parseNumstat(numstatOutput);
+
+      // Build tree with original paths (needed for git commands)
+      const tree = buildFileTree(fileStats);
+
+      const value = { fileTree: tree };
+      setCachedReviewFileTree(cacheKey, value);
+      return value;
+    })();
+
+    setInFlightReviewFileTree(cacheKey, loadPromise);
+
+    void loadPromise
+      .then((data) => {
+        if (cancelled) return;
+        setFileTree(data.fileTree);
+      })
+      .catch((err) => {
+        console.error("Failed to load file tree:", err);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setIsLoadingTree(false);
+      });
 
     return () => {
       cancelled = true;
@@ -231,97 +301,171 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     if (!api || isCreating) return;
     let cancelled = false;
 
-    // Transition to appropriate loading state:
-    // - "refreshing" if we have data (keeps UI stable during refresh)
-    // - "loading" if no data yet
-    setDiffState((prev) => {
-      if (prev.status === "loaded" || prev.status === "refreshing") {
-        return {
-          status: "refreshing",
-          hunks: prev.hunks,
-          truncationWarning: prev.truncationWarning,
-        };
-      }
-      return { status: "loading" };
+    const prevRefreshTrigger = lastDiffRefreshTriggerRef.current;
+    lastDiffRefreshTriggerRef.current = refreshTrigger;
+    const isManualRefresh = prevRefreshTrigger !== null && prevRefreshTrigger !== refreshTrigger;
+
+    const cacheKey = makeReviewDiffCacheKey({
+      workspaceId,
+      workspacePath,
+      diffBase: filters.diffBase,
+      includeUncommitted: filters.includeUncommitted,
+      selectedFilePath,
     });
 
-    const loadDiff = async () => {
-      try {
-        // Git-level filters (affect what data is fetched):
-        // - diffBase: what to diff against
-        // - includeUncommitted: include working directory changes
-        // - selectedFilePath: ESSENTIAL for truncation - if full diff is cut off,
-        //   path filter lets us retrieve specific file's hunks
-        const pathFilter = selectedFilePath ? ` -- "${extractNewPath(selectedFilePath)}"` : "";
+    const inFlight = getInFlightReviewDiff(cacheKey);
 
-        const diffCommand = buildGitDiffCommand(
-          filters.diffBase,
-          filters.includeUncommitted,
-          pathFilter,
-          "diff"
-        );
-
-        // Fetch diff
-        const diffResult = await api.workspace.executeBash({
-          workspaceId,
-          script: diffCommand,
-          options: { timeout_secs: 30 },
+    // Fast path: show cached diff immediately when switching workspaces.
+    // If a refresh is already in-flight, keep the cached diff visible and update when it completes.
+    if (!isManualRefresh) {
+      const cached = getCachedReviewDiff(cacheKey);
+      if (cached) {
+        setDiagnosticInfo(cached.diagnosticInfo);
+        setDiffState({
+          status: inFlight ? "refreshing" : "loaded",
+          hunks: cached.hunks,
+          truncationWarning: cached.truncationWarning,
         });
 
-        if (cancelled) return;
+        if (cached.hunks.length > 0) {
+          setSelectedHunkId((prev) => prev ?? cached.hunks[0].id);
+        }
 
-        if (!diffResult.success) {
-          // Real error (not truncation-related)
-          console.error("Git diff failed:", diffResult.error);
-          setDiffState({ status: "error", message: diffResult.error ?? "Unknown error" });
+        if (!inFlight) {
+          return () => {
+            cancelled = true;
+          };
+        }
+      }
+    }
+
+    const transitionToLoadingState = () => {
+      // - "refreshing" if we have data (keeps UI stable during refresh)
+      // - "loading" if no data yet
+      setDiffState((prev) => {
+        if (prev.status === "loaded" || prev.status === "refreshing") {
+          return {
+            status: "refreshing",
+            hunks: prev.hunks,
+            truncationWarning: prev.truncationWarning,
+          };
+        }
+        return { status: "loading" };
+      });
+    };
+
+    // If another panel instance is already loading this diff, reuse it.
+    if (inFlight) {
+      transitionToLoadingState();
+
+      void inFlight
+        .then((data) => {
+          if (cancelled) return;
+          setDiagnosticInfo(data.diagnosticInfo);
+          setDiffState({
+            status: "loaded",
+            hunks: data.hunks,
+            truncationWarning: data.truncationWarning,
+          });
+
+          if (data.hunks.length > 0) {
+            setSelectedHunkId((prev) => prev ?? data.hunks[0].id);
+          }
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          const errorMsg = `Failed to load diff: ${err instanceof Error ? err.message : String(err)}`;
+          console.error(errorMsg);
+          setDiffState({ status: "error", message: errorMsg });
           setDiagnosticInfo(null);
-          return;
-        }
-
-        const diffOutput = diffResult.data.output ?? "";
-        const truncationInfo =
-          "truncated" in diffResult.data ? diffResult.data.truncated : undefined;
-
-        const fileDiffs = parseDiff(diffOutput);
-        const allHunks = extractAllHunks(fileDiffs);
-
-        // Store diagnostic info
-        setDiagnosticInfo({
-          command: diffCommand,
-          outputLength: diffOutput.length,
-          fileDiffCount: fileDiffs.length,
-          hunkCount: allHunks.length,
         });
 
-        // Build truncation warning (only when not filtering by path)
-        const truncationWarning =
-          truncationInfo && !selectedFilePath
-            ? `Diff truncated (${truncationInfo.reason}). Filter by file to see more.`
-            : null;
+      return () => {
+        cancelled = true;
+      };
+    }
 
-        // Single atomic state update with all data
-        setDiffState({ status: "loaded", hunks: allHunks, truncationWarning });
+    transitionToLoadingState();
 
-        // Auto-select first hunk if none selected
-        if (allHunks.length > 0 && !selectedHunkId) {
-          setSelectedHunkId(allHunks[0].id);
+    const loadPromise = (async () => {
+      // Git-level filters (affect what data is fetched):
+      // - diffBase: what to diff against
+      // - includeUncommitted: include working directory changes
+      // - selectedFilePath: ESSENTIAL for truncation - if full diff is cut off,
+      //   path filter lets us retrieve specific file's hunks
+      const pathFilter = selectedFilePath ? ` -- "${extractNewPath(selectedFilePath)}"` : "";
+
+      const diffCommand = buildGitDiffCommand(
+        filters.diffBase,
+        filters.includeUncommitted,
+        pathFilter,
+        "diff"
+      );
+
+      // Fetch diff
+      const diffResult = await api.workspace.executeBash({
+        workspaceId,
+        script: diffCommand,
+        options: { timeout_secs: 30 },
+      });
+
+      if (!diffResult.success) {
+        throw new Error(diffResult.error ?? "Unknown error");
+      }
+
+      const diffOutput = diffResult.data.output ?? "";
+      const truncationInfo = "truncated" in diffResult.data ? diffResult.data.truncated : undefined;
+
+      const fileDiffs = parseDiff(diffOutput);
+      const allHunks = extractAllHunks(fileDiffs);
+
+      const diagnosticInfo: DiagnosticInfo = {
+        command: diffCommand,
+        outputLength: diffOutput.length,
+        fileDiffCount: fileDiffs.length,
+        hunkCount: allHunks.length,
+      };
+
+      // Build truncation warning (only when not filtering by path)
+      const truncationWarning =
+        truncationInfo && !selectedFilePath
+          ? `Diff truncated (${truncationInfo.reason}). Filter by file to see more.`
+          : null;
+
+      const value = { hunks: allHunks, truncationWarning, diagnosticInfo };
+      setCachedReviewDiff(cacheKey, value);
+      return value;
+    })();
+
+    setInFlightReviewDiff(cacheKey, loadPromise);
+
+    void loadPromise
+      .then((data) => {
+        if (cancelled) return;
+        setDiagnosticInfo(data.diagnosticInfo);
+        setDiffState({
+          status: "loaded",
+          hunks: data.hunks,
+          truncationWarning: data.truncationWarning,
+        });
+
+        if (data.hunks.length > 0) {
+          setSelectedHunkId((prev) => prev ?? data.hunks[0].id);
         }
-      } catch (err) {
+      })
+      .catch((err) => {
         if (cancelled) return;
         const errorMsg = `Failed to load diff: ${err instanceof Error ? err.message : String(err)}`;
         console.error(errorMsg);
         setDiffState({ status: "error", message: errorMsg });
-      }
-    };
-
-    void loadDiff();
+        setDiagnosticInfo(null);
+      });
 
     return () => {
       cancelled = true;
     };
-    // selectedHunkId intentionally omitted - only auto-select on initial load, not on every selection change
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    api,
     workspaceId,
     workspacePath,
     filters.diffBase,
