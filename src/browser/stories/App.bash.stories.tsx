@@ -17,6 +17,7 @@ import {
   createBashBackgroundTerminateTool,
 } from "./mockFactory";
 import { setupSimpleChatStory } from "./storyHelpers";
+import { blurActiveElement, waitForChatInputAutofocusDone } from "./storyPlayHelpers.js";
 import { userEvent, waitFor } from "@storybook/test";
 
 /**
@@ -64,20 +65,8 @@ async function expandAllBashTools(canvasElement: HTMLElement) {
   }
 
   // Avoid leaving focus on a tool header.
-  // Wait for ChatInput's auto-focus attempt to finish (no timing-based sleeps).
-  await waitFor(
-    () => {
-      const state = canvasElement
-        .querySelector('[data-component="ChatInputSection"]')
-        ?.getAttribute("data-autofocus-state");
-      if (state !== "done") {
-        throw new Error("ChatInput auto-focus not finished");
-      }
-    },
-    { timeout: 5000 }
-  );
-
-  (document.activeElement as HTMLElement | null)?.blur?.();
+  await waitForChatInputAutofocusDone(canvasElement);
+  blurActiveElement();
 }
 
 export default {

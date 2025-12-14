@@ -437,7 +437,6 @@ export const GenericTool: AppStory = {
       },
       { timeout: 5000 }
     );
-
     await waitForChatInputAutofocusDone(canvasElement);
     blurActiveElement();
   },
