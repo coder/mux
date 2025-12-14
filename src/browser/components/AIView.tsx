@@ -71,7 +71,7 @@ interface AIViewProps {
   workspaceId: string;
   projectPath: string;
   projectName: string;
-  branch: string;
+  workspaceName: string;
   namedWorkspacePath: string; // User-friendly path for display and terminal
   runtimeConfig?: RuntimeConfig;
   className?: string;
@@ -85,7 +85,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
   workspaceId,
   projectPath,
   projectName,
-  branch,
+  workspaceName,
   namedWorkspacePath,
   runtimeConfig,
   className,
@@ -517,7 +517,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
     );
   }
 
-  if (!projectName || !branch) {
+  if (!projectName || !workspaceName) {
     return (
       <div
         className={cn(
@@ -551,7 +551,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
         <WorkspaceHeader
           workspaceId={workspaceId}
           projectName={projectName}
-          branch={branch}
+          workspaceName={workspaceName}
           namedWorkspacePath={namedWorkspacePath}
           runtimeConfig={runtimeConfig}
         />
@@ -752,7 +752,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
           onMessageSent={handleMessageSent}
           onTruncateHistory={handleClearHistory}
           onProviderConfig={handleProviderConfig}
-          disabled={!projectName || !branch}
+          disabled={!projectName || !workspaceName}
           isCompacting={isCompacting}
           editingMessage={editingMessage}
           onCancelEdit={handleCancelEdit}

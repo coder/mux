@@ -604,7 +604,7 @@ function AppInner() {
                       workspaceId={selectedWorkspace.workspaceId}
                       projectPath={selectedWorkspace.projectPath}
                       projectName={selectedWorkspace.projectName}
-                      branch={workspaceName}
+                      workspaceName={workspaceName}
                       namedWorkspacePath={workspacePath}
                       runtimeConfig={currentMetadata.runtimeConfig}
                       incompatibleRuntime={currentMetadata.incompatibleRuntime}

@@ -16,7 +16,7 @@ import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 interface WorkspaceHeaderProps {
   workspaceId: string;
   projectName: string;
-  branch: string;
+  workspaceName: string;
   namedWorkspacePath: string;
   runtimeConfig?: RuntimeConfig;
 }
@@ -24,7 +24,7 @@ interface WorkspaceHeaderProps {
 export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   workspaceId,
   projectName,
-  branch,
+  workspaceName,
   namedWorkspacePath,
   runtimeConfig,
 }) => {
@@ -73,7 +73,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
         />
         <span className="min-w-0 truncate font-mono text-xs">{projectName}</span>
         <div className="flex items-center gap-1">
-          <BranchSelector workspaceId={workspaceId} workspaceName={branch} />
+          <BranchSelector workspaceId={workspaceId} workspaceName={workspaceName} />
           <GitStatusIndicator
             gitStatus={gitStatus}
             workspaceId={workspaceId}
