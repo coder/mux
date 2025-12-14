@@ -35,6 +35,10 @@ import { AttachmentService } from "./attachmentService";
 import type { PostCompactionAttachment, PostCompactionExclusions } from "@/common/types/attachment";
 import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
 import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
+import {
+  forwardStreamLifecycleEvents,
+  STREAM_LIFECYCLE_EVENTS_SIMPLE_FORWARD,
+} from "@/common/utils/streamLifecycle";
 import { isValidModelFormat } from "@/common/utils/ai/models";
 
 /**
@@ -619,9 +623,15 @@ export class AgentSession {
       this.aiService.on(event, wrapped as never);
     };
 
-    forward("stream-pending", (payload) => this.emitChatEvent(payload));
-    forward("stream-start", (payload) => this.emitChatEvent(payload));
-    forward("stream-delta", (payload) => this.emitChatEvent(payload));
+    forwardStreamLifecycleEvents({
+      events: STREAM_LIFECYCLE_EVENTS_SIMPLE_FORWARD,
+      listen: (event, handler) => {
+        forward(event, handler);
+      },
+      emit: (_event, payload) => {
+        this.emitChatEvent(payload as WorkspaceChatMessage);
+      },
+    });
     forward("tool-call-start", (payload) => this.emitChatEvent(payload));
     forward("tool-call-delta", (payload) => this.emitChatEvent(payload));
     forward("tool-call-end", (payload) => {
@@ -644,7 +654,6 @@ export class AgentSession {
     forward("reasoning-delta", (payload) => this.emitChatEvent(payload));
     forward("reasoning-end", (payload) => this.emitChatEvent(payload));
     forward("usage-delta", (payload) => this.emitChatEvent(payload));
-    forward("stream-abort", (payload) => this.emitChatEvent(payload));
 
     forward("stream-end", async (payload) => {
       const handled = await this.compactionHandler.handleCompletion(payload as StreamEndEvent);

@@ -548,18 +548,6 @@ export class StreamingMessageAggregator {
     this.setPendingStreamStartTime(null);
 
     this.connectingStreams.set(data.messageId, { startTime: Date.now(), model: data.model });
-
-    // Create a placeholder assistant message (kept invisible until parts arrive)
-    // so that out-of-order deltas (if they ever occur) have somewhere to attach.
-    if (!this.messages.has(data.messageId)) {
-      const connectingMessage = createMuxMessage(data.messageId, "assistant", "", {
-        historySequence: data.historySequence,
-        timestamp: Date.now(),
-        model: data.model,
-      });
-      this.messages.set(data.messageId, connectingMessage);
-    }
-
     this.invalidateCache();
   }
 

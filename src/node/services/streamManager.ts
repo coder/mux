@@ -600,6 +600,7 @@ export class StreamManager extends EventEmitter {
    */
   private createStreamAtomically(
     workspaceId: WorkspaceId,
+    assistantMessageId: string,
     streamToken: StreamToken,
     runtimeTempDir: string,
     runtime: Runtime,
@@ -684,7 +685,7 @@ export class StreamManager extends EventEmitter {
       throw error;
     }
 
-    const messageId = `assistant-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const messageId = assistantMessageId;
 
     const streamInfo: WorkspaceStreamInfo = {
       state: StreamState.STARTING,
@@ -1380,6 +1381,7 @@ export class StreamManager extends EventEmitter {
    */
   async startStream(
     workspaceId: string,
+    assistantMessageId: string,
     messages: ModelMessage[],
     model: LanguageModel,
     modelString: string,
@@ -1426,6 +1428,7 @@ export class StreamManager extends EventEmitter {
       // Step 4: Atomic stream creation and registration
       const streamInfo = this.createStreamAtomically(
         typedWorkspaceId,
+        assistantMessageId,
         streamToken,
         runtimeTempDir,
         runtime,
