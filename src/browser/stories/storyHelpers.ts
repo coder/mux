@@ -45,6 +45,11 @@ export function selectWorkspace(workspace: FrontendWorkspaceMetadata): void {
   );
 }
 
+/** Clear workspace selection from localStorage (for sidebar-focused stories) */
+export function clearWorkspaceSelection(): void {
+  localStorage.removeItem(SELECTED_WORKSPACE_KEY);
+}
+
 /** Set input text for a workspace */
 export function setWorkspaceInput(workspaceId: string, text: string): void {
   localStorage.setItem(getInputKey(workspaceId), text);
@@ -98,7 +103,7 @@ export function createReview(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /** Creates an executeBash function that returns git status output for workspaces */
-function createGitStatusExecutor(gitStatus?: Map<string, GitStatusFixture>) {
+export function createGitStatusExecutor(gitStatus?: Map<string, GitStatusFixture>) {
   return (workspaceId: string, script: string) => {
     if (script.includes("git status") || script.includes("git show-branch")) {
       const status = gitStatus?.get(workspaceId) ?? {};
@@ -118,10 +123,10 @@ function createGitStatusExecutor(gitStatus?: Map<string, GitStatusFixture>) {
 // CHAT HANDLER ADAPTER
 // ═══════════════════════════════════════════════════════════════════════════════
 
-type ChatHandler = (callback: (event: WorkspaceChatMessage) => void) => () => void;
+export type ChatHandler = (callback: (event: WorkspaceChatMessage) => void) => () => void;
 
 /** Adapts callback-based chat handlers to ORPC onChat format */
-function createOnChatAdapter(chatHandlers: Map<string, ChatHandler>) {
+export function createOnChatAdapter(chatHandlers: Map<string, ChatHandler>) {
   return (workspaceId: string, emit: (msg: WorkspaceChatMessage) => void) => {
     const handler = chatHandlers.get(workspaceId);
     if (handler) {
