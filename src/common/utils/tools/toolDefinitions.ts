@@ -401,9 +401,10 @@ export function getToolSchemas(): Record<string, ToolSchema> {
 /**
  * Get which tools are available for a given model
  * @param modelString The model string (e.g., "anthropic:claude-opus-4-1")
+ * @param mode Optional mode ("plan" | "exec") - ask_user_question only available in plan mode
  * @returns Array of tool names available for the model
  */
-export function getAvailableTools(modelString: string): string[] {
+export function getAvailableTools(modelString: string, mode?: "plan" | "exec"): string[] {
   const [provider] = modelString.split(":");
 
   // Base tools available for all models
@@ -416,7 +417,8 @@ export function getAvailableTools(modelString: string): string[] {
     "file_edit_replace_string",
     // "file_edit_replace_lines", // DISABLED: causes models to break repo state
     "file_edit_insert",
-    "ask_user_question",
+    // ask_user_question only available in plan mode
+    ...(mode === "plan" ? ["ask_user_question"] : []),
     "propose_plan",
     "todo_write",
     "todo_read",
