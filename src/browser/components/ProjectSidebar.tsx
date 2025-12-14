@@ -164,15 +164,14 @@ const ProjectDragLayer: React.FC = () => {
         <div
           className={cn(
             PROJECT_ITEM_BASE_CLASS,
-            "w-fit max-w-72 min-w-44 rounded-md border border-border-light shadow-[0_6px_24px_rgba(0,0,0,0.35)]",
-            "bg-hover/95 border-l-[3px] border-l-accent"
+            "w-fit max-w-64 rounded-sm border-l-accent bg-sidebar shadow-lg"
           )}
         >
-          <ChevronRight size={12} className="mr-2 opacity-60" />
+          <span className="text-secondary mr-2 flex h-5 w-5 shrink-0 items-center justify-center">
+            <ChevronRight size={12} />
+          </span>
           <div className="flex min-w-0 flex-1 items-center pr-2">
-            <div className="text-muted-dark flex gap-2 truncate text-sm">
-              <span className="text-foreground truncate font-medium">{basename}</span>
-            </div>
+            <span className="text-foreground truncate text-sm font-medium">{basename}</span>
           </div>
         </div>
       </div>
