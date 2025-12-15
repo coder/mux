@@ -453,6 +453,12 @@ export class AgentSession {
       return Err(createUnknownSendMessageError(appendResult.error));
     }
 
+    // Workspace may be tearing down while we await filesystem IO.
+    // If so, skip event emission + streaming to avoid races with dispose().
+    if (this.disposed) {
+      return Ok(undefined);
+    }
+
     // Add type: "message" for discriminated union (createMuxMessage doesn't add it)
     this.emitChatEvent({ ...userMessage, type: "message" });
 
@@ -460,6 +466,10 @@ export class AgentSession {
     // They won't be included in the summary, so continuing with orphaned processes would be confusing
     if (isCompactionRequestMetadata(typedMuxMetadata)) {
       await this.backgroundProcessManager.cleanup(this.workspaceId);
+
+      if (this.disposed) {
+        return Ok(undefined);
+      }
     }
 
     // If this is a compaction request with a continue message, queue it for auto-send after compaction
@@ -499,6 +509,10 @@ export class AgentSession {
 
       this.messageQueue.add(finalText, sanitizedOptions);
       this.emitQueuedMessageChanged();
+    }
+
+    if (this.disposed) {
+      return Ok(undefined);
     }
 
     return this.streamWithHistory(options.model, options);
@@ -550,6 +564,10 @@ export class AgentSession {
     modelString: string,
     options?: SendMessageOptions
   ): Promise<Result<void, SendMessageError>> {
+    if (this.disposed) {
+      return Ok(undefined);
+    }
+
     const commitResult = await this.partialService.commitToHistory(this.workspaceId);
     if (!commitResult.success) {
       return Err(createUnknownSendMessageError(commitResult.error));
@@ -716,7 +734,12 @@ export class AgentSession {
 
   // Public method to emit chat events (used by init hooks and other workspace events)
   emitChatEvent(message: WorkspaceChatMessage): void {
-    this.assertNotDisposed("emitChatEvent");
+    // NOTE: Workspace teardown does not await in-flight async work (sendMessage(), stopStream(), etc).
+    // Those code paths can still try to emit events after dispose; drop them rather than crashing.
+    if (this.disposed) {
+      return;
+    }
+
     this.emitter.emit("chat-event", {
       workspaceId: this.workspaceId,
       message,
