@@ -44,6 +44,9 @@ import assert from "@/common/utils/assert";
 import parseDuration from "parse-duration";
 import { log, type LogLevel } from "@/node/services/log";
 
+// Only packaged Electron needs 'electron' parse mode; bun/node/electron-dev all use 'node'
+const isPackagedElectron = "electron" in process.versions && !process.defaultApp;
+
 type CLIMode = "plan" | "exec";
 
 function parseRuntimeConfig(value: string | undefined, srcBaseDir: string): RuntimeConfig {
@@ -212,7 +215,7 @@ Examples:
 `
   );
 
-program.parse(process.argv);
+program.parse(process.argv, { from: isPackagedElectron ? "electron" : "node" });
 
 interface CLIOptions {
   dir: string;

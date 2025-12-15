@@ -8,18 +8,26 @@
  * fails when running CLI commands in non-GUI environments. Subcommands like
  * `run` and `server` import the AI SDK which has significant startup cost.
  *
- * By checking argv[2] first, we only load the code path actually needed.
+ * By checking argv first, we only load the code path actually needed.
  *
  * ELECTRON DETECTION:
  * When run via `electron .` or as a packaged app, Electron sets process.versions.electron.
  * In that case, we launch the desktop app automatically. When run via `bun` or `node`,
  * we show CLI help instead.
+ *
+ * ARGV OFFSET:
+ * In development (`electron .`), argv = [electron, ".", ...args] so first arg is at index 2.
+ * In packaged apps (`./mux.AppImage`), argv = [app, ...args] so first arg is at index 1.
+ * process.defaultApp is true in dev mode and undefined in packaged apps.
  */
 import { Command } from "commander";
 import { VERSION } from "../version";
 
-const subcommand = process.argv[2];
 const isElectron = "electron" in process.versions;
+// Only packaged Electron has args at index 1; all others (bun, node, electron .) use index 2
+const isPackagedElectron = isElectron && !process.defaultApp;
+const firstArgIndex = isPackagedElectron ? 1 : 2;
+const subcommand = process.argv[firstArgIndex];
 
 function launchDesktop(): void {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -27,19 +35,26 @@ function launchDesktop(): void {
 }
 
 // Route known subcommands to their dedicated entry points (each has its own Commander instance)
-// When Electron launches us (e.g., `bunx electron --flags .`), argv[2] may be a flag or "." - not a subcommand
-const isElectronLaunchArg = subcommand?.startsWith("-") || subcommand === ".";
+// In dev mode (electron --inspect .), argv may contain flags or "." before the subcommand.
+// Only treat these as "launch args" in dev mode; in packaged apps, --help is a legitimate CLI flag.
+const isElectronLaunchArg =
+  process.defaultApp && (subcommand?.startsWith("-") || subcommand === ".");
 
 if (subcommand === "run") {
-  process.argv.splice(2, 1); // Remove "run" since run.ts defines .name("mux run")
+  if (isPackagedElectron) {
+    console.error("The 'run' command is only available via the CLI (bun mux run).");
+    console.error("It is not included in the packaged Electron app.");
+    process.exit(1);
+  }
+  process.argv.splice(firstArgIndex, 1); // Remove "run" since run.ts defines .name("mux run")
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   require("./run");
 } else if (subcommand === "server") {
-  process.argv.splice(2, 1);
+  process.argv.splice(firstArgIndex, 1);
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   require("./server");
 } else if (subcommand === "api") {
-  process.argv.splice(2, 1);
+  process.argv.splice(firstArgIndex, 1);
   // Must use native import() to load ESM module - trpc-cli requires ESM with top-level await.
   // Using Function constructor prevents TypeScript from converting this to require().
   // The .mjs extension is critical for Node.js to treat it as ESM.
@@ -70,10 +85,17 @@ if (subcommand === "run") {
     .version(`${gitDescribe} (${gitCommit})`, "-v, --version");
 
   // Register subcommand stubs for help display (actual implementations are above)
-  program.command("run").description("Run a one-off agent task");
+  // `run` is only available via bun/node CLI, not bundled in packaged Electron app
+  if (!isPackagedElectron) {
+    program.command("run").description("Run a one-off agent task");
+  }
   program.command("server").description("Start the HTTP/WebSocket ORPC server");
   program.command("api").description("Interact with the mux API via a running server");
-  program.command("desktop").description("Launch the desktop app (requires Electron)");
+  program
+    .command("desktop")
+    .description(
+      isElectron ? "Launch the desktop app" : "Launch the desktop app (requires Electron)"
+    );
 
   program.parse();
 }
