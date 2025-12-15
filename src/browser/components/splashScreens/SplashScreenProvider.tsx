@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, type ReactNode } from "react";
-import { SPLASH_REGISTRY, type SplashConfig } from "./index";
+import { SPLASH_REGISTRY, DISABLE_SPLASH_SCREENS, type SplashConfig } from "./index";
 import { useAPI } from "@/browser/contexts/API";
 
 export function SplashScreenProvider({ children }: { children: ReactNode }) {
@@ -9,7 +9,11 @@ export function SplashScreenProvider({ children }: { children: ReactNode }) {
 
   // Load viewed splash screens from config on mount
   useEffect(() => {
-    if (!api) return;
+    // Skip if disabled or API not ready
+    if (DISABLE_SPLASH_SCREENS || !api) {
+      setLoaded(true);
+      return;
+    }
 
     void (async () => {
       try {
