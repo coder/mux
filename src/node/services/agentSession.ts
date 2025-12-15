@@ -775,6 +775,13 @@ export class AgentSession {
    * Called when tool execution completes, stream ends, or user clicks send immediately.
    */
   sendQueuedMessages(): void {
+    // sendQueuedMessages can race with teardown (e.g. workspace.remove) because we
+    // trigger it off stream/tool events and disposal does not await stopStream().
+    // If the session is already disposed, do nothing.
+    if (this.disposed) {
+      return;
+    }
+
     // Clear the queued message flag (even if queue is empty, to handle race conditions)
     this.backgroundProcessManager.setMessageQueued(this.workspaceId, false);
 
