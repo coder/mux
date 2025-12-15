@@ -622,17 +622,17 @@ export class StreamManager extends EventEmitter {
       abortSignal.addEventListener("abort", () => abortController.abort());
     }
 
-    // Determine toolChoice based on toolPolicy
+    // Determine toolChoice based on toolPolicy.
+    //
     // If a tool is required (tools object has exactly one tool after applyToolPolicy),
-    // force the model to use it with toolChoice: { type: "required", toolName: "..." }
-    let toolChoice: { type: "required"; toolName: string } | undefined;
+    // force the model to use it using the AI SDK tool choice shape.
+    let toolChoice: { type: "tool"; toolName: string } | "required" | undefined;
     if (tools && toolPolicy) {
-      // Check if any filter has "require" action
       const hasRequireAction = toolPolicy.some((filter) => filter.action === "require");
       if (hasRequireAction && Object.keys(tools).length === 1) {
         const requiredToolName = Object.keys(tools)[0];
-        toolChoice = { type: "required", toolName: requiredToolName };
-        log.debug("Setting toolChoice to required", { toolName: requiredToolName });
+        toolChoice = { type: "tool", toolName: requiredToolName };
+        log.debug("Setting toolChoice to tool", { toolName: requiredToolName });
       }
     }
 
