@@ -125,6 +125,21 @@ function makeReviewPanelCacheKey(params: {
 }
 
 type ExecuteBashResult = Awaited<ReturnType<APIClient["workspace"]["executeBash"]>>;
+
+const REVIEW_AUTO_REFRESH_INTERVAL_MS = 30_000;
+
+function getOriginBranchForFetch(diffBase: string): string | null {
+  const trimmed = diffBase.trim();
+  if (!trimmed.startsWith("origin/")) return null;
+
+  const branch = trimmed.slice("origin/".length);
+
+  // Avoid shell injection; diffBase is user-controlled.
+  if (!/^[0-9A-Za-z._/-]+$/.test(branch)) return null;
+
+  return branch;
+}
+
 type ExecuteBashSuccess = Extract<ExecuteBashResult, { success: true }>;
 
 async function executeWorkspaceBashAndCache<T extends ReviewPanelCacheValue>(params: {
@@ -219,13 +234,131 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     [diffState]
   );
 
+  const [autoRefreshSecondsRemaining, setAutoRefreshSecondsRemaining] = useState<number | null>(
+    null
+  );
+  const [isAutoRefreshing, setIsAutoRefreshing] = useState(false);
+  const autoRefreshDeadlineRef = useRef<number | null>(null);
   const [filters, setFilters] = useState<ReviewFiltersType>({
     showReadHunks: showReadHunks,
     diffBase: diffBase,
     includeUncommitted: includeUncommitted,
   });
 
+  // Auto-refresh diffs every 30s (with a user-visible countdown).
+  // For origin/* bases, fetches from remote first to pick up upstream changes.
+  useEffect(() => {
+    if (!api || isCreating) {
+      autoRefreshDeadlineRef.current = null;
+      setAutoRefreshSecondsRemaining(null);
+      return;
+    }
+
+    autoRefreshDeadlineRef.current = Date.now() + REVIEW_AUTO_REFRESH_INTERVAL_MS;
+
+    const resetCountdown = () => {
+      autoRefreshDeadlineRef.current = Date.now() + REVIEW_AUTO_REFRESH_INTERVAL_MS;
+      setAutoRefreshSecondsRemaining(Math.ceil(REVIEW_AUTO_REFRESH_INTERVAL_MS / 1000));
+    };
+
+    resetCountdown();
+
+    let lastRenderedSeconds: number | null = null;
+
+    const interval = setInterval(() => {
+      const deadline = autoRefreshDeadlineRef.current;
+      if (!deadline) return;
+
+      const msRemaining = deadline - Date.now();
+      const secondsRemaining = Math.max(0, Math.ceil(msRemaining / 1000));
+      if (secondsRemaining !== lastRenderedSeconds) {
+        lastRenderedSeconds = secondsRemaining;
+        setAutoRefreshSecondsRemaining(secondsRemaining);
+      }
+
+      // Fire when deadline passed (not when display shows 0)
+      if (msRemaining > 0) return;
+      if (isAutoRefreshing) return;
+
+      setIsAutoRefreshing(true);
+
+      // Reset early so we don't immediately re-fire if fetch takes time.
+      resetCountdown();
+
+      const originBranch = getOriginBranchForFetch(filters.diffBase);
+      if (originBranch) {
+        // Remote base: fetch before refreshing diff
+        api.workspace
+          .executeBash({
+            workspaceId,
+            script: `git fetch origin ${originBranch} --quiet || true`,
+            options: { timeout_secs: 30 },
+          })
+          .catch((err) => {
+            console.debug("ReviewPanel origin fetch failed", err);
+          })
+          .finally(() => {
+            setIsAutoRefreshing(false);
+            setRefreshTrigger((prev) => prev + 1);
+          });
+      } else {
+        // Local base: just refresh diff
+        setIsAutoRefreshing(false);
+        setRefreshTrigger((prev) => prev + 1);
+      }
+    }, 250);
+
+    return () => {
+      clearInterval(interval);
+      autoRefreshDeadlineRef.current = null;
+      setAutoRefreshSecondsRemaining(null);
+    };
+  }, [api, workspaceId, filters.diffBase, isCreating, isAutoRefreshing]);
+
   // Focus panel when focusTrigger changes (preserves current hunk selection)
+
+  const handleRefreshRef = useRef<() => void>(() => {
+    console.debug("ReviewPanel handleRefreshRef called before init");
+  });
+  handleRefreshRef.current = () => {
+    if (!api || isCreating) return;
+
+    // Reset countdown on manual refresh so the user doesn't see an immediate auto-refresh.
+    autoRefreshDeadlineRef.current = Date.now() + REVIEW_AUTO_REFRESH_INTERVAL_MS;
+    setAutoRefreshSecondsRemaining(Math.ceil(REVIEW_AUTO_REFRESH_INTERVAL_MS / 1000));
+
+    const originBranch = getOriginBranchForFetch(filters.diffBase);
+    if (originBranch) {
+      if (isAutoRefreshing) {
+        setRefreshTrigger((prev) => prev + 1);
+        return;
+      }
+
+      setIsAutoRefreshing(true);
+
+      api.workspace
+        .executeBash({
+          workspaceId,
+          script: `git fetch origin ${originBranch} --quiet || true`,
+          options: { timeout_secs: 30 },
+        })
+        .catch((err) => {
+          console.debug("ReviewPanel origin fetch failed", err);
+        })
+        .finally(() => {
+          setIsAutoRefreshing(false);
+          setRefreshTrigger((prev) => prev + 1);
+        });
+
+      return;
+    }
+
+    setRefreshTrigger((prev) => prev + 1);
+  };
+
+  const handleRefresh = () => {
+    handleRefreshRef.current();
+  };
   useEffect(() => {
     if (focusTrigger && focusTrigger > 0) {
       panelRef.current?.focus();
@@ -730,7 +863,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (matchesKeybind(e, KEYBINDS.REFRESH_REVIEW)) {
         e.preventDefault();
-        setRefreshTrigger((prev) => prev + 1);
+        handleRefreshRef.current();
       } else if (matchesKeybind(e, KEYBINDS.FOCUS_REVIEW_SEARCH)) {
         e.preventDefault();
         searchInputRef.current?.focus();
@@ -765,9 +898,13 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         filters={filters}
         stats={stats}
         onFiltersChange={setFilters}
-        onRefresh={() => setRefreshTrigger((prev) => prev + 1)}
+        onRefresh={handleRefresh}
+        autoRefreshSecondsRemaining={autoRefreshSecondsRemaining}
         isLoading={
-          diffState.status === "loading" || diffState.status === "refreshing" || isLoadingTree
+          diffState.status === "loading" ||
+          diffState.status === "refreshing" ||
+          isLoadingTree ||
+          isAutoRefreshing
         }
         workspaceId={workspaceId}
         workspacePath={workspacePath}

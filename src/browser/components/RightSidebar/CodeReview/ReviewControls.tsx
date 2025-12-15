@@ -16,6 +16,8 @@ interface ReviewControlsProps {
   isLoading?: boolean;
   workspaceId: string;
   workspacePath: string;
+  /** If set, show an auto-refresh countdown (e.g., for origin/* bases). */
+  autoRefreshSecondsRemaining?: number | null;
   refreshTrigger?: number;
 }
 
@@ -27,6 +29,7 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
   isLoading = false,
   workspaceId,
   workspacePath,
+  autoRefreshSecondsRemaining,
   refreshTrigger,
 }) => {
   // Local state for input value - only commit on blur/Enter
@@ -83,6 +86,11 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
 
   return (
     <div className="bg-separator border-border-light flex flex-wrap items-center gap-3 border-b px-3 py-2 text-[11px]">
+      {autoRefreshSecondsRemaining != null && (
+        <span className="text-muted whitespace-nowrap tabular-nums">
+          Refresh in: {String(autoRefreshSecondsRemaining).padStart(2, "\u2007")}s
+        </span>
+      )}
       {onRefresh && <RefreshButton onClick={onRefresh} isLoading={isLoading} />}
       <label className="text-muted font-medium whitespace-nowrap">Base:</label>
       <input
