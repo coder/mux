@@ -699,9 +699,9 @@ export class StreamingMessageAggregator {
   handleStreamAbort(data: StreamAbortEvent): void {
     // Direct lookup by messageId
     const stream = this.inFlightStreams.get(data.messageId);
-    const activeStream = stream?.phase === "active" ? stream.context : undefined;
+    if (!stream) return;
 
-    if (activeStream) {
+    if (stream.phase === "active") {
       // Mark the message as interrupted and merge metadata (consistent with handleStreamEnd)
       const message = this.messages.get(data.messageId);
       if (message?.metadata) {
@@ -714,14 +714,35 @@ export class StreamingMessageAggregator {
         // Compact parts even on abort - still reduces memory for partial messages
         this.compactMessageParts(message);
       }
-
-      // Clean up stream-scoped state (active stream tracking, TODOs)
-      this.cleanupStreamState(data.messageId);
-      this.invalidateCache();
     }
+
+    // Always clean up stream-scoped state (pending or active) to avoid wedging canInterrupt=true.
+    this.cleanupStreamState(data.messageId);
+    this.invalidateCache();
   }
 
   handleStreamError(data: StreamErrorMessage): void {
+    const createSyntheticErrorMessage = (): void => {
+      // Get the highest historySequence from existing messages so this appears at the end.
+      const maxSequence = Math.max(
+        0,
+        ...Array.from(this.messages.values()).map((m) => m.metadata?.historySequence ?? 0)
+      );
+      const errorMessage: MuxMessage = {
+        id: data.messageId,
+        role: "assistant",
+        parts: [],
+        metadata: {
+          partial: true,
+          error: data.error,
+          errorType: data.errorType,
+          timestamp: Date.now(),
+          historySequence: maxSequence + 1,
+        },
+      };
+      this.messages.set(data.messageId, errorMessage);
+    };
+
     const isTrackedStream = this.inFlightStreams.has(data.messageId);
 
     if (isTrackedStream) {
@@ -734,6 +755,9 @@ export class StreamingMessageAggregator {
 
         // Compact parts even on error - still reduces memory for partial messages
         this.compactMessageParts(message);
+      } else {
+        // Stream errored before stream-start created a message (pending-phase).
+        createSyntheticErrorMessage();
       }
 
       // Clean up stream-scoped state (active/connecting tracking, TODOs)
@@ -744,24 +768,7 @@ export class StreamingMessageAggregator {
 
     // Pre-stream error (e.g., API key not configured before streaming starts)
     // Create a synthetic error message since there's no tracked stream to attach to.
-    // Get the highest historySequence from existing messages so this appears at the end.
-    const maxSequence = Math.max(
-      0,
-      ...Array.from(this.messages.values()).map((m) => m.metadata?.historySequence ?? 0)
-    );
-    const errorMessage: MuxMessage = {
-      id: data.messageId,
-      role: "assistant",
-      parts: [],
-      metadata: {
-        partial: true,
-        error: data.error,
-        errorType: data.errorType,
-        timestamp: Date.now(),
-        historySequence: maxSequence + 1,
-      },
-    };
-    this.messages.set(data.messageId, errorMessage);
+    createSyntheticErrorMessage();
     this.invalidateCache();
   }
 
