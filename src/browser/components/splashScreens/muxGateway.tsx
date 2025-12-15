@@ -1,6 +1,5 @@
 import React from "react";
 import { SplashScreen } from "./SplashScreen";
-import { DialogInfo } from "@/browser/components/ui/dialog";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 
 export function MuxGatewaySplash({ onDismiss }: { onDismiss: () => void }) {
