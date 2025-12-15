@@ -117,19 +117,19 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Review stats reported by ReviewPanel
   const [reviewStats, setReviewStats] = React.useState<ReviewStats | null>(null);
 
-  // Notify parent (AIView) of tab changes so it can enable/disable resize functionality
-  React.useEffect(() => {
-    onTabChange?.(selectedTab);
-  }, [selectedTab, onTabChange]);
+  // NOTE: We intentionally avoid mirroring `selectedTab` into AIView via `useEffect`.
+  // AIView needs tab changes in the same render to avoid sidebar width jank.
 
   // Keyboard shortcuts for tab switching
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (matchesKeybind(e, KEYBINDS.COSTS_TAB)) {
         e.preventDefault();
+        onTabChange?.("costs");
         setSelectedTab("costs");
       } else if (matchesKeybind(e, KEYBINDS.REVIEW_TAB)) {
         e.preventDefault();
+        onTabChange?.("review");
         setSelectedTab("review");
         setFocusTrigger((prev) => prev + 1);
       }
@@ -137,7 +137,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [setSelectedTab, selectedTab]);
+  }, [onTabChange, setSelectedTab]);
 
   const usage = useWorkspaceUsage(workspaceId);
   const { options } = useProviderOptions();
@@ -276,7 +276,10 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
                       ? "bg-hover text-foreground"
                       : "bg-transparent text-muted hover:bg-hover/50 hover:text-foreground"
                   )}
-                  onClick={() => setSelectedTab("costs")}
+                  onClick={() => {
+                    onTabChange?.("costs");
+                    setSelectedTab("costs");
+                  }}
                   id={costsTabId}
                   role="tab"
                   type="button"
@@ -304,7 +307,10 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
                       ? "bg-hover text-foreground"
                       : "bg-transparent text-muted hover:bg-hover/50 hover:text-foreground"
                   )}
-                  onClick={() => setSelectedTab("review")}
+                  onClick={() => {
+                    onTabChange?.("review");
+                    setSelectedTab("review");
+                  }}
                   id={reviewTabId}
                   role="tab"
                   type="button"
