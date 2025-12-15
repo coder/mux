@@ -1,4 +1,4 @@
-import { MuxGatewaySplash } from "./muxGateway";
+import { MuxGatewaySplash } from "./MuxGateway";
 
 export interface SplashConfig {
   id: string;
