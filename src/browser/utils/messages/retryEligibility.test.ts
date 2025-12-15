@@ -54,6 +54,7 @@ describe("hasInterruptedStream", () => {
         isPartial: true,
         isLastPartOfMessage: true,
         isCompacted: false,
+        isIdleCompacted: false,
       },
     ];
     expect(hasInterruptedStream(messages)).toBe(true);
@@ -155,6 +156,7 @@ describe("hasInterruptedStream", () => {
         isPartial: false,
         isLastPartOfMessage: true,
         isCompacted: false,
+        isIdleCompacted: false,
       },
     ];
     expect(hasInterruptedStream(messages)).toBe(false);
@@ -180,6 +182,7 @@ describe("hasInterruptedStream", () => {
         isPartial: false,
         isLastPartOfMessage: true,
         isCompacted: false,
+        isIdleCompacted: false,
       },
       {
         type: "user",
@@ -212,6 +215,7 @@ describe("hasInterruptedStream", () => {
         isPartial: false,
         isLastPartOfMessage: true,
         isCompacted: false,
+        isIdleCompacted: false,
       },
       {
         type: "user",
@@ -337,6 +341,7 @@ describe("isEligibleForAutoRetry", () => {
         isPartial: false,
         isLastPartOfMessage: true,
         isCompacted: false,
+        isIdleCompacted: false,
       },
     ];
     expect(isEligibleForAutoRetry(messages)).toBe(false);
@@ -535,6 +540,7 @@ describe("isEligibleForAutoRetry", () => {
           isPartial: true,
           isLastPartOfMessage: true,
           isCompacted: false,
+          isIdleCompacted: false,
         },
       ];
       expect(isEligibleForAutoRetry(messages)).toBe(true);
@@ -560,6 +566,7 @@ describe("isEligibleForAutoRetry", () => {
           isPartial: false,
           isLastPartOfMessage: true,
           isCompacted: false,
+          isIdleCompacted: false,
         },
         {
           type: "user",

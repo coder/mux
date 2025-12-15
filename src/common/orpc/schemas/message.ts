@@ -83,6 +83,7 @@ export const MuxMessageSchema = z.object({
       muxMetadata: z.any().optional(),
       cmuxMetadata: z.any().optional(), // Legacy field for backward compatibility
       compacted: z.boolean().optional(), // Marks compaction summary messages
+      idleCompacted: z.boolean().optional(), // Marks auto-compaction due to inactivity
       toolPolicy: z.any().optional(),
       mode: z.string().optional(),
       partial: z.boolean().optional(),

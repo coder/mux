@@ -123,13 +123,16 @@ export class WorkspaceService extends EventEmitter {
   private terminalService?: TerminalService;
 
   /**
-   * Set the terminal service for cleanup on workspace removal.
+   * Set the MCP server manager for tool access.
    * Called after construction due to circular dependency.
    */
   setMCPServerManager(manager: MCPServerManager): void {
     this.mcpServerManager = manager;
   }
 
+  /**
+   * Set the terminal service for cleanup on workspace removal.
+   */
   setTerminalService(terminalService: TerminalService): void {
     this.terminalService = terminalService;
   }
@@ -980,7 +983,17 @@ export class WorkspaceService extends EventEmitter {
       }
 
       const session = this.getOrCreateSession(workspaceId);
-      void this.updateRecencyTimestamp(workspaceId);
+
+      // Skip recency update for idle compaction - preserve original "last used" time
+      const muxMeta = options?.muxMetadata as { type?: string; source?: string } | undefined;
+      const isIdleCompaction =
+        muxMeta?.type === "compaction-request" && muxMeta?.source === "idle-compaction";
+      // Use current time for recency - this matches the timestamp used on the message
+      // in agentSession.sendMessage(). Keeps ExtensionMetadata in sync with chat.jsonl.
+      const messageTimestamp = Date.now();
+      if (!isIdleCompaction) {
+        void this.updateRecencyTimestamp(workspaceId, messageTimestamp);
+      }
 
       if (this.aiService.isStreaming(workspaceId) && !options?.editMessageId) {
         const pendingAskUserQuestion = askUserQuestionManager.getLatestPending(workspaceId);
@@ -1642,5 +1655,16 @@ export class WorkspaceService extends EventEmitter {
    */
   offBackgroundBashChange(callback: (workspaceId: string) => void): void {
     this.backgroundProcessManager.off("change", callback);
+  }
+
+  /**
+   * Emit an idle-compaction-needed event to a workspace's stream.
+   * Called by IdleCompactionService when a workspace becomes eligible while connected.
+   */
+  emitIdleCompactionNeeded(workspaceId: string): void {
+    const session = this.sessions.get(workspaceId);
+    if (session) {
+      session.emitChatEvent({ type: "idle-compaction-needed" });
+    }
   }
 }

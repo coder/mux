@@ -514,4 +514,177 @@ describe("CompactionHandler", () => {
       expect((streamMsg.metadata as Record<string, unknown>).customField).toBe("test");
     });
   });
+
+  describe("Idle Compaction", () => {
+    it("should preserve original recency timestamp from last user message", async () => {
+      const originalTimestamp = Date.now() - 3600 * 1000; // 1 hour ago
+      const userMessage = createMuxMessage("user-1", "user", "Hello", {
+        timestamp: originalTimestamp,
+        historySequence: 0,
+      });
+      const idleCompactionReq = createMuxMessage("req-1", "user", "Summarize", {
+        historySequence: 1,
+        muxMetadata: {
+          type: "compaction-request",
+          source: "idle-compaction",
+          rawCommand: "/compact",
+          parsed: {},
+        },
+      });
+
+      mockHistoryService.mockGetHistory(Ok([userMessage, idleCompactionReq]));
+      mockHistoryService.mockClearHistory(Ok([0, 1]));
+      mockHistoryService.mockAppendToHistory(Ok(undefined));
+
+      const event = createStreamEndEvent("Summary");
+      await handler.handleCompletion(event);
+
+      const summaryEvent = emittedEvents.find((_e) => {
+        const m = _e.data.message as MuxMessage | undefined;
+        return m?.role === "assistant" && m?.metadata?.compacted;
+      });
+      expect(summaryEvent).toBeDefined();
+      const summaryMsg = summaryEvent?.data.message as MuxMessage;
+      expect(summaryMsg.metadata?.timestamp).toBe(originalTimestamp);
+      expect(summaryMsg.metadata?.idleCompacted).toBe(true);
+    });
+
+    it("should preserve recency from last compacted message if no user message", async () => {
+      const compactedTimestamp = Date.now() - 7200 * 1000; // 2 hours ago
+      const compactedMessage = createMuxMessage("compacted-1", "assistant", "Previous summary", {
+        timestamp: compactedTimestamp,
+        compacted: true,
+        historySequence: 0,
+      });
+      const idleCompactionReq = createMuxMessage("req-1", "user", "Summarize", {
+        historySequence: 1,
+        muxMetadata: {
+          type: "compaction-request",
+          source: "idle-compaction",
+          rawCommand: "/compact",
+          parsed: {},
+        },
+      });
+
+      mockHistoryService.mockGetHistory(Ok([compactedMessage, idleCompactionReq]));
+      mockHistoryService.mockClearHistory(Ok([0, 1]));
+      mockHistoryService.mockAppendToHistory(Ok(undefined));
+
+      const event = createStreamEndEvent("Summary");
+      await handler.handleCompletion(event);
+
+      const summaryEvent = emittedEvents.find((_e) => {
+        const m = _e.data.message as MuxMessage | undefined;
+        return m?.role === "assistant" && m?.metadata?.idleCompacted;
+      });
+      expect(summaryEvent).toBeDefined();
+      const summaryMsg = summaryEvent?.data.message as MuxMessage;
+      expect(summaryMsg.metadata?.timestamp).toBe(compactedTimestamp);
+    });
+
+    it("should use max of user and compacted timestamps", async () => {
+      const olderCompactedTimestamp = Date.now() - 7200 * 1000; // 2 hours ago
+      const newerUserTimestamp = Date.now() - 3600 * 1000; // 1 hour ago
+      const compactedMessage = createMuxMessage("compacted-1", "assistant", "Previous summary", {
+        timestamp: olderCompactedTimestamp,
+        compacted: true,
+        historySequence: 0,
+      });
+      const userMessage = createMuxMessage("user-1", "user", "Hello", {
+        timestamp: newerUserTimestamp,
+        historySequence: 1,
+      });
+      const idleCompactionReq = createMuxMessage("req-1", "user", "Summarize", {
+        historySequence: 2,
+        muxMetadata: {
+          type: "compaction-request",
+          source: "idle-compaction",
+          rawCommand: "/compact",
+          parsed: {},
+        },
+      });
+
+      mockHistoryService.mockGetHistory(Ok([compactedMessage, userMessage, idleCompactionReq]));
+      mockHistoryService.mockClearHistory(Ok([0, 1, 2]));
+      mockHistoryService.mockAppendToHistory(Ok(undefined));
+
+      const event = createStreamEndEvent("Summary");
+      await handler.handleCompletion(event);
+
+      const summaryEvent = emittedEvents.find((_e) => {
+        const m = _e.data.message as MuxMessage | undefined;
+        return m?.role === "assistant" && m?.metadata?.idleCompacted;
+      });
+      expect(summaryEvent).toBeDefined();
+      const summaryMsg = summaryEvent?.data.message as MuxMessage;
+      // Should use the newer timestamp (user message)
+      expect(summaryMsg.metadata?.timestamp).toBe(newerUserTimestamp);
+    });
+
+    it("should skip compaction-request message when finding timestamp to preserve", async () => {
+      const originalTimestamp = Date.now() - 3600 * 1000; // 1 hour ago - the real user message
+      const freshTimestamp = Date.now(); // The compaction request has a fresh timestamp
+      const userMessage = createMuxMessage("user-1", "user", "Hello", {
+        timestamp: originalTimestamp,
+        historySequence: 0,
+      });
+      // Idle compaction request WITH a timestamp (as happens in production)
+      const idleCompactionReq = createMuxMessage("req-1", "user", "Summarize", {
+        timestamp: freshTimestamp,
+        historySequence: 1,
+        muxMetadata: {
+          type: "compaction-request",
+          source: "idle-compaction",
+          rawCommand: "/compact",
+          parsed: {},
+        },
+      });
+
+      mockHistoryService.mockGetHistory(Ok([userMessage, idleCompactionReq]));
+      mockHistoryService.mockClearHistory(Ok([0, 1]));
+      mockHistoryService.mockAppendToHistory(Ok(undefined));
+
+      const event = createStreamEndEvent("Summary");
+      await handler.handleCompletion(event);
+
+      const summaryEvent = emittedEvents.find((_e) => {
+        const m = _e.data.message as MuxMessage | undefined;
+        return m?.role === "assistant" && m?.metadata?.compacted;
+      });
+      expect(summaryEvent).toBeDefined();
+      const summaryMsg = summaryEvent?.data.message as MuxMessage;
+      // Should use the OLD user message timestamp, NOT the fresh compaction request timestamp
+      expect(summaryMsg.metadata?.timestamp).toBe(originalTimestamp);
+      expect(summaryMsg.metadata?.idleCompacted).toBe(true);
+    });
+
+    it("should use current time for non-idle compaction", async () => {
+      const oldTimestamp = Date.now() - 3600 * 1000; // 1 hour ago
+      const userMessage = createMuxMessage("user-1", "user", "Hello", {
+        timestamp: oldTimestamp,
+        historySequence: 0,
+      });
+      // Regular compaction (not idle)
+      const compactionReq = createCompactionRequest();
+      mockHistoryService.mockGetHistory(Ok([userMessage, compactionReq]));
+      mockHistoryService.mockClearHistory(Ok([0, 1]));
+      mockHistoryService.mockAppendToHistory(Ok(undefined));
+
+      const beforeTime = Date.now();
+      const event = createStreamEndEvent("Summary");
+      await handler.handleCompletion(event);
+      const afterTime = Date.now();
+
+      const summaryEvent = emittedEvents.find((_e) => {
+        const m = _e.data.message as MuxMessage | undefined;
+        return m?.role === "assistant" && m?.metadata?.compacted;
+      });
+      expect(summaryEvent).toBeDefined();
+      const summaryMsg = summaryEvent?.data.message as MuxMessage;
+      // Should use current time, not the old user message timestamp
+      expect(summaryMsg.metadata?.timestamp).toBeGreaterThanOrEqual(beforeTime);
+      expect(summaryMsg.metadata?.timestamp).toBeLessThanOrEqual(afterTime);
+      expect(summaryMsg.metadata?.idleCompacted).toBeFalsy();
+    });
+  });
 });

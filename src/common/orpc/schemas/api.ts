@@ -180,6 +180,19 @@ export const projects = {
       output: ResultSchema(z.void(), z.string()),
     },
   },
+  idleCompaction: {
+    get: {
+      input: z.object({ projectPath: z.string() }),
+      output: z.object({ hours: z.number().nullable() }),
+    },
+    set: {
+      input: z.object({
+        projectPath: z.string(),
+        hours: z.number().min(1).nullable(),
+      }),
+      output: ResultSchema(z.void(), z.string()),
+    },
+  },
 };
 
 // Workspace

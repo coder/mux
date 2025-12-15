@@ -604,6 +604,8 @@ export interface CompactionOptions {
   model?: string;
   sendMessageOptions: SendMessageOptions;
   editMessageId?: string;
+  /** Source of compaction request (e.g., "idle-compaction" for auto-triggered) */
+  source?: "idle-compaction";
 }
 
 export interface CompactionResult {
@@ -671,6 +673,10 @@ export function prepareCompactionMessage(options: CompactionOptions): {
     type: "compaction-request",
     rawCommand: formatCompactionCommand(options),
     parsed: compactData,
+    ...(options.source === "idle-compaction" && {
+      source: options.source,
+      displayStatus: { emoji: "💤", message: "Compacting idle workspace..." },
+    }),
   };
 
   // Apply compaction overrides

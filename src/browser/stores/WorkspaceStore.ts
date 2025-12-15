@@ -140,6 +140,9 @@ export class WorkspaceStore {
   // Cumulative session usage (from session-usage.json)
   private sessionUsage = new Map<string, z.infer<typeof SessionUsageFileSchema>>();
 
+  // Idle compaction notification callbacks (called when backend signals idle compaction needed)
+  private idleCompactionCallbacks = new Set<(workspaceId: string) => void>();
+
   // Idle callback handles for high-frequency delta events to reduce re-renders during streaming.
   // Data is always updated immediately in the aggregator; only UI notification is scheduled.
   // Using requestIdleCallback adapts to actual CPU availability rather than a fixed timer.
@@ -927,6 +930,29 @@ export class WorkspaceStore {
     this.workspaceCreatedAt.clear();
   }
 
+  /**
+   * Subscribe to idle compaction events.
+   * Callback is called when backend signals a workspace needs idle compaction.
+   * Returns unsubscribe function.
+   */
+  onIdleCompactionNeeded(callback: (workspaceId: string) => void): () => void {
+    this.idleCompactionCallbacks.add(callback);
+    return () => this.idleCompactionCallbacks.delete(callback);
+  }
+
+  /**
+   * Notify all listeners that a workspace needs idle compaction.
+   */
+  private notifyIdleCompactionNeeded(workspaceId: string): void {
+    for (const callback of this.idleCompactionCallbacks) {
+      try {
+        callback(workspaceId);
+      } catch (error) {
+        console.error("Error in idle compaction callback:", error);
+      }
+    }
+  }
+
   // Private methods
 
   /**
@@ -1003,6 +1029,12 @@ export class WorkspaceStore {
         this.consumerManager.scheduleCalculation(workspaceId, aggregator);
       }
 
+      return;
+    }
+
+    // Handle idle-compaction-needed event (workspace became eligible while connected)
+    if ("type" in data && data.type === "idle-compaction-needed") {
+      this.notifyIdleCompactionNeeded(workspaceId);
       return;
     }
 
@@ -1125,6 +1157,15 @@ function getStoreInstance(): WorkspaceStore {
   });
   return storeInstance;
 }
+
+/**
+ * Direct access to the singleton store instance.
+ * Use this for non-hook subscriptions (e.g., in useEffect callbacks).
+ */
+export const workspaceStore = {
+  onIdleCompactionNeeded: (callback: (workspaceId: string) => void) =>
+    getStoreInstance().onIdleCompactionNeeded(callback),
+};
 
 /**
  * Hook to get state for a specific workspace.

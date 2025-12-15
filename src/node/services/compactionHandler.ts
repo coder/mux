@@ -1,6 +1,7 @@
 import type { EventEmitter } from "events";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
+
 import type { StreamEndEvent } from "@/common/types/stream";
 import type { WorkspaceChatMessage, DeleteMessage } from "@/common/orpc/types";
 import type { Result } from "@/common/types/result";
@@ -13,12 +14,15 @@ import {
   extractEditedFileDiffs,
   type FileEditDiff,
 } from "@/common/utils/messages/extractEditedFiles";
+import { computeRecencyFromMessages } from "@/common/utils/recency";
 
 interface CompactionHandlerOptions {
   workspaceId: string;
   historyService: HistoryService;
   partialService: PartialService;
   emitter: EventEmitter;
+  /** Called when compaction completes successfully (e.g., to clear idle compaction pending state) */
+  onCompactionComplete?: () => void;
 }
 
 /**
@@ -35,6 +39,7 @@ export class CompactionHandler {
   private readonly partialService: PartialService;
   private readonly emitter: EventEmitter;
   private readonly processedCompactionRequestIds: Set<string> = new Set<string>();
+  private readonly onCompactionComplete?: () => void;
 
   /** Flag indicating post-compaction attachments should be generated on next turn */
   private postCompactionAttachmentsPending = false;
@@ -46,6 +51,7 @@ export class CompactionHandler {
     this.historyService = options.historyService;
     this.partialService = options.partialService;
     this.emitter = options.emitter;
+    this.onCompactionComplete = options.onCompactionComplete;
   }
 
   /**
@@ -105,14 +111,27 @@ export class CompactionHandler {
       .map((part) => part.text)
       .join("");
 
+    // Check if this was an idle-compaction (auto-triggered due to inactivity)
+    const muxMeta = lastUserMsg.metadata?.muxMetadata;
+    const isIdleCompaction =
+      muxMeta?.type === "compaction-request" && muxMeta.source === "idle-compaction";
+
     // Mark as processed before performing compaction
     this.processedCompactionRequestIds.add(lastUserMsg.id);
 
-    const result = await this.performCompaction(summary, event.metadata, messages);
+    const result = await this.performCompaction(
+      summary,
+      event.metadata,
+      messages,
+      isIdleCompaction
+    );
     if (!result.success) {
       log.error("Compaction failed:", result.error);
       return false;
     }
+
+    // Notify that compaction completed (clears idle compaction pending state)
+    this.onCompactionComplete?.();
 
     // Emit stream-end to frontend so UI knows compaction is complete
     this.emitChatEvent(event);
@@ -137,7 +156,8 @@ export class CompactionHandler {
       providerMetadata?: Record<string, unknown>;
       systemMessageTokens?: number;
     },
-    messages: MuxMessage[]
+    messages: MuxMessage[],
+    isIdleCompaction = false
   ): Promise<Result<void, string>> {
     // CRITICAL: Delete partial.json BEFORE clearing history
     // This prevents a race condition where:
@@ -161,6 +181,17 @@ export class CompactionHandler {
     }
     const deletedSequences = clearResult.data;
 
+    // For idle compaction, preserve the original recency timestamp so the workspace
+    // doesn't appear "recently used" in the sidebar. Use the shared recency utility
+    // to ensure consistency with how the sidebar computes recency.
+    let timestamp = Date.now();
+    if (isIdleCompaction) {
+      const recency = computeRecencyFromMessages(messages);
+      if (recency !== null) {
+        timestamp = recency;
+      }
+    }
+
     // Create summary message with metadata.
     // We omit providerMetadata because it contains cacheCreationInputTokens from the
     // pre-compaction context, which inflates context usage display.
@@ -173,8 +204,9 @@ export class CompactionHandler {
       "assistant",
       summary,
       {
-        timestamp: Date.now(),
+        timestamp,
         compacted: true,
+        idleCompacted: isIdleCompaction,
         model: metadata.model,
         usage: metadata.usage,
         duration: metadata.duration,

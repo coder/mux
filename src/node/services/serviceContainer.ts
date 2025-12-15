@@ -24,6 +24,7 @@ import { BackgroundProcessManager } from "@/node/services/backgroundProcessManag
 import { MCPConfigService } from "@/node/services/mcpConfigService";
 import { MCPServerManager } from "@/node/services/mcpServerManager";
 import { SessionUsageService } from "@/node/services/sessionUsageService";
+import { IdleCompactionService } from "@/node/services/idleCompactionService";
 
 /**
  * ServiceContainer - Central dependency container for all backend services.
@@ -55,6 +56,7 @@ export class ServiceContainer {
   private readonly extensionMetadata: ExtensionMetadataService;
   private readonly ptyService: PTYService;
   private readonly backgroundProcessManager: BackgroundProcessManager;
+  public readonly idleCompactionService: IdleCompactionService;
 
   constructor(config: Config) {
     this.config = config;
@@ -90,6 +92,13 @@ export class ServiceContainer {
       this.backgroundProcessManager
     );
     this.workspaceService.setMCPServerManager(this.mcpServerManager);
+    // Idle compaction service - auto-compacts workspaces after configured idle period
+    this.idleCompactionService = new IdleCompactionService(
+      config,
+      this.historyService,
+      this.extensionMetadata,
+      (workspaceId) => this.workspaceService.emitIdleCompactionNeeded(workspaceId)
+    );
     this.providerService = new ProviderService(config);
     // Terminal services - PTYService is cross-platform
     this.ptyService = new PTYService();
@@ -111,12 +120,15 @@ export class ServiceContainer {
     await this.extensionMetadata.initialize();
     // Initialize telemetry service
     await this.telemetryService.initialize();
+    // Start idle compaction checker
+    this.idleCompactionService.start();
   }
 
   /**
    * Shutdown services that need cleanup
    */
   async shutdown(): Promise<void> {
+    this.idleCompactionService.stop();
     await this.telemetryService.shutdown();
   }
 

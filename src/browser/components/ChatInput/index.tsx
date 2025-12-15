@@ -984,6 +984,58 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           }
           return;
         }
+        // Handle /idle command
+        if (parsed.type === "idle-compaction") {
+          if (!api) {
+            setToast({
+              id: Date.now().toString(),
+              type: "error",
+              message: "Not connected to server",
+            });
+            return;
+          }
+          if (!selectedWorkspace?.projectPath) {
+            setToast({
+              id: Date.now().toString(),
+              type: "error",
+              message: "No project selected",
+            });
+            return;
+          }
+          setInput(""); // Clear input immediately
+
+          try {
+            const result = await api.projects.idleCompaction.set({
+              projectPath: selectedWorkspace.projectPath,
+              hours: parsed.hours,
+            });
+
+            if (!result.success) {
+              setToast({
+                id: Date.now().toString(),
+                type: "error",
+                message: result.error ?? "Failed to update setting",
+              });
+              setInput(messageText); // Restore input on error
+            } else {
+              setToast({
+                id: Date.now().toString(),
+                type: "success",
+                message: parsed.hours
+                  ? `Idle compaction set to ${parsed.hours} hours`
+                  : "Idle compaction disabled",
+              });
+            }
+          } catch (error) {
+            setToast({
+              id: Date.now().toString(),
+              type: "error",
+              message: error instanceof Error ? error.message : "Failed to update setting",
+            });
+            setInput(messageText); // Restore input on error
+          }
+          return;
+        }
       }
 
       // Regular message - send directly via API

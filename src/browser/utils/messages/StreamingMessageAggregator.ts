@@ -929,14 +929,28 @@ export class StreamingMessageAggregator {
 
       // If this is a user message, clear derived state and record timestamp
       if (incomingMessage.role === "user") {
-        // Clear derived state (todos, agentStatus) for new conversation turn
-        // This ensures consistent behavior whether loading from history or processing live events
-        // since stream-start/stream-end events are not persisted in chat.jsonl
+        const muxMeta = incomingMessage.metadata?.muxMetadata as
+          | { displayStatus?: { emoji: string; message: string } }
+          | undefined;
+
+        // Always clear todos (stream-scoped state)
         this.currentTodos = [];
-        this.agentStatus = undefined;
-        this.clearPersistedAgentStatus();
+
+        if (muxMeta?.displayStatus) {
+          // Background operation - show requested status (don't persist)
+          this.agentStatus = muxMeta.displayStatus;
+        } else {
+          // Normal user turn - clear status
+          this.agentStatus = undefined;
+          this.clearPersistedAgentStatus();
+        }
 
         this.setPendingStreamStartTime(Date.now());
+      }
+
+      // Clear transient status when idle compaction completes
+      if (incomingMessage.role === "assistant" && incomingMessage.metadata?.idleCompacted) {
+        this.agentStatus = undefined;
       }
     }
   }
@@ -1087,6 +1101,7 @@ export class StreamingMessageAggregator {
                 isPartial: message.metadata?.partial ?? false,
                 isLastPartOfMessage: isLastPart,
                 isCompacted: message.metadata?.compacted ?? false,
+                isIdleCompacted: message.metadata?.idleCompacted ?? false,
                 model: message.metadata?.model,
                 timestamp: part.timestamp ?? baseTimestamp,
               });

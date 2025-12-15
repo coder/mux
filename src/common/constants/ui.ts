@@ -11,6 +11,11 @@
 export const COMPACTED_EMOJI = "📦";
 
 /**
+ * Emoji used for idle-compacted messages (auto-compacted due to inactivity)
+ */
+export const IDLE_COMPACTED_EMOJI = `💤${COMPACTED_EMOJI}`;
+
+/**
  * Auto-compaction threshold bounds (percentage)
  * MIN: Allow any value - user can choose aggressive compaction if desired
  * MAX: Cap at 90% to leave buffer before hitting context limit

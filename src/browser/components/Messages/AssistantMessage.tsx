@@ -1,4 +1,4 @@
-import { COMPACTED_EMOJI } from "@/common/constants/ui";
+import { COMPACTED_EMOJI, IDLE_COMPACTED_EMOJI } from "@/common/constants/ui";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { useStartHere } from "@/browser/hooks/useStartHere";
 import type { DisplayedMessage } from "@/common/types/message";
@@ -109,13 +109,16 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
   const renderLabel = () => {
     const modelName = message.model;
     const isCompacted = message.isCompacted;
+    const isIdleCompacted = message.isIdleCompacted;
 
     return (
       <div className="flex items-center gap-2">
         {modelName && <ModelDisplay modelString={modelName} />}
         {isCompacted && (
           <span className="text-plan-mode bg-plan-mode/10 rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
-            {COMPACTED_EMOJI} compacted
+            {isIdleCompacted
+              ? `${IDLE_COMPACTED_EMOJI} idle-compacted`
+              : `${COMPACTED_EMOJI} compacted`}
           </span>
         )}
       </div>

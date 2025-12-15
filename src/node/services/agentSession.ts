@@ -9,6 +9,7 @@ import type { AIService } from "@/node/services/aiService";
 import type { HistoryService } from "@/node/services/historyService";
 import type { PartialService } from "@/node/services/partialService";
 import type { InitStateManager } from "@/node/services/initStateManager";
+
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
@@ -89,7 +90,7 @@ interface AgentSessionOptions {
   aiService: AIService;
   initStateManager: InitStateManager;
   backgroundProcessManager: BackgroundProcessManager;
-  /** Called after compaction completes to trigger metadata refresh */
+  /** Called when compaction completes (e.g., to clear idle compaction pending state) */
   onCompactionComplete?: () => void;
   /** Called when post-compaction context state may have changed (plan/file edits) */
   onPostCompactionStateChange?: () => void;
@@ -170,6 +171,7 @@ export class AgentSession {
       historyService: this.historyService,
       partialService: this.partialService,
       emitter: this.emitter,
+      onCompactionComplete,
     });
 
     this.attachAiListeners();

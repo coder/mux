@@ -276,6 +276,20 @@ export const router = (authToken?: string) => {
             )
           ),
       },
+      idleCompaction: {
+        get: t
+          .input(schemas.projects.idleCompaction.get.input)
+          .output(schemas.projects.idleCompaction.get.output)
+          .handler(({ context, input }) => ({
+            hours: context.projectService.getIdleCompactionHours(input.projectPath),
+          })),
+        set: t
+          .input(schemas.projects.idleCompaction.set.input)
+          .output(schemas.projects.idleCompaction.set.output)
+          .handler(({ context, input }) =>
+            context.projectService.setIdleCompactionHours(input.projectPath, input.hours)
+          ),
+      },
     },
     nameGeneration: {
       generate: t

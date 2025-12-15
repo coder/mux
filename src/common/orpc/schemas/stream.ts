@@ -15,6 +15,11 @@ export const CaughtUpMessageSchema = z.object({
   type: z.literal("caught-up"),
 });
 
+/** Sent when a workspace becomes eligible for idle compaction while connected */
+export const IdleCompactionNeededEventSchema = z.object({
+  type: z.literal("idle-compaction-needed"),
+});
+
 export const StreamErrorMessageSchema = z.object({
   type: z.literal("stream-error"),
   messageId: z.string(),
@@ -290,6 +295,8 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   UsageDeltaEventSchema,
   QueuedMessageChangedEventSchema,
   RestoreToInputEventSchema,
+  // Idle compaction notification
+  IdleCompactionNeededEventSchema,
   // Init events
   ...WorkspaceInitEventSchema.def.options,
   // Chat messages with type discriminator

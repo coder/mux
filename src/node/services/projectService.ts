@@ -182,4 +182,41 @@ export class ProjectService {
       return Err(`Failed to update project secrets: ${message}`);
     }
   }
+
+  /**
+   * Get idle compaction hours setting for a project.
+   * Returns null if disabled or project not found.
+   */
+  getIdleCompactionHours(projectPath: string): number | null {
+    try {
+      const config = this.config.loadConfigOrDefault();
+      const project = config.projects.get(projectPath);
+      return project?.idleCompactionHours ?? null;
+    } catch (error) {
+      log.error("Failed to get idle compaction hours:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Set idle compaction hours for a project.
+   * Pass null to disable idle compaction.
+   */
+  async setIdleCompactionHours(projectPath: string, hours: number | null): Promise<Result<void>> {
+    try {
+      const config = this.config.loadConfigOrDefault();
+      const project = config.projects.get(projectPath);
+
+      if (!project) {
+        return Err(`Project not found: ${projectPath}`);
+      }
+
+      project.idleCompactionHours = hours;
+      await this.config.saveConfig(config);
+      return Ok(undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to set idle compaction hours: ${message}`);
+    }
+  }
 }

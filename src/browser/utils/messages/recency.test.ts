@@ -179,4 +179,56 @@ describe("computeRecencyTimestamp", () => {
       expect(computeRecencyTimestamp([], undefined)).toBeNull();
     });
   });
+
+  // Tests for idle compaction request filtering
+  describe("with idle compaction requests", () => {
+    it("excludes idle compaction request messages from recency", () => {
+      const messages = [
+        createMuxMessage("1", "user", "normal message", { timestamp: 100 }),
+        createMuxMessage("2", "assistant", "reply", { timestamp: 150 }),
+        createMuxMessage("3", "user", "compaction request", {
+          timestamp: 300,
+          muxMetadata: {
+            type: "compaction-request",
+            rawCommand: "/compact",
+            parsed: {},
+            source: "idle-compaction",
+          },
+        }),
+      ];
+      // Should use timestamp 100 (normal user message), not 300 (idle compaction)
+      expect(computeRecencyTimestamp(messages)).toBe(100);
+    });
+
+    it("includes user-initiated compaction requests in recency", () => {
+      const messages = [
+        createMuxMessage("1", "user", "normal message", { timestamp: 100 }),
+        createMuxMessage("2", "user", "compaction request", {
+          timestamp: 300,
+          muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+        }),
+      ];
+      // Should use timestamp 300 (user-initiated compaction request)
+      expect(computeRecencyTimestamp(messages)).toBe(300);
+    });
+
+    it("falls back to createdAt when only idle compaction requests exist", () => {
+      const createdAt = "2024-01-15T10:30:00.000Z";
+      const createdTimestamp = new Date(createdAt).getTime();
+
+      const messages = [
+        createMuxMessage("1", "user", "idle compaction", {
+          timestamp: createdTimestamp + 10000,
+          muxMetadata: {
+            type: "compaction-request",
+            rawCommand: "/compact",
+            parsed: {},
+            source: "idle-compaction",
+          },
+        }),
+      ];
+      // Should fall back to createdAt since the only user message is idle compaction
+      expect(computeRecencyTimestamp(messages, createdAt)).toBe(createdTimestamp);
+    });
+  });
 });

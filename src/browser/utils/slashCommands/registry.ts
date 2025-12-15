@@ -624,6 +624,39 @@ function parseMCPNameCommand(
   return { name, command };
 }
 
+const idleCommandDefinition: SlashCommandDefinition = {
+  key: "idle",
+  description: "Configure idle compaction for this project. Usage: /idle <hours> or /idle off",
+  appendSpace: false,
+  handler: ({ cleanRemainingTokens }): ParsedCommand => {
+    if (cleanRemainingTokens.length === 0) {
+      return {
+        type: "unknown-command",
+        command: "idle",
+        subcommand: undefined,
+      };
+    }
+
+    const arg = cleanRemainingTokens[0].toLowerCase();
+
+    // "off", "disable", or "0" all disable idle compaction
+    if (arg === "off" || arg === "disable" || arg === "0") {
+      return { type: "idle-compaction", hours: null };
+    }
+
+    const hours = parseInt(arg, 10);
+    if (isNaN(hours) || hours < 1) {
+      return {
+        type: "unknown-command",
+        command: "idle",
+        subcommand: arg,
+      };
+    }
+
+    return { type: "idle-compaction", hours };
+  },
+};
+
 const mcpCommandDefinition: SlashCommandDefinition = {
   key: "mcp",
   description: "Manage MCP servers for this project",
@@ -666,6 +699,7 @@ export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   newCommandDefinition,
   vimCommandDefinition,
   mcpCommandDefinition,
+  idleCommandDefinition,
 ];
 
 export const SLASH_COMMAND_DEFINITION_MAP = new Map(

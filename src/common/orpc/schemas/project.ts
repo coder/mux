@@ -30,4 +30,8 @@ export const WorkspaceConfigSchema = z.object({
 
 export const ProjectConfigSchema = z.object({
   workspaces: z.array(WorkspaceConfigSchema),
+  idleCompactionHours: z.number().min(1).nullable().optional().meta({
+    description:
+      "Hours of inactivity before auto-compacting workspaces. null/undefined = disabled.",
+  }),
 });

@@ -75,12 +75,22 @@ interface MuxFrontendMetadataBase {
   reviews?: ReviewNoteDataForDisplay[];
 }
 
+/** Status to display in sidebar during background operations */
+export interface DisplayStatus {
+  emoji: string;
+  message: string;
+}
+
 export type MuxFrontendMetadata = MuxFrontendMetadataBase &
   (
     | {
         type: "compaction-request";
         rawCommand: string; // The original /compact command as typed by user (for display)
         parsed: CompactionRequestData;
+        /** Source of compaction request: user-initiated (undefined) or idle-compaction (auto) */
+        source?: "idle-compaction";
+        /** Transient status to display in sidebar during this operation */
+        displayStatus?: DisplayStatus;
       }
     | {
         type: "plan-display"; // Ephemeral plan display from /plan command
@@ -111,6 +121,7 @@ export interface MuxMetadata {
   error?: string; // Error message if stream failed
   errorType?: StreamErrorType; // Error type/category if stream failed
   compacted?: boolean; // Whether this message is a compacted summary of previous history
+  idleCompacted?: boolean; // Whether this compaction was auto-triggered due to workspace inactivity
   toolPolicy?: ToolPolicy; // Tool policy active when this message was sent (user messages only)
   mode?: string; // The mode (plan/exec/etc) active when this message was sent (assistant messages only)
   cmuxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
@@ -181,6 +192,7 @@ export type DisplayedMessage =
       isPartial: boolean; // Whether this message was interrupted
       isLastPartOfMessage?: boolean; // True if this is the last part of a multi-part message
       isCompacted: boolean; // Whether this is a compacted summary
+      isIdleCompacted: boolean; // Whether this compaction was auto-triggered due to inactivity
       model?: string;
       timestamp?: number;
       tokens?: number;

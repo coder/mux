@@ -195,6 +195,17 @@ export const ProjectSettingsSection: React.FC = () => {
   const [editing, setEditing] = useState<{ name: string; command: string } | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
 
+  // Idle compaction state
+  const [idleHours, setIdleHours] = useState<number | null>(null);
+  const [idleHoursInput, setIdleHoursInput] = useState<string>("");
+  const [savingIdleHours, setSavingIdleHours] = useState(false);
+
+  // Sync input field when idleHours loads/changes
+  // Show "24" as default placeholder when disabled
+  useEffect(() => {
+    setIdleHoursInput(idleHours?.toString() ?? "24");
+  }, [idleHours]);
+
   // Set default project when projects load
   useEffect(() => {
     if (projectList.length > 0 && !selectedProject) {
@@ -206,11 +217,15 @@ export const ProjectSettingsSection: React.FC = () => {
     if (!api || !selectedProject) return;
     setLoading(true);
     try {
-      const result = await api.projects.mcp.list({ projectPath: selectedProject });
-      setServers(result ?? {});
+      const [mcpResult, idleResult] = await Promise.all([
+        api.projects.mcp.list({ projectPath: selectedProject }),
+        api.projects.idleCompaction.get({ projectPath: selectedProject }),
+      ]);
+      setServers(mcpResult ?? {});
+      setIdleHours(idleResult.hours);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load MCP servers");
+      setError(err instanceof Error ? err.message : "Failed to load project settings");
     } finally {
       setLoading(false);
     }
@@ -380,6 +395,29 @@ export const ProjectSettingsSection: React.FC = () => {
     }
   }, [api, selectedProject, editing, refresh, clearTestResult]);
 
+  const handleIdleHoursChange = useCallback(
+    async (hours: number | null) => {
+      if (!api || !selectedProject) return;
+      setSavingIdleHours(true);
+      try {
+        const result = await api.projects.idleCompaction.set({
+          projectPath: selectedProject,
+          hours,
+        });
+        if (result.success) {
+          setIdleHours(hours);
+        } else {
+          setError(result.error ?? "Failed to update idle compaction setting");
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to update idle compaction setting");
+      } finally {
+        setSavingIdleHours(false);
+      }
+    },
+    [api, selectedProject]
+  );
+
   if (projectList.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-center">
@@ -417,8 +455,60 @@ export const ProjectSettingsSection: React.FC = () => {
         </p>
       </div>
 
+      {/* Idle Compaction */}
+      <div className="space-y-4">
+        <div>
+          <h3 className="font-medium">Idle Compaction</h3>
+          <p className="text-muted-foreground text-xs">
+            Automatically compact workspaces after a period of inactivity to provide helpful
+            summaries when returning
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={idleHours !== null}
+              onChange={(e) => void handleIdleHoursChange(e.target.checked ? 24 : null)}
+              disabled={savingIdleHours}
+              className="accent-accent h-4 w-4 rounded"
+            />
+            <span className="text-sm">Enable idle compaction</span>
+          </label>
+          {savingIdleHours && <Loader2 className="text-muted-foreground h-4 w-4 animate-spin" />}
+        </div>
+
+        <div
+          className={cn(
+            "flex items-center gap-2",
+            idleHours === null && "pointer-events-none opacity-50"
+          )}
+        >
+          <span className="text-sm">Compact after</span>
+          <input
+            type="number"
+            min={1}
+            value={idleHoursInput}
+            onChange={(e) => setIdleHoursInput(e.target.value)}
+            onBlur={(e) => {
+              const val = parseInt(e.target.value, 10);
+              if (!isNaN(val) && val >= 1 && val !== idleHours) {
+                void handleIdleHoursChange(val);
+              } else if (e.target.value === "" || isNaN(val) || val < 1) {
+                // Reset to current value on invalid input
+                setIdleHoursInput(idleHours?.toString() ?? "24");
+              }
+            }}
+            disabled={savingIdleHours || idleHours === null}
+            className="border-border-medium bg-secondary/30 focus:ring-accent w-20 rounded-md border px-2 py-1 text-sm focus:ring-1 focus:outline-none disabled:cursor-not-allowed"
+          />
+          <span className="text-sm">hours of inactivity</span>
+        </div>
+      </div>
+
       {/* MCP Servers header */}
-      <div className="flex items-center justify-between">
+      <div className="border-border-medium flex items-center justify-between border-t pt-6">
         <div>
           <h3 className="font-medium">MCP Servers</h3>
           <p className="text-muted-foreground text-xs">

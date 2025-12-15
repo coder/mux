@@ -58,6 +58,7 @@ import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useAutoCompactionSettings } from "../hooks/useAutoCompactionSettings";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { useForceCompaction } from "@/browser/hooks/useForceCompaction";
+import { useIdleCompactionHandler } from "@/browser/hooks/useIdleCompactionHandler";
 import { useAPI } from "@/browser/contexts/API";
 import { useReviews } from "@/browser/hooks/useReviews";
 import { ReviewsBanner } from "./ReviewsBanner";
@@ -201,6 +202,9 @@ const AIViewInner: React.FC<AIViewProps> = ({
     isCompacting,
     onTrigger: handleForceCompaction,
   });
+
+  // Idle compaction - trigger compaction when backend signals workspace has been idle
+  useIdleCompactionHandler({ api });
 
   // Auto-retry state - minimal setter for keybinds and message sent handler
   // RetryBarrier manages its own state, but we need this for interrupt keybind

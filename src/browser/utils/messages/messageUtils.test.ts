@@ -65,6 +65,7 @@ describe("mergeConsecutiveStreamErrors", () => {
         isStreaming: false,
         isPartial: false,
         isCompacted: false,
+        isIdleCompacted: false,
       },
     ];
 
@@ -262,6 +263,7 @@ describe("mergeConsecutiveStreamErrors", () => {
         isStreaming: false,
         isPartial: false,
         isCompacted: false,
+        isIdleCompacted: false,
       },
       {
         type: "stream-error",
