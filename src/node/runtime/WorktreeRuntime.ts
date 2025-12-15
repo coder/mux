@@ -18,14 +18,16 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { expandTilde } from "./tildeExpansion";
 import { LocalBaseRuntime } from "./LocalBaseRuntime";
 import { toPosixPath } from "@/node/utils/paths";
+import { encodeWorkspaceNameForDir } from "@/common/utils/workspaceDirName";
 
 /**
  * Worktree runtime implementation that executes commands and file operations
  * directly on the host machine using Node.js APIs.
  *
  * This runtime uses git worktrees for workspace isolation:
- * - Workspaces are created in {srcBaseDir}/{projectName}/{workspaceName}
+ * - Workspaces are created in {srcBaseDir}/{projectName}/{encodedWorkspaceName}
  * - Each workspace is a git worktree with its own branch
+ * - Workspace names containing "/" are encoded (e.g., "feature/foo" → "feature%2Ffoo")
  */
 export class WorktreeRuntime extends LocalBaseRuntime {
   private readonly srcBaseDir: string;
@@ -38,7 +40,8 @@ export class WorktreeRuntime extends LocalBaseRuntime {
 
   getWorkspacePath(projectPath: string, workspaceName: string): string {
     const projectName = getProjectName(projectPath);
-    return path.join(this.srcBaseDir, projectName, workspaceName);
+    const dirName = encodeWorkspaceNameForDir(workspaceName);
+    return path.join(this.srcBaseDir, projectName, dirName);
   }
 
   async createWorkspace(params: WorkspaceCreationParams): Promise<WorkspaceCreationResult> {
