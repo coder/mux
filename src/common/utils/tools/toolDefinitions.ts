@@ -228,7 +228,8 @@ export const TOOL_DEFINITIONS = {
   ask_user_question: {
     description:
       "Ask 1–4 multiple-choice questions (with optional multi-select) and wait for the user's answers. " +
-      "This tool is intended for plan mode and should be used when proceeding requires clarification. " +
+      "This tool is intended for plan mode and MUST be used when you need user clarification to complete the plan. " +
+      "Do not output a list of open questions; ask them via this tool instead. " +
       "Each question must include 2–4 options; an 'Other' choice is provided automatically.",
     schema: AskUserQuestionToolArgsSchema,
   },
@@ -236,7 +237,8 @@ export const TOOL_DEFINITIONS = {
     description:
       "Signal that your plan is complete and ready for user approval. " +
       "This tool reads the plan from the plan file you wrote. " +
-      "You must write your plan to the plan file before calling this tool.",
+      "You must write your plan to the plan file before calling this tool. " +
+      "After calling this tool, do not paste the plan contents or mention the plan file path; the UI already shows the full plan.",
     schema: z.object({}),
   },
   todo_write: {

@@ -17,6 +17,14 @@ NOTE that this is the only file you are allowed to edit - other than this you ar
 
 Keep the plan crisp and focused on actionable recommendations. Put historical context, alternatives considered, or lengthy rationale into collapsible \`<details>/<summary>\` blocks so the core plan stays scannable.
 
+If you need clarification from the user before you can finalize the plan, you MUST use the ask_user_question tool.
+- Do not ask questions in a normal chat message.
+- Do not include an "Open Questions" section in the plan.
+- Ask up to 4 questions at a time (each with 2–4 options; "Other" is always available for free-form input).
+- After you receive answers, update the plan file and only then call propose_plan.
+- After calling propose_plan, do not repeat/paste the plan contents in chat; the UI already renders the full plan.
+- After calling propose_plan, do not say "the plan is ready at <path>" or otherwise mention the plan file location; it's already shown in the Plan UI.
+
 When you have finished writing your plan and are ready for user approval, call the propose_plan tool.
 Do not make other edits in plan mode. You may have tools like bash but only use them for read-only operations.
 
