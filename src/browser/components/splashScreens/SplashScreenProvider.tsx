@@ -1,37 +1,65 @@
-import React, { useState, useCallback, type ReactNode } from "react";
+import React, { useState, useCallback, useEffect, type ReactNode } from "react";
 import { SPLASH_REGISTRY, type SplashConfig } from "./index";
-import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { getSplashDismissedKey } from "@/common/constants/storage";
+import { useAPI } from "@/browser/contexts/API";
 
 export function SplashScreenProvider({ children }: { children: ReactNode }) {
-  // Filter registry to undismissed splashes, sorted by priority (highest number first)
-  const [queue, setQueue] = useState<SplashConfig[]>(() => {
-    return SPLASH_REGISTRY.filter((splash) => {
-      // Priority 0 = never show
-      if (splash.priority === 0) return false;
-      
-      // Check if this splash has been dismissed
-      const isDismissed = readPersistedState(getSplashDismissedKey(splash.id), false);
-      return !isDismissed;
-    }).sort((a, b) => b.priority - a.priority); // Higher number = higher priority = shown first
-  });
+  const { api } = useAPI();
+  const [queue, setQueue] = useState<SplashConfig[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  // Load viewed splash screens from config on mount
+  useEffect(() => {
+    if (!api) return;
+
+    void (async () => {
+      try {
+        const viewedIds = await api.splashScreens.getViewedSplashScreens();
+
+        // Filter registry to undismissed splashes, sorted by priority (highest number first)
+        const activeQueue = SPLASH_REGISTRY.filter((splash) => {
+          // Priority 0 = never show
+          if (splash.priority === 0) return false;
+
+          // Check if this splash has been viewed
+          return !viewedIds.includes(splash.id);
+        }).sort((a, b) => b.priority - a.priority); // Higher number = higher priority = shown first
+
+        setQueue(activeQueue);
+      } catch (error) {
+        console.error("Failed to load viewed splash screens:", error);
+        // On error, don't show any splash screens
+        setQueue([]);
+      } finally {
+        setLoaded(true);
+      }
+    })();
+  }, [api]);
 
   const currentSplash = queue[0] ?? null;
 
-  const dismiss = useCallback(() => {
-    if (!currentSplash) return;
+  const dismiss = useCallback(async () => {
+    if (!currentSplash || !api) return;
 
-    // Persist dismissal to localStorage
-    updatePersistedState(getSplashDismissedKey(currentSplash.id), true);
+    // Mark as viewed in config
+    try {
+      await api.splashScreens.markSplashScreenViewed({ splashId: currentSplash.id });
+    } catch (error) {
+      console.error("Failed to mark splash screen as viewed:", error);
+    }
 
     // Remove from queue, next one shows automatically
     setQueue((q) => q.slice(1));
-  }, [currentSplash]);
+  }, [currentSplash, api]);
+
+  // Don't render splash until we've loaded the viewed state
+  if (!loaded) {
+    return <>{children}</>;
+  }
 
   return (
     <>
       {children}
-      {currentSplash && <currentSplash.component onDismiss={dismiss} />}
+      {currentSplash && <currentSplash.component onDismiss={() => void dismiss()} />}
     </>
   );
 }

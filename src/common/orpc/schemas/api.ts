@@ -502,6 +502,20 @@ export const server = {
   },
 };
 
+// Splash screens
+export const splashScreens = {
+  getViewedSplashScreens: {
+    input: z.void(),
+    output: z.array(z.string()),
+  },
+  markSplashScreenViewed: {
+    input: z.object({
+      splashId: z.string(),
+    }),
+    output: z.void(),
+  },
+};
+
 // Update
 export const update = {
   check: {

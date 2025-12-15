@@ -110,6 +110,7 @@ export {
   providers,
   ProvidersConfigMapSchema,
   server,
+  splashScreens,
   telemetry,
   TelemetryEventSchema,
   terminal,

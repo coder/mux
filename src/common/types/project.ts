@@ -14,4 +14,6 @@ export interface ProjectsConfig {
   projects: Map<string, ProjectConfig>;
   /** SSH hostname/alias for this machine (used for editor deep links in browser mode) */
   serverSshHost?: string;
+  /** IDs of splash screens that have been viewed */
+  viewedSplashScreens?: string[];
 }

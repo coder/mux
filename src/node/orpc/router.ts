@@ -42,6 +42,30 @@ export const router = (authToken?: string) => {
           return context.tokenizerService.calculateStats(input.messages, input.model);
         }),
     },
+    splashScreens: {
+      getViewedSplashScreens: t
+        .input(schemas.splashScreens.getViewedSplashScreens.input)
+        .output(schemas.splashScreens.getViewedSplashScreens.output)
+        .handler(({ context }) => {
+          const config = context.config.loadConfigOrDefault();
+          return config.viewedSplashScreens ?? [];
+        }),
+      markSplashScreenViewed: t
+        .input(schemas.splashScreens.markSplashScreenViewed.input)
+        .output(schemas.splashScreens.markSplashScreenViewed.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const viewed = config.viewedSplashScreens ?? [];
+            if (!viewed.includes(input.splashId)) {
+              viewed.push(input.splashId);
+            }
+            return {
+              ...config,
+              viewedSplashScreens: viewed,
+            };
+          });
+        }),
+    },
     server: {
       getLaunchProject: t
         .input(schemas.server.getLaunchProject.input)

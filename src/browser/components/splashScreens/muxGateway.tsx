@@ -15,7 +15,7 @@ export function MuxGatewaySplash({ onDismiss }: { onDismiss: () => void }) {
       onDismiss={onDismiss}
       primaryAction={{ label: "Open Settings", onClick: handleOpenSettings }}
     >
-      <div className="space-y-3 text-muted">
+      <div className="text-muted" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
         <p>Mux Gateway gives you access to AI models through a unified API.</p>
         <p>
           If you haven&apos;t redeemed your Mux voucher yet,{" "}

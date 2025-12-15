@@ -53,7 +53,11 @@ export class Config {
     try {
       if (fs.existsSync(this.configFile)) {
         const data = fs.readFileSync(this.configFile, "utf-8");
-        const parsed = JSON.parse(data) as { projects?: unknown; serverSshHost?: string };
+        const parsed = JSON.parse(data) as {
+          projects?: unknown;
+          serverSshHost?: string;
+          viewedSplashScreens?: string[];
+        };
 
         // Config is stored as array of [path, config] pairs
         if (parsed.projects && Array.isArray(parsed.projects)) {
@@ -67,6 +71,7 @@ export class Config {
           return {
             projects: projectsMap,
             serverSshHost: parsed.serverSshHost,
+            viewedSplashScreens: parsed.viewedSplashScreens,
           };
         }
       }
@@ -86,11 +91,18 @@ export class Config {
         fs.mkdirSync(this.rootDir, { recursive: true });
       }
 
-      const data: { projects: Array<[string, ProjectConfig]>; serverSshHost?: string } = {
+      const data: {
+        projects: Array<[string, ProjectConfig]>;
+        serverSshHost?: string;
+        viewedSplashScreens?: string[];
+      } = {
         projects: Array.from(config.projects.entries()),
       };
       if (config.serverSshHost) {
         data.serverSshHost = config.serverSshHost;
+      }
+      if (config.viewedSplashScreens) {
+        data.viewedSplashScreens = config.viewedSplashScreens;
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
