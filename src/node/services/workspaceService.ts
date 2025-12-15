@@ -14,7 +14,7 @@ import type { AIService } from "@/node/services/aiService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
-import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { EXPERIMENT_IDS, EXPERIMENTS } from "@/common/constants/experiments";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import { createRuntime, IncompatibleRuntimeError } from "@/node/runtime/runtimeFactory";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
@@ -687,10 +687,26 @@ export class WorkspaceService extends EventEmitter {
     try {
       const metadata = await this.config.getAllWorkspaceMetadata();
 
-      const includePostCompaction =
-        this.experimentsService?.isRemoteEvaluationEnabled() === true
-          ? this.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT)
-          : options?.includePostCompaction === true;
+      // For list(), we use includePostCompaction from options since it's already resolved
+      // by the frontend based on experiment state. The frontend's useExperimentValue()
+      // handles userOverridable logic, so we trust the passed value.
+      const postCompactionExperiment = EXPERIMENTS[EXPERIMENT_IDS.POST_COMPACTION_CONTEXT];
+      let includePostCompaction: boolean;
+      if (
+        postCompactionExperiment.userOverridable &&
+        options?.includePostCompaction !== undefined
+      ) {
+        // User-overridable: trust frontend value
+        includePostCompaction = options.includePostCompaction;
+      } else if (this.experimentsService?.isRemoteEvaluationEnabled() === true) {
+        // Remote evaluation: use PostHog assignment
+        includePostCompaction = this.experimentsService.isExperimentEnabled(
+          EXPERIMENT_IDS.POST_COMPACTION_CONTEXT
+        );
+      } else {
+        // Fallback to frontend value or false
+        includePostCompaction = options?.includePostCompaction === true;
+      }
 
       if (!includePostCompaction) {
         return metadata;
@@ -1007,12 +1023,26 @@ export class WorkspaceService extends EventEmitter {
         void this.updateRecencyTimestamp(workspaceId, messageTimestamp);
       }
 
-      // Experiments: resolve backend-authoritative flags when telemetry is enabled.
-      // When telemetry is disabled, fall back to the renderer-provided experiment toggles.
-      const postCompactionContextEnabled =
-        this.experimentsService?.isRemoteEvaluationEnabled() === true
-          ? this.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT)
-          : options?.experiments?.postCompactionContext;
+      // Experiments: resolve flags respecting userOverridable setting.
+      // - If userOverridable && frontend provides a value → use frontend value (user's choice)
+      // - Else if remote evaluation enabled → use PostHog assignment
+      // - Else → use frontend value (dev fallback) or default
+      const postCompactionExperiment = EXPERIMENTS[EXPERIMENT_IDS.POST_COMPACTION_CONTEXT];
+      const frontendValue = options?.experiments?.postCompactionContext;
+
+      let postCompactionContextEnabled: boolean | undefined;
+      if (postCompactionExperiment.userOverridable && frontendValue !== undefined) {
+        // User-overridable: trust frontend value (user's explicit choice)
+        postCompactionContextEnabled = frontendValue;
+      } else if (this.experimentsService?.isRemoteEvaluationEnabled() === true) {
+        // Remote evaluation: use PostHog assignment
+        postCompactionContextEnabled = this.experimentsService.isExperimentEnabled(
+          EXPERIMENT_IDS.POST_COMPACTION_CONTEXT
+        );
+      } else {
+        // Fallback to frontend value (dev mode or telemetry disabled)
+        postCompactionContextEnabled = frontendValue;
+      }
 
       const resolvedOptions =
         postCompactionContextEnabled === undefined

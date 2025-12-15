@@ -17,6 +17,16 @@ export interface ExperimentDefinition {
   description: string;
   /** Default state - false means disabled by default */
   enabledByDefault: boolean;
+  /**
+   * When true, user can override remote PostHog assignment via Settings toggle.
+   * When false (default), remote assignment is authoritative.
+   */
+  userOverridable?: boolean;
+  /**
+   * When false, experiment is hidden from Settings → Experiments.
+   * Defaults to true. Use false for invisible A/B tests.
+   */
+  showInSettings?: boolean;
 }
 
 /**
@@ -29,6 +39,8 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "Post-Compaction Context",
     description: "Re-inject plan file and edited file diffs after compaction to preserve context",
     enabledByDefault: false,
+    userOverridable: true, // User can opt-out via Settings
+    showInSettings: true,
   },
 };
 

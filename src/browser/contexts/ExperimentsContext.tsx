@@ -38,6 +38,7 @@ function subscribeToExperiment(experimentId: ExperimentId, callback: () => void)
 
 /**
  * Get current experiment state from localStorage.
+ * Returns the stored value or the default if not set.
  */
 function getExperimentSnapshot(experimentId: ExperimentId): boolean {
   const experiment = EXPERIMENTS[experimentId];
@@ -51,6 +52,20 @@ function getExperimentSnapshot(experimentId: ExperimentId): boolean {
     return JSON.parse(stored) as boolean;
   } catch {
     return experiment.enabledByDefault;
+  }
+}
+
+/**
+ * Check if user has explicitly set a local override for an experiment.
+ * Returns true if there's a value in localStorage (not using default).
+ */
+function hasLocalOverride(experimentId: ExperimentId): boolean {
+  const key = getExperimentKey(experimentId);
+  try {
+    const stored = window.localStorage.getItem(key);
+    return stored !== null && stored !== "undefined";
+  } catch {
+    return false;
   }
 }
 
@@ -155,10 +170,16 @@ export function ExperimentsProvider(props: { children: React.ReactNode }) {
  * Uses useSyncExternalStore for efficient, selective re-renders.
  * Only re-renders when THIS specific experiment changes.
  *
+ * Resolution priority:
+ * - If userOverridable && user has explicitly set a local value → use local
+ * - If remote PostHog assignment exists → use remote
+ * - Otherwise → use local (which may be default)
+ *
  * @param experimentId - The experiment to subscribe to
  * @returns Whether the experiment is enabled
  */
 export function useExperimentValue(experimentId: ExperimentId): boolean {
+  const experiment = EXPERIMENTS[experimentId];
   const subscribe = useCallback(
     (callback: () => void) => subscribeToExperiment(experimentId, callback),
     [experimentId]
@@ -171,10 +192,17 @@ export function useExperimentValue(experimentId: ExperimentId): boolean {
   const context = useContext(ExperimentsContext);
   const remote = context?.remoteExperiments?.[experimentId];
 
+  // User-overridable: local wins if explicitly set
+  if (experiment.userOverridable && hasLocalOverride(experimentId)) {
+    return localEnabled;
+  }
+
+  // Remote assignment (if available and not disabled)
   if (remote && remote.source !== "disabled" && remote.value !== null) {
     return getRemoteExperimentEnabled(remote.value);
   }
 
+  // Fallback to local (which may be default)
   return localEnabled;
 }
 
@@ -237,20 +265,25 @@ export function useAllExperiments(): Record<ExperimentId, boolean> {
 
   const getSnapshot = useCallback(() => {
     const result: Partial<Record<ExperimentId, boolean>> = {};
+
     for (const exp of experiments) {
-      result[exp.id] = getExperimentSnapshot(exp.id);
-    }
+      const localValue = getExperimentSnapshot(exp.id);
+      const remote = remoteExperiments?.[exp.id];
 
-    if (remoteExperiments) {
-      for (const [experimentId, remote] of Object.entries(remoteExperiments) as Array<
-        [ExperimentId, ExperimentValue]
-      >) {
-        if (!remote || remote.source === "disabled" || remote.value === null) {
-          continue;
-        }
-
-        result[experimentId] = getRemoteExperimentEnabled(remote.value);
+      // User-overridable: local wins if explicitly set
+      if (exp.userOverridable && hasLocalOverride(exp.id)) {
+        result[exp.id] = localValue;
+        continue;
       }
+
+      // Remote assignment (if available and not disabled)
+      if (remote && remote.source !== "disabled" && remote.value !== null) {
+        result[exp.id] = getRemoteExperimentEnabled(remote.value);
+        continue;
+      }
+
+      // Fallback to local (which may be default)
+      result[exp.id] = localValue;
     }
 
     return result as Record<ExperimentId, boolean>;
