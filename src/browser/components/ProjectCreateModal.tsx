@@ -212,11 +212,10 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
             )}
           </div>
           {error && (
-            <div className="text-error flex items-center gap-2 text-xs">
-              <span>{error}</span>
+            <div className="flex items-center gap-2 text-xs">
+              <span className={canCreateFolder ? "text-muted" : "text-error"}>{error}</span>
               {canCreateFolder && (
                 <Button
-                  variant="outline"
                   size="sm"
                   onClick={() => void handleCreateFolder()}
                   disabled={isCreating}
@@ -231,7 +230,7 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
             <Button variant="secondary" onClick={handleCancel} disabled={isCreating}>
               Cancel
             </Button>
-            <Button onClick={() => void handleSelect()} disabled={isCreating}>
+            <Button onClick={() => void handleSelect()} disabled={isCreating || canCreateFolder}>
               {isCreating ? "Adding..." : "Add Project"}
             </Button>
           </DialogFooter>

@@ -191,11 +191,10 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
           />
         </div>
         {error && (
-          <div className="text-error mb-3 flex items-center gap-2 text-xs">
-            <span>{error}</span>
+          <div className="mb-3 flex items-center gap-2 text-xs">
+            <span className={canCreateFolder ? "text-muted" : "text-error"}>{error}</span>
             {canCreateFolder && (
               <Button
-                variant="outline"
                 size="sm"
                 onClick={() => void handleCreateFolder()}
                 disabled={isLoading}
