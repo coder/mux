@@ -51,6 +51,23 @@ describe("WorktreeRuntime constructor", () => {
     const expected = path.join(os.homedir(), "project", "branch");
     expect(workspacePath).toBe(expected);
   });
+
+  it("should encode slashes in workspace names", () => {
+    const runtime = new WorktreeRuntime("/absolute/path");
+    const workspacePath = runtime.getWorkspacePath("/home/user/project", "feature/foo");
+
+    // Slash should be encoded as %2F, not create nested directories
+    const expected = path.join("/absolute/path", "project", "feature%2Ffoo");
+    expect(workspacePath).toBe(expected);
+  });
+
+  it("should encode multiple slashes in workspace names", () => {
+    const runtime = new WorktreeRuntime("/absolute/path");
+    const workspacePath = runtime.getWorkspacePath("/home/user/project", "feature/sub/deep");
+
+    const expected = path.join("/absolute/path", "project", "feature%2Fsub%2Fdeep");
+    expect(workspacePath).toBe(expected);
+  });
 });
 
 describe("WorktreeRuntime.resolvePath", () => {

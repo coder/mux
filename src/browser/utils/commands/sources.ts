@@ -210,8 +210,10 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
 
     // Remove current workspace (rename action intentionally omitted until we add a proper modal)
     if (selected?.namedWorkspacePath) {
-      const workspaceDisplayName = `${selected.projectName}/${selected.namedWorkspacePath.split("/").pop() ?? selected.namedWorkspacePath}`;
       const selectedMeta = p.workspaceMetadata.get(selected.workspaceId);
+      // Use metadata.name if available (handles slashes correctly), fallback to path derivation
+      const workspaceName = selectedMeta?.name ?? selected.namedWorkspacePath;
+      const workspaceDisplayName = `${selected.projectName}/${workspaceName}`;
       list.push({
         id: CommandIds.workspaceOpenTerminalCurrent(),
         title: "Open Current Workspace in Terminal",

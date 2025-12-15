@@ -26,6 +26,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { execAsync, DisposableProcess } from "@/node/utils/disposableExec";
 import { getControlPath, sshConnectionPool, type SSHRuntimeConfig } from "./sshConnectionPool";
 import { getBashPath } from "@/node/utils/main/bashPath";
+import { encodeWorkspaceNameForDir } from "@/common/utils/workspaceDirName";
 
 /**
  * Shell-escape helper for remote bash.
@@ -871,7 +872,8 @@ export class SSHRuntime implements Runtime {
 
   getWorkspacePath(projectPath: string, workspaceName: string): string {
     const projectName = getProjectName(projectPath);
-    return path.posix.join(this.config.srcBaseDir, projectName, workspaceName);
+    const dirName = encodeWorkspaceNameForDir(workspaceName);
+    return path.posix.join(this.config.srcBaseDir, projectName, dirName);
   }
 
   async createWorkspace(params: WorkspaceCreationParams): Promise<WorkspaceCreationResult> {
