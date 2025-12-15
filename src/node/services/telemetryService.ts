@@ -12,6 +12,7 @@
  * Uses posthog-node which batches events and flushes asynchronously.
  */
 
+import assert from "@/common/utils/assert";
 import { PostHog } from "posthog-node";
 import { randomUUID } from "crypto";
 import * as fs from "fs/promises";
@@ -144,8 +145,44 @@ function getVersionString(): string {
 export class TelemetryService {
   private client: PostHog | null = null;
   private distinctId: string | null = null;
+  private featureFlagVariants: Record<string, string | boolean> = {};
   private readonly muxHome: string;
 
+  getPostHogClient(): PostHog | null {
+    return this.client;
+  }
+
+  getDistinctId(): string | null {
+    return this.distinctId;
+  }
+
+  /**
+   * Set the current PostHog feature flag/experiment assignment.
+   *
+   * This is used to attach `$feature/<flagKey>` properties to all telemetry events so
+   * PostHog can break down metrics by experiment variant (required for server-side capture).
+   */
+  setFeatureFlagVariant(flagKey: string, variant: string | boolean | null): void {
+    assert(typeof flagKey === "string", "flagKey must be a string");
+    const trimmed = flagKey.trim();
+    assert(trimmed.length > 0, "flagKey must not be empty");
+
+    const key = `$feature/${trimmed}`;
+
+    if (variant === null) {
+      // Removing the property avoids emitting null values which can pollute breakdowns.
+      // Note: This is safe even if telemetry is disabled.
+      delete this.featureFlagVariants[key];
+      return;
+    }
+
+    assert(
+      typeof variant === "string" || typeof variant === "boolean",
+      "variant must be a string | boolean | null"
+    );
+
+    this.featureFlagVariants[key] = variant;
+  }
   constructor(muxHome?: string) {
     this.muxHome = muxHome ?? getMuxHome();
   }
@@ -178,7 +215,7 @@ export class TelemetryService {
 
     this.client = new PostHog(DEFAULT_POSTHOG_KEY, {
       host: DEFAULT_POSTHOG_HOST,
-      // Disable feature flags since we don't use them
+      // Avoid geo-IP enrichment (we don't need coarse location for mux telemetry)
       disableGeoip: true,
     });
 
@@ -219,13 +256,14 @@ export class TelemetryService {
   /**
    * Get base properties included with all events
    */
-  private getBaseProperties(): BaseTelemetryProperties {
+  private getBaseProperties(): BaseTelemetryProperties & Record<string, string | boolean> {
     return {
       version: getVersionString(),
       backend_platform: process.platform,
       electronVersion: process.versions.electron ?? "unknown",
       nodeVersion: process.versions.node ?? "unknown",
       bunVersion: process.versions.bun ?? "unknown",
+      ...this.featureFlagVariants,
     };
   }
 

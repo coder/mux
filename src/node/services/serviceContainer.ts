@@ -20,6 +20,7 @@ import { ServerService } from "@/node/services/serverService";
 import { MenuEventService } from "@/node/services/menuEventService";
 import { VoiceService } from "@/node/services/voiceService";
 import { TelemetryService } from "@/node/services/telemetryService";
+import { ExperimentsService } from "@/node/services/experimentsService";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import { MCPConfigService } from "@/node/services/mcpConfigService";
 import { MCPServerManager } from "@/node/services/mcpServerManager";
@@ -51,6 +52,7 @@ export class ServiceContainer {
   public readonly mcpConfigService: MCPConfigService;
   public readonly mcpServerManager: MCPServerManager;
   public readonly telemetryService: TelemetryService;
+  public readonly experimentsService: ExperimentsService;
   public readonly sessionUsageService: SessionUsageService;
   private readonly initStateManager: InitStateManager;
   private readonly extensionMetadata: ExtensionMetadataService;
@@ -114,12 +116,18 @@ export class ServiceContainer {
     this.menuEventService = new MenuEventService();
     this.voiceService = new VoiceService(config);
     this.telemetryService = new TelemetryService(config.rootDir);
+    this.experimentsService = new ExperimentsService({
+      telemetryService: this.telemetryService,
+      muxHome: config.rootDir,
+    });
+    this.workspaceService.setExperimentsService(this.experimentsService);
   }
 
   async initialize(): Promise<void> {
     await this.extensionMetadata.initialize();
     // Initialize telemetry service
     await this.telemetryService.initialize();
+    await this.experimentsService.initialize();
     // Start idle compaction checker
     this.idleCompactionService.start();
   }

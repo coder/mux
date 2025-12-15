@@ -338,6 +338,7 @@ async function loadServices(): Promise<void> {
     menuEventService: services.menuEventService,
     voiceService: services.voiceService,
     telemetryService: services.telemetryService,
+    experimentsService: services.experimentsService,
     sessionUsageService: services.sessionUsageService,
   };
 

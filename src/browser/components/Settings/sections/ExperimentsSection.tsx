@@ -1,5 +1,5 @@
 import React, { useCallback } from "react";
-import { useExperiment } from "@/browser/contexts/ExperimentsContext";
+import { useExperiment, useRemoteExperimentValue } from "@/browser/contexts/ExperimentsContext";
 import {
   getExperimentList,
   EXPERIMENT_IDS,
@@ -17,14 +17,20 @@ interface ExperimentRowProps {
 
 function ExperimentRow(props: ExperimentRowProps) {
   const [enabled, setEnabled] = useExperiment(props.experimentId);
+  const remote = useRemoteExperimentValue(props.experimentId);
+  const isRemoteControlled = remote ? remote.source !== "disabled" : false;
   const { onToggle } = props;
 
   const handleToggle = useCallback(
     (value: boolean) => {
+      if (isRemoteControlled) {
+        return;
+      }
+
       setEnabled(value);
       onToggle?.(value);
     },
-    [setEnabled, onToggle]
+    [isRemoteControlled, setEnabled, onToggle]
   );
 
   return (
@@ -32,9 +38,15 @@ function ExperimentRow(props: ExperimentRowProps) {
       <div className="flex-1 pr-4">
         <div className="text-foreground text-sm font-medium">{props.name}</div>
         <div className="text-muted mt-0.5 text-xs">{props.description}</div>
+        {isRemoteControlled ? (
+          <div className="text-muted mt-0.5 text-xs">
+            PostHog: {remote?.value ?? "loading"} ({remote?.source})
+          </div>
+        ) : null}
       </div>
       <Switch
         checked={enabled}
+        disabled={isRemoteControlled}
         onCheckedChange={handleToggle}
         aria-label={`Toggle ${props.name}`}
       />

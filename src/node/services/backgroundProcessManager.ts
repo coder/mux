@@ -548,21 +548,41 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       // Last element is incomplete if content doesn't end with newline
       const hasTrailingNewline = rawWithBuffer.endsWith("\n");
       const completeLines = hasTrailingNewline ? allLines.slice(0, -1) : allLines.slice(0, -1);
-      const incompleteLine = hasTrailingNewline ? "" : allLines[allLines.length - 1];
 
-      // When using filter_exclude, check if we have meaningful (non-excluded) output
-      // Only consider complete lines for filtering - fragments can't match patterns
+      // When using filter_exclude, check if we have meaningful (non-excluded) output.
+      // We only consider complete lines as "meaningful" here; fragments are buffered for the next read.
       const filteredOutput = applyFilter(completeLines);
       const hasMeaningfulOutput = filterExclude
         ? filteredOutput.trim().length > 0
-        : completeLines.length > 0 || incompleteLine.length > 0;
+        : completeLines.length > 0;
 
       // Return immediately if:
       // 1. We have meaningful output (after filtering if filter_exclude is set)
-      // 2. Process is no longer running (exited/killed/failed) - flush buffer
-      // 3. Timeout elapsed
-      // 4. Abort signal received (user sent a new message)
-      if (hasMeaningfulOutput || currentStatus !== "running") {
+      // 2. Timeout elapsed
+      // 3. Abort signal received (user sent a new message)
+      if (hasMeaningfulOutput) {
+        break;
+      }
+
+      // If the process is no longer running (exited/killed/failed), do one last read
+      // to avoid dropping output that arrives between our readOutput() call and
+      // the status refresh.
+      if (currentStatus !== "running") {
+        while (true) {
+          const finalRead = await proc.handle.readOutput(proc.outputBytesRead);
+          if (finalRead.content.length === 0) {
+            break;
+          }
+
+          // Defensive: avoid infinite loops if a handle returns inconsistent offsets.
+          if (finalRead.newOffset <= proc.outputBytesRead) {
+            break;
+          }
+
+          accumulatedRaw += finalRead.content;
+          proc.outputBytesRead = finalRead.newOffset;
+        }
+
         break;
       }
 

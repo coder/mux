@@ -92,6 +92,7 @@ const mockWindow: BrowserWindow = {
     mcpServerManager: serviceContainer.mcpServerManager,
     voiceService: serviceContainer.voiceService,
     telemetryService: serviceContainer.telemetryService,
+    experimentsService: serviceContainer.experimentsService,
     sessionUsageService: serviceContainer.sessionUsageService,
   };
 

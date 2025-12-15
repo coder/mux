@@ -111,6 +111,8 @@ export {
   ProvidersConfigMapSchema,
   server,
   splashScreens,
+  experiments,
+  ExperimentValueSchema,
   telemetry,
   TelemetryEventSchema,
   terminal,

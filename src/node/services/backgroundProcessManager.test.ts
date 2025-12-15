@@ -397,33 +397,33 @@ describe("BackgroundProcessManager", () => {
 
   describe("getOutput", () => {
     it("should return stdout from a running process", async () => {
-      // Spawn a process that writes output over time
-      // Use longer sleep and explicit flush to ensure output is written to file
+      // Spawn a process that writes output in two phases.
+      // Use a file-gated barrier rather than timing sleeps to avoid CI flakiness.
+      const triggerFile = path.join(bgOutputDir, `trigger-${Date.now()}`);
+
       const result = await manager.spawn(
         runtime,
         testWorkspaceId,
-        "echo 'line 1'; sleep 0.3; echo 'line 2'",
+        `echo 'line 1'; while [ ! -f ${triggerFile} ]; do sleep 0.05; done; echo 'line 2'`,
         { cwd: process.cwd(), displayName: "test" }
       );
 
       expect(result.success).toBe(true);
       if (!result.success) return;
 
-      // Wait for first line to be written and flushed (increased for CI reliability)
-      await new Promise((resolve) => setTimeout(resolve, 200));
-
-      // Get output - should have at least the first line
-      const output1 = await manager.getOutput(result.processId);
+      // Get output - wait up to 1s for the first line
+      const output1 = await manager.getOutput(result.processId, undefined, undefined, 1);
       expect(output1.success).toBe(true);
       if (!output1.success) return;
 
       expect(output1.output).toContain("line 1");
+      expect(output1.output).not.toContain("line 2");
 
-      // Wait for second line (sleep 0.3s + buffer for CI)
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // Unblock the process so it can emit the second line
+      await fs.writeFile(triggerFile, "go", "utf-8");
 
-      // Get output again - should have incremental output (line 2)
-      const output2 = await manager.getOutput(result.processId);
+      // Get output again - wait up to 1s for incremental output (line 2)
+      const output2 = await manager.getOutput(result.processId, undefined, undefined, 1);
       expect(output2.success).toBe(true);
       if (!output2.success) return;
 

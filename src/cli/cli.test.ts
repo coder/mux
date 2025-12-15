@@ -70,6 +70,7 @@ async function createTestServer(authToken?: string): Promise<TestServerHandle> {
     serverService: services.serverService,
     mcpConfigService: services.mcpConfigService,
     mcpServerManager: services.mcpServerManager,
+    experimentsService: services.experimentsService,
     menuEventService: services.menuEventService,
     voiceService: services.voiceService,
     telemetryService: services.telemetryService,

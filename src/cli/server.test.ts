@@ -74,6 +74,7 @@ async function createTestServer(): Promise<TestServerHandle> {
     mcpConfigService: services.mcpConfigService,
     mcpServerManager: services.mcpServerManager,
     menuEventService: services.menuEventService,
+    experimentsService: services.experimentsService,
     voiceService: services.voiceService,
     telemetryService: services.telemetryService,
     sessionUsageService: services.sessionUsageService,

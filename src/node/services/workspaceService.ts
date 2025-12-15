@@ -13,6 +13,8 @@ import type { PartialService } from "@/node/services/partialService";
 import type { AIService } from "@/node/services/aiService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
+import type { ExperimentsService } from "@/node/services/experimentsService";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import { createRuntime, IncompatibleRuntimeError } from "@/node/runtime/runtimeFactory";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
@@ -118,6 +120,7 @@ export class WorkspaceService extends EventEmitter {
     this.setupMetadataListeners();
   }
 
+  private experimentsService?: ExperimentsService;
   private mcpServerManager?: MCPServerManager;
   // Optional terminal service for cleanup on workspace removal
   private terminalService?: TerminalService;
@@ -128,6 +131,10 @@ export class WorkspaceService extends EventEmitter {
    */
   setMCPServerManager(manager: MCPServerManager): void {
     this.mcpServerManager = manager;
+  }
+
+  setExperimentsService(experimentsService: ExperimentsService): void {
+    this.experimentsService = experimentsService;
   }
 
   /**
@@ -680,7 +687,12 @@ export class WorkspaceService extends EventEmitter {
     try {
       const metadata = await this.config.getAllWorkspaceMetadata();
 
-      if (!options?.includePostCompaction) {
+      const includePostCompaction =
+        this.experimentsService?.isRemoteEvaluationEnabled() === true
+          ? this.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT)
+          : options?.includePostCompaction === true;
+
+      if (!includePostCompaction) {
         return metadata;
       }
 
@@ -995,7 +1007,25 @@ export class WorkspaceService extends EventEmitter {
         void this.updateRecencyTimestamp(workspaceId, messageTimestamp);
       }
 
-      if (this.aiService.isStreaming(workspaceId) && !options?.editMessageId) {
+      // Experiments: resolve backend-authoritative flags when telemetry is enabled.
+      // When telemetry is disabled, fall back to the renderer-provided experiment toggles.
+      const postCompactionContextEnabled =
+        this.experimentsService?.isRemoteEvaluationEnabled() === true
+          ? this.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT)
+          : options?.experiments?.postCompactionContext;
+
+      const resolvedOptions =
+        postCompactionContextEnabled === undefined
+          ? options
+          : {
+              ...(options ?? { model: defaultModel }),
+              experiments: {
+                ...(options?.experiments ?? {}),
+                postCompactionContext: postCompactionContextEnabled,
+              },
+            };
+
+      if (this.aiService.isStreaming(workspaceId) && !resolvedOptions?.editMessageId) {
         const pendingAskUserQuestion = askUserQuestionManager.getLatestPending(workspaceId);
         if (pendingAskUserQuestion) {
           try {
@@ -1013,11 +1043,11 @@ export class WorkspaceService extends EventEmitter {
           }
         }
 
-        session.queueMessage(message, options);
+        session.queueMessage(message, resolvedOptions);
         return Ok(undefined);
       }
 
-      const result = await session.sendMessage(message, options);
+      const result = await session.sendMessage(message, resolvedOptions);
       if (!result.success) {
         log.error("sendMessage handler: session returned error", {
           workspaceId,

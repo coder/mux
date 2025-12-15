@@ -1,4 +1,11 @@
-import React, { createContext, useContext, useSyncExternalStore, useCallback } from "react";
+import React, {
+  createContext,
+  useContext,
+  useSyncExternalStore,
+  useCallback,
+  useEffect,
+  useState,
+} from "react";
 import {
   type ExperimentId,
   EXPERIMENTS,
@@ -6,6 +13,8 @@ import {
   getExperimentList,
 } from "@/common/constants/experiments";
 import { getStorageChangeEvent } from "@/common/constants/events";
+import type { ExperimentValue } from "@/common/orpc/types";
+import { useAPI } from "@/browser/contexts/API";
 
 /**
  * Subscribe to experiment changes for a specific experiment ID.
@@ -48,6 +57,15 @@ function getExperimentSnapshot(experimentId: ExperimentId): boolean {
 /**
  * Set experiment state to localStorage and dispatch sync event.
  */
+
+function getRemoteExperimentEnabled(value: string | boolean): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  // For now, our PostHog experiment uses control/test variants.
+  return value === "test";
+}
 function setExperimentState(experimentId: ExperimentId, enabled: boolean): void {
   const key = getExperimentKey(experimentId);
 
@@ -70,6 +88,8 @@ function setExperimentState(experimentId: ExperimentId, enabled: boolean): void 
  */
 interface ExperimentsContextValue {
   setExperiment: (experimentId: ExperimentId, enabled: boolean) => void;
+  remoteExperiments: Partial<Record<ExperimentId, ExperimentValue>> | null;
+  reloadRemoteExperiments: () => Promise<void>;
 }
 
 const ExperimentsContext = createContext<ExperimentsContextValue | null>(null);
@@ -83,8 +103,48 @@ export function ExperimentsProvider(props: { children: React.ReactNode }) {
     setExperimentState(experimentId, enabled);
   }, []);
 
+  const apiState = useAPI();
+  const [remoteExperiments, setRemoteExperiments] = useState<Partial<
+    Record<ExperimentId, ExperimentValue>
+  > | null>(null);
+
+  const loadRemoteExperiments = useCallback(async () => {
+    if (apiState.status !== "connected" || !apiState.api) {
+      setRemoteExperiments(null);
+      return;
+    }
+
+    try {
+      const result = await apiState.api.experiments.getAll();
+      setRemoteExperiments(result as Partial<Record<ExperimentId, ExperimentValue>>);
+    } catch {
+      setRemoteExperiments(null);
+    }
+  }, [apiState.status, apiState.api]);
+
+  const reloadRemoteExperiments = useCallback(async () => {
+    if (apiState.status !== "connected" || !apiState.api) {
+      setRemoteExperiments(null);
+      return;
+    }
+
+    try {
+      await apiState.api.experiments.reload();
+    } catch {
+      // Best effort
+    }
+
+    await loadRemoteExperiments();
+  }, [apiState.status, apiState.api, loadRemoteExperiments]);
+
+  useEffect(() => {
+    void loadRemoteExperiments();
+  }, [loadRemoteExperiments]);
+
   return (
-    <ExperimentsContext.Provider value={{ setExperiment }}>
+    <ExperimentsContext.Provider
+      value={{ setExperiment, remoteExperiments, reloadRemoteExperiments }}
+    >
       {props.children}
     </ExperimentsContext.Provider>
   );
@@ -106,7 +166,16 @@ export function useExperimentValue(experimentId: ExperimentId): boolean {
 
   const getSnapshot = useCallback(() => getExperimentSnapshot(experimentId), [experimentId]);
 
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const localEnabled = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+
+  const context = useContext(ExperimentsContext);
+  const remote = context?.remoteExperiments?.[experimentId];
+
+  if (remote && remote.source !== "disabled" && remote.value !== null) {
+    return getRemoteExperimentEnabled(remote.value);
+  }
+
+  return localEnabled;
 }
 
 /**
@@ -115,6 +184,11 @@ export function useExperimentValue(experimentId: ExperimentId): boolean {
  *
  * @returns Function to set experiment state
  */
+
+export function useRemoteExperimentValue(experimentId: ExperimentId): ExperimentValue | null {
+  const context = useContext(ExperimentsContext);
+  return context?.remoteExperiments?.[experimentId] ?? null;
+}
 export function useSetExperiment(): (experimentId: ExperimentId, enabled: boolean) => void {
   const context = useContext(ExperimentsContext);
   if (!context) {
@@ -149,6 +223,8 @@ export function useExperiment(experimentId: ExperimentId): [boolean, (enabled: b
  */
 export function useAllExperiments(): Record<ExperimentId, boolean> {
   const experiments = getExperimentList();
+  const context = useContext(ExperimentsContext);
+  const remoteExperiments = context?.remoteExperiments;
 
   // Subscribe to all experiments
   const subscribe = useCallback(
@@ -164,8 +240,21 @@ export function useAllExperiments(): Record<ExperimentId, boolean> {
     for (const exp of experiments) {
       result[exp.id] = getExperimentSnapshot(exp.id);
     }
+
+    if (remoteExperiments) {
+      for (const [experimentId, remote] of Object.entries(remoteExperiments) as Array<
+        [ExperimentId, ExperimentValue]
+      >) {
+        if (!remote || remote.source === "disabled" || remote.value === null) {
+          continue;
+        }
+
+        result[experimentId] = getRemoteExperimentEnabled(remote.value);
+      }
+    }
+
     return result as Record<ExperimentId, boolean>;
-  }, [experiments]);
+  }, [experiments, remoteExperiments]);
 
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }

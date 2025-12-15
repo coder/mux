@@ -34,6 +34,9 @@ export type FrontendWorkspaceMetadataSchemaType = z.infer<
   typeof schemas.FrontendWorkspaceMetadataSchema
 >;
 
+// Experiment types (single source of truth - derived from schemas)
+export type ExperimentValue = z.infer<typeof schemas.ExperimentValueSchema>;
+
 // Type guards for common chat message variants
 export function isCaughtUpMessage(msg: WorkspaceChatMessage): msg is CaughtUpMessage {
   return (msg as { type?: string }).type === "caught-up";

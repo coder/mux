@@ -977,6 +977,20 @@ export const router = (authToken?: string) => {
           return context.voiceService.transcribe(input.audioBase64);
         }),
     },
+    experiments: {
+      getAll: t
+        .input(schemas.experiments.getAll.input)
+        .output(schemas.experiments.getAll.output)
+        .handler(({ context }) => {
+          return context.experimentsService.getAll();
+        }),
+      reload: t
+        .input(schemas.experiments.reload.input)
+        .output(schemas.experiments.reload.output)
+        .handler(async ({ context }) => {
+          await context.experimentsService.refreshAll();
+        }),
+    },
     debug: {
       triggerStreamError: t
         .input(schemas.debug.triggerStreamError.input)

@@ -26,6 +26,22 @@ import {
   WorkspaceMCPOverridesSchema,
 } from "./mcp";
 
+// Experiments
+export const ExperimentValueSchema = z.object({
+  value: z.union([z.string(), z.boolean(), z.null()]),
+  source: z.enum(["posthog", "cache", "disabled"]),
+});
+
+export const experiments = {
+  getAll: {
+    input: z.void(),
+    output: z.record(z.string(), ExperimentValueSchema),
+  },
+  reload: {
+    input: z.void(),
+    output: z.void(),
+  },
+};
 // Re-export telemetry schemas
 export { telemetry, TelemetryEventSchema } from "./telemetry";
 

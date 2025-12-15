@@ -84,6 +84,7 @@ export async function createTestEnvironment(): Promise<TestEnvironment> {
     mcpServerManager: services.mcpServerManager,
     menuEventService: services.menuEventService,
     voiceService: services.voiceService,
+    experimentsService: services.experimentsService,
     telemetryService: services.telemetryService,
     sessionUsageService: services.sessionUsageService,
   };
