@@ -14,14 +14,10 @@ import { EditCutoffBarrier } from "./Messages/ChatBarrier/EditCutoffBarrier";
 import { StreamingBarrier } from "./Messages/ChatBarrier/StreamingBarrier";
 import { RetryBarrier } from "./Messages/ChatBarrier/RetryBarrier";
 import { PinnedTodoList } from "./PinnedTodoList";
-import {
-  getAutoRetryKey,
-  VIM_ENABLED_KEY,
-  RIGHT_SIDEBAR_TAB_KEY,
-} from "@/common/constants/storage";
+import { getAutoRetryKey, VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { ChatInput, type ChatInputAPI } from "./ChatInput/index";
-import { RightSidebar, type TabType } from "./RightSidebar";
+import { RightSidebar } from "./RightSidebar";
 import { useResizableSidebar } from "@/browser/hooks/useResizableSidebar";
 import {
   shouldShowInterruptedBarrier,
@@ -38,7 +34,7 @@ import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
-import { readPersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useThinking } from "@/browser/contexts/ThinkingContext";
 import {
   useWorkspaceState,
@@ -95,28 +91,17 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const { api } = useAPI();
   const chatAreaRef = useRef<HTMLDivElement>(null);
 
-  // Track active tab to conditionally enable resize functionality
-  // Initialize from persisted value to avoid layout flash; RightSidebar owns the state
-  // and notifies us of changes via onTabChange callback
-  const [activeTab, setActiveTab] = useState<TabType>(() =>
-    readPersistedState<TabType>(RIGHT_SIDEBAR_TAB_KEY, "costs")
-  );
-
-  const isReviewTabActive = activeTab === "review";
-
-  // Resizable sidebar for Review tab only
-  // Hook encapsulates all drag logic, persistence, and constraints
-  // Returns width to apply to RightSidebar and startResize for handle's onMouseDown
+  // Resizable RightSidebar width (used for both Review + Costs to avoid tab-switch jank)
   const {
     width: sidebarWidth,
     isResizing,
     startResize,
   } = useResizableSidebar({
-    enabled: isReviewTabActive, // Only active on Review tab
-    defaultWidth: 600, // Initial width or fallback
-    minWidth: 300, // Can't shrink smaller
-    maxWidth: 1200, // Can't grow larger
-    storageKey: "review-sidebar-width", // Persists across sessions
+    enabled: true,
+    defaultWidth: 300,
+    minWidth: 300,
+    maxWidth: 1200,
+    storageKey: "review-sidebar-width",
   });
 
   const workspaceState = useWorkspaceState(workspaceId);
@@ -775,12 +760,11 @@ const AIViewInner: React.FC<AIViewProps> = ({
         workspaceId={workspaceId}
         workspacePath={namedWorkspacePath}
         chatAreaRef={chatAreaRef}
-        onTabChange={setActiveTab} // Notifies us when tab changes
-        width={isReviewTabActive ? sidebarWidth : undefined} // Custom width only on Review tab
-        onStartResize={isReviewTabActive ? startResize : undefined} // Pass resize handler when Review active
-        isResizing={isResizing} // Pass resizing state
-        onReviewNote={handleReviewNote} // Pass review note handler to append to chat
-        isCreating={status === "creating"} // Workspace still being set up
+        width={sidebarWidth}
+        onStartResize={startResize}
+        isResizing={isResizing}
+        onReviewNote={handleReviewNote}
+        isCreating={status === "creating"}
       />
 
       <PopoverError

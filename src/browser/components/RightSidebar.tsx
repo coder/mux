@@ -83,8 +83,6 @@ interface RightSidebarProps {
   workspaceId: string;
   workspacePath: string;
   chatAreaRef: React.RefObject<HTMLDivElement>;
-  /** Callback fired when tab selection changes (used for resize logic in AIView) */
-  onTabChange?: (tab: TabType) => void;
   /** Custom width in pixels (overrides default widths when Review tab is resizable) */
   width?: number;
   /** Drag start handler for resize (Review tab only) */
@@ -101,7 +99,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   workspaceId,
   workspacePath,
   chatAreaRef,
-  onTabChange,
   width,
   onStartResize,
   isResizing = false,
@@ -117,19 +114,14 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Review stats reported by ReviewPanel
   const [reviewStats, setReviewStats] = React.useState<ReviewStats | null>(null);
 
-  // NOTE: We intentionally avoid mirroring `selectedTab` into AIView via `useEffect`.
-  // AIView needs tab changes in the same render to avoid sidebar width jank.
-
   // Keyboard shortcuts for tab switching
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (matchesKeybind(e, KEYBINDS.COSTS_TAB)) {
         e.preventDefault();
-        onTabChange?.("costs");
         setSelectedTab("costs");
       } else if (matchesKeybind(e, KEYBINDS.REVIEW_TAB)) {
         e.preventDefault();
-        onTabChange?.("review");
         setSelectedTab("review");
         setFocusTrigger((prev) => prev + 1);
       }
@@ -137,7 +129,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onTabChange, setSelectedTab]);
+  }, [setSelectedTab]);
 
   const usage = useWorkspaceUsage(workspaceId);
   const { options } = useProviderOptions();
@@ -276,10 +268,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
                       ? "bg-hover text-foreground"
                       : "bg-transparent text-muted hover:bg-hover/50 hover:text-foreground"
                   )}
-                  onClick={() => {
-                    onTabChange?.("costs");
-                    setSelectedTab("costs");
-                  }}
+                  onClick={() => setSelectedTab("costs")}
                   id={costsTabId}
                   role="tab"
                   type="button"
@@ -307,10 +296,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
                       ? "bg-hover text-foreground"
                       : "bg-transparent text-muted hover:bg-hover/50 hover:text-foreground"
                   )}
-                  onClick={() => {
-                    onTabChange?.("review");
-                    setSelectedTab("review");
-                  }}
+                  onClick={() => setSelectedTab("review")}
                   id={reviewTabId}
                   role="tab"
                   type="button"
