@@ -204,6 +204,18 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       return;
     }
 
+    // If the sidebar is custom-resized (wider than the default Costs width),
+    // auto-collapse based on chatAreaWidth can oscillate between expanded and
+    // collapsed states (because collapsed is 20px but expanded can be much wider),
+    // which looks like a constant flash. In that case, keep it expanded and let
+    // the user resize manually.
+    if (width !== undefined && width > 300) {
+      if (showCollapsed) {
+        setShowCollapsed(false);
+      }
+      return;
+    }
+
     // Normal hysteresis for Costs/Tools tabs
     if (chatAreaWidth <= COLLAPSE_THRESHOLD) {
       setShowCollapsed(true);
@@ -211,7 +223,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       setShowCollapsed(false);
     }
     // Between thresholds: maintain current state (no change)
-  }, [chatAreaWidth, selectedTab, showCollapsed, setShowCollapsed]);
+  }, [chatAreaWidth, selectedTab, showCollapsed, setShowCollapsed, width]);
 
   // Single render point for VerticalTokenMeter
   // Shows when: (1) collapsed, OR (2) Review tab is active
