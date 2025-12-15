@@ -60,11 +60,16 @@ const DraggableTab: React.FC<{
 }> = ({ item, index, tabsetId, onReorder }) => {
   const [dropIndicator, setDropIndicator] = React.useState<"before" | "after" | null>(null);
   const tabRef = React.useRef<HTMLButtonElement | null>(null);
+  // Track if a drag occurred to suppress click-to-select after drag ends
+  const didDragRef = React.useRef(false);
 
   const [{ isDragging }, drag, preview] = useDrag<TabDragItem, void, { isDragging: boolean }>(
     () => ({
       type: SIDEBAR_TAB_DRAG_TYPE,
-      item: { type: SIDEBAR_TAB_DRAG_TYPE, tab: item.tab, sourceTabsetId: tabsetId, index },
+      item: () => {
+        didDragRef.current = true;
+        return { type: SIDEBAR_TAB_DRAG_TYPE, tab: item.tab, sourceTabsetId: tabsetId, index };
+      },
       collect: (monitor) => ({
         isDragging: monitor.isDragging(),
       }),
@@ -146,7 +151,14 @@ const DraggableTab: React.FC<{
           item.disabled && "opacity-50 pointer-events-none",
           isDragging && "opacity-50"
         )}
-        onClick={item.onSelect}
+        onClick={() => {
+          // Suppress selection if this click is the mouseup after a drag
+          if (didDragRef.current) {
+            didDragRef.current = false;
+            return;
+          }
+          item.onSelect();
+        }}
         id={item.id}
         role="tab"
         type="button"
