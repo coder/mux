@@ -46,6 +46,7 @@ import { AuthTokenModal } from "@/browser/components/AuthTokenModal";
 
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
 import { SettingsModal } from "./components/Settings/SettingsModal";
+import { SplashScreenProvider } from "./components/splashScreens/SplashScreenProvider";
 import { TutorialProvider } from "./contexts/TutorialContext";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { ExperimentsProvider } from "./contexts/ExperimentsContext";
@@ -719,11 +720,13 @@ function App() {
       <ExperimentsProvider>
         <TooltipProvider delayDuration={200}>
           <SettingsProvider>
-            <TutorialProvider>
-              <CommandRegistryProvider>
-                <AppInner />
-              </CommandRegistryProvider>
-            </TutorialProvider>
+            <SplashScreenProvider>
+              <TutorialProvider>
+                <CommandRegistryProvider>
+                  <AppInner />
+                </CommandRegistryProvider>
+              </TutorialProvider>
+            </SplashScreenProvider>
           </SettingsProvider>
         </TooltipProvider>
       </ExperimentsProvider>

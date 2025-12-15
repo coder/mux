@@ -332,6 +332,14 @@ export function deleteWorkspaceStorage(workspaceId: string): void {
 }
 
 /**
+ * Get the localStorage key for tracking dismissed splash screens
+ * Format: "splash:dismissed:{splashId}"
+ */
+export function getSplashDismissedKey(splashId: string): string {
+  return `splash:dismissed:${splashId}`;
+}
+
+/**
  * Migrate all workspace-specific localStorage keys from old to new workspace ID
  * Should be called when a workspace is renamed to preserve settings
  */
