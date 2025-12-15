@@ -371,8 +371,9 @@ export const GitStatusVariations: AppStory = {
     // Hover to open tooltip
     await userEvent.hover(plus);
 
+    // HoverCard content is portaled with data-state="open" when visible
     const getVisibleTooltip = () =>
-      document.body.querySelector<HTMLElement>(".bg-modal-bg.opacity-100.visible");
+      document.body.querySelector<HTMLElement>('.bg-modal-bg[data-state="open"]');
 
     // Wait for tooltip (portaled) and toggle to commits mode
     await waitFor(
