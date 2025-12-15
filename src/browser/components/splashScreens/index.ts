@@ -17,4 +17,4 @@ export const SPLASH_REGISTRY: SplashConfig[] = [
 ];
 
 // Set to true to disable all splash screens (useful for testing)
-export const DISABLE_SPLASH_SCREENS = false;
+export const DISABLE_SPLASH_SCREENS = true;
