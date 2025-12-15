@@ -32,6 +32,8 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
   const { api } = useAPI();
   const [path, setPath] = useState("");
   const [error, setError] = useState("");
+  // Track if the error is specifically "path does not exist" so we can offer to create it
+  const [canCreateFolder, setCanCreateFolder] = useState(false);
   // In Electron mode, window.api exists (set by preload) and has native directory picker via ORPC
   // In browser mode, window.api doesn't exist and we use web-based DirectoryPickerModal
   const isDesktop = !!window.api;
@@ -42,12 +44,14 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
   const handleCancel = useCallback(() => {
     setPath("");
     setError("");
+    setCanCreateFolder(false);
     onClose();
   }, [onClose]);
 
   const handleWebPickerPathSelected = useCallback((selected: string) => {
     setPath(selected);
     setError("");
+    setCanCreateFolder(false);
   }, []);
 
   const handleBrowse = useCallback(async () => {
@@ -56,6 +60,7 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
       if (selectedPath) {
         setPath(selectedPath);
         setError("");
+        setCanCreateFolder(false);
       }
     } catch (err) {
       console.error("Failed to pick directory:", err);
@@ -70,6 +75,7 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
     }
 
     setError("");
+    setCanCreateFolder(false);
     if (!api) {
       setError("Not connected to server");
       return;
@@ -101,7 +107,13 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
         // Backend validation error - show inline, keep modal open
         const errorMessage =
           typeof result.error === "string" ? result.error : "Failed to add project";
-        setError(errorMessage);
+        // Detect "Path does not exist" error to offer folder creation
+        if (errorMessage.includes("Path does not exist")) {
+          setCanCreateFolder(true);
+          setError("This folder doesn't exist.");
+        } else {
+          setError(errorMessage);
+        }
       }
     } catch (err) {
       // Unexpected error
@@ -111,6 +123,32 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
       setIsCreating(false);
     }
   }, [path, onSuccess, onClose, api]);
+
+  const handleCreateFolder = useCallback(async () => {
+    const trimmedPath = path.trim();
+    if (!trimmedPath || !api) return;
+
+    setIsCreating(true);
+    setError("");
+
+    try {
+      const createResult = await api.general.createDirectory({ path: trimmedPath });
+      if (!createResult.success) {
+        setError(createResult.error ?? "Failed to create folder");
+        setCanCreateFolder(false);
+        return;
+      }
+      // Folder created - now retry adding the project
+      setCanCreateFolder(false);
+      void handleSelect();
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred";
+      setError(`Failed to create folder: ${errorMessage}`);
+      setCanCreateFolder(false);
+    } finally {
+      setIsCreating(false);
+    }
+  }, [path, api, handleSelect]);
 
   const handleBrowseClick = useCallback(() => {
     if (isDesktop) {
@@ -154,6 +192,7 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
               onChange={(e) => {
                 setPath(e.target.value);
                 setError("");
+                setCanCreateFolder(false);
               }}
               onKeyDown={handleKeyDown}
               placeholder="/home/user/projects/my-project"
@@ -172,7 +211,22 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
               </Button>
             )}
           </div>
-          {error && <div className="text-error text-xs">{error}</div>}
+          {error && (
+            <div className="text-error flex items-center gap-2 text-xs">
+              <span>{error}</span>
+              {canCreateFolder && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void handleCreateFolder()}
+                  disabled={isCreating}
+                  className="h-6 px-2 py-0 text-xs"
+                >
+                  Create Folder
+                </Button>
+              )}
+            </div>
+          )}
           <DialogFooter>
             <Button variant="secondary" onClick={handleCancel} disabled={isCreating}>
               Cancel

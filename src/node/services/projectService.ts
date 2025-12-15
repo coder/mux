@@ -173,6 +173,26 @@ export class ProjectService {
       };
     }
   }
+
+  async createDirectory(
+    requestedPath: string
+  ): Promise<Result<{ normalizedPath: string }, string>> {
+    try {
+      // Expand ~ to home directory
+      const expanded =
+        requestedPath === "~" || requestedPath.startsWith("~/")
+          ? requestedPath.replace("~", os.homedir())
+          : requestedPath;
+      const normalizedPath = path.resolve(expanded);
+
+      await fsPromises.mkdir(normalizedPath, { recursive: true });
+      return Ok({ normalizedPath });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to create directory: ${message}`);
+    }
+  }
+
   async updateSecrets(projectPath: string, secrets: Secret[]): Promise<Result<void>> {
     try {
       await this.config.updateProjectSecrets(projectPath, secrets);

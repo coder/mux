@@ -549,6 +549,14 @@ export const general = {
     input: z.object({ path: z.string() }),
     output: ResultSchema(FileTreeNodeSchema),
   },
+  /**
+   * Create a directory at the specified path.
+   * Creates parent directories recursively if they don't exist (like mkdir -p).
+   */
+  createDirectory: {
+    input: z.object({ path: z.string() }),
+    output: ResultSchema(z.object({ normalizedPath: z.string() }), z.string()),
+  },
   ping: {
     input: z.string(),
     output: z.string(),
