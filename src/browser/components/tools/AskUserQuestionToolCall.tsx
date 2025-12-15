@@ -1,6 +1,6 @@
 import assert from "@/common/utils/assert";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { useAPI } from "@/browser/contexts/API";
@@ -152,6 +152,18 @@ function draftToAnswerString(question: AskUserQuestionQuestion, draft: DraftAnsw
   return parts.join(", ");
 }
 
+/**
+ * Look up the description for an answer label from the question's options.
+ * Returns undefined for "Other" or custom answers not in options.
+ */
+function getDescriptionForAnswer(
+  question: AskUserQuestionQuestion,
+  answerLabel: string
+): string | undefined {
+  const option = question.options.find((o) => o.label === answerLabel);
+  return option?.description;
+}
+
 export function AskUserQuestionToolCall(props: {
   args: AskUserQuestionToolArgs;
   result: AskUserQuestionToolResult | null;
@@ -210,6 +222,31 @@ export function AskUserQuestionToolCall(props: {
     ? null
     : props.args.questions[Math.min(activeIndex, props.args.questions.length - 1)];
   const currentDraft = currentQuestion ? draftAnswers[currentQuestion.question] : undefined;
+
+  // Track if user has interacted to avoid auto-advancing on initial render
+  const hasUserInteracted = useRef(false);
+
+  // Auto-advance for single-select questions when an option is selected
+  useEffect(() => {
+    if (!hasUserInteracted.current) {
+      return;
+    }
+
+    if (!currentQuestion || currentQuestion.multiSelect || isOnSummary) {
+      return;
+    }
+
+    const draft = draftAnswers[currentQuestion.question];
+    if (!draft) {
+      return;
+    }
+
+    // For single-select, advance when user selects a non-Other option
+    // (Other requires text input, so don't auto-advance)
+    if (draft.selected.length === 1 && !draft.selected.includes(OTHER_VALUE)) {
+      setActiveIndex(activeIndex + 1);
+    }
+  }, [draftAnswers, currentQuestion, activeIndex, isOnSummary]);
 
   const unansweredCount = useMemo(() => {
     return props.args.questions.filter((q) => {
@@ -340,6 +377,11 @@ export function AskUserQuestionToolCall(props: {
                   <>
                     <div>
                       <div className="text-sm font-medium">{currentQuestion.question}</div>
+                      <div className="text-muted-foreground text-xs">
+                        {currentQuestion.multiSelect
+                          ? "Select one or more options"
+                          : "Select one option"}
+                      </div>
                     </div>
 
                     <div className="flex flex-col gap-3">
@@ -347,6 +389,7 @@ export function AskUserQuestionToolCall(props: {
                         const checked = currentDraft.selected.includes(opt.label);
 
                         const toggle = () => {
+                          hasUserInteracted.current = true;
                           setDraftAnswers((prev) => {
                             const next = { ...prev };
                             const draft = next[currentQuestion.question] ?? {
@@ -406,6 +449,7 @@ export function AskUserQuestionToolCall(props: {
                       {(() => {
                         const checked = currentDraft.selected.includes(OTHER_VALUE);
                         const toggle = () => {
+                          hasUserInteracted.current = true;
                           setDraftAnswers((prev) => {
                             const next = { ...prev };
                             const draft = next[currentQuestion.question] ?? {
@@ -492,11 +536,18 @@ export function AskUserQuestionToolCall(props: {
                         ⚠️ {unansweredCount} question{unansweredCount > 1 ? "s" : ""} not answered
                       </div>
                     )}
-                    <div className="flex flex-col gap-1">
+                    <div className="flex flex-col gap-2">
                       {props.args.questions.map((q, idx) => {
                         const draft = draftAnswers[q.question];
                         const answered = draft ? isQuestionAnswered(q, draft) : false;
                         const answerText = answered ? draftToAnswerString(q, draft) : null;
+                        // Get descriptions for selected options
+                        const descriptions = answered
+                          ? draft.selected
+                              .filter((label) => label !== OTHER_VALUE)
+                              .map((label) => getDescriptionForAnswer(q, label))
+                              .filter((d): d is string => d !== undefined)
+                          : [];
                         return (
                           <div
                             key={q.question}
@@ -511,17 +562,30 @@ export function AskUserQuestionToolCall(props: {
                               }
                             }}
                           >
-                            {answered ? (
-                              <span className="text-green-400">✓</span>
-                            ) : (
-                              <span className="text-yellow-500">⚠️</span>
-                            )}{" "}
-                            <span className="font-medium">{q.header}:</span>{" "}
-                            {answered ? (
-                              <span className="text-muted-foreground">{answerText}</span>
-                            ) : (
-                              <span className="text-muted-foreground italic">Not answered</span>
-                            )}
+                            <div className="flex items-start gap-1">
+                              {answered ? (
+                                <span className="text-green-400">✓</span>
+                              ) : (
+                                <span className="text-yellow-500">⚠️</span>
+                              )}{" "}
+                              <div className="flex flex-col">
+                                <div>
+                                  <span className="font-medium">{q.header}:</span>{" "}
+                                  {answered ? (
+                                    <span className="text-muted-foreground">{answerText}</span>
+                                  ) : (
+                                    <span className="text-muted-foreground italic">
+                                      Not answered
+                                    </span>
+                                  )}
+                                </div>
+                                {descriptions.length > 0 && (
+                                  <div className="text-muted-foreground ml-1 text-xs italic">
+                                    {descriptions.join("; ")}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
                           </div>
                         );
                       })}
@@ -541,13 +605,34 @@ export function AskUserQuestionToolCall(props: {
             {props.status !== "executing" && (
               <div className="flex flex-col gap-2">
                 {successResult && (
-                  <div className="text-muted-foreground flex flex-col gap-1 text-sm">
+                  <div className="text-muted-foreground flex flex-col gap-2 text-sm">
                     <div>User answered:</div>
-                    {Object.entries(successResult.answers).map(([question, answer]) => (
-                      <div key={question} className="ml-4">
-                        • <span className="font-medium">{question}:</span> {answer}
-                      </div>
-                    ))}
+                    {Object.entries(successResult.answers).map(([question, answer]) => {
+                      // Find the question definition to get descriptions
+                      const questionDef = successResult.questions.find(
+                        (q) => q.question === question
+                      );
+                      // Parse answer labels (could be comma-separated for multi-select)
+                      const answerLabels = answer.split(",").map((s) => s.trim());
+                      const descriptions = questionDef
+                        ? answerLabels
+                            .map((label) => getDescriptionForAnswer(questionDef, label))
+                            .filter((d): d is string => d !== undefined)
+                        : [];
+
+                      return (
+                        <div key={question} className="ml-4 flex flex-col">
+                          <div>
+                            • <span className="font-medium">{question}:</span> {answer}
+                          </div>
+                          {descriptions.length > 0 && (
+                            <div className="text-muted-foreground ml-3 text-xs italic">
+                              {descriptions.join("; ")}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
 
