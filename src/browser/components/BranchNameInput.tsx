@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronRight, Globe, Loader2, Wand2 } from "lucide-react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
+import { Check, ChevronRight, Globe, Loader2, Plus, Wand2 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { Popover, PopoverContent, PopoverAnchor } from "./ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
@@ -103,27 +103,29 @@ export function BranchNameInput(props: BranchNameInputProps) {
     filteredLocalBranches.length > 0 ||
     remoteGroups.some((g) => getFilteredRemoteBranches(g.remote).length > 0);
 
+  const hasAnyBranches =
+    localBranches.length > 0 || remoteGroups.some((g) => g.branches.length > 0);
+
   // Check if input exactly matches an existing branch
   const exactLocalMatch = localBranches.find((b) => b.toLowerCase() === searchLower);
   const exactRemoteMatch = remoteGroups.find((g) =>
     g.branches.some((b) => b.toLowerCase() === searchLower)
   );
+  const hasExactMatch = exactLocalMatch ?? exactRemoteMatch;
 
-  // Open popover when there's input and matching branches
-  useEffect(() => {
-    if (value.length > 0 && hasMatchingBranches && !disabled) {
-      setIsOpen(true);
-    } else if (value.length === 0 || !hasMatchingBranches) {
-      setIsOpen(false);
-    }
-  }, [value, hasMatchingBranches, disabled]);
+  // Show "Create new branch" option when there's input that doesn't exactly match
+  const showCreateOption = value.length > 0 && !hasExactMatch;
 
-  // Handle input focus - disable auto-generate so user can edit
+  // Handle input focus - show dropdown and disable auto-generate
   const handleFocus = useCallback(() => {
     if (autoGenerate) {
       onAutoGenerateChange(false);
     }
-  }, [autoGenerate, onAutoGenerateChange]);
+    // Show dropdown if branches are available (even when input is empty)
+    if (branchesLoaded && hasAnyBranches && !disabled) {
+      setIsOpen(true);
+    }
+  }, [autoGenerate, onAutoGenerateChange, branchesLoaded, hasAnyBranches, disabled]);
 
   // Handle input change
   const handleChange = useCallback(
@@ -160,17 +162,21 @@ export function BranchNameInput(props: BranchNameInputProps) {
     [onChange, onSelectExistingBranch]
   );
 
-  // Handle input blur - check if we should auto-select an exact match
+  // Handle selecting "Create new branch" option
+  const handleSelectCreateNew = useCallback(() => {
+    // Keep the current value, clear any existing branch selection
+    onSelectExistingBranch(null);
+    setIsOpen(false);
+    inputRef.current?.blur();
+  }, [onSelectExistingBranch]);
+
+  // Handle input blur - close dropdown
   const handleBlur = useCallback(() => {
     // Small delay to allow click events on dropdown items to fire first
     setTimeout(() => {
-      // If input exactly matches a local branch, auto-select it
-      if (exactLocalMatch && !selectedExistingBranch) {
-        onSelectExistingBranch({ kind: "local", branch: exactLocalMatch });
-      }
       setIsOpen(false);
     }, 150);
-  }, [exactLocalMatch, selectedExistingBranch, onSelectExistingBranch]);
+  }, []);
 
   // Handle keyboard navigation
   const handleKeyDown = useCallback(
@@ -187,9 +193,9 @@ export function BranchNameInput(props: BranchNameInputProps) {
           if (branch) {
             handleSelectRemoteBranch(exactRemoteMatch.remote, branch);
           }
-        } else {
-          // No match - close popover and use as new branch name
-          setIsOpen(false);
+        } else if (value.length > 0) {
+          // No match - use as new branch name
+          handleSelectCreateNew();
         }
       }
     },
@@ -197,8 +203,10 @@ export function BranchNameInput(props: BranchNameInputProps) {
       exactLocalMatch,
       exactRemoteMatch,
       searchLower,
+      value.length,
       handleSelectLocalBranch,
       handleSelectRemoteBranch,
+      handleSelectCreateNew,
     ]
   );
 
@@ -315,6 +323,23 @@ export function BranchNameInput(props: BranchNameInputProps) {
             </div>
           )}
 
+          {/* Create new branch option - shown when input doesn't match existing */}
+          {branchesLoaded && showCreateOption && (
+            <>
+              <button
+                type="button"
+                onClick={handleSelectCreateNew}
+                className="text-accent hover:bg-hover flex w-full items-center gap-1.5 rounded-sm px-2 py-1.5 font-mono text-[11px]"
+              >
+                <Plus className="h-3 w-3 shrink-0" />
+                <span className="truncate">
+                  Create new branch <span className="font-semibold">{value}</span>
+                </span>
+              </button>
+              {hasMatchingBranches && <div className="bg-border my-1 h-px" />}
+            </>
+          )}
+
           {/* Remote branches as expandable groups */}
           {branchesLoaded && remoteGroups.length > 0 && (
             <>
@@ -399,10 +424,10 @@ export function BranchNameInput(props: BranchNameInputProps) {
             </>
           )}
 
-          {/* No matches - show hint */}
-          {branchesLoaded && !hasMatchingBranches && value.length > 0 && (
+          {/* Empty state when no input yet */}
+          {branchesLoaded && value.length === 0 && !hasMatchingBranches && (
             <div className="text-muted px-2 py-2 text-center text-[11px]">
-              Press Enter to create new branch
+              Type to search or create a branch
             </div>
           )}
         </div>
