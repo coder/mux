@@ -1040,9 +1040,13 @@ export class AIService extends EventEmitter {
         ? metadata.projectPath
         : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
 
+      // Fetch workspace MCP overrides (for filtering servers and tools)
+      const mcpOverrides = this.config.getWorkspaceMCPOverrides(workspaceId);
+
       // Fetch MCP server config for system prompt (before building message)
+      // Pass overrides to filter out disabled servers
       const mcpServers = this.mcpServerManager
-        ? await this.mcpServerManager.listServers(metadata.projectPath)
+        ? await this.mcpServerManager.listServers(metadata.projectPath, mcpOverrides)
         : undefined;
 
       // Construct plan mode instruction if in plan mode
@@ -1164,6 +1168,7 @@ export class AIService extends EventEmitter {
             projectPath: metadata.projectPath,
             runtime,
             workspacePath,
+            overrides: mcpOverrides,
           });
         } catch (error) {
           log.error("Failed to start MCP servers", { workspaceId, error });

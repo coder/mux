@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Pencil } from "lucide-react";
+import { Pencil, Server } from "lucide-react";
 import { GitStatusIndicator } from "./GitStatusIndicator";
 import { RuntimeBadge } from "./RuntimeBadge";
 import { BranchSelector } from "./BranchSelector";
+import { WorkspaceMCPModal } from "./WorkspaceMCPModal";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
@@ -16,6 +17,7 @@ import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 interface WorkspaceHeaderProps {
   workspaceId: string;
   projectName: string;
+  projectPath: string;
   workspaceName: string;
   namedWorkspacePath: string;
   runtimeConfig?: RuntimeConfig;
@@ -24,6 +26,7 @@ interface WorkspaceHeaderProps {
 export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   workspaceId,
   projectName,
+  projectPath,
   workspaceName,
   namedWorkspacePath,
   runtimeConfig,
@@ -34,6 +37,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const { canInterrupt } = useWorkspaceSidebarState(workspaceId);
   const { startSequence: startTutorial, isSequenceCompleted } = useTutorial();
   const [editorError, setEditorError] = useState<string | null>(null);
+  const [mcpModalOpen, setMcpModalOpen] = useState(false);
 
   const handleOpenTerminal = useCallback(() => {
     openTerminal(workspaceId, runtimeConfig);
@@ -89,8 +93,23 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => void handleOpenInEditor()}
+              onClick={() => setMcpModalOpen(true)}
               className="text-muted hover:text-foreground h-6 w-6 shrink-0"
+            >
+              <Server className="h-4 w-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center">
+            Configure MCP servers for this workspace
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => void handleOpenInEditor()}
+              className="text-muted hover:text-foreground ml-1 h-6 w-6 shrink-0"
             >
               <Pencil className="h-4 w-4" />
             </Button>
@@ -118,6 +137,12 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           </TooltipContent>
         </Tooltip>
       </div>
+      <WorkspaceMCPModal
+        workspaceId={workspaceId}
+        projectPath={projectPath}
+        open={mcpModalOpen}
+        onOpenChange={setMcpModalOpen}
+      />
     </div>
   );
 };

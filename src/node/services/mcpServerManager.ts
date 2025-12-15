@@ -2,7 +2,12 @@ import { experimental_createMCPClient, type MCPTransport } from "@ai-sdk/mcp";
 import type { Tool } from "ai";
 import { log } from "@/node/services/log";
 import { MCPStdioTransport } from "@/node/services/mcpStdioTransport";
-import type { MCPServerMap, MCPTestResult } from "@/common/types/mcp";
+import type {
+  MCPServerInfo,
+  MCPServerMap,
+  MCPTestResult,
+  WorkspaceMCPOverrides,
+} from "@/common/types/mcp";
 import type { Runtime } from "@/node/runtime/Runtime";
 import type { MCPConfigService } from "@/node/services/mcpConfigService";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
@@ -149,31 +154,127 @@ export class MCPServerManager {
   }
 
   /**
-   * Get merged servers: config file servers (unless ignoreConfigFile) + inline servers.
-   * Inline servers take precedence over config file servers with the same name.
-   * Filters out disabled servers.
+   * Get all servers from config (both enabled and disabled) + inline servers.
+   * Returns full MCPServerInfo to preserve disabled state.
    */
-  private async getMergedServers(projectPath: string): Promise<MCPServerMap> {
-    const allServers = this.ignoreConfigFile
+  private async getAllServers(projectPath: string): Promise<Record<string, MCPServerInfo>> {
+    const configServers = this.ignoreConfigFile
       ? {}
       : await this.configService.listServers(projectPath);
-    // Filter to enabled servers only, extract command strings
-    const configServers: MCPServerMap = {};
-    for (const [name, entry] of Object.entries(allServers)) {
-      if (!entry.disabled) {
-        configServers[name] = entry.command;
-      }
+    // Inline servers override config file servers (always enabled)
+    const inlineAsInfo: Record<string, MCPServerInfo> = {};
+    for (const [name, command] of Object.entries(this.inlineServers)) {
+      inlineAsInfo[name] = { command, disabled: false };
     }
-    // Inline servers override config file servers
-    return { ...configServers, ...this.inlineServers };
+    return { ...configServers, ...inlineAsInfo };
   }
 
   /**
    * List configured MCP servers for a project (name -> command).
    * Used to show server info in the system prompt.
+   *
+   * Applies both project-level disabled state and workspace-level overrides:
+   * - Project disabled + workspace enabled => enabled
+   * - Project enabled + workspace disabled => disabled
+   * - No workspace override => use project state
+   *
+   * @param projectPath - Project path to get servers for
+   * @param overrides - Optional workspace-level overrides
    */
-  async listServers(projectPath: string): Promise<MCPServerMap> {
-    return this.getMergedServers(projectPath);
+  async listServers(projectPath: string, overrides?: WorkspaceMCPOverrides): Promise<MCPServerMap> {
+    const allServers = await this.getAllServers(projectPath);
+    return this.applyServerOverrides(allServers, overrides);
+  }
+
+  /**
+   * Apply workspace MCP overrides to determine final server enabled state.
+   *
+   * Logic:
+   * - If server is in enabledServers: enabled (overrides project disabled)
+   * - If server is in disabledServers: disabled (overrides project enabled)
+   * - Otherwise: use project-level disabled state
+   */
+  private applyServerOverrides(
+    servers: Record<string, MCPServerInfo>,
+    overrides?: WorkspaceMCPOverrides
+  ): MCPServerMap {
+    const enabledSet = new Set(overrides?.enabledServers ?? []);
+    const disabledSet = new Set(overrides?.disabledServers ?? []);
+
+    const result: MCPServerMap = {};
+    for (const [name, info] of Object.entries(servers)) {
+      // Workspace overrides take precedence
+      if (enabledSet.has(name)) {
+        result[name] = info.command; // Explicitly enabled at workspace level
+      } else if (disabledSet.has(name)) {
+        // Explicitly disabled at workspace level - skip
+        continue;
+      } else if (!info.disabled) {
+        result[name] = info.command; // Enabled at project level, no workspace override
+      }
+      // If disabled at project level with no workspace override, skip
+    }
+    return result;
+  }
+
+  /**
+   * Apply tool allowlists to filter tools from a server.
+   * Project-level allowlist is applied first, then workspace-level (intersection).
+   *
+   * @param serverName - Name of the MCP server (used for allowlist lookup)
+   * @param tools - Record of tool name -> Tool (NOT namespaced)
+   * @param projectAllowlist - Optional project-level tool allowlist (from .mux/mcp.jsonc)
+   * @param workspaceOverrides - Optional workspace MCP overrides containing toolAllowlist
+   * @returns Filtered tools record
+   */
+  private applyToolAllowlist(
+    serverName: string,
+    tools: Record<string, Tool>,
+    projectAllowlist?: string[],
+    workspaceOverrides?: WorkspaceMCPOverrides
+  ): Record<string, Tool> {
+    const workspaceAllowlist = workspaceOverrides?.toolAllowlist?.[serverName];
+
+    // Determine effective allowlist:
+    // - If both exist: intersection (workspace restricts further)
+    // - If only project: use project
+    // - If only workspace: use workspace
+    // - If neither: no filtering
+    let effectiveAllowlist: Set<string> | null = null;
+
+    if (projectAllowlist && projectAllowlist.length > 0 && workspaceAllowlist) {
+      // Intersection of both allowlists
+      const projectSet = new Set(projectAllowlist);
+      effectiveAllowlist = new Set(workspaceAllowlist.filter((t) => projectSet.has(t)));
+    } else if (projectAllowlist && projectAllowlist.length > 0) {
+      effectiveAllowlist = new Set(projectAllowlist);
+    } else if (workspaceAllowlist) {
+      effectiveAllowlist = new Set(workspaceAllowlist);
+    }
+
+    if (!effectiveAllowlist) {
+      // No allowlist => return all tools
+      return tools;
+    }
+
+    // Filter to only allowed tools
+    const filtered: Record<string, Tool> = {};
+    for (const [name, tool] of Object.entries(tools)) {
+      if (effectiveAllowlist.has(name)) {
+        filtered[name] = tool;
+      }
+    }
+
+    log.debug("[MCP] Applied tool allowlist", {
+      serverName,
+      projectAllowlist,
+      workspaceAllowlist,
+      effectiveCount: effectiveAllowlist.size,
+      originalCount: Object.keys(tools).length,
+      filteredCount: Object.keys(filtered).length,
+    });
+
+    return filtered;
   }
 
   async getToolsForWorkspace(options: {
@@ -181,9 +282,16 @@ export class MCPServerManager {
     projectPath: string;
     runtime: Runtime;
     workspacePath: string;
+    /** Per-workspace MCP overrides (disabled servers, tool allowlists) */
+    overrides?: WorkspaceMCPOverrides;
   }): Promise<Record<string, Tool>> {
-    const { workspaceId, projectPath, runtime, workspacePath } = options;
-    const servers = await this.getMergedServers(projectPath);
+    const { workspaceId, projectPath, runtime, workspacePath, overrides } = options;
+
+    // Fetch full server info for project-level allowlists and server filtering
+    const fullServerInfo = await this.getAllServers(projectPath);
+
+    // Apply server-level overrides (enabled/disabled) before caching
+    const servers = this.applyServerOverrides(fullServerInfo, overrides);
     const signature = JSON.stringify(servers);
     const serverNames = Object.keys(servers);
 
@@ -192,7 +300,8 @@ export class MCPServerManager {
       // Update activity timestamp to prevent idle cleanup
       existing.lastActivity = Date.now();
       log.debug("[MCP] Using cached servers", { workspaceId, serverCount: serverNames.length });
-      return this.collectTools(existing.instances);
+      // Apply tool-level filtering (allowlists) each time - they can change without server restart
+      return this.collectTools(existing.instances, fullServerInfo, overrides);
     }
 
     // Config changed or not started yet -> restart
@@ -206,7 +315,7 @@ export class MCPServerManager {
       instances,
       lastActivity: Date.now(),
     });
-    return this.collectTools(instances);
+    return this.collectTools(instances, fullServerInfo, overrides);
   }
 
   async stopServers(workspaceId: string): Promise<void> {
@@ -244,10 +353,31 @@ export class MCPServerManager {
     return { success: false, error: "Either name or command is required" };
   }
 
-  private collectTools(instances: Map<string, MCPServerInstance>): Record<string, Tool> {
+  /**
+   * Collect tools from all server instances, applying tool allowlists.
+   *
+   * @param instances - Map of server instances
+   * @param serverInfo - Project-level server info (for project-level tool allowlists)
+   * @param workspaceOverrides - Optional workspace MCP overrides for tool allowlists
+   * @returns Aggregated tools record with namespaced names (serverName_toolName)
+   */
+  private collectTools(
+    instances: Map<string, MCPServerInstance>,
+    serverInfo: Record<string, MCPServerInfo>,
+    workspaceOverrides?: WorkspaceMCPOverrides
+  ): Record<string, Tool> {
     const aggregated: Record<string, Tool> = {};
     for (const instance of instances.values()) {
-      for (const [toolName, tool] of Object.entries(instance.tools)) {
+      // Get project-level allowlist for this server
+      const projectAllowlist = serverInfo[instance.name]?.toolAllowlist;
+      // Apply tool allowlist filtering (project-level + workspace-level)
+      const filteredTools = this.applyToolAllowlist(
+        instance.name,
+        instance.tools,
+        projectAllowlist,
+        workspaceOverrides
+      );
+      for (const [toolName, tool] of Object.entries(filteredTools)) {
         // Namespace tools with server name to prevent collisions
         const namespacedName = `${instance.name}_${toolName}`;
         aggregated[namespacedName] = tool;

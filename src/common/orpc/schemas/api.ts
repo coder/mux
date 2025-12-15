@@ -20,8 +20,10 @@ import {
   MCPRemoveParamsSchema,
   MCPServerMapSchema,
   MCPSetEnabledParamsSchema,
+  MCPSetToolAllowlistParamsSchema,
   MCPTestParamsSchema,
   MCPTestResultSchema,
+  WorkspaceMCPOverridesSchema,
 } from "./mcp";
 
 // Re-export telemetry schemas
@@ -158,6 +160,10 @@ export const projects = {
     },
     setEnabled: {
       input: MCPSetEnabledParamsSchema,
+      output: ResultSchema(z.void(), z.string()),
+    },
+    setToolAllowlist: {
+      input: MCPSetToolAllowlistParamsSchema,
       output: ResultSchema(z.void(), z.string()),
     },
   },
@@ -407,6 +413,20 @@ export const workspace = {
   getSessionUsage: {
     input: z.object({ workspaceId: z.string() }),
     output: SessionUsageFileSchema.optional(),
+  },
+  /** Per-workspace MCP configuration (overrides project-level mcp.jsonc) */
+  mcp: {
+    get: {
+      input: z.object({ workspaceId: z.string() }),
+      output: WorkspaceMCPOverridesSchema,
+    },
+    set: {
+      input: z.object({
+        workspaceId: z.string(),
+        overrides: WorkspaceMCPOverridesSchema,
+      }),
+      output: ResultSchema(z.void(), z.string()),
+    },
   },
 };
 

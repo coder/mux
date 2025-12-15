@@ -540,6 +540,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
         <WorkspaceHeader
           workspaceId={workspaceId}
           projectName={projectName}
+          projectPath={projectPath}
           workspaceName={workspaceName}
           namedWorkspacePath={namedWorkspacePath}
           runtimeConfig={runtimeConfig}

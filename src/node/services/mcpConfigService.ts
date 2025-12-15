@@ -29,11 +29,17 @@ export class MCPConfigService {
   }
 
   /** Raw config file format - string (legacy) or object */
-  private normalizeEntry(entry: string | { command: string; disabled?: boolean }): MCPServerInfo {
+  private normalizeEntry(
+    entry: string | { command: string; disabled?: boolean; toolAllowlist?: string[] }
+  ): MCPServerInfo {
     if (typeof entry === "string") {
       return { command: entry, disabled: false };
     }
-    return { command: entry.command, disabled: entry.disabled ?? false };
+    return {
+      command: entry.command,
+      disabled: entry.disabled ?? false,
+      toolAllowlist: entry.toolAllowlist,
+    };
   }
 
   async getConfig(projectPath: string): Promise<MCPConfig> {
@@ -65,10 +71,26 @@ export class MCPConfigService {
   private async saveConfig(projectPath: string, config: MCPConfig): Promise<void> {
     await this.ensureProjectDir(projectPath);
     const filePath = this.getConfigPath(projectPath);
-    // Write minimal format: string for enabled, object only when disabled
-    const output: Record<string, string | { command: string; disabled: true }> = {};
+    // Write minimal format: string for simple enabled servers, object when has settings
+    // toolAllowlist: undefined = all tools (omit), [] = no tools, [...] = those tools
+    const output: Record<
+      string,
+      string | { command: string; disabled?: true; toolAllowlist?: string[] }
+    > = {};
     for (const [name, entry] of Object.entries(config.servers)) {
-      output[name] = entry.disabled ? { command: entry.command, disabled: true } : entry.command;
+      const hasSettings = entry.disabled || entry.toolAllowlist !== undefined;
+      if (hasSettings) {
+        const obj: { command: string; disabled?: true; toolAllowlist?: string[] } = {
+          command: entry.command,
+        };
+        if (entry.disabled) obj.disabled = true;
+        if (entry.toolAllowlist !== undefined) {
+          obj.toolAllowlist = entry.toolAllowlist;
+        }
+        output[name] = obj;
+      } else {
+        output[name] = entry.command;
+      }
     }
     await writeFileAtomic(filePath, JSON.stringify({ servers: output }, null, 2), "utf-8");
   }
@@ -89,8 +111,12 @@ export class MCPConfigService {
 
     const cfg = await this.getConfig(projectPath);
     const existing = cfg.servers[name];
-    // Preserve disabled state if updating existing server
-    cfg.servers[name] = { command, disabled: existing?.disabled ?? false };
+    // Preserve disabled state and toolAllowlist if updating existing server
+    cfg.servers[name] = {
+      command,
+      disabled: existing?.disabled ?? false,
+      toolAllowlist: existing?.toolAllowlist,
+    };
 
     try {
       await this.saveConfig(projectPath, cfg);
@@ -132,6 +158,30 @@ export class MCPConfigService {
       return Ok(undefined);
     } catch (error) {
       log.error("Failed to remove MCP server", { projectPath, name, error });
+      return Err(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async setToolAllowlist(
+    projectPath: string,
+    name: string,
+    toolAllowlist: string[]
+  ): Promise<Result<void>> {
+    const cfg = await this.getConfig(projectPath);
+    const entry = cfg.servers[name];
+    if (!entry) {
+      return Err(`Server ${name} not found`);
+    }
+    // [] = no tools allowed, [...tools] = those tools allowed
+    cfg.servers[name] = {
+      ...entry,
+      toolAllowlist,
+    };
+    try {
+      await this.saveConfig(projectPath, cfg);
+      return Ok(undefined);
+    } catch (error) {
+      log.error("Failed to update MCP server tool allowlist", { projectPath, name, error });
       return Err(error instanceof Error ? error.message : String(error));
     }
   }
