@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import {
@@ -12,6 +12,8 @@ import {
   Pencil,
   Check,
   X,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { Button } from "@/browser/components/ui/button";
 import {
@@ -26,57 +28,143 @@ import { Switch } from "@/browser/components/ui/switch";
 import { cn } from "@/common/lib/utils";
 import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
 import type { CachedMCPTestResult, MCPServerInfo } from "@/common/types/mcp";
-import { getMCPTestResultsKey } from "@/common/constants/storage";
-import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { useMCPTestCache } from "@/browser/hooks/useMCPTestCache";
+import { ToolSelector } from "@/browser/components/ToolSelector";
 
-type CachedResults = Record<string, CachedMCPTestResult>;
-
-/** Hook to manage MCP test results with localStorage caching */
-function useMCPTestCache(projectPath: string) {
-  const storageKey = useMemo(
-    () => (projectPath ? getMCPTestResultsKey(projectPath) : ""),
-    [projectPath]
+/** Component for managing tool allowlist for a single MCP server */
+const ToolAllowlistSection: React.FC<{
+  serverName: string;
+  availableTools: string[];
+  currentAllowlist?: string[];
+  testedAt: number;
+  projectPath: string;
+}> = ({ serverName, availableTools, currentAllowlist, testedAt, projectPath }) => {
+  const { api } = useAPI();
+  const [expanded, setExpanded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  // Always use an array internally - undefined from props means all tools allowed
+  const [localAllowlist, setLocalAllowlist] = useState<string[]>(
+    () => currentAllowlist ?? [...availableTools]
   );
 
-  const [cache, setCache] = useState<CachedResults>(() =>
-    storageKey ? readPersistedState<CachedResults>(storageKey, {}) : {}
-  );
-
-  // Reload cache when project changes
+  // Sync local state when prop changes
   useEffect(() => {
-    if (storageKey) {
-      setCache(readPersistedState<CachedResults>(storageKey, {}));
-    } else {
-      setCache({});
+    setLocalAllowlist(currentAllowlist ?? [...availableTools]);
+  }, [currentAllowlist, availableTools]);
+
+  const allAllowed = localAllowlist.length === availableTools.length;
+  const allDisabled = localAllowlist.length === 0;
+
+  const handleToggleTool = useCallback(
+    async (toolName: string, allowed: boolean) => {
+      if (!api) return;
+
+      const newAllowlist = allowed
+        ? [...localAllowlist, toolName]
+        : localAllowlist.filter((t) => t !== toolName);
+
+      // Optimistic update
+      setLocalAllowlist(newAllowlist);
+      setSaving(true);
+
+      try {
+        const result = await api.projects.mcp.setToolAllowlist({
+          projectPath,
+          name: serverName,
+          toolAllowlist: newAllowlist,
+        });
+        if (!result.success) {
+          setLocalAllowlist(currentAllowlist ?? [...availableTools]);
+          console.error("Failed to update tool allowlist:", result.error);
+        }
+      } catch (err) {
+        setLocalAllowlist(currentAllowlist ?? [...availableTools]);
+        console.error("Failed to update tool allowlist:", err);
+      } finally {
+        setSaving(false);
+      }
+    },
+    [api, projectPath, serverName, localAllowlist, currentAllowlist, availableTools]
+  );
+
+  const handleAllowAll = useCallback(async () => {
+    if (!api || allAllowed) return;
+
+    const newAllowlist = [...availableTools];
+    setLocalAllowlist(newAllowlist);
+    setSaving(true);
+
+    try {
+      const result = await api.projects.mcp.setToolAllowlist({
+        projectPath,
+        name: serverName,
+        toolAllowlist: newAllowlist,
+      });
+      if (!result.success) {
+        setLocalAllowlist(currentAllowlist ?? [...availableTools]);
+        console.error("Failed to clear tool allowlist:", result.error);
+      }
+    } catch (err) {
+      setLocalAllowlist(currentAllowlist ?? [...availableTools]);
+      console.error("Failed to clear tool allowlist:", err);
+    } finally {
+      setSaving(false);
     }
-  }, [storageKey]);
+  }, [api, projectPath, serverName, allAllowed, currentAllowlist, availableTools]);
 
-  const setResult = useCallback(
-    (name: string, result: CachedMCPTestResult["result"]) => {
-      const entry: CachedMCPTestResult = { result, testedAt: Date.now() };
-      setCache((prev) => {
-        const next = { ...prev, [name]: entry };
-        if (storageKey) updatePersistedState(storageKey, next);
-        return next;
+  const handleSelectNone = useCallback(async () => {
+    if (!api || allDisabled) return;
+
+    setLocalAllowlist([]);
+    setSaving(true);
+
+    try {
+      const result = await api.projects.mcp.setToolAllowlist({
+        projectPath,
+        name: serverName,
+        toolAllowlist: [],
       });
-    },
-    [storageKey]
-  );
+      if (!result.success) {
+        setLocalAllowlist(currentAllowlist ?? [...availableTools]);
+        console.error("Failed to set empty tool allowlist:", result.error);
+      }
+    } catch (err) {
+      setLocalAllowlist(currentAllowlist ?? [...availableTools]);
+      console.error("Failed to set empty tool allowlist:", err);
+    } finally {
+      setSaving(false);
+    }
+  }, [api, projectPath, serverName, allDisabled, currentAllowlist, availableTools]);
 
-  const clearResult = useCallback(
-    (name: string) => {
-      setCache((prev) => {
-        const next = { ...prev };
-        delete next[name];
-        if (storageKey) updatePersistedState(storageKey, next);
-        return next;
-      });
-    },
-    [storageKey]
-  );
+  return (
+    <div className="mt-2">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-xs"
+      >
+        {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        <span>
+          Tools: {localAllowlist.length}/{availableTools.length}
+        </span>
+        <span className="text-muted-foreground/60 ml-1">({formatRelativeTime(testedAt)})</span>
+        {saving && <Loader2 className="ml-1 h-3 w-3 animate-spin" />}
+      </button>
 
-  return { cache, setResult, clearResult };
-}
+      {expanded && (
+        <div className="border-border-light mt-2 border-l-2 pl-3">
+          <ToolSelector
+            availableTools={availableTools}
+            allowedTools={localAllowlist}
+            onToggle={(tool, allowed) => void handleToggleTool(tool, allowed)}
+            onSelectAll={() => void handleAllowAll()}
+            onSelectNone={() => void handleSelectNone()}
+            disabled={saving}
+          />
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const ProjectSettingsSection: React.FC = () => {
   const { api } = useAPI();
@@ -478,12 +566,13 @@ export const ProjectSettingsSection: React.FC = () => {
                   </div>
                 )}
                 {cached?.result.success && cached.result.tools.length > 0 && !isEditing && (
-                  <p className="text-muted-foreground mt-2 text-xs">
-                    Tools: {cached.result.tools.join(", ")}
-                    <span className="text-muted-foreground/60 ml-2">
-                      ({formatRelativeTime(cached.testedAt)})
-                    </span>
-                  </p>
+                  <ToolAllowlistSection
+                    serverName={name}
+                    availableTools={cached.result.tools}
+                    currentAllowlist={entry.toolAllowlist}
+                    testedAt={cached.testedAt}
+                    projectPath={selectedProject}
+                  />
                 )}
               </li>
             );

@@ -265,6 +265,16 @@ export const router = (authToken?: string) => {
           .handler(({ context, input }) =>
             context.mcpConfigService.setServerEnabled(input.projectPath, input.name, input.enabled)
           ),
+        setToolAllowlist: t
+          .input(schemas.projects.mcp.setToolAllowlist.input)
+          .output(schemas.projects.mcp.setToolAllowlist.output)
+          .handler(({ context, input }) =>
+            context.mcpConfigService.setToolAllowlist(
+              input.projectPath,
+              input.name,
+              input.toolAllowlist
+            )
+          ),
       },
     },
     nameGeneration: {
@@ -740,6 +750,28 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.sessionUsageService.getSessionUsage(input.workspaceId);
         }),
+      mcp: {
+        get: t
+          .input(schemas.workspace.mcp.get.input)
+          .output(schemas.workspace.mcp.get.output)
+          .handler(({ context, input }) => {
+            const overrides = context.config.getWorkspaceMCPOverrides(input.workspaceId);
+            // Return empty object if no overrides (matches schema default)
+            return overrides ?? {};
+          }),
+        set: t
+          .input(schemas.workspace.mcp.set.input)
+          .output(schemas.workspace.mcp.set.output)
+          .handler(async ({ context, input }) => {
+            try {
+              await context.config.setWorkspaceMCPOverrides(input.workspaceId, input.overrides);
+              return { success: true, data: undefined };
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              return { success: false, error: message };
+            }
+          }),
+      },
     },
     window: {
       setTitle: t
