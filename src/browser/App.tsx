@@ -51,6 +51,7 @@ import { TutorialProvider } from "./contexts/TutorialContext";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { ExperimentsProvider } from "./contexts/ExperimentsContext";
 import { getWorkspaceSidebarKey } from "./utils/workspace";
+import { CreationHeader } from "./components/CreationHeader";
 
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high"];
 
@@ -627,70 +628,83 @@ function AppInner() {
                 const projectName =
                   projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "Project";
                 return (
-                  <ModeProvider projectPath={projectPath}>
-                    <ProviderOptionsProvider>
-                      <ThinkingProvider projectPath={projectPath}>
-                        <ChatInput
-                          variant="creation"
-                          projectPath={projectPath}
-                          projectName={projectName}
-                          onProviderConfig={handleProviderConfig}
-                          onReady={handleCreationChatReady}
-                          onWorkspaceCreated={(metadata) => {
-                            // IMPORTANT: Add workspace to store FIRST (synchronous) to ensure
-                            // the store knows about it before React processes the state updates.
-                            // This prevents race conditions where the UI tries to access the
-                            // workspace before the store has created its aggregator.
-                            workspaceStore.addWorkspace(metadata);
+                  <>
+                    <CreationHeader
+                      projectName={projectName}
+                      onToggleSidebar={handleToggleSidebar}
+                      sidebarCollapsed={sidebarCollapsed}
+                    />
+                    <ModeProvider projectPath={projectPath}>
+                      <ProviderOptionsProvider>
+                        <ThinkingProvider projectPath={projectPath}>
+                          <ChatInput
+                            variant="creation"
+                            projectPath={projectPath}
+                            projectName={projectName}
+                            onProviderConfig={handleProviderConfig}
+                            onReady={handleCreationChatReady}
+                            onWorkspaceCreated={(metadata) => {
+                              // IMPORTANT: Add workspace to store FIRST (synchronous) to ensure
+                              // the store knows about it before React processes the state updates.
+                              // This prevents race conditions where the UI tries to access the
+                              // workspace before the store has created its aggregator.
+                              workspaceStore.addWorkspace(metadata);
 
-                            // Add to workspace metadata map (triggers React state update)
-                            setWorkspaceMetadata((prev) =>
-                              new Map(prev).set(metadata.id, metadata)
-                            );
+                              // Add to workspace metadata map (triggers React state update)
+                              setWorkspaceMetadata((prev) =>
+                                new Map(prev).set(metadata.id, metadata)
+                              );
 
-                            // Only switch to new workspace if user hasn't selected another one
-                            // during the creation process (selectedWorkspace was null when creation started)
-                            setSelectedWorkspace((current) => {
-                              if (current !== null) {
-                                // User has already selected another workspace - don't override
-                                return current;
-                              }
-                              return {
-                                workspaceId: metadata.id,
-                                projectPath: metadata.projectPath,
-                                projectName: metadata.projectName,
-                                namedWorkspacePath: metadata.namedWorkspacePath,
-                              };
-                            });
+                              // Only switch to new workspace if user hasn't selected another one
+                              // during the creation process (selectedWorkspace was null when creation started)
+                              setSelectedWorkspace((current) => {
+                                if (current !== null) {
+                                  // User has already selected another workspace - don't override
+                                  return current;
+                                }
+                                return {
+                                  workspaceId: metadata.id,
+                                  projectPath: metadata.projectPath,
+                                  projectName: metadata.projectName,
+                                  namedWorkspacePath: metadata.namedWorkspacePath,
+                                };
+                              });
 
-                            // Track telemetry
-                            telemetry.workspaceCreated(
-                              metadata.id,
-                              getRuntimeTypeForTelemetry(metadata.runtimeConfig)
-                            );
+                              // Track telemetry
+                              telemetry.workspaceCreated(
+                                metadata.id,
+                                getRuntimeTypeForTelemetry(metadata.runtimeConfig)
+                              );
 
-                            // Clear pending state
-                            clearPendingWorkspaceCreation();
-                          }}
-                        />
-                      </ThinkingProvider>
-                    </ProviderOptionsProvider>
-                  </ModeProvider>
+                              // Clear pending state
+                              clearPendingWorkspaceCreation();
+                            }}
+                          />
+                        </ThinkingProvider>
+                      </ProviderOptionsProvider>
+                    </ModeProvider>
+                  </>
                 );
               })()
             ) : (
-              <div
-                className="[&_p]:text-muted [&_h2]:text-foreground mx-auto w-full max-w-3xl text-center [&_h2]:mb-4 [&_h2]:font-bold [&_h2]:tracking-tight [&_p]:leading-[1.6]"
-                style={{
-                  padding: "clamp(40px, 10vh, 100px) 20px",
-                  fontSize: "clamp(14px, 2vw, 16px)",
-                }}
-              >
-                <h2 style={{ fontSize: "clamp(24px, 5vw, 36px)", letterSpacing: "-1px" }}>
-                  Welcome to Mux
-                </h2>
-                <p>Select a workspace from the sidebar or add a new one to get started.</p>
-              </div>
+              <>
+                <CreationHeader
+                  onToggleSidebar={handleToggleSidebar}
+                  sidebarCollapsed={sidebarCollapsed}
+                />
+                <div
+                  className="[&_p]:text-muted [&_h2]:text-foreground mx-auto w-full max-w-3xl text-center [&_h2]:mb-4 [&_h2]:font-bold [&_h2]:tracking-tight [&_p]:leading-[1.6]"
+                  style={{
+                    padding: "clamp(40px, 10vh, 100px) 20px",
+                    fontSize: "clamp(14px, 2vw, 16px)",
+                  }}
+                >
+                  <h2 style={{ fontSize: "clamp(24px, 5vw, 36px)", letterSpacing: "-1px" }}>
+                    Welcome to Mux
+                  </h2>
+                  <p>Select a workspace from the sidebar or add a new one to get started.</p>
+                </div>
+              </>
             )}
           </div>
         </div>
