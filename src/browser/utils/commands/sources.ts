@@ -8,6 +8,7 @@ import { CommandIds } from "@/browser/utils/commandIds";
 
 import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { ExistingBranchSelection } from "@/common/types/branchSelection";
 import type { BranchListResult } from "@/common/orpc/types";
 import type { WorkspaceState } from "@/browser/stores/WorkspaceStore";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -32,7 +33,10 @@ export interface BuildSourcesParams {
 
   onStartWorkspaceCreation: (projectPath: string) => void;
   /** Start workspace creation flow with an existing branch pre-selected */
-  onStartWorkspaceCreationWithBranch: (projectPath: string, branchName: string) => void;
+  onStartWorkspaceCreationWithBranch: (
+    projectPath: string,
+    selection: ExistingBranchSelection
+  ) => void;
   getBranchesForProject: (projectPath: string) => Promise<BranchListResult>;
   onSelectWorkspace: (sel: {
     projectPath: string;
@@ -128,18 +132,54 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
               placeholder: "Search branches…",
               getOptions: async () => {
                 const result = await p.getBranchesForProject(selected.projectPath);
-                // Combine local and remote branches, local first
-                const allBranches = [...result.branches, ...result.remoteBranches];
-                return allBranches.map((b) => ({
-                  id: b,
-                  label: b,
-                  keywords: result.remoteBranches.includes(b) ? [b, "remote"] : [b],
+
+                const localOptions = result.branches.map((branch) => ({
+                  id: `local:${branch}`,
+                  label: branch,
+                  keywords: [branch],
                 }));
+
+                const groups =
+                  result.remoteBranchGroups.length > 0
+                    ? result.remoteBranchGroups
+                    : result.remoteBranches.length > 0
+                      ? [{ remote: "origin", branches: result.remoteBranches, truncated: false }]
+                      : [];
+
+                const remoteOptions = groups.flatMap((group) =>
+                  group.branches.map((branch) => ({
+                    id: `remote:${group.remote}:${branch}`,
+                    label: `${group.remote}/${branch}`,
+                    keywords: [branch, group.remote, "remote"],
+                  }))
+                );
+
+                return [...localOptions, ...remoteOptions];
               },
             },
           ],
           onSubmit: (vals) => {
-            p.onStartWorkspaceCreationWithBranch(selected.projectPath, vals.branch);
+            const raw = vals.branch;
+
+            let selection: ExistingBranchSelection;
+            if (raw.startsWith("remote:")) {
+              const rest = raw.slice("remote:".length);
+              const firstColon = rest.indexOf(":");
+              console.assert(
+                firstColon > 0,
+                "Expected remote branch id to include remote and branch"
+              );
+              const remote = rest.slice(0, Math.max(0, firstColon));
+              const branch = rest.slice(Math.max(0, firstColon + 1));
+              selection = { kind: "remote", remote, branch };
+            } else if (raw.startsWith("local:")) {
+              selection = { kind: "local", branch: raw.slice("local:".length) };
+            } else {
+              // Back-compat: older prompt ids were raw branch names.
+              selection = { kind: "local", branch: raw };
+            }
+
+            p.onStartWorkspaceCreationWithBranch(selected.projectPath, selection);
           },
         },
       });

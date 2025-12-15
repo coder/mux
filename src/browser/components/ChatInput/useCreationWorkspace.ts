@@ -5,6 +5,10 @@ import type { ThinkingLevel } from "@/common/types/thinking";
 import type { UIMode } from "@/common/types/mode";
 import { parseRuntimeString } from "@/browser/utils/chatCommands";
 import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
+import {
+  parseExistingBranchSelection,
+  type ExistingBranchSelection,
+} from "@/common/types/branchSelection";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import {
@@ -21,7 +25,7 @@ import {
 } from "@/common/constants/storage";
 import type { Toast } from "@/browser/components/ChatInputToast";
 import { useAPI } from "@/browser/contexts/API";
-import type { ImagePart } from "@/common/orpc/types";
+import type { BranchListResult, ImagePart } from "@/common/orpc/types";
 import {
   useWorkspaceName,
   type WorkspaceNameState,
@@ -90,6 +94,8 @@ interface UseCreationWorkspaceReturn {
   branches: string[];
   /** Remote-only branches (not in local branches) */
   remoteBranches: string[];
+  /** Remote-only branches grouped by remote name (e.g. origin/upstream) */
+  remoteBranchGroups: BranchListResult["remoteBranchGroups"];
   /** Whether listBranches has completed (to distinguish loading vs non-git repo) */
   branchesLoaded: boolean;
   trunkBranch: string;
@@ -115,8 +121,8 @@ interface UseCreationWorkspaceReturn {
   branchMode: BranchMode;
   setBranchMode: (mode: BranchMode) => void;
   /** Selected existing branch (when branchMode is "existing") */
-  selectedExistingBranch: string;
-  setSelectedExistingBranch: (branch: string) => void;
+  selectedExistingBranch: ExistingBranchSelection | null;
+  setSelectedExistingBranch: (selection: ExistingBranchSelection | null) => void;
 }
 
 /**
@@ -135,6 +141,9 @@ export function useCreationWorkspace({
   const { api } = useAPI();
   const [branches, setBranches] = useState<string[]>([]);
   const [remoteBranches, setRemoteBranches] = useState<string[]>([]);
+  const [remoteBranchGroups, setRemoteBranchGroups] = useState<
+    BranchListResult["remoteBranchGroups"]
+  >([]);
   const [branchesLoaded, setBranchesLoaded] = useState(false);
   const [recommendedTrunk, setRecommendedTrunk] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
@@ -144,7 +153,8 @@ export function useCreationWorkspace({
   // Branch mode: "new" creates a new branch, "existing" uses an existing branch
   const [branchMode, setBranchMode] = useState<BranchMode>("new");
   // Selected existing branch (when branchMode is "existing")
-  const [selectedExistingBranch, setSelectedExistingBranch] = useState<string>("");
+  const [selectedExistingBranch, setSelectedExistingBranch] =
+    useState<ExistingBranchSelection | null>(null);
 
   // Centralized draft workspace settings with automatic persistence
   const {
@@ -176,15 +186,16 @@ export function useCreationWorkspace({
   useEffect(() => {
     if (!projectPath.length) return;
 
-    const prefilledBranch = readPersistedState<string | null>(
+    const storedSelection = readPersistedState<unknown>(
       getPrefilledExistingBranchKey(projectPath),
       null
     );
 
-    if (prefilledBranch) {
+    const selection = parseExistingBranchSelection(storedSelection);
+    if (selection) {
       // Set existing branch mode and select the branch
       setBranchMode("existing");
-      setSelectedExistingBranch(prefilledBranch);
+      setSelectedExistingBranch(selection);
       // Clear the prefill so it doesn't persist
       updatePersistedState(getPrefilledExistingBranchKey(projectPath), undefined);
     }
@@ -205,6 +216,7 @@ export function useCreationWorkspace({
         if (!mounted) return;
         setBranches(result.branches);
         setRemoteBranches(result.remoteBranches);
+        setRemoteBranchGroups(result.remoteBranchGroups);
         setRecommendedTrunk(result.recommendedTrunk);
       } catch (err) {
         console.error("Failed to load branches:", err);
@@ -232,6 +244,7 @@ export function useCreationWorkspace({
         // Determine branch name and title based on mode
         let branchName: string;
         let title: string | undefined;
+        let startPointRef: string | undefined;
 
         if (branchMode === "existing") {
           // Existing branch mode: use selected branch, no title (use branch name)
@@ -244,7 +257,13 @@ export function useCreationWorkspace({
             setIsSending(false);
             return false;
           }
-          branchName = selectedExistingBranch;
+
+          branchName = selectedExistingBranch.branch;
+          startPointRef =
+            selectedExistingBranch.kind === "remote"
+              ? `${selectedExistingBranch.remote}/${selectedExistingBranch.branch}`
+              : undefined;
+
           title = undefined; // Will use branch name as title
           // Set identity for UI display
           setCreatingWithIdentity({ name: branchName, title: branchName });
@@ -276,6 +295,7 @@ export function useCreationWorkspace({
           projectPath,
           branchName,
           trunkBranch: settings.trunkBranch,
+          startPointRef,
           title,
           runtimeConfig,
         });
@@ -376,6 +396,7 @@ export function useCreationWorkspace({
   return {
     branches,
     remoteBranches,
+    remoteBranchGroups,
     branchesLoaded,
     trunkBranch: settings.trunkBranch,
     setTrunkBranch,

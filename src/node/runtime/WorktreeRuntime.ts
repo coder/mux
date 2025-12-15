@@ -43,7 +43,7 @@ export class WorktreeRuntime extends LocalBaseRuntime {
   }
 
   async createWorkspace(params: WorkspaceCreationParams): Promise<WorkspaceCreationResult> {
-    const { projectPath, branchName, trunkBranch, initLogger } = params;
+    const { projectPath, branchName, trunkBranch, startPointRef, initLogger } = params;
 
     // Clean up stale lock before git operations on main repo
     cleanStaleLock(projectPath);
@@ -81,6 +81,12 @@ export class WorktreeRuntime extends LocalBaseRuntime {
         // Branch exists, just add worktree pointing to it
         using proc = execAsync(
           `git -C "${projectPath}" worktree add "${workspacePath}" "${branchName}"`
+        );
+        await proc.result;
+      } else if (startPointRef) {
+        // Branch doesn't exist locally; create it from the provided ref (e.g. origin/foo)
+        using proc = execAsync(
+          `git -C "${projectPath}" worktree add -b "${branchName}" "${workspacePath}" "${startPointRef}"`
         );
         await proc.result;
       } else {

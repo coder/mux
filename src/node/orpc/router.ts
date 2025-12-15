@@ -903,6 +903,7 @@ export const router = (authToken?: string) => {
             input.projectPath,
             input.branchName,
             input.trunkBranch,
+            input.startPointRef,
             input.title,
             input.runtimeConfig
           );

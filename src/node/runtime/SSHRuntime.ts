@@ -929,7 +929,15 @@ export class SSHRuntime implements Runtime {
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, trunkBranch, workspacePath, initLogger, abortSignal } = params;
+    const {
+      projectPath,
+      branchName,
+      trunkBranch,
+      startPointRef,
+      workspacePath,
+      initLogger,
+      abortSignal,
+    } = params;
 
     try {
       // 1. Sync project to remote with retry for transient SSH failures
@@ -984,7 +992,9 @@ export class SSHRuntime implements Runtime {
 
       // Try to checkout existing branch, or create new branch from trunk
       // Since we've created local branches for all remote refs, we can use branch names directly
-      const checkoutCmd = `git checkout ${shescape.quote(branchName)} 2>/dev/null || git checkout -b ${shescape.quote(branchName)} ${shescape.quote(trunkBranch)}`;
+      const checkoutCmd = startPointRef
+        ? `git checkout ${shescape.quote(branchName)} 2>/dev/null || git checkout -b ${shescape.quote(branchName)} ${shescape.quote(startPointRef)}`
+        : `git checkout ${shescape.quote(branchName)} 2>/dev/null || git checkout -b ${shescape.quote(branchName)} ${shescape.quote(trunkBranch)}`;
 
       const checkoutStream = await this.exec(checkoutCmd, {
         cwd: workspacePath, // Use the full workspace path for git operations

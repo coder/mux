@@ -1696,6 +1696,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           {variant === "creation" && (
             <CreationControls
               branches={creationState.branches}
+              remoteBranchGroups={creationState.remoteBranchGroups}
               remoteBranches={creationState.remoteBranches}
               branchesLoaded={creationState.branchesLoaded}
               trunkBranch={creationState.trunkBranch}

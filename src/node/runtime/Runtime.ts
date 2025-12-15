@@ -159,6 +159,8 @@ export interface WorkspaceCreationParams {
   branchName: string;
   /** Trunk branch to base new branches on */
   trunkBranch: string;
+  /** Optional git ref to base the branch on (e.g. "origin/foo"). */
+  startPointRef?: string;
   /** Directory name to use for workspace (typically branch name) */
   directoryName: string;
   /** Logger for streaming creation progress and init hook output */
@@ -187,6 +189,8 @@ export interface WorkspaceInitParams {
   branchName: string;
   /** Trunk branch to base new branches on */
   trunkBranch: string;
+  /** Optional git ref to base the branch on (e.g. "origin/foo"). */
+  startPointRef?: string;
   /** Absolute path to workspace (from createWorkspace result) */
   workspacePath: string;
   /** Logger for streaming initialization progress and output */

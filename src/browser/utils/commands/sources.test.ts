@@ -41,7 +41,7 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
     getThinkingLevel: () => "off",
     onSetThinkingLevel: () => undefined,
     onStartWorkspaceCreation: () => undefined,
-    onStartWorkspaceCreationWithBranch: () => undefined,
+    onStartWorkspaceCreationWithBranch: (_projectPath: string, _selection: unknown) => undefined,
     onSelectWorkspace: () => undefined,
     onRemoveWorkspace: () => Promise.resolve({ success: true }),
     onRenameWorkspace: () => Promise.resolve({ success: true }),
@@ -62,6 +62,7 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
       Promise.resolve({
         branches: ["main"],
         remoteBranches: [],
+        remoteBranchGroups: [],
         recommendedTrunk: "main",
       }),
     ...over,

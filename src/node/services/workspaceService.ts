@@ -494,6 +494,7 @@ export class WorkspaceService extends EventEmitter {
     projectPath: string,
     branchName: string,
     trunkBranch: string | undefined,
+    startPointRef: string | undefined,
     title?: string,
     runtimeConfig?: RuntimeConfig
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata }>> {
@@ -554,6 +555,7 @@ export class WorkspaceService extends EventEmitter {
           projectPath,
           branchName: finalBranchName,
           trunkBranch: normalizedTrunkBranch,
+          startPointRef,
           directoryName: finalBranchName,
           initLogger,
         });
@@ -618,6 +620,7 @@ export class WorkspaceService extends EventEmitter {
           projectPath,
           branchName: finalBranchName,
           trunkBranch: normalizedTrunkBranch,
+          startPointRef,
           workspacePath: createResult!.workspacePath,
           initLogger,
         })

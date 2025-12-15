@@ -6,6 +6,7 @@
  */
 
 import type { ThinkingLevel } from "@/common/types/thinking";
+import type { ExistingBranchSelection } from "@/common/types/branchSelection";
 import type { ImagePart } from "@/common/orpc/schemas";
 
 export const CUSTOM_EVENTS = {
@@ -114,7 +115,7 @@ export interface CustomEventPayloads {
     trunkBranch?: string;
     runtime?: string;
     /** Pre-select an existing branch (switches to "existing branch" mode) */
-    existingBranch?: string;
+    existingBranch?: ExistingBranchSelection | string;
   };
   [CUSTOM_EVENTS.TOGGLE_VOICE_INPUT]: never; // No payload
 }
