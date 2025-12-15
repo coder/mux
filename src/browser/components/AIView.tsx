@@ -173,11 +173,14 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const transformedMessages = useMemo(() => mergeConsecutiveStreamErrors(messages), [messages]);
   const deferredTransformedMessages = useDeferredValue(transformedMessages);
 
-  // CRITICAL: When message count changes (new message sent/received), show immediately.
-  // Only defer content changes within existing messages (streaming deltas).
-  // This ensures user messages appear instantly while keeping streaming performant.
+  // CRITICAL: Show immediate messages when streaming or when message count changes.
+  // useDeferredValue can defer indefinitely if React keeps getting new work (rapid deltas).
+  // During active streaming (reasoning, text), we MUST show immediate updates or the UI
+  // appears frozen while only the token counter updates (reads aggregator directly).
+  // Only use deferred messages when the stream is idle and no content is changing.
+  const hasActiveStream = transformedMessages.some((m) => "isStreaming" in m && m.isStreaming);
   const deferredMessages =
-    transformedMessages.length !== deferredTransformedMessages.length
+    hasActiveStream || transformedMessages.length !== deferredTransformedMessages.length
       ? transformedMessages
       : deferredTransformedMessages;
 
