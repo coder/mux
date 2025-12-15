@@ -65,7 +65,8 @@ export function buildProviderOptions(
   thinkingLevel: ThinkingLevel,
   messages?: MuxMessage[],
   lostResponseIds?: (id: string) => boolean,
-  muxProviderOptions?: MuxProviderOptions
+  muxProviderOptions?: MuxProviderOptions,
+  workspaceId?: string // Optional for non-OpenAI providers
 ): ProviderOptions {
   // Always clamp to the model's supported thinking policy (e.g., gpt-5-pro = HIGH only)
   const effectiveThinking = enforceThinkingPolicy(modelString, thinkingLevel);
@@ -210,11 +211,17 @@ export function buildProviderOptions(
     // Check if auto-truncation should be disabled (for testing context limit errors)
     const disableAutoTruncation = muxProviderOptions?.openai?.disableAutoTruncation ?? false;
 
+    // Prompt cache key: derive from workspaceId
+    // This helps OpenAI route requests to cached prefixes for improved hit rates
+    // workspaceId is always passed from AIService.streamMessage for real requests
+    const promptCacheKey = workspaceId ? `mux-v1-${workspaceId}` : undefined;
+
     log.debug("buildProviderOptions: OpenAI config", {
       reasoningEffort,
       thinkingLevel: effectiveThinking,
       previousResponseId,
       disableAutoTruncation,
+      promptCacheKey,
     });
 
     const serviceTier = muxProviderOptions?.openai?.serviceTier ?? "auto";
@@ -225,6 +232,9 @@ export function buildProviderOptions(
         serviceTier,
         // Automatically truncate conversation to fit context window, unless disabled for testing
         truncation: disableAutoTruncation ? "disabled" : "auto",
+        // Stable prompt cache key to improve OpenAI cache hit rates
+        // See: https://sdk.vercel.ai/providers/ai-sdk-providers/openai#responses-models
+        ...(promptCacheKey && { promptCacheKey }),
         // Conditionally add reasoning configuration
         ...(reasoningEffort && {
           reasoningEffort,

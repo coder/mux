@@ -1365,12 +1365,14 @@ export class AIService extends EventEmitter {
       // Build provider options based on thinking level and message history
       // Pass filtered messages so OpenAI can extract previousResponseId for persistence
       // Also pass callback to filter out lost responseIds (OpenAI invalidated them)
+      // Pass workspaceId to derive stable promptCacheKey for OpenAI caching
       const providerOptions = buildProviderOptions(
         modelString,
         thinkingLevel ?? "off",
         filteredMessages,
         (id) => this.streamManager.isResponseIdLost(id),
-        effectiveMuxProviderOptions
+        effectiveMuxProviderOptions,
+        workspaceId
       );
 
       // Debug dump: Log the complete LLM request when MUX_DEBUG_LLM_REQUEST is set

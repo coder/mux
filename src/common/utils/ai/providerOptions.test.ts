@@ -2,6 +2,7 @@
  * Tests for provider options builder
  */
 
+import type { OpenAIResponsesProviderOptions } from "@ai-sdk/openai";
 import { describe, test, expect, mock } from "bun:test";
 import { buildProviderOptions } from "./providerOptions";
 
@@ -117,6 +118,50 @@ describe("buildProviderOptions - Anthropic", () => {
           sendReasoning: true,
         },
       });
+    });
+  });
+});
+
+describe("buildProviderOptions - OpenAI promptCacheKey", () => {
+  // Helper to extract OpenAI options from the result
+  const getOpenAIOptions = (
+    result: ReturnType<typeof buildProviderOptions>
+  ): OpenAIResponsesProviderOptions | undefined => {
+    if ("openai" in result) {
+      return result.openai;
+    }
+    return undefined;
+  };
+
+  describe("promptCacheKey derivation", () => {
+    test("should derive promptCacheKey from workspaceId when provided", () => {
+      const result = buildProviderOptions(
+        "openai:gpt-5.2",
+        "off",
+        undefined,
+        undefined,
+        undefined,
+        "abc123"
+      );
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.promptCacheKey).toBe("mux-v1-abc123");
+    });
+
+    test("should derive promptCacheKey for gateway OpenAI model", () => {
+      const result = buildProviderOptions(
+        "mux-gateway:openai/gpt-5.2",
+        "off",
+        undefined,
+        undefined,
+        undefined,
+        "workspace-xyz"
+      );
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.promptCacheKey).toBe("mux-v1-workspace-xyz");
     });
   });
 });
