@@ -131,13 +131,13 @@ dev: node_modules/.installed build-main ## Start development server (Vite + node
 	@echo "Starting dev mode (3 watchers: nodemon for main process, esbuild for api, vite for renderer)..."
 	# On Windows, use npm run because bunx doesn't correctly pass arguments to concurrently
 	# https://github.com/oven-sh/bun/issues/18275
-	@NODE_OPTIONS="--max-old-space-size=4096" npm x concurrently -k --raw \
+	@MUX_DISABLE_TELEMETRY=$(or $(MUX_DISABLE_TELEMETRY),1) NODE_OPTIONS="--max-old-space-size=4096" npm x concurrently -k --raw \
 		"bun x nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules --exec node scripts/build-main-watch.js" \
 		"npx esbuild src/cli/api.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:@trpc/server --watch" \
 		"vite"
 else
 dev: node_modules/.installed build-main build-preload ## Start development server (Vite + tsgo watcher for 10x faster type checking)
-	@bun x concurrently -k \
+	@MUX_DISABLE_TELEMETRY=$(or $(MUX_DISABLE_TELEMETRY),1) bun x concurrently -k \
 		"bun x concurrently \"$(TSGO) -w -p tsconfig.main.json\" \"bun x tsc-alias -w -p tsconfig.main.json\"" \
 		"bun x esbuild src/cli/api.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:@trpc/server --watch" \
 		"vite"
@@ -151,7 +151,7 @@ dev-server: node_modules/.installed build-main ## Start server mode with hot rel
 	@echo ""
 	@echo "For remote access: make dev-server VITE_HOST=0.0.0.0 BACKEND_HOST=0.0.0.0"
 	@# On Windows, use npm run because bunx doesn't correctly pass arguments
-	@npmx concurrently -k \
+	@MUX_DISABLE_TELEMETRY=$(or $(MUX_DISABLE_TELEMETRY),1) npmx concurrently -k \
 		"npmx nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules --exec node scripts/build-main-watch.js" \
 		"npx esbuild src/cli/api.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:@trpc/server --watch" \
 		"npmx nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms --exec \"node dist/cli/index.js server --host $(or $(BACKEND_HOST),localhost) --port $(or $(BACKEND_PORT),3000)\"" \
@@ -163,7 +163,7 @@ dev-server: node_modules/.installed build-main ## Start server mode with hot rel
 	@echo "  Frontend (with HMR):     http://$(or $(VITE_HOST),localhost):$(or $(VITE_PORT),5173)"
 	@echo ""
 	@echo "For remote access: make dev-server VITE_HOST=0.0.0.0 BACKEND_HOST=0.0.0.0"
-	@bun x concurrently -k \
+	@MUX_DISABLE_TELEMETRY=$(or $(MUX_DISABLE_TELEMETRY),1) bun x concurrently -k \
 		"bun x concurrently \"$(TSGO) -w -p tsconfig.main.json\" \"bun x tsc-alias -w -p tsconfig.main.json\"" \
 		"bun x esbuild src/cli/api.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:@trpc/server --watch" \
 		"bun x nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms --exec 'NODE_ENV=development node dist/cli/index.js server --host $(or $(BACKEND_HOST),localhost) --port $(or $(BACKEND_PORT),3000)'" \
@@ -173,7 +173,7 @@ endif
 
 
 start: node_modules/.installed build-main build-preload build-static ## Build and start Electron app
-	@NODE_ENV=development bunx electron --remote-debugging-port=9222 .
+	@NODE_ENV=development MUX_DISABLE_TELEMETRY=$(or $(MUX_DISABLE_TELEMETRY),1) bunx electron --remote-debugging-port=9222 .
 
 ## Build targets (can run in parallel)
 build: node_modules/.installed src/version.ts build-renderer build-main build-preload build-icons build-static ## Build all targets

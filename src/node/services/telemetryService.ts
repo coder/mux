@@ -5,6 +5,9 @@
  * This avoids ad-blocker issues that affect browser-side telemetry.
  *
  * Telemetry can be disabled by setting the MUX_DISABLE_TELEMETRY=1 env var.
+ * Telemetry is also disabled automatically in development and test contexts
+ * (e.g., unpackaged Electron builds, NODE_ENV=test, CI, MUX_E2E=1) unless you
+ * explicitly opt in via MUX_ENABLE_TELEMETRY_IN_DEV=1.
  *
  * Uses posthog-node which batches events and flushes asynchronously.
  */
@@ -29,53 +32,99 @@ const TELEMETRY_ID_FILE = "telemetry_id";
  * Covers major CI providers: GitHub Actions, GitLab CI, Jenkins, CircleCI,
  * Travis, Azure Pipelines, Bitbucket, TeamCity, Buildkite, etc.
  */
-function isCIEnvironment(): boolean {
+function isCIEnvironment(env: NodeJS.ProcessEnv): boolean {
   return (
     // Generic CI indicator (set by most CI systems)
-    process.env.CI === "true" ||
-    process.env.CI === "1" ||
+    env.CI === "true" ||
+    env.CI === "1" ||
     // GitHub Actions
-    process.env.GITHUB_ACTIONS === "true" ||
+    env.GITHUB_ACTIONS === "true" ||
     // GitLab CI
-    process.env.GITLAB_CI === "true" ||
+    env.GITLAB_CI === "true" ||
     // Jenkins
-    process.env.JENKINS_URL !== undefined ||
+    env.JENKINS_URL !== undefined ||
     // CircleCI
-    process.env.CIRCLECI === "true" ||
+    env.CIRCLECI === "true" ||
     // Travis CI
-    process.env.TRAVIS === "true" ||
+    env.TRAVIS === "true" ||
     // Azure Pipelines
-    process.env.TF_BUILD === "True" ||
+    env.TF_BUILD === "True" ||
     // Bitbucket Pipelines
-    process.env.BITBUCKET_BUILD_NUMBER !== undefined ||
+    env.BITBUCKET_BUILD_NUMBER !== undefined ||
     // TeamCity
-    process.env.TEAMCITY_VERSION !== undefined ||
+    env.TEAMCITY_VERSION !== undefined ||
     // Buildkite
-    process.env.BUILDKITE === "true" ||
+    env.BUILDKITE === "true" ||
     // AWS CodeBuild
-    process.env.CODEBUILD_BUILD_ID !== undefined ||
+    env.CODEBUILD_BUILD_ID !== undefined ||
     // Drone CI
-    process.env.DRONE === "true" ||
+    env.DRONE === "true" ||
     // AppVeyor
-    process.env.APPVEYOR === "True" ||
+    env.APPVEYOR === "True" ||
     // Vercel / Netlify (build environments)
-    process.env.VERCEL === "1" ||
-    process.env.NETLIFY === "true"
+    env.VERCEL === "1" ||
+    env.NETLIFY === "true"
   );
 }
 
 /**
  * Check if telemetry is disabled via environment variable or automation context
  */
-function isTelemetryDisabled(): boolean {
+function isTelemetryDisabledByEnv(env: NodeJS.ProcessEnv): boolean {
   return (
-    process.env.MUX_DISABLE_TELEMETRY === "1" ||
-    process.env.NODE_ENV === "test" ||
-    process.env.JEST_WORKER_ID !== undefined ||
-    process.env.VITEST !== undefined ||
-    process.env.TEST_INTEGRATION === "1" ||
-    isCIEnvironment()
+    env.MUX_DISABLE_TELEMETRY === "1" ||
+    env.MUX_E2E === "1" ||
+    env.NODE_ENV === "test" ||
+    env.JEST_WORKER_ID !== undefined ||
+    env.VITEST !== undefined ||
+    env.TEST_INTEGRATION === "1" ||
+    isCIEnvironment(env)
   );
+}
+
+export interface TelemetryEnablementContext {
+  env: NodeJS.ProcessEnv;
+  isElectron: boolean;
+  isPackaged: boolean | null;
+}
+
+export function shouldEnableTelemetry(context: TelemetryEnablementContext): boolean {
+  if (isTelemetryDisabledByEnv(context.env)) {
+    return false;
+  }
+
+  const enableInDev = context.env.MUX_ENABLE_TELEMETRY_IN_DEV === "1";
+
+  if (context.isElectron) {
+    // In Electron, we treat all unpackaged builds as "development".
+    // Telemetry is only enabled by default in packaged builds.
+    if (context.isPackaged === true) {
+      return true;
+    }
+    return enableInDev;
+  }
+
+  // In non-Electron modes (e.g., `mux server`), treat NODE_ENV=development as "development".
+  if (context.env.NODE_ENV === "development") {
+    return enableInDev;
+  }
+
+  return true;
+}
+
+async function getElectronIsPackaged(isElectron: boolean): Promise<boolean | null> {
+  if (!isElectron) {
+    return null;
+  }
+
+  try {
+    // eslint-disable-next-line no-restricted-syntax -- Electron is unavailable in `mux server`; avoid top-level import
+    const { app } = await import("electron");
+    return app.isPackaged;
+  } catch {
+    // If we can't determine packaging status, fail closed.
+    return null;
+  }
 }
 
 /**
@@ -106,11 +155,21 @@ export class TelemetryService {
    * Should be called once on app startup.
    */
   async initialize(): Promise<void> {
-    if (isTelemetryDisabled()) {
+    if (this.client) {
       return;
     }
 
-    if (this.client) {
+    const env = process.env;
+
+    // Fast path: avoid Electron imports when telemetry is obviously disabled.
+    if (isTelemetryDisabledByEnv(env)) {
+      return;
+    }
+
+    const isElectron = typeof process.versions.electron === "string";
+    const isPackaged = await getElectronIsPackaged(isElectron);
+
+    if (!shouldEnableTelemetry({ env, isElectron, isPackaged })) {
       return;
     }
 
@@ -175,7 +234,7 @@ export class TelemetryService {
    * Events are silently ignored when disabled.
    */
   capture(payload: TelemetryEventPayload): void {
-    if (isTelemetryDisabled() || !this.client || !this.distinctId) {
+    if (isTelemetryDisabledByEnv(process.env) || !this.client || !this.distinctId) {
       return;
     }
 

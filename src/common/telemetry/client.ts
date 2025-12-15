@@ -45,6 +45,30 @@ function isTestEnvironment(): boolean {
 }
 
 /**
+ * Check if we're running under the Vite dev server.
+ *
+ * We avoid import.meta.env here because this module is shared across the
+ * renderer and the main-process builds (tsconfig.main uses module=CommonJS).
+ */
+function isViteDevEnvironment(): boolean {
+  if (typeof document === "undefined") {
+    return false;
+  }
+
+  // Vite injects /@vite/client in dev for HMR.
+  return document.querySelector('script[src^="/@vite/client"]') !== null;
+}
+
+/**
+ * Allow maintainers to opt into telemetry while running the dev server.
+ *
+ * In Electron, the preload script exposes this as a safe boolean.
+ */
+function isTelemetryEnabledInDev(): boolean {
+  return window.api?.enableTelemetryInDev === true;
+}
+
+/**
  * Initialize telemetry (no-op, kept for API compatibility)
  */
 export function initTelemetry(): void {
@@ -58,7 +82,11 @@ export function initTelemetry(): void {
  * The backend decides whether to actually send to PostHog.
  */
 export function trackEvent(payload: TelemetryEventPayload): void {
-  if (isTestEnvironment()) {
+  if (
+    isTestEnvironment() ||
+    window.api?.isE2E === true ||
+    (isViteDevEnvironment() && !isTelemetryEnabledInDev())
+  ) {
     return;
   }
 

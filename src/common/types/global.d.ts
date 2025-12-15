@@ -15,6 +15,8 @@ declare global {
       chrome?: string;
       electron?: string;
     };
+    // Allow maintainers to opt into telemetry while running the dev server.
+    enableTelemetryInDev?: boolean;
     // E2E test mode flag - used to adjust UI behavior (e.g., longer toast durations)
     isE2E?: boolean;
     // Optional ORPC-backed API surfaces populated in tests/storybook mocks
