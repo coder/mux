@@ -15,7 +15,7 @@ export function MuxGatewaySplash({ onDismiss }: { onDismiss: () => void }) {
       onDismiss={onDismiss}
       primaryAction={{ label: "Open Settings", onClick: handleOpenSettings }}
     >
-      <DialogInfo>
+      <div className="space-y-3 text-muted">
         <p>Mux Gateway gives you access to AI models through a unified API.</p>
         <p>
           If you haven&apos;t redeemed your Mux voucher yet,{" "}
@@ -30,7 +30,7 @@ export function MuxGatewaySplash({ onDismiss }: { onDismiss: () => void }) {
           .
         </p>
         <p>Once redeemed, add your coupon code in Settings → Providers → Mux Gateway.</p>
-      </DialogInfo>
+      </div>
     </SplashScreen>
   );
 }
