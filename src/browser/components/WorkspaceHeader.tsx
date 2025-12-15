@@ -68,7 +68,10 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   }, [startTutorial, isSequenceCompleted]);
 
   return (
-    <div className="bg-sidebar border-border-light flex h-8 items-center justify-between border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:flex-wrap [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:py-2 [@media(max-width:768px)]:pl-[60px]">
+    <div
+      data-testid="workspace-header"
+      className="bg-sidebar border-border-light flex h-8 items-center justify-between border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:flex-wrap [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:py-2 [@media(max-width:768px)]:pl-[60px]"
+    >
       <div className="text-foreground flex min-w-0 items-center gap-2.5 overflow-hidden font-semibold">
         <RuntimeBadge
           runtimeConfig={runtimeConfig}
@@ -95,6 +98,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
               size="icon"
               onClick={() => setMcpModalOpen(true)}
               className="text-muted hover:text-foreground h-6 w-6 shrink-0"
+              data-testid="workspace-mcp-button"
             >
               <Server className="h-4 w-4" />
             </Button>

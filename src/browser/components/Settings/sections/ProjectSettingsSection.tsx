@@ -143,7 +143,9 @@ const ToolAllowlistSection: React.FC<{
         className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-xs"
       >
         {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-        <span>Tools: {localAllowlist.length}/{availableTools.length}</span>
+        <span>
+          Tools: {localAllowlist.length}/{availableTools.length}
+        </span>
         <span className="text-muted-foreground/60 ml-1">({formatRelativeTime(testedAt)})</span>
         {saving && <Loader2 className="ml-1 h-3 w-3 animate-spin" />}
       </button>

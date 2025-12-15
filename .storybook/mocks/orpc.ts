@@ -70,6 +70,18 @@ export interface MockORPCClientOptions {
   >;
   /** Session usage data per workspace (for Costs tab) */
   sessionUsage?: Map<string, MockSessionUsage>;
+  /** MCP server configuration per project */
+  mcpServers?: Map<
+    string,
+    Record<string, { command: string; disabled: boolean; toolAllowlist?: string[] }>
+  >;
+  /** MCP workspace overrides per workspace */
+  mcpOverrides?: Map<
+    string,
+    { disabledServers?: string[]; enabledServers?: string[]; toolAllowlist?: Record<string, string[]> }
+  >;
+  /** MCP test results - maps server name to tools list or error */
+  mcpTestResults?: Map<string, { success: true; tools: string[] } | { success: false; error: string }>;
 }
 
 /**
@@ -100,6 +112,9 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     onProjectRemove,
     backgroundProcesses = new Map(),
     sessionUsage = new Map(),
+    mcpServers = new Map(),
+    mcpOverrides = new Map(),
+    mcpTestResults = new Map(),
   } = options;
 
   const workspaceMap = new Map(workspaces.map((w) => [w.id, w]));
@@ -158,6 +173,20 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       secrets: {
         get: async () => [],
         update: async () => ({ success: true, data: undefined }),
+      },
+      mcp: {
+        list: async (input: { projectPath: string }) => mcpServers.get(input.projectPath) ?? {},
+        add: async () => ({ success: true, data: undefined }),
+        remove: async () => ({ success: true, data: undefined }),
+        test: async (input: { projectPath: string; name?: string }) => {
+          if (input.name && mcpTestResults.has(input.name)) {
+            return mcpTestResults.get(input.name)!;
+          }
+          // Default: return empty tools
+          return { success: true, tools: [] };
+        },
+        setEnabled: async () => ({ success: true, data: undefined }),
+        setToolAllowlist: async () => ({ success: true, data: undefined }),
       },
     },
     workspace: {
@@ -239,6 +268,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         sendToBackground: async () => ({ success: true, data: undefined }),
       },
       getSessionUsage: async (input: { workspaceId: string }) => sessionUsage.get(input.workspaceId),
+      mcp: {
+        get: async (input: { workspaceId: string }) => mcpOverrides.get(input.workspaceId) ?? {},
+        set: async () => ({ success: true, data: undefined }),
+      },
     },
     window: {
       setTitle: async () => undefined,
