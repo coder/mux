@@ -848,3 +848,65 @@ export const DiffPaddingColors: AppStory = {
     },
   },
 };
+
+/**
+ * Story to verify diff padding alignment with high line numbers.
+ * The ch unit misalignment bug is more visible with 3-digit line numbers.
+ * The colored padding strip should align perfectly with the gutter edge.
+ */
+export const DiffPaddingAlignment: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-diff-alignment",
+          messages: [
+            createUserMessage("msg-1", "Show me a diff with high line numbers", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 100000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "Here's a diff ending with deletions at high line numbers:",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 90000,
+                toolCalls: [
+                  // Diff with 3-digit line numbers ending in deletions
+                  // Replicates the alignment issue from code review diffs
+                  createFileEditTool(
+                    "call-1",
+                    "src/ppo/train/config.rs",
+                    [
+                      "--- src/ppo/train/config.rs",
+                      "+++ src/ppo/train/config.rs",
+                      "@@ -374,7 +374,3 @@",
+                      "             adj = LR_INCREASE_ADJ;",
+                      "         }",
+                      " ",
+                      "-            // Slow down learning rate when we're too stale.",
+                      "-            if last_metrics.stop_reason == metrics::StopReason::TooStale {",
+                      "-                adj = LR_DECREASE_ADJ;",
+                      "-            }",
+                    ].join("\n")
+                  ),
+                ],
+              }
+            ),
+          ],
+        })
+      }
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Verifies diff padding alignment with 3-digit line numbers. " +
+          "The bottom red padding strip should align exactly with the gutter/content boundary. " +
+          "Before the fix, the padding strip used ch units without font-monospace, " +
+          "causing misalignment that scaled with line number width.",
+      },
+    },
+  },
+};

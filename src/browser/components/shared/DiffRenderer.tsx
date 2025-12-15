@@ -285,8 +285,9 @@ export const DiffContainer: React.FC<
       : "8px";
 
   // Padding strip mirrors gutter/content background split of diff lines
+  // Must use font-monospace so ch units match DiffLineGutter's character widths
   const PaddingStrip = ({ lineType }: { lineType?: DiffLineType }) => (
-    <div className="flex h-1.5">
+    <div className="font-monospace flex h-1.5">
       <div
         className="shrink-0"
         style={{
