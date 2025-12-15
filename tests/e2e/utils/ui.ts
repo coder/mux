@@ -41,6 +41,8 @@ export interface WorkspaceUI {
   readonly metaSidebar: {
     expectVisible(): Promise<void>;
     selectTab(label: string): Promise<void>;
+    expectTerminalNoError(): Promise<void>;
+    expectTerminalError(expectedText?: string): Promise<void>;
   };
   readonly settings: {
     open(): Promise<void>;
@@ -410,6 +412,22 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
       const selected = await tab.getAttribute("aria-selected");
       if (selected !== "true") {
         throw new Error(`Tab "${label}" did not enter selected state`);
+      }
+    },
+
+    async expectTerminalNoError(): Promise<void> {
+      // Wait a bit for the terminal to initialize
+      await page.waitForTimeout(500);
+      // Check that there's no error message displayed
+      const errorElement = page.locator(".terminal-view").getByText(/Terminal Error:/);
+      await expect(errorElement).not.toBeVisible({ timeout: 2000 });
+    },
+
+    async expectTerminalError(expectedText?: string): Promise<void> {
+      const errorElement = page.locator(".terminal-view").getByText(/Terminal Error:/);
+      await expect(errorElement).toBeVisible({ timeout: 5000 });
+      if (expectedText) {
+        await expect(errorElement).toContainText(expectedText);
       }
     },
   };

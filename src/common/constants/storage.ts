@@ -308,6 +308,12 @@ export const RIGHT_SIDEBAR_COSTS_WIDTH_KEY = "right-sidebar:width:costs";
 export const RIGHT_SIDEBAR_REVIEW_WIDTH_KEY = "review-sidebar-width";
 
 /**
+ * Right sidebar dock-lite layout (global)
+ * Format: "right-sidebar:layout"
+ */
+export const RIGHT_SIDEBAR_LAYOUT_KEY = "right-sidebar:layout";
+
+/**
  * Get the localStorage key for unified Review search state per workspace
  * Stores: { input: string, useRegex: boolean, matchCase: boolean }
  * Format: "reviewSearchState:{workspaceId}"
