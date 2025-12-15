@@ -1,9 +1,9 @@
 import React from "react";
-import { createPortal } from "react-dom";
 import type { GitStatus } from "@/common/types/workspace";
 import type { GitCommit, GitBranchHeader } from "@/common/utils/git/parseGitLog";
 import { cn } from "@/common/lib/utils";
 import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
 
 // Helper for indicator colors
 const getIndicatorColor = (branch: number): string => {
@@ -50,14 +50,9 @@ export interface GitStatusIndicatorViewProps {
   isLoading: boolean;
   errorMessage: string | null;
   // Interaction
-  showTooltip: boolean;
-  tooltipCoords: { top: number; left: number };
-  onMouseEnter: () => void;
-  onMouseLeave: () => void;
-  onTooltipMouseEnter: () => void;
-  onTooltipMouseLeave: () => void;
+  isOpen: boolean;
+  onOpenChange: (open: boolean) => void;
   onModeChange: (nextMode: GitStatusIndicatorMode) => void;
-  onContainerRef: (el: HTMLSpanElement | null) => void;
   /** When true, shows blue pulsing styling to indicate agent is working */
   isWorking?: boolean;
 }
@@ -76,14 +71,9 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   dirtyFiles,
   isLoading,
   errorMessage,
-  showTooltip,
-  tooltipCoords,
-  onMouseEnter,
-  onMouseLeave,
-  onTooltipMouseEnter,
-  onTooltipMouseLeave,
+  isOpen,
+  onOpenChange,
   onModeChange,
-  onContainerRef,
   isWorking = false,
 }) => {
   // Handle null gitStatus (loading state)
@@ -229,21 +219,9 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   const additionsColor = isWorking ? "text-success-light" : "text-muted";
   const deletionsColor = isWorking ? "text-warning-light" : "text-muted";
 
-  // Render tooltip via portal to bypass overflow constraints
-  const tooltipElement = (
-    <div
-      className={cn(
-        "fixed z-[10000] bg-modal-bg text-foreground border border-separator-light rounded px-3 py-2 text-[11px] font-mono whitespace-pre max-w-96 max-h-[400px] overflow-auto shadow-[0_4px_12px_rgba(0,0,0,0.5)] pointer-events-auto transition-opacity duration-200",
-        showTooltip ? "opacity-100 visible" : "opacity-0 invisible"
-      )}
-      style={{
-        top: `${tooltipCoords.top}px`,
-        left: `${tooltipCoords.left}px`,
-        transform: tooltipPosition === "right" ? "translateY(-50%)" : "none",
-      }}
-      onMouseEnter={onTooltipMouseEnter}
-      onMouseLeave={onTooltipMouseLeave}
-    >
+  // Popover content with git divergence details
+  const popoverContent = (
+    <>
       <div className="border-separator-light mb-2 flex flex-col gap-1 border-b pb-2">
         <div className="flex items-center gap-2">
           <span className="text-muted-light">Divergence:</span>
@@ -296,65 +274,77 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
       </div>
 
       {renderTooltipContent()}
-    </div>
+    </>
+  );
+
+  const triggerContent = (
+    <>
+      {mode === "divergence" ? (
+        <>
+          {gitStatus.ahead > 0 && (
+            <span className="flex items-center font-normal">
+              ↑{formatCountAbbrev(gitStatus.ahead)}
+            </span>
+          )}
+          {gitStatus.behind > 0 && (
+            <span className="flex items-center font-normal">
+              ↓{formatCountAbbrev(gitStatus.behind)}
+            </span>
+          )}
+        </>
+      ) : (
+        <>
+          {outgoingHasDelta ? (
+            <span className="flex items-center gap-2">
+              {gitStatus.outgoingAdditions > 0 && (
+                <span className={cn("font-normal", additionsColor)}>
+                  +{formatCountAbbrev(gitStatus.outgoingAdditions)}
+                </span>
+              )}
+              {gitStatus.outgoingDeletions > 0 && (
+                <span className={cn("font-normal", deletionsColor)}>
+                  -{formatCountAbbrev(gitStatus.outgoingDeletions)}
+                </span>
+              )}
+            </span>
+          ) : (
+            // No outgoing lines but behind remote - show muted behind indicator
+            // so users know they can hover to toggle to divergence view
+            gitStatus.behind > 0 && (
+              <span className="text-muted flex items-center font-normal">
+                ↓{formatCountAbbrev(gitStatus.behind)}
+              </span>
+            )
+          )}
+        </>
+      )}
+      {gitStatus.dirty && (
+        <span className={cn("flex items-center leading-none font-normal", dirtyColor)}>*</span>
+      )}
+    </>
   );
 
   return (
-    <>
-      <span
-        ref={onContainerRef}
-        onMouseEnter={onMouseEnter}
-        onMouseLeave={onMouseLeave}
-        className={cn(
-          "relative flex items-center gap-1 font-mono text-[11px] transition-colors",
-          statusColor
-        )}
+    <HoverCard open={isOpen} onOpenChange={onOpenChange} openDelay={0} closeDelay={150}>
+      <HoverCardTrigger asChild>
+        <span
+          className={cn(
+            "relative flex items-center gap-1 font-mono text-[11px] transition-colors",
+            statusColor
+          )}
+        >
+          {triggerContent}
+        </span>
+      </HoverCardTrigger>
+      <HoverCardContent
+        side={tooltipPosition === "right" ? "right" : "bottom"}
+        align="start"
+        sideOffset={8}
+        collisionPadding={8}
+        className="bg-modal-bg text-foreground border-separator-light z-[10000] max-h-[400px] w-auto max-w-96 min-w-0 overflow-auto px-3 py-2 font-mono text-[11px] whitespace-pre shadow-[0_4px_12px_rgba(0,0,0,0.5)]"
       >
-        {mode === "divergence" ? (
-          <>
-            {gitStatus.ahead > 0 && (
-              <span className="flex items-center font-normal">
-                ↑{formatCountAbbrev(gitStatus.ahead)}
-              </span>
-            )}
-            {gitStatus.behind > 0 && (
-              <span className="flex items-center font-normal">
-                ↓{formatCountAbbrev(gitStatus.behind)}
-              </span>
-            )}
-          </>
-        ) : (
-          <>
-            {outgoingHasDelta ? (
-              <span className="flex items-center gap-2">
-                {gitStatus.outgoingAdditions > 0 && (
-                  <span className={cn("font-normal", additionsColor)}>
-                    +{formatCountAbbrev(gitStatus.outgoingAdditions)}
-                  </span>
-                )}
-                {gitStatus.outgoingDeletions > 0 && (
-                  <span className={cn("font-normal", deletionsColor)}>
-                    -{formatCountAbbrev(gitStatus.outgoingDeletions)}
-                  </span>
-                )}
-              </span>
-            ) : (
-              // No outgoing lines but behind remote - show muted behind indicator
-              // so users know they can hover to toggle to divergence view
-              gitStatus.behind > 0 && (
-                <span className="text-muted flex items-center font-normal">
-                  ↓{formatCountAbbrev(gitStatus.behind)}
-                </span>
-              )
-            )}
-          </>
-        )}
-        {gitStatus.dirty && (
-          <span className={cn("flex items-center leading-none font-normal", dirtyColor)}>*</span>
-        )}
-      </span>
-
-      {createPortal(tooltipElement, document.body)}
-    </>
+        {popoverContent}
+      </HoverCardContent>
+    </HoverCard>
   );
 };
