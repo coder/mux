@@ -6,6 +6,7 @@ interface TokenMeterProps {
   segments: TokenSegment[];
   orientation: "horizontal" | "vertical";
   className?: string;
+  trackClassName?: string;
   style?: React.CSSProperties;
 }
 
@@ -13,13 +14,15 @@ const TokenMeterComponent: React.FC<TokenMeterProps> = ({
   segments,
   orientation,
   className,
+  trackClassName,
   style,
   ...rest
 }) => {
   return (
     <div
       className={cn(
-        "bg-border-light overflow-hidden flex",
+        "overflow-hidden flex",
+        trackClassName ?? "bg-border-light",
         orientation === "horizontal"
           ? "rounded w-full h-1.5 flex-row"
           : "rounded-[4px] w-2 h-full flex-col",

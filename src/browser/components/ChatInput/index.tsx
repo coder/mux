@@ -46,6 +46,11 @@ import {
 } from "@/browser/utils/slashCommands/suggestions";
 import { Tooltip, TooltipTrigger, TooltipContent, HelpIndicator } from "../ui/tooltip";
 import { ModeSelector } from "../ModeSelector";
+import { ContextUsageIndicatorButton } from "../ContextUsageIndicatorButton";
+import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
+import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
+import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
+import { calculateTokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
 import {
   matchesKeybind,
   formatKeybind,
@@ -245,6 +250,25 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // - baseModel: canonical format for UI display and policy checks (e.g., ThinkingSlider)
   const preferredModel = sendMessageOptions.model;
   const baseModel = sendMessageOptions.baseModel;
+
+  // Context usage indicator data (workspace variant only)
+  const workspaceIdForUsage = variant === "workspace" ? props.workspaceId : "";
+  const usage = useWorkspaceUsage(workspaceIdForUsage);
+  const { options: providerOptions } = useProviderOptions();
+  const use1M = providerOptions.anthropic?.use1MContext ?? false;
+  const lastUsage = usage?.liveUsage ?? usage?.lastContextUsage;
+  const usageModel = lastUsage?.model ?? null;
+  const contextUsageData = useMemo(() => {
+    return lastUsage
+      ? calculateTokenMeterData(lastUsage, usageModel ?? "unknown", use1M, false)
+      : { segments: [], totalTokens: 0, totalPercentage: 0 };
+  }, [lastUsage, usageModel, use1M]);
+  const { threshold: autoCompactThreshold, setThreshold: setAutoCompactThreshold } =
+    useAutoCompactionSettings(workspaceIdForUsage, usageModel);
+  const autoCompactionProps = useMemo(
+    () => ({ threshold: autoCompactThreshold, setThreshold: setAutoCompactThreshold }),
+    [autoCompactThreshold, setAutoCompactThreshold]
+  );
 
   const setPreferredModel = useCallback(
     (model: string) => {
@@ -1638,6 +1662,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 data-component="ModelControls"
                 data-tutorial="mode-selector"
               >
+                {variant === "workspace" && (
+                  <ContextUsageIndicatorButton
+                    data={contextUsageData}
+                    autoCompaction={autoCompactionProps}
+                  />
+                )}
                 <ModeSelector mode={mode} onChange={setMode} />
                 <Tooltip>
                   <TooltipTrigger asChild>
