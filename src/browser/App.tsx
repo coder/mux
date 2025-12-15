@@ -43,6 +43,7 @@ import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import type { BranchListResult } from "@/common/orpc/types";
+import type { ExistingBranchSelection } from "@/common/types/branchSelection";
 import { useTelemetry } from "./hooks/useTelemetry";
 import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
 import { useStartWorkspaceCreation, getFirstProjectPath } from "./hooks/useStartWorkspaceCreation";
@@ -368,8 +369,8 @@ function AppInner() {
   );
 
   const openBranchAsWorkspaceFromPalette = useCallback(
-    (projectPath: string, branchName: string) => {
-      startWorkspaceCreation(projectPath, { projectPath, existingBranch: branchName });
+    (projectPath: string, selection: ExistingBranchSelection) => {
+      startWorkspaceCreation(projectPath, { projectPath, existingBranch: selection });
     },
     [startWorkspaceCreation]
   );
@@ -377,7 +378,7 @@ function AppInner() {
   const getBranchesForProject = useCallback(
     async (projectPath: string): Promise<BranchListResult> => {
       if (!api) {
-        return { branches: [], remoteBranches: [], recommendedTrunk: null };
+        return { branches: [], remoteBranches: [], remoteBranchGroups: [], recommendedTrunk: null };
       }
       const branchResult = await api.projects.listBranches({ projectPath });
       const sanitizedBranches = branchResult.branches.filter(
@@ -388,6 +389,22 @@ function AppInner() {
         (branch): branch is string => typeof branch === "string"
       );
 
+      const sanitizedRemoteBranchGroups = Array.isArray(branchResult.remoteBranchGroups)
+        ? branchResult.remoteBranchGroups
+            .filter(
+              (group): group is { remote: string; branches: string[]; truncated: boolean } =>
+                typeof group?.remote === "string" &&
+                Array.isArray(group.branches) &&
+                typeof group.truncated === "boolean"
+            )
+            .map((group) => ({
+              remote: group.remote,
+              branches: group.branches.filter((b): b is string => typeof b === "string"),
+              truncated: group.truncated,
+            }))
+            .filter((group) => group.remote.length > 0 && group.branches.length > 0)
+        : [];
+
       const recommended =
         branchResult.recommendedTrunk && sanitizedBranches.includes(branchResult.recommendedTrunk)
           ? branchResult.recommendedTrunk
@@ -396,6 +413,7 @@ function AppInner() {
       return {
         branches: sanitizedBranches,
         remoteBranches: sanitizedRemoteBranches,
+        remoteBranchGroups: sanitizedRemoteBranchGroups,
         recommendedTrunk: recommended,
       };
     },

@@ -58,6 +58,52 @@ export async function listLocalBranches(projectPath: string): Promise<string[]> 
     .sort((a, b) => a.localeCompare(b));
 }
 
+/** List configured git remotes (e.g. ["origin", "upstream"]). */
+export async function listRemotes(projectPath: string): Promise<string[]> {
+  using proc = execAsync(`git -C "${projectPath}" remote`);
+  const { stdout } = await proc.result;
+  return stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+/**
+ * List remote branches for a specific remote without the "<remote>/" prefix.
+ *
+ * Returns at most `limit` branches (sorted by most recent commit), plus a
+ * `truncated` flag if more branches exist.
+ */
+export async function listRemoteBranchesForRemote(
+  projectPath: string,
+  remote: string,
+  limit: number
+): Promise<{ branches: string[]; truncated: boolean }> {
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : 1;
+  const count = safeLimit + 1;
+
+  using proc = execAsync(
+    `git -C "${projectPath}" for-each-ref --sort=-committerdate --count=${count} --format="%(refname:short)" "refs/remotes/${remote}"`
+  );
+  const { stdout } = await proc.result;
+
+  const refNames = stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    // Remove remote HEAD pointer
+    .filter((line) => line !== `${remote}/HEAD`);
+
+  const prefix = `${remote}/`;
+  const branchNames = refNames
+    .map((ref) => (ref.startsWith(prefix) ? ref.slice(prefix.length) : ref))
+    .filter((name) => name.length > 0 && name !== "HEAD");
+
+  const truncated = branchNames.length > safeLimit;
+  const branches = truncated ? branchNames.slice(0, safeLimit) : branchNames;
+  return { branches, truncated };
+}
+
 /**
  * List remote branches (from origin) without the origin/ prefix.
  * Returns branch names like ["feature-x", "fix-bug-123", ...]

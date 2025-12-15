@@ -3,6 +3,7 @@ import type { ProjectConfig } from "@/node/config";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
 import { CUSTOM_EVENTS, type CustomEventPayloads } from "@/common/constants/events";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { parseExistingBranchSelection } from "@/common/types/branchSelection";
 import {
   getInputKey,
   getModelKey,
@@ -48,11 +49,8 @@ export function persistWorkspaceCreationPrefill(
   }
 
   if (detail.existingBranch !== undefined) {
-    const normalizedBranch = detail.existingBranch.trim();
-    persist(
-      getPrefilledExistingBranchKey(projectPath),
-      normalizedBranch.length > 0 ? normalizedBranch : undefined
-    );
+    const selection = parseExistingBranchSelection(detail.existingBranch);
+    persist(getPrefilledExistingBranchKey(projectPath), selection ?? undefined);
   }
 
   // Note: runtime is intentionally NOT persisted here - it's a one-time override.

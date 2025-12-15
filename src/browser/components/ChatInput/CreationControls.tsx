@@ -1,11 +1,14 @@
 import React, { useCallback, useEffect } from "react";
 import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
+import { BranchPickerPopover } from "../BranchPickerPopover";
 import { Select } from "../Select";
 import { Loader2, Wand2, GitBranch } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { SSHIcon, WorktreeIcon, LocalIcon } from "../icons/RuntimeIcons";
 import { DocsLink } from "../DocsLink";
+import type { ExistingBranchSelection } from "@/common/types/branchSelection";
+import type { BranchListResult } from "@/common/orpc/types";
 import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
 
 export type BranchMode = "new" | "existing";
@@ -14,6 +17,8 @@ interface CreationControlsProps {
   branches: string[];
   /** Remote-only branches (not in local branches) */
   remoteBranches: string[];
+  /** Remote-only branches grouped by remote name (e.g. origin/upstream) */
+  remoteBranchGroups: BranchListResult["remoteBranchGroups"];
   /** Whether branches have finished loading (to distinguish loading vs non-git repo) */
   branchesLoaded: boolean;
   trunkBranch: string;
@@ -33,8 +38,8 @@ interface CreationControlsProps {
   branchMode: BranchMode;
   onBranchModeChange: (mode: BranchMode) => void;
   /** Selected existing branch (when branchMode is "existing") */
-  selectedExistingBranch: string;
-  onSelectedExistingBranchChange: (branch: string) => void;
+  selectedExistingBranch: ExistingBranchSelection | null;
+  onSelectedExistingBranchChange: (selection: ExistingBranchSelection | null) => void;
 }
 
 /** Runtime type button group with icons and colors */
@@ -176,9 +181,15 @@ export function CreationControls(props: CreationControlsProps) {
     }
   }, [isNonGitRepo, runtimeMode, onRuntimeModeChange]);
 
-  // All existing branches (local + remote)
-  const allExistingBranches = [...props.branches, ...props.remoteBranches];
-  const hasExistingBranches = allExistingBranches.length > 0;
+  const remoteGroups =
+    props.remoteBranchGroups.length > 0
+      ? props.remoteBranchGroups
+      : props.remoteBranches.length > 0
+        ? [{ remote: "origin", branches: props.remoteBranches, truncated: false }]
+        : [];
+
+  const hasExistingBranches =
+    props.branches.length > 0 || remoteGroups.some((group) => group.branches.length > 0);
 
   const handleNameChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -307,13 +318,44 @@ export function CreationControls(props: CreationControlsProps) {
 
         {/* Existing branch mode: Branch selector */}
         {props.branchMode === "existing" && (
-          <Select
-            id="existing-branch"
-            value={props.selectedExistingBranch}
-            options={allExistingBranches}
-            onChange={props.onSelectedExistingBranchChange}
-            disabled={props.disabled}
-            className="h-8 min-w-[200px] text-lg font-semibold"
+          <BranchPickerPopover
+            trigger={
+              <button
+                type="button"
+                disabled={props.disabled || !props.branchesLoaded}
+                className={cn(
+                  "hover:bg-hover focus:border-border-medium focus:bg-bg-dark inline-flex h-8 min-w-[200px] items-center gap-2 rounded-md border border-transparent px-2 text-lg font-semibold",
+                  (props.disabled || !props.branchesLoaded) && "cursor-not-allowed opacity-50"
+                )}
+              >
+                <GitBranch size={14} className="text-muted-foreground shrink-0" />
+                <span
+                  className={cn(
+                    "truncate",
+                    !props.selectedExistingBranch ? "text-muted-foreground" : "text-foreground"
+                  )}
+                >
+                  {props.selectedExistingBranch
+                    ? props.selectedExistingBranch.branch
+                    : "Select branch"}
+                </span>
+                {props.selectedExistingBranch?.kind === "remote" && (
+                  <span className="text-muted-foreground text-xs font-normal">
+                    @{props.selectedExistingBranch.remote}
+                  </span>
+                )}
+              </button>
+            }
+            isLoading={!props.branchesLoaded}
+            localBranches={props.branches}
+            remotes={remoteGroups}
+            selection={props.selectedExistingBranch}
+            onSelectLocalBranch={(branch) =>
+              props.onSelectedExistingBranchChange({ kind: "local", branch })
+            }
+            onSelectRemoteBranch={(remote, branch) =>
+              props.onSelectedExistingBranchChange({ kind: "remote", remote, branch })
+            }
           />
         )}
 

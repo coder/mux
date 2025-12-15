@@ -1,6 +1,12 @@
 import type { Config, ProjectConfig } from "@/node/config";
 import { validateProjectPath, isGitRepository } from "@/node/utils/pathUtils";
-import { listLocalBranches, listRemoteBranches, detectDefaultTrunkBranch } from "@/node/git";
+import {
+  listLocalBranches,
+  listRemoteBranches,
+  listRemotes,
+  listRemoteBranchesForRemote,
+  detectDefaultTrunkBranch,
+} from "@/node/git";
 import { execAsync } from "@/node/utils/disposableExec";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
@@ -142,7 +148,7 @@ export class ProjectService {
 
       // Non-git repos return empty branches - they're restricted to local runtime only
       if (!(await isGitRepository(normalizedPath))) {
-        return { branches: [], remoteBranches: [], recommendedTrunk: null };
+        return { branches: [], remoteBranches: [], remoteBranchGroups: [], recommendedTrunk: null };
       }
 
       // Best-effort fetch - ensures newly pushed PR branches are visible
@@ -155,12 +161,36 @@ export class ProjectService {
       }
 
       const branches = await listLocalBranches(normalizedPath);
-      const allRemoteBranches = await listRemoteBranches(normalizedPath);
       // Exclude remote branches that already exist locally
       const localBranchSet = new Set(branches);
-      const remoteBranches = allRemoteBranches.filter((b) => !localBranchSet.has(b));
+
+      // Back-compat: origin-only remote branches, without origin/ prefix
+      const allOriginRemoteBranches = await listRemoteBranches(normalizedPath);
+      const remoteBranches = allOriginRemoteBranches.filter((b) => !localBranchSet.has(b));
+
+      // New: remote branches grouped by remote name (for UI disambiguation)
+      const REMOTE_BRANCH_LIMIT = 50;
+      const remotes = await listRemotes(normalizedPath);
+      const remoteBranchGroups = (
+        await Promise.all(
+          remotes.map(async (remote) => {
+            const { branches: remoteBranchesForRemote, truncated } =
+              await listRemoteBranchesForRemote(normalizedPath, remote, REMOTE_BRANCH_LIMIT);
+
+            const remoteOnlyBranches = remoteBranchesForRemote.filter(
+              (b) => !localBranchSet.has(b)
+            );
+            if (remoteOnlyBranches.length === 0) {
+              return null;
+            }
+
+            return { remote, branches: remoteOnlyBranches, truncated };
+          })
+        )
+      ).filter((group): group is NonNullable<typeof group> => group !== null);
+
       const recommendedTrunk = await detectDefaultTrunkBranch(normalizedPath, branches);
-      return { branches, remoteBranches, recommendedTrunk };
+      return { branches, remoteBranches, remoteBranchGroups, recommendedTrunk };
     } catch (error) {
       log.error("Failed to list branches:", error);
       throw error instanceof Error ? error : new Error(String(error));
