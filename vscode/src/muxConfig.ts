@@ -1,63 +1,96 @@
-import * as path from "path";
-import * as os from "os";
+import type {
+  FrontendWorkspaceMetadata,
+  WorkspaceActivitySnapshot,
+} from "mux/common/types/workspace";
 import { Config } from "mux/node/config";
-import type { WorkspaceMetadata } from "mux/common/types/workspace";
-import { type ExtensionMetadata, readExtensionMetadata } from "mux/node/utils/extensionMetadata";
-import { getProjectName } from "mux/node/utils/runtime/helpers";
-import { createRuntime } from "mux/node/runtime/runtimeFactory";
+import { readExtensionMetadata } from "mux/node/utils/extensionMetadata";
+import {
+  createOrpcHttpClient,
+  discoverMuxServer,
+  type DiscoveredMuxServer,
+} from "./orpcClient";
 
 /**
- * Workspace with extension metadata for display in VS Code extension.
- * Combines workspace metadata from main app with extension-specific data.
+ * Workspace with activity metadata for display in VS Code extension.
  */
-export interface WorkspaceWithContext extends WorkspaceMetadata {
-  projectPath: string;
-  extensionMetadata?: ExtensionMetadata;
+export interface WorkspaceWithContext extends FrontendWorkspaceMetadata {
+  extensionMetadata?: WorkspaceActivitySnapshot;
 }
 
-/**
- * Get all workspaces from mux config, enriched with extension metadata.
- * Uses main app's Config class to read workspace metadata, then enriches
- * with extension-specific data (recency, streaming status).
- */
-export async function getAllWorkspaces(): Promise<WorkspaceWithContext[]> {
+export class MuxServerConnectionError extends Error {
+  readonly baseUrl: string;
+  readonly innerError: unknown;
+
+  constructor(baseUrl: string, innerError: unknown) {
+    super(`Failed to connect to mux server at ${baseUrl}`);
+    this.baseUrl = baseUrl;
+    this.innerError = innerError;
+  }
+}
+
+export interface GetAllWorkspacesOptions {
+  /** Skip server discovery and read from local mux files directly. */
+  forceFiles?: boolean;
+}
+
+export async function getAllWorkspaces(
+  options: GetAllWorkspacesOptions = {}
+): Promise<WorkspaceWithContext[]> {
+  if (!options.forceFiles) {
+    const server = await discoverMuxServer();
+    if (server) {
+      try {
+        return await getAllWorkspacesViaOrpc(server);
+      } catch (error) {
+        throw new MuxServerConnectionError(server.baseUrl, error);
+      }
+    }
+  }
+
+  return getAllWorkspacesViaFiles();
+}
+
+async function getAllWorkspacesViaOrpc(
+  server: DiscoveredMuxServer
+): Promise<WorkspaceWithContext[]> {
+  const api = createOrpcHttpClient(server);
+
+  const [workspaces, activityByWorkspaceId] = await Promise.all([
+    api.workspace.list(),
+    api.workspace.activity.list(),
+  ]);
+
+  const enriched: WorkspaceWithContext[] = workspaces.map((ws) => ({
+    ...ws,
+    extensionMetadata: activityByWorkspaceId[ws.id],
+  }));
+
+  sortByRecency(enriched);
+  return enriched;
+}
+
+async function getAllWorkspacesViaFiles(): Promise<WorkspaceWithContext[]> {
   const config = new Config();
   const workspaces = await config.getAllWorkspaceMetadata();
   const extensionMeta = readExtensionMetadata();
 
-  console.log(`[mux] Read ${extensionMeta.size} entries from extension metadata`);
+  const enriched: WorkspaceWithContext[] = workspaces.map((ws) => ({
+    ...ws,
+    extensionMetadata: extensionMeta.get(ws.id),
+  }));
 
-  // Enrich with extension metadata
-  const enriched: WorkspaceWithContext[] = workspaces.map((ws) => {
-    const meta = extensionMeta.get(ws.id);
-    if (meta) {
-      console.log(`[mux]   ${ws.id}: recency=${meta.recency}, streaming=${meta.streaming}`);
-    }
-    return {
-      ...ws,
-      extensionMetadata: meta,
-    };
-  });
+  sortByRecency(enriched);
+  return enriched;
+}
 
-  // Sort by recency (extension metadata > createdAt > name)
+function sortByRecency(workspaces: WorkspaceWithContext[]): void {
   const recencyOf = (w: WorkspaceWithContext): number =>
     w.extensionMetadata?.recency ?? (w.createdAt ? Date.parse(w.createdAt) : 0);
 
-  enriched.sort((a, b) => {
+  workspaces.sort((a, b) => {
     const aRecency = recencyOf(a);
     const bRecency = recencyOf(b);
     if (aRecency !== bRecency) return bRecency - aRecency;
     return a.name.localeCompare(b.name);
   });
-
-  return enriched;
-}
-
-/**
- * Get the workspace path for local or SSH workspaces
- * Uses Runtime to compute path using main app's logic
- */
-export function getWorkspacePath(workspace: WorkspaceWithContext): string {
-  const runtime = createRuntime(workspace.runtimeConfig, { projectPath: workspace.projectPath });
-  return runtime.getWorkspacePath(workspace.projectPath, workspace.name);
 }

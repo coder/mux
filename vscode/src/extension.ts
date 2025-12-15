@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { getAllWorkspaces, WorkspaceWithContext } from "./muxConfig";
+import { getAllWorkspaces, MuxServerConnectionError, WorkspaceWithContext } from "./muxConfig";
 import { openWorkspace } from "./workspaceOpener";
 import { formatRelativeTime } from "mux/browser/utils/ui/dateTime";
 
@@ -70,7 +70,39 @@ function createWorkspaceQuickPickItem(
  */
 async function openWorkspaceCommand() {
   // Get all workspaces, this is intentionally not cached.
-  const workspaces = await getAllWorkspaces();
+  let workspaces: WorkspaceWithContext[] = [];
+  let forceFiles = false;
+
+  while (true) {
+    try {
+      workspaces = await getAllWorkspaces({ forceFiles });
+      break;
+    } catch (error) {
+      if (error instanceof MuxServerConnectionError) {
+        const selection = await vscode.window.showErrorMessage(
+          `mux appears to be running at ${error.baseUrl}, but the VS Code extension couldn't connect.`,
+          "Retry",
+          "Use local files (may conflict)"
+        );
+
+        if (selection === "Retry") {
+          continue;
+        }
+
+        if (selection === "Use local files (may conflict)") {
+          forceFiles = true;
+          continue;
+        }
+
+        return;
+      }
+
+      vscode.window.showErrorMessage(
+        `mux: Failed to list workspaces. ${error instanceof Error ? error.message : String(error)}`
+      );
+      return;
+    }
+  }
 
   if (workspaces.length === 0) {
     const selection = await vscode.window.showInformationMessage(

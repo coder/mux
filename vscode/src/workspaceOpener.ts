@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { WorkspaceWithContext, getWorkspacePath } from "./muxConfig";
+import { WorkspaceWithContext } from "./muxConfig";
 
 /**
  * Check if a Remote-SSH extension is installed
@@ -18,7 +18,7 @@ function isRemoteSshInstalled(): boolean {
 export async function openWorkspace(workspace: WorkspaceWithContext) {
   // Handle local runtimes: "local", "worktree", or legacy "local" with srcBaseDir
   if (workspace.runtimeConfig.type === "local" || workspace.runtimeConfig.type === "worktree") {
-    const workspacePath = getWorkspacePath(workspace);
+    const workspacePath = workspace.namedWorkspacePath;
     const uri = vscode.Uri.file(workspacePath);
 
     await vscode.commands.executeCommand("vscode.openFolder", uri, {
@@ -53,7 +53,7 @@ export async function openWorkspace(workspace: WorkspaceWithContext) {
   }
 
   const host = workspace.runtimeConfig.host;
-  const remotePath = getWorkspacePath(workspace);
+  const remotePath = workspace.namedWorkspacePath;
 
   // Format: vscode-remote://ssh-remote+<host><absolute-path>
   // Both ms-vscode-remote.remote-ssh and anysphere.remote-ssh use the same URI scheme
