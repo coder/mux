@@ -4,13 +4,13 @@ import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePer
 import { getSplashDismissedKey } from "@/common/constants/storage";
 
 export function SplashScreenProvider({ children }: { children: ReactNode }) {
-  // Filter registry to undismissed splashes, sorted by priority
+  // Filter registry to undismissed splashes, sorted by priority (highest priority first)
   const [queue, setQueue] = useState<SplashConfig[]>(() => {
     return SPLASH_REGISTRY.filter((splash) => {
       // Check if this splash has been dismissed
       const isDismissed = readPersistedState(getSplashDismissedKey(splash.id), false);
       return !isDismissed;
-    }).sort((a, b) => a.priority - b.priority);
+    }).sort((a, b) => a.priority - b.priority); // Lower number = higher priority = shown first
   });
 
   const currentSplash = queue[0] ?? null;
