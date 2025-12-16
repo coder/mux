@@ -22,6 +22,7 @@ Recommended sections:
     - test
     - clean
     - development server
+    - other *important* scripts (use `find -type f -name '*.sh'` or similar)
 - Patterns (optional)
     - List any important or uncommon patterns (compared to other similar codebases), with examples (e.g., how to authorize an HTTP request).
     - List any important workflows and their steps (e.g., how to make a database migration).
@@ -37,12 +38,8 @@ You can add other sections if they are necessary.
 If the information required for mandatory sections isn't available due to the workspace being empty or sparse, add TODO text in its place.
 Optional sections should be scrapped if the information is too thin.
 
-You can find some examples of AGENTS.md files online that you can use for inspiration if you have access. DO NOT COPY THESE VERBATIM.
-- https://raw.githubusercontent.com/coder/coder/refs/heads/main/AGENTS.md
-- https://raw.githubusercontent.com/coder/mux/refs/heads/main/docs/AGENTS.md
-
 Above all things:
-- The document must be clear and concise. Less than 400 words is optimal. Measure the word count of the complete file and strive to achieve this goal without losing important information.
+- The document must be clear and concise. Simple projects should need less than 400 words, but larger and more mature codebases will likely need 700+. Prioritize completeness over brevity.
 - Don't include useless fluff.
 - The document must be in Markdown format and use headings for structure.
 - Give examples where necessary or helpful (commands, directory paths, naming patterns).
