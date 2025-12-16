@@ -697,11 +697,8 @@ describe("BackgroundProcessManager", () => {
       expect(result.success).toBe(true);
       if (!result.success) return;
 
-      // Wait for output
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      // Verify we can read output using the SAME manager
-      const output = await manager.getOutput(result.processId);
+      // Wait for output using the SAME manager (avoid sleep-based flakiness)
+      const output = await manager.getOutput(result.processId, undefined, undefined, 2);
       expect(output.success).toBe(true);
       if (!output.success) return;
 

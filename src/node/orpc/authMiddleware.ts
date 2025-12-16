@@ -1,18 +1,21 @@
-import { timingSafeEqual } from "crypto";
 import { os } from "@orpc/server";
 import type { IncomingHttpHeaders, IncomingMessage } from "http";
 import { URL } from "url";
 
-// Time-constant string comparison using Node's crypto module
+// Best-effort time-constant string comparison.
 export function safeEq(a: string, b: string): boolean {
   const bufA = Buffer.from(a);
   const bufB = Buffer.from(b);
-  if (bufA.length !== bufB.length) {
-    // Perform a dummy comparison to maintain constant time
-    timingSafeEqual(bufA, bufA);
-    return false;
+
+  const maxLen = Math.max(bufA.length, bufB.length);
+  let diff = bufA.length ^ bufB.length;
+
+  // Compare every byte without early-exit so mismatch position doesn't affect timing.
+  for (let i = 0; i < maxLen; i++) {
+    diff |= (bufA[i] ?? 0) ^ (bufB[i] ?? 0);
   }
-  return timingSafeEqual(bufA, bufB);
+
+  return diff === 0;
 }
 
 function extractBearerToken(header: string | string[] | undefined): string | null {

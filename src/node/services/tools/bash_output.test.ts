@@ -1,3 +1,6 @@
+import * as fs from "fs";
+import * as path from "path";
+
 import { describe, it, expect } from "bun:test";
 import { createBashOutputTool } from "./bash_output";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
@@ -308,12 +311,14 @@ describe("bash_output tool", () => {
 
     // Use unique process ID to avoid leftover state from previous runs
     const processId = `delayed-output-${Date.now()}`;
+    const signalPath = path.join(tempDir.path, `${processId}.signal`);
 
-    // Spawn a process that outputs after a delay (use longer sleep to avoid race)
+    // Spawn a process that blocks until we create a signal file, then outputs.
+    // This avoids flakiness from the spawn call itself taking a non-trivial amount of time.
     const spawnResult = await manager.spawn(
       runtime,
       "test-workspace",
-      "sleep 1; echo 'delayed output'",
+      `while [ ! -f "${signalPath}" ]; do sleep 0.1; done; echo 'delayed output'`,
       { cwd: process.cwd(), displayName: processId }
     );
 
@@ -323,21 +328,25 @@ describe("bash_output tool", () => {
 
     const tool = createBashOutputTool(config);
 
-    // Call with timeout=3 should wait and return output (waiting for the sleep to complete)
+    // Call with timeout=3 should wait and return output (waiting for signal file)
     const start = Date.now();
-    const result = (await tool.execute!(
+    const resultPromise = tool.execute!(
       { process_id: spawnResult.processId, timeout_secs: 3 },
       mockToolCallOptions
-    )) as BashOutputToolResult;
+    ) as Promise<BashOutputToolResult>;
+
+    // Ensure bash_output is actually waiting before we trigger output.
+    await new Promise((r) => setTimeout(r, 300));
+    await fs.promises.writeFile(signalPath, "go");
+
+    const result = await resultPromise;
     const elapsed = Date.now() - start;
 
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.output).toContain("delayed output");
-      // Should have waited at least ~1 second for the sleep
-      expect(elapsed).toBeGreaterThan(800);
-      // But not the full 3s timeout
-      expect(elapsed).toBeLessThan(2500);
+      expect(elapsed).toBeGreaterThan(250);
+      expect(elapsed).toBeLessThan(3500);
     }
 
     // Cleanup

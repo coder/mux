@@ -13,6 +13,7 @@ import {
   createTerminalTool,
   createStatusTool,
   createGenericTool,
+  createPendingTool,
 } from "./mockFactory";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getModelKey } from "@/common/constants/storage";
@@ -275,48 +276,101 @@ export const AskUserQuestionPending: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() =>
-        setupStreamingChatStory({
+        setupSimpleChatStory({
           messages: [
             createUserMessage("msg-1", "Please implement the feature", {
               historySequence: 1,
               timestamp: STABLE_TIMESTAMP - 3000,
             }),
-          ],
-          streamingMessageId: "msg-2",
-          historySequence: 2,
-          streamText: "I have a few clarifying questions.",
-          pendingTool: {
-            toolCallId: "call-ask-1",
-            toolName: "ask_user_question",
-            args: {
-              questions: [
-                {
-                  question: "Which approach should we take?",
-                  header: "Approach",
-                  options: [
-                    { label: "A", description: "Approach A" },
-                    { label: "B", description: "Approach B" },
+            createAssistantMessage("msg-2", "I have a few clarifying questions.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 2000,
+              toolCalls: [
+                createPendingTool("call-ask-1", "ask_user_question", {
+                  questions: [
+                    {
+                      question: "Which approach should we take?",
+                      header: "Approach",
+                      options: [
+                        { label: "A", description: "Approach A" },
+                        { label: "B", description: "Approach B" },
+                      ],
+                      multiSelect: false,
+                    },
+                    {
+                      question: "Which platforms do we need to support?",
+                      header: "Platforms",
+                      options: [
+                        { label: "macOS", description: "Apple macOS" },
+                        { label: "Windows", description: "Microsoft Windows" },
+                        { label: "Linux", description: "Linux desktops" },
+                      ],
+                      multiSelect: true,
+                    },
                   ],
-                  multiSelect: false,
-                },
-                {
-                  question: "Which platforms do we need to support?",
-                  header: "Platforms",
-                  options: [
-                    { label: "macOS", description: "Apple macOS" },
-                    { label: "Windows", description: "Microsoft Windows" },
-                    { label: "Linux", description: "Linux desktops" },
-                  ],
-                  multiSelect: true,
-                },
+                }),
               ],
-            },
-          },
+            }),
+          ],
           gitStatus: { dirty: 1 },
         })
       }
     />
   ),
+  play: async ({ canvasElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const canvas = within(storyRoot);
+
+    // Wait for the tool card to appear (header is rendered even when collapsed).
+    const toolTitle = await canvas.findByText(/ask_user_question/, {}, { timeout: 8000 });
+
+    // Ensure tool is expanded (question text is inside ToolDetails).
+    if (!canvas.queryByText("Summary")) {
+      await userEvent.click(toolTitle);
+    }
+
+    const getSectionButton = (prefix: string): HTMLElement => {
+      const buttons = canvas.getAllByRole("button");
+      const btn = buttons.find(
+        (el) => el.tagName === "BUTTON" && (el.textContent ?? "").startsWith(prefix)
+      );
+      if (!btn) throw new Error(`${prefix} section button not found`);
+      return btn;
+    };
+
+    // Ensure we're on the first question.
+    await userEvent.click(getSectionButton("Approach"));
+
+    // Wait for the first question to render.
+    try {
+      await canvas.findByText("Which approach should we take?", {}, { timeout: 8000 });
+    } catch {
+      const toolContainerText =
+        toolTitle.closest("div")?.parentElement?.textContent?.slice(0, 500) ?? "<missing>";
+      throw new Error(
+        `AskUserQuestionPending: question UI not found. Tool container: ${toolContainerText}`
+      );
+    }
+
+    // Selecting a single-select option should auto-advance.
+    await userEvent.click(canvas.getByText("Approach A"));
+    await canvas.findByText("Which platforms do we need to support?", {}, { timeout: 2000 });
+
+    // Regression: you must be able to jump back to a previous section after answering it.
+    await userEvent.click(getSectionButton("Approach"));
+
+    await canvas.findByText("Which approach should we take?", {}, { timeout: 2000 });
+
+    // Give React a tick to run any pending effects; we should still be on question 1.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    if (canvas.queryByText("Which platforms do we need to support?")) {
+      throw new Error("Unexpected auto-advance when navigating back to a previous question");
+    }
+
+    // Changing the answer should still auto-advance.
+    await userEvent.click(canvas.getByText("Approach B"));
+    await canvas.findByText("Which platforms do we need to support?", {}, { timeout: 2000 });
+  },
 };
 
 /** Completed ask_user_question tool call */

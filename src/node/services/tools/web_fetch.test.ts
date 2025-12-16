@@ -1,3 +1,5 @@
+import { shouldRunIntegrationTests } from "../../../../tests/testUtils";
+
 import { describe, it, expect } from "bun:test";
 import { createWebFetchTool } from "./web_fetch";
 import type { WebFetchToolArgs, WebFetchToolResult } from "@/common/types/tools";
@@ -9,6 +11,8 @@ import * as path from "path";
 import type { ToolCallOptions } from "ai";
 
 // ToolCallOptions stub for testing
+
+const itInternet = shouldRunIntegrationTests() ? it : it.skip;
 const toolCallOptions: ToolCallOptions = {
   toolCallId: "test-call-id",
   messages: [],
@@ -31,7 +35,7 @@ function createTestWebFetchTool() {
 
 describe("web_fetch tool", () => {
   // Integration test: fetch a real public URL
-  it("should fetch and convert a real web page to markdown", async () => {
+  itInternet("should fetch and convert a real web page to markdown", async () => {
     using testEnv = createTestWebFetchTool();
     const args: WebFetchToolArgs = {
       // example.com is a stable, simple HTML page maintained by IANA
@@ -51,7 +55,7 @@ describe("web_fetch tool", () => {
   });
 
   // Integration test: fetch plain text endpoint (not HTML)
-  it("should fetch plain text content without HTML processing", async () => {
+  itInternet("should fetch plain text content without HTML processing", async () => {
     using testEnv = createTestWebFetchTool();
     const args: WebFetchToolArgs = {
       // Cloudflare's trace endpoint returns plain text diagnostics
@@ -72,7 +76,7 @@ describe("web_fetch tool", () => {
     }
   });
 
-  it("should handle DNS failure gracefully", async () => {
+  itInternet("should handle DNS failure gracefully", async () => {
     using testEnv = createTestWebFetchTool();
     const args: WebFetchToolArgs = {
       // .invalid TLD is reserved and guaranteed to never resolve

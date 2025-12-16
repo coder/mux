@@ -1,6 +1,6 @@
 import assert from "@/common/utils/assert";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { useAPI } from "@/browser/contexts/API";
@@ -247,31 +247,6 @@ export function AskUserQuestionToolCall(props: {
     : props.args.questions[Math.min(activeIndex, props.args.questions.length - 1)];
   const currentDraft = currentQuestion ? draftAnswers[currentQuestion.question] : undefined;
 
-  // Track if user has interacted to avoid auto-advancing on initial render
-  const hasUserInteracted = useRef(false);
-
-  // Auto-advance for single-select questions when an option is selected
-  useEffect(() => {
-    if (!hasUserInteracted.current) {
-      return;
-    }
-
-    if (!currentQuestion || currentQuestion.multiSelect || isOnSummary) {
-      return;
-    }
-
-    const draft = draftAnswers[currentQuestion.question];
-    if (!draft) {
-      return;
-    }
-
-    // For single-select, advance when user selects a non-Other option
-    // (Other requires text input, so don't auto-advance)
-    if (draft.selected.length === 1 && !draft.selected.includes(OTHER_VALUE)) {
-      setActiveIndex(activeIndex + 1);
-    }
-  }, [draftAnswers, currentQuestion, activeIndex, isOnSummary]);
-
   const unansweredCount = useMemo(() => {
     return props.args.questions.filter((q) => {
       const draft = draftAnswers[q.question];
@@ -425,7 +400,8 @@ export function AskUserQuestionToolCall(props: {
                         const checked = currentDraft.selected.includes(opt.label);
 
                         const toggle = () => {
-                          hasUserInteracted.current = true;
+                          const isSelecting = !checked;
+
                           setDraftAnswers((prev) => {
                             const draft = prev[currentQuestion.question] ?? {
                               selected: [],
@@ -458,6 +434,16 @@ export function AskUserQuestionToolCall(props: {
                               };
                             }
                           });
+
+                          // For single-select questions, auto-advance *only* when the user selects
+                          // a non-Other option (avoid useEffect auto-advance that breaks back-nav).
+                          if (
+                            !currentQuestion.multiSelect &&
+                            isSelecting &&
+                            opt.label !== OTHER_VALUE
+                          ) {
+                            setActiveIndex((idx) => idx + 1);
+                          }
                         };
 
                         return (

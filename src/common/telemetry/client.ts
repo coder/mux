@@ -65,6 +65,10 @@ function isViteDevEnvironment(): boolean {
  * In Electron, the preload script exposes this as a safe boolean.
  */
 function isTelemetryEnabledInDev(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
   return window.api?.enableTelemetryInDev === true;
 }
 
@@ -82,6 +86,10 @@ export function initTelemetry(): void {
  * The backend decides whether to actually send to PostHog.
  */
 export function trackEvent(payload: TelemetryEventPayload): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
   if (
     isTestEnvironment() ||
     window.api?.isE2E === true ||

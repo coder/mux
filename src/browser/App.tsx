@@ -139,11 +139,17 @@ function AppInner() {
 
   // Sync selectedWorkspace with URL hash
   useEffect(() => {
+    // Storybook's test runner treats hash updates as navigations and will retry play tests.
+    // The hash deep-linking isn't needed in Storybook, so skip it there.
+    const shouldSyncHash = !window.location.pathname.endsWith("iframe.html");
+
     if (selectedWorkspace) {
       // Update URL with workspace ID
-      const newHash = `#workspace=${encodeURIComponent(selectedWorkspace.workspaceId)}`;
-      if (window.location.hash !== newHash) {
-        window.history.replaceState(null, "", newHash);
+      if (shouldSyncHash) {
+        const newHash = `#workspace=${encodeURIComponent(selectedWorkspace.workspaceId)}`;
+        if (window.location.hash !== newHash) {
+          window.history.replaceState(null, "", newHash);
+        }
       }
 
       // Update window title with workspace title (or name for legacy workspaces)
@@ -155,7 +161,7 @@ function AppInner() {
       void api?.window.setTitle({ title });
     } else {
       // Clear hash when no workspace selected
-      if (window.location.hash) {
+      if (shouldSyncHash && window.location.hash) {
         window.history.replaceState(null, "", window.location.pathname);
       }
       // Set document.title locally for browser mode, call backend for Electron
@@ -174,7 +180,7 @@ function AppInner() {
           `Workspace ${selectedWorkspace.workspaceId} no longer exists, clearing selection`
         );
         setSelectedWorkspace(null);
-        if (window.location.hash) {
+        if (!window.location.pathname.endsWith("iframe.html") && window.location.hash) {
           window.history.replaceState(null, "", window.location.pathname);
         }
       } else if (!selectedWorkspace.namedWorkspacePath && metadata.namedWorkspacePath) {
