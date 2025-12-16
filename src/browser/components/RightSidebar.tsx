@@ -24,8 +24,10 @@ export interface ReviewStats {
 interface SidebarContainerProps {
   collapsed: boolean;
   wide?: boolean;
-  /** Custom width from drag-resize (takes precedence over collapsed/wide) */
+  /** Custom width from drag-resize (persisted per-tab by AIView) */
   customWidth?: number;
+  /** Whether actively dragging resize handle (disables transition) */
+  isResizing?: boolean;
   children: React.ReactNode;
   role: string;
   "aria-label": string;
@@ -36,14 +38,15 @@ interface SidebarContainerProps {
  *
  * Width priority (first match wins):
  * 1. collapsed (20px) - Shows vertical token meter only
- * 2. customWidth - From drag-resize on Review tab
- * 3. wide - Auto-calculated max width for Review tab (when not resizing)
- * 4. default (300px) - Costs/Tools tabs
+ * 2. customWidth - From drag-resize (persisted per-tab)
+ * 3. wide - Auto-calculated max width for Review tab (when not drag-resizing)
+ * 4. default (300px) - Costs tab when no customWidth saved
  */
 const SidebarContainer: React.FC<SidebarContainerProps> = ({
   collapsed,
   wide,
   customWidth,
+  isResizing,
   children,
   role,
   "aria-label": ariaLabel,
@@ -60,7 +63,7 @@ const SidebarContainer: React.FC<SidebarContainerProps> = ({
     <div
       className={cn(
         "bg-sidebar border-l border-border-light flex flex-col overflow-hidden flex-shrink-0",
-        customWidth ? "" : "transition-[width] duration-200",
+        !isResizing && "transition-[width] duration-200",
         collapsed && "sticky right-0 z-10 shadow-[-2px_0_4px_rgba(0,0,0,0.2)]",
         // Mobile: Show vertical meter when collapsed (20px), full width when expanded
         "max-md:border-l-0 max-md:border-t max-md:border-border-light",
@@ -83,9 +86,9 @@ interface RightSidebarProps {
   workspaceId: string;
   workspacePath: string;
   chatAreaRef: React.RefObject<HTMLDivElement>;
-  /** Custom width in pixels (overrides default widths when Review tab is resizable) */
+  /** Custom width in pixels (persisted per-tab, provided by AIView) */
   width?: number;
-  /** Drag start handler for resize (Review tab only) */
+  /** Drag start handler for resize */
   onStartResize?: (e: React.MouseEvent) => void;
   /** Whether currently resizing */
   isResizing?: boolean;
@@ -243,7 +246,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     <SidebarContainer
       collapsed={showCollapsed}
       wide={selectedTab === "review" && !width} // Auto-wide only if not drag-resizing
-      customWidth={width} // Drag-resized width from AIView (Review tab only)
+      customWidth={width} // Per-tab resized width from AIView
+      isResizing={isResizing}
       role="complementary"
       aria-label="Workspace insights"
     >

@@ -8,7 +8,11 @@ import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { setupSimpleChatStory } from "./storyHelpers";
 import { createUserMessage, createAssistantMessage } from "./mockFactory";
 import { within, userEvent, waitFor } from "@storybook/test";
-import { RIGHT_SIDEBAR_TAB_KEY } from "@/common/constants/storage";
+import {
+  RIGHT_SIDEBAR_TAB_KEY,
+  RIGHT_SIDEBAR_COSTS_WIDTH_KEY,
+  RIGHT_SIDEBAR_REVIEW_WIDTH_KEY,
+} from "@/common/constants/storage";
 import type { ComponentType } from "react";
 import type { MockSessionUsage } from "../../../.storybook/mocks/orpc";
 
@@ -65,6 +69,9 @@ export const CostsTab: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
+        // Set per-tab widths: costs at 350px, review at 700px
+        localStorage.setItem(RIGHT_SIDEBAR_COSTS_WIDTH_KEY, "350");
+        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
 
         return setupSimpleChatStory({
           workspaceId: "ws-costs",
@@ -96,12 +103,16 @@ export const CostsTab: AppStory = {
 
 /**
  * Review tab selected - click switches from Costs to Review tab
+ * Verifies per-tab width persistence: starts at Costs width (350px), switches to Review width (700px)
  */
 export const ReviewTab: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
+        // Set distinct widths per tab to verify switching behavior
+        localStorage.setItem(RIGHT_SIDEBAR_COSTS_WIDTH_KEY, "350");
+        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
 
         return setupSimpleChatStory({
           workspaceId: "ws-review",

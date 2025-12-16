@@ -240,6 +240,19 @@ export const RIGHT_SIDEBAR_TAB_KEY = "right-sidebar-tab";
 export const RIGHT_SIDEBAR_COLLAPSED_KEY = "right-sidebar:collapsed";
 
 /**
+ * Right sidebar width for Costs tab (global)
+ * Format: "right-sidebar:width:costs"
+ */
+export const RIGHT_SIDEBAR_COSTS_WIDTH_KEY = "right-sidebar:width:costs";
+
+/**
+ * Right sidebar width for Review tab (global)
+ * Reuses legacy key to preserve existing user preferences
+ * Format: "review-sidebar-width"
+ */
+export const RIGHT_SIDEBAR_REVIEW_WIDTH_KEY = "review-sidebar-width";
+
+/**
  * Get the localStorage key for unified Review search state per workspace
  * Stores: { input: string, useRegex: boolean, matchCase: boolean }
  * Format: "reviewSearchState:{workspaceId}"

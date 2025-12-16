@@ -14,10 +14,16 @@ import { EditCutoffBarrier } from "./Messages/ChatBarrier/EditCutoffBarrier";
 import { StreamingBarrier } from "./Messages/ChatBarrier/StreamingBarrier";
 import { RetryBarrier } from "./Messages/ChatBarrier/RetryBarrier";
 import { PinnedTodoList } from "./PinnedTodoList";
-import { getAutoRetryKey, VIM_ENABLED_KEY } from "@/common/constants/storage";
+import {
+  getAutoRetryKey,
+  VIM_ENABLED_KEY,
+  RIGHT_SIDEBAR_TAB_KEY,
+  RIGHT_SIDEBAR_COSTS_WIDTH_KEY,
+  RIGHT_SIDEBAR_REVIEW_WIDTH_KEY,
+} from "@/common/constants/storage";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { ChatInput, type ChatInputAPI } from "./ChatInput/index";
-import { RightSidebar } from "./RightSidebar";
+import { RightSidebar, type TabType } from "./RightSidebar";
 import { useResizableSidebar } from "@/browser/hooks/useResizableSidebar";
 import {
   shouldShowInterruptedBarrier,
@@ -92,18 +98,33 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const { api } = useAPI();
   const chatAreaRef = useRef<HTMLDivElement>(null);
 
-  // Resizable RightSidebar width (used for both Review + Costs to avoid tab-switch jank)
-  const {
-    width: sidebarWidth,
-    isResizing,
-    startResize,
-  } = useResizableSidebar({
-    enabled: true,
+  // Track which right sidebar tab is selected (listener: true to sync with RightSidebar changes)
+  const [selectedRightTab] = usePersistedState<TabType>(RIGHT_SIDEBAR_TAB_KEY, "costs", {
+    listener: true,
+  });
+
+  // Resizable RightSidebar width - separate hooks per tab for independent persistence
+  const costsSidebar = useResizableSidebar({
+    enabled: selectedRightTab === "costs",
     defaultWidth: 300,
     minWidth: 300,
     maxWidth: 1200,
-    storageKey: "review-sidebar-width",
+    storageKey: RIGHT_SIDEBAR_COSTS_WIDTH_KEY,
   });
+  const reviewSidebar = useResizableSidebar({
+    enabled: selectedRightTab === "review",
+    defaultWidth: 600,
+    minWidth: 300,
+    maxWidth: 1200,
+    storageKey: RIGHT_SIDEBAR_REVIEW_WIDTH_KEY,
+  });
+
+  // Derive active sidebar props based on selected tab
+  const sidebarWidth = selectedRightTab === "review" ? reviewSidebar.width : costsSidebar.width;
+  const isResizing =
+    selectedRightTab === "review" ? reviewSidebar.isResizing : costsSidebar.isResizing;
+  const startResize =
+    selectedRightTab === "review" ? reviewSidebar.startResize : costsSidebar.startResize;
 
   const workspaceState = useWorkspaceState(workspaceId);
   const aggregator = useWorkspaceAggregator(workspaceId);
