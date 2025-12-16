@@ -28,6 +28,14 @@ export const SolutionLabel: React.FC<{ children: ReactNode }> = ({ children }) =
 export const ChatInputToast: React.FC<ChatInputToastProps> = ({ toast, onDismiss }) => {
   const [isLeaving, setIsLeaving] = React.useState(false);
 
+  // Avoid carrying the fade-out animation state across toast changes.
+  // If we auto-dismiss or manually dismiss a toast, `isLeaving` becomes true.
+  // Without resetting it on new toasts, subsequent toasts can render in a permanent
+  // fade-out state and appear invisible.
+  useEffect(() => {
+    setIsLeaving(false);
+  }, [toast?.id]);
+
   const handleDismiss = useCallback(() => {
     setIsLeaving(true);
     setTimeout(onDismiss, 200); // Wait for fade animation
