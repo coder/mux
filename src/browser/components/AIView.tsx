@@ -70,6 +70,7 @@ import { useReviews } from "@/browser/hooks/useReviews";
 import { ReviewsBanner } from "./ReviewsBanner";
 import type { ReviewNoteData } from "@/common/types/review";
 import { PopoverError } from "./PopoverError";
+import { ConnectionStatusIndicator } from "./ConnectionStatusIndicator";
 
 interface AIViewProps {
   workspaceId: string;
@@ -756,6 +757,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
           onTerminate={handleTerminateBackgroundBash}
         />
         <ReviewsBanner workspaceId={workspaceId} />
+        <ConnectionStatusIndicator />
         <ChatInput
           variant="workspace"
           workspaceId={workspaceId}

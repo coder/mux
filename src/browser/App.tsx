@@ -48,6 +48,7 @@ import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
 import { SettingsModal } from "./components/Settings/SettingsModal";
 import { SplashScreenProvider } from "./components/splashScreens/SplashScreenProvider";
 import { TutorialProvider } from "./contexts/TutorialContext";
+import { ConnectionStatusIndicator } from "./components/ConnectionStatusIndicator";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { ExperimentsProvider } from "./contexts/ExperimentsContext";
 import { getWorkspaceSidebarKey } from "./utils/workspace";
@@ -630,6 +631,7 @@ function AppInner() {
                   <ModeProvider projectPath={projectPath}>
                     <ProviderOptionsProvider>
                       <ThinkingProvider projectPath={projectPath}>
+                        <ConnectionStatusIndicator />
                         <ChatInput
                           variant="creation"
                           projectPath={projectPath}

@@ -20,6 +20,7 @@ export type { APIClient };
 export type APIState =
   | { status: "connecting"; api: null; error: null }
   | { status: "connected"; api: APIClient; error: null }
+  | { status: "degraded"; api: APIClient; error: null } // Connected but pings failing
   | { status: "reconnecting"; api: null; error: null; attempt: number }
   | { status: "auth_required"; api: null; error: string | null }
   | { status: "error"; api: null; error: string };
@@ -36,6 +37,7 @@ export type UseAPIResult = APIState & APIStateMethods;
 type ConnectionState =
   | { status: "connecting" }
   | { status: "connected"; client: APIClient; cleanup: () => void }
+  | { status: "degraded"; client: APIClient; cleanup: () => void } // Pings failing
   | { status: "reconnecting"; attempt: number }
   | { status: "auth_required"; error?: string }
   | { status: "error"; error: string };
@@ -44,6 +46,11 @@ type ConnectionState =
 const MAX_RECONNECT_ATTEMPTS = 10;
 const BASE_DELAY_MS = 100;
 const MAX_DELAY_MS = 10000;
+
+// Liveness check constants
+const LIVENESS_INTERVAL_MS = 5000; // Check every 5 seconds
+const LIVENESS_TIMEOUT_MS = 3000; // Ping must respond within 3 seconds
+const CONSECUTIVE_FAILURES_FOR_DEGRADED = 2; // Mark degraded after N failures
 
 const APIContext = createContext<UseAPIResult | null>(null);
 
@@ -118,6 +125,7 @@ export const APIProvider = (props: APIProviderProps) => {
   const reconnectAttemptRef = useRef(0);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scheduleReconnectRef = useRef<(() => void) | null>(null);
+  const consecutivePingFailuresRef = useRef(0);
 
   const wsFactory = useMemo(
     () => props.createWebSocket ?? ((url: string) => new WebSocket(url)),
@@ -241,6 +249,50 @@ export const APIProvider = (props: APIProviderProps) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Liveness check: periodic ping to detect degraded connections
+  // Only runs for browser WebSocket connections (not Electron or test clients)
+  useEffect(() => {
+    // Only check liveness for connected/degraded browser connections
+    if (state.status !== "connected" && state.status !== "degraded") return;
+    // Skip for Electron (MessagePort) and test clients (externally provided)
+    if (props.client || (!props.createWebSocket && window.api)) return;
+
+    const client = state.client;
+    const cleanup = state.cleanup;
+
+    const checkLiveness = async () => {
+      try {
+        // Race ping against timeout
+        const pingPromise = client.general.ping("liveness");
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Ping timeout")), LIVENESS_TIMEOUT_MS)
+        );
+
+        await Promise.race([pingPromise, timeoutPromise]);
+
+        // Ping succeeded - reset failure count and restore connected state if degraded
+        consecutivePingFailuresRef.current = 0;
+        if (state.status === "degraded") {
+          setState({ status: "connected", client, cleanup });
+        }
+      } catch {
+        // Ping failed
+        consecutivePingFailuresRef.current++;
+        if (
+          consecutivePingFailuresRef.current >= CONSECUTIVE_FAILURES_FOR_DEGRADED &&
+          state.status === "connected"
+        ) {
+          setState({ status: "degraded", client, cleanup });
+        }
+      }
+    };
+
+    const intervalId = setInterval(() => {
+      void checkLiveness();
+    }, LIVENESS_INTERVAL_MS);
+    return () => clearInterval(intervalId);
+  }, [state, props.client, props.createWebSocket]);
+
   const authenticate = useCallback(
     (token: string) => {
       setAuthToken(token);
@@ -261,6 +313,8 @@ export const APIProvider = (props: APIProviderProps) => {
         return { status: "connecting", api: null, error: null, ...base };
       case "connected":
         return { status: "connected", api: state.client, error: null, ...base };
+      case "degraded":
+        return { status: "degraded", api: state.client, error: null, ...base };
       case "reconnecting":
         return { status: "reconnecting", api: null, error: null, attempt: state.attempt, ...base };
       case "auth_required":
