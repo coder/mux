@@ -586,6 +586,38 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     }
 
     // Final line processing with buffer from previous call
+
+    // If the process exited, do a final drain of output.
+    //
+    // Rationale: stdout/stderr writes can land just after we observe that the process
+    // has exited. Without a final drain, we can return "exited" with empty output
+    // even though output becomes available moments later.
+    if (currentStatus !== "running") {
+      const offsetBeforeDrain = proc.outputBytesRead;
+
+      while (true) {
+        const extra = await proc.handle.readOutput(proc.outputBytesRead);
+        if (extra.content.length === 0) {
+          break;
+        }
+        accumulatedRaw += extra.content;
+        proc.outputBytesRead = extra.newOffset;
+      }
+
+      // If we didn't observe any new output, wait one poll interval and try once more.
+      if (proc.outputBytesRead === offsetBeforeDrain) {
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+
+        while (true) {
+          const extra = await proc.handle.readOutput(proc.outputBytesRead);
+          if (extra.content.length === 0) {
+            break;
+          }
+          accumulatedRaw += extra.content;
+          proc.outputBytesRead = extra.newOffset;
+        }
+      }
+    }
     const rawWithBuffer = previousBuffer + accumulatedRaw;
     const allLines = rawWithBuffer.split("\n");
     const hasTrailingNewline = rawWithBuffer.endsWith("\n");

@@ -565,28 +565,36 @@ describe("BackgroundProcessManager", () => {
     });
 
     it("should keep waiting when only excluded lines arrive", async () => {
-      // Script outputs progress spam for 300ms, then meaningful output
+      const signalPath = path.join(bgOutputDir, `signal-${Date.now()}`);
+
+      // Spawn a process that spams excluded output until we create a signal file.
+      // This avoids flakiness from the spawn itself taking long enough that "DONE"
+      // is already present by the time we call getOutput.
       const result = await manager.spawn(
         runtime,
         testWorkspaceId,
-        "for i in 1 2 3; do echo 'PROGRESS'; sleep 0.1; done; echo 'DONE'",
-        { cwd: process.cwd(), displayName: "test" }
+        `while [ ! -f "${signalPath}" ]; do echo 'PROGRESS'; sleep 0.1; done; echo 'DONE'`,
+        { cwd: process.cwd(), displayName: "test", timeoutSecs: 5 }
       );
 
       expect(result.success).toBe(true);
       if (!result.success) return;
 
-      // With filter_exclude for PROGRESS, should wait until DONE arrives
-      // Set timeout long enough to cover the full script duration
-      const output = await manager.getOutput(result.processId, "PROGRESS", true, 2);
+      const outputPromise = manager.getOutput(result.processId, "PROGRESS", true, 2);
+
+      // Ensure getOutput is waiting before we allow the process to produce
+      // meaningful output.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await fs.writeFile(signalPath, "go");
+
+      const output = await outputPromise;
       expect(output.success).toBe(true);
       if (!output.success) return;
 
       // Should only see DONE, not PROGRESS lines
       expect(output.output).toContain("DONE");
       expect(output.output).not.toContain("PROGRESS");
-      // Should have waited ~300ms+ for meaningful output
-      expect(output.elapsed_ms).toBeGreaterThanOrEqual(200);
+      expect(output.elapsed_ms).toBeGreaterThanOrEqual(250);
     });
 
     it("should return when process exits even if only excluded lines", async () => {

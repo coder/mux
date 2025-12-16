@@ -54,6 +54,10 @@ import { getWorkspaceSidebarKey } from "./utils/workspace";
 
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high"];
 
+function isStorybookIframe(): boolean {
+  return typeof window !== "undefined" && window.location.pathname.endsWith("iframe.html");
+}
+
 function AppInner() {
   // Get workspace state from context
   const {
@@ -141,7 +145,7 @@ function AppInner() {
   useEffect(() => {
     // Storybook's test runner treats hash updates as navigations and will retry play tests.
     // The hash deep-linking isn't needed in Storybook, so skip it there.
-    const shouldSyncHash = !window.location.pathname.endsWith("iframe.html");
+    const shouldSyncHash = !isStorybookIframe();
 
     if (selectedWorkspace) {
       // Update URL with workspace ID
@@ -180,7 +184,7 @@ function AppInner() {
           `Workspace ${selectedWorkspace.workspaceId} no longer exists, clearing selection`
         );
         setSelectedWorkspace(null);
-        if (!window.location.pathname.endsWith("iframe.html") && window.location.hash) {
+        if (!isStorybookIframe() && window.location.hash) {
           window.history.replaceState(null, "", window.location.pathname);
         }
       } else if (!selectedWorkspace.namedWorkspacePath && metadata.namedWorkspacePath) {

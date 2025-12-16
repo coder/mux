@@ -1,21 +1,30 @@
+import { timingSafeEqual } from "crypto";
 import { os } from "@orpc/server";
 import type { IncomingHttpHeaders, IncomingMessage } from "http";
 import { URL } from "url";
 
 // Best-effort time-constant string comparison.
+//
+// We intentionally use Node's native `timingSafeEqual` (battle-tested + optimized).
+// It requires equal-length inputs, so we pad both sides to maxLen first, then fold
+// the original length equality into the final result.
+//
+// Tradeoff: this allocates temporary buffers. That's acceptable here (called once
+// per auth check) and avoids tricky timing branches.
 export function safeEq(a: string, b: string): boolean {
   const bufA = Buffer.from(a);
   const bufB = Buffer.from(b);
 
   const maxLen = Math.max(bufA.length, bufB.length);
-  let diff = bufA.length ^ bufB.length;
 
-  // Compare every byte without early-exit so mismatch position doesn't affect timing.
-  for (let i = 0; i < maxLen; i++) {
-    diff |= (bufA[i] ?? 0) ^ (bufB[i] ?? 0);
-  }
+  // timingSafeEqual requires equal-length buffers.
+  const paddedA = Buffer.alloc(maxLen);
+  const paddedB = Buffer.alloc(maxLen);
+  bufA.copy(paddedA);
+  bufB.copy(paddedB);
 
-  return diff === 0;
+  const bytesMatch = timingSafeEqual(paddedA, paddedB);
+  return bytesMatch && bufA.length === bufB.length;
 }
 
 function extractBearerToken(header: string | string[] | undefined): string | null {

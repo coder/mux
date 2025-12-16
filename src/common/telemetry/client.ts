@@ -60,19 +60,6 @@ function isViteDevEnvironment(): boolean {
 }
 
 /**
- * Allow maintainers to opt into telemetry while running the dev server.
- *
- * In Electron, the preload script exposes this as a safe boolean.
- */
-function isTelemetryEnabledInDev(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  return window.api?.enableTelemetryInDev === true;
-}
-
-/**
  * Initialize telemetry (no-op, kept for API compatibility)
  */
 export function initTelemetry(): void {
@@ -86,14 +73,17 @@ export function initTelemetry(): void {
  * The backend decides whether to actually send to PostHog.
  */
 export function trackEvent(payload: TelemetryEventPayload): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-
+  // Telemetry is a no-op in tests/CI/E2E, and also in SSR-ish test contexts
+  // where `window` isn't available.
+  //
+  // Under the Vite dev server we also require explicit opt-in from the preload
+  // script (window.api.enableTelemetryInDev) to avoid accidentally emitting data
+  // from local development.
   if (
+    typeof window === "undefined" ||
     isTestEnvironment() ||
     window.api?.isE2E === true ||
-    (isViteDevEnvironment() && !isTelemetryEnabledInDev())
+    (isViteDevEnvironment() && window.api?.enableTelemetryInDev !== true)
   ) {
     return;
   }
