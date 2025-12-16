@@ -249,8 +249,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     >
       {/* Full view when not collapsed */}
       <div className={cn("flex-row h-full", !showCollapsed ? "flex" : "hidden")}>
-        {/* Resize handle (left edge) when Review tab is active */}
-        {selectedTab === "review" && onStartResize && (
+        {/* Resize handle (left edge) */}
+        {onStartResize && (
           <div
             className={cn(
               "w-0.5 flex-shrink-0 z-10 transition-[background] duration-150 cursor-col-resize",
