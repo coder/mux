@@ -164,10 +164,7 @@ function draftToAnswerString(question: AskUserQuestionQuestion, draft: DraftAnsw
  * Get descriptions for selected answer labels from a question's options.
  * Filters out "Other" and labels not found in options.
  */
-function getDescriptionsForLabels(
-  question: AskUserQuestionQuestion,
-  labels: string[]
-): string[] {
+function getDescriptionsForLabels(question: AskUserQuestionQuestion, labels: string[]): string[] {
   return labels
     .filter((label) => label !== OTHER_VALUE)
     .map((label) => question.options.find((o) => o.label === label)?.description)
