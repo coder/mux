@@ -243,8 +243,8 @@ export class AgentSession {
   private async emitHistoricalEvents(
     listener: (event: AgentSessionChatEvent) => void
   ): Promise<void> {
-    // Check for interrupted streams (active streaming state) or partial FIRST
-    // We need to know the partial's historySequence to skip the placeholder in chat.jsonl
+    // Read partial BEFORE iterating history so we can skip the corresponding
+    // placeholder message (which has empty parts). The partial has the real content.
     const streamInfo = this.aiService.getStreamInfo(this.workspaceId);
     const partial = await this.partialService.readPartial(this.workspaceId);
     const partialHistorySequence = partial?.metadata?.historySequence;

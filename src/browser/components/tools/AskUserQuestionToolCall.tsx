@@ -161,15 +161,17 @@ function draftToAnswerString(question: AskUserQuestionQuestion, draft: DraftAnsw
 }
 
 /**
- * Look up the description for an answer label from the question's options.
- * Returns undefined for "Other" or custom answers not in options.
+ * Get descriptions for selected answer labels from a question's options.
+ * Filters out "Other" and labels not found in options.
  */
-function getDescriptionForAnswer(
+function getDescriptionsForLabels(
   question: AskUserQuestionQuestion,
-  answerLabel: string
-): string | undefined {
-  const option = question.options.find((o) => o.label === answerLabel);
-  return option?.description;
+  labels: string[]
+): string[] {
+  return labels
+    .filter((label) => label !== OTHER_VALUE)
+    .map((label) => question.options.find((o) => o.label === label)?.description)
+    .filter((d): d is string => d !== undefined);
 }
 
 export function AskUserQuestionToolCall(props: {
@@ -410,37 +412,54 @@ export function AskUserQuestionToolCall(props: {
                     </div>
 
                     <div className="flex flex-col gap-3">
-                      {currentQuestion.options.map((opt) => {
+                      {/* Render option checkboxes */}
+                      {[
+                        ...currentQuestion.options.map((opt) => ({
+                          label: opt.label,
+                          displayLabel: opt.label,
+                          description: opt.description,
+                        })),
+                        {
+                          label: OTHER_VALUE,
+                          displayLabel: "Other",
+                          description: "Provide a custom answer.",
+                        },
+                      ].map((opt) => {
                         const checked = currentDraft.selected.includes(opt.label);
 
                         const toggle = () => {
                           hasUserInteracted.current = true;
                           setDraftAnswers((prev) => {
-                            const next = { ...prev };
-                            const draft = next[currentQuestion.question] ?? {
+                            const draft = prev[currentQuestion.question] ?? {
                               selected: [],
                               otherText: "",
                             };
 
                             if (currentQuestion.multiSelect) {
+                              // Multi-select: toggle this option
                               const selected = new Set(draft.selected);
                               if (selected.has(opt.label)) {
                                 selected.delete(opt.label);
                               } else {
                                 selected.add(opt.label);
                               }
-                              next[currentQuestion.question] = {
-                                ...draft,
-                                selected: Array.from(selected),
+                              return {
+                                ...prev,
+                                [currentQuestion.question]: {
+                                  ...draft,
+                                  selected: Array.from(selected),
+                                },
                               };
                             } else {
-                              next[currentQuestion.question] = {
-                                selected: checked ? [] : [opt.label],
-                                otherText: "",
+                              // Single-select: replace selection (clear otherText if not Other)
+                              return {
+                                ...prev,
+                                [currentQuestion.question]: {
+                                  selected: checked ? [] : [opt.label],
+                                  otherText: opt.label === OTHER_VALUE ? draft.otherText : "",
+                                },
                               };
                             }
-
-                            return next;
                           });
                         };
 
@@ -464,71 +483,12 @@ export function AskUserQuestionToolCall(props: {
                               onClick={(e) => e.stopPropagation()}
                             />
                             <div className="flex flex-col">
-                              <div className="text-sm">{opt.label}</div>
+                              <div className="text-sm">{opt.displayLabel}</div>
                               <div className="text-muted-foreground text-xs">{opt.description}</div>
                             </div>
                           </div>
                         );
                       })}
-
-                      {(() => {
-                        const checked = currentDraft.selected.includes(OTHER_VALUE);
-                        const toggle = () => {
-                          hasUserInteracted.current = true;
-                          setDraftAnswers((prev) => {
-                            const next = { ...prev };
-                            const draft = next[currentQuestion.question] ?? {
-                              selected: [],
-                              otherText: "",
-                            };
-                            const selected = new Set(draft.selected);
-                            if (selected.has(OTHER_VALUE)) {
-                              selected.delete(OTHER_VALUE);
-                              next[currentQuestion.question] = {
-                                ...draft,
-                                selected: Array.from(selected),
-                              };
-                            } else {
-                              if (!currentQuestion.multiSelect) {
-                                selected.clear();
-                              }
-                              selected.add(OTHER_VALUE);
-                              next[currentQuestion.question] = {
-                                ...draft,
-                                selected: Array.from(selected),
-                              };
-                            }
-                            return next;
-                          });
-                        };
-
-                        return (
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            className="flex cursor-pointer items-start gap-2 select-none"
-                            onClick={toggle}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                toggle();
-                              }
-                            }}
-                          >
-                            <Checkbox
-                              checked={checked}
-                              onCheckedChange={toggle}
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                            <div className="flex flex-col">
-                              <div className="text-sm">Other</div>
-                              <div className="text-muted-foreground text-xs">
-                                Provide a custom answer.
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })()}
 
                       {currentDraft.selected.includes(OTHER_VALUE) && (
                         <Input
@@ -566,12 +526,8 @@ export function AskUserQuestionToolCall(props: {
                         const draft = draftAnswers[q.question];
                         const answered = draft ? isQuestionAnswered(q, draft) : false;
                         const answerText = answered ? draftToAnswerString(q, draft) : null;
-                        // Get descriptions for selected options
                         const descriptions = answered
-                          ? draft.selected
-                              .filter((label) => label !== OTHER_VALUE)
-                              .map((label) => getDescriptionForAnswer(q, label))
-                              .filter((d): d is string => d !== undefined)
+                          ? getDescriptionsForLabels(q, draft.selected)
                           : [];
                         return (
                           <div
@@ -633,16 +589,13 @@ export function AskUserQuestionToolCall(props: {
                   <div className="text-muted-foreground flex flex-col gap-2 text-sm">
                     <div>User answered:</div>
                     {Object.entries(successResult.answers).map(([question, answer]) => {
-                      // Find the question definition to get descriptions
                       const questionDef = successResult.questions.find(
                         (q) => q.question === question
                       );
                       // Parse answer labels (could be comma-separated for multi-select)
                       const answerLabels = answer.split(",").map((s) => s.trim());
                       const descriptions = questionDef
-                        ? answerLabels
-                            .map((label) => getDescriptionForAnswer(questionDef, label))
-                            .filter((d): d is string => d !== undefined)
+                        ? getDescriptionsForLabels(questionDef, answerLabels)
                         : [];
 
                       return (
