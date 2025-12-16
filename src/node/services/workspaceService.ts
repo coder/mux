@@ -111,7 +111,7 @@ export class WorkspaceService extends EventEmitter {
   >();
 
   // Debounce post-compaction metadata refreshes (file_edit_* can fire rapidly)
-  private readonly postCompactionRefreshTimers = new Map<string, NodeJS.Timeout>();
+  private readonly postCompactionRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // Tracks workspaces currently being renamed to prevent streaming during rename
   private readonly renamingWorkspaces = new Set<string>();
   // Tracks workspaces currently being removed to prevent new sessions/streams during deletion.

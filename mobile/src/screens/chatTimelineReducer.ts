@@ -13,6 +13,7 @@ const DISPLAYABLE_MESSAGE_TYPES: ReadonlySet<DisplayedMessage["type"]> = new Set
   "stream-error",
   "history-hidden",
   "workspace-init",
+  "plan-display",
 ]);
 
 function isDisplayedMessageEvent(event: WorkspaceChatEvent): event is DisplayedMessage {

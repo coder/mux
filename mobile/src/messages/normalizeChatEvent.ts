@@ -33,6 +33,7 @@ export const DISPLAYABLE_MESSAGE_TYPES: ReadonlySet<DisplayedMessage["type"]> = 
   "stream-error",
   "history-hidden",
   "workspace-init",
+  "plan-display",
 ]);
 
 const DEBUG_TAG = "[ChatEventExpander]";
@@ -151,6 +152,7 @@ function transformMuxToDisplayed(message: MuxMessage): DisplayedMessage[] {
           isLastPartOfMessage: isLastPart,
           // Support both new enum ("user"|"idle") and legacy boolean (true)
           isCompacted: !!message.metadata?.compacted,
+          isIdleCompacted: message.metadata?.compacted === "idle",
           model: message.metadata?.model,
           timestamp: part.timestamp ?? baseTimestamp,
         });
@@ -398,6 +400,9 @@ export function createChatEventExpander(): ChatEventExpander {
 
         // Usage delta: mobile app doesn't display usage, silently ignore
         "usage-delta": () => [],
+
+        // Idle compaction signal: desktop auto-triggers; mobile currently ignores.
+        "idle-compaction-needed": () => [],
 
         // Pass-through events: return unchanged
         "caught-up": () => [payload as WorkspaceChatEvent],

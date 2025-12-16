@@ -20,7 +20,9 @@ import { hasRenderableMarkdown } from "./markdownUtils";
 import { Ionicons } from "@expo/vector-icons";
 import { Surface } from "../components/Surface";
 import { ThemedText } from "../components/ThemedText";
+import { AskUserQuestionToolCard } from "../components/AskUserQuestionToolCard";
 import { ProposePlanCard } from "../components/ProposePlanCard";
+import { ProposePlanToolCard } from "../components/ProposePlanToolCard";
 import { TodoToolCard } from "../components/TodoToolCard";
 import { StatusSetToolCard } from "../components/StatusSetToolCard";
 import type { TodoItem } from "../components/TodoItemView";
@@ -105,6 +107,14 @@ export function MessageRenderer({
       return <HistoryHiddenMessageCard message={message} />;
     case "workspace-init":
       return <WorkspaceInitMessageCard message={message} />;
+    case "plan-display":
+      return (
+        <PlanDisplayMessageCard
+          message={message}
+          workspaceId={workspaceId}
+          onStartHere={onStartHere}
+        />
+      );
     case "tool":
       return (
         <ToolMessageCard message={message} workspaceId={workspaceId} onStartHere={onStartHere} />
@@ -891,22 +901,43 @@ function WorkspaceInitMessageCard({
 }
 
 /**
- * Type guard for propose_plan tool
+ * Plan display message card (from /plan)
  */
-function isProposePlanTool(
-  message: DisplayedMessage & { type: "tool" }
-): message is DisplayedMessage & {
-  type: "tool";
-  args: { title: string; plan: string };
-} {
+function PlanDisplayMessageCard({
+  message,
+  workspaceId,
+  onStartHere,
+}: {
+  message: DisplayedMessage & { type: "plan-display" };
+  workspaceId?: string;
+  onStartHere?: (content: string) => Promise<void>;
+}): JSX.Element {
+  const title = useMemo(() => {
+    const titleMatch = /^#\s+(.+)$/m.exec(message.content);
+    if (titleMatch) {
+      return titleMatch[1];
+    }
+    const filename = message.path.split("/").pop();
+    return filename ?? "Plan";
+  }, [message.content, message.path]);
+
+  const handleStartHereWithPlan = onStartHere
+    ? async () => {
+        const content = /^#\s+/m.test(message.content)
+          ? message.content
+          : `# ${title}\n\n${message.content}`;
+        await onStartHere(content);
+      }
+    : undefined;
+
   return (
-    message.toolName === "propose_plan" &&
-    message.args !== null &&
-    typeof message.args === "object" &&
-    "title" in message.args &&
-    "plan" in message.args &&
-    typeof message.args.title === "string" &&
-    typeof message.args.plan === "string"
+    <ProposePlanCard
+      title={title}
+      plan={message.content}
+      status="completed"
+      workspaceId={workspaceId}
+      onStartHere={handleStartHereWithPlan}
+    />
   );
 }
 
@@ -958,21 +989,28 @@ function ToolMessageCard({
   onStartHere?: (content: string) => Promise<void>;
 }): JSX.Element {
   // Special handling for propose_plan tool
-  if (isProposePlanTool(message)) {
-    const handleStartHereWithPlan = onStartHere
-      ? async () => {
-          const fullContent = `# ${message.args.title}\n\n${message.args.plan}`;
-          await onStartHere(fullContent);
-        }
-      : undefined;
-
+  if (message.toolName === "propose_plan") {
     return (
-      <ProposePlanCard
-        title={message.args.title}
-        plan={message.args.plan}
+      <ProposePlanToolCard
+        args={message.args}
+        result={message.result}
         status={message.status}
+        toolCallId={message.toolCallId}
         workspaceId={workspaceId}
-        onStartHere={handleStartHereWithPlan}
+        onStartHere={onStartHere}
+      />
+    );
+  }
+
+  // Special handling for ask_user_question tool
+  if (message.toolName === "ask_user_question") {
+    return (
+      <AskUserQuestionToolCard
+        args={message.args}
+        result={message.result}
+        status={message.status}
+        toolCallId={message.toolCallId}
+        workspaceId={workspaceId}
       />
     );
   }

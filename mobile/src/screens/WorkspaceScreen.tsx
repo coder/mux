@@ -737,49 +737,82 @@ function WorkspaceScreenInner({
     setSuppressCommandSuggestions(true);
 
     if (isCreationMode) {
+      if (!creationContext) {
+        showErrorToast("New workspace", "Missing creation context");
+        setInputWithSuggestionGuard(originalContent);
+        setIsSending(false);
+        return false;
+      }
+
       const runtimeConfig: RuntimeConfig | undefined =
         runtimeMode === RUNTIME_MODE.SSH
           ? { type: "ssh" as const, host: sshHost, srcBaseDir: "~/mux" }
           : undefined;
 
-      const result = await client.workspace.sendMessage({
-        workspaceId: null,
+      const identity = await client.nameGeneration.generate({
         message: trimmed,
-        options: {
-          ...sendMessageOptions,
-          projectPath: creationContext!.projectPath,
-          trunkBranch,
-          runtimeConfig,
-        },
+        fallbackModel: sendMessageOptions.model,
       });
 
-      if (!result.success) {
-        const err = result.error;
+      if (!identity.success) {
+        const err = identity.error;
         const errorMsg =
           typeof err === "string"
             ? err
             : err?.type === "unknown"
               ? err.raw
               : (err?.type ?? "Unknown error");
-        console.error("[createWorkspace] Failed:", errorMsg);
-        setTimeline((current) =>
-          applyChatEvent(current, { type: "error", error: errorMsg } as WorkspaceChatEvent)
-        );
+        console.error("[createWorkspace] Name generation failed:", errorMsg);
+        showErrorToast("New workspace", errorMsg);
         setInputWithSuggestionGuard(originalContent);
         setIsSending(false);
         return false;
       }
 
-      if (result.data.metadata) {
-        if (runtimeMode !== RUNTIME_MODE.LOCAL) {
-          const runtimeString = buildRuntimeString(runtimeMode, sshHost);
-          if (runtimeString) {
-            await saveRuntimePreference(creationContext!.projectPath, runtimeString);
-          }
-        }
+      const createResult = await client.workspace.create({
+        projectPath: creationContext.projectPath,
+        branchName: identity.data.name,
+        trunkBranch,
+        title: identity.data.title,
+        runtimeConfig,
+      });
 
-        router.replace(`/workspace/${result.data.metadata.id}`);
+      if (!createResult.success) {
+        console.error("[createWorkspace] Failed:", createResult.error);
+        showErrorToast("New workspace", createResult.error ?? "Failed to create workspace");
+        setInputWithSuggestionGuard(originalContent);
+        setIsSending(false);
+        return false;
       }
+
+      if (runtimeMode !== RUNTIME_MODE.LOCAL) {
+        const runtimeString = buildRuntimeString(runtimeMode, sshHost);
+        if (runtimeString) {
+          await saveRuntimePreference(creationContext.projectPath, runtimeString);
+        }
+      }
+
+      const createdWorkspaceId = createResult.metadata.id;
+
+      const sendResult = await client.workspace.sendMessage({
+        workspaceId: createdWorkspaceId,
+        message: trimmed,
+        options: sendMessageOptions,
+      });
+
+      if (!sendResult.success) {
+        const err = sendResult.error;
+        const errorMsg =
+          typeof err === "string"
+            ? err
+            : err?.type === "unknown"
+              ? err.raw
+              : (err?.type ?? "Unknown error");
+        console.error("[createWorkspace] Initial message failed:", errorMsg);
+        showErrorToast("Message", errorMsg);
+      }
+
+      router.replace(`/workspace/${createdWorkspaceId}`);
 
       setIsSending(false);
       return true;
