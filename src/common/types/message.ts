@@ -145,6 +145,9 @@ export interface MuxReasoningPart {
   type: "reasoning";
   text: string;
   timestamp?: number;
+  // Provider-specific metadata (e.g., OpenAI itemId for Responses API)
+  // Required to reconstruct reasoning parts when sending back to the provider
+  providerMetadata?: Record<string, unknown>;
 }
 
 // File/Image part type for multimodal messages (matches AI SDK FileUIPart)
