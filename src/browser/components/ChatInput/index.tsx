@@ -861,6 +861,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         const parsed = parseCommand(messageText);
         if (parsed?.type === "init") {
           setInput(initMessage);
+          focusMessageInput();
           return;
         }
       }
@@ -965,6 +966,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         // Handle /init command - populate input with init message
         if (parsed.type === "init") {
           setInput(initMessage);
+          focusMessageInput();
           return;
         }
 
