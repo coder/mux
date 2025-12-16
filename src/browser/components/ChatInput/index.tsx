@@ -13,11 +13,7 @@ import type { Toast } from "../ChatInputToast";
 import { ChatInputToast } from "../ChatInputToast";
 import { createCommandToast, createErrorToast } from "../ChatInputToasts";
 import { parseCommand } from "@/browser/utils/slashCommands/parser";
-import {
-  usePersistedState,
-  updatePersistedState,
-  readPersistedState,
-} from "@/browser/hooks/usePersistedState";
+import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useMode } from "@/browser/contexts/ModeContext";
@@ -83,41 +79,18 @@ import { useCreationWorkspace } from "./useCreationWorkspace";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { useVoiceInput } from "@/browser/hooks/useVoiceInput";
 import { VoiceInputButton } from "./VoiceInputButton";
+import {
+  estimatePersistedImageAttachmentsChars,
+  readPersistedImageAttachments,
+} from "./draftImagesStorage";
 import { RecordingOverlay } from "./RecordingOverlay";
 import { ReviewBlockFromData } from "../shared/ReviewBlock";
 
+// localStorage quotas are environment-dependent and relatively small.
+// Be conservative here so we can warn the user before writes start failing.
+const MAX_PERSISTED_IMAGE_DRAFT_CHARS = 4_000_000;
 type TokenCountReader = () => number;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function isImageAttachment(value: unknown): value is ImageAttachment {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.id === "string" &&
-    typeof value.url === "string" &&
-    typeof value.mediaType === "string"
-  );
-}
-
-function readPersistedImageAttachments(imagesKey: string): ImageAttachment[] {
-  const raw = readPersistedState<unknown>(imagesKey, []);
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-
-  const attachments: ImageAttachment[] = [];
-  for (const item of raw) {
-    if (!isImageAttachment(item)) {
-      console.warn(`Invalid persisted image attachments for key "${imagesKey}"; ignoring.`);
-      return [];
-    }
-    attachments.push({ id: item.id, url: item.url, mediaType: item.mediaType });
-  }
-
-  return attachments;
-}
 function createTokenCountResource(promise: Promise<number>): TokenCountReader {
   let status: "pending" | "success" | "error" = "pending";
   let value = 0;
@@ -188,21 +161,55 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [commandSuggestions, setCommandSuggestions] = useState<SlashSuggestion[]>([]);
   const [providerNames, setProviderNames] = useState<string[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
+  const pushToast = useCallback(
+    (nextToast: Omit<Toast, "id">) => {
+      setToast({ id: Date.now().toString(), ...nextToast });
+    },
+    [setToast]
+  );
+  const handleToastDismiss = useCallback(() => {
+    setToast(null);
+  }, []);
+
+  const imageDraftTooLargeToastKeyRef = useRef<string | null>(null);
+
   const [imageAttachments, setImageAttachmentsState] = useState<ImageAttachment[]>(() => {
     return readPersistedImageAttachments(storageKeys.imagesKey);
   });
   const persistImageAttachments = useCallback(
     (nextImages: ImageAttachment[]) => {
-      updatePersistedState<ImageAttachment[] | undefined>(
-        storageKeys.imagesKey,
-        nextImages.length > 0 ? nextImages : undefined
-      );
+      if (nextImages.length === 0) {
+        imageDraftTooLargeToastKeyRef.current = null;
+        updatePersistedState<ImageAttachment[] | undefined>(storageKeys.imagesKey, undefined);
+        return;
+      }
+
+      const estimatedChars = estimatePersistedImageAttachmentsChars(nextImages);
+      if (estimatedChars > MAX_PERSISTED_IMAGE_DRAFT_CHARS) {
+        // Clear persisted value to avoid restoring stale images on restart.
+        updatePersistedState<ImageAttachment[] | undefined>(storageKeys.imagesKey, undefined);
+
+        if (imageDraftTooLargeToastKeyRef.current !== storageKeys.imagesKey) {
+          imageDraftTooLargeToastKeyRef.current = storageKeys.imagesKey;
+          pushToast({
+            type: "error",
+            message:
+              "This draft image is too large to save. It will be lost when you switch workspaces or restart.",
+            duration: 5000,
+          });
+        }
+        return;
+      }
+
+      imageDraftTooLargeToastKeyRef.current = null;
+      updatePersistedState<ImageAttachment[] | undefined>(storageKeys.imagesKey, nextImages);
     },
-    [storageKeys.imagesKey]
+    [storageKeys.imagesKey, pushToast]
   );
 
   // Keep image drafts in sync when the storage scope changes (e.g. switching creation projects).
   useEffect(() => {
+    imageDraftTooLargeToastKeyRef.current = null;
     setImageAttachmentsState(readPersistedImageAttachments(storageKeys.imagesKey));
   }, [storageKeys.imagesKey]);
   const setImageAttachments = useCallback(
@@ -217,16 +224,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   );
   // Attached reviews come from parent via props (persisted in pendingReviews state)
   const attachedReviews = variant === "workspace" ? (props.attachedReviews ?? []) : [];
-
-  const pushToast = useCallback(
-    (nextToast: Omit<Toast, "id">) => {
-      setToast({ id: Date.now().toString(), ...nextToast });
-    },
-    [setToast]
-  );
-  const handleToastDismiss = useCallback(() => {
-    setToast(null);
-  }, []);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const modelSelectorRef = useRef<ModelSelectorRef>(null);
 

@@ -36,12 +36,14 @@ export const ChatInputToast: React.FC<ChatInputToastProps> = ({ toast, onDismiss
   useEffect(() => {
     if (!toast) return;
 
-    // Only auto-dismiss success toasts
-    if (toast.type === "success") {
-      // Use longer duration in E2E tests to give assertions time to observe the toast
-      const e2eDuration = 10_000;
-      const defaultDuration = 3000;
-      const duration = toast.duration ?? (window.api?.isE2E ? e2eDuration : defaultDuration);
+    // Use longer duration in E2E tests to give assertions time to observe the toast
+    const e2eDuration = 10_000;
+    const defaultSuccessDuration = window.api?.isE2E ? e2eDuration : 3000;
+
+    // Auto-dismiss when duration is explicitly provided, regardless of toast type.
+    // Otherwise, only success toasts auto-dismiss.
+    const duration = toast.duration ?? (toast.type === "success" ? defaultSuccessDuration : null);
+    if (duration !== null) {
       const timer = setTimeout(() => {
         handleDismiss();
       }, duration);

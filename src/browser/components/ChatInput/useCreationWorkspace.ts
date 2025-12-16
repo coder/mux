@@ -201,7 +201,7 @@ export function useCreationWorkspace({
         if (projectPath) {
           const pendingScopeId = getPendingScopeId(projectPath);
           updatePersistedState(getInputKey(pendingScopeId), "");
-          updatePersistedState<unknown>(getInputImagesKey(pendingScopeId), undefined);
+          updatePersistedState(getInputImagesKey(pendingScopeId), undefined);
         }
 
         // Switch to the workspace IMMEDIATELY after creation to exit splash faster.
