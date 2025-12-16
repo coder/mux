@@ -189,6 +189,19 @@ export interface ErrorOccurredPayload {
 }
 
 /**
+ * Experiment override event - tracks when users manually toggle experiments
+ * This helps measure opt-out rates and understand user preferences
+ */
+export interface ExperimentOverriddenPayload {
+  /** Experiment identifier (e.g., 'post-compaction-context') */
+  experimentId: string;
+  /** The variant PostHog assigned (null if not remote-controlled) */
+  assignedVariant: string | boolean | null;
+  /** What the user chose (true = enabled, false = disabled) */
+  userChoice: boolean;
+}
+
+/**
  * Union type of all telemetry event payloads
  * Frontend sends these; backend adds BaseTelemetryProperties before forwarding to PostHog
  */
@@ -201,4 +214,5 @@ export type TelemetryEventPayload =
   | { event: "provider_configured"; properties: ProviderConfiguredPayload }
   | { event: "command_used"; properties: CommandUsedPayload }
   | { event: "voice_transcription"; properties: VoiceTranscriptionPayload }
-  | { event: "error_occurred"; properties: ErrorOccurredPayload };
+  | { event: "error_occurred"; properties: ErrorOccurredPayload }
+  | { event: "experiment_overridden"; properties: ExperimentOverriddenPayload };

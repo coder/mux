@@ -97,6 +97,12 @@ const ErrorOccurredPropertiesSchema = z.object({
   context: ErrorContextSchema,
 });
 
+const ExperimentOverriddenPropertiesSchema = z.object({
+  experimentId: z.string(),
+  assignedVariant: z.union([z.string(), z.boolean(), z.null()]),
+  userChoice: z.boolean(),
+});
+
 // Union of all telemetry events
 export const TelemetryEventSchema = z.discriminatedUnion("event", [
   z.object({
@@ -134,6 +140,10 @@ export const TelemetryEventSchema = z.discriminatedUnion("event", [
   z.object({
     event: z.literal("error_occurred"),
     properties: ErrorOccurredPropertiesSchema,
+  }),
+  z.object({
+    event: z.literal("experiment_overridden"),
+    properties: ExperimentOverriddenPropertiesSchema,
   }),
 ]);
 

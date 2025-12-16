@@ -8,6 +8,7 @@ import {
   trackCommandUsed,
   trackVoiceTranscription,
   trackErrorOccurred,
+  trackExperimentOverridden,
 } from "@/common/telemetry";
 import type {
   ErrorContext,
@@ -35,6 +36,7 @@ import type {
  * telemetry.commandUsed(commandType);
  * telemetry.voiceTranscription(audioDurationSecs, success);
  * telemetry.errorOccurred(errorType, context);
+ * telemetry.experimentOverridden(experimentId, assignedVariant, userChoice);
  * ```
  */
 export function useTelemetry() {
@@ -83,6 +85,13 @@ export function useTelemetry() {
     trackErrorOccurred(errorType, context);
   }, []);
 
+  const experimentOverridden = useCallback(
+    (experimentId: string, assignedVariant: string | boolean | null, userChoice: boolean) => {
+      trackExperimentOverridden(experimentId, assignedVariant, userChoice);
+    },
+    []
+  );
+
   return {
     workspaceSwitched,
     workspaceCreated,
@@ -92,5 +101,6 @@ export function useTelemetry() {
     commandUsed,
     voiceTranscription,
     errorOccurred,
+    experimentOverridden,
   };
 }

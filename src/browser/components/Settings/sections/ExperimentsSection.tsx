@@ -1,13 +1,13 @@
 import React, { useCallback, useMemo } from "react";
 import { useExperiment, useRemoteExperimentValue } from "@/browser/contexts/ExperimentsContext";
 import {
-  EXPERIMENTS,
   getExperimentList,
   EXPERIMENT_IDS,
   type ExperimentId,
 } from "@/common/constants/experiments";
 import { Switch } from "@/browser/components/ui/switch";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { useTelemetry } from "@/browser/hooks/useTelemetry";
 
 interface ExperimentRowProps {
   experimentId: ExperimentId;
@@ -17,24 +17,19 @@ interface ExperimentRowProps {
 }
 
 function ExperimentRow(props: ExperimentRowProps) {
-  const experiment = EXPERIMENTS[props.experimentId];
   const [enabled, setEnabled] = useExperiment(props.experimentId);
   const remote = useRemoteExperimentValue(props.experimentId);
-  const isRemoteControlled = remote ? remote.source !== "disabled" : false;
-  const canOverride = experiment.userOverridable === true;
-  const { onToggle } = props;
+  const telemetry = useTelemetry();
+  const { onToggle, experimentId } = props;
 
   const handleToggle = useCallback(
     (value: boolean) => {
-      // Allow toggle if not remote-controlled OR if user can override
-      if (isRemoteControlled && !canOverride) {
-        return;
-      }
-
       setEnabled(value);
+      // Track the override for analytics
+      telemetry.experimentOverridden(experimentId, remote?.value ?? null, value);
       onToggle?.(value);
     },
-    [isRemoteControlled, canOverride, setEnabled, onToggle]
+    [setEnabled, telemetry, experimentId, remote?.value, onToggle]
   );
 
   return (
@@ -42,16 +37,9 @@ function ExperimentRow(props: ExperimentRowProps) {
       <div className="flex-1 pr-4">
         <div className="text-foreground text-sm font-medium">{props.name}</div>
         <div className="text-muted mt-0.5 text-xs">{props.description}</div>
-        {isRemoteControlled ? (
-          <div className="text-muted mt-0.5 text-xs">
-            PostHog: {String(remote?.value ?? "loading")} ({remote?.source})
-            {canOverride ? " • overridable" : null}
-          </div>
-        ) : null}
       </div>
       <Switch
         checked={enabled}
-        disabled={isRemoteControlled && !canOverride}
         onCheckedChange={handleToggle}
         aria-label={`Toggle ${props.name}`}
       />
@@ -63,9 +51,10 @@ export function ExperimentsSection() {
   const allExperiments = getExperimentList();
   const { refreshWorkspaceMetadata } = useWorkspaceContext();
 
-  // Filter to only show experiments where showInSettings !== false
+  // Only show user-overridable experiments (non-overridable ones are hidden since users can't change them)
   const experiments = useMemo(
-    () => allExperiments.filter((exp) => exp.showInSettings !== false),
+    () =>
+      allExperiments.filter((exp) => exp.showInSettings !== false && exp.userOverridable === true),
     [allExperiments]
   );
 
