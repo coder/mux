@@ -10,7 +10,7 @@ export const WorkspaceStatusIndicator = memo<{ workspaceId: string }>(({ workspa
   // Show prompt when ask_user_question is pending - make it prominent
   if (awaitingUserQuestion) {
     return (
-      <div className="flex min-w-0 items-center gap-1.5 rounded bg-yellow-500/20 px-1.5 py-0.5 text-xs text-yellow-400">
+      <div className="bg-plan-mode-alpha text-plan-mode-light flex min-w-0 items-center gap-1.5 rounded px-1.5 py-0.5 text-xs">
         <span className="-mt-0.5 shrink-0 text-[10px]">❓</span>
         <span className="min-w-0 truncate font-medium">Mux has a few questions</span>
       </div>

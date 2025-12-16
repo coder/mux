@@ -504,6 +504,12 @@ export function AskUserQuestionToolCall(props: {
                               },
                             }));
                           }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && currentDraft.otherText.trim().length > 0) {
+                              e.preventDefault();
+                              setActiveIndex(activeIndex + 1);
+                            }
+                          }}
                         />
                       )}
                     </div>
