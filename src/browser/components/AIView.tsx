@@ -96,6 +96,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
   status,
 }) => {
   const { api } = useAPI();
+  const chatAreaRef = useRef<HTMLDivElement>(null);
 
   // Track which right sidebar tab is selected (listener: true to sync with RightSidebar changes)
   const [selectedRightTab] = usePersistedState<TabType>(RIGHT_SIDEBAR_TAB_KEY, "costs", {
@@ -557,7 +558,10 @@ const AIViewInner: React.FC<AIViewProps> = ({
       )}
       style={{ containerType: "inline-size" }}
     >
-      <div className="flex min-w-96 flex-1 flex-col [@media(max-width:768px)]:max-h-full [@media(max-width:768px)]:w-full [@media(max-width:768px)]:min-w-0">
+      <div
+        ref={chatAreaRef}
+        className="flex min-w-96 flex-1 flex-col [@media(max-width:768px)]:max-h-full [@media(max-width:768px)]:w-full [@media(max-width:768px)]:min-w-0"
+      >
         <WorkspaceHeader
           workspaceId={workspaceId}
           projectName={projectName}
@@ -781,6 +785,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
         key={workspaceId}
         workspaceId={workspaceId}
         workspacePath={namedWorkspacePath}
+        chatAreaRef={chatAreaRef}
         width={sidebarWidth}
         onStartResize={startResize}
         isResizing={isResizing}

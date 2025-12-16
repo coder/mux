@@ -1,9 +1,9 @@
 import React from "react";
-import { RIGHT_SIDEBAR_TAB_KEY } from "@/common/constants/storage";
+import { RIGHT_SIDEBAR_TAB_KEY, RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
-
+import { useResizeObserver } from "@/browser/hooks/useResizeObserver";
 import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
 import { CostsTab } from "./RightSidebar/CostsTab";
 import { VerticalTokenMeter } from "./RightSidebar/VerticalTokenMeter";
@@ -78,6 +78,7 @@ export type { TabType };
 interface RightSidebarProps {
   workspaceId: string;
   workspacePath: string;
+  chatAreaRef: React.RefObject<HTMLDivElement>;
   /** Custom width in pixels (persisted per-tab, provided by AIView) */
   width?: number;
   /** Drag start handler for resize */
@@ -93,6 +94,7 @@ interface RightSidebarProps {
 const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   workspaceId,
   workspacePath,
+  chatAreaRef,
   width,
   onStartResize,
   isResizing = false,
@@ -128,6 +130,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const usage = useWorkspaceUsage(workspaceId);
   const { options } = useProviderOptions();
   const use1M = options.anthropic?.use1MContext ?? false;
+  const chatAreaSize = useResizeObserver(chatAreaRef);
 
   const baseId = `right-sidebar-${workspaceId}`;
   const costsTabId = `${baseId}-tab-costs`;
@@ -170,6 +173,46 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       : { segments: [], totalTokens: 0, totalPercentage: 0 };
   }, [lastUsage, model, use1M]);
 
+  // Auto-hide sidebar on small screens using hysteresis to prevent oscillation
+  // - Observe ChatArea width directly (independent of sidebar width)
+  // - ChatArea has min-width and flex: 1
+  // - Collapse when chatAreaWidth <= 800px (tight space)
+  // - Expand when chatAreaWidth >= 1100px (lots of space)
+  // - Between 800-1100: maintain current state (dead zone)
+  const COLLAPSE_THRESHOLD = 800;
+  const EXPAND_THRESHOLD = 1100;
+  const chatAreaWidth = chatAreaSize?.width ?? 1000; // Default to large to avoid flash
+
+  // Persist collapsed state globally (not per-workspace) since chat area width is shared
+  const [isHidden, setIsHidden] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false);
+
+  React.useEffect(() => {
+    // Never hide when Review tab is active - code review needs space
+    if (selectedTab === "review") {
+      if (isHidden) {
+        setIsHidden(false);
+      }
+      return;
+    }
+
+    // If sidebar is custom-resized wider than default, don't auto-hide
+    // (would cause oscillation between hidden and wide states)
+    if (width !== undefined && width > 300) {
+      if (isHidden) {
+        setIsHidden(false);
+      }
+      return;
+    }
+
+    // Normal hysteresis for Costs tab
+    if (chatAreaWidth <= COLLAPSE_THRESHOLD) {
+      setIsHidden(true);
+    } else if (chatAreaWidth >= EXPAND_THRESHOLD) {
+      setIsHidden(false);
+    }
+    // Between thresholds: maintain current state (no change)
+  }, [chatAreaWidth, selectedTab, isHidden, setIsHidden, width]);
+
   // Vertical meter only shows on Review tab (context usage indicator is now in ChatInput)
   const autoCompactionProps = React.useMemo(
     () => ({
@@ -182,6 +225,11 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     selectedTab === "review" ? (
       <VerticalTokenMeter data={verticalMeterData} autoCompaction={autoCompactionProps} />
     ) : null;
+
+  // Fully hide sidebar on small screens (context usage now shown in ChatInput)
+  if (isHidden) {
+    return null;
+  }
 
   return (
     <SidebarContainer
@@ -312,5 +360,5 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 };
 
 // Memoize to prevent re-renders when parent (AIView) re-renders during streaming
-// Only re-renders when workspaceId changes, or internal state updates
+// Only re-renders when workspaceId or chatAreaRef changes, or internal state updates
 export const RightSidebar = React.memo(RightSidebarComponent);
