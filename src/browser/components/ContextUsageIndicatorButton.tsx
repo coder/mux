@@ -32,7 +32,7 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
           <PopoverTrigger asChild>
             <button
               aria-label={ariaLabel}
-              className="flex h-6 w-20 cursor-pointer items-center rounded px-1 hover:bg-sidebar-hover"
+              className="hover:bg-sidebar-hover flex h-6 w-20 cursor-pointer items-center rounded px-1"
               type="button"
             >
               <TokenMeter
