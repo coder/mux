@@ -13,7 +13,11 @@ import type { Toast } from "../ChatInputToast";
 import { ChatInputToast } from "../ChatInputToast";
 import { createCommandToast, createErrorToast } from "../ChatInputToasts";
 import { parseCommand } from "@/browser/utils/slashCommands/parser";
-import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  usePersistedState,
+  updatePersistedState,
+  readPersistedState,
+} from "@/browser/hooks/usePersistedState";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useMode } from "@/browser/contexts/ModeContext";
@@ -24,6 +28,7 @@ import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import {
   getModelKey,
   getInputKey,
+  getInputImagesKey,
   VIM_ENABLED_KEY,
   getProjectScopeId,
   getPendingScopeId,
@@ -83,6 +88,36 @@ import { ReviewBlockFromData } from "../shared/ReviewBlock";
 
 type TokenCountReader = () => number;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isImageAttachment(value: unknown): value is ImageAttachment {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.id === "string" &&
+    typeof value.url === "string" &&
+    typeof value.mediaType === "string"
+  );
+}
+
+function readPersistedImageAttachments(imagesKey: string): ImageAttachment[] {
+  const raw = readPersistedState<unknown>(imagesKey, []);
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  const attachments: ImageAttachment[] = [];
+  for (const item of raw) {
+    if (!isImageAttachment(item)) {
+      console.warn(`Invalid persisted image attachments for key "${imagesKey}"; ignoring.`);
+      return [];
+    }
+    attachments.push({ id: item.id, url: item.url, mediaType: item.mediaType });
+  }
+
+  return attachments;
+}
 function createTokenCountResource(promise: Promise<number>): TokenCountReader {
   let status: "pending" | "success" | "error" = "pending";
   let value = 0;
@@ -132,13 +167,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // Storage keys differ by variant
   const storageKeys = (() => {
     if (variant === "creation") {
+      const pendingScopeId = getPendingScopeId(props.projectPath);
       return {
-        inputKey: getInputKey(getPendingScopeId(props.projectPath)),
+        inputKey: getInputKey(pendingScopeId),
+        imagesKey: getInputImagesKey(pendingScopeId),
         modelKey: getModelKey(getProjectScopeId(props.projectPath)),
       };
     }
     return {
       inputKey: getInputKey(props.workspaceId),
+      imagesKey: getInputImagesKey(props.workspaceId),
       modelKey: getModelKey(props.workspaceId),
     };
   })();
@@ -150,7 +188,33 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [commandSuggestions, setCommandSuggestions] = useState<SlashSuggestion[]>([]);
   const [providerNames, setProviderNames] = useState<string[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
-  const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([]);
+  const [imageAttachments, setImageAttachmentsState] = useState<ImageAttachment[]>(() => {
+    return readPersistedImageAttachments(storageKeys.imagesKey);
+  });
+  const persistImageAttachments = useCallback(
+    (nextImages: ImageAttachment[]) => {
+      updatePersistedState<ImageAttachment[] | undefined>(
+        storageKeys.imagesKey,
+        nextImages.length > 0 ? nextImages : undefined
+      );
+    },
+    [storageKeys.imagesKey]
+  );
+
+  // Keep image drafts in sync when the storage scope changes (e.g. switching creation projects).
+  useEffect(() => {
+    setImageAttachmentsState(readPersistedImageAttachments(storageKeys.imagesKey));
+  }, [storageKeys.imagesKey]);
+  const setImageAttachments = useCallback(
+    (value: ImageAttachment[] | ((prev: ImageAttachment[]) => ImageAttachment[])) => {
+      setImageAttachmentsState((prev) => {
+        const next = value instanceof Function ? value(prev) : value;
+        persistImageAttachments(next);
+        return next;
+      });
+    },
+    [persistImageAttachments]
+  );
   // Attached reviews come from parent via props (persisted in pendingReviews state)
   const attachedReviews = variant === "workspace" ? (props.attachedReviews ?? []) : [];
 
@@ -181,7 +245,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       setInput(draft.text);
       setImageAttachments(draft.images);
     },
-    [setInput]
+    [setInput, setImageAttachments]
   );
   const preEditDraftRef = useRef<DraftState>({ text: "", images: [] });
   const { open } = useSettings();
@@ -387,14 +451,17 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   );
 
   // Method to restore images to input (used by queued message edit)
-  const restoreImages = useCallback((images: ImagePart[]) => {
-    const attachments: ImageAttachment[] = images.map((img, index) => ({
-      id: `restored-${Date.now()}-${index}`,
-      url: img.url,
-      mediaType: img.mediaType,
-    }));
-    setImageAttachments(attachments);
-  }, []);
+  const restoreImages = useCallback(
+    (images: ImagePart[]) => {
+      const attachments: ImageAttachment[] = images.map((img, index) => ({
+        id: `restored-${Date.now()}-${index}`,
+        url: img.url,
+        mediaType: img.mediaType,
+      }));
+      setImageAttachments(attachments);
+    },
+    [setImageAttachments]
+  );
 
   // Provide API to parent via callback
   useEffect(() => {
@@ -678,24 +745,30 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   }, [variant, workspaceIdForFocus, focusMessageInput, setChatInputAutoFocusState]);
 
   // Handle paste events to extract images
-  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
 
-    const imageFiles = extractImagesFromClipboard(items);
-    if (imageFiles.length === 0) return;
+      const imageFiles = extractImagesFromClipboard(items);
+      if (imageFiles.length === 0) return;
 
-    e.preventDefault(); // Prevent default paste behavior for images
+      e.preventDefault(); // Prevent default paste behavior for images
 
-    void processImageFiles(imageFiles).then((attachments) => {
-      setImageAttachments((prev) => [...prev, ...attachments]);
-    });
-  }, []);
+      void processImageFiles(imageFiles).then((attachments) => {
+        setImageAttachments((prev) => [...prev, ...attachments]);
+      });
+    },
+    [setImageAttachments]
+  );
 
   // Handle removing an image attachment
-  const handleRemoveImage = useCallback((id: string) => {
-    setImageAttachments((prev) => prev.filter((img) => img.id !== id));
-  }, []);
+  const handleRemoveImage = useCallback(
+    (id: string) => {
+      setImageAttachments((prev) => prev.filter((img) => img.id !== id));
+    },
+    [setImageAttachments]
+  );
 
   // Handle drag over to allow drop
   const handleDragOver = useCallback((e: React.DragEvent<HTMLTextAreaElement>) => {
@@ -707,16 +780,19 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   }, []);
 
   // Handle drop to extract images
-  const handleDrop = useCallback((e: React.DragEvent<HTMLTextAreaElement>) => {
-    e.preventDefault();
+  const handleDrop = useCallback(
+    (e: React.DragEvent<HTMLTextAreaElement>) => {
+      e.preventDefault();
 
-    const imageFiles = extractImagesFromDrop(e.dataTransfer);
-    if (imageFiles.length === 0) return;
+      const imageFiles = extractImagesFromDrop(e.dataTransfer);
+      if (imageFiles.length === 0) return;
 
-    void processImageFiles(imageFiles).then((attachments) => {
-      setImageAttachments((prev) => [...prev, ...attachments]);
-    });
-  }, []);
+      void processImageFiles(imageFiles).then((attachments) => {
+        setImageAttachments((prev) => [...prev, ...attachments]);
+      });
+    },
+    [setImageAttachments]
+  );
 
   // Handle command selection
   const handleCommandSelect = useCallback(

@@ -8,6 +8,7 @@ import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePer
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import {
   getInputKey,
+  getInputImagesKey,
   getModelKey,
   getModeKey,
   getPendingScopeId,
@@ -198,8 +199,9 @@ export function useCreationWorkspace({
         // Sync preferences immediately (before switching)
         syncCreationPreferences(projectPath, metadata.id);
         if (projectPath) {
-          const pendingInputKey = getInputKey(getPendingScopeId(projectPath));
-          updatePersistedState(pendingInputKey, "");
+          const pendingScopeId = getPendingScopeId(projectPath);
+          updatePersistedState(getInputKey(pendingScopeId), "");
+          updatePersistedState<unknown>(getInputImagesKey(pendingScopeId), undefined);
         }
 
         // Switch to the workspace IMMEDIATELY after creation to exit splash faster.

@@ -80,6 +80,17 @@ export function getInputKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for the input image attachments for a workspace.
+ * Format: "inputImages:{scopeId}"
+ *
+ * Note: The input key functions accept any string scope ID. For normal workspaces
+ * this is the workspaceId; for creation mode it's a pending scope ID.
+ */
+export function getInputImagesKey(scopeId: string): string {
+  return `inputImages:${scopeId}`;
+}
+
+/**
  * Get the localStorage key for auto-retry preference for a workspace
  */
 export function getAutoRetryKey(workspaceId: string): string {
@@ -293,6 +304,7 @@ export function getAutoCompactionThresholdKey(model: string): string {
 const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> = [
   getModelKey,
   getInputKey,
+  getInputImagesKey,
   getModeKey,
   getAutoRetryKey,
   getRetryStateKey,
@@ -314,8 +326,8 @@ const EPHEMERAL_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> 
 ];
 
 /**
- * Copy all workspace-specific localStorage keys from source to destination workspace
- * This includes: model, input, mode, thinking level, auto-retry, retry state, review expand state, file tree expand state
+ * Copy all workspace-specific localStorage keys from source to destination workspace.
+ * Includes keys listed in PERSISTENT_WORKSPACE_KEY_FUNCTIONS (model, draft input text/images, etc).
  */
 export function copyWorkspaceStorage(sourceWorkspaceId: string, destWorkspaceId: string): void {
   for (const getKey of PERSISTENT_WORKSPACE_KEY_FUNCTIONS) {

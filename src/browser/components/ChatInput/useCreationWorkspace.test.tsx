@@ -2,6 +2,7 @@ import type { APIClient } from "@/browser/contexts/API";
 import type { DraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
 import {
   getInputKey,
+  getInputImagesKey,
   getModelKey,
   getModeKey,
   getPendingScopeId,
@@ -461,10 +462,13 @@ describe("useCreationWorkspace", () => {
     expect(readPersistedStateCalls).toContainEqual([projectModeKey, null]);
 
     const modeKey = getModeKey(TEST_WORKSPACE_ID);
-    const pendingInputKey = getInputKey(getPendingScopeId(TEST_PROJECT_PATH));
+    const pendingScopeId = getPendingScopeId(TEST_PROJECT_PATH);
+    const pendingInputKey = getInputKey(pendingScopeId);
+    const pendingImagesKey = getInputImagesKey(pendingScopeId);
     expect(updatePersistedStateCalls).toContainEqual([modeKey, "plan"]);
     // Note: thinking level is no longer synced per-workspace, it's stored per-model globally
     expect(updatePersistedStateCalls).toContainEqual([pendingInputKey, ""]);
+    expect(updatePersistedStateCalls).toContainEqual([pendingImagesKey, undefined]);
   });
 
   test("handleSend surfaces backend errors and resets state", async () => {
