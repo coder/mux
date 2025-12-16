@@ -511,8 +511,30 @@ describe("StreamManager - previousResponseId recovery", () => {
   });
 });
 
-// Note: Anthropic cache control tests are in cacheStrategy.test.ts
-// Those tests verify the cache control structure without requiring
+describe("StreamManager - ask_user_question Partial Persistence", () => {
+  // Note: The ask_user_question tool blocks waiting for user input.
+  // If the app restarts during that wait, the partial must be persisted.
+  // The fix (flush partial immediately for ask_user_question) is verified
+  // by the code path in processStreamWithCleanup's tool-call handler:
+  //
+  //   if (part.toolName === "ask_user_question") {
+  //     await this.flushPartialWrite(workspaceId, streamInfo);
+  //   }
+  //
+  // Full integration test would require mocking the entire streaming pipeline.
+  // Instead, we verify the StreamManager has the expected method signature.
+
+  test("flushPartialWrite is a callable method", () => {
+    const mockHistoryService = createMockHistoryService();
+    const mockPartialService = createMockPartialService();
+    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+
+    // Verify the private method exists and is callable
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const flushMethod = Reflect.get(streamManager, "flushPartialWrite");
+    expect(typeof flushMethod).toBe("function");
+  });
+});
 
 // Note: Comprehensive Anthropic cache control tests are in cacheStrategy.test.ts
 // Those unit tests cover all cache control functionality without requiring

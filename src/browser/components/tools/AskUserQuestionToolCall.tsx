@@ -1,6 +1,6 @@
 import assert from "@/common/utils/assert";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { useAPI } from "@/browser/contexts/API";
@@ -35,6 +35,14 @@ interface DraftAnswer {
   selected: string[];
   otherText: string;
 }
+
+interface CachedState {
+  draftAnswers: Record<string, DraftAnswer>;
+  activeIndex: number;
+}
+
+// Cache draft state by toolCallId so it survives workspace switches
+const draftStateCache = new Map<string, CachedState>();
 
 function unwrapJsonContainer(value: unknown): unknown {
   if (!value || typeof value !== "object") {
@@ -152,6 +160,17 @@ function draftToAnswerString(question: AskUserQuestionQuestion, draft: DraftAnsw
   return parts.join(", ");
 }
 
+/**
+ * Get descriptions for selected answer labels from a question's options.
+ * Filters out "Other" and labels not found in options.
+ */
+function getDescriptionsForLabels(question: AskUserQuestionQuestion, labels: string[]): string[] {
+  return labels
+    .filter((label) => label !== OTHER_VALUE)
+    .map((label) => question.options.find((o) => o.label === label)?.description)
+    .filter((d): d is string => d !== undefined);
+}
+
 export function AskUserQuestionToolCall(props: {
   args: AskUserQuestionToolArgs;
   result: AskUserQuestionToolResult | null;
@@ -164,13 +183,20 @@ export function AskUserQuestionToolCall(props: {
   const { expanded, toggleExpanded } = useToolExpansion(props.status === "executing");
   const statusDisplay = getStatusDisplay(props.status);
 
-  const [activeIndex, setActiveIndex] = useState(0);
+  const argsAnswers = props.args.answers ?? {};
+
+  // Restore from cache if available (survives workspace switches)
+  const cachedState = draftStateCache.get(props.toolCallId);
+
+  const [activeIndex, setActiveIndex] = useState(() => cachedState?.activeIndex ?? 0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const argsAnswers = props.args.answers ?? {};
-
   const [draftAnswers, setDraftAnswers] = useState<Record<string, DraftAnswer>>(() => {
+    if (cachedState) {
+      return cachedState.draftAnswers;
+    }
+
     const initial: Record<string, DraftAnswer> = {};
     for (const q of props.args.questions) {
       const prefilled = argsAnswers[q.question];
@@ -182,6 +208,16 @@ export function AskUserQuestionToolCall(props: {
     }
     return initial;
   });
+
+  // Sync draft state to cache so it survives workspace switches
+  useEffect(() => {
+    if (props.status === "executing") {
+      draftStateCache.set(props.toolCallId, { draftAnswers, activeIndex });
+    } else {
+      // Clean up cache when tool completes
+      draftStateCache.delete(props.toolCallId);
+    }
+  }, [props.toolCallId, props.status, draftAnswers, activeIndex]);
 
   const resultUnwrapped = useMemo(() => {
     if (!props.result) {
@@ -210,6 +246,31 @@ export function AskUserQuestionToolCall(props: {
     ? null
     : props.args.questions[Math.min(activeIndex, props.args.questions.length - 1)];
   const currentDraft = currentQuestion ? draftAnswers[currentQuestion.question] : undefined;
+
+  // Track if user has interacted to avoid auto-advancing on initial render
+  const hasUserInteracted = useRef(false);
+
+  // Auto-advance for single-select questions when an option is selected
+  useEffect(() => {
+    if (!hasUserInteracted.current) {
+      return;
+    }
+
+    if (!currentQuestion || currentQuestion.multiSelect || isOnSummary) {
+      return;
+    }
+
+    const draft = draftAnswers[currentQuestion.question];
+    if (!draft) {
+      return;
+    }
+
+    // For single-select, advance when user selects a non-Other option
+    // (Other requires text input, so don't auto-advance)
+    if (draft.selected.length === 1 && !draft.selected.includes(OTHER_VALUE)) {
+      setActiveIndex(activeIndex + 1);
+    }
+  }, [draftAnswers, currentQuestion, activeIndex, isOnSummary]);
 
   const unansweredCount = useMemo(() => {
     return props.args.questions.filter((q) => {
@@ -340,39 +401,62 @@ export function AskUserQuestionToolCall(props: {
                   <>
                     <div>
                       <div className="text-sm font-medium">{currentQuestion.question}</div>
+                      <div className="text-muted-foreground text-xs">
+                        {currentQuestion.multiSelect
+                          ? "Select one or more options"
+                          : "Select one option"}
+                      </div>
                     </div>
 
                     <div className="flex flex-col gap-3">
-                      {currentQuestion.options.map((opt) => {
+                      {/* Render option checkboxes */}
+                      {[
+                        ...currentQuestion.options.map((opt) => ({
+                          label: opt.label,
+                          displayLabel: opt.label,
+                          description: opt.description,
+                        })),
+                        {
+                          label: OTHER_VALUE,
+                          displayLabel: "Other",
+                          description: "Provide a custom answer.",
+                        },
+                      ].map((opt) => {
                         const checked = currentDraft.selected.includes(opt.label);
 
                         const toggle = () => {
+                          hasUserInteracted.current = true;
                           setDraftAnswers((prev) => {
-                            const next = { ...prev };
-                            const draft = next[currentQuestion.question] ?? {
+                            const draft = prev[currentQuestion.question] ?? {
                               selected: [],
                               otherText: "",
                             };
 
                             if (currentQuestion.multiSelect) {
+                              // Multi-select: toggle this option
                               const selected = new Set(draft.selected);
                               if (selected.has(opt.label)) {
                                 selected.delete(opt.label);
                               } else {
                                 selected.add(opt.label);
                               }
-                              next[currentQuestion.question] = {
-                                ...draft,
-                                selected: Array.from(selected),
+                              return {
+                                ...prev,
+                                [currentQuestion.question]: {
+                                  ...draft,
+                                  selected: Array.from(selected),
+                                },
                               };
                             } else {
-                              next[currentQuestion.question] = {
-                                selected: checked ? [] : [opt.label],
-                                otherText: "",
+                              // Single-select: replace selection (clear otherText if not Other)
+                              return {
+                                ...prev,
+                                [currentQuestion.question]: {
+                                  selected: checked ? [] : [opt.label],
+                                  otherText: opt.label === OTHER_VALUE ? draft.otherText : "",
+                                },
                               };
                             }
-
-                            return next;
                           });
                         };
 
@@ -396,70 +480,12 @@ export function AskUserQuestionToolCall(props: {
                               onClick={(e) => e.stopPropagation()}
                             />
                             <div className="flex flex-col">
-                              <div className="text-sm">{opt.label}</div>
+                              <div className="text-sm">{opt.displayLabel}</div>
                               <div className="text-muted-foreground text-xs">{opt.description}</div>
                             </div>
                           </div>
                         );
                       })}
-
-                      {(() => {
-                        const checked = currentDraft.selected.includes(OTHER_VALUE);
-                        const toggle = () => {
-                          setDraftAnswers((prev) => {
-                            const next = { ...prev };
-                            const draft = next[currentQuestion.question] ?? {
-                              selected: [],
-                              otherText: "",
-                            };
-                            const selected = new Set(draft.selected);
-                            if (selected.has(OTHER_VALUE)) {
-                              selected.delete(OTHER_VALUE);
-                              next[currentQuestion.question] = {
-                                ...draft,
-                                selected: Array.from(selected),
-                              };
-                            } else {
-                              if (!currentQuestion.multiSelect) {
-                                selected.clear();
-                              }
-                              selected.add(OTHER_VALUE);
-                              next[currentQuestion.question] = {
-                                ...draft,
-                                selected: Array.from(selected),
-                              };
-                            }
-                            return next;
-                          });
-                        };
-
-                        return (
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            className="flex cursor-pointer items-start gap-2 select-none"
-                            onClick={toggle}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                toggle();
-                              }
-                            }}
-                          >
-                            <Checkbox
-                              checked={checked}
-                              onCheckedChange={toggle}
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                            <div className="flex flex-col">
-                              <div className="text-sm">Other</div>
-                              <div className="text-muted-foreground text-xs">
-                                Provide a custom answer.
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })()}
 
                       {currentDraft.selected.includes(OTHER_VALUE) && (
                         <Input
@@ -492,11 +518,14 @@ export function AskUserQuestionToolCall(props: {
                         ⚠️ {unansweredCount} question{unansweredCount > 1 ? "s" : ""} not answered
                       </div>
                     )}
-                    <div className="flex flex-col gap-1">
+                    <div className="flex flex-col gap-2">
                       {props.args.questions.map((q, idx) => {
                         const draft = draftAnswers[q.question];
                         const answered = draft ? isQuestionAnswered(q, draft) : false;
                         const answerText = answered ? draftToAnswerString(q, draft) : null;
+                        const descriptions = answered
+                          ? getDescriptionsForLabels(q, draft.selected)
+                          : [];
                         return (
                           <div
                             key={q.question}
@@ -511,17 +540,30 @@ export function AskUserQuestionToolCall(props: {
                               }
                             }}
                           >
-                            {answered ? (
-                              <span className="text-green-400">✓</span>
-                            ) : (
-                              <span className="text-yellow-500">⚠️</span>
-                            )}{" "}
-                            <span className="font-medium">{q.header}:</span>{" "}
-                            {answered ? (
-                              <span className="text-muted-foreground">{answerText}</span>
-                            ) : (
-                              <span className="text-muted-foreground italic">Not answered</span>
-                            )}
+                            <div className="flex items-start gap-1">
+                              {answered ? (
+                                <span className="text-green-400">✓</span>
+                              ) : (
+                                <span className="text-yellow-500">⚠️</span>
+                              )}{" "}
+                              <div className="flex flex-col">
+                                <div>
+                                  <span className="font-medium">{q.header}:</span>{" "}
+                                  {answered ? (
+                                    <span className="text-muted-foreground">{answerText}</span>
+                                  ) : (
+                                    <span className="text-muted-foreground italic">
+                                      Not answered
+                                    </span>
+                                  )}
+                                </div>
+                                {descriptions.length > 0 && (
+                                  <div className="text-muted-foreground ml-1 text-xs italic">
+                                    {descriptions.join("; ")}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
                           </div>
                         );
                       })}
@@ -541,13 +583,31 @@ export function AskUserQuestionToolCall(props: {
             {props.status !== "executing" && (
               <div className="flex flex-col gap-2">
                 {successResult && (
-                  <div className="text-muted-foreground flex flex-col gap-1 text-sm">
+                  <div className="text-muted-foreground flex flex-col gap-2 text-sm">
                     <div>User answered:</div>
-                    {Object.entries(successResult.answers).map(([question, answer]) => (
-                      <div key={question} className="ml-4">
-                        • <span className="font-medium">{question}:</span> {answer}
-                      </div>
-                    ))}
+                    {Object.entries(successResult.answers).map(([question, answer]) => {
+                      const questionDef = successResult.questions.find(
+                        (q) => q.question === question
+                      );
+                      // Parse answer labels (could be comma-separated for multi-select)
+                      const answerLabels = answer.split(",").map((s) => s.trim());
+                      const descriptions = questionDef
+                        ? getDescriptionsForLabels(questionDef, answerLabels)
+                        : [];
+
+                      return (
+                        <div key={question} className="ml-4 flex flex-col">
+                          <div>
+                            • <span className="font-medium">{question}:</span> {answer}
+                          </div>
+                          {descriptions.length > 0 && (
+                            <div className="text-muted-foreground ml-3 text-xs italic">
+                              {descriptions.join("; ")}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
 

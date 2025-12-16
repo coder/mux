@@ -906,6 +906,14 @@ export class StreamManager extends EventEmitter {
               `[StreamManager] tool-call: toolName=${part.toolName}, input length=${inputText.length}`
             );
             await this.emitPartAsEvent(workspaceId, streamInfo.messageId, toolPart);
+
+            // CRITICAL: Flush partial immediately for ask_user_question
+            // This tool blocks waiting for user input, and if the app restarts during
+            // that wait, the partial must be persisted so it can be restored.
+            // Without this, the throttled write might not complete before app shutdown.
+            if (part.toolName === "ask_user_question") {
+              await this.flushPartialWrite(workspaceId, streamInfo);
+            }
             break;
           }
 
