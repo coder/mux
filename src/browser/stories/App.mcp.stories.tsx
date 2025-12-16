@@ -140,7 +140,7 @@ function setupMCPStory(options: MCPStoryOptions = {}): APIClient {
   });
 }
 
-/** Open settings modal and navigate to Projects section */
+/** Open settings modal and navigate to Projects section, scrolling to MCP servers */
 async function openProjectSettings(canvasElement: HTMLElement): Promise<void> {
   const canvas = within(canvasElement);
   const body = within(canvasElement.ownerDocument.body);
@@ -152,6 +152,10 @@ async function openProjectSettings(canvasElement: HTMLElement): Promise<void> {
 
   const projectsButton = await body.findByRole("button", { name: /Projects/i });
   await userEvent.click(projectsButton);
+
+  // Scroll to MCP Servers section (past Idle Compaction)
+  const mcpHeading = await body.findByText("MCP Servers");
+  mcpHeading.scrollIntoView({ block: "start" });
 }
 
 /** Open the workspace MCP modal */
