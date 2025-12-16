@@ -188,6 +188,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         setEnabled: async () => ({ success: true, data: undefined }),
         setToolAllowlist: async () => ({ success: true, data: undefined }),
       },
+      idleCompaction: {
+        get: async () => ({ success: true, hours: null }),
+        set: async () => ({ success: true }),
+      },
     },
     workspace: {
       list: async () => workspaces,
