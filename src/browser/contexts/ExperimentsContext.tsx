@@ -63,6 +63,8 @@ function hasLocalOverride(experimentId: ExperimentId): boolean {
   const key = getExperimentKey(experimentId);
   try {
     const stored = window.localStorage.getItem(key);
+    // Check for literal "undefined" string defensively - this can occur if
+    // JSON.stringify(undefined) is accidentally stored (it returns "undefined")
     return stored !== null && stored !== "undefined";
   } catch {
     return false;
@@ -70,17 +72,19 @@ function hasLocalOverride(experimentId: ExperimentId): boolean {
 }
 
 /**
- * Set experiment state to localStorage and dispatch sync event.
+ * Convert PostHog experiment variant to boolean enabled state.
+ * For experiments with control/test variants, "test" means enabled.
  */
-
 function getRemoteExperimentEnabled(value: string | boolean): boolean {
   if (typeof value === "boolean") {
     return value;
   }
-
-  // For now, our PostHog experiment uses control/test variants.
   return value === "test";
 }
+
+/**
+ * Set experiment state to localStorage and dispatch sync event.
+ */
 function setExperimentState(experimentId: ExperimentId, enabled: boolean): void {
   const key = getExperimentKey(experimentId);
 

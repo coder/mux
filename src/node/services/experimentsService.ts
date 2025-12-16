@@ -40,6 +40,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * - Avoid calling PostHog when telemetry is disabled
  */
 export class ExperimentsService {
+  private readonly telemetryService: TelemetryService;
   private readonly muxHome: string;
   private readonly cacheFilePath: string;
   private readonly cacheTtlMs: number;
@@ -59,8 +60,6 @@ export class ExperimentsService {
     this.cacheFilePath = path.join(this.muxHome, CACHE_FILE_NAME);
     this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
   }
-
-  private readonly telemetryService: TelemetryService;
 
   async initialize(): Promise<void> {
     if (this.cacheLoaded) {

@@ -23,6 +23,12 @@
 #   AVOID CONDITIONAL BRANCHES (if/else) IN BUILD TARGETS AT ALL COSTS.
 #   Branches reduce reproducibility - builds should fail fast with clear errors
 #   if dependencies are missing, not silently fall back to different behavior.
+#
+# Telemetry in Development:
+#   Telemetry is disabled by default in dev mode (MUX_DISABLE_TELEMETRY=1).
+#   To enable it (e.g., for testing PostHog experiments), set:
+#     MUX_ENABLE_TELEMETRY_IN_DEV=1 make dev
+#   This single env var is sufficient - no need to also set MUX_DISABLE_TELEMETRY=0.
 
 # Use PATH-resolved bash for portability across different systems.
 # - Windows: /usr/bin/bash doesn't exist in Chocolatey's make environment or GitHub Actions
