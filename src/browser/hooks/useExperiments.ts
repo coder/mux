@@ -5,6 +5,7 @@ import { type ExperimentId, EXPERIMENTS, getExperimentKey } from "@/common/const
 export {
   useExperiment,
   useExperimentValue,
+  useExperimentOverrideValue,
   useSetExperiment,
   useAllExperiments,
 } from "@/browser/contexts/ExperimentsContext";
@@ -14,7 +15,8 @@ export {
  * Use when you need a one-time read (e.g., constructing send options at send time)
  * or outside of React components.
  *
- * For reactive updates in React components, use useExperimentValue instead.
+ * For reactive updates in React components, use useExperimentValue (UI gating) or
+ * useExperimentOverrideValue (backend send options).
  *
  * IMPORTANT: For user-overridable experiments, returns `undefined` when no explicit
  * localStorage override exists. This signals to the backend to use the PostHog
@@ -30,18 +32,11 @@ export function isExperimentEnabled(experimentId: ExperimentId): boolean | undef
   // For user-overridable experiments: only return a value if user explicitly set one.
   // This allows the backend to use PostHog assignment when there's no override.
   if (experiment.userOverridable) {
-    const raw = window.localStorage.getItem(key);
-    // Check for null (never set) or literal "undefined" (defensive - see hasLocalOverride)
-    if (raw === null || raw === "undefined") {
-      return undefined; // Let backend use PostHog
-    }
-    try {
-      return JSON.parse(raw) as boolean;
-    } catch {
-      return undefined;
-    }
+    const stored = readPersistedState<unknown>(key, undefined);
+    return typeof stored === "boolean" ? stored : undefined;
   }
 
   // Non-overridable: always use default (these are local-only experiments)
-  return readPersistedState<boolean>(key, experiment.enabledByDefault);
+  const stored = readPersistedState<unknown>(key, experiment.enabledByDefault);
+  return typeof stored === "boolean" ? stored : experiment.enabledByDefault;
 }

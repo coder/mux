@@ -687,9 +687,8 @@ export class WorkspaceService extends EventEmitter {
     try {
       const metadata = await this.config.getAllWorkspaceMetadata();
 
-      // For list(), we use includePostCompaction from options since it's already resolved
-      // by the frontend based on experiment state. The frontend's useExperimentValue()
-      // handles userOverridable logic, so we trust the passed value.
+      // For list(), treat includePostCompaction as an explicit frontend override when provided.
+      // If it's undefined (e.g., user hasn't overridden), fall back to PostHog assignment.
       const postCompactionExperiment = EXPERIMENTS[EXPERIMENT_IDS.POST_COMPACTION_CONTEXT];
       let includePostCompaction: boolean;
       if (
@@ -1024,7 +1023,7 @@ export class WorkspaceService extends EventEmitter {
       }
 
       // Experiments: resolve flags respecting userOverridable setting.
-      // - If userOverridable && frontend provides a value → use frontend value (user's choice)
+      // - If userOverridable && frontend provides a value (explicit override) → use frontend value
       // - Else if remote evaluation enabled → use PostHog assignment
       // - Else → use frontend value (dev fallback) or default
       const postCompactionExperiment = EXPERIMENTS[EXPERIMENT_IDS.POST_COMPACTION_CONTEXT];

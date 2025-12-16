@@ -37,22 +37,34 @@ function subscribeToExperiment(experimentId: ExperimentId, callback: () => void)
 }
 
 /**
+ * Get explicit localStorage override for an experiment.
+ * Returns undefined if no value is set or parsing fails.
+ */
+function getExperimentOverrideSnapshot(experimentId: ExperimentId): boolean | undefined {
+  const key = getExperimentKey(experimentId);
+
+  try {
+    const stored = window.localStorage.getItem(key);
+    // Check for literal "undefined" string defensively - this can occur if
+    // JSON.stringify(undefined) is accidentally stored (it returns "undefined")
+    if (stored === null || stored === "undefined") {
+      return undefined;
+    }
+
+    const parsed = JSON.parse(stored) as unknown;
+    return typeof parsed === "boolean" ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Get current experiment state from localStorage.
  * Returns the stored value or the default if not set.
  */
 function getExperimentSnapshot(experimentId: ExperimentId): boolean {
   const experiment = EXPERIMENTS[experimentId];
-  const key = getExperimentKey(experimentId);
-
-  try {
-    const stored = window.localStorage.getItem(key);
-    if (stored === null || stored === "undefined") {
-      return experiment.enabledByDefault;
-    }
-    return JSON.parse(stored) as boolean;
-  } catch {
-    return experiment.enabledByDefault;
-  }
+  return getExperimentOverrideSnapshot(experimentId) ?? experiment.enabledByDefault;
 }
 
 /**
@@ -60,15 +72,7 @@ function getExperimentSnapshot(experimentId: ExperimentId): boolean {
  * Returns true if there's a value in localStorage (not using default).
  */
 function hasLocalOverride(experimentId: ExperimentId): boolean {
-  const key = getExperimentKey(experimentId);
-  try {
-    const stored = window.localStorage.getItem(key);
-    // Check for literal "undefined" string defensively - this can occur if
-    // JSON.stringify(undefined) is accidentally stored (it returns "undefined")
-    return stored !== null && stored !== "undefined";
-  } catch {
-    return false;
-  }
+  return getExperimentOverrideSnapshot(experimentId) !== undefined;
 }
 
 /**
@@ -208,6 +212,27 @@ export function useExperimentValue(experimentId: ExperimentId): boolean {
 
   // Fallback to local (which may be default)
   return localEnabled;
+}
+
+/**
+ * Hook to read only an explicit local override for an experiment.
+ *
+ * Returns `undefined` when the user has not explicitly set a value in localStorage.
+ * This is important for user-overridable experiments: the backend can then apply
+ * the PostHog assignment instead of treating the default value as a user choice.
+ */
+export function useExperimentOverrideValue(experimentId: ExperimentId): boolean | undefined {
+  const subscribe = useCallback(
+    (callback: () => void) => subscribeToExperiment(experimentId, callback),
+    [experimentId]
+  );
+
+  const getSnapshot = useCallback(
+    () => getExperimentOverrideSnapshot(experimentId),
+    [experimentId]
+  );
+
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
 /**

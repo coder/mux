@@ -13,7 +13,7 @@ import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions"
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 import { useProviderOptions } from "./useProviderOptions";
 import type { GatewayState } from "./useGatewayModels";
-import { useExperimentValue } from "./useExperiments";
+import { useExperimentOverrideValue } from "./useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
 /**
@@ -47,7 +47,7 @@ function constructSendMessageOptions(
   providerOptions: MuxProviderOptions,
   fallbackModel: string,
   gateway: GatewayState,
-  postCompactionContext: boolean
+  postCompactionContext: boolean | undefined
 ): SendMessageOptions {
   // Ensure model is always a valid string (defensive against corrupted localStorage)
   const rawModel =
@@ -110,8 +110,9 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
   // Subscribe to gateway state so we re-render when user toggles gateway
   const gateway = useGateway();
 
-  // Subscribe to experiment state so toggles apply immediately
-  const postCompactionContext = useExperimentValue(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
+  // Subscribe to local override state so toggles apply immediately.
+  // If undefined, the backend will apply the PostHog assignment.
+  const postCompactionContext = useExperimentOverrideValue(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
 
   // Compute base model (canonical format) for UI components
   const rawModel =
