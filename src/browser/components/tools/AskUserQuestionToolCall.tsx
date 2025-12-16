@@ -36,6 +36,14 @@ interface DraftAnswer {
   otherText: string;
 }
 
+interface CachedState {
+  draftAnswers: Record<string, DraftAnswer>;
+  activeIndex: number;
+}
+
+// Cache draft state by toolCallId so it survives workspace switches
+const draftStateCache = new Map<string, CachedState>();
+
 function unwrapJsonContainer(value: unknown): unknown {
   if (!value || typeof value !== "object") {
     return value;
@@ -176,13 +184,20 @@ export function AskUserQuestionToolCall(props: {
   const { expanded, toggleExpanded } = useToolExpansion(props.status === "executing");
   const statusDisplay = getStatusDisplay(props.status);
 
-  const [activeIndex, setActiveIndex] = useState(0);
+  const argsAnswers = props.args.answers ?? {};
+
+  // Restore from cache if available (survives workspace switches)
+  const cachedState = draftStateCache.get(props.toolCallId);
+
+  const [activeIndex, setActiveIndex] = useState(() => cachedState?.activeIndex ?? 0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const argsAnswers = props.args.answers ?? {};
-
   const [draftAnswers, setDraftAnswers] = useState<Record<string, DraftAnswer>>(() => {
+    if (cachedState) {
+      return cachedState.draftAnswers;
+    }
+
     const initial: Record<string, DraftAnswer> = {};
     for (const q of props.args.questions) {
       const prefilled = argsAnswers[q.question];
@@ -194,6 +209,16 @@ export function AskUserQuestionToolCall(props: {
     }
     return initial;
   });
+
+  // Sync draft state to cache so it survives workspace switches
+  useEffect(() => {
+    if (props.status === "executing") {
+      draftStateCache.set(props.toolCallId, { draftAnswers, activeIndex });
+    } else {
+      // Clean up cache when tool completes
+      draftStateCache.delete(props.toolCallId);
+    }
+  }, [props.toolCallId, props.status, draftAnswers, activeIndex]);
 
   const resultUnwrapped = useMemo(() => {
     if (!props.result) {
