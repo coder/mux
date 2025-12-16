@@ -335,6 +335,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
         stop({ send: true });
       } else if (e.key === "Escape") {
         e.preventDefault();
+        e.stopPropagation(); // Prevent global stream interrupt handler
         cancel();
       } else if (matchesKeybind(e, KEYBINDS.TOGGLE_VOICE_INPUT)) {
         e.preventDefault();
