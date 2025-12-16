@@ -11,9 +11,7 @@ import { Command } from "commander";
 import { validateProjectPath } from "@/node/utils/pathUtils";
 import { createOrpcServer } from "@/node/orpc/server";
 import type { ORPCContext } from "@/node/orpc/context";
-
-// Only packaged Electron needs 'electron' parse mode; bun/node/electron-dev all use 'node'
-const isPackagedElectron = "electron" in process.versions && !process.defaultApp;
+import { getParseOptions } from "./argv";
 
 const program = new Command();
 program
@@ -24,7 +22,7 @@ program
   .option("--auth-token <token>", "optional bearer token for HTTP/WS auth")
   .option("--ssh-host <host>", "SSH hostname/alias for editor deep links (e.g., devbox)")
   .option("--add-project <path>", "add and open project at the specified path (idempotent)")
-  .parse(process.argv, { from: isPackagedElectron ? "electron" : "node" });
+  .parse(process.argv, getParseOptions());
 
 const options = program.opts();
 const HOST = options.host as string;
