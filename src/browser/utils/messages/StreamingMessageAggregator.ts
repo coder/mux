@@ -338,15 +338,15 @@ export class StreamingMessageAggregator {
    * Clears:
    * - Active stream tracking (this.activeStreams)
    * - Current TODOs (this.currentTodos) - reconstructed from history on reload
-   *
-   * Does NOT clear:
-   * - agentStatus - persists after stream completion to show last activity
+   * - Transient agentStatus (from displayStatus) - restored to persisted value
    */
   private cleanupStreamState(messageId: string): void {
     this.activeStreams.delete(messageId);
     // Clear todos when stream ends - they're stream-scoped state
     // On reload, todos will be reconstructed from completed tool_write calls in history
     this.currentTodos = [];
+    // Restore persisted status - clears transient displayStatus, preserves status_set values
+    this.agentStatus = this.loadPersistedAgentStatus();
   }
 
   /**
@@ -946,11 +946,6 @@ export class StreamingMessageAggregator {
         }
 
         this.setPendingStreamStartTime(Date.now());
-      }
-
-      // Clear transient status when idle compaction completes
-      if (incomingMessage.role === "assistant" && incomingMessage.metadata?.idleCompacted) {
-        this.agentStatus = undefined;
       }
     }
   }

@@ -208,7 +208,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
   });
 
   it("should persist agent status after stream ends", () => {
-    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z", "workspace1");
     const messageId = "msg1";
 
     // Start a stream
@@ -299,7 +299,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
   });
 
   it("should clear agent status when new user message arrives", () => {
-    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z", "workspace1");
 
     // Start first stream and set status
     aggregator.handleStreamStart({
@@ -419,7 +419,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
   });
 
   it("should show 'completed' status in UI when status_set validation succeeds", () => {
-    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z", "workspace1");
     const messageId = "msg1";
 
     // Start a stream
