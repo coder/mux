@@ -226,3 +226,17 @@ describe("plan commands", () => {
     });
   });
 });
+
+describe("init command", () => {
+  it("should parse /init", () => {
+    expectParse("/init", { type: "init" });
+  });
+
+  it("should reject /init with arguments", () => {
+    expectParse("/init extra", {
+      type: "unknown-command",
+      command: "init",
+      subcommand: "extra",
+    });
+  });
+});

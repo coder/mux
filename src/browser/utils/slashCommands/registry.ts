@@ -456,6 +456,23 @@ const vimCommandDefinition: SlashCommandDefinition = {
   },
 };
 
+const initCommandDefinition: SlashCommandDefinition = {
+  key: "init",
+  description: "Bootstrap an AGENTS.md file in a new or existing project",
+  appendSpace: false,
+  handler: ({ cleanRemainingTokens }): ParsedCommand => {
+    if (cleanRemainingTokens.length > 0) {
+      return {
+        type: "unknown-command",
+        command: "init",
+        subcommand: cleanRemainingTokens[0],
+      };
+    }
+
+    return { type: "init" };
+  },
+};
+
 const planOpenCommandDefinition: SlashCommandDefinition = {
   key: "open",
   description: "Open plan in external editor",
@@ -700,6 +717,7 @@ export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   vimCommandDefinition,
   mcpCommandDefinition,
   idleCommandDefinition,
+  initCommandDefinition,
 ];
 
 export const SLASH_COMMAND_DEFINITION_MAP = new Map(

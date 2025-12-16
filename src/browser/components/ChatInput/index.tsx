@@ -93,6 +93,7 @@ import {
 } from "./draftImagesStorage";
 import { RecordingOverlay } from "./RecordingOverlay";
 import { ReviewBlockFromData } from "../shared/ReviewBlock";
+import initMessage from "@/browser/assets/initMessage.txt?raw";
 
 // localStorage quotas are environment-dependent and relatively small.
 // Be conservative here so we can warn the user before writes start failing.
@@ -855,6 +856,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     // Route to creation handler for creation variant
     if (variant === "creation") {
+      // Handle /init command in creation variant - populate input with init message
+      if (messageText.startsWith("/")) {
+        const parsed = parseCommand(messageText);
+        if (parsed?.type === "init") {
+          setInput(initMessage);
+          return;
+        }
+      }
+
       // Creation variant: simple message send + workspace creation
       const creationImageParts = imageAttachmentsToImageParts(imageAttachments);
       const ok = await creationState.handleSend(
@@ -952,7 +962,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           return;
         }
 
-        // Handle /vim command
+        // Handle /init command - populate input with init message
+        if (parsed.type === "init") {
+          setInput(initMessage);
+          return;
+        }
 
         // Handle other non-API commands (help, invalid args, etc)
         const commandToast = createCommandToast(parsed);
