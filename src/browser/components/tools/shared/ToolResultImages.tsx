@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useState } from "react";
+import { Dialog, DialogContent, DialogTitle, VisuallyHidden } from "@/browser/components/ui/dialog";
 
 /**
  * Image content from MCP tool results (transformed from MCP's image type to AI SDK's media type)
@@ -15,6 +16,50 @@ interface MediaContent {
 interface ContentResult {
   type: "content";
   value: Array<{ type: string; text?: string; data?: string; mediaType?: string }>;
+}
+
+/**
+ * Allowed image MIME types for display.
+ * Excludes SVG (can contain scripts) and other potentially dangerous formats.
+ */
+const ALLOWED_IMAGE_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/gif",
+  "image/webp",
+  "image/avif",
+  "image/bmp",
+]);
+
+/**
+ * Validate base64 string contains only valid characters.
+ * Prevents injection of malicious content through invalid base64.
+ */
+function isValidBase64(str: string): boolean {
+  // Base64 should only contain alphanumeric, +, /, and = for padding
+  // Also allow reasonable length (up to ~10MB decoded = ~13MB base64)
+  if (str.length > 15_000_000) return false;
+  return /^[A-Za-z0-9+/]*={0,2}$/.test(str);
+}
+
+/**
+ * Sanitize and validate image data from MCP tool results.
+ * Returns a safe data URL or null if validation fails.
+ */
+export function sanitizeImageData(mediaType: string, data: string): string | null {
+  // Normalize and validate media type
+  const normalizedType = mediaType.toLowerCase().trim();
+  if (!ALLOWED_IMAGE_TYPES.has(normalizedType)) {
+    return null;
+  }
+
+  // Validate base64 data
+  if (!isValidBase64(data)) {
+    return null;
+  }
+
+  return `data:${normalizedType};base64,${data}`;
 }
 
 /**
@@ -42,30 +87,53 @@ interface ToolResultImagesProps {
  */
 export const ToolResultImages: React.FC<ToolResultImagesProps> = ({ result }) => {
   const images = extractImagesFromToolResult(result);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
-  if (images.length === 0) return null;
+  // Sanitize all images upfront, filtering out any that fail validation
+  const safeImages = images
+    .map((image) => sanitizeImageData(image.mediaType, image.data))
+    .filter((url): url is string => url !== null);
+
+  if (safeImages.length === 0) return null;
 
   return (
-    <div className="mt-2 flex flex-wrap gap-2">
-      {images.map((image, index) => {
-        const dataUrl = `data:${image.mediaType};base64,${image.data}`;
-        return (
-          <a
+    <>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {safeImages.map((dataUrl, index) => (
+          <button
             key={index}
-            href={dataUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="border-border-light bg-dark group block overflow-hidden rounded border transition-opacity hover:opacity-80"
-            title="Click to open full size"
+            onClick={() => setSelectedImage(dataUrl)}
+            className="border-border-light bg-dark block cursor-pointer overflow-hidden rounded border p-0 transition-opacity hover:opacity-80"
+            title="Click to view full size"
           >
             <img
               src={dataUrl}
               alt={`Tool result image ${index + 1}`}
               className="max-h-48 max-w-full object-contain"
             />
-          </a>
-        );
-      })}
-    </div>
+          </button>
+        ))}
+      </div>
+
+      {/* Lightbox modal for full-size image viewing */}
+      <Dialog open={selectedImage !== null} onOpenChange={() => setSelectedImage(null)}>
+        <DialogContent
+          maxWidth="90vw"
+          maxHeight="90vh"
+          className="flex items-center justify-center bg-black/90 p-2"
+        >
+          <VisuallyHidden>
+            <DialogTitle>Image Preview</DialogTitle>
+          </VisuallyHidden>
+          {selectedImage && (
+            <img
+              src={selectedImage}
+              alt="Full size preview"
+              className="max-h-[85vh] max-w-full object-contain"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 };

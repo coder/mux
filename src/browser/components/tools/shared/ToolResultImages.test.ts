@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { extractImagesFromToolResult } from "./ToolResultImages";
+import { extractImagesFromToolResult, sanitizeImageData } from "./ToolResultImages";
 
 describe("extractImagesFromToolResult", () => {
   it("should extract images from MCP content result format", () => {
@@ -78,5 +78,67 @@ describe("extractImagesFromToolResult", () => {
   it("should return empty for wrong type value", () => {
     expect(extractImagesFromToolResult({ type: "error", value: [] })).toEqual([]);
     expect(extractImagesFromToolResult({ type: "content", value: "not-array" })).toEqual([]);
+  });
+});
+
+describe("sanitizeImageData", () => {
+  it("should allow safe image types", () => {
+    const validBase64 = "SGVsbG8gV29ybGQ="; // "Hello World" in base64
+    expect(sanitizeImageData("image/png", validBase64)).toBe(
+      `data:image/png;base64,${validBase64}`
+    );
+    expect(sanitizeImageData("image/jpeg", validBase64)).toBe(
+      `data:image/jpeg;base64,${validBase64}`
+    );
+    expect(sanitizeImageData("image/gif", validBase64)).toBe(
+      `data:image/gif;base64,${validBase64}`
+    );
+    expect(sanitizeImageData("image/webp", validBase64)).toBe(
+      `data:image/webp;base64,${validBase64}`
+    );
+  });
+
+  it("should normalize media type to lowercase", () => {
+    const validBase64 = "SGVsbG8=";
+    expect(sanitizeImageData("IMAGE/PNG", validBase64)).toBe(
+      `data:image/png;base64,${validBase64}`
+    );
+    expect(sanitizeImageData("Image/JPEG", validBase64)).toBe(
+      `data:image/jpeg;base64,${validBase64}`
+    );
+  });
+
+  it("should reject SVG (can contain scripts)", () => {
+    expect(sanitizeImageData("image/svg+xml", "PHN2Zz4=")).toBeNull();
+    expect(sanitizeImageData("image/svg", "PHN2Zz4=")).toBeNull();
+  });
+
+  it("should reject non-image types", () => {
+    expect(sanitizeImageData("text/html", "PGh0bWw+")).toBeNull();
+    expect(sanitizeImageData("application/javascript", "YWxlcnQoMSk=")).toBeNull();
+    expect(sanitizeImageData("text/plain", "SGVsbG8=")).toBeNull();
+  });
+
+  it("should reject invalid base64 characters", () => {
+    expect(sanitizeImageData("image/png", "hello<script>alert(1)</script>")).toBeNull();
+    expect(sanitizeImageData("image/png", "data with spaces")).toBeNull();
+    expect(sanitizeImageData("image/png", "invalid!@#$%")).toBeNull();
+  });
+
+  it("should accept valid base64 with padding", () => {
+    expect(sanitizeImageData("image/png", "YQ==")).toBe("data:image/png;base64,YQ==");
+    expect(sanitizeImageData("image/png", "YWI=")).toBe("data:image/png;base64,YWI=");
+    expect(sanitizeImageData("image/png", "YWJj")).toBe("data:image/png;base64,YWJj");
+  });
+
+  it("should reject excessively large data", () => {
+    const hugeData = "A".repeat(16_000_000); // 16MB
+    expect(sanitizeImageData("image/png", hugeData)).toBeNull();
+  });
+
+  it("should handle edge cases", () => {
+    expect(sanitizeImageData("", "SGVsbG8=")).toBeNull();
+    expect(sanitizeImageData("image/png", "")).toBe("data:image/png;base64,");
+    expect(sanitizeImageData("  image/png  ", "SGVsbG8=")).toBe("data:image/png;base64,SGVsbG8=");
   });
 });
