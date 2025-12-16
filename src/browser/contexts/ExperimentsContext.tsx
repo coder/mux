@@ -4,6 +4,7 @@ import React, {
   useSyncExternalStore,
   useCallback,
   useEffect,
+  useRef,
   useState,
 } from "react";
 import {
@@ -87,6 +88,28 @@ function getRemoteExperimentEnabled(value: string | boolean): boolean {
 }
 
 /**
+ * True when any remote experiment value is still pending a background PostHog refresh.
+ */
+function hasPendingRemoteExperimentValues(
+  remoteExperiments: Partial<Record<ExperimentId, ExperimentValue>>
+): boolean {
+  return Object.values(remoteExperiments).some(
+    (remote) => remote?.source === "cache" && remote.value === null
+  );
+}
+
+const REMOTE_EXPERIMENTS_POLL_INITIAL_DELAY_MS = 100;
+const REMOTE_EXPERIMENTS_POLL_MAX_DELAY_MS = 5_000;
+const REMOTE_EXPERIMENTS_POLL_MAX_ATTEMPTS = 8;
+
+function getRemoteExperimentsPollDelayMs(attempt: number): number {
+  return Math.min(
+    REMOTE_EXPERIMENTS_POLL_INITIAL_DELAY_MS * 2 ** attempt,
+    REMOTE_EXPERIMENTS_POLL_MAX_DELAY_MS
+  );
+}
+
+/**
  * Set experiment state to localStorage and dispatch sync event.
  */
 function setExperimentState(experimentId: ExperimentId, enabled: boolean): void {
@@ -160,6 +183,62 @@ export function ExperimentsProvider(props: { children: React.ReactNode }) {
     await loadRemoteExperiments();
   }, [apiState.status, apiState.api, loadRemoteExperiments]);
 
+  // On cold start, experiments.getAll can return { source: "cache", value: null } while
+  // ExperimentsService refreshes from PostHog in the background. Poll a few times so the
+  // renderer picks up remote variants without requiring a manual reload.
+  const remotePollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const remotePollAttemptRef = useRef(0);
+
+  const clearRemotePoll = useCallback(() => {
+    if (remotePollTimeoutRef.current === null) {
+      return;
+    }
+
+    clearTimeout(remotePollTimeoutRef.current);
+    remotePollTimeoutRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearRemotePoll();
+    };
+  }, [clearRemotePoll]);
+
+  useEffect(() => {
+    if (apiState.status !== "connected" || !apiState.api) {
+      remotePollAttemptRef.current = 0;
+      clearRemotePoll();
+      return;
+    }
+
+    if (!remoteExperiments) {
+      remotePollAttemptRef.current = 0;
+      clearRemotePoll();
+      return;
+    }
+
+    if (!hasPendingRemoteExperimentValues(remoteExperiments)) {
+      remotePollAttemptRef.current = 0;
+      clearRemotePoll();
+      return;
+    }
+
+    if (remotePollTimeoutRef.current !== null) {
+      return;
+    }
+
+    const attempt = remotePollAttemptRef.current;
+    if (attempt >= REMOTE_EXPERIMENTS_POLL_MAX_ATTEMPTS) {
+      return;
+    }
+
+    const delayMs = getRemoteExperimentsPollDelayMs(attempt);
+    remotePollTimeoutRef.current = setTimeout(() => {
+      remotePollTimeoutRef.current = null;
+      remotePollAttemptRef.current += 1;
+      void loadRemoteExperiments();
+    }, delayMs);
+  }, [apiState.status, apiState.api, remoteExperiments, clearRemotePoll, loadRemoteExperiments]);
   useEffect(() => {
     void loadRemoteExperiments();
   }, [loadRemoteExperiments]);
