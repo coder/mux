@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  CLI_GLOBAL_FLAGS,
   detectCliEnvironment,
   getParseOptions,
   getSubcommand,
@@ -7,6 +8,19 @@ import {
   isCommandAvailable,
   isElectronLaunchArg,
 } from "./argv";
+
+describe("CLI_GLOBAL_FLAGS", () => {
+  test("contains expected help and version flags", () => {
+    expect(CLI_GLOBAL_FLAGS).toContain("--help");
+    expect(CLI_GLOBAL_FLAGS).toContain("-h");
+    expect(CLI_GLOBAL_FLAGS).toContain("--version");
+    expect(CLI_GLOBAL_FLAGS).toContain("-v");
+  });
+
+  test("has exactly 4 flags", () => {
+    expect(CLI_GLOBAL_FLAGS).toHaveLength(4);
+  });
+});
 
 describe("detectCliEnvironment", () => {
   test("bun/node: firstArgIndex=2", () => {
@@ -123,11 +137,26 @@ describe("isElectronLaunchArg", () => {
     const env = detectCliEnvironment({}, undefined);
     expect(isElectronLaunchArg(".", env)).toBe(false);
     expect(isElectronLaunchArg("--help", env)).toBe(false);
+    expect(isElectronLaunchArg("--no-sandbox", env)).toBe(false);
   });
 
-  test("returns false for packaged Electron (flags are real CLI args)", () => {
+  test("returns true for Electron flags in packaged mode (--no-sandbox, etc.)", () => {
+    const env = detectCliEnvironment({ electron: "33.0.0" }, undefined);
+    expect(isElectronLaunchArg("--no-sandbox", env)).toBe(true);
+    expect(isElectronLaunchArg("--disable-gpu", env)).toBe(true);
+    expect(isElectronLaunchArg("--enable-logging", env)).toBe(true);
+  });
+
+  test("returns false for CLI flags in packaged mode (--help, --version)", () => {
     const env = detectCliEnvironment({ electron: "33.0.0" }, undefined);
     expect(isElectronLaunchArg("--help", env)).toBe(false);
+    expect(isElectronLaunchArg("-h", env)).toBe(false);
+    expect(isElectronLaunchArg("--version", env)).toBe(false);
+    expect(isElectronLaunchArg("-v", env)).toBe(false);
+  });
+
+  test("returns false for '.' in packaged mode", () => {
+    const env = detectCliEnvironment({ electron: "33.0.0" }, undefined);
     expect(isElectronLaunchArg(".", env)).toBe(false);
   });
 
@@ -152,6 +181,11 @@ describe("isElectronLaunchArg", () => {
 
   test("returns false for undefined subcommand", () => {
     const env = detectCliEnvironment({ electron: "33.0.0" }, true);
+    expect(isElectronLaunchArg(undefined, env)).toBe(false);
+  });
+
+  test("returns false for undefined subcommand in packaged mode", () => {
+    const env = detectCliEnvironment({ electron: "33.0.0" }, undefined);
     expect(isElectronLaunchArg(undefined, env)).toBe(false);
   });
 });

@@ -71,19 +71,36 @@ export function getArgsAfterSplice(
 }
 
 /**
+ * Global CLI flags that should show help/version, not launch desktop.
+ * Commander auto-adds --help/-h. We add --version/-v in index.ts.
+ *
+ * IMPORTANT: If you add new global flags to the CLI in index.ts,
+ * add them here too so packaged Electron routes them correctly.
+ */
+export const CLI_GLOBAL_FLAGS = ["--help", "-h", "--version", "-v"] as const;
+
+/**
  * Check if the subcommand is an Electron launch arg (not a real CLI command).
- * In dev mode (electron --inspect .), argv may contain flags or "." before the subcommand.
- * These should trigger desktop launch, not CLI processing.
+ * In dev mode, "." or flags before the app path should launch desktop.
+ * In packaged mode, Electron flags (--no-sandbox, etc.) should launch desktop,
+ * but CLI flags (--help, --version) should show CLI help.
  */
 export function isElectronLaunchArg(
   subcommand: string | undefined,
   env: CliEnvironment = detectCliEnvironment()
 ): boolean {
-  if (env.isPackagedElectron || !env.isElectron) {
-    return false;
+  if (!env.isElectron) return false;
+
+  if (env.isPackagedElectron) {
+    // In packaged: flags that aren't CLI flags should launch desktop
+    return Boolean(
+      subcommand?.startsWith("-") &&
+      !CLI_GLOBAL_FLAGS.includes(subcommand as (typeof CLI_GLOBAL_FLAGS)[number])
+    );
   }
-  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- intentional: false from startsWith should still check "."
-  return subcommand?.startsWith("-") || subcommand === ".";
+
+  // Dev mode: "." or any flag launches desktop
+  return subcommand === "." || subcommand?.startsWith("-") === true;
 }
 
 /**
