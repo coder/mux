@@ -23,6 +23,7 @@
 import { Command } from "commander";
 import { VERSION } from "../version";
 import {
+  CLI_GLOBAL_FLAGS,
   detectCliEnvironment,
   getParseOptions,
   getSubcommand,
@@ -79,10 +80,22 @@ if (subcommand === "run") {
   const gitCommit =
     typeof versionRecord.git_commit === "string" ? versionRecord.git_commit : "unknown";
 
+  // Global flags are defined in CLI_GLOBAL_FLAGS (argv.ts) for routing logic.
+  // Commander auto-adds --help/-h. We define --version/-v below.
   program
     .name("mux")
     .description("Mux - AI agent orchestration")
     .version(`${gitDescribe} (${gitCommit})`, "-v, --version");
+
+  // Sanity check: ensure version flags match CLI_GLOBAL_FLAGS
+  if (process.env.NODE_ENV !== "production") {
+    const versionFlags = ["-v", "--version"];
+    for (const flag of versionFlags) {
+      if (!CLI_GLOBAL_FLAGS.includes(flag as (typeof CLI_GLOBAL_FLAGS)[number])) {
+        console.warn(`Warning: version flag "${flag}" not in CLI_GLOBAL_FLAGS`);
+      }
+    }
+  }
 
   // Register subcommand stubs for help display (actual implementations are above)
   // `run` is only available via bun/node CLI, not bundled in Electron
