@@ -98,14 +98,52 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
     void loadDirectory(`${root.path}/..`);
   }, [loadDirectory, root]);
 
-  const handleConfirm = useCallback(() => {
+  const handleConfirm = useCallback(async () => {
+    const trimmedInput = pathInput.trim();
+
+    // If user has typed a different path, try to load it first
+    if (trimmedInput && trimmedInput !== root?.path) {
+      if (!api) return;
+      setIsLoading(true);
+      setError(null);
+      setCanCreateFolder(false);
+
+      try {
+        const result = await api.general.listDirectory({ path: trimmedInput });
+        if (!result.success) {
+          const errorMessage = typeof result.error === "string" ? result.error : "Unknown error";
+          const isNotFound =
+            errorMessage.includes("ENOENT") || errorMessage.includes("no such file or directory");
+          if (isNotFound) {
+            setCanCreateFolder(true);
+            setError("Folder doesn't exist.");
+          } else {
+            setError(`Failed to load directory: ${errorMessage}`);
+          }
+          setRoot(null);
+          return;
+        }
+        // Success - select this path
+        onSelectPath(result.data.path);
+        onClose();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setError(`Failed to load directory: ${message}`);
+        setRoot(null);
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    // Otherwise use the current root
     if (!root) {
       return;
     }
 
     onSelectPath(root.path);
     onClose();
-  }, [onClose, onSelectPath, root]);
+  }, [onClose, onSelectPath, root, pathInput, api]);
 
   const handleCreateFolder = useCallback(async () => {
     const trimmedPath = pathInput.trim();
@@ -157,7 +195,7 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
       } else if ((e.ctrlKey || e.metaKey) && e.key === "o") {
         e.preventDefault();
         if (!isLoading && root) {
-          handleConfirm();
+          void handleConfirm();
         }
       }
     },
@@ -215,7 +253,7 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
             isLoading={isLoading}
             onNavigateTo={handleNavigateTo}
             onNavigateParent={handleNavigateParent}
-            onConfirm={handleConfirm}
+            onConfirm={() => void handleConfirm()}
             selectedIndex={selectedIndex}
             onSelectedIndexChange={setSelectedIndex}
           />
