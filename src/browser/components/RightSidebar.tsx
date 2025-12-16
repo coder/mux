@@ -2,13 +2,9 @@ import React from "react";
 import { RIGHT_SIDEBAR_TAB_KEY, RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
-import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useResizeObserver } from "@/browser/hooks/useResizeObserver";
-import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
 import { CostsTab } from "./RightSidebar/CostsTab";
-import { VerticalTokenMeter } from "./RightSidebar/VerticalTokenMeter";
 import { ReviewPanel } from "./RightSidebar/CodeReview/ReviewPanel";
-import { calculateTokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
 import { sumUsageHistory, type ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
@@ -128,8 +124,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   }, [setSelectedTab]);
 
   const usage = useWorkspaceUsage(workspaceId);
-  const { options } = useProviderOptions();
-  const use1M = options.anthropic?.use1MContext ?? false;
   const chatAreaSize = useResizeObserver(chatAreaRef);
 
   const baseId = `right-sidebar-${workspaceId}`;
@@ -137,10 +131,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const reviewTabId = `${baseId}-tab-review`;
   const costsPanelId = `${baseId}-panel-costs`;
   const reviewPanelId = `${baseId}-panel-review`;
-
-  // Use lastContextUsage for context window display (last step = actual context size)
-  const lastUsage = usage?.liveUsage ?? usage?.lastContextUsage;
-  const model = lastUsage?.model ?? null;
 
   // Calculate session cost for tab display
   const sessionCost = React.useMemo(() => {
@@ -161,17 +151,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       (aggregated.reasoning.cost_usd ?? 0);
     return total > 0 ? total : null;
   }, [usage.sessionTotal, usage.liveCostUsage]);
-
-  // Auto-compaction settings: threshold per-model
-  const { threshold: autoCompactThreshold, setThreshold: setAutoCompactThreshold } =
-    useAutoCompactionSettings(workspaceId, model);
-
-  // Memoize vertical meter data calculation to prevent unnecessary re-renders
-  const verticalMeterData = React.useMemo(() => {
-    return lastUsage
-      ? calculateTokenMeterData(lastUsage, model ?? "unknown", use1M, true)
-      : { segments: [], totalTokens: 0, totalPercentage: 0 };
-  }, [lastUsage, model, use1M]);
 
   // Auto-hide sidebar on small screens using hysteresis to prevent oscillation
   // - Observe ChatArea width directly (independent of sidebar width)
@@ -213,19 +192,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     // Between thresholds: maintain current state (no change)
   }, [chatAreaWidth, selectedTab, isHidden, setIsHidden, width]);
 
-  // Vertical meter only shows on Review tab (context usage indicator is now in ChatInput)
-  const autoCompactionProps = React.useMemo(
-    () => ({
-      threshold: autoCompactThreshold,
-      setThreshold: setAutoCompactThreshold,
-    }),
-    [autoCompactThreshold, setAutoCompactThreshold]
-  );
-  const verticalMeter =
-    selectedTab === "review" ? (
-      <VerticalTokenMeter data={verticalMeterData} autoCompaction={autoCompactionProps} />
-    ) : null;
-
   // Fully hide sidebar on small screens (context usage now shown in ChatInput)
   if (isHidden) {
     return null;
@@ -249,11 +215,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
             )}
             onMouseDown={(e) => onStartResize(e as unknown as React.MouseEvent)}
           />
-        )}
-
-        {/* Render meter when Review tab is active */}
-        {selectedTab === "review" && (
-          <div className="bg-sidebar flex w-5 shrink-0 flex-col">{verticalMeter}</div>
         )}
 
         <div className="flex min-w-0 flex-1 flex-col">

@@ -45,7 +45,7 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
           </PopoverTrigger>
         </TooltipTrigger>
         <TooltipContent side="bottom" align="end" className="w-80">
-          <ContextUsageBar data={data} />
+          <ContextUsageBar data={data} autoCompactionThreshold={autoCompaction?.threshold} />
         </TooltipContent>
       </Tooltip>
 
