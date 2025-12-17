@@ -380,6 +380,212 @@ export const TOOL_DEFINITIONS = {
   },
 } as const;
 
+// -----------------------------------------------------------------------------
+// Result Schemas for Bridgeable Tools (PTC Type Generation)
+// -----------------------------------------------------------------------------
+// These Zod schemas define the result types for tools exposed in the PTC sandbox.
+// They serve as single source of truth for both:
+// 1. TypeScript types in tools.ts (via z.infer<>)
+// 2. Runtime type generation for PTC (via Zod → JSON Schema → TypeScript string)
+
+/**
+ * Truncation info returned when output exceeds limits.
+ */
+const TruncatedInfoSchema = z.object({
+  reason: z.string(),
+  totalLines: z.number(),
+});
+
+/**
+ * Bash tool result - success, background spawn, or failure.
+ */
+export const BashToolResultSchema = z.union([
+  // Foreground success
+  z.object({
+    success: z.literal(true),
+    output: z.string(),
+    exitCode: z.literal(0),
+    wall_duration_ms: z.number(),
+    note: z.string().optional(),
+    truncated: TruncatedInfoSchema.optional(),
+  }),
+  // Background spawn success
+  z.object({
+    success: z.literal(true),
+    output: z.string(),
+    exitCode: z.literal(0),
+    wall_duration_ms: z.number(),
+    backgroundProcessId: z.string(),
+  }),
+  // Failure
+  z.object({
+    success: z.literal(false),
+    output: z.string().optional(),
+    exitCode: z.number(),
+    error: z.string(),
+    wall_duration_ms: z.number(),
+    note: z.string().optional(),
+    truncated: TruncatedInfoSchema.optional(),
+  }),
+]);
+
+/**
+ * Bash output tool result - process status and incremental output.
+ */
+export const BashOutputToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    status: z.enum(["running", "exited", "killed", "failed", "interrupted"]),
+    output: z.string(),
+    exitCode: z.number().optional(),
+    note: z.string().optional(),
+    elapsed_ms: z.number(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
+/**
+ * Bash background list tool result - all background processes.
+ */
+export const BashBackgroundListResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    processes: z.array(
+      z.object({
+        process_id: z.string(),
+        status: z.enum(["running", "exited", "killed", "failed"]),
+        script: z.string(),
+        uptime_ms: z.number(),
+        exitCode: z.number().optional(),
+        display_name: z.string().optional(),
+      })
+    ),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
+/**
+ * Bash background terminate tool result.
+ */
+export const BashBackgroundTerminateResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    message: z.string(),
+    display_name: z.string().optional(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
+/**
+ * File read tool result - content or error.
+ */
+export const FileReadToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    file_size: z.number(),
+    modifiedTime: z.string(),
+    lines_read: z.number(),
+    content: z.string(),
+    warning: z.string().optional(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
+/**
+ * File edit insert tool result - diff or error.
+ */
+export const FileEditInsertToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    diff: z.string(),
+    warning: z.string().optional(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+    note: z.string().optional(),
+  }),
+]);
+
+/**
+ * File edit replace string tool result - diff with edit count or error.
+ */
+export const FileEditReplaceStringToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    diff: z.string(),
+    edits_applied: z.number(),
+    warning: z.string().optional(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+    note: z.string().optional(),
+  }),
+]);
+
+/**
+ * Web fetch tool result - parsed content or error.
+ */
+export const WebFetchToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    title: z.string(),
+    content: z.string(),
+    url: z.string(),
+    byline: z.string().optional(),
+    length: z.number(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+    content: z.string().optional(),
+  }),
+]);
+
+/**
+ * Names of tools that are bridgeable to PTC sandbox.
+ * If adding a new tool here, you must also add its result schema below.
+ */
+export type BridgeableToolName =
+  | "bash"
+  | "bash_output"
+  | "bash_background_list"
+  | "bash_background_terminate"
+  | "file_read"
+  | "file_edit_insert"
+  | "file_edit_replace_string"
+  | "web_fetch";
+
+/**
+ * Lookup map for result schemas by tool name.
+ * Used by PTC type generator to get result types for bridgeable tools.
+ *
+ * Type-level enforcement ensures all BridgeableToolName entries have schemas.
+ */
+export const RESULT_SCHEMAS: Record<BridgeableToolName, z.ZodType> = {
+  bash: BashToolResultSchema,
+  bash_output: BashOutputToolResultSchema,
+  bash_background_list: BashBackgroundListResultSchema,
+  bash_background_terminate: BashBackgroundTerminateResultSchema,
+  file_read: FileReadToolResultSchema,
+  file_edit_insert: FileEditInsertToolResultSchema,
+  file_edit_replace_string: FileEditReplaceStringToolResultSchema,
+  web_fetch: WebFetchToolResultSchema,
+};
+
 /**
  * Get tool definition schemas for token counting
  * JSON schemas are auto-generated from zod schemas

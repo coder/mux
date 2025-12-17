@@ -8,7 +8,15 @@ import type {
   AskUserQuestionOptionSchema,
   AskUserQuestionQuestionSchema,
   AskUserQuestionToolResultSchema,
+  BashBackgroundListResultSchema,
+  BashBackgroundTerminateResultSchema,
+  BashOutputToolResultSchema,
+  BashToolResultSchema,
+  FileEditInsertToolResultSchema,
+  FileEditReplaceStringToolResultSchema,
+  FileReadToolResultSchema,
   TOOL_DEFINITIONS,
+  WebFetchToolResultSchema,
 } from "@/common/utils/tools/toolDefinitions";
 
 // Bash Tool Types
@@ -19,40 +27,8 @@ export interface BashToolArgs {
   display_name: string; // Required - used as process identifier if sent to background
 }
 
-interface CommonBashFields {
-  // wall_duration_ms is provided to give the agent a sense of how long a command takes which
-  // should inform future timeouts.
-  wall_duration_ms: number;
-}
-
-export type BashToolResult =
-  | (CommonBashFields & {
-      success: true;
-      output: string;
-      exitCode: 0;
-      note?: string; // Agent-only message (not displayed in UI)
-      truncated?: {
-        reason: string;
-        totalLines: number;
-      };
-    })
-  | (CommonBashFields & {
-      success: true;
-      output: string;
-      exitCode: 0;
-      backgroundProcessId: string; // Background spawn succeeded
-    })
-  | (CommonBashFields & {
-      success: false;
-      output?: string;
-      exitCode: number;
-      error: string;
-      note?: string; // Agent-only message (not displayed in UI)
-      truncated?: {
-        reason: string;
-        totalLines: number;
-      };
-    });
+// BashToolResult derived from Zod schema (single source of truth)
+export type BashToolResult = z.infer<typeof BashToolResultSchema>;
 
 // File Read Tool Types
 export interface FileReadToolArgs {
@@ -61,19 +37,8 @@ export interface FileReadToolArgs {
   limit?: number; // number of lines to return from offset (optional)
 }
 
-export type FileReadToolResult =
-  | {
-      success: true;
-      file_size: number;
-      modifiedTime: string;
-      lines_read: number;
-      content: string;
-      warning?: string;
-    }
-  | {
-      success: false;
-      error: string;
-    };
+// FileReadToolResult derived from Zod schema (single source of truth)
+export type FileReadToolResult = z.infer<typeof FileReadToolResultSchema>;
 
 export interface FileEditDiffSuccessBase {
   success: true;
@@ -96,7 +61,8 @@ export interface FileEditInsertToolArgs {
   after?: string;
 }
 
-export type FileEditInsertToolResult = FileEditDiffSuccessBase | FileEditErrorResult;
+// FileEditInsertToolResult derived from Zod schema (single source of truth)
+export type FileEditInsertToolResult = z.infer<typeof FileEditInsertToolResultSchema>;
 
 export interface FileEditReplaceStringToolArgs {
   file_path: string;
@@ -105,11 +71,8 @@ export interface FileEditReplaceStringToolArgs {
   replace_count?: number;
 }
 
-export type FileEditReplaceStringToolResult =
-  | (FileEditDiffSuccessBase & {
-      edits_applied: number;
-    })
-  | FileEditErrorResult;
+// FileEditReplaceStringToolResult derived from Zod schema (single source of truth)
+export type FileEditReplaceStringToolResult = z.infer<typeof FileEditReplaceStringToolResultSchema>;
 
 export interface FileEditReplaceLinesToolArgs {
   file_path: string;
@@ -255,42 +218,28 @@ export interface BashOutputToolArgs {
   timeout_secs: number;
 }
 
-export type BashOutputToolResult =
-  | {
-      success: true;
-      status: "running" | "exited" | "killed" | "failed" | "interrupted";
-      output: string;
-      exitCode?: number;
-      note?: string; // Agent-only message (not displayed in UI)
-      // Time spent waiting for output (helps agent detect/avoid busy loops)
-      elapsed_ms: number;
-    }
-  | { success: false; error: string };
+// BashOutputToolResult derived from Zod schema (single source of truth)
+export type BashOutputToolResult = z.infer<typeof BashOutputToolResultSchema>;
 
 // Bash Background Tool Types
 export interface BashBackgroundTerminateArgs {
   process_id: string;
 }
 
-export type BashBackgroundTerminateResult =
-  | { success: true; message: string; display_name?: string }
-  | { success: false; error: string };
+// BashBackgroundTerminateResult derived from Zod schema (single source of truth)
+export type BashBackgroundTerminateResult = z.infer<typeof BashBackgroundTerminateResultSchema>;
 
 // Bash Background List Tool Types
 export type BashBackgroundListArgs = Record<string, never>;
 
-export interface BashBackgroundListProcess {
-  process_id: string;
-  status: "running" | "exited" | "killed" | "failed";
-  script: string;
-  uptime_ms: number;
-  exitCode?: number;
-  display_name?: string; // Human-readable name (e.g., "Dev Server")
-}
+// BashBackgroundListResult derived from Zod schema (single source of truth)
+export type BashBackgroundListResult = z.infer<typeof BashBackgroundListResultSchema>;
 
-export type BashBackgroundListResult =
-  | { success: true; processes: BashBackgroundListProcess[] }
-  | { success: false; error: string };
+// BashBackgroundListProcess extracted from result type for convenience
+export type BashBackgroundListProcess = Extract<
+  BashBackgroundListResult,
+  { success: true }
+>["processes"][number];
 
 export type StatusSetToolResult =
   | {
@@ -309,18 +258,5 @@ export interface WebFetchToolArgs {
   url: string;
 }
 
-export type WebFetchToolResult =
-  | {
-      success: true;
-      title: string;
-      content: string;
-      url: string;
-      byline?: string;
-      length: number;
-    }
-  | {
-      success: false;
-      error: string;
-      /** Parsed error response body (e.g., from HTTP 4xx/5xx pages) */
-      content?: string;
-    };
+// WebFetchToolResult derived from Zod schema (single source of truth)
+export type WebFetchToolResult = z.infer<typeof WebFetchToolResultSchema>;

@@ -338,6 +338,7 @@ export const ToolPolicySchema = z.array(ToolPolicyFilterSchema).meta({
 // Experiments schema for feature gating
 export const ExperimentsSchema = z.object({
   postCompactionContext: z.boolean().optional(),
+  programmaticToolCalling: z.boolean().optional(),
 });
 
 // SendMessage options
