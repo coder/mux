@@ -17,7 +17,7 @@ description: Agent instructions for AI assistants working on the mux codebase
   <!-- mux-attribution: model=<modelString> thinking=<thinkingLevel> -->
   ```
 
-  Prefer sourcing values from `$MUX_MODEL_STRING` and `$MUX_THINKING_LEVEL` (bash tool env).
+  Always check `$MUX_MODEL_STRING` and `$MUX_THINKING_LEVEL` via bash before creating PRs—include them in the footer if set.
 
 ## PR + Release Workflow
 
