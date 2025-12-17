@@ -13,6 +13,7 @@ import type { PartialService } from "@/node/services/partialService";
 import type { AIService } from "@/node/services/aiService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
+import type { TelemetryService } from "@/node/services/telemetryService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
 import { EXPERIMENT_IDS, EXPERIMENTS } from "@/common/constants/experiments";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
@@ -120,6 +121,7 @@ export class WorkspaceService extends EventEmitter {
     this.setupMetadataListeners();
   }
 
+  private telemetryService?: TelemetryService;
   private experimentsService?: ExperimentsService;
   private mcpServerManager?: MCPServerManager;
   // Optional terminal service for cleanup on workspace removal
@@ -131,6 +133,10 @@ export class WorkspaceService extends EventEmitter {
    */
   setMCPServerManager(manager: MCPServerManager): void {
     this.mcpServerManager = manager;
+  }
+
+  setTelemetryService(telemetryService: TelemetryService): void {
+    this.telemetryService = telemetryService;
   }
 
   setExperimentsService(experimentsService: ExperimentsService): void {
@@ -301,6 +307,7 @@ export class WorkspaceService extends EventEmitter {
       historyService: this.historyService,
       partialService: this.partialService,
       aiService: this.aiService,
+      telemetryService: this.telemetryService,
       initStateManager: this.initStateManager,
       backgroundProcessManager: this.backgroundProcessManager,
       onCompactionComplete: () => {

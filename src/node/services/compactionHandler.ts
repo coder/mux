@@ -9,6 +9,8 @@ import { Ok, Err } from "@/common/types/result";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import type { TelemetryService } from "@/node/services/telemetryService";
+import { roundToBase2 } from "@/common/telemetry/utils";
 import { log } from "@/node/services/log";
 import {
   extractEditedFileDiffs,
@@ -20,6 +22,7 @@ interface CompactionHandlerOptions {
   workspaceId: string;
   historyService: HistoryService;
   partialService: PartialService;
+  telemetryService?: TelemetryService;
   emitter: EventEmitter;
   /** Called when compaction completes successfully (e.g., to clear idle compaction pending state) */
   onCompactionComplete?: () => void;
@@ -37,6 +40,7 @@ export class CompactionHandler {
   private readonly workspaceId: string;
   private readonly historyService: HistoryService;
   private readonly partialService: PartialService;
+  private readonly telemetryService?: TelemetryService;
   private readonly emitter: EventEmitter;
   private readonly processedCompactionRequestIds: Set<string> = new Set<string>();
   private readonly onCompactionComplete?: () => void;
@@ -50,6 +54,7 @@ export class CompactionHandler {
     this.workspaceId = options.workspaceId;
     this.historyService = options.historyService;
     this.partialService = options.partialService;
+    this.telemetryService = options.telemetryService;
     this.emitter = options.emitter;
     this.onCompactionComplete = options.onCompactionComplete;
   }
@@ -129,6 +134,24 @@ export class CompactionHandler {
       log.error("Compaction failed:", result.error);
       return false;
     }
+
+    const durationSecs =
+      typeof event.metadata.duration === "number" ? event.metadata.duration / 1000 : 0;
+    const inputTokens =
+      event.metadata.contextUsage?.inputTokens ?? event.metadata.usage?.inputTokens ?? 0;
+    const outputTokens =
+      event.metadata.contextUsage?.outputTokens ?? event.metadata.usage?.outputTokens ?? 0;
+
+    this.telemetryService?.capture({
+      event: "compaction_completed",
+      properties: {
+        model: event.metadata.model,
+        duration_b2: roundToBase2(durationSecs),
+        input_tokens_b2: roundToBase2(inputTokens ?? 0),
+        output_tokens_b2: roundToBase2(outputTokens ?? 0),
+        compaction_source: isIdleCompaction ? "idle" : "manual",
+      },
+    });
 
     // Notify that compaction completed (clears idle compaction pending state)
     this.onCompactionComplete?.();

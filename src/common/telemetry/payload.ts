@@ -123,6 +123,22 @@ export interface StreamCompletedPayload {
 }
 
 /**
+ * Compaction completion event - tracks when history compaction finishes
+ */
+export interface CompactionCompletedPayload {
+  /** Model used for compaction */
+  model: string;
+  /** Duration in seconds, rounded to nearest power of 2 */
+  duration_b2: number;
+  /** Input tokens (pre-compaction history size), rounded to nearest power of 2 */
+  input_tokens_b2: number;
+  /** Output tokens (post-compaction summary size), rounded to nearest power of 2 */
+  output_tokens_b2: number;
+  /** Whether this compaction was user-triggered vs idle */
+  compaction_source: "manual" | "idle";
+}
+
+/**
  * Provider configuration event - tracks when users set up providers
  * Note: Only tracks that a key was set, never the actual value
  */
@@ -211,6 +227,7 @@ export type TelemetryEventPayload =
   | { event: "workspace_switched"; properties: WorkspaceSwitchedPayload }
   | { event: "message_sent"; properties: MessageSentPayload }
   | { event: "stream_completed"; properties: StreamCompletedPayload }
+  | { event: "compaction_completed"; properties: CompactionCompletedPayload }
   | { event: "provider_configured"; properties: ProviderConfiguredPayload }
   | { event: "command_used"; properties: CommandUsedPayload }
   | { event: "voice_transcription"; properties: VoiceTranscriptionPayload }

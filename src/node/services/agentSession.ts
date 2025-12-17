@@ -30,6 +30,7 @@ import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { MessageQueue } from "./messageQueue";
 import type { StreamEndEvent } from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
+import type { TelemetryService } from "./telemetryService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import { computeDiff } from "@/node/utils/diff";
 import { AttachmentService } from "./attachmentService";
@@ -89,6 +90,7 @@ interface AgentSessionOptions {
   partialService: PartialService;
   aiService: AIService;
   initStateManager: InitStateManager;
+  telemetryService?: TelemetryService;
   backgroundProcessManager: BackgroundProcessManager;
   /** Called when compaction completes (e.g., to clear idle compaction pending state) */
   onCompactionComplete?: () => void;
@@ -147,6 +149,7 @@ export class AgentSession {
       partialService,
       aiService,
       initStateManager,
+      telemetryService,
       backgroundProcessManager,
       onCompactionComplete,
       onPostCompactionStateChange,
@@ -169,6 +172,7 @@ export class AgentSession {
     this.compactionHandler = new CompactionHandler({
       workspaceId: this.workspaceId,
       historyService: this.historyService,
+      telemetryService,
       partialService: this.partialService,
       emitter: this.emitter,
       onCompactionComplete,

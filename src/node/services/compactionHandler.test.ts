@@ -5,6 +5,8 @@ import type { PartialService } from "./partialService";
 import type { EventEmitter } from "events";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import type { StreamEndEvent } from "@/common/types/stream";
+import type { TelemetryService } from "./telemetryService";
+import type { TelemetryEventPayload } from "@/common/telemetry/payload";
 import { Ok, Err, type Result } from "@/common/types/result";
 
 interface EmittedEvent {
@@ -117,6 +119,8 @@ describe("CompactionHandler", () => {
   let mockHistoryService: ReturnType<typeof createMockHistoryService>;
   let mockPartialService: ReturnType<typeof createMockPartialService>;
   let mockEmitter: EventEmitter;
+  let telemetryCapture: ReturnType<typeof mock>;
+  let telemetryService: TelemetryService;
   let emittedEvents: EmittedEvent[];
   const workspaceId = "test-workspace";
 
@@ -125,12 +129,18 @@ describe("CompactionHandler", () => {
     mockEmitter = emitter;
     emittedEvents = events;
 
+    telemetryCapture = mock((_payload: TelemetryEventPayload) => {
+      void _payload;
+    });
+    telemetryService = { capture: telemetryCapture } as unknown as TelemetryService;
+
     mockHistoryService = createMockHistoryService();
     mockPartialService = createMockPartialService();
 
     handler = new CompactionHandler({
       workspaceId,
       historyService: mockHistoryService as unknown as HistoryService,
+      telemetryService,
       partialService: mockPartialService as unknown as PartialService,
       emitter: mockEmitter,
     });
@@ -158,6 +168,37 @@ describe("CompactionHandler", () => {
       const result = await handler.handleCompletion(event);
 
       expect(result).toBe(false);
+    });
+
+    it("should capture compaction_completed telemetry on successful compaction", async () => {
+      const compactionReq = createCompactionRequest();
+      setupSuccessfulCompaction(mockHistoryService, [compactionReq]);
+
+      const event = createStreamEndEvent("Summary", {
+        duration: 1500,
+        // Prefer contextUsage (context size) over total usage.
+        contextUsage: { inputTokens: 1000, outputTokens: 333, totalTokens: undefined },
+      });
+
+      await handler.handleCompletion(event);
+
+      expect(telemetryCapture.mock.calls).toHaveLength(1);
+      const payload = telemetryCapture.mock.calls[0][0] as TelemetryEventPayload;
+      expect(payload.event).toBe("compaction_completed");
+      if (payload.event !== "compaction_completed") {
+        throw new Error("Expected compaction_completed payload");
+      }
+
+      expect(payload.properties).toEqual({
+        model: "claude-3-5-sonnet-20241022",
+        // 1.5s -> 2
+        duration_b2: 2,
+        // 1000 -> 1024
+        input_tokens_b2: 1024,
+        // 333 -> 512
+        output_tokens_b2: 512,
+        compaction_source: "manual",
+      });
     });
 
     it("should return true when successful", async () => {

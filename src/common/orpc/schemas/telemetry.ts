@@ -78,6 +78,14 @@ const StreamCompletedPropertiesSchema = z.object({
   output_tokens_b2: z.number(),
 });
 
+const CompactionCompletedPropertiesSchema = z.object({
+  model: z.string(),
+  duration_b2: z.number(),
+  input_tokens_b2: z.number(),
+  output_tokens_b2: z.number(),
+  compaction_source: z.enum(["manual", "idle"]),
+});
+
 const ProviderConfiguredPropertiesSchema = z.object({
   provider: z.string(),
   keyType: z.string(),
@@ -124,6 +132,10 @@ export const TelemetryEventSchema = z.discriminatedUnion("event", [
   z.object({
     event: z.literal("stream_completed"),
     properties: StreamCompletedPropertiesSchema,
+  }),
+  z.object({
+    event: z.literal("compaction_completed"),
+    properties: CompactionCompletedPropertiesSchema,
   }),
   z.object({
     event: z.literal("provider_configured"),

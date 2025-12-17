@@ -116,6 +116,7 @@ export class ServiceContainer {
     this.menuEventService = new MenuEventService();
     this.voiceService = new VoiceService(config);
     this.telemetryService = new TelemetryService(config.rootDir);
+    this.workspaceService.setTelemetryService(this.telemetryService);
     this.experimentsService = new ExperimentsService({
       telemetryService: this.telemetryService,
       muxHome: config.rootDir,
