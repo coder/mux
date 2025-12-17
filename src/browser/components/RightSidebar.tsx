@@ -23,6 +23,8 @@ interface SidebarContainerProps {
   customWidth?: number;
   /** Whether actively dragging resize handle (disables transition) */
   isResizing?: boolean;
+  /** Whether sidebar is collapsed (renders at 0 width for smooth transition) */
+  isCollapsed?: boolean;
   children: React.ReactNode;
   role: string;
   "aria-label": string;
@@ -32,25 +34,29 @@ interface SidebarContainerProps {
  * SidebarContainer - Main sidebar wrapper with dynamic width
  *
  * Width priority (first match wins):
- * 1. customWidth - From drag-resize (persisted per-tab)
- * 2. wide - Auto-calculated max width for Review tab (when not drag-resizing)
- * 3. default (300px) - Costs tab when no customWidth saved
+ * 1. isCollapsed - Render at 0 width (keeps DOM present for CSS transitions)
+ * 2. customWidth - From drag-resize (persisted per-tab)
+ * 3. wide - Auto-calculated max width for Review tab (when not drag-resizing)
+ * 4. default (300px) - Costs tab when no customWidth saved
  */
 const SidebarContainer: React.FC<SidebarContainerProps> = ({
   wide,
   customWidth,
   isResizing,
+  isCollapsed,
   children,
   role,
   "aria-label": ariaLabel,
 }) => {
-  const width = customWidth
-    ? `${customWidth}px`
-    : wide
-      ? "min(1200px, calc(100vw - 400px))"
-      : "300px";
+  const width = isCollapsed
+    ? "0px"
+    : customWidth
+      ? `${customWidth}px`
+      : wide
+        ? "min(1200px, calc(100vw - 400px))"
+        : "300px";
   
-  console.log(`[SidebarContainer] wide=${wide}, customWidth=${customWidth}, computed width=${width}`);
+  console.log(`[SidebarContainer] isCollapsed=${isCollapsed}, wide=${wide}, customWidth=${customWidth}, computed width=${width}`);
 
   return (
     <div
@@ -198,20 +204,19 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     // Between thresholds: maintain current state (no change)
   }, [chatAreaWidth, selectedTab, isHidden, setIsHidden, width]);
 
-  // Fully hide sidebar on small screens (context usage now shown in ChatInput)
-  // Check tab synchronously to prevent flash when switching to review tab
-  // (isHidden state may be stale from the effect, but review tab should never be hidden)
-  if (isHidden && selectedTab !== "review") {
-    return null;
-  }
+  // Collapse sidebar on small screens (context usage now shown in ChatInput)
+  // Use isCollapsed prop instead of returning null to keep DOM present for CSS transitions
+  // Review tab is never collapsed (needs space for code review)
+  const isCollapsed = isHidden && selectedTab !== "review";
 
-  console.log(`[RightSidebar] selectedTab=${selectedTab}, width prop=${width}, wide=${selectedTab === "review" && !width}`);
+  console.log(`[RightSidebar] selectedTab=${selectedTab}, width prop=${width}, isCollapsed=${isCollapsed}, wide=${selectedTab === "review" && !width}`);
 
   return (
     <SidebarContainer
       wide={selectedTab === "review" && !width} // Auto-wide only if not drag-resizing
       customWidth={width} // Per-tab resized width from AIView
       isResizing={isResizing}
+      isCollapsed={isCollapsed}
       role="complementary"
       aria-label="Workspace insights"
     >
