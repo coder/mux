@@ -38,6 +38,7 @@ import { MCPConfigService } from "@/node/services/mcpConfigService";
 import { MCPServerManager } from "@/node/services/mcpServerManager";
 import { SessionUsageService } from "@/node/services/sessionUsageService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
+import { TaskService } from "@/node/services/taskService";
 
 /**
  * ServiceContainer - Central dependency container for all backend services.
@@ -73,6 +74,7 @@ export class ServiceContainer {
   private readonly ptyService: PTYService;
   private readonly backgroundProcessManager: BackgroundProcessManager;
   public readonly idleCompactionService: IdleCompactionService;
+  public readonly taskService: TaskService;
 
   constructor(config: Config) {
     this.config = config;
@@ -108,6 +110,15 @@ export class ServiceContainer {
       this.backgroundProcessManager
     );
     this.workspaceService.setMCPServerManager(this.mcpServerManager);
+    // TaskService - orchestrates subagent task workspaces
+    this.taskService = new TaskService(
+      config,
+      this.workspaceService,
+      this.historyService,
+      this.aiService
+    );
+    // Wire TaskService to AIService for task tool access
+    this.aiService.setTaskService(this.taskService);
     // Idle compaction service - auto-compacts workspaces after configured idle period
     this.idleCompactionService = new IdleCompactionService(
       config,
@@ -182,6 +193,8 @@ export class ServiceContainer {
     await this.experimentsService.initialize();
     // Start idle compaction checker
     this.idleCompactionService.start();
+    // Rehydrate any in-flight agent tasks from previous session
+    await this.taskService.rehydrateTasks();
   }
 
   /**
@@ -205,6 +218,7 @@ export class ServiceContainer {
    * Terminates all background processes to prevent orphans.
    */
   async dispose(): Promise<void> {
+    this.taskService.dispose();
     this.mcpServerManager.dispose();
     await this.backgroundProcessManager.terminateAll();
   }

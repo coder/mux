@@ -48,6 +48,7 @@ import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import { getRuntimeTypeForTelemetry, roundToBase2 } from "@/common/telemetry/utils";
 import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpServerManager";
+import type { TaskService } from "@/node/services/taskService";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type {
@@ -308,6 +309,7 @@ export class AIService extends EventEmitter {
   private readonly config: Config;
   private mcpServerManager?: MCPServerManager;
   private telemetryService?: TelemetryService;
+  private taskService?: TaskService;
   private readonly initStateManager: InitStateManager;
   private readonly mockModeEnabled: boolean;
   private readonly mockScenarioPlayer?: MockScenarioPlayer;
@@ -348,6 +350,10 @@ export class AIService extends EventEmitter {
   }
   setMCPServerManager(manager: MCPServerManager): void {
     this.mcpServerManager = manager;
+  }
+
+  setTaskService(taskService: TaskService): void {
+    this.taskService = taskService;
   }
 
   /**
@@ -1230,6 +1236,8 @@ export class AIService extends EventEmitter {
           workspaceId,
           // External edit detection callback
           recordFileState,
+          // TaskService for spawning subagent tasks
+          taskService: this.taskService,
         },
         workspaceId,
         this.initStateManager,

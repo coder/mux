@@ -1,6 +1,6 @@
 import React from "react";
 import { cn } from "@/common/lib/utils";
-import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { WorkspaceWithNesting } from "@/browser/utils/ui/workspaceFiltering";
 import ProjectSidebar from "./ProjectSidebar";
 import { TitleBar } from "./TitleBar";
 
@@ -9,7 +9,7 @@ interface LeftSidebarProps {
   onToggleUnread: (workspaceId: string) => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
-  sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>;
+  sortedWorkspacesByProject: Map<string, WorkspaceWithNesting[]>;
   workspaceRecency: Record<string, number>;
 }
 

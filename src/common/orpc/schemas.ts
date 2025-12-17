@@ -51,6 +51,19 @@ export { SecretSchema } from "./schemas/secrets";
 // Provider options schemas
 export { MuxProviderOptionsSchema } from "./schemas/providerOptions";
 
+// Task schemas (subagent workspaces)
+export {
+  AgentReportToolInputSchema,
+  AgentReportToolResultSchema,
+  AgentTypeSchema,
+  TaskCreateResultSchema,
+  TaskSettingsSchema,
+  TaskStateSchema,
+  TaskStatusSchema,
+  TaskToolInputSchema,
+  TaskToolResultSchema,
+} from "./schemas/task";
+
 // MCP schemas
 export {
   MCPAddParamsSchema,

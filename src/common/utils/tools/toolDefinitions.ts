@@ -378,6 +378,44 @@ export const TOOL_DEFINITIONS = {
       url: z.string().url().describe("The URL to fetch (http or https)"),
     }),
   },
+  task: {
+    description:
+      "Spawn a subagent to work on a task in parallel. " +
+      "Available agent types:\n" +
+      "- 'research': Web search and research without file edits. Good for gathering information, documentation, external resources.\n" +
+      "- 'explore': Codebase exploration without file edits. Good for understanding code structure, finding patterns, tracing dependencies.\n\n" +
+      "The subagent will call agent_report when done with its findings. " +
+      "Use run_in_background=true to continue working while the subagent runs, " +
+      "or omit it to block until the subagent completes.",
+    schema: z.object({
+      subagent_type: z
+        .enum(["research", "explore"])
+        .describe("Type of subagent to spawn (determines tools and system prompt)"),
+      prompt: z.string().min(1).describe("The task/question to send to the subagent"),
+      description: z
+        .string()
+        .optional()
+        .describe("Optional short description of the task (shown in UI)"),
+      run_in_background: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "If true, return immediately with taskId; otherwise block until agent_report is called"
+        ),
+    }),
+  },
+  agent_report: {
+    description:
+      "Report your findings back to the parent workspace. " +
+      "You MUST call this tool exactly once when you have completed your task. " +
+      "Include all relevant findings, sources, and conclusions in the reportMarkdown. " +
+      "After calling this tool, the task is considered complete and the workspace will be cleaned up.",
+    schema: z.object({
+      reportMarkdown: z.string().min(1).describe("The final report/answer in markdown format"),
+      title: z.string().optional().describe("Optional short title for the report"),
+    }),
+  },
 } as const;
 
 /**
@@ -426,6 +464,9 @@ export function getAvailableTools(modelString: string, mode?: "plan" | "exec"): 
     "todo_read",
     "status_set",
     "web_fetch",
+    // Subagent task tools
+    "task",
+    "agent_report",
   ];
 
   // Add provider-specific tools

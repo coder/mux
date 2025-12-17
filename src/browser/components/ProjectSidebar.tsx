@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { cn } from "@/common/lib/utils";
-import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { WorkspaceWithNesting } from "@/browser/utils/ui/workspaceFiltering";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { EXPANDED_PROJECTS_KEY } from "@/common/constants/storage";
 import { DndProvider } from "react-dnd";
@@ -179,7 +179,7 @@ interface ProjectSidebarProps {
   onToggleUnread: (workspaceId: string) => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
-  sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>;
+  sortedWorkspacesByProject: Map<string, WorkspaceWithNesting[]>;
   workspaceRecency: Record<string, number>;
 }
 
@@ -613,7 +613,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 workspaceRecency
                               );
 
-                              const renderWorkspace = (metadata: FrontendWorkspaceMetadata) => (
+                              const renderWorkspace = (metadata: WorkspaceWithNesting) => (
                                 <WorkspaceListItem
                                   key={metadata.id}
                                   metadata={metadata}
@@ -622,6 +622,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   isSelected={selectedWorkspace?.workspaceId === metadata.id}
                                   isDeleting={deletingWorkspaceIds.has(metadata.id)}
                                   lastReadTimestamp={lastReadTimestamps[metadata.id] ?? 0}
+                                  nestingDepth={metadata.nestingDepth}
                                   onSelectWorkspace={handleSelectWorkspace}
                                   onRemoveWorkspace={handleRemoveWorkspace}
                                   onToggleUnread={_onToggleUnread}

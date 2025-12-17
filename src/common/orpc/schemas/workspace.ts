@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { RuntimeConfigSchema } from "./runtime";
 import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
+import { TaskStateSchema, AgentTypeSchema } from "./task";
 
 export const WorkspaceMetadataSchema = z.object({
   id: z.string().meta({
@@ -33,6 +34,17 @@ export const WorkspaceMetadataSchema = z.object({
   status: z.enum(["creating"]).optional().meta({
     description:
       "Workspace creation status. 'creating' = pending setup (ephemeral, not persisted). Absent = ready.",
+  }),
+  // Agent task workspace fields (optional - only set for subagent workspaces)
+  parentWorkspaceId: z.string().optional().meta({
+    description:
+      "If this is an agent task workspace, the ID of the parent workspace that spawned it",
+  }),
+  agentType: AgentTypeSchema.optional().meta({
+    description: "Agent preset type (research, explore) - only set for agent task workspaces",
+  }),
+  taskState: TaskStateSchema.optional().meta({
+    description: "Full task state for agent task workspaces (persisted for restart safety)",
   }),
 });
 

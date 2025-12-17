@@ -11,9 +11,12 @@ import { createAskUserQuestionTool } from "@/node/services/tools/ask_user_questi
 import { createProposePlanTool } from "@/node/services/tools/propose_plan";
 import { createTodoWriteTool, createTodoReadTool } from "@/node/services/tools/todo";
 import { createStatusSetTool } from "@/node/services/tools/status_set";
+import { createAgentReportTool } from "@/node/services/tools/agent_report";
+import { createTaskTool } from "@/node/services/tools/task";
 import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
 import { log } from "@/node/services/log";
 import { sanitizeMCPToolsForOpenAI } from "@/common/utils/tools/schemaSanitizer";
+import type { TaskService } from "@/node/services/taskService";
 
 import type { Runtime } from "@/node/runtime/Runtime";
 import type { InitStateManager } from "@/node/services/initStateManager";
@@ -49,6 +52,8 @@ export interface ToolConfiguration {
   workspaceId?: string;
   /** Callback to record file state for external edit detection (plan files) */
   recordFileState?: (filePath: string, state: FileState) => void;
+  /** TaskService for spawning subagent tasks (optional, only needed if task tool is enabled) */
+  taskService?: TaskService;
 }
 
 /**
@@ -133,6 +138,18 @@ export async function getToolsForModel(
     todo_write: createTodoWriteTool(config),
     todo_read: createTodoReadTool(config),
     status_set: createStatusSetTool(config),
+    // agent_report is always available but only useful in agent task workspaces
+    // The tool itself does nothing - TaskService intercepts tool-call-end events
+    agent_report: createAgentReportTool(),
+    // task tool for spawning subagent tasks (only available if TaskService is provided)
+    ...(config.taskService && config.workspaceId
+      ? {
+          task: createTaskTool({
+            workspaceId: config.workspaceId,
+            taskService: config.taskService,
+          }),
+        }
+      : {}),
   };
 
   // Base tools available for all models

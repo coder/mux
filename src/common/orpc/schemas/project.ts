@@ -2,6 +2,7 @@ import { z } from "zod";
 import { RuntimeConfigSchema } from "./runtime";
 import { WorkspaceMCPOverridesSchema } from "./mcp";
 import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
+import { TaskStateSchema, AgentTypeSchema } from "./task";
 
 export const WorkspaceConfigSchema = z.object({
   path: z.string().meta({
@@ -29,6 +30,17 @@ export const WorkspaceConfigSchema = z.object({
   }),
   mcp: WorkspaceMCPOverridesSchema.optional().meta({
     description: "Per-workspace MCP overrides (disabled servers, tool allowlists)",
+  }),
+  // Agent task workspace fields (optional - only set for subagent workspaces)
+  parentWorkspaceId: z.string().optional().meta({
+    description:
+      "If this is an agent task workspace, the ID of the parent workspace that spawned it",
+  }),
+  agentType: AgentTypeSchema.optional().meta({
+    description: "Agent preset type (research, explore) - only set for agent task workspaces",
+  }),
+  taskState: TaskStateSchema.optional().meta({
+    description: "Full task state for agent task workspaces (persisted for restart safety)",
   }),
 });
 

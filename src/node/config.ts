@@ -63,6 +63,7 @@ export class Config {
           serverSshHost?: string;
           viewedSplashScreens?: string[];
           featureFlagOverrides?: Record<string, "default" | "on" | "off">;
+          taskSettings?: ProjectsConfig["taskSettings"];
         };
 
         // Config is stored as array of [path, config] pairs
@@ -79,6 +80,7 @@ export class Config {
             serverSshHost: parsed.serverSshHost,
             viewedSplashScreens: parsed.viewedSplashScreens,
             featureFlagOverrides: parsed.featureFlagOverrides,
+            taskSettings: parsed.taskSettings,
           };
         }
       }
@@ -103,6 +105,7 @@ export class Config {
         serverSshHost?: string;
         viewedSplashScreens?: string[];
         featureFlagOverrides?: ProjectsConfig["featureFlagOverrides"];
+        taskSettings?: ProjectsConfig["taskSettings"];
       } = {
         projects: Array.from(config.projects.entries()),
       };
@@ -114,6 +117,9 @@ export class Config {
       }
       if (config.viewedSplashScreens) {
         data.viewedSplashScreens = config.viewedSplashScreens;
+      }
+      if (config.taskSettings) {
+        data.taskSettings = config.taskSettings;
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
@@ -589,6 +595,168 @@ export class Config {
       }
       throw new Error(`Workspace ${workspaceId} not found in config`);
     });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Task Settings (global config for subagent workspaces)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Get task settings with defaults applied.
+   */
+  getTaskSettings(): NonNullable<ProjectsConfig["taskSettings"]> {
+    const config = this.loadConfigOrDefault();
+    return {
+      maxParallelAgentTasks: config.taskSettings?.maxParallelAgentTasks ?? 3,
+      maxTaskNestingDepth: config.taskSettings?.maxTaskNestingDepth ?? 3,
+    };
+  }
+
+  /**
+   * Update task settings (partial update supported).
+   */
+  async setTaskSettings(
+    settings: Partial<NonNullable<ProjectsConfig["taskSettings"]>>
+  ): Promise<void> {
+    await this.editConfig((config) => {
+      config.taskSettings = {
+        ...this.getTaskSettings(),
+        ...settings,
+      };
+      return config;
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Task State (per agent-task workspace)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Get task state for an agent task workspace.
+   * Returns undefined if workspace is not an agent task or not found.
+   */
+  getWorkspaceTaskState(workspaceId: string): Workspace["taskState"] | undefined {
+    const config = this.loadConfigOrDefault();
+    for (const [_projectPath, projectConfig] of config.projects) {
+      const workspace = projectConfig.workspaces.find((w) => w.id === workspaceId);
+      if (workspace) {
+        return workspace.taskState;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Update task state for an agent task workspace.
+   * @throws Error if workspace not found
+   */
+  async setWorkspaceTaskState(
+    workspaceId: string,
+    taskState: Workspace["taskState"]
+  ): Promise<void> {
+    await this.editConfig((config) => {
+      for (const [_projectPath, projectConfig] of config.projects) {
+        const workspace = projectConfig.workspaces.find((w) => w.id === workspaceId);
+        if (workspace) {
+          workspace.taskState = taskState;
+          // Also update top-level fields for consistency
+          if (taskState) {
+            workspace.parentWorkspaceId = taskState.parentWorkspaceId;
+            workspace.agentType = taskState.agentType;
+          }
+          return config;
+        }
+      }
+      throw new Error(`Workspace ${workspaceId} not found in config`);
+    });
+  }
+
+  /**
+   * Get all agent task workspaces (for rehydration on restart).
+   * Returns workspaces with taskState that are not yet completed.
+   */
+  getActiveAgentTaskWorkspaces(): Array<{
+    workspaceId: string;
+    taskState: NonNullable<Workspace["taskState"]>;
+  }> {
+    const config = this.loadConfigOrDefault();
+    const result: Array<{ workspaceId: string; taskState: NonNullable<Workspace["taskState"]> }> =
+      [];
+
+    for (const [_projectPath, projectConfig] of config.projects) {
+      for (const workspace of projectConfig.workspaces) {
+        if (workspace.taskState && workspace.id) {
+          // Include queued, running, and awaiting_report tasks
+          if (
+            workspace.taskState.taskStatus === "queued" ||
+            workspace.taskState.taskStatus === "running" ||
+            workspace.taskState.taskStatus === "awaiting_report"
+          ) {
+            result.push({
+              workspaceId: workspace.id,
+              taskState: workspace.taskState,
+            });
+          }
+        }
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Count currently running agent tasks (for enforcing maxParallelAgentTasks).
+   */
+  countRunningAgentTasks(): number {
+    const config = this.loadConfigOrDefault();
+    let count = 0;
+
+    for (const [_projectPath, projectConfig] of config.projects) {
+      for (const workspace of projectConfig.workspaces) {
+        if (
+          workspace.taskState?.taskStatus === "running" ||
+          workspace.taskState?.taskStatus === "awaiting_report"
+        ) {
+          count++;
+        }
+      }
+    }
+
+    return count;
+  }
+
+  /**
+   * Calculate the nesting depth for a workspace (for enforcing maxTaskNestingDepth).
+   * Returns 0 for non-agent workspaces, 1 for direct children of regular workspaces, etc.
+   */
+  getWorkspaceNestingDepth(workspaceId: string): number {
+    const config = this.loadConfigOrDefault();
+
+    // Build a map of workspaceId -> parentWorkspaceId for efficient lookup
+    const parentMap = new Map<string, string | undefined>();
+    for (const [_projectPath, projectConfig] of config.projects) {
+      for (const workspace of projectConfig.workspaces) {
+        if (workspace.id) {
+          parentMap.set(workspace.id, workspace.parentWorkspaceId);
+        }
+      }
+    }
+
+    // Walk up the parent chain
+    let depth = 0;
+    let currentId: string | undefined = workspaceId;
+
+    while (currentId) {
+      const parentId = parentMap.get(currentId);
+      if (parentId) {
+        depth++;
+        currentId = parentId;
+      } else {
+        break;
+      }
+    }
+
+    return depth;
   }
 
   /**

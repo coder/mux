@@ -10,22 +10,83 @@ export type AgeThresholdDays = (typeof AGE_THRESHOLDS_DAYS)[number];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** Workspace metadata extended with computed nesting depth */
+export interface WorkspaceWithNesting extends FrontendWorkspaceMetadata {
+  /** Nesting depth (0 = top-level, 1 = direct child, etc.) */
+  nestingDepth: number;
+}
+
+/**
+ * Sort workspaces so children appear immediately after their parent.
+ * Maintains recency order within each level.
+ */
+function sortWithNesting(
+  metadataList: FrontendWorkspaceMetadata[],
+  workspaceRecency: Record<string, number>
+): WorkspaceWithNesting[] {
+  // Build parent→children map
+  const childrenByParent = new Map<string, FrontendWorkspaceMetadata[]>();
+  const topLevel: FrontendWorkspaceMetadata[] = [];
+
+  for (const ws of metadataList) {
+    const parentId = ws.parentWorkspaceId;
+    if (parentId) {
+      const siblings = childrenByParent.get(parentId) ?? [];
+      siblings.push(ws);
+      childrenByParent.set(parentId, siblings);
+    } else {
+      topLevel.push(ws);
+    }
+  }
+
+  // Sort by recency (most recent first)
+  const sortByRecency = (a: FrontendWorkspaceMetadata, b: FrontendWorkspaceMetadata) => {
+    const aTs = workspaceRecency[a.id] ?? 0;
+    const bTs = workspaceRecency[b.id] ?? 0;
+    return bTs - aTs;
+  };
+
+  topLevel.sort(sortByRecency);
+  for (const children of childrenByParent.values()) {
+    children.sort(sortByRecency);
+  }
+
+  // Flatten: parent, then children recursively
+  const result: WorkspaceWithNesting[] = [];
+
+  const visit = (ws: FrontendWorkspaceMetadata, depth: number) => {
+    result.push({ ...ws, nestingDepth: depth });
+    const children = childrenByParent.get(ws.id) ?? [];
+    for (const child of children) {
+      visit(child, depth + 1);
+    }
+  };
+
+  for (const ws of topLevel) {
+    visit(ws, 0);
+  }
+
+  return result;
+}
+
 /**
  * Build a map of project paths to sorted workspace metadata lists.
  * Includes both persisted workspaces (from config) and pending workspaces
  * (status: "creating") that haven't been saved yet.
  *
- * Workspaces are sorted by recency (most recent first).
+ * Workspaces are sorted by recency (most recent first), with child workspaces
+ * (agent tasks) appearing directly below their parent with indentation.
  */
 export function buildSortedWorkspacesByProject(
   projects: Map<string, ProjectConfig>,
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>,
   workspaceRecency: Record<string, number>
-): Map<string, FrontendWorkspaceMetadata[]> {
-  const result = new Map<string, FrontendWorkspaceMetadata[]>();
+): Map<string, WorkspaceWithNesting[]> {
+  const result = new Map<string, WorkspaceWithNesting[]>();
   const includedIds = new Set<string>();
 
-  // First pass: include workspaces from persisted config
+  // First pass: collect workspaces from persisted config
+  const collectedByProject = new Map<string, FrontendWorkspaceMetadata[]>();
   for (const [projectPath, config] of projects) {
     const metadataList: FrontendWorkspaceMetadata[] = [];
     for (const ws of config.workspaces) {
@@ -36,25 +97,21 @@ export function buildSortedWorkspacesByProject(
         includedIds.add(ws.id);
       }
     }
-    result.set(projectPath, metadataList);
+    collectedByProject.set(projectPath, metadataList);
   }
 
   // Second pass: add pending workspaces (status: "creating") not yet in config
   for (const [id, metadata] of workspaceMetadata) {
     if (metadata.status === "creating" && !includedIds.has(id)) {
-      const projectWorkspaces = result.get(metadata.projectPath) ?? [];
+      const projectWorkspaces = collectedByProject.get(metadata.projectPath) ?? [];
       projectWorkspaces.push(metadata);
-      result.set(metadata.projectPath, projectWorkspaces);
+      collectedByProject.set(metadata.projectPath, projectWorkspaces);
     }
   }
 
-  // Sort each project's workspaces by recency (sort mutates in place)
-  for (const metadataList of result.values()) {
-    metadataList.sort((a, b) => {
-      const aTimestamp = workspaceRecency[a.id] ?? 0;
-      const bTimestamp = workspaceRecency[b.id] ?? 0;
-      return bTimestamp - aTimestamp;
-    });
+  // Sort with nesting for each project
+  for (const [projectPath, metadataList] of collectedByProject) {
+    result.set(projectPath, sortWithNesting(metadataList, workspaceRecency));
   }
 
   return result;
@@ -76,19 +133,19 @@ export function formatDaysThreshold(days: number): string {
  *   - buckets[1]: older than 7 days but newer than 30 days
  *   - buckets[2]: older than 30 days
  */
-export interface AgePartitionResult {
-  recent: FrontendWorkspaceMetadata[];
-  buckets: FrontendWorkspaceMetadata[][];
+export interface AgePartitionResult<T extends FrontendWorkspaceMetadata = WorkspaceWithNesting> {
+  recent: T[];
+  buckets: T[][];
 }
 
 /**
  * Partition workspaces into age-based buckets.
  * Always shows at least one workspace in the recent section (the most recent one).
  */
-export function partitionWorkspacesByAge(
-  workspaces: FrontendWorkspaceMetadata[],
+export function partitionWorkspacesByAge<T extends FrontendWorkspaceMetadata>(
+  workspaces: T[],
   workspaceRecency: Record<string, number>
-): AgePartitionResult {
+): AgePartitionResult<T> {
   if (workspaces.length === 0) {
     return { recent: [], buckets: AGE_THRESHOLDS_DAYS.map(() => []) };
   }
@@ -96,8 +153,8 @@ export function partitionWorkspacesByAge(
   const now = Date.now();
   const thresholdMs = AGE_THRESHOLDS_DAYS.map((d) => d * DAY_MS);
 
-  const recent: FrontendWorkspaceMetadata[] = [];
-  const buckets: FrontendWorkspaceMetadata[][] = AGE_THRESHOLDS_DAYS.map(() => []);
+  const recent: T[] = [];
+  const buckets: T[][] = AGE_THRESHOLDS_DAYS.map(() => []);
 
   for (const workspace of workspaces) {
     const recencyTimestamp = workspaceRecency[workspace.id] ?? 0;

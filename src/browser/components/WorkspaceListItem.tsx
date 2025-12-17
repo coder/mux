@@ -25,6 +25,8 @@ export interface WorkspaceListItemProps {
   isDeleting?: boolean;
   /** @deprecated No longer used since status dot was removed, kept for API compatibility */
   lastReadTimestamp?: number;
+  /** Nesting depth for agent task workspaces (0 = top-level, 1+ = nested) */
+  nestingDepth?: number;
   // Event handlers
   onSelectWorkspace: (selection: WorkspaceSelection) => void;
   onRemoveWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
@@ -39,6 +41,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   isSelected,
   isDeleting,
   lastReadTimestamp: _lastReadTimestamp,
+  nestingDepth = 0,
   onSelectWorkspace,
   onRemoveWorkspace,
   onToggleUnread: _onToggleUnread,
@@ -102,17 +105,24 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   const { canInterrupt, awaitingUserQuestion } = useWorkspaceSidebarState(workspaceId);
   const isWorking = canInterrupt && !awaitingUserQuestion;
 
+  // Calculate left padding based on nesting depth (base 9px + 16px per level)
+  const leftPadding = 9 + nestingDepth * 16;
+  const isAgentTask = Boolean(metadata.parentWorkspaceId);
+
   return (
     <React.Fragment>
       <div
         className={cn(
-          "py-1.5 pl-[9px] pr-2 border-l-[3px] border-transparent transition-all duration-150 text-[13px] relative flex gap-2",
+          "py-1.5 pr-2 border-l-[3px] border-transparent transition-all duration-150 text-[13px] relative flex gap-2",
           isDisabled
             ? "cursor-default opacity-70"
             : "cursor-pointer hover:bg-hover [&:hover_button]:opacity-100",
           isSelected && !isDisabled && "bg-hover border-l-blue-400",
-          isDeleting && "pointer-events-none"
+          isDeleting && "pointer-events-none",
+          // Nested agent tasks get a subtle visual indicator
+          isAgentTask && "border-l-purple-400/30"
         )}
+        style={{ paddingLeft: `${leftPadding}px` }}
         onClick={() => {
           if (isDisabled) return;
           onSelectWorkspace({
