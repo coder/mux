@@ -4,6 +4,7 @@ import { supports1MContext } from "../ai/models";
 
 export const TOKEN_COMPONENT_COLORS = {
   cached: "var(--color-token-cached)",
+  cacheCreate: "var(--color-token-cache-create)",
   input: "var(--color-token-input)",
   output: "var(--color-token-output)",
   thinking: "var(--color-thinking-mode)",
@@ -35,7 +36,7 @@ const SEGMENT_DEFS: SegmentDef[] = [
   {
     type: "cacheCreate",
     key: "cacheCreate",
-    color: TOKEN_COMPONENT_COLORS.cached,
+    color: TOKEN_COMPONENT_COLORS.cacheCreate,
     label: "Cache Create",
   },
   { type: "input", key: "input", color: TOKEN_COMPONENT_COLORS.input, label: "Input" },

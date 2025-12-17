@@ -131,6 +131,7 @@
     --color-token-input: hsl(120 40% 35%);
     --color-token-output: hsl(207 100% 40%);
     --color-token-cached: hsl(0 0% 50%);
+    --color-token-cache-create: hsl(30 90% 50%);
 
     /* Plan surfaces */
     --surface-plan-gradient: linear-gradient(
@@ -383,6 +384,7 @@
   --color-token-input: hsl(125 45% 36%);
   --color-token-output: hsl(207 90% 40%);
   --color-token-cached: hsl(210 16% 50%);
+  --color-token-cache-create: hsl(30 85% 45%);
 
   --surface-plan-gradient: linear-gradient(
     135deg,
@@ -622,6 +624,7 @@
   --color-token-input: #859900;
   --color-token-output: #268bd2;
   --color-token-cached: #839496;
+  --color-token-cache-create: #cb4b16;
 
   --surface-plan-gradient: linear-gradient(135deg, color-mix(in srgb, var(--color-plan-mode), transparent 94%) 0%, color-mix(in srgb, var(--color-plan-mode), transparent 97%) 100%);
   --surface-plan-border: color-mix(in srgb, var(--color-plan-mode), transparent 78%);
@@ -836,6 +839,7 @@
   --color-token-input: #859900;
   --color-token-output: #268bd2;
   --color-token-cached: #586e75;
+  --color-token-cache-create: #cb4b16;
 
   --surface-plan-gradient: linear-gradient(135deg, color-mix(in srgb, var(--color-plan-mode), transparent 92%) 0%, color-mix(in srgb, var(--color-plan-mode), transparent 95%) 100%);
   --surface-plan-border: color-mix(in srgb, var(--color-plan-mode), transparent 70%);

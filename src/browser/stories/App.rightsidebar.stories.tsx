@@ -102,6 +102,60 @@ export const CostsTab: AppStory = {
 };
 
 /**
+ * Costs tab showing cache create vs cache read differentiation.
+ * Cache create (orange) is typically more expensive than cache read (grey).
+ * This story uses realistic Anthropic-style usage where most input is cached.
+ */
+export const CostsTabWithCacheCreate: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
+        localStorage.setItem(RIGHT_SIDEBAR_COSTS_WIDTH_KEY, "350");
+
+        return setupSimpleChatStory({
+          workspaceId: "ws-cache-create",
+          workspaceName: "feature/caching",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Refactor the auth module", { historySequence: 1 }),
+            createAssistantMessage("msg-2", "I'll refactor the authentication module.", {
+              historySequence: 2,
+            }),
+          ],
+          sessionUsage: {
+            byModel: {
+              "anthropic:claude-sonnet-4-20250514": {
+                // Realistic Anthropic usage: heavy caching, cache create is expensive
+                input: { tokens: 2000, cost_usd: 0.006 },
+                cached: { tokens: 45000, cost_usd: 0.0045 }, // Cache read: cheap
+                cacheCreate: { tokens: 30000, cost_usd: 0.1125 }, // Cache create: expensive!
+                output: { tokens: 3000, cost_usd: 0.045 },
+                reasoning: { tokens: 0, cost_usd: 0 },
+                model: "anthropic:claude-sonnet-4-20250514",
+              },
+            },
+            version: 1,
+          },
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Wait for costs to render - cache create should be dominant cost
+    await waitFor(
+      () => {
+        canvas.getByText("Cache Create");
+        canvas.getByText("Cache Read");
+      },
+      { timeout: 5000 }
+    );
+  },
+};
+
+/**
  * Review tab selected - click switches from Costs to Review tab
  * Verifies per-tab width persistence: starts at Costs width (350px), switches to Review width (700px)
  */
