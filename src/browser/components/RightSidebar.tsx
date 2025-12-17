@@ -55,8 +55,6 @@ const SidebarContainer: React.FC<SidebarContainerProps> = ({
       : wide
         ? "min(1200px, calc(100vw - 400px))"
         : "300px";
-  
-  console.log(`[SidebarContainer] isCollapsed=${isCollapsed}, wide=${wide}, customWidth=${customWidth}, computed width=${width}`);
 
   return (
     <div
@@ -208,8 +206,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Use isCollapsed prop instead of returning null to keep DOM present for CSS transitions
   // Review tab is never collapsed (needs space for code review)
   const isCollapsed = isHidden && selectedTab !== "review";
-
-  console.log(`[RightSidebar] selectedTab=${selectedTab}, width prop=${width}, isCollapsed=${isCollapsed}, wide=${selectedTab === "review" && !width}`);
 
   return (
     <SidebarContainer

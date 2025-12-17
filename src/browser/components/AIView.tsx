@@ -128,8 +128,6 @@ const AIViewInner: React.FC<AIViewProps> = ({
     selectedRightTab === "review" ? reviewSidebar.isResizing : costsSidebar.isResizing;
   const startResize =
     selectedRightTab === "review" ? reviewSidebar.startResize : costsSidebar.startResize;
-  
-  console.log(`[AIView] selectedRightTab=${selectedRightTab}, reviewSidebar.width=${reviewSidebar.width}, costsSidebar.width=${costsSidebar.width}, sidebarWidth=${sidebarWidth}`);
 
   const workspaceState = useWorkspaceState(workspaceId);
   const aggregator = useWorkspaceAggregator(workspaceId);
