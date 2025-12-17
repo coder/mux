@@ -631,6 +631,11 @@ export const features = {
   },
 };
 
+// Task Settings Schema for API
+const TaskSettingsApiSchema = z.object({
+  maxParallelAgentTasks: z.number().int().min(1).max(10).optional(),
+  maxTaskNestingDepth: z.number().int().min(1).max(5).optional(),
+});
 // General
 export const general = {
   listDirectory: {
@@ -648,6 +653,16 @@ export const general = {
   ping: {
     input: z.string(),
     output: z.string(),
+  },
+  /** Get current task settings for agent subworkspaces */
+  getTaskSettings: {
+    input: z.void(),
+    output: TaskSettingsApiSchema.required(),
+  },
+  /** Update task settings */
+  setTaskSettings: {
+    input: TaskSettingsApiSchema,
+    output: z.void(),
   },
   /**
    * Test endpoint: emits numbered ticks at an interval.

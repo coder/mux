@@ -217,6 +217,18 @@ export const router = (authToken?: string) => {
             input.editorConfig
           );
         }),
+      getTaskSettings: t
+        .input(schemas.general.getTaskSettings.input)
+        .output(schemas.general.getTaskSettings.output)
+        .handler(({ context }) => {
+          return context.config.getTaskSettings();
+        }),
+      setTaskSettings: t
+        .input(schemas.general.setTaskSettings.input)
+        .output(schemas.general.setTaskSettings.output)
+        .handler(async ({ context, input }) => {
+          await context.config.setTaskSettings(input);
+        }),
     },
     projects: {
       list: t

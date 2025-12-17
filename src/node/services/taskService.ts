@@ -158,14 +158,19 @@ export class TaskService extends EventEmitter {
       throw new Error(`Parent workspace ${parentWorkspaceId} metadata not found`);
     }
 
+    // Inherit runtime from parent - agent tasks run in same environment as parent
+    // For SSH workspaces, this means agent tasks run on the same remote host
+    // For local workspaces, this has no change in behavior
+    const parentRuntime = parentMetadata.runtimeConfig;
+
     // Create workspace via WorkspaceService
-    // Using empty trunk branch because agent workspaces use local runtime (no git isolation needed)
+    // Using empty trunk branch because agent workspaces don't need git isolation
     const createResult = await this.workspaceService.create(
       parentInfo.projectPath,
       workspaceName,
-      "", // No trunk branch for local runtime
+      "", // No trunk branch - agent tasks share parent's working directory context
       workspaceTitle,
-      { type: "local" } // Agent workspaces use local runtime for simplicity
+      parentRuntime // Inherit runtime from parent workspace
     );
 
     if (!createResult.success) {
@@ -491,8 +496,8 @@ export class TaskService extends EventEmitter {
             runInBackground: true, // Don't block on restart
           },
         });
-      } else if (taskState.taskStatus === "running" || taskState.taskStatus === "awaiting_report") {
-        // Send continuation message
+      } else if (taskState.taskStatus === "running") {
+        // Send continuation message for running tasks
         try {
           const result = await this.workspaceService.sendMessage(
             workspaceId,
@@ -510,6 +515,28 @@ export class TaskService extends EventEmitter {
           }
         } catch (error) {
           log.error(`Failed to resume task ${workspaceId}:`, error);
+        }
+      } else if (taskState.taskStatus === "awaiting_report") {
+        // Send reminder message for tasks that finished without reporting
+        try {
+          const result = await this.workspaceService.sendMessage(
+            workspaceId,
+            "Mux was restarted. Your task appears to have finished but agent_report was not called. " +
+              "Please call agent_report now with your findings.",
+            {
+              model: "anthropic:claude-sonnet-4-20250514",
+              thinkingLevel: "low",
+              // Require only agent_report
+              toolPolicy: [{ regex_match: "agent_report", action: "require" }],
+              mode: "exec",
+            }
+          );
+
+          if (!result.success) {
+            log.error(`Failed to send reminder to task ${workspaceId}:`, result.error);
+          }
+        } catch (error) {
+          log.error(`Failed to send reminder to task ${workspaceId}:`, error);
         }
       }
     }
