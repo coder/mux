@@ -527,28 +527,23 @@ export class MCPServerManager {
       projectSecrets
     );
 
-    const configuredTransports = new Set<ResolvedTransport>();
-    for (const [, info] of enabledEntries) {
-      if (info.transport === "stdio") {
-        configuredTransports.add("stdio");
-        continue;
-      }
-      // Treat auto as http for transport-mode purposes.
-      configuredTransports.add(info.transport === "sse" ? "sse" : "http");
+    const resolvedTransports = new Set<ResolvedTransport>();
+    for (const instance of instances.values()) {
+      resolvedTransports.add(instance.resolvedTransport);
     }
 
-    const hasStdio = configuredTransports.has("stdio");
-    const hasHttp = configuredTransports.has("http");
-    const hasSse = configuredTransports.has("sse");
+    const hasStdio = resolvedTransports.has("stdio");
+    const hasHttp = resolvedTransports.has("http");
+    const hasSse = resolvedTransports.has("sse");
 
     const transportMode: MCPTransportMode =
-      enabledEntries.length === 0
+      instances.size === 0
         ? "none"
-        : configuredTransports.size === 1 && hasStdio
+        : resolvedTransports.size === 1 && hasStdio
           ? "stdio_only"
-          : configuredTransports.size === 1 && hasHttp
+          : resolvedTransports.size === 1 && hasHttp
             ? "http_only"
-            : configuredTransports.size === 1 && hasSse
+            : resolvedTransports.size === 1 && hasSse
               ? "sse_only"
               : "mixed";
 
