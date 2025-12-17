@@ -199,7 +199,9 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   }, [chatAreaWidth, selectedTab, isHidden, setIsHidden, width]);
 
   // Fully hide sidebar on small screens (context usage now shown in ChatInput)
-  if (isHidden) {
+  // Check tab synchronously to prevent flash when switching to review tab
+  // (isHidden state may be stale from the effect, but review tab should never be hidden)
+  if (isHidden && selectedTab !== "review") {
     return null;
   }
 
