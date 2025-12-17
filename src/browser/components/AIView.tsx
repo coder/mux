@@ -596,7 +596,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
                   <p>Send a message below to begin</p>
                   <p className="text-muted mt-5 text-xs">
                     💡 Tip: Add a{" "}
-                    <code className="bg-modal-bg text-code-string rounded-[3px] px-1.5 py-0.5 font-mono text-[11px]">
+                    <code className="bg-inline-code-dark-bg text-code-string rounded-[3px] px-1.5 py-0.5 font-mono text-[11px]">
                       .mux/init
                     </code>{" "}
                     hook to your project to run setup commands

@@ -218,6 +218,7 @@
     --color-separator: #262626; /* neutral-800 - dividers/separators */
     --color-separator-light: hsl(0 0% 27%); /* #464647 - lighter separator */
     --color-modal-bg: hsl(0 0% 18%); /* #2d2d30 - modal backgrounds */
+    --color-inline-code-dark-bg: hsl(0 0% 18%); /* #2d2d30 - always dark, for inline code that should stay dark in all themes */
 
     --color-accent: hsl(207 100% 40%); /* #007acc - VS Code blue */
     --color-accent-hover: hsl(207 100% 45%); /* #1177bb - accent hover */
