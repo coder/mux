@@ -165,6 +165,12 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.projectService.listDirectory(input.path);
         }),
+      createDirectory: t
+        .input(schemas.general.createDirectory.input)
+        .output(schemas.general.createDirectory.output)
+        .handler(async ({ context, input }) => {
+          return context.projectService.createDirectory(input.path);
+        }),
       ping: t
         .input(schemas.general.ping.input)
         .output(schemas.general.ping.output)
