@@ -1,5 +1,5 @@
 import React from "react";
-import { RIGHT_SIDEBAR_TAB_KEY, RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
+import { RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
 import { useResizeObserver } from "@/browser/hooks/useResizeObserver";
@@ -75,6 +75,10 @@ interface RightSidebarProps {
   workspaceId: string;
   workspacePath: string;
   chatAreaRef: React.RefObject<HTMLDivElement>;
+  /** Currently selected tab (owned by AIView to sync with width) */
+  selectedTab: TabType;
+  /** Tab change handler */
+  onTabChange: (tab: TabType) => void;
   /** Custom width in pixels (persisted per-tab, provided by AIView) */
   width?: number;
   /** Drag start handler for resize */
@@ -91,14 +95,14 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   workspaceId,
   workspacePath,
   chatAreaRef,
+  selectedTab,
+  onTabChange,
   width,
   onStartResize,
   isResizing = false,
   onReviewNote,
   isCreating = false,
 }) => {
-  // Global tab preference (not per-workspace)
-  const [selectedTab, setSelectedTab] = usePersistedState<TabType>(RIGHT_SIDEBAR_TAB_KEY, "costs");
 
   // Trigger for focusing Review panel (preserves hunk selection)
   const [focusTrigger, setFocusTrigger] = React.useState(0);
@@ -111,17 +115,17 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (matchesKeybind(e, KEYBINDS.COSTS_TAB)) {
         e.preventDefault();
-        setSelectedTab("costs");
+        onTabChange("costs");
       } else if (matchesKeybind(e, KEYBINDS.REVIEW_TAB)) {
         e.preventDefault();
-        setSelectedTab("review");
+        onTabChange("review");
         setFocusTrigger((prev) => prev + 1);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [setSelectedTab]);
+  }, [onTabChange]);
 
   const usage = useWorkspaceUsage(workspaceId);
   const chatAreaSize = useResizeObserver(chatAreaRef);
@@ -232,7 +236,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
                       ? "bg-hover text-foreground"
                       : "bg-transparent text-muted hover:bg-hover/50 hover:text-foreground"
                   )}
-                  onClick={() => setSelectedTab("costs")}
+                  onClick={() => onTabChange("costs")}
                   id={costsTabId}
                   role="tab"
                   type="button"
@@ -260,7 +264,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
                       ? "bg-hover text-foreground"
                       : "bg-transparent text-muted hover:bg-hover/50 hover:text-foreground"
                   )}
-                  onClick={() => setSelectedTab("review")}
+                  onClick={() => onTabChange("review")}
                   id={reviewTabId}
                   role="tab"
                   type="button"
