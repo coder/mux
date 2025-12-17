@@ -140,13 +140,11 @@ export const ProjectCreateModal: React.FC<ProjectCreateModalProps> = ({
       }
       // Folder created - now retry adding the project
       setCanCreateFolder(false);
-      void handleSelect();
+      await handleSelect();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred";
       setError(`Failed to create folder: ${errorMessage}`);
       setCanCreateFolder(false);
-    } finally {
-      setIsCreating(false);
     }
   }, [path, api, handleSelect]);
 
