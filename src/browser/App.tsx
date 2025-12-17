@@ -34,8 +34,13 @@ import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sour
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
-import { getThinkingLevelByModelKey, getModelKey } from "@/common/constants/storage";
+import {
+  getThinkingLevelByModelKey,
+  getThinkingLevelKey,
+  getModelKey,
+} from "@/common/constants/storage";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
+import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import type { BranchListResult } from "@/common/orpc/types";
 import { useTelemetry } from "./hooks/useTelemetry";
@@ -52,7 +57,7 @@ import { TooltipProvider } from "./components/ui/tooltip";
 import { ExperimentsProvider } from "./contexts/ExperimentsContext";
 import { getWorkspaceSidebarKey } from "./utils/workspace";
 
-const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high"];
+const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high", "xhigh"];
 
 function isStorybookIframe(): boolean {
   return typeof window !== "undefined" && window.location.pathname.endsWith("iframe.html");
@@ -293,9 +298,25 @@ function AppInner() {
       if (!workspaceId) {
         return "off";
       }
+
+      const scopedKey = getThinkingLevelKey(workspaceId);
+      const scoped = readPersistedState<ThinkingLevel | undefined>(scopedKey, undefined);
+      if (scoped !== undefined) {
+        return THINKING_LEVELS.includes(scoped) ? scoped : "off";
+      }
+
+      // Migration: fall back to legacy per-model thinking and seed the workspace-scoped key.
       const model = getModelForWorkspace(workspaceId);
-      const level = readPersistedState<ThinkingLevel>(getThinkingLevelByModelKey(model), "off");
-      return THINKING_LEVELS.includes(level) ? level : "off";
+      const legacy = readPersistedState<ThinkingLevel | undefined>(
+        getThinkingLevelByModelKey(model),
+        undefined
+      );
+      if (legacy !== undefined && THINKING_LEVELS.includes(legacy)) {
+        updatePersistedState(scopedKey, legacy);
+        return legacy;
+      }
+
+      return "off";
     },
     [getModelForWorkspace]
   );
@@ -308,22 +329,32 @@ function AppInner() {
 
       const normalized = THINKING_LEVELS.includes(level) ? level : "off";
       const model = getModelForWorkspace(workspaceId);
-      const key = getThinkingLevelByModelKey(model);
+      const effective = enforceThinkingPolicy(model, normalized);
+      const key = getThinkingLevelKey(workspaceId);
 
       // Use the utility function which handles localStorage and event dispatch
       // ThinkingProvider will pick this up via its listener
-      updatePersistedState(key, normalized);
+      updatePersistedState(key, effective);
+
+      // Persist to backend so the palette change follows the workspace across devices.
+      if (api) {
+        api.workspace
+          .updateAISettings({ workspaceId, aiSettings: { model, thinkingLevel: effective } })
+          .catch(() => {
+            // Best-effort only.
+          });
+      }
 
       // Dispatch toast notification event for UI feedback
       if (typeof window !== "undefined") {
         window.dispatchEvent(
           new CustomEvent(CUSTOM_EVENTS.THINKING_LEVEL_TOAST, {
-            detail: { workspaceId, level: normalized },
+            detail: { workspaceId, level: effective },
           })
         );
       }
     },
-    [getModelForWorkspace]
+    [api, getModelForWorkspace]
   );
 
   const registerParamsRef = useRef<BuildSourcesParams | null>(null);

@@ -15,6 +15,7 @@ import {
 } from "./terminal";
 import { BashToolResultSchema, FileTreeNodeSchema } from "./tools";
 import { FrontendWorkspaceMetadataSchema, WorkspaceActivitySnapshotSchema } from "./workspace";
+import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 import {
   MCPAddParamsSchema,
   MCPRemoveParamsSchema,
@@ -249,6 +250,13 @@ export const workspace = {
   },
   updateTitle: {
     input: z.object({ workspaceId: z.string(), title: z.string() }),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  updateAISettings: {
+    input: z.object({
+      workspaceId: z.string(),
+      aiSettings: WorkspaceAISettingsSchema,
+    }),
     output: ResultSchema(z.void(), z.string()),
   },
   fork: {

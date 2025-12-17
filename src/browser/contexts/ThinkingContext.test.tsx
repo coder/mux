@@ -4,7 +4,11 @@ import { act, cleanup, render, waitFor } from "@testing-library/react";
 import React from "react";
 import { ThinkingProvider } from "./ThinkingContext";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
-import { getModelKey, getThinkingLevelByModelKey } from "@/common/constants/storage";
+import {
+  getModelKey,
+  getThinkingLevelByModelKey,
+  getThinkingLevelKey,
+} from "@/common/constants/storage";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 
 // Setup basic DOM environment for testing-library
@@ -49,8 +53,7 @@ describe("ThinkingContext", () => {
     const workspaceId = "ws-1";
 
     updatePersistedState(getModelKey(workspaceId), "openai:gpt-5.2");
-    updatePersistedState(getThinkingLevelByModelKey("openai:gpt-5.2"), "high");
-    updatePersistedState(getThinkingLevelByModelKey("anthropic:claude-3.5"), "low");
+    updatePersistedState(getThinkingLevelKey(workspaceId), "high");
 
     let unmounts = 0;
 
@@ -79,21 +82,18 @@ describe("ThinkingContext", () => {
       updatePersistedState(getModelKey(workspaceId), "anthropic:claude-3.5");
     });
 
+    // Thinking is workspace-scoped (not per-model), so switching models should not change it.
     await waitFor(() => {
-      expect(view.getByTestId("child").textContent).toBe("low");
+      expect(view.getByTestId("child").textContent).toBe("high");
     });
 
     expect(unmounts).toBe(0);
   });
-  test("switching models restores the per-model thinking level", async () => {
+  test("migrates legacy per-model thinking to the workspace-scoped key", async () => {
     const workspaceId = "ws-1";
 
-    // Model A
     updatePersistedState(getModelKey(workspaceId), "openai:gpt-5.2");
-    updatePersistedState(getThinkingLevelByModelKey("openai:gpt-5.2"), "high");
-
-    // Model B
-    updatePersistedState(getThinkingLevelByModelKey("anthropic:claude-3.5"), "low");
+    updatePersistedState(getThinkingLevelByModelKey("openai:gpt-5.2"), "low");
 
     const view = render(
       <ThinkingProvider workspaceId={workspaceId}>
@@ -102,10 +102,15 @@ describe("ThinkingContext", () => {
     );
 
     await waitFor(() => {
-      expect(view.getByTestId("thinking").textContent).toBe("high:ws-1");
+      expect(view.getByTestId("thinking").textContent).toBe("low:ws-1");
     });
 
-    // Change model -> should restore that model's stored thinking level
+    // Migration should have populated the new workspace-scoped key.
+    const persisted = window.localStorage.getItem(getThinkingLevelKey(workspaceId));
+    expect(persisted).toBeTruthy();
+    expect(JSON.parse(persisted!)).toBe("low");
+
+    // Switching models should not change the workspace-scoped value.
     act(() => {
       updatePersistedState(getModelKey(workspaceId), "anthropic:claude-3.5");
     });

@@ -20,6 +20,9 @@ import { useMode } from "@/browser/contexts/ModeContext";
 import { ThinkingSliderComponent } from "../ThinkingSlider";
 import { ModelSettings } from "../ModelSettings";
 import { useAPI } from "@/browser/contexts/API";
+import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
+import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
+import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import {
   getModelKey,
@@ -133,6 +136,8 @@ export type { ChatInputProps, ChatInputAPI };
 const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { api } = useAPI();
   const { variant } = props;
+  const [thinkingLevel] = useThinkingLevel();
+  const workspaceId = variant === "workspace" ? props.workspaceId : null;
 
   // Extract workspace-specific props with defaults
   const disabled = props.disabled ?? false;
@@ -333,10 +338,26 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   const setPreferredModel = useCallback(
     (model: string) => {
-      ensureModelInSettings(model); // Ensure model exists in Settings
-      updatePersistedState(storageKeys.modelKey, model); // Update workspace or project-specific
+      const canonicalModel = migrateGatewayModel(model);
+      ensureModelInSettings(canonicalModel); // Ensure model exists in Settings
+      updatePersistedState(storageKeys.modelKey, canonicalModel); // Update workspace or project-specific
+
+      // Workspace variant: persist to backend for cross-device consistency.
+      if (!api || variant !== "workspace" || !workspaceId) {
+        return;
+      }
+
+      const effectiveThinkingLevel = enforceThinkingPolicy(canonicalModel, thinkingLevel);
+      api.workspace
+        .updateAISettings({
+          workspaceId,
+          aiSettings: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
+        })
+        .catch(() => {
+          // Best-effort only. If offline or backend is old, sendMessage will persist.
+        });
     },
-    [storageKeys.modelKey, ensureModelInSettings]
+    [api, storageKeys.modelKey, ensureModelInSettings, thinkingLevel, variant, workspaceId]
   );
   const deferredModel = useDeferredValue(preferredModel);
   const deferredInput = useDeferredValue(input);

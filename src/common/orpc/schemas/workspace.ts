@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { RuntimeConfigSchema } from "./runtime";
+import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 
 export const WorkspaceMetadataSchema = z.object({
   id: z.string().meta({
@@ -25,6 +26,9 @@ export const WorkspaceMetadataSchema = z.object({
   }),
   runtimeConfig: RuntimeConfigSchema.meta({
     description: "Runtime configuration for this workspace (always set, defaults to local on load)",
+  }),
+  aiSettings: WorkspaceAISettingsSchema.optional().meta({
+    description: "Workspace-scoped AI settings (model + thinking level) persisted in config",
   }),
   status: z.enum(["creating"]).optional().meta({
     description:

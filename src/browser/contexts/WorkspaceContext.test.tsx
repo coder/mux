@@ -6,7 +6,11 @@ import type { WorkspaceContext } from "./WorkspaceContext";
 import { WorkspaceProvider, useWorkspaceContext } from "./WorkspaceContext";
 import { ProjectProvider } from "@/browser/contexts/ProjectContext";
 import { useWorkspaceStoreRaw as getWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
-import { SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
+import {
+  SELECTED_WORKSPACE_KEY,
+  getModelKey,
+  getThinkingLevelKey,
+} from "@/common/constants/storage";
 import type { RecursivePartial } from "@/browser/testUtils";
 
 import type { APIClient } from "@/browser/contexts/API";
@@ -92,6 +96,36 @@ describe("WorkspaceContext", () => {
     expect(workspaceApi.onMetadata).toHaveBeenCalled();
   });
 
+  test("seeds model + thinking localStorage from backend metadata", async () => {
+    const initialWorkspaces: FrontendWorkspaceMetadata[] = [
+      createWorkspaceMetadata({
+        id: "ws-ai",
+        aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "xhigh" },
+      }),
+    ];
+
+    createMockAPI({
+      workspace: {
+        list: () => Promise.resolve(initialWorkspaces),
+      },
+      localStorage: {
+        // Seed with different values; backend should win.
+        [getModelKey("ws-ai")]: JSON.stringify("anthropic:claude-3.5"),
+        [getThinkingLevelKey("ws-ai")]: JSON.stringify("low"),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(1));
+
+    expect(JSON.parse(globalThis.localStorage.getItem(getModelKey("ws-ai"))!)).toBe(
+      "openai:gpt-5.2"
+    );
+    expect(JSON.parse(globalThis.localStorage.getItem(getThinkingLevelKey("ws-ai"))!)).toBe(
+      "xhigh"
+    );
+  });
   test("loads workspace metadata on mount", async () => {
     const initialWorkspaces: FrontendWorkspaceMetadata[] = [
       createWorkspaceMetadata({

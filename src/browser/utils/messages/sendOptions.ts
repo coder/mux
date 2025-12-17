@@ -1,6 +1,11 @@
-import { getModelKey, getThinkingLevelByModelKey, getModeKey } from "@/common/constants/storage";
+import {
+  getModelKey,
+  getThinkingLevelByModelKey,
+  getThinkingLevelKey,
+  getModeKey,
+} from "@/common/constants/storage";
 import { modeToToolPolicy } from "@/common/utils/ui/modeUtils";
-import { readPersistedState } from "@/browser/hooks/usePersistedState";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { toGatewayModel, migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import type { SendMessageOptions } from "@/common/orpc/types";
@@ -47,11 +52,21 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
   // Transform to gateway format if gateway is enabled for this model
   const model = toGatewayModel(baseModel);
 
-  // Read thinking level (per-model global storage)
-  const thinkingLevel = readPersistedState<ThinkingLevel>(
-    getThinkingLevelByModelKey(baseModel),
-    WORKSPACE_DEFAULTS.thinkingLevel
-  );
+  // Read thinking level (workspace-scoped).
+  // Migration: if the workspace-scoped value is missing, fall back to legacy per-model storage
+  // once, then persist into the workspace-scoped key.
+  const scopedKey = getThinkingLevelKey(workspaceId);
+  const existingScoped = readPersistedState<ThinkingLevel | undefined>(scopedKey, undefined);
+  const thinkingLevel =
+    existingScoped ??
+    readPersistedState<ThinkingLevel>(
+      getThinkingLevelByModelKey(baseModel),
+      WORKSPACE_DEFAULTS.thinkingLevel
+    );
+  if (existingScoped === undefined) {
+    // Best-effort: avoid losing a user's existing per-model preference.
+    updatePersistedState<ThinkingLevel>(scopedKey, thinkingLevel);
+  }
 
   // Read mode (workspace-specific)
   const mode = readPersistedState<UIMode>(getModeKey(workspaceId), WORKSPACE_DEFAULTS.mode);
@@ -62,7 +77,7 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
   // Plan mode instructions are now handled by the backend (has access to plan file path)
 
   // Enforce thinking policy (gpt-5-pro → high only)
-  const effectiveThinkingLevel = enforceThinkingPolicy(model, thinkingLevel);
+  const effectiveThinkingLevel = enforceThinkingPolicy(baseModel, thinkingLevel);
 
   return {
     model,

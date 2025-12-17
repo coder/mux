@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { RuntimeConfigSchema } from "./runtime";
 import { WorkspaceMCPOverridesSchema } from "./mcp";
+import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 
 export const WorkspaceConfigSchema = z.object({
   path: z.string().meta({
@@ -22,6 +23,9 @@ export const WorkspaceConfigSchema = z.object({
     .meta({ description: "ISO 8601 creation timestamp - optional for legacy" }),
   runtimeConfig: RuntimeConfigSchema.optional().meta({
     description: "Runtime configuration (local vs SSH) - optional, defaults to local",
+  }),
+  aiSettings: WorkspaceAISettingsSchema.optional().meta({
+    description: "Workspace-scoped AI settings (model + thinking level)",
   }),
   mcp: WorkspaceMCPOverridesSchema.optional().meta({
     description: "Per-workspace MCP overrides (disabled servers, tool allowlists)",

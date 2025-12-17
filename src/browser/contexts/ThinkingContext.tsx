@@ -1,10 +1,22 @@
 import type { ReactNode } from "react";
-import React, { createContext, useContext, useMemo } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useCallback } from "react";
 import type { ThinkingLevel } from "@/common/types/thinking";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { getThinkingLevelByModelKey, getModelKey } from "@/common/constants/storage";
+import {
+  readPersistedState,
+  updatePersistedState,
+  usePersistedState,
+} from "@/browser/hooks/usePersistedState";
+import {
+  getModelKey,
+  getProjectScopeId,
+  getThinkingLevelByModelKey,
+  getThinkingLevelKey,
+  GLOBAL_SCOPE_ID,
+} from "@/common/constants/storage";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
+import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
+import { useAPI } from "@/browser/contexts/API";
 
 interface ThinkingContextType {
   thinkingLevel: ThinkingLevel;
@@ -14,45 +26,74 @@ interface ThinkingContextType {
 const ThinkingContext = createContext<ThinkingContextType | undefined>(undefined);
 
 interface ThinkingProviderProps {
-  workspaceId?: string; // For existing workspaces
-  projectPath?: string; // For workspace creation (uses project-scoped model key)
+  workspaceId?: string; // Workspace-scoped storage (highest priority)
+  projectPath?: string; // Project-scoped storage (fallback if no workspaceId)
   children: ReactNode;
 }
 
-/**
- * Hook to get the model key for the current scope.
- */
-function useModelKey(workspaceId?: string, projectPath?: string): string | null {
-  return workspaceId
-    ? getModelKey(workspaceId)
-    : projectPath
-      ? getModelKey(`__project__/${projectPath}`)
-      : null;
+function getScopeId(workspaceId: string | undefined, projectPath: string | undefined): string {
+  return workspaceId ?? (projectPath ? getProjectScopeId(projectPath) : GLOBAL_SCOPE_ID);
 }
 
-export const ThinkingProvider: React.FC<ThinkingProviderProps> = ({
-  workspaceId,
-  projectPath,
-  children,
-}) => {
+function getCanonicalModelForScope(scopeId: string, fallbackModel: string): string {
+  const rawModel = readPersistedState<string>(getModelKey(scopeId), fallbackModel);
+  return migrateGatewayModel(rawModel || fallbackModel);
+}
+
+export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
+  const { api } = useAPI();
   const defaultModel = getDefaultModel();
-  const modelKey = useModelKey(workspaceId, projectPath);
+  const scopeId = getScopeId(props.workspaceId, props.projectPath);
+  const thinkingKey = getThinkingLevelKey(scopeId);
 
-  // Subscribe to model changes so we update thinking level when model changes.
-  // This uses a fallback key to satisfy hooks rules; it should be unused in practice
-  // because ThinkingProvider is expected to have either workspaceId or projectPath.
-  const [rawModel] = usePersistedState<string>(modelKey ?? "model:__unused__", defaultModel, {
-    listener: true,
-  });
+  // Workspace-scoped thinking. (No longer per-model.)
+  const [thinkingLevel, setThinkingLevelInternal] = usePersistedState<ThinkingLevel>(
+    thinkingKey,
+    "off",
+    { listener: true }
+  );
 
-  const thinkingKey = useMemo(() => {
-    const model = migrateGatewayModel(rawModel || defaultModel);
-    return getThinkingLevelByModelKey(model);
-  }, [rawModel, defaultModel]);
+  // One-time migration: if the new workspace-scoped key is missing, seed from the legacy per-model key.
+  useEffect(() => {
+    const existing = readPersistedState<ThinkingLevel | undefined>(thinkingKey, undefined);
+    if (existing !== undefined) {
+      return;
+    }
 
-  const [thinkingLevel, setThinkingLevel] = usePersistedState<ThinkingLevel>(thinkingKey, "off", {
-    listener: true,
-  });
+    const model = getCanonicalModelForScope(scopeId, defaultModel);
+    const legacyKey = getThinkingLevelByModelKey(model);
+    const legacy = readPersistedState<ThinkingLevel | undefined>(legacyKey, undefined);
+    if (legacy === undefined) {
+      return;
+    }
+
+    const effective = enforceThinkingPolicy(model, legacy);
+    updatePersistedState(thinkingKey, effective);
+  }, [defaultModel, scopeId, thinkingKey]);
+
+  const setThinkingLevel = useCallback(
+    (level: ThinkingLevel) => {
+      const model = getCanonicalModelForScope(scopeId, defaultModel);
+      const effective = enforceThinkingPolicy(model, level);
+
+      setThinkingLevelInternal(effective);
+
+      // Workspace variant: persist to backend so settings follow the workspace across devices.
+      if (!props.workspaceId || !api) {
+        return;
+      }
+
+      api.workspace
+        .updateAISettings({
+          workspaceId: props.workspaceId,
+          aiSettings: { model, thinkingLevel: effective },
+        })
+        .catch(() => {
+          // Best-effort only. If offline or backend is old, the next sendMessage will persist.
+        });
+    },
+    [api, defaultModel, props.workspaceId, scopeId, setThinkingLevelInternal]
+  );
 
   // Memoize context value to prevent unnecessary re-renders of consumers.
   const contextValue = useMemo(
@@ -60,7 +101,7 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = ({
     [thinkingLevel, setThinkingLevel]
   );
 
-  return <ThinkingContext.Provider value={contextValue}>{children}</ThinkingContext.Provider>;
+  return <ThinkingContext.Provider value={contextValue}>{props.children}</ThinkingContext.Provider>;
 };
 
 export const useThinking = () => {

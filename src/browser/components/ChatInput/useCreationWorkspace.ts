@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig, RuntimeMode } from "@/common/types/runtime";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import type { UIMode } from "@/common/types/mode";
 import { parseRuntimeString } from "@/browser/utils/chatCommands";
 import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
@@ -11,6 +12,7 @@ import {
   getInputImagesKey,
   getModelKey,
   getModeKey,
+  getThinkingLevelKey,
   getPendingScopeId,
   getProjectScopeId,
 } from "@/common/constants/storage";
@@ -45,8 +47,13 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
     updatePersistedState(getModeKey(workspaceId), projectMode);
   }
 
-  // Note: thinking level is stored per-model globally, not per-workspace,
-  // so no sync is needed here
+  const projectThinkingLevel = readPersistedState<ThinkingLevel | null>(
+    getThinkingLevelKey(projectScopeId),
+    null
+  );
+  if (projectThinkingLevel !== null) {
+    updatePersistedState(getThinkingLevelKey(workspaceId), projectThinkingLevel);
+  }
 }
 
 interface UseCreationWorkspaceReturn {
@@ -196,6 +203,19 @@ export function useCreationWorkspace({
 
         const { metadata } = createResult;
 
+        // Best-effort: persist the initial AI settings to the backend immediately so this workspace
+        // is portable across devices even before the first stream starts.
+        api.workspace
+          .updateAISettings({
+            workspaceId: metadata.id,
+            aiSettings: {
+              model: settings.model,
+              thinkingLevel: settings.thinkingLevel,
+            },
+          })
+          .catch(() => {
+            // Ignore (offline / older backend). sendMessage will persist as a fallback.
+          });
         // Sync preferences immediately (before switching)
         syncCreationPreferences(projectPath, metadata.id);
         if (projectPath) {
@@ -239,6 +259,8 @@ export function useCreationWorkspace({
       projectScopeId,
       onWorkspaceCreated,
       getRuntimeString,
+      settings.model,
+      settings.thinkingLevel,
       settings.trunkBranch,
       waitForGeneration,
     ]

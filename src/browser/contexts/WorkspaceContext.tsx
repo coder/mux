@@ -9,15 +9,55 @@ import {
   type SetStateAction,
 } from "react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
 import type { RuntimeConfig } from "@/common/types/runtime";
-import { deleteWorkspaceStorage, SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
+import {
+  deleteWorkspaceStorage,
+  getModelKey,
+  getThinkingLevelKey,
+  SELECTED_WORKSPACE_KEY,
+} from "@/common/constants/storage";
 import { useAPI } from "@/browser/contexts/API";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  readPersistedState,
+  updatePersistedState,
+  usePersistedState,
+} from "@/browser/hooks/usePersistedState";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+
+/**
+ * Seed per-workspace localStorage from backend workspace metadata.
+ *
+ * This keeps a workspace's model/thinking consistent across devices/browsers.
+ */
+function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadata): void {
+  const ai = metadata.aiSettings;
+  if (!ai) {
+    return;
+  }
+
+  // Seed model selection.
+  if (typeof ai.model === "string" && ai.model.length > 0) {
+    const modelKey = getModelKey(metadata.id);
+    const existingModel = readPersistedState<string | undefined>(modelKey, undefined);
+    if (existingModel !== ai.model) {
+      updatePersistedState(modelKey, ai.model);
+    }
+  }
+
+  // Seed thinking level.
+  if (ai.thinkingLevel) {
+    const thinkingKey = getThinkingLevelKey(metadata.id);
+    const existingThinking = readPersistedState<ThinkingLevel | undefined>(thinkingKey, undefined);
+    if (existingThinking !== ai.thinkingLevel) {
+      updatePersistedState(thinkingKey, ai.thinkingLevel);
+    }
+  }
+}
 
 /**
  * Ensure workspace metadata has createdAt timestamp.
@@ -128,6 +168,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       for (const metadata of metadataList) {
         ensureCreatedAt(metadata);
         // Use stable workspace ID as key (not path, which can change)
+        seedWorkspaceLocalStorageFromBackend(metadata);
         metadataMap.set(metadata.id, metadata);
       }
       setWorkspaceMetadata(metadataMap);
@@ -255,6 +296,11 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         for await (const event of iterator) {
           if (signal.aborted) break;
 
+          if (event.metadata !== null) {
+            ensureCreatedAt(event.metadata);
+            seedWorkspaceLocalStorageFromBackend(event.metadata);
+          }
+
           setWorkspaceMetadata((prev) => {
             const updated = new Map(prev);
             const isNewWorkspace = !prev.has(event.workspaceId) && event.metadata !== null;
@@ -267,7 +313,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
               // Workspace deleted - remove from map
               updated.delete(event.workspaceId);
             } else {
-              ensureCreatedAt(event.metadata);
               updated.set(event.workspaceId, event.metadata);
             }
 
@@ -317,6 +362,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
         // Update metadata immediately to avoid race condition with validation effect
         ensureCreatedAt(result.metadata);
+        seedWorkspaceLocalStorageFromBackend(result.metadata);
         setWorkspaceMetadata((prev) => {
           const updated = new Map(prev);
           updated.set(result.metadata.id, result.metadata);
@@ -418,6 +464,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       const metadata = await api.workspace.getInfo({ workspaceId });
       if (metadata) {
         ensureCreatedAt(metadata);
+        seedWorkspaceLocalStorageFromBackend(metadata);
       }
       return metadata;
     },

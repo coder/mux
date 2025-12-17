@@ -11,6 +11,7 @@ export { RuntimeConfigSchema, RuntimeModeSchema } from "./schemas/runtime";
 export { ProjectConfigSchema, WorkspaceConfigSchema } from "./schemas/project";
 
 // Workspace schemas
+export { WorkspaceAISettingsSchema } from "./schemas/workspaceAiSettings";
 export {
   FrontendWorkspaceMetadataSchema,
   GitStatusSchema,

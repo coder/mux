@@ -47,9 +47,11 @@ import {
 import type { MuxMessage } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { hasSrcBaseDir, getSrcBaseDir, isSSHRuntime } from "@/common/types/runtime";
-import { defaultModel } from "@/common/utils/ai/models";
+import { defaultModel, isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
 import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
+import type { WorkspaceAISettingsSchema } from "@/common/orpc/schemas";
+import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 
 import { DisposableTempDir } from "@/node/services/tempDir";
@@ -63,6 +65,9 @@ import { movePlanFile, copyPlanFile } from "@/node/utils/runtime/helpers";
 const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
 
 // Keep short to feel instant, but debounce bursts of file_edit_* tool calls.
+
+// Shared type for workspace-scoped AI settings (model + thinking)
+type WorkspaceAISettings = z.infer<typeof WorkspaceAISettingsSchema>;
 const POST_COMPACTION_METADATA_REFRESH_DEBOUNCE_MS = 100;
 
 /**
@@ -876,6 +881,125 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  private normalizeWorkspaceAISettings(
+    aiSettings: WorkspaceAISettings
+  ): Result<WorkspaceAISettings, string> {
+    const rawModel = aiSettings.model;
+    const model = normalizeGatewayModel(rawModel).trim();
+    if (!model) {
+      return Err("Model is required");
+    }
+    if (!isValidModelFormat(model)) {
+      return Err(`Invalid model format: ${rawModel}`);
+    }
+
+    const effectiveThinkingLevel = enforceThinkingPolicy(model, aiSettings.thinkingLevel);
+
+    return Ok({
+      model,
+      thinkingLevel: effectiveThinkingLevel,
+    });
+  }
+
+  private extractWorkspaceAISettingsFromSendOptions(
+    options: SendMessageOptions | undefined
+  ): WorkspaceAISettings | null {
+    const rawModel = options?.model;
+    if (typeof rawModel !== "string" || rawModel.trim().length === 0) {
+      return null;
+    }
+
+    const model = normalizeGatewayModel(rawModel).trim();
+    if (!isValidModelFormat(model)) {
+      return null;
+    }
+
+    const requestedThinking = options?.thinkingLevel;
+    // Be defensive: if a (very) old client doesn't send thinkingLevel, don't overwrite
+    // any existing workspace-scoped value.
+    if (requestedThinking === undefined) {
+      return null;
+    }
+
+    const thinkingLevel = enforceThinkingPolicy(model, requestedThinking);
+
+    return { model, thinkingLevel };
+  }
+
+  private async persistWorkspaceAISettings(
+    workspaceId: string,
+    aiSettings: WorkspaceAISettings,
+    options?: { emitMetadata?: boolean }
+  ): Promise<Result<boolean, string>> {
+    const found = this.config.findWorkspace(workspaceId);
+    if (!found) {
+      return Err("Workspace not found");
+    }
+
+    const { projectPath, workspacePath } = found;
+
+    const config = this.config.loadConfigOrDefault();
+    const projectConfig = config.projects.get(projectPath);
+    if (!projectConfig) {
+      return Err(`Project not found: ${projectPath}`);
+    }
+
+    const workspaceEntry = projectConfig.workspaces.find(
+      (w) => w.id === workspaceId || w.path === workspacePath
+    );
+    if (!workspaceEntry) {
+      return Err("Workspace not found");
+    }
+
+    const prev = workspaceEntry.aiSettings;
+    const changed =
+      prev?.model !== aiSettings.model || prev?.thinkingLevel !== aiSettings.thinkingLevel;
+    if (!changed) {
+      return Ok(false);
+    }
+
+    workspaceEntry.aiSettings = aiSettings;
+    await this.config.saveConfig(config);
+
+    if (options?.emitMetadata !== false) {
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const updatedMetadata = allMetadata.find((m) => m.id === workspaceId) ?? null;
+
+      const session = this.sessions.get(workspaceId);
+      if (session) {
+        session.emitMetadata(updatedMetadata);
+      } else {
+        this.emit("metadata", { workspaceId, metadata: updatedMetadata });
+      }
+    }
+
+    return Ok(true);
+  }
+
+  async updateAISettings(
+    workspaceId: string,
+    aiSettings: WorkspaceAISettings
+  ): Promise<Result<void, string>> {
+    try {
+      const normalized = this.normalizeWorkspaceAISettings(aiSettings);
+      if (!normalized.success) {
+        return Err(normalized.error);
+      }
+
+      const persistResult = await this.persistWorkspaceAISettings(workspaceId, normalized.data, {
+        emitMetadata: true,
+      });
+      if (!persistResult.success) {
+        return Err(persistResult.error);
+      }
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to update workspace AI settings: ${message}`);
+    }
+  }
+
   async fork(
     sourceWorkspaceId: string,
     newName: string
@@ -1064,6 +1188,25 @@ export class WorkspaceService extends EventEmitter {
               },
             };
 
+      // Persist last-used model + thinking level for cross-device consistency.
+      // Best-effort: failures should not block sending.
+      const extractedSettings = this.extractWorkspaceAISettingsFromSendOptions(resolvedOptions);
+      if (extractedSettings) {
+        const persistResult = await this.persistWorkspaceAISettings(
+          workspaceId,
+          extractedSettings,
+          {
+            emitMetadata: false,
+          }
+        );
+        if (!persistResult.success) {
+          log.debug("Failed to persist workspace AI settings from send options", {
+            workspaceId,
+            error: persistResult.error,
+          });
+        }
+      }
+
       if (this.aiService.isStreaming(workspaceId) && !resolvedOptions?.editMessageId) {
         const pendingAskUserQuestion = askUserQuestionManager.getLatestPending(workspaceId);
         if (pendingAskUserQuestion) {
@@ -1130,6 +1273,26 @@ export class WorkspaceService extends EventEmitter {
       }
 
       const session = this.getOrCreateSession(workspaceId);
+
+      // Persist last-used model + thinking level for cross-device consistency.
+      // Best-effort: failures should not block resuming.
+      const extractedSettings = this.extractWorkspaceAISettingsFromSendOptions(options);
+      if (extractedSettings) {
+        const persistResult = await this.persistWorkspaceAISettings(
+          workspaceId,
+          extractedSettings,
+          {
+            emitMetadata: false,
+          }
+        );
+        if (!persistResult.success) {
+          log.debug("Failed to persist workspace AI settings from resume options", {
+            workspaceId,
+            error: persistResult.error,
+          });
+        }
+      }
+
       const result = await session.resumeStream(options);
       if (!result.success) {
         log.error("resumeStream handler: session returned error", {

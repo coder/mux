@@ -365,6 +365,12 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.workspaceService.updateTitle(input.workspaceId, input.title);
         }),
+      updateAISettings: t
+        .input(schemas.workspace.updateAISettings.input)
+        .output(schemas.workspace.updateAISettings.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.updateAISettings(input.workspaceId, input.aiSettings);
+        }),
       fork: t
         .input(schemas.workspace.fork.input)
         .output(schemas.workspace.fork.output)

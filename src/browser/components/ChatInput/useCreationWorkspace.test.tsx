@@ -7,6 +7,7 @@ import {
   getModeKey,
   getPendingScopeId,
   getProjectScopeId,
+  getThinkingLevelKey,
 } from "@/common/constants/storage";
 import type { SendMessageError as _SendMessageError } from "@/common/types/errors";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
@@ -83,11 +84,18 @@ type ListBranchesArgs = Parameters<APIClient["projects"]["listBranches"]>[0];
 type WorkspaceSendMessageArgs = Parameters<APIClient["workspace"]["sendMessage"]>[0];
 type WorkspaceSendMessageResult = Awaited<ReturnType<APIClient["workspace"]["sendMessage"]>>;
 type WorkspaceCreateArgs = Parameters<APIClient["workspace"]["create"]>[0];
+type WorkspaceUpdateAISettingsArgs = Parameters<APIClient["workspace"]["updateAISettings"]>[0];
+type WorkspaceUpdateAISettingsResult = Awaited<
+  ReturnType<APIClient["workspace"]["updateAISettings"]>
+>;
 type WorkspaceCreateResult = Awaited<ReturnType<APIClient["workspace"]["create"]>>;
 type NameGenerationArgs = Parameters<APIClient["nameGeneration"]["generate"]>[0];
 type NameGenerationResult = Awaited<ReturnType<APIClient["nameGeneration"]["generate"]>>;
 type MockOrpcProjectsClient = Pick<APIClient["projects"], "listBranches">;
-type MockOrpcWorkspaceClient = Pick<APIClient["workspace"], "sendMessage" | "create">;
+type MockOrpcWorkspaceClient = Pick<
+  APIClient["workspace"],
+  "sendMessage" | "create" | "updateAISettings"
+>;
 type MockOrpcNameGenerationClient = Pick<APIClient["nameGeneration"], "generate">;
 type WindowWithApi = Window & typeof globalThis;
 type WindowApi = WindowWithApi["api"];
@@ -114,6 +122,9 @@ interface SetupWindowOptions {
   sendMessage?: ReturnType<
     typeof mock<(args: WorkspaceSendMessageArgs) => Promise<WorkspaceSendMessageResult>>
   >;
+  updateAISettings?: ReturnType<
+    typeof mock<(args: WorkspaceUpdateAISettingsArgs) => Promise<WorkspaceUpdateAISettingsResult>>
+  >;
   create?: ReturnType<typeof mock<(args: WorkspaceCreateArgs) => Promise<WorkspaceCreateResult>>>;
   nameGeneration?: ReturnType<
     typeof mock<(args: NameGenerationArgs) => Promise<NameGenerationResult>>
@@ -124,6 +135,7 @@ const setupWindow = ({
   listBranches,
   sendMessage,
   create,
+  updateAISettings,
   nameGeneration,
 }: SetupWindowOptions = {}) => {
   const listBranchesMock =
@@ -157,6 +169,15 @@ const setupWindow = ({
       } as WorkspaceCreateResult);
     });
 
+  const updateAISettingsMock =
+    updateAISettings ??
+    mock<(args: WorkspaceUpdateAISettingsArgs) => Promise<WorkspaceUpdateAISettingsResult>>(() => {
+      return Promise.resolve({
+        success: true,
+        data: undefined,
+      } as WorkspaceUpdateAISettingsResult);
+    });
+
   const nameGenerationMock =
     nameGeneration ??
     mock<(args: NameGenerationArgs) => Promise<NameGenerationResult>>(() => {
@@ -176,6 +197,7 @@ const setupWindow = ({
     workspace: {
       sendMessage: (input: WorkspaceSendMessageArgs) => sendMessageMock(input),
       create: (input: WorkspaceCreateArgs) => createMock(input),
+      updateAISettings: (input: WorkspaceUpdateAISettingsArgs) => updateAISettingsMock(input),
     },
     nameGeneration: {
       generate: (input: NameGenerationArgs) => nameGenerationMock(input),
@@ -213,6 +235,7 @@ const setupWindow = ({
     workspace: {
       list: rejectNotImplemented("workspace.list"),
       create: (args: WorkspaceCreateArgs) => createMock(args),
+      updateAISettings: (args: WorkspaceUpdateAISettingsArgs) => updateAISettingsMock(args),
       remove: rejectNotImplemented("workspace.remove"),
       rename: rejectNotImplemented("workspace.rename"),
       fork: rejectNotImplemented("workspace.fork"),
@@ -278,7 +301,11 @@ const setupWindow = ({
 
   return {
     projectsApi: { listBranches: listBranchesMock },
-    workspaceApi: { sendMessage: sendMessageMock, create: createMock },
+    workspaceApi: {
+      sendMessage: sendMessageMock,
+      create: createMock,
+      updateAISettings: updateAISettingsMock,
+    },
     nameGenerationApi: { generate: nameGenerationMock },
   };
 };
@@ -466,7 +493,7 @@ describe("useCreationWorkspace", () => {
     const pendingInputKey = getInputKey(pendingScopeId);
     const pendingImagesKey = getInputImagesKey(pendingScopeId);
     expect(updatePersistedStateCalls).toContainEqual([modeKey, "plan"]);
-    // Note: thinking level is no longer synced per-workspace, it's stored per-model globally
+    // Thinking is workspace-scoped, but this test doesn't set a project-scoped thinking preference.
     expect(updatePersistedStateCalls).toContainEqual([pendingInputKey, ""]);
     expect(updatePersistedStateCalls).toContainEqual([pendingImagesKey, undefined]);
   });
@@ -510,7 +537,10 @@ describe("useCreationWorkspace", () => {
     expect(onWorkspaceCreated.mock.calls.length).toBe(0);
     await waitFor(() => expect(getHook().toast?.message).toBe("backend exploded"));
     await waitFor(() => expect(getHook().isSending).toBe(false));
-    expect(updatePersistedStateCalls).toEqual([]);
+
+    // Side effect: send-options reader may migrate thinking level into the project scope.
+    const thinkingKey = getThinkingLevelKey(getProjectScopeId(TEST_PROJECT_PATH));
+    expect(updatePersistedStateCalls).toEqual([[thinkingKey, "off"]]);
   });
 });
 

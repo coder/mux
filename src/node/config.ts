@@ -301,6 +301,7 @@ export class Config {
               createdAt: workspace.createdAt ?? new Date().toISOString(),
               // GUARANTEE: All workspaces must have runtimeConfig (apply default if missing)
               runtimeConfig: workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
+              aiSettings: workspace.aiSettings,
             };
 
             // Migrate missing createdAt to config for next load
@@ -340,6 +341,9 @@ export class Config {
             // GUARANTEE: All workspaces must have runtimeConfig
             metadata.runtimeConfig ??= DEFAULT_RUNTIME_CONFIG;
 
+            // Preserve any config-only fields that may not exist in legacy metadata.json
+            metadata.aiSettings ??= workspace.aiSettings;
+
             // Migrate to config for next load
             workspace.id = metadata.id;
             workspace.name = metadata.name;
@@ -363,6 +367,7 @@ export class Config {
               createdAt: new Date().toISOString(),
               // GUARANTEE: All workspaces must have runtimeConfig
               runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+              aiSettings: workspace.aiSettings,
             };
 
             // Save to config for next load
@@ -387,6 +392,7 @@ export class Config {
             createdAt: new Date().toISOString(),
             // GUARANTEE: All workspaces must have runtimeConfig (even in error cases)
             runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+            aiSettings: workspace.aiSettings,
           };
           workspaceMetadata.push(this.addPathsToMetadata(metadata, workspace.path, projectPath));
         }
