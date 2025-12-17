@@ -18,7 +18,7 @@ export const InitMessage = React.memo<InitMessageProps>(({ message, className })
         className
       )}
     >
-      <div className="flex items-center gap-2 text-bright">
+      <div className="text-bright flex items-center gap-2">
         <span>🔧</span>
         <div>
           {message.status === "running" ? (
@@ -31,7 +31,7 @@ export const InitMessage = React.memo<InitMessageProps>(({ message, className })
               failed.
             </span>
           )}
-          <div className="mt-0.5 font-mono text-[11px] text-muted">{message.hookPath}</div>
+          <div className="text-muted mt-0.5 font-mono text-[11px]">{message.hookPath}</div>
         </div>
       </div>
       {message.lines.length > 0 && (

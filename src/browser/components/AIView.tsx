@@ -594,9 +594,9 @@ const AIViewInner: React.FC<AIViewProps> = ({
                 <div className="text-placeholder flex h-full flex-1 flex-col items-center justify-center text-center [&_h3]:m-0 [&_h3]:mb-2.5 [&_h3]:text-base [&_h3]:font-medium [&_p]:m-0 [&_p]:text-[13px]">
                   <h3>No Messages Yet</h3>
                   <p>Send a message below to begin</p>
-                  <p className="mt-5 text-xs text-muted">
+                  <p className="text-muted mt-5 text-xs">
                     💡 Tip: Add a{" "}
-                    <code className="rounded-[3px] bg-modal-bg px-1.5 py-0.5 font-mono text-[11px] text-code-string">
+                    <code className="bg-modal-bg text-code-string rounded-[3px] px-1.5 py-0.5 font-mono text-[11px]">
                       .mux/init
                     </code>{" "}
                     hook to your project to run setup commands
