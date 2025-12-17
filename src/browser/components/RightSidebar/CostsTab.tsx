@@ -312,7 +312,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                               className="h-full transition-[width] duration-300"
                               style={{
                                 width: `${cacheCreateCostPercentage}%`,
-                                background: TOKEN_COMPONENT_COLORS.cached,
+                                background: TOKEN_COMPONENT_COLORS.cacheCreate,
                               }}
                             />
                           )}
