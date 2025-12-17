@@ -81,8 +81,10 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
     [api]
   );
 
+  // Sync pathInput with initialPath when modal opens (component stays mounted)
   useEffect(() => {
     if (!isOpen) return;
+    setPathInput(initialPath || "");
     void loadDirectory(initialPath || ".");
   }, [isOpen, initialPath, loadDirectory]);
 
