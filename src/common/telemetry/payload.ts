@@ -137,13 +137,13 @@ export interface MCPContextInjectedPayload {
   /** Built-in tool count injected into the model request */
   builtin_tool_count: number;
 
-  /** Effective transport mix for enabled servers */
+  /** Effective transport mix for *started* servers (auto transport is resolved to http/sse) */
   mcp_transport_mode: TelemetryMCPTransportMode;
-  /** Whether any enabled server uses HTTP (includes auto transport) */
+  /** Whether any started server uses HTTP (auto transport resolves to http/sse at runtime) */
   mcp_has_http: boolean;
-  /** Whether any enabled server uses legacy SSE */
+  /** Whether any started server uses legacy SSE */
   mcp_has_sse: boolean;
-  /** Whether any enabled server uses stdio */
+  /** Whether any started server uses stdio */
   mcp_has_stdio: boolean;
 
   /** Number of servers that required auto-fallback from HTTP to SSE */
