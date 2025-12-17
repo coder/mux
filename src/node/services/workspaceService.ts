@@ -56,7 +56,7 @@ import { createBashTool } from "@/node/services/tools/bash";
 import type { AskUserQuestionToolSuccessResult, BashToolResult } from "@/common/types/tools";
 import { secretsToRecord } from "@/common/types/secrets";
 
-import { movePlanFile } from "@/node/utils/runtime/helpers";
+import { movePlanFile, copyPlanFile } from "@/node/utils/runtime/helpers";
 
 /** Maximum number of retry attempts when workspace name collides */
 const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
@@ -959,6 +959,9 @@ export class WorkspaceService extends EventEmitter {
         const message = copyError instanceof Error ? copyError.message : String(copyError);
         return Err(`Failed to copy chat history: ${message}`);
       }
+
+      // Copy plan file if it exists (checks both new and legacy paths)
+      await copyPlanFile(runtime, sourceMetadata.name, sourceWorkspaceId, newName, projectName);
 
       // Compute namedWorkspacePath for frontend metadata
       const namedWorkspacePath = runtime.getWorkspacePath(foundProjectPath, newName);
