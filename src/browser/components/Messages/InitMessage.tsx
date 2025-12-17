@@ -13,12 +13,12 @@ export const InitMessage = React.memo<InitMessageProps>(({ message, className })
   return (
     <div
       className={cn(
-        "flex flex-col gap-1.5 border-b p-3 font-mono text-xs text-[#ddd]",
-        isError ? "bg-[#3a1e1e] border-[#653737]" : "bg-[#1e2a3a] border-[#2f3f52]",
+        "flex flex-col gap-1.5 border-b p-3 font-mono text-xs text-text-lighter",
+        isError ? "bg-init-error-bg border-init-error-border" : "bg-init-bg border-init-border",
         className
       )}
     >
-      <div className="flex items-center gap-2 text-[#ccc]">
+      <div className="flex items-center gap-2 text-bright">
         <span>🔧</span>
         <div>
           {message.status === "running" ? (
@@ -31,7 +31,7 @@ export const InitMessage = React.memo<InitMessageProps>(({ message, className })
               failed.
             </span>
           )}
-          <div className="mt-0.5 font-mono text-[11px] text-[#888]">{message.hookPath}</div>
+          <div className="mt-0.5 font-mono text-[11px] text-muted">{message.hookPath}</div>
         </div>
       </div>
       {message.lines.length > 0 && (

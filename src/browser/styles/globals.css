@@ -193,6 +193,7 @@
     --color-subtle: hsl(0 0% 60%); /* #999 - subtle */
     --color-dim: hsl(0 0% 42%); /* #666 - dimmed */
     --color-light: hsl(0 0% 83%); /* #d4d4d4 - light */
+    --color-text-lighter: hsl(0 0% 87%); /* #dddddd - lighter text */
     --color-lighter: hsl(0 0% 90%); /* #e5e5e5 - lighter */
     --color-bright: hsl(0 0% 80%); /* #cccccc - bright */
     --color-subdued: hsl(0 0% 60%); /* #9a9a9a - subdued */
@@ -239,6 +240,21 @@
     /* Code syntax highlighting */
     --color-code-type: hsl(197 71% 73%); /* #9cdcfe - type annotations */
     --color-code-keyword: hsl(210 59% 63%); /* #6496ff - keywords */
+    --color-code-string: hsl(40 53% 67%); /* #d7ba7d - string literals */
+    --color-syntax-error: hsl(355 65% 65%); /* #e06c75 - One Dark error red */
+
+    /* Terminal */
+    --color-terminal-bg: hsl(0 0% 12%); /* #1e1e1e */
+    --color-terminal-fg: hsl(0 0% 83%); /* #d4d4d4 */
+
+    /* Info (blue accent for in-progress states) */
+    --color-info: hsl(207 90% 54%); /* #2196f3 */
+
+    /* Init message surfaces */
+    --color-init-bg: hsl(210 33% 17%); /* #1e2a3a */
+    --color-init-border: hsl(210 27% 25%); /* #2f3f52 */
+    --color-init-error-bg: hsl(0 33% 17%); /* #3a1e1e */
+    --color-init-error-border: hsl(0 28% 30%); /* #653737 */
 
     /* Toast and notification backgrounds */
     --color-toast-success-bg: hsl(207 100% 37% / 0.13); /* #0e639c with 20% opacity */

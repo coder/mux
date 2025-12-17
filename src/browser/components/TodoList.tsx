@@ -3,20 +3,20 @@ import { cn } from "@/common/lib/utils";
 import type { TodoItem } from "@/common/types/tools";
 
 const statusBgColors: Record<TodoItem["status"], string> = {
-  completed: "color-mix(in srgb, #4caf50, transparent 92%)",
-  in_progress: "color-mix(in srgb, #2196f3, transparent 92%)",
-  pending: "color-mix(in srgb, #888, transparent 96%)",
+  completed: "color-mix(in srgb, var(--color-success), transparent 92%)",
+  in_progress: "color-mix(in srgb, var(--color-info), transparent 92%)",
+  pending: "color-mix(in srgb, var(--color-muted), transparent 96%)",
 };
 
 const statusBorderColors: Record<TodoItem["status"], string> = {
-  completed: "#4caf50",
-  in_progress: "#2196f3",
-  pending: "#666",
+  completed: "var(--color-success)",
+  in_progress: "var(--color-info)",
+  pending: "var(--color-dim)",
 };
 
 const statusTextColors: Record<TodoItem["status"], string> = {
-  completed: "#888",
-  in_progress: "#2196f3",
+  completed: "var(--color-muted)",
+  in_progress: "var(--color-info)",
   pending: "var(--color-text)",
 };
 

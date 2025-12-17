@@ -162,7 +162,7 @@ const TreeNodeContent: React.FC<{
               (node.totalStats.additions > 0 || node.totalStats.deletions > 0) && (
                 <span
                   className="flex gap-2 text-[11px] opacity-70"
-                  style={{ color: isOpen ? "#666" : "inherit" }}
+                  style={{ color: isOpen ? "var(--color-dim)" : "inherit" }}
                 >
                   {node.totalStats.additions > 0 &&
                     (isOpen ? (

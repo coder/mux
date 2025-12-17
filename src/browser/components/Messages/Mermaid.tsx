@@ -204,7 +204,13 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
 
     // Not streaming - show actual error
     return (
-      <pre style={{ color: "#e06c75", background: "rgba(224, 108, 117, 0.1)", padding: "12px" }}>
+      <pre
+        style={{
+          color: "var(--color-syntax-error)",
+          background: "hsl(from var(--color-syntax-error) h s l / 0.1)",
+          padding: "12px",
+        }}
+      >
         Mermaid Error: {error}
       </pre>
     );

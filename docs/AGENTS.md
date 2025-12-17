@@ -113,7 +113,7 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 
 ## Styling
 
-- Colors defined in `src/styles/colors.tsx`; fonts in `src/styles/fonts.tsx`. Reference them via CSS variables (e.g., `var(--color-plan-mode)`), never hardcode values.
+- Colors defined in `src/browser/styles/globals.css` (`:root @theme` block). Reference via CSS variables (e.g., `var(--color-plan-mode)`), never hardcode hex values.
 
 ## TypeScript Discipline
 

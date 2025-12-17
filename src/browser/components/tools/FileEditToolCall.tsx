@@ -53,7 +53,7 @@ function renderDiff(
   try {
     const patches = parsePatch(diff);
     if (patches.length === 0) {
-      return <div style={{ padding: "8px", color: "#888" }}>No changes</div>;
+      return <div style={{ padding: "8px", color: "var(--color-muted)" }}>No changes</div>;
     }
 
     // Render each hunk using SelectableDiffRenderer if we have a callback, otherwise DiffRenderer
