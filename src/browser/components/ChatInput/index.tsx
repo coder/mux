@@ -1626,6 +1626,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   aria-expanded={showCommandSuggestions && commandSuggestions.length > 0}
                   className={variant === "creation" ? "min-h-24" : undefined}
                 />
+                {/* Token count - positioned to left of mic */}
+                {preferredModel && hasTypedText && (
+                  <div className="absolute right-8 bottom-2">
+                    <Suspense fallback={<span className="text-muted/50 text-xs">…</span>}>
+                      <TokenCountDisplay reader={tokenCountReader} />
+                    </Suspense>
+                  </div>
+                )}
                 {/* Floating voice input button inside textarea */}
                 <div className="absolute right-2 bottom-2">
                   <VoiceInputButton
@@ -1713,23 +1721,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 <ModelSettings model={baseModel || ""} />
               </div>
 
-              {preferredModel && (
-                <div className={hasTypedText ? "block" : "hidden"}>
-                  <Suspense
-                    fallback={
-                      <div
-                        className="text-muted flex items-center gap-1 text-xs"
-                        data-component="TokenEstimate"
-                      >
-                        <span>Calculating tokens…</span>
-                      </div>
-                    }
-                  >
-                    <TokenCountDisplay reader={tokenCountReader} />
-                  </Suspense>
-                </div>
-              )}
-
               <div
                 className="ml-auto flex items-center gap-2"
                 data-component="ModelControls"
@@ -1781,8 +1772,8 @@ const TokenCountDisplay: React.FC<{ reader: TokenCountReader }> = ({ reader }) =
     return null;
   }
   return (
-    <div className="text-muted flex items-center gap-1 text-xs" data-component="TokenEstimate">
-      <span>{tokens.toLocaleString()} tokens</span>
-    </div>
+    <span className="text-muted/50 text-xs" data-component="TokenEstimate">
+      {tokens.toLocaleString()} tokens
+    </span>
   );
 };
