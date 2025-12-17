@@ -55,6 +55,7 @@ const SidebarContainer: React.FC<SidebarContainerProps> = ({
       : wide
         ? "min(1200px, calc(100vw - 400px))"
         : "300px";
+  console.log("[SidebarContainer] width calc:", { isCollapsed, customWidth, wide, computedWidth: width });
 
   return (
     <div
@@ -206,10 +207,18 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Use isCollapsed prop instead of returning null to keep DOM present for CSS transitions
   // Review tab is never collapsed (needs space for code review)
   const isCollapsed = isHidden && selectedTab !== "review";
+  const wide = selectedTab === "review" && !width;
+  console.log("[RightSidebar] render:", {
+    selectedTab,
+    width,
+    wide,
+    isCollapsed,
+    isHidden,
+  });
 
   return (
     <SidebarContainer
-      wide={selectedTab === "review" && !width} // Auto-wide only if not drag-resizing
+      wide={wide} // Auto-wide only if not drag-resizing
       customWidth={width} // Per-tab resized width from AIView
       isResizing={isResizing}
       isCollapsed={isCollapsed}

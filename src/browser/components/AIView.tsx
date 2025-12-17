@@ -124,6 +124,12 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
   // Derive active sidebar props based on selected tab
   const sidebarWidth = selectedRightTab === "review" ? reviewSidebar.width : costsSidebar.width;
+  console.log("[AIView] tab switch:", {
+    selectedRightTab,
+    reviewWidth: reviewSidebar.width,
+    costsWidth: costsSidebar.width,
+    derivedWidth: sidebarWidth,
+  });
   const isResizing =
     selectedRightTab === "review" ? reviewSidebar.isResizing : costsSidebar.isResizing;
   const startResize =
