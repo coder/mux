@@ -156,7 +156,11 @@ describeIntegration("MCP project configuration", () => {
       // Should list the added server
       const listed = await client.projects.mcp.list({ projectPath: repoPath });
       expect(listed).toEqual({
-        "chrome-devtools": { command: CHROME_DEVTOOLS_MCP_NPX, disabled: false },
+        "chrome-devtools": {
+          transport: "stdio",
+          command: CHROME_DEVTOOLS_MCP_NPX,
+          disabled: false,
+        },
       });
 
       // Config file should be written
@@ -177,7 +181,7 @@ describeIntegration("MCP project configuration", () => {
       // Should still be listed but disabled
       const disabledList = await client.projects.mcp.list({ projectPath: repoPath });
       expect(disabledList).toEqual({
-        "chrome-devtools": { command: CHROME_DEVTOOLS_MCP_NPX, disabled: true },
+        "chrome-devtools": { transport: "stdio", command: CHROME_DEVTOOLS_MCP_NPX, disabled: true },
       });
 
       // Config file should have disabled format
@@ -199,7 +203,11 @@ describeIntegration("MCP project configuration", () => {
       // Should be enabled again, config file back to string format
       const enabledList = await client.projects.mcp.list({ projectPath: repoPath });
       expect(enabledList).toEqual({
-        "chrome-devtools": { command: CHROME_DEVTOOLS_MCP_NPX, disabled: false },
+        "chrome-devtools": {
+          transport: "stdio",
+          command: CHROME_DEVTOOLS_MCP_NPX,
+          disabled: false,
+        },
       });
       const enabledConfig = await fs.readFile(configPath, "utf-8");
       expect(JSON.parse(enabledConfig)).toEqual({
