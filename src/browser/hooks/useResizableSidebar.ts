@@ -157,11 +157,14 @@ export function useResizableSidebar({
   // Dummy component for type compatibility (not rendered, actual handle is in AIView)
   const ResizeHandle: React.FC = () => null;
 
+  const returnWidth = customWidth ?? undefined;
+  console.log(`[useResizableSidebar] storageKey=${storageKey}, enabled=${enabled}, customWidth=${customWidth}, returning=${returnWidth}`);
+
   return {
     // Return undefined if no custom width (allows caller to use auto/default sizing)
     // Return the custom width when user has resized, regardless of enabled state
     // (keeps width stable during tab switches for smooth transitions)
-    width: customWidth ?? undefined,
+    width: returnWidth,
     isResizing,
     startResize,
     ResizeHandle,

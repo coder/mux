@@ -49,6 +49,8 @@ const SidebarContainer: React.FC<SidebarContainerProps> = ({
     : wide
       ? "min(1200px, calc(100vw - 400px))"
       : "300px";
+  
+  console.log(`[SidebarContainer] wide=${wide}, customWidth=${customWidth}, computed width=${width}`);
 
   return (
     <div
@@ -200,6 +202,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   if (isHidden) {
     return null;
   }
+
+  console.log(`[RightSidebar] selectedTab=${selectedTab}, width prop=${width}, wide=${selectedTab === "review" && !width}`);
 
   return (
     <SidebarContainer
