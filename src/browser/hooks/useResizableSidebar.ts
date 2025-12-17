@@ -60,6 +60,7 @@ export function useResizableSidebar({
   const [customWidth, setCustomWidth] = useState<number | null>(() => {
     try {
       const stored = localStorage.getItem(storageKey);
+      console.log(`[useResizableSidebar INIT] ${storageKey}: stored=${stored}`);
       if (stored) {
         const parsed = parseInt(stored, 10);
         if (!isNaN(parsed) && parsed >= minWidth && parsed <= maxWidth) {
@@ -71,6 +72,8 @@ export function useResizableSidebar({
     }
     return null; // No custom width - use default/auto
   });
+  
+  console.log(`[useResizableSidebar] ${storageKey}: enabled=${enabled}, customWidth=${customWidth}, returning=${customWidth ?? undefined}`);
 
   const [isResizing, setIsResizing] = useState(false);
 
