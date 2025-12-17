@@ -16,6 +16,8 @@ import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
+import { secretsToRecord } from "@/common/types/secrets";
+import { roundToBase2 } from "@/common/telemetry/utils";
 import { createAsyncEventQueue } from "@/common/utils/asyncEventIterator";
 
 export const router = (authToken?: string) => {
@@ -244,37 +246,235 @@ export const router = (authToken?: string) => {
         add: t
           .input(schemas.projects.mcp.add.input)
           .output(schemas.projects.mcp.add.output)
-          .handler(({ context, input }) =>
-            context.mcpConfigService.addServer(input.projectPath, input.name, input.command)
-          ),
+          .handler(async ({ context, input }) => {
+            const existing = await context.mcpConfigService.listServers(input.projectPath);
+            const existingServer = existing[input.name];
+
+            const transport = input.transport ?? "stdio";
+            const hasHeaders = Boolean(input.headers && Object.keys(input.headers).length > 0);
+            const usesSecretHeaders = Boolean(
+              input.headers &&
+              Object.values(input.headers).some(
+                (v) => typeof v === "object" && v !== null && "secret" in v
+              )
+            );
+
+            const action = (() => {
+              if (!existingServer) {
+                return "add";
+              }
+
+              if (
+                existingServer.transport !== "stdio" &&
+                transport !== "stdio" &&
+                existingServer.transport === transport &&
+                existingServer.url === input.url &&
+                JSON.stringify(existingServer.headers ?? {}) !== JSON.stringify(input.headers ?? {})
+              ) {
+                return "set_headers";
+              }
+
+              return "edit";
+            })();
+
+            const result = await context.mcpConfigService.addServer(input.projectPath, input.name, {
+              transport,
+              command: input.command,
+              url: input.url,
+              headers: input.headers,
+            });
+
+            if (result.success) {
+              context.telemetryService.capture({
+                event: "mcp_server_config_changed",
+                properties: {
+                  action,
+                  transport,
+                  has_headers: hasHeaders,
+                  uses_secret_headers: usesSecretHeaders,
+                },
+              });
+            }
+
+            return result;
+          }),
         remove: t
           .input(schemas.projects.mcp.remove.input)
           .output(schemas.projects.mcp.remove.output)
-          .handler(({ context, input }) =>
-            context.mcpConfigService.removeServer(input.projectPath, input.name)
-          ),
+          .handler(async ({ context, input }) => {
+            const existing = await context.mcpConfigService.listServers(input.projectPath);
+            const server = existing[input.name];
+
+            const result = await context.mcpConfigService.removeServer(
+              input.projectPath,
+              input.name
+            );
+
+            if (result.success && server) {
+              const hasHeaders =
+                server.transport !== "stdio" &&
+                Boolean(server.headers && Object.keys(server.headers).length > 0);
+              const usesSecretHeaders =
+                server.transport !== "stdio" &&
+                Boolean(
+                  server.headers &&
+                  Object.values(server.headers).some(
+                    (v) => typeof v === "object" && v !== null && "secret" in v
+                  )
+                );
+
+              context.telemetryService.capture({
+                event: "mcp_server_config_changed",
+                properties: {
+                  action: "remove",
+                  transport: server.transport,
+                  has_headers: hasHeaders,
+                  uses_secret_headers: usesSecretHeaders,
+                },
+              });
+            }
+
+            return result;
+          }),
         test: t
           .input(schemas.projects.mcp.test.input)
           .output(schemas.projects.mcp.test.output)
-          .handler(({ context, input }) =>
-            context.mcpServerManager.test(input.projectPath, input.name, input.command)
-          ),
+          .handler(async ({ context, input }) => {
+            const start = Date.now();
+            const secrets = secretsToRecord(context.projectService.getSecrets(input.projectPath));
+
+            const configuredTransport = input.name
+              ? (await context.mcpConfigService.listServers(input.projectPath))[input.name]
+                  ?.transport
+              : undefined;
+
+            const transport =
+              configuredTransport ?? (input.command ? "stdio" : (input.transport ?? "auto"));
+
+            const result = await context.mcpServerManager.test({
+              projectPath: input.projectPath,
+              name: input.name,
+              command: input.command,
+              transport: input.transport,
+              url: input.url,
+              headers: input.headers,
+              projectSecrets: secrets,
+            });
+
+            const durationMs = Date.now() - start;
+
+            const categorizeError = (
+              error: string
+            ): "timeout" | "connect" | "http_status" | "unknown" => {
+              const lower = error.toLowerCase();
+              if (lower.includes("timed out")) {
+                return "timeout";
+              }
+              if (
+                lower.includes("econnrefused") ||
+                lower.includes("econnreset") ||
+                lower.includes("enotfound") ||
+                lower.includes("ehostunreach")
+              ) {
+                return "connect";
+              }
+              if (/\b(400|401|403|404|405|500|502|503)\b/.test(lower)) {
+                return "http_status";
+              }
+              return "unknown";
+            };
+
+            context.telemetryService.capture({
+              event: "mcp_server_tested",
+              properties: {
+                transport,
+                success: result.success,
+                duration_ms_b2: roundToBase2(durationMs),
+                ...(result.success ? {} : { error_category: categorizeError(result.error) }),
+              },
+            });
+
+            return result;
+          }),
         setEnabled: t
           .input(schemas.projects.mcp.setEnabled.input)
           .output(schemas.projects.mcp.setEnabled.output)
-          .handler(({ context, input }) =>
-            context.mcpConfigService.setServerEnabled(input.projectPath, input.name, input.enabled)
-          ),
+          .handler(async ({ context, input }) => {
+            const existing = await context.mcpConfigService.listServers(input.projectPath);
+            const server = existing[input.name];
+
+            const result = await context.mcpConfigService.setServerEnabled(
+              input.projectPath,
+              input.name,
+              input.enabled
+            );
+
+            if (result.success && server) {
+              const hasHeaders =
+                server.transport !== "stdio" &&
+                Boolean(server.headers && Object.keys(server.headers).length > 0);
+              const usesSecretHeaders =
+                server.transport !== "stdio" &&
+                Boolean(
+                  server.headers &&
+                  Object.values(server.headers).some(
+                    (v) => typeof v === "object" && v !== null && "secret" in v
+                  )
+                );
+
+              context.telemetryService.capture({
+                event: "mcp_server_config_changed",
+                properties: {
+                  action: input.enabled ? "enable" : "disable",
+                  transport: server.transport,
+                  has_headers: hasHeaders,
+                  uses_secret_headers: usesSecretHeaders,
+                },
+              });
+            }
+
+            return result;
+          }),
         setToolAllowlist: t
           .input(schemas.projects.mcp.setToolAllowlist.input)
           .output(schemas.projects.mcp.setToolAllowlist.output)
-          .handler(({ context, input }) =>
-            context.mcpConfigService.setToolAllowlist(
+          .handler(async ({ context, input }) => {
+            const existing = await context.mcpConfigService.listServers(input.projectPath);
+            const server = existing[input.name];
+
+            const result = await context.mcpConfigService.setToolAllowlist(
               input.projectPath,
               input.name,
               input.toolAllowlist
-            )
-          ),
+            );
+
+            if (result.success && server) {
+              const hasHeaders =
+                server.transport !== "stdio" &&
+                Boolean(server.headers && Object.keys(server.headers).length > 0);
+              const usesSecretHeaders =
+                server.transport !== "stdio" &&
+                Boolean(
+                  server.headers &&
+                  Object.values(server.headers).some(
+                    (v) => typeof v === "object" && v !== null && "secret" in v
+                  )
+                );
+
+              context.telemetryService.capture({
+                event: "mcp_server_config_changed",
+                properties: {
+                  action: "set_tool_allowlist",
+                  transport: server.transport,
+                  has_headers: hasHeaders,
+                  uses_secret_headers: usesSecretHeaders,
+                  tool_allowlist_size_b2: roundToBase2(input.toolAllowlist.length),
+                },
+              });
+            }
+
+            return result;
+          }),
       },
       idleCompaction: {
         get: t

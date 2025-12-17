@@ -27,7 +27,12 @@ import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { Switch } from "@/browser/components/ui/switch";
 import { cn } from "@/common/lib/utils";
 import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
-import type { CachedMCPTestResult, MCPServerInfo } from "@/common/types/mcp";
+import type {
+  CachedMCPTestResult,
+  MCPHeaderValue,
+  MCPServerInfo,
+  MCPServerTransport,
+} from "@/common/types/mcp";
 import { useMCPTestCache } from "@/browser/hooks/useMCPTestCache";
 import { ToolSelector } from "@/browser/components/ToolSelector";
 
@@ -185,14 +190,28 @@ export const ProjectSettingsSection: React.FC = () => {
   } = useMCPTestCache(selectedProject);
   const [testingServer, setTestingServer] = useState<string | null>(null);
 
+  interface EditableServer {
+    name: string;
+    transport: MCPServerTransport;
+    /** command (stdio) or url (http/sse/auto) */
+    value: string;
+    /** JSON string for headers (http/sse/auto only) */
+    headersJson: string;
+  }
+
   // Add form state
-  const [newServer, setNewServer] = useState({ name: "", command: "" });
+  const [newServer, setNewServer] = useState<EditableServer>({
+    name: "",
+    transport: "stdio",
+    value: "",
+    headersJson: "",
+  });
   const [addingServer, setAddingServer] = useState(false);
   const [testingNew, setTestingNew] = useState(false);
   const [newTestResult, setNewTestResult] = useState<CachedMCPTestResult | null>(null);
 
   // Edit state
-  const [editing, setEditing] = useState<{ name: string; command: string } | null>(null);
+  const [editing, setEditing] = useState<EditableServer | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
 
   // Idle compaction state
@@ -235,10 +254,10 @@ export const ProjectSettingsSection: React.FC = () => {
     void refresh();
   }, [refresh]);
 
-  // Clear new command test result when command changes
+  // Clear new-server test result when transport/value/headers change
   useEffect(() => {
     setNewTestResult(null);
-  }, [newServer.command]);
+  }, [newServer.transport, newServer.value, newServer.headersJson]);
 
   const handleRemove = useCallback(
     async (name: string) => {
@@ -314,15 +333,66 @@ export const ProjectSettingsSection: React.FC = () => {
     [api, selectedProject, cacheTestResult]
   );
 
-  const handleTestNewCommand = useCallback(async () => {
-    if (!api || !selectedProject || !newServer.command.trim()) return;
+  const parseHeadersJson = (headersJson: string): Record<string, MCPHeaderValue> | undefined => {
+    const trimmed = headersJson.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+
+    const parsed: unknown = JSON.parse(trimmed);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Headers must be a JSON object");
+    }
+
+    const out: Record<string, MCPHeaderValue> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === "string") {
+        out[key] = value;
+        continue;
+      }
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        const secret = (value as Record<string, unknown>).secret;
+        if (typeof secret === "string") {
+          out[key] = { secret };
+          continue;
+        }
+      }
+      throw new Error(`Invalid header value for ${key}`);
+    }
+
+    return out;
+  };
+
+  const serverDisplayValue = (entry: MCPServerInfo): string =>
+    entry.transport === "stdio" ? entry.command : entry.url;
+
+  const serverHeadersJson = (entry: MCPServerInfo): string => {
+    if (entry.transport === "stdio") {
+      return "";
+    }
+    return entry.headers ? JSON.stringify(entry.headers, null, 2) : "";
+  };
+
+  const handleTestNewServer = useCallback(async () => {
+    if (!api || !selectedProject || !newServer.value.trim()) return;
     setTestingNew(true);
     setNewTestResult(null);
+
     try {
+      const headers =
+        newServer.transport === "stdio" ? undefined : parseHeadersJson(newServer.headersJson);
+
       const result = await api.projects.mcp.test({
         projectPath: selectedProject,
-        command: newServer.command.trim(),
+        ...(newServer.transport === "stdio"
+          ? { command: newServer.value.trim() }
+          : {
+              transport: newServer.transport,
+              url: newServer.value.trim(),
+              headers,
+            }),
       });
+
       setNewTestResult({ result, testedAt: Date.now() });
     } catch (err) {
       setNewTestResult({
@@ -332,18 +402,29 @@ export const ProjectSettingsSection: React.FC = () => {
     } finally {
       setTestingNew(false);
     }
-  }, [api, selectedProject, newServer.command]);
+  }, [api, selectedProject, newServer.transport, newServer.value, newServer.headersJson]);
 
   const handleAddServer = useCallback(async () => {
-    if (!api || !selectedProject || !newServer.name.trim() || !newServer.command.trim()) return;
+    if (!api || !selectedProject || !newServer.name.trim() || !newServer.value.trim()) return;
     setAddingServer(true);
     setError(null);
+
     try {
+      const headers =
+        newServer.transport === "stdio" ? undefined : parseHeadersJson(newServer.headersJson);
+
       const result = await api.projects.mcp.add({
         projectPath: selectedProject,
         name: newServer.name.trim(),
-        command: newServer.command.trim(),
+        ...(newServer.transport === "stdio"
+          ? { transport: "stdio", command: newServer.value.trim() }
+          : {
+              transport: newServer.transport,
+              url: newServer.value.trim(),
+              headers,
+            }),
       });
+
       if (!result.success) {
         setError(result.error ?? "Failed to add MCP server");
       } else {
@@ -351,7 +432,7 @@ export const ProjectSettingsSection: React.FC = () => {
         if (newTestResult?.result.success) {
           cacheTestResult(newServer.name.trim(), newTestResult.result);
         }
-        setNewServer({ name: "", command: "" });
+        setNewServer({ name: "", transport: "stdio", value: "", headersJson: "" });
         setNewTestResult(null);
         await refresh();
       }
@@ -362,8 +443,13 @@ export const ProjectSettingsSection: React.FC = () => {
     }
   }, [api, selectedProject, newServer, newTestResult, refresh, cacheTestResult]);
 
-  const handleStartEdit = useCallback((name: string, command: string) => {
-    setEditing({ name, command });
+  const handleStartEdit = useCallback((name: string, entry: MCPServerInfo) => {
+    setEditing({
+      name,
+      transport: entry.transport,
+      value: serverDisplayValue(entry),
+      headersJson: serverHeadersJson(entry),
+    });
   }, []);
 
   const handleCancelEdit = useCallback(() => {
@@ -371,19 +457,30 @@ export const ProjectSettingsSection: React.FC = () => {
   }, []);
 
   const handleSaveEdit = useCallback(async () => {
-    if (!api || !selectedProject || !editing?.command.trim()) return;
+    if (!api || !selectedProject || !editing?.value.trim()) return;
     setSavingEdit(true);
     setError(null);
+
     try {
+      const headers =
+        editing.transport === "stdio" ? undefined : parseHeadersJson(editing.headersJson);
+
       const result = await api.projects.mcp.add({
         projectPath: selectedProject,
         name: editing.name,
-        command: editing.command.trim(),
+        ...(editing.transport === "stdio"
+          ? { transport: "stdio", command: editing.value.trim() }
+          : {
+              transport: editing.transport,
+              url: editing.value.trim(),
+              headers,
+            }),
       });
+
       if (!result.success) {
         setError(result.error ?? "Failed to update MCP server");
       } else {
-        // Clear cached test result since command changed
+        // Clear cached test result since config changed
         clearTestResult(editing.name);
         setEditing(null);
         await refresh();
@@ -430,8 +527,8 @@ export const ProjectSettingsSection: React.FC = () => {
   }
 
   const projectName = (path: string) => path.split(/[\\/]/).pop() ?? path;
-  const canAdd = newServer.name.trim() && newServer.command.trim();
-  const canTest = newServer.command.trim();
+  const canAdd = newServer.name.trim() && newServer.value.trim();
+  const canTest = newServer.value.trim();
 
   return (
     <div className="space-y-6">
@@ -564,21 +661,37 @@ export const ProjectSettingsSection: React.FC = () => {
                       )}
                     </div>
                     {isEditing ? (
-                      <input
-                        type="text"
-                        value={editing.command}
-                        onChange={(e) => setEditing({ ...editing, command: e.target.value })}
-                        className="border-border-medium bg-secondary/30 text-foreground placeholder:text-muted-foreground focus:ring-accent mt-1 w-full rounded-md border px-2 py-1 font-mono text-xs focus:ring-1 focus:outline-none"
-                        autoFocus
-                        spellCheck={false}
-                        onKeyDown={createEditKeyHandler({
-                          onSave: () => void handleSaveEdit(),
-                          onCancel: handleCancelEdit,
-                        })}
-                      />
+                      <div className="mt-1 space-y-2">
+                        <p className="text-muted-foreground text-xs">
+                          transport: {editing.transport}
+                        </p>
+                        <input
+                          type="text"
+                          value={editing.value}
+                          onChange={(e) => setEditing({ ...editing, value: e.target.value })}
+                          className="border-border-medium bg-secondary/30 text-foreground placeholder:text-muted-foreground focus:ring-accent w-full rounded-md border px-2 py-1 font-mono text-xs focus:ring-1 focus:outline-none"
+                          autoFocus
+                          spellCheck={false}
+                          onKeyDown={createEditKeyHandler({
+                            onSave: () => void handleSaveEdit(),
+                            onCancel: handleCancelEdit,
+                          })}
+                        />
+                        {editing.transport !== "stdio" && (
+                          <textarea
+                            value={editing.headersJson}
+                            onChange={(e) =>
+                              setEditing({ ...editing, headersJson: e.target.value })
+                            }
+                            rows={4}
+                            spellCheck={false}
+                            className="border-border-medium bg-secondary/30 text-foreground placeholder:text-muted-foreground focus:ring-accent w-full rounded-md border px-2 py-1 font-mono text-xs focus:ring-1 focus:outline-none"
+                          />
+                        )}
+                      </div>
                     ) : (
                       <p className="text-muted-foreground mt-0.5 font-mono text-xs break-all">
-                        {entry.command}
+                        {serverDisplayValue(entry)}
                       </p>
                     )}
                   </div>
@@ -589,7 +702,7 @@ export const ProjectSettingsSection: React.FC = () => {
                           variant="ghost"
                           size="icon"
                           onClick={() => void handleSaveEdit()}
-                          disabled={savingEdit || !editing.command.trim()}
+                          disabled={savingEdit || !editing.value.trim()}
                           className="h-7 w-7 text-green-500 hover:text-green-400"
                           title="Save (Enter)"
                         >
@@ -629,9 +742,9 @@ export const ProjectSettingsSection: React.FC = () => {
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => handleStartEdit(name, entry.command)}
+                          onClick={() => handleStartEdit(name, entry)}
                           className="text-muted hover:text-accent h-7 w-7"
-                          title="Edit command"
+                          title="Edit server"
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
@@ -688,19 +801,65 @@ export const ProjectSettingsSection: React.FC = () => {
             />
           </div>
           <div className="space-y-1.5">
-            <label htmlFor="server-command" className="text-muted-foreground text-xs">
-              Command
+            <label className="text-muted-foreground text-xs">Transport</label>
+            <Select
+              value={newServer.transport}
+              onValueChange={(value) =>
+                setNewServer((prev) => ({
+                  ...prev,
+                  transport: value as MCPServerTransport,
+                  value: "",
+                  headersJson: "",
+                }))
+              }
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="stdio">Stdio</SelectItem>
+                <SelectItem value="http">HTTP (Streamable)</SelectItem>
+                <SelectItem value="sse">SSE (Legacy)</SelectItem>
+                <SelectItem value="auto">Auto (HTTP → SSE)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1.5">
+            <label htmlFor="server-value" className="text-muted-foreground text-xs">
+              {newServer.transport === "stdio" ? "Command" : "URL"}
             </label>
             <input
-              id="server-command"
+              id="server-value"
               type="text"
-              placeholder="e.g., npx -y @modelcontextprotocol/server-memory"
-              value={newServer.command}
-              onChange={(e) => setNewServer((prev) => ({ ...prev, command: e.target.value }))}
+              placeholder={
+                newServer.transport === "stdio"
+                  ? "e.g., npx -y @modelcontextprotocol/server-memory"
+                  : "e.g., http://localhost:3333/mcp"
+              }
+              value={newServer.value}
+              onChange={(e) => setNewServer((prev) => ({ ...prev, value: e.target.value }))}
               spellCheck={false}
               className="border-border-medium bg-secondary/30 text-foreground placeholder:text-muted-foreground focus:ring-accent w-full rounded-md border px-3 py-2 font-mono text-sm focus:ring-1 focus:outline-none"
             />
           </div>
+
+          {newServer.transport !== "stdio" && (
+            <div className="space-y-1.5">
+              <label htmlFor="server-headers" className="text-muted-foreground text-xs">
+                Headers (JSON)
+              </label>
+              <textarea
+                id="server-headers"
+                placeholder='e.g., {"Authorization": {"secret": "MCP_TOKEN"}}'
+                value={newServer.headersJson}
+                onChange={(e) => setNewServer((prev) => ({ ...prev, headersJson: e.target.value }))}
+                spellCheck={false}
+                rows={4}
+                className="border-border-medium bg-secondary/30 text-foreground placeholder:text-muted-foreground focus:ring-accent w-full rounded-md border px-3 py-2 font-mono text-xs focus:ring-1 focus:outline-none"
+              />
+            </div>
+          )}
 
           {/* Test result for new command */}
           {newTestResult && (
@@ -737,7 +896,7 @@ export const ProjectSettingsSection: React.FC = () => {
           <div className="flex gap-2">
             <Button
               variant="outline"
-              onClick={() => void handleTestNewCommand()}
+              onClick={() => void handleTestNewServer()}
               disabled={!canTest || testingNew}
               className="h-auto px-3 py-1.5"
             >

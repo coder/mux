@@ -45,7 +45,9 @@ import type { PartialService } from "./partialService";
 import type { SessionUsageService } from "./sessionUsageService";
 import { buildSystemMessage, readToolInstructions } from "./systemMessage";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
-import type { MCPServerManager } from "@/node/services/mcpServerManager";
+import type { TelemetryService } from "@/node/services/telemetryService";
+import { getRuntimeTypeForTelemetry, roundToBase2 } from "@/common/telemetry/utils";
+import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpServerManager";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type {
@@ -305,6 +307,7 @@ export class AIService extends EventEmitter {
   private readonly partialService: PartialService;
   private readonly config: Config;
   private mcpServerManager?: MCPServerManager;
+  private telemetryService?: TelemetryService;
   private readonly initStateManager: InitStateManager;
   private readonly mockModeEnabled: boolean;
   private readonly mockScenarioPlayer?: MockScenarioPlayer;
@@ -340,6 +343,9 @@ export class AIService extends EventEmitter {
     }
   }
 
+  setTelemetryService(service: TelemetryService): void {
+    this.telemetryService = service;
+  }
   setMCPServerManager(manager: MCPServerManager): void {
     this.mcpServerManager = manager;
   }
@@ -1160,18 +1166,29 @@ export class AIService extends EventEmitter {
 
       // Generate stream token and create temp directory for tools
       const streamToken = this.streamManager.generateStreamToken();
+
       let mcpTools: Record<string, Tool> | undefined;
+      let mcpStats: MCPWorkspaceStats | undefined;
+      let mcpSetupDurationMs = 0;
+
       if (this.mcpServerManager) {
+        const start = Date.now();
         try {
-          mcpTools = await this.mcpServerManager.getToolsForWorkspace({
+          const result = await this.mcpServerManager.getToolsForWorkspace({
             workspaceId,
             projectPath: metadata.projectPath,
             runtime,
             workspacePath,
             overrides: mcpOverrides,
+            projectSecrets: secretsToRecord(projectSecrets),
           });
+
+          mcpTools = result.tools;
+          mcpStats = result.stats;
         } catch (error) {
           log.error("Failed to start MCP servers", { workspaceId, error });
+        } finally {
+          mcpSetupDurationMs = Date.now() - start;
         }
       }
 
@@ -1222,6 +1239,50 @@ export class AIService extends EventEmitter {
 
       // Apply tool policy to filter tools (if policy provided)
       const tools = applyToolPolicy(allTools, toolPolicy);
+
+      const effectiveMcpStats: MCPWorkspaceStats =
+        mcpStats ??
+        ({
+          enabledServerCount: 0,
+          startedServerCount: 0,
+          failedServerCount: 0,
+          autoFallbackCount: 0,
+          hasStdio: false,
+          hasHttp: false,
+          hasSse: false,
+          transportMode: "none",
+        } satisfies MCPWorkspaceStats);
+
+      const mcpToolNames = new Set(Object.keys(mcpTools ?? {}));
+      const toolNames = Object.keys(tools);
+      const mcpToolCount = toolNames.filter((name) => mcpToolNames.has(name)).length;
+      const totalToolCount = toolNames.length;
+      const builtinToolCount = Math.max(0, totalToolCount - mcpToolCount);
+
+      this.telemetryService?.capture({
+        event: "mcp_context_injected",
+        properties: {
+          workspaceId,
+          model: modelString,
+          mode: mode ?? uiMode ?? "unknown",
+          runtimeType: getRuntimeTypeForTelemetry(metadata.runtimeConfig),
+
+          mcp_server_enabled_count: effectiveMcpStats.enabledServerCount,
+          mcp_server_started_count: effectiveMcpStats.startedServerCount,
+          mcp_server_failed_count: effectiveMcpStats.failedServerCount,
+
+          mcp_tool_count: mcpToolCount,
+          total_tool_count: totalToolCount,
+          builtin_tool_count: builtinToolCount,
+
+          mcp_transport_mode: effectiveMcpStats.transportMode,
+          mcp_has_http: effectiveMcpStats.hasHttp,
+          mcp_has_sse: effectiveMcpStats.hasSse,
+          mcp_has_stdio: effectiveMcpStats.hasStdio,
+          mcp_auto_fallback_count: effectiveMcpStats.autoFallbackCount,
+          mcp_setup_duration_ms_b2: roundToBase2(mcpSetupDurationMs),
+        },
+      });
 
       log.info("AIService.streamMessage: tool configuration", {
         workspaceId,

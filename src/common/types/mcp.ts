@@ -1,6 +1,10 @@
-/** Normalized server info (always has disabled field) */
-export interface MCPServerInfo {
-  command: string;
+/** Supported MCP server transports. */
+export type MCPServerTransport = "stdio" | "http" | "sse" | "auto";
+
+export type MCPHeaderValue = string | { secret: string };
+
+export interface MCPServerBaseInfo {
+  transport: MCPServerTransport;
   disabled: boolean;
   /**
    * Optional tool allowlist at project level.
@@ -10,12 +14,32 @@ export interface MCPServerInfo {
   toolAllowlist?: string[];
 }
 
+/** stdio server definition (local process). */
+export interface MCPStdioServerInfo extends MCPServerBaseInfo {
+  transport: "stdio";
+  command: string;
+}
+
+/** HTTP-based server definition. */
+export interface MCPHttpServerInfo extends MCPServerBaseInfo {
+  transport: "http" | "sse" | "auto";
+  url: string;
+  /** Optional headers (string literal or reference to a project secret key). */
+  headers?: Record<string, MCPHeaderValue>;
+}
+
+/** Normalized server info (always has disabled field). */
+export type MCPServerInfo = MCPStdioServerInfo | MCPHttpServerInfo;
+
 export interface MCPConfig {
   servers: Record<string, MCPServerInfo>;
 }
 
-/** Internal map of server name → command string (used after filtering disabled) */
-export type MCPServerMap = Record<string, string>;
+/**
+ * Internal map of server name → server info (used after filtering disabled).
+ * Values are not shown to the model; only server names are exposed.
+ */
+export type MCPServerMap = Record<string, MCPServerInfo>;
 
 /** Result of testing an MCP server connection */
 export type MCPTestResult = { success: true; tools: string[] } | { success: false; error: string };

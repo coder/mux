@@ -109,6 +109,79 @@ export interface MessageSentPayload {
 }
 
 /**
+ * MCP usage events
+ */
+export type TelemetryMCPTransportMode = "none" | "stdio_only" | "http_only" | "sse_only" | "mixed";
+
+export interface MCPContextInjectedPayload {
+  /** Workspace ID (randomly generated, safe to send) */
+  workspaceId: string;
+  /** Full model identifier */
+  model: string;
+  /** UI mode */
+  mode: string;
+  /** Runtime type for the workspace */
+  runtimeType: TelemetryRuntimeType;
+
+  /** How many servers are enabled for this workspace message */
+  mcp_server_enabled_count: number;
+  /** How many servers successfully started (client created + tools fetched) */
+  mcp_server_started_count: number;
+  /** How many enabled servers failed to start */
+  mcp_server_failed_count: number;
+
+  /** MCP tools injected into the model request */
+  mcp_tool_count: number;
+  /** Total tools injected into the model request (built-in + MCP) */
+  total_tool_count: number;
+  /** Built-in tool count injected into the model request */
+  builtin_tool_count: number;
+
+  /** Effective transport mix for enabled servers */
+  mcp_transport_mode: TelemetryMCPTransportMode;
+  /** Whether any enabled server uses HTTP (includes auto transport) */
+  mcp_has_http: boolean;
+  /** Whether any enabled server uses legacy SSE */
+  mcp_has_sse: boolean;
+  /** Whether any enabled server uses stdio */
+  mcp_has_stdio: boolean;
+
+  /** Number of servers that required auto-fallback from HTTP to SSE */
+  mcp_auto_fallback_count: number;
+
+  /** Time spent preparing MCP servers/tools (ms, rounded to nearest power of 2) */
+  mcp_setup_duration_ms_b2: number;
+}
+
+export type TelemetryMCPServerTransport = "stdio" | "http" | "sse" | "auto";
+export type TelemetryMCPTestErrorCategory = "timeout" | "connect" | "http_status" | "unknown";
+
+export interface MCPServerTestedPayload {
+  transport: TelemetryMCPServerTransport;
+  success: boolean;
+  duration_ms_b2: number;
+  /** Error category when success=false (no raw error messages for privacy) */
+  error_category?: TelemetryMCPTestErrorCategory;
+}
+
+export type TelemetryMCPServerConfigAction =
+  | "add"
+  | "edit"
+  | "remove"
+  | "enable"
+  | "disable"
+  | "set_tool_allowlist"
+  | "set_headers";
+
+export interface MCPServerConfigChangedPayload {
+  action: TelemetryMCPServerConfigAction;
+  transport: TelemetryMCPServerTransport;
+  has_headers: boolean;
+  uses_secret_headers: boolean;
+  /** Only set when action=set_tool_allowlist */
+  tool_allowlist_size_b2?: number;
+}
+/**
  * Stream completion event - tracks when AI responses finish
  */
 export interface StreamCompletedPayload {
@@ -226,6 +299,9 @@ export type TelemetryEventPayload =
   | { event: "workspace_created"; properties: WorkspaceCreatedPayload }
   | { event: "workspace_switched"; properties: WorkspaceSwitchedPayload }
   | { event: "message_sent"; properties: MessageSentPayload }
+  | { event: "mcp_context_injected"; properties: MCPContextInjectedPayload }
+  | { event: "mcp_server_tested"; properties: MCPServerTestedPayload }
+  | { event: "mcp_server_config_changed"; properties: MCPServerConfigChangedPayload }
   | { event: "stream_completed"; properties: StreamCompletedPayload }
   | { event: "compaction_completed"; properties: CompactionCompletedPayload }
   | { event: "provider_configured"; properties: ProviderConfiguredPayload }

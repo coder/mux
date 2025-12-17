@@ -24,8 +24,14 @@ describe("MCP server disable filtering", () => {
 
   test("disabled servers are filtered from manager.listServers", async () => {
     // Add two servers
-    await configService.addServer(tempDir, "enabled-server", "cmd1");
-    await configService.addServer(tempDir, "disabled-server", "cmd2");
+    await configService.addServer(tempDir, "enabled-server", {
+      transport: "stdio",
+      command: "cmd1",
+    });
+    await configService.addServer(tempDir, "disabled-server", {
+      transport: "stdio",
+      command: "cmd2",
+    });
 
     // Disable one
     await configService.setServerEnabled(tempDir, "disabled-server", false);
@@ -33,13 +39,15 @@ describe("MCP server disable filtering", () => {
     // Config service returns both (with disabled flag)
     const allServers = await configService.listServers(tempDir);
     expect(allServers).toEqual({
-      "enabled-server": { command: "cmd1", disabled: false },
-      "disabled-server": { command: "cmd2", disabled: true },
+      "enabled-server": { transport: "stdio", command: "cmd1", disabled: false },
+      "disabled-server": { transport: "stdio", command: "cmd2", disabled: true },
     });
 
     // Server manager filters to enabled only
     const enabledServers = await serverManager.listServers(tempDir);
-    expect(enabledServers).toEqual({ "enabled-server": "cmd1" });
+    expect(enabledServers).toEqual({
+      "enabled-server": { transport: "stdio", command: "cmd1", disabled: false },
+    });
   });
 });
 
@@ -54,9 +62,9 @@ describe("Workspace MCP overrides filtering", () => {
     serverManager = new MCPServerManager(configService);
 
     // Set up multiple servers for testing
-    await configService.addServer(tempDir, "server-a", "cmd-a");
-    await configService.addServer(tempDir, "server-b", "cmd-b");
-    await configService.addServer(tempDir, "server-c", "cmd-c");
+    await configService.addServer(tempDir, "server-a", { transport: "stdio", command: "cmd-a" });
+    await configService.addServer(tempDir, "server-b", { transport: "stdio", command: "cmd-b" });
+    await configService.addServer(tempDir, "server-c", { transport: "stdio", command: "cmd-c" });
   });
 
   afterEach(async () => {
@@ -67,9 +75,9 @@ describe("Workspace MCP overrides filtering", () => {
   test("listServers with no overrides returns all enabled servers", async () => {
     const servers = await serverManager.listServers(tempDir);
     expect(servers).toEqual({
-      "server-a": "cmd-a",
-      "server-b": "cmd-b",
-      "server-c": "cmd-c",
+      "server-a": { transport: "stdio", command: "cmd-a", disabled: false },
+      "server-b": { transport: "stdio", command: "cmd-b", disabled: false },
+      "server-c": { transport: "stdio", command: "cmd-c", disabled: false },
     });
   });
 
@@ -77,9 +85,9 @@ describe("Workspace MCP overrides filtering", () => {
     const overrides: WorkspaceMCPOverrides = {};
     const servers = await serverManager.listServers(tempDir, overrides);
     expect(servers).toEqual({
-      "server-a": "cmd-a",
-      "server-b": "cmd-b",
-      "server-c": "cmd-c",
+      "server-a": { transport: "stdio", command: "cmd-a", disabled: false },
+      "server-b": { transport: "stdio", command: "cmd-b", disabled: false },
+      "server-c": { transport: "stdio", command: "cmd-c", disabled: false },
     });
   });
 
@@ -88,7 +96,9 @@ describe("Workspace MCP overrides filtering", () => {
       disabledServers: ["server-a", "server-c"],
     };
     const servers = await serverManager.listServers(tempDir, overrides);
-    expect(servers).toEqual({ "server-b": "cmd-b" });
+    expect(servers).toEqual({
+      "server-b": { transport: "stdio", command: "cmd-b", disabled: false },
+    });
   });
 
   test("listServers with disabledServers removes servers not in config (no error)", async () => {
@@ -97,9 +107,9 @@ describe("Workspace MCP overrides filtering", () => {
     };
     const servers = await serverManager.listServers(tempDir, overrides);
     expect(servers).toEqual({
-      "server-a": "cmd-a",
-      "server-b": "cmd-b",
-      "server-c": "cmd-c",
+      "server-a": { transport: "stdio", command: "cmd-a", disabled: false },
+      "server-b": { transport: "stdio", command: "cmd-b", disabled: false },
+      "server-c": { transport: "stdio", command: "cmd-c", disabled: false },
     });
   });
 
@@ -110,8 +120,8 @@ describe("Workspace MCP overrides filtering", () => {
     // Without override, server-a should be disabled
     const serversWithoutOverride = await serverManager.listServers(tempDir);
     expect(serversWithoutOverride).toEqual({
-      "server-b": "cmd-b",
-      "server-c": "cmd-c",
+      "server-b": { transport: "stdio", command: "cmd-b", disabled: false },
+      "server-c": { transport: "stdio", command: "cmd-c", disabled: false },
     });
 
     // With enabledServers override, server-a should be re-enabled
@@ -120,9 +130,9 @@ describe("Workspace MCP overrides filtering", () => {
     };
     const serversWithOverride = await serverManager.listServers(tempDir, overrides);
     expect(serversWithOverride).toEqual({
-      "server-a": "cmd-a",
-      "server-b": "cmd-b",
-      "server-c": "cmd-c",
+      "server-a": { transport: "stdio", command: "cmd-a", disabled: false },
+      "server-b": { transport: "stdio", command: "cmd-b", disabled: false },
+      "server-c": { transport: "stdio", command: "cmd-c", disabled: false },
     });
   });
 
@@ -137,6 +147,8 @@ describe("Workspace MCP overrides filtering", () => {
 
     const servers = await serverManager.listServers(tempDir, overrides);
     // Only server-c should remain
-    expect(servers).toEqual({ "server-c": "cmd-c" });
+    expect(servers).toEqual({
+      "server-c": { transport: "stdio", command: "cmd-c", disabled: false },
+    });
   });
 });

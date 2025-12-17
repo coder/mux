@@ -1,10 +1,12 @@
-import { experimental_createMCPClient, type MCPTransport } from "@ai-sdk/mcp";
+import { experimental_createMCPClient } from "@ai-sdk/mcp";
 import type { Tool } from "ai";
 import { log } from "@/node/services/log";
 import { MCPStdioTransport } from "@/node/services/mcpStdioTransport";
 import type {
+  MCPHeaderValue,
   MCPServerInfo,
   MCPServerMap,
+  MCPServerTransport,
   MCPTestResult,
   WorkspaceMCPOverrides,
 } from "@/common/types/mcp";
@@ -41,50 +43,199 @@ function wrapMCPTools(tools: Record<string, Tool>): Record<string, Tool> {
   return wrapped;
 }
 
+type ResolvedHeaders = Record<string, string> | undefined;
+
+type ResolvedTransport = "stdio" | "http" | "sse";
+
+function resolveHeaders(
+  headers: Record<string, MCPHeaderValue> | undefined,
+  projectSecrets: Record<string, string> | undefined
+): { headers: ResolvedHeaders; usesSecretHeaders: boolean } {
+  if (!headers) {
+    return { headers: undefined, usesSecretHeaders: false };
+  }
+
+  const resolved: Record<string, string> = {};
+  let usesSecretHeaders = false;
+
+  for (const [key, value] of Object.entries(headers)) {
+    if (typeof value === "string") {
+      resolved[key] = value;
+      continue;
+    }
+
+    usesSecretHeaders = true;
+    const secretKey = value.secret;
+    const secretValue = projectSecrets?.[secretKey];
+    if (typeof secretValue !== "string") {
+      throw new Error(`Missing project secret: ${secretKey}`);
+    }
+    resolved[key] = secretValue;
+  }
+
+  return { headers: resolved, usesSecretHeaders };
+}
+
+function extractHttpStatusCode(error: unknown): number | null {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+
+  const obj = error as Record<string, unknown>;
+
+  // A few common shapes across fetch libraries / AI SDK.
+  const statusCode = obj.statusCode;
+  if (typeof statusCode === "number") {
+    return statusCode;
+  }
+
+  const status = obj.status;
+  if (typeof status === "number") {
+    return status;
+  }
+
+  const response = obj.response;
+  if (response && typeof response === "object") {
+    const responseStatus = (response as Record<string, unknown>).status;
+    if (typeof responseStatus === "number") {
+      return responseStatus;
+    }
+  }
+
+  const cause = obj.cause;
+  if (cause && typeof cause === "object") {
+    const causeStatus = (cause as Record<string, unknown>).statusCode;
+    if (typeof causeStatus === "number") {
+      return causeStatus;
+    }
+  }
+
+  // Best-effort fallback on message contents.
+  const message = obj.message;
+  if (typeof message === "string") {
+    const re = /\b(400|404|405)\b/;
+    const match = re.exec(message);
+    if (match) {
+      return Number(match[1]);
+    }
+  }
+
+  return null;
+}
+
+function shouldAutoFallbackToSse(error: unknown): boolean {
+  const status = extractHttpStatusCode(error);
+  return status === 400 || status === 404 || status === 405;
+}
+
 export type { MCPTestResult } from "@/common/types/mcp";
 
 /**
- * Run a test connection to an MCP server command.
- * Spawns the process, connects, fetches tools, then closes.
+ * Run a test connection to an MCP server.
+ * Connects, fetches tools, then closes.
  */
 async function runServerTest(
-  command: string,
+  server:
+    | { transport: "stdio"; command: string }
+    | { transport: "http" | "sse" | "auto"; url: string; headers?: ResolvedHeaders },
   projectPath: string,
   logContext: string
 ): Promise<MCPTestResult> {
-  const runtime = createRuntime({ type: "local", srcBaseDir: projectPath });
   const timeoutPromise = new Promise<MCPTestResult>((resolve) =>
     setTimeout(() => resolve({ success: false, error: "Connection timed out" }), TEST_TIMEOUT_MS)
   );
 
   const testPromise = (async (): Promise<MCPTestResult> => {
-    let transport: MCPStdioTransport | null = null;
-    try {
-      log.debug(`[MCP] Testing ${logContext}`, { command });
-      const execStream = await runtime.exec(command, {
-        cwd: projectPath,
-        timeout: TEST_TIMEOUT_MS / 1000,
-      });
+    let stdioTransport: MCPStdioTransport | null = null;
+    let client: Awaited<ReturnType<typeof experimental_createMCPClient>> | null = null;
 
-      transport = new MCPStdioTransport(execStream);
-      await transport.start();
-      const client = await experimental_createMCPClient({ transport });
+    try {
+      if (server.transport === "stdio") {
+        const runtime = createRuntime({ type: "local", srcBaseDir: projectPath });
+        log.debug(`[MCP] Testing ${logContext}`, { transport: "stdio" });
+
+        const execStream = await runtime.exec(server.command, {
+          cwd: projectPath,
+          timeout: TEST_TIMEOUT_MS / 1000,
+        });
+
+        stdioTransport = new MCPStdioTransport(execStream);
+        await stdioTransport.start();
+        client = await experimental_createMCPClient({ transport: stdioTransport });
+      } else {
+        log.debug(`[MCP] Testing ${logContext}`, { transport: server.transport });
+
+        const tryHttp = async () =>
+          experimental_createMCPClient({
+            transport: {
+              type: "http",
+              url: server.url,
+              headers: server.headers,
+            },
+          });
+
+        const trySse = async () =>
+          experimental_createMCPClient({
+            transport: {
+              type: "sse",
+              url: server.url,
+              headers: server.headers,
+            },
+          });
+
+        if (server.transport === "http") {
+          client = await tryHttp();
+        } else if (server.transport === "sse") {
+          client = await trySse();
+        } else {
+          // auto
+          try {
+            client = await tryHttp();
+          } catch (error) {
+            if (!shouldAutoFallbackToSse(error)) {
+              throw error;
+            }
+            log.debug(`[MCP] ${logContext} auto-fallback http→sse`, {
+              status: extractHttpStatusCode(error),
+            });
+            client = await trySse();
+          }
+        }
+      }
+
       const tools = await client.tools();
       const toolNames = Object.keys(tools);
+
       await client.close();
-      await transport.close();
-      log.info(`[MCP] ${logContext} test successful`, { tools: toolNames });
+      client = null;
+
+      if (stdioTransport) {
+        await stdioTransport.close();
+        stdioTransport = null;
+      }
+
+      log.info(`[MCP] ${logContext} test successful`, { toolCount: toolNames.length });
       return { success: true, tools: toolNames };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       log.warn(`[MCP] ${logContext} test failed`, { error: message });
-      if (transport) {
+
+      if (client) {
         try {
-          await transport.close();
+          await client.close();
         } catch {
           // ignore cleanup errors
         }
       }
+
+      if (stdioTransport) {
+        try {
+          await stdioTransport.close();
+        } catch {
+          // ignore cleanup errors
+        }
+      }
+
       return { success: false, error: message };
     }
   })();
@@ -94,20 +245,41 @@ async function runServerTest(
 
 interface MCPServerInstance {
   name: string;
-  transport: MCPTransport;
+  /** Resolved transport actually used (auto may fall back to sse). */
+  resolvedTransport: ResolvedTransport;
+  autoFallbackUsed: boolean;
   tools: Record<string, Tool>;
   close: () => Promise<void>;
 }
 
+export type MCPTransportMode = "none" | "stdio_only" | "http_only" | "sse_only" | "mixed";
+
+export interface MCPWorkspaceStats {
+  enabledServerCount: number;
+  startedServerCount: number;
+  failedServerCount: number;
+  autoFallbackCount: number;
+
+  hasStdio: boolean;
+  hasHttp: boolean;
+  hasSse: boolean;
+  transportMode: MCPTransportMode;
+}
+
+export interface MCPToolsForWorkspaceResult {
+  tools: Record<string, Tool>;
+  stats: MCPWorkspaceStats;
+}
 interface WorkspaceServers {
   configSignature: string;
   instances: Map<string, MCPServerInstance>;
+  stats: MCPWorkspaceStats;
   lastActivity: number;
 }
 
 export interface MCPServerManagerOptions {
-  /** Inline servers to use (merged with config file servers by default) */
-  inlineServers?: MCPServerMap;
+  /** Inline stdio servers to use (merged with config file servers by default) */
+  inlineServers?: Record<string, string>;
   /** If true, ignore config file servers and use only inline servers */
   ignoreConfigFile?: boolean;
 }
@@ -115,7 +287,7 @@ export interface MCPServerManagerOptions {
 export class MCPServerManager {
   private readonly workspaceServers = new Map<string, WorkspaceServers>();
   private readonly idleCheckInterval: ReturnType<typeof setInterval>;
-  private inlineServers: MCPServerMap = {};
+  private inlineServers: Record<string, string> = {};
   private ignoreConfigFile = false;
 
   constructor(
@@ -164,7 +336,7 @@ export class MCPServerManager {
     // Inline servers override config file servers (always enabled)
     const inlineAsInfo: Record<string, MCPServerInfo> = {};
     for (const [name, command] of Object.entries(this.inlineServers)) {
-      inlineAsInfo[name] = { command, disabled: false };
+      inlineAsInfo[name] = { transport: "stdio", command, disabled: false };
     }
     return { ...configServers, ...inlineAsInfo };
   }
@@ -205,15 +377,23 @@ export class MCPServerManager {
     for (const [name, info] of Object.entries(servers)) {
       // Workspace overrides take precedence
       if (enabledSet.has(name)) {
-        result[name] = info.command; // Explicitly enabled at workspace level
-      } else if (disabledSet.has(name)) {
+        // Explicitly enabled at workspace level (overrides project disabled)
+        result[name] = { ...info, disabled: false };
+        continue;
+      }
+
+      if (disabledSet.has(name)) {
         // Explicitly disabled at workspace level - skip
         continue;
-      } else if (!info.disabled) {
-        result[name] = info.command; // Enabled at project level, no workspace override
+      }
+
+      if (!info.disabled) {
+        // Enabled at project level, no workspace override
+        result[name] = info;
       }
       // If disabled at project level with no workspace override, skip
     }
+
     return result;
   }
 
@@ -284,38 +464,116 @@ export class MCPServerManager {
     workspacePath: string;
     /** Per-workspace MCP overrides (disabled servers, tool allowlists) */
     overrides?: WorkspaceMCPOverrides;
-  }): Promise<Record<string, Tool>> {
-    const { workspaceId, projectPath, runtime, workspacePath, overrides } = options;
+    /** Project secrets, used for resolving {secret: "KEY"} header references. */
+    projectSecrets?: Record<string, string>;
+  }): Promise<MCPToolsForWorkspaceResult> {
+    const { workspaceId, projectPath, runtime, workspacePath, overrides, projectSecrets } = options;
 
     // Fetch full server info for project-level allowlists and server filtering
     const fullServerInfo = await this.getAllServers(projectPath);
 
     // Apply server-level overrides (enabled/disabled) before caching
-    const servers = this.applyServerOverrides(fullServerInfo, overrides);
-    const signature = JSON.stringify(servers);
-    const serverNames = Object.keys(servers);
+    const enabledServers = this.applyServerOverrides(fullServerInfo, overrides);
+    const enabledEntries = Object.entries(enabledServers).sort(([a], [b]) => a.localeCompare(b));
+
+    // Signature is based on *start config* only (not tool allowlists), so changing allowlists
+    // does not force a server restart.
+    const signatureEntries: Record<string, unknown> = {};
+    for (const [name, info] of enabledEntries) {
+      if (info.transport === "stdio") {
+        signatureEntries[name] = { transport: "stdio", command: info.command };
+        continue;
+      }
+
+      try {
+        const { headers } = resolveHeaders(info.headers, projectSecrets);
+        signatureEntries[name] = { transport: info.transport, url: info.url, headers };
+      } catch {
+        // Missing secrets or invalid header config. Keep signature stable but avoid leaking details.
+        signatureEntries[name] = { transport: info.transport, url: info.url, headers: null };
+      }
+    }
+
+    const signature = JSON.stringify(signatureEntries);
 
     const existing = this.workspaceServers.get(workspaceId);
     if (existing?.configSignature === signature) {
-      // Update activity timestamp to prevent idle cleanup
       existing.lastActivity = Date.now();
-      log.debug("[MCP] Using cached servers", { workspaceId, serverCount: serverNames.length });
-      // Apply tool-level filtering (allowlists) each time - they can change without server restart
-      return this.collectTools(existing.instances, fullServerInfo, overrides);
+      log.debug("[MCP] Using cached servers", {
+        workspaceId,
+        serverCount: enabledEntries.length,
+      });
+
+      return {
+        tools: this.collectTools(existing.instances, fullServerInfo, overrides),
+        stats: existing.stats,
+      };
     }
 
     // Config changed or not started yet -> restart
-    if (serverNames.length > 0) {
-      log.info("[MCP] Starting servers", { workspaceId, servers: serverNames });
+    if (enabledEntries.length > 0) {
+      log.info("[MCP] Starting servers", {
+        workspaceId,
+        servers: enabledEntries.map(([name]) => name),
+      });
     }
+
     await this.stopServers(workspaceId);
-    const instances = await this.startServers(servers, runtime, workspacePath);
+
+    const instances = await this.startServers(
+      enabledServers,
+      runtime,
+      workspacePath,
+      projectSecrets
+    );
+
+    const configuredTransports = new Set<ResolvedTransport>();
+    for (const [, info] of enabledEntries) {
+      if (info.transport === "stdio") {
+        configuredTransports.add("stdio");
+        continue;
+      }
+      // Treat auto as http for transport-mode purposes.
+      configuredTransports.add(info.transport === "sse" ? "sse" : "http");
+    }
+
+    const hasStdio = configuredTransports.has("stdio");
+    const hasHttp = configuredTransports.has("http");
+    const hasSse = configuredTransports.has("sse");
+
+    const transportMode: MCPTransportMode =
+      enabledEntries.length === 0
+        ? "none"
+        : configuredTransports.size === 1 && hasStdio
+          ? "stdio_only"
+          : configuredTransports.size === 1 && hasHttp
+            ? "http_only"
+            : configuredTransports.size === 1 && hasSse
+              ? "sse_only"
+              : "mixed";
+
+    const stats: MCPWorkspaceStats = {
+      enabledServerCount: enabledEntries.length,
+      startedServerCount: instances.size,
+      failedServerCount: Math.max(0, enabledEntries.length - instances.size),
+      autoFallbackCount: [...instances.values()].filter((i) => i.autoFallbackUsed).length,
+      hasStdio,
+      hasHttp,
+      hasSse,
+      transportMode,
+    };
+
     this.workspaceServers.set(workspaceId, {
       configSignature: signature,
       instances,
+      stats,
       lastActivity: Date.now(),
     });
-    return this.collectTools(instances, fullServerInfo, overrides);
+
+    return {
+      tools: this.collectTools(instances, fullServerInfo, overrides),
+      stats,
+    };
   }
 
   async stopServers(workspaceId: string): Promise<void> {
@@ -334,23 +592,71 @@ export class MCPServerManager {
   }
 
   /**
-   * Test an MCP server. Provide either:
-   * - `name` to test a configured server by looking up its command
-   * - `command` to test an arbitrary command directly
+   * Test an MCP server.
+   *
+   * Provide either:
+   * - `name` to test a configured server by looking up its config, OR
+   * - `command` to test an arbitrary stdio command, OR
+   * - `url`+`transport` to test an arbitrary HTTP/SSE endpoint.
    */
-  async test(projectPath: string, name?: string, command?: string): Promise<MCPTestResult> {
-    if (name) {
+  async test(options: {
+    projectPath: string;
+    name?: string;
+    command?: string;
+    transport?: MCPServerTransport;
+    url?: string;
+    headers?: Record<string, MCPHeaderValue>;
+    projectSecrets?: Record<string, string>;
+  }): Promise<MCPTestResult> {
+    const { projectPath, name, command, transport, url, headers, projectSecrets } = options;
+
+    if (name?.trim()) {
       const servers = await this.configService.listServers(projectPath);
       const server = servers[name];
       if (!server) {
         return { success: false, error: `Server "${name}" not found in configuration` };
       }
-      return runServerTest(server.command, projectPath, `server "${name}"`);
+
+      if (server.transport === "stdio") {
+        return runServerTest(
+          { transport: "stdio", command: server.command },
+          projectPath,
+          `server "${name}"`
+        );
+      }
+
+      try {
+        const resolved = resolveHeaders(server.headers, projectSecrets);
+        return runServerTest(
+          { transport: server.transport, url: server.url, headers: resolved.headers },
+          projectPath,
+          `server "${name}"`
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { success: false, error: message };
+      }
     }
+
     if (command?.trim()) {
-      return runServerTest(command, projectPath, "command");
+      return runServerTest({ transport: "stdio", command }, projectPath, "command");
     }
-    return { success: false, error: "Either name or command is required" };
+
+    if (url?.trim()) {
+      if (transport !== "http" && transport !== "sse" && transport !== "auto") {
+        return { success: false, error: "transport must be http|sse|auto when testing by url" };
+      }
+
+      try {
+        const resolved = resolveHeaders(headers, projectSecrets);
+        return runServerTest({ transport, url, headers: resolved.headers }, projectPath, "url");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { success: false, error: message };
+      }
+    }
+
+    return { success: false, error: "Either name, command, or url is required" };
   }
 
   /**
@@ -389,46 +695,140 @@ export class MCPServerManager {
   private async startServers(
     servers: MCPServerMap,
     runtime: Runtime,
-    workspacePath: string
+    workspacePath: string,
+    projectSecrets: Record<string, string> | undefined
   ): Promise<Map<string, MCPServerInstance>> {
     const result = new Map<string, MCPServerInstance>();
     const entries = Object.entries(servers);
-    for (const [name, command] of entries) {
+
+    for (const [name, info] of entries) {
       try {
-        const instance = await this.startSingleServer(name, command, runtime, workspacePath);
+        const instance = await this.startSingleServer(
+          name,
+          info,
+          runtime,
+          workspacePath,
+          projectSecrets
+        );
         if (instance) {
           result.set(name, instance);
         }
       } catch (error) {
-        log.error("Failed to start MCP server", { name, error });
+        const message = error instanceof Error ? error.message : String(error);
+        log.error("Failed to start MCP server", { name, error: message });
       }
     }
+
     return result;
   }
 
   private async startSingleServer(
     name: string,
-    command: string,
+    info: MCPServerInfo,
     runtime: Runtime,
-    workspacePath: string
+    workspacePath: string,
+    projectSecrets: Record<string, string> | undefined
   ): Promise<MCPServerInstance | null> {
-    log.debug("[MCP] Spawning server", { name, command });
-    const execStream = await runtime.exec(command, {
-      cwd: workspacePath,
-      timeout: 60 * 60 * 24, // 24 hours
-    });
+    if (info.transport === "stdio") {
+      log.debug("[MCP] Spawning stdio server", { name });
+      const execStream = await runtime.exec(info.command, {
+        cwd: workspacePath,
+        timeout: 60 * 60 * 24, // 24 hours
+      });
 
-    const transport = new MCPStdioTransport(execStream);
-    transport.onerror = (error) => {
-      log.error("[MCP] Transport error", { name, error });
-    };
+      const transport = new MCPStdioTransport(execStream);
+      transport.onerror = (error) => {
+        log.error("[MCP] Transport error", { name, error });
+      };
 
-    await transport.start();
-    const client = await experimental_createMCPClient({ transport });
+      await transport.start();
+      const client = await experimental_createMCPClient({ transport });
+      const rawTools = await client.tools();
+      const tools = wrapMCPTools(rawTools);
+
+      log.info("[MCP] Server ready", {
+        name,
+        transport: "stdio",
+        toolCount: Object.keys(tools).length,
+      });
+
+      const close = async () => {
+        try {
+          await client.close();
+        } catch (error) {
+          log.debug("[MCP] Error closing client", { name, error });
+        }
+        try {
+          await transport.close();
+        } catch (error) {
+          log.debug("[MCP] Error closing transport", { name, error });
+        }
+      };
+
+      return {
+        name,
+        resolvedTransport: "stdio",
+        autoFallbackUsed: false,
+        tools,
+        close,
+      };
+    }
+
+    const { headers } = resolveHeaders(info.headers, projectSecrets);
+
+    const tryHttp = async () =>
+      experimental_createMCPClient({
+        transport: {
+          type: "http",
+          url: info.url,
+          headers,
+        },
+      });
+
+    const trySse = async () =>
+      experimental_createMCPClient({
+        transport: {
+          type: "sse",
+          url: info.url,
+          headers,
+        },
+      });
+
+    let client: Awaited<ReturnType<typeof experimental_createMCPClient>>;
+    let resolvedTransport: ResolvedTransport;
+    let autoFallbackUsed = false;
+
+    if (info.transport === "http") {
+      resolvedTransport = "http";
+      client = await tryHttp();
+    } else if (info.transport === "sse") {
+      resolvedTransport = "sse";
+      client = await trySse();
+    } else {
+      // auto
+      try {
+        resolvedTransport = "http";
+        client = await tryHttp();
+      } catch (error) {
+        if (!shouldAutoFallbackToSse(error)) {
+          throw error;
+        }
+        autoFallbackUsed = true;
+        resolvedTransport = "sse";
+        log.debug("[MCP] Auto-fallback http→sse", { name, status: extractHttpStatusCode(error) });
+        client = await trySse();
+      }
+    }
+
     const rawTools = await client.tools();
     const tools = wrapMCPTools(rawTools);
-    const toolNames = Object.keys(tools);
-    log.info("[MCP] Server ready", { name, tools: toolNames });
+
+    log.info("[MCP] Server ready", {
+      name,
+      transport: resolvedTransport,
+      toolCount: Object.keys(tools).length,
+      autoFallbackUsed,
+    });
 
     const close = async () => {
       try {
@@ -436,13 +836,14 @@ export class MCPServerManager {
       } catch (error) {
         log.debug("[MCP] Error closing client", { name, error });
       }
-      try {
-        await transport.close();
-      } catch (error) {
-        log.debug("[MCP] Error closing transport", { name, error });
-      }
     };
 
-    return { name, transport, tools, close };
+    return {
+      name,
+      resolvedTransport,
+      autoFallbackUsed,
+      tools,
+      close,
+    };
   }
 }
