@@ -195,9 +195,12 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const [isHidden, setIsHidden] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false);
 
   React.useEffect(() => {
-    // Never hide when Review tab is active - code review needs space
+    // Review tab: prefer not to hide, but still collapse if window is very small
+    // (chatAreaWidth is too cramped even for minimal chat)
     if (selectedTab === "review") {
-      if (isHidden) {
+      if (chatAreaWidth <= COLLAPSE_THRESHOLD) {
+        setIsHidden(true);
+      } else if (isHidden) {
         setIsHidden(false);
       }
       return;
