@@ -13,6 +13,7 @@ import { createTodoWriteTool, createTodoReadTool } from "@/node/services/tools/t
 import { createStatusSetTool } from "@/node/services/tools/status_set";
 import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
 import { log } from "@/node/services/log";
+import { sanitizeMCPToolsForOpenAI } from "@/common/utils/tools/schemaSanitizer";
 
 import type { Runtime } from "@/node/runtime/Runtime";
 import type { InitStateManager } from "@/node/services/initStateManager";
@@ -157,16 +158,28 @@ export async function getToolsForModel(
       }
 
       case "openai": {
+        // Sanitize MCP tools for OpenAI's stricter JSON Schema validation.
+        // OpenAI's Responses API doesn't support certain schema properties like
+        // minLength, maximum, default, etc. that are valid JSON Schema but not
+        // accepted by OpenAI's Structured Outputs implementation.
+        const sanitizedMcpTools = mcpTools ? sanitizeMCPToolsForOpenAI(mcpTools) : {};
+
         // Only add web search for models that support it
         if (modelId.includes("gpt-5") || modelId.includes("gpt-4")) {
           const { openai } = await import("@ai-sdk/openai");
           allTools = {
             ...baseTools,
-            ...(mcpTools ?? {}),
+            ...sanitizedMcpTools,
             // Provider-specific tool types are compatible with Tool at runtime
             web_search: openai.tools.webSearch({
               searchContextSize: "high",
             }) as Tool,
+          };
+        } else {
+          // For other OpenAI models (o1, o3, etc.), still use sanitized MCP tools
+          allTools = {
+            ...baseTools,
+            ...sanitizedMcpTools,
           };
         }
         break;
