@@ -9,6 +9,15 @@ function getParams(tool: Tool): any {
   return (tool as any).parameters;
 }
 
+// Test helper to access tool inputSchema (MCP tools)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getInputSchema(tool: Tool): any {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const inputSchema = (tool as any).inputSchema;
+  // inputSchema has a jsonSchema getter
+  return inputSchema?.jsonSchema;
+}
+
 describe("schemaSanitizer", () => {
   describe("sanitizeToolSchemaForOpenAI", () => {
     it("should strip minLength from string properties", () => {
@@ -162,6 +171,65 @@ describe("schemaSanitizer", () => {
 
       // Original should still have minLength
       expect(params.properties.content.minLength).toBe(1);
+    });
+
+    it("should sanitize MCP tools with inputSchema", () => {
+      // MCP tools use inputSchema with a jsonSchema getter instead of parameters
+      const jsonSchema = {
+        type: "object",
+        properties: {
+          content: { type: "string", minLength: 1, maxLength: 100 },
+          count: { type: "number", minimum: 0, maximum: 10 },
+        },
+        required: ["content"],
+      };
+
+      const mcpTool = {
+        type: "dynamic",
+        description: "MCP test tool",
+        inputSchema: {
+          // Simulate the jsonSchema getter that @ai-sdk/mcp creates
+          get jsonSchema() {
+            return jsonSchema;
+          },
+        },
+        execute: () => Promise.resolve({}),
+      } as unknown as Tool;
+
+      const sanitized = sanitizeToolSchemaForOpenAI(mcpTool);
+      const schema = getInputSchema(sanitized);
+
+      // Unsupported properties should be stripped
+      expect(schema.properties.content).toEqual({ type: "string" });
+      expect(schema.properties.count).toEqual({ type: "number" });
+      // Supported properties should be preserved
+      expect(schema.type).toBe("object");
+      expect(schema.required).toEqual(["content"]);
+    });
+
+    it("should not mutate the original MCP tool inputSchema", () => {
+      const jsonSchema = {
+        type: "object",
+        properties: {
+          content: { type: "string", minLength: 1 },
+        },
+      };
+
+      const mcpTool = {
+        type: "dynamic",
+        description: "MCP test tool",
+        inputSchema: {
+          get jsonSchema() {
+            return jsonSchema;
+          },
+        },
+        execute: () => Promise.resolve({}),
+      } as unknown as Tool;
+
+      sanitizeToolSchemaForOpenAI(mcpTool);
+
+      // Original should still have minLength
+      expect(jsonSchema.properties.content.minLength).toBe(1);
     });
   });
 

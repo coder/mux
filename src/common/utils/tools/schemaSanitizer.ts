@@ -104,15 +104,50 @@ function stripUnsupportedProperties(schema: unknown): void {
  * This function creates a new tool with sanitized parameters that strips
  * unsupported schema properties like minLength, maximum, default, etc.
  *
+ * Tools can have schemas in two places:
+ * - `parameters`: Used by tools created with ai SDK's `tool()` function
+ * - `inputSchema`: Used by MCP tools created with `dynamicTool()` from @ai-sdk/mcp
+ *
  * @param tool - The original tool to sanitize
  * @returns A new tool with sanitized parameter schema
  */
 export function sanitizeToolSchemaForOpenAI(tool: Tool): Tool {
-  // Access tool internals - the AI SDK tool structure has parameters
+  // Access tool internals - the AI SDK tool structure varies:
+  // - Regular tools have `parameters` (Zod schema)
+  // - MCP/dynamic tools have `inputSchema` (JSON Schema wrapper with getter)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const toolRecord = tool as any as Record<string, unknown>;
 
-  // If no parameters, return as-is
+  // Check for inputSchema first (MCP tools use this)
+  // The inputSchema is a wrapper object with a jsonSchema getter
+  if (toolRecord.inputSchema && typeof toolRecord.inputSchema === "object") {
+    const inputSchemaWrapper = toolRecord.inputSchema as Record<string, unknown>;
+
+    // Get the actual JSON Schema - it's exposed via a getter
+    const rawJsonSchema = inputSchemaWrapper.jsonSchema;
+    if (rawJsonSchema && typeof rawJsonSchema === "object") {
+      // Deep clone and sanitize
+      const clonedSchema = JSON.parse(JSON.stringify(rawJsonSchema)) as Record<string, unknown>;
+      stripUnsupportedProperties(clonedSchema);
+
+      // Create a new inputSchema wrapper that returns our sanitized schema
+      const sanitizedInputSchema = {
+        ...inputSchemaWrapper,
+        // Override the jsonSchema getter with our sanitized version
+        get jsonSchema() {
+          return clonedSchema;
+        },
+      };
+
+      return {
+        ...tool,
+        inputSchema: sanitizedInputSchema,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any as Tool;
+    }
+  }
+
+  // Fall back to parameters (regular AI SDK tools)
   if (!toolRecord.parameters) {
     return tool;
   }
