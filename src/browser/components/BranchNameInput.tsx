@@ -1,9 +1,10 @@
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronRight, Globe, Loader2, Plus, Wand2 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { Popover, PopoverContent, PopoverAnchor } from "./ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import type { ExistingBranchSelection } from "@/common/types/branchSelection";
+import { inferExactExistingBranchSelection } from "./branchNameInputSelection";
 import type { BranchListResult } from "@/common/orpc/types";
 
 interface RemoteGroup {
@@ -70,6 +71,12 @@ export function BranchNameInput(props: BranchNameInputProps) {
   } = props;
 
   const inputRef = useRef<HTMLInputElement>(null);
+  const selectedExistingBranchRef = useRef<ExistingBranchSelection | null>(selectedExistingBranch);
+
+  useEffect(() => {
+    selectedExistingBranchRef.current = selectedExistingBranch;
+  }, [selectedExistingBranch]);
+
   const [isOpen, setIsOpen] = useState(false);
   const [expandedRemotes, setExpandedRemotes] = useState<Set<string>>(new Set());
 
@@ -106,15 +113,17 @@ export function BranchNameInput(props: BranchNameInputProps) {
   const hasAnyBranches =
     localBranches.length > 0 || remoteGroups.some((g) => g.branches.length > 0);
 
-  // Check if input exactly matches an existing branch
-  const exactLocalMatch = localBranches.find((b) => b.toLowerCase() === searchLower);
-  const exactRemoteMatch = remoteGroups.find((g) =>
-    g.branches.some((b) => b.toLowerCase() === searchLower)
+  const exactExistingBranchSelection = useMemo(
+    () =>
+      inferExactExistingBranchSelection({
+        value,
+        localBranches,
+        remoteGroups,
+      }),
+    [value, localBranches, remoteGroups]
   );
-  const hasExactMatch = exactLocalMatch ?? exactRemoteMatch;
 
-  // Show "Create new branch" option when there's input that doesn't exactly match
-  const showCreateOption = value.length > 0 && !hasExactMatch;
+  const showCreateOption = value.length > 0 && exactExistingBranchSelection === null;
 
   // Handle input focus - show dropdown and disable auto-generate
   const handleFocus = useCallback(() => {
@@ -170,13 +179,33 @@ export function BranchNameInput(props: BranchNameInputProps) {
     inputRef.current?.blur();
   }, [onSelectExistingBranch]);
 
-  // Handle input blur - close dropdown
+  // Handle input blur - close dropdown and opportunistically auto-select exact matches.
+  //
+  // Important: We only auto-select when the user *typed* an exact match but didn't click
+  // a dropdown item. If a dropdown item click already selected a branch, don't override it.
   const handleBlur = useCallback(() => {
     // Small delay to allow click events on dropdown items to fire first
     setTimeout(() => {
       setIsOpen(false);
+
+      if (disabled || !branchesLoaded) return;
+
+      // If the user clicked a dropdown item, selection was already set.
+      if (selectedExistingBranchRef.current) return;
+
+      if (value.length === 0) return;
+
+      if (exactExistingBranchSelection) {
+        onSelectExistingBranch(exactExistingBranchSelection);
+      }
     }, 150);
-  }, []);
+  }, [
+    branchesLoaded,
+    disabled,
+    exactExistingBranchSelection,
+    onSelectExistingBranch,
+    value.length,
+  ]);
 
   // Handle keyboard navigation
   const handleKeyDown = useCallback(
@@ -186,13 +215,13 @@ export function BranchNameInput(props: BranchNameInputProps) {
         inputRef.current?.blur();
       } else if (e.key === "Enter") {
         // If exact match exists, select it
-        if (exactLocalMatch) {
-          handleSelectLocalBranch(exactLocalMatch);
-        } else if (exactRemoteMatch) {
-          const branch = exactRemoteMatch.branches.find((b) => b.toLowerCase() === searchLower);
-          if (branch) {
-            handleSelectRemoteBranch(exactRemoteMatch.remote, branch);
-          }
+        if (exactExistingBranchSelection?.kind === "local") {
+          handleSelectLocalBranch(exactExistingBranchSelection.branch);
+        } else if (exactExistingBranchSelection?.kind === "remote") {
+          handleSelectRemoteBranch(
+            exactExistingBranchSelection.remote,
+            exactExistingBranchSelection.branch
+          );
         } else if (value.length > 0) {
           // No match - use as new branch name
           handleSelectCreateNew();
@@ -200,9 +229,7 @@ export function BranchNameInput(props: BranchNameInputProps) {
       }
     },
     [
-      exactLocalMatch,
-      exactRemoteMatch,
-      searchLower,
+      exactExistingBranchSelection,
       value.length,
       handleSelectLocalBranch,
       handleSelectRemoteBranch,
