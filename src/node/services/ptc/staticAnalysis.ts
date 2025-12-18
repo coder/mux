@@ -314,10 +314,12 @@ export async function analyzeCode(code: string, muxTypes?: string): Promise<Anal
   // 4. TypeScript type validation (if muxTypes provided)
   if (muxTypes) {
     const typeResult = validateTypes(code, muxTypes);
-    for (const message of typeResult.errors) {
+    for (const typeError of typeResult.errors) {
       errors.push({
         type: "type_error",
-        message,
+        message: typeError.message,
+        line: typeError.line,
+        column: typeError.column,
       });
     }
   }

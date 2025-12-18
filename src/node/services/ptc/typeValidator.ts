@@ -11,9 +11,15 @@
 
 import ts from "typescript";
 
+export interface TypeValidationError {
+  message: string;
+  line?: number;
+  column?: number;
+}
+
 export interface TypeValidationResult {
   valid: boolean;
-  errors: string[];
+  errors: TypeValidationError[];
 }
 
 /**
@@ -26,11 +32,12 @@ export interface TypeValidationResult {
 export function validateTypes(code: string, muxTypes: string): TypeValidationResult {
   // Wrap code in function to allow return statements (matches runtime behavior)
   // Note: We don't use async because Asyncify makes mux.* calls appear synchronous
-  const wrappedCode = `${muxTypes}
-
-function __agent__() {
-${code}
+  // Types go AFTER code so error line numbers match agent's code directly
+  const wrapperPrefix = "function __agent__() {\n";
+  const wrappedCode = `${wrapperPrefix}${code}
 }
+
+${muxTypes}
 `;
 
   const compilerOptions: ts.CompilerOptions = {
@@ -64,11 +71,25 @@ ${code}
 
   // Filter to errors in our code only (not lib files)
   // Also filter console redeclaration warning (our minimal console conflicts with lib.dom)
-  const errors = diagnostics
+  const errors: TypeValidationError[] = diagnostics
     .filter((d) => d.category === ts.DiagnosticCategory.Error)
     .filter((d) => !d.file || d.file.fileName === "agent.ts")
     .filter((d) => !ts.flattenDiagnosticMessageText(d.messageText, "").includes("console"))
-    .map((d) => ts.flattenDiagnosticMessageText(d.messageText, " "));
+    .map((d) => {
+      const message = ts.flattenDiagnosticMessageText(d.messageText, " ");
+      // Extract line number if available, adjusting for wrapper prefix
+      if (d.file && d.start !== undefined) {
+        const { line, character } = d.file.getLineAndCharacterOfPosition(d.start);
+        // Line is 0-indexed; wrapper adds 1 line ("function __agent__() {\n")
+        // Only report line if it's in the agent's code (not in muxTypes after)
+        const agentCodeLines = code.split("\n").length;
+        const adjustedLine = line; // line 1 in file = line 0 (0-indexed) = agent line 1
+        if (adjustedLine >= 1 && adjustedLine <= agentCodeLines) {
+          return { message, line: adjustedLine, column: character + 1 };
+        }
+      }
+      return { message };
+    });
 
   return { valid: errors.length === 0, errors };
 }

@@ -71,7 +71,9 @@ describe("validateTypes", () => {
     );
     expect(result.valid).toBe(false);
     // Error should mention 'path' doesn't exist or 'filePath' is missing
-    expect(result.errors.some((e) => e.includes("path") || e.includes("filePath"))).toBe(true);
+    expect(result.errors.some((e) => e.message.includes("path") || e.message.includes("filePath"))).toBe(
+      true
+    );
   });
 
   test("catches missing required property", () => {
@@ -94,7 +96,9 @@ describe("validateTypes", () => {
       muxTypes
     );
     expect(result.valid).toBe(false);
-    expect(result.errors.some((e) => e.includes("number") || e.includes("string"))).toBe(true);
+    expect(result.errors.some((e) => e.message.includes("number") || e.message.includes("string"))).toBe(
+      true
+    );
   });
 
   test("catches calling non-existent tool", () => {
@@ -105,7 +109,21 @@ describe("validateTypes", () => {
       muxTypes
     );
     expect(result.valid).toBe(false);
-    expect(result.errors.some((e) => e.includes("nonexistent_tool"))).toBe(true);
+    expect(result.errors.some((e) => e.message.includes("nonexistent_tool"))).toBe(true);
+  });
+
+  test("returns line numbers for type errors", () => {
+    const result = validateTypes(
+      `const x = 1;
+const y = 2;
+mux.file_read({ path: "test.txt" });`,
+      muxTypes
+    );
+    expect(result.valid).toBe(false);
+    // Error should be on line 3 (the mux.file_read call)
+    const errorWithLine = result.errors.find((e) => e.line !== undefined);
+    expect(errorWithLine).toBeDefined();
+    expect(errorWithLine!.line).toBe(3);
   });
 
   test("allows dynamic property access (no strict checking on unknown keys)", () => {

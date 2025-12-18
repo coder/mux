@@ -140,6 +140,18 @@ describe("createCodeExecutionTool", () => {
       expect(result.error).toContain("process");
     });
 
+    it("includes line numbers for unavailable globals", async () => {
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge({}));
+
+      const result = (await tool.execute!(
+        { code: "const x = 1;\nconst y = 2;\nconst env = process.env" }, // process on line 3
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("(line 3)");
+    });
+
     it("rejects code using require()", async () => {
       const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge({}));
 
@@ -151,6 +163,39 @@ describe("createCodeExecutionTool", () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain("Code analysis failed");
       expect(result.error).toContain("require");
+    });
+
+    it("includes line numbers for type errors", async () => {
+      const mockTools: Record<string, Tool> = {
+        bash: createMockTool("bash", z.object({ script: z.string() })),
+      };
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge(mockTools));
+
+      const result = (await tool.execute!(
+        { code: "const x = 1;\nconst result = mux.bash({ scriptz: 'ls' });" }, // typo on line 2
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("Code analysis failed");
+      expect(result.error).toContain("scriptz");
+      expect(result.error).toContain("(line 2)");
+    });
+
+    it("includes line numbers for calling non-existent tools", async () => {
+      const mockTools: Record<string, Tool> = {
+        bash: createMockTool("bash", z.object({ script: z.string() })),
+      };
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge(mockTools));
+
+      const result = (await tool.execute!(
+        { code: "const x = 1;\nconst y = 2;\nmux.nonexistent({ arg: 1 });" }, // line 3
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("Code analysis failed");
+      expect(result.error).toContain("(line 3)");
     });
   });
 
