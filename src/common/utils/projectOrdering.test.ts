@@ -17,10 +17,10 @@ describe("projectOrdering", () => {
   };
 
   describe("sortProjectsByOrder", () => {
-    it("returns natural order when order array is empty", () => {
+    it("returns lexical order when order array is empty", () => {
       const projects = createProjects(["/a", "/c", "/b"]);
       const result = sortProjectsByOrder(projects, []);
-      expect(result.map(([p]) => p)).toEqual(["/a", "/c", "/b"]);
+      expect(result.map(([p]) => p)).toEqual(["/a", "/b", "/c"]);
     });
 
     it("sorts projects according to order array", () => {

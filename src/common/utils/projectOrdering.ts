@@ -15,7 +15,10 @@ export function sortProjectsByOrder(
 ): Array<[string, ProjectConfig]> {
   const entries = Array.from(projects.entries());
 
-  if (order.length === 0) return entries; // Natural order
+  if (order.length === 0) {
+    // Sort lexically for stable, deterministic order
+    return entries.sort(([a], [b]) => a.localeCompare(b));
+  }
 
   const pos = new Map(order.map((p, i) => [p, i]));
 
