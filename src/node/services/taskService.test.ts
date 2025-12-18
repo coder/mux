@@ -1,7 +1,7 @@
 import { describe, it, expect } from "bun:test";
 
 import type { MuxMessage, MuxToolPart } from "@/common/types/message";
-import { Ok } from "@/common/types/result";
+import { Err, Ok } from "@/common/types/result";
 import { TaskService } from "./taskService";
 
 function createTaskToolPart(params: {
@@ -255,6 +255,125 @@ describe("TaskService", () => {
         toolCallId,
         toolName: "task",
       });
+    });
+  });
+
+  describe("onStreamEnd", () => {
+    it("should finalize tasks when report enforcement resume fails", async () => {
+      const parentWorkspaceId = "parent";
+      const childWorkspaceId = "child";
+
+      const workspace = {
+        id: childWorkspaceId,
+        path: "/tmp/agent",
+        name: "agent",
+        projectName: "proj",
+        projectPath: "/proj",
+        createdAt: "2025-01-01T00:00:00.000Z",
+        parentWorkspaceId,
+        agentType: "research",
+        taskStatus: "running",
+        taskModel: "openai:gpt-5-codex",
+      };
+
+      const projects = new Map([
+        [
+          "/proj",
+          {
+            workspaces: [workspace],
+          },
+        ],
+      ]);
+
+      let idCounter = 0;
+      const config = {
+        generateStableId: () => `id-${idCounter++}`,
+        getTaskSettings: () => ({
+          maxParallelAgentTasks: 3,
+          maxTaskNestingDepth: 3,
+        }),
+        listWorkspaceConfigs: () => [{ projectPath: "/proj", workspace }],
+        getWorkspaceConfig: (id: string) => {
+          if (id !== childWorkspaceId) {
+            return null;
+          }
+
+          return { projectPath: "/proj", workspace };
+        },
+        editConfig: (edit: (cfg: unknown) => unknown) => {
+          edit({ projects });
+        },
+      };
+
+      const histories = new Map<string, MuxMessage[]>([
+        [
+          childWorkspaceId,
+          [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              parts: [{ type: "text", text: "partial output" }],
+              metadata: {
+                historySequence: 1,
+              },
+            },
+          ],
+        ],
+        [parentWorkspaceId, []],
+      ]);
+
+      const historyService = {
+        getHistory: (workspaceId: string) => Ok(histories.get(workspaceId) ?? []),
+        appendToHistory: (workspaceId: string, message: MuxMessage) => {
+          const list = histories.get(workspaceId) ?? [];
+          list.push(message);
+          histories.set(workspaceId, list);
+          return Ok(undefined);
+        },
+      };
+
+      const partialService = {
+        readPartial: () => null,
+        writePartial: () => Ok(undefined),
+      };
+
+      const removed: string[] = [];
+      const workspaceService = {
+        emitChatEvent: (_workspaceId: string, _event: unknown) => undefined,
+        emitWorkspaceMetadata: (_workspaceId: string) => undefined,
+        resumeStream: () => Err({ type: "api_key_not_found", provider: "openai" }),
+        remove: (workspaceId: string, _force?: boolean) => {
+          removed.push(workspaceId);
+          return Ok(undefined);
+        },
+      };
+
+      const aiService = {
+        on: () => undefined,
+      };
+
+      const service = new TaskService(
+        config as never,
+        historyService as never,
+        partialService as never,
+        workspaceService as never,
+        aiService as never
+      );
+
+      await (service as unknown as { onStreamEnd: (id: string) => Promise<void> }).onStreamEnd(
+        childWorkspaceId
+      );
+
+      expect(workspace.taskStatus).toBe("reported");
+      expect(removed).toEqual([childWorkspaceId]);
+
+      const parentHistory = histories.get(parentWorkspaceId) ?? [];
+      expect(parentHistory).toHaveLength(1);
+
+      const reportText = parentHistory[0].parts.find((p) => p.type === "text")?.text;
+      expect(reportText).toBeDefined();
+      expect(reportText).toContain("Mux was unable to resume this agent task");
+      expect(reportText).toContain("partial output");
     });
   });
 });

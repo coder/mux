@@ -189,6 +189,42 @@ export class TaskService {
     }
   }
 
+  private async finalizeAgentTaskWithoutReport(
+    workspaceId: string,
+    reportMarkdown: string
+  ): Promise<void> {
+    const workspaceConfig = this.config.getWorkspaceConfig(workspaceId);
+    if (!workspaceConfig) {
+      log.error("Failed to finalize agent task without report: unknown workspace", {
+        workspaceId,
+      });
+      return;
+    }
+
+    // If this isn't a properly-parented task workspace, at least mark it complete so it doesn't
+    // consume a scheduler slot indefinitely.
+    if (!workspaceConfig.workspace.parentWorkspaceId) {
+      await this.updateTaskWorkspace(workspaceId, { taskStatus: "reported" });
+      await this.maybeCleanupReportedWorkspace(workspaceId);
+      await this.queueScheduling();
+      return;
+    }
+
+    try {
+      await this.handleAgentReport(workspaceId, { reportMarkdown });
+    } catch (error: unknown) {
+      // Ensure a failed report doesn't leave the queue stuck.
+      log.error("Failed to finalize agent task without agent_report", {
+        workspaceId,
+        error,
+      });
+
+      await this.updateTaskWorkspace(workspaceId, { taskStatus: "reported" });
+      await this.maybeCleanupReportedWorkspace(workspaceId);
+      await this.queueScheduling();
+    }
+  }
+
   async createAgentTask(params: CreateAgentTaskParams): Promise<{ childWorkspaceId: string }> {
     const preset = getAgentPreset(params.agentType);
 
@@ -437,53 +473,80 @@ export class TaskService {
       await this.updateTaskWorkspace(workspaceId, { taskStatus: "awaiting_report" });
 
       const preset = getAgentPreset(agentType);
-      if (!preset) {
-        return;
-      }
+      if (preset) {
+        // Force a report-only follow-up.
+        const requirePolicy: ToolPolicy = [{ action: "require", regex_match: "^agent_report$" }];
 
-      // Force a report-only follow-up.
-      const requirePolicy: ToolPolicy = [{ action: "require", regex_match: "^agent_report$" }];
+        const nudgeMessage = createMuxMessage(
+          this.config.generateStableId(),
+          "user",
+          "You must now call agent_report with your final reportMarkdown. Do not do anything else.",
+          { synthetic: true }
+        );
 
-      const nudgeMessage = createMuxMessage(
-        this.config.generateStableId(),
-        "user",
-        "You must now call agent_report with your final reportMarkdown. Do not do anything else.",
-        { synthetic: true }
-      );
+        const appendResult = await this.historyService.appendToHistory(workspaceId, nudgeMessage);
+        if (!appendResult.success) {
+          log.error("Failed to append agent_report enforcement message", {
+            workspaceId,
+            error: appendResult.error,
+          });
+        } else {
+          this.workspaceService.emitChatEvent(workspaceId, {
+            ...nudgeMessage,
+            type: "message",
+          } satisfies WorkspaceChatMessage);
+        }
 
-      const appendResult = await this.historyService.appendToHistory(workspaceId, nudgeMessage);
-      if (!appendResult.success) {
-        throw new Error(appendResult.error);
-      }
+        const model = config.workspace.taskModel ?? DEFAULT_MODEL;
+        const resumeResult = await this.workspaceService.resumeStream(workspaceId, {
+          model,
+          mode: "agent",
+          additionalSystemInstructions: preset.systemPrompt,
+          toolPolicy: requirePolicy,
+        });
+        if (resumeResult.success) {
+          return;
+        }
 
-      this.workspaceService.emitChatEvent(workspaceId, {
-        ...nudgeMessage,
-        type: "message",
-      } satisfies WorkspaceChatMessage);
-
-      const model = config.workspace.taskModel ?? DEFAULT_MODEL;
-      const resumeResult = await this.workspaceService.resumeStream(workspaceId, {
-        model,
-        mode: "agent",
-        additionalSystemInstructions: preset.systemPrompt,
-        toolPolicy: requirePolicy,
-      });
-      if (!resumeResult.success) {
         log.error("Failed to resume agent task for report enforcement", {
           workspaceId,
           error: resumeResult.error,
         });
+
+        const fallbackReport = await this.buildFallbackReportFromHistory(workspaceId);
+        const reportMarkdown = [
+          "Mux was unable to resume this agent task to collect a final agent_report.",
+          "",
+          "Resume error:",
+          "```",
+          this.formatErrorForReport(resumeResult.error),
+          "```",
+          ...(fallbackReport
+            ? ["", "Best-effort output extracted from the task history:", "", fallbackReport]
+            : [
+                "",
+                "Mux could not extract any assistant text from the task history (best-effort fallback).",
+              ]),
+        ].join("\n");
+
+        await this.finalizeAgentTaskWithoutReport(workspaceId, reportMarkdown);
+        return;
       }
-      return;
+
+      log.error("Agent task ended without agent_report, but no preset exists for enforcement", {
+        workspaceId,
+        agentType,
+      });
+      // Fall through to best-effort extraction.
     }
 
     // Second failure: fall back to best-effort report extraction.
     const fallbackReport = await this.buildFallbackReportFromHistory(workspaceId);
-    if (!fallbackReport) {
-      return;
-    }
+    const reportMarkdown =
+      fallbackReport ??
+      "Mux did not receive an agent_report for this task and could not extract any assistant text from the task history.";
 
-    await this.handleAgentReport(workspaceId, { reportMarkdown: fallbackReport });
+    await this.finalizeAgentTaskWithoutReport(workspaceId, reportMarkdown);
   }
 
   private async tryResolveParentTaskToolCall(params: {
