@@ -144,10 +144,12 @@ class FakeConfig {
     const result: Array<{ workspaceId: string; taskState: TaskState }> = [];
     for (const [workspaceId, taskState] of this.taskStateById.entries()) {
       if (!taskState) continue;
+      // Include "reported" tasks for restart redelivery
       if (
         taskState.taskStatus === "queued" ||
         taskState.taskStatus === "running" ||
-        taskState.taskStatus === "awaiting_report"
+        taskState.taskStatus === "awaiting_report" ||
+        taskState.taskStatus === "reported"
       ) {
         result.push({ workspaceId, taskState });
       }
@@ -822,6 +824,51 @@ describe("TaskService", () => {
     expect(awaitingCall?.options?.toolPolicy).toEqual([
       { regex_match: "agent_report", action: "require" },
     ]);
+  });
+
+  it("redelivers saved report for 'reported' tasks on restart", async () => {
+    // This tests the scenario where Mux crashed after saving taskStatus="reported"
+    // but before delivering the report to the parent workspace.
+    const config = new FakeConfig();
+
+    const parent = createWorkspaceMetadata("parent");
+    const reportedTask = createWorkspaceMetadata("task_reported", { parentWorkspaceId: "parent" });
+    config.addWorkspace(parent);
+    config.addWorkspace(reportedTask);
+
+    // Task was marked as reported with saved report content
+    await config.setWorkspaceTaskState("task_reported", {
+      taskStatus: "reported",
+      agentType: "research",
+      parentWorkspaceId: "parent",
+      prompt: "research prompt",
+      reportMarkdown: "This is the saved report content",
+      reportTitle: "Saved Report",
+      reportedAt: new Date().toISOString(),
+    });
+
+    const aiService = new FakeAIService();
+    const workspaceService = new FakeWorkspaceService(config, aiService);
+    const historyService = new FakeHistoryService();
+    const partialService = new FakePartialService();
+
+    const taskService = new TaskService(
+      config as unknown as Config,
+      workspaceService as unknown as WorkspaceService,
+      historyService as unknown as HistoryService,
+      partialService as unknown as PartialService,
+      aiService as unknown as AIService
+    );
+
+    await taskService.rehydrateTasks();
+
+    // The saved report should be re-delivered to the parent
+    expect(workspaceService.appendedMessages).toHaveLength(1);
+    expect(workspaceService.appendedMessages[0]?.workspaceId).toBe("parent");
+    const msg = workspaceService.appendedMessages[0]?.message;
+    const textPart = msg?.parts.find((p) => p.type === "text");
+    assert(textPart?.type === "text", "expected text part");
+    expect(textPart.text).toContain("This is the saved report content");
   });
 
   it("does not remove a completed task workspace until its subtree is gone", async () => {

@@ -690,11 +690,15 @@ export class Config {
     for (const [_projectPath, projectConfig] of config.projects) {
       for (const workspace of projectConfig.workspaces) {
         if (workspace.taskState && workspace.id) {
-          // Include queued, running, and awaiting_report tasks
+          // Include queued, running, awaiting_report, and reported tasks.
+          // "reported" tasks need rehydration too: if Mux crashed after saving
+          // the report but before injecting it into the parent, we need to
+          // re-deliver the saved report on restart.
           if (
             workspace.taskState.taskStatus === "queued" ||
             workspace.taskState.taskStatus === "running" ||
-            workspace.taskState.taskStatus === "awaiting_report"
+            workspace.taskState.taskStatus === "awaiting_report" ||
+            workspace.taskState.taskStatus === "reported"
           ) {
             result.push({
               workspaceId: workspace.id,

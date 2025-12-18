@@ -473,6 +473,43 @@ export class TaskService extends EventEmitter {
   }
 
   /**
+   * Re-deliver a saved report from a "reported" task on restart.
+   * This handles the case where Mux crashed after saving taskStatus="reported"
+   * but before delivering the report to the parent workspace.
+   */
+  private async redeliverSavedReport(taskId: string, taskState: TaskState): Promise<void> {
+    assert(taskState.reportMarkdown, "Cannot redeliver report without reportMarkdown");
+
+    const report = {
+      reportMarkdown: taskState.reportMarkdown,
+      title: taskState.reportTitle,
+    };
+
+    // Re-post the report to the parent workspace history (idempotent from user perspective)
+    await this.postReportToParent(taskId, taskState, report);
+
+    // If this was a foreground task, re-inject the tool output
+    if (taskState.parentToolCallId) {
+      const toolOutput: TaskToolResult = {
+        status: "completed",
+        taskId,
+        reportMarkdown: report.reportMarkdown,
+        reportTitle: report.title,
+      };
+      const injected = await this.injectToolOutputToParent(
+        taskState.parentWorkspaceId,
+        taskState.parentToolCallId,
+        toolOutput
+      );
+      if (injected) {
+        await this.maybeResumeParentStream(taskState.parentWorkspaceId);
+      }
+    }
+
+    log.debug(`Re-delivered saved report for task ${taskId}`);
+  }
+
+  /**
    * Inject task tool output into the parent workspace's pending tool call.
    * Persists the output into partial.json or chat.jsonl and emits a synthetic
    * tool-call-end event so the UI updates immediately after restart recovery.
@@ -952,6 +989,15 @@ export class TaskService extends EventEmitter {
         } catch (error) {
           log.error(`Failed to send reminder to task ${workspaceId}:`, error);
         }
+      } else if (taskState.taskStatus === "reported") {
+        // Task already reported but may not have delivered to parent before crash.
+        // Re-deliver the saved report to ensure parent gets the result.
+        if (taskState.reportMarkdown) {
+          log.debug(`Re-delivering saved report for task ${workspaceId}`);
+          await this.redeliverSavedReport(workspaceId, taskState);
+        } else {
+          log.warn(`Task ${workspaceId} marked as reported but has no saved report`);
+        }
       }
     }
 
@@ -1036,7 +1082,13 @@ export class TaskService extends EventEmitter {
 
   private async hasActiveDescendantTasks(parentWorkspaceId: string): Promise<boolean> {
     const activeTasks = this.config.getActiveAgentTaskWorkspaces();
-    if (activeTasks.length === 0) {
+    // Filter out "reported" tasks - they're done and shouldn't block parent resumption.
+    // We still include them in getActiveAgentTaskWorkspaces for restart redelivery,
+    // but they shouldn't count as "active" for the purpose of blocking resumption.
+    const trulyActiveTasks = activeTasks.filter(
+      ({ taskState }) => taskState.taskStatus !== "reported"
+    );
+    if (trulyActiveTasks.length === 0) {
       return false;
     }
 
@@ -1046,7 +1098,7 @@ export class TaskService extends EventEmitter {
       parentMap.set(meta.id, meta.parentWorkspaceId);
     }
 
-    for (const { workspaceId } of activeTasks) {
+    for (const { workspaceId } of trulyActiveTasks) {
       let current: string | undefined = workspaceId;
       while (current) {
         const parent = parentMap.get(current);
