@@ -147,6 +147,41 @@ describe("Config", () => {
       expect(workspace.name).toBe(workspaceName);
       expect(workspace.createdAt).toBe("2025-01-01T00:00:00.000Z");
     });
+
+    it("should include agent task fields for config-native workspaces", async () => {
+      const projectPath = "/fake/project";
+
+      const parentWorkspacePath = path.join(config.srcDir, "project", "main");
+      const childWorkspacePath = path.join(config.srcDir, "project", "agent-task");
+
+      fs.mkdirSync(parentWorkspacePath, { recursive: true });
+      fs.mkdirSync(childWorkspacePath, { recursive: true });
+
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectPath, {
+          workspaces: [
+            { path: parentWorkspacePath, id: "parent-id", name: "main" },
+            {
+              path: childWorkspacePath,
+              id: "child-id",
+              name: "agent-task",
+              parentWorkspaceId: "parent-id",
+              agentType: "research",
+              taskStatus: "queued",
+            },
+          ],
+        });
+        return cfg;
+      });
+
+      const allMetadata = await config.getAllWorkspaceMetadata();
+
+      const childMetadata = allMetadata.find((metadata) => metadata.id === "child-id");
+      expect(childMetadata).toBeDefined();
+      expect(childMetadata!.parentWorkspaceId).toBe("parent-id");
+      expect(childMetadata!.agentType).toBe("research");
+      expect(childMetadata!.taskStatus).toBe("queued");
+    });
   });
 
   describe("workspace MCP overrides", () => {

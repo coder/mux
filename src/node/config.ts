@@ -408,6 +408,9 @@ export class Config {
               title: workspace.title,
               projectName,
               projectPath,
+              parentWorkspaceId: workspace.parentWorkspaceId,
+              agentType: workspace.agentType,
+              taskStatus: workspace.taskStatus,
               // GUARANTEE: All workspaces must have createdAt (assign now if missing)
               createdAt: workspace.createdAt ?? new Date().toISOString(),
               // GUARANTEE: All workspaces must have runtimeConfig (apply default if missing)
@@ -454,6 +457,9 @@ export class Config {
 
             // Preserve any config-only fields that may not exist in legacy metadata.json
             metadata.aiSettings ??= workspace.aiSettings;
+            metadata.parentWorkspaceId ??= workspace.parentWorkspaceId;
+            metadata.agentType ??= workspace.agentType;
+            metadata.taskStatus ??= workspace.taskStatus;
 
             // Migrate to config for next load
             workspace.id = metadata.id;
@@ -474,6 +480,9 @@ export class Config {
               name: workspaceBasename,
               projectName,
               projectPath,
+              parentWorkspaceId: workspace.parentWorkspaceId,
+              agentType: workspace.agentType,
+              taskStatus: workspace.taskStatus,
               // GUARANTEE: All workspaces must have createdAt
               createdAt: new Date().toISOString(),
               // GUARANTEE: All workspaces must have runtimeConfig
@@ -499,6 +508,9 @@ export class Config {
             name: workspaceBasename,
             projectName,
             projectPath,
+            parentWorkspaceId: workspace.parentWorkspaceId,
+            agentType: workspace.agentType,
+            taskStatus: workspace.taskStatus,
             // GUARANTEE: All workspaces must have createdAt (even in error cases)
             createdAt: new Date().toISOString(),
             // GUARANTEE: All workspaces must have runtimeConfig (even in error cases)
