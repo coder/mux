@@ -789,8 +789,9 @@ export class StreamManager extends EventEmitter {
       // Update state to streaming
       streamInfo.state = StreamState.STREAMING;
 
-      // Emit stream start event (include mode from initialMetadata if available)
-      const streamStartMode = streamInfo.initialMetadata?.mode as "plan" | "exec" | undefined;
+      // Emit stream start event (include UI mode from initialMetadata if available)
+      const rawMode = streamInfo.initialMetadata?.mode;
+      const streamStartMode = rawMode === "plan" || rawMode === "exec" ? rawMode : undefined;
       this.emit("stream-start", {
         type: "stream-start",
         workspaceId: workspaceId as string,
@@ -1692,8 +1693,9 @@ export class StreamManager extends EventEmitter {
     // Initialize token tracker for this model (required for tokenization)
     await this.tokenTracker.setModel(streamInfo.model);
 
-    // Emit stream-start event (include mode from initialMetadata if available)
-    const replayMode = streamInfo.initialMetadata?.mode as "plan" | "exec" | undefined;
+    // Emit stream-start event (include UI mode from initialMetadata if available)
+    const rawMode = streamInfo.initialMetadata?.mode;
+    const replayMode = rawMode === "plan" || rawMode === "exec" ? rawMode : undefined;
     this.emit("stream-start", {
       type: "stream-start",
       workspaceId,

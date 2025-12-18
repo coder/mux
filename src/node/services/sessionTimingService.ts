@@ -486,7 +486,7 @@ export class SessionTimingService {
       workspaceId: data.workspaceId,
       messageId: data.messageId,
       model,
-      mode: data.mode,
+      mode: data.mode === "plan" || data.mode === "exec" ? data.mode : undefined,
       startTimeMs: data.startTime,
       firstTokenTimeMs: null,
       completedToolExecutionMs: 0,
