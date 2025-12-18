@@ -155,6 +155,7 @@ export const ToolCallStartEventSchema = z.object({
   args: z.unknown(),
   tokens: z.number().meta({ description: "Token count for tool input" }),
   timestamp: z.number().meta({ description: "When tool call started (Date.now())" }),
+  parentToolCallId: z.string().optional().meta({ description: "Set for nested PTC calls" }),
 });
 
 export const ToolCallDeltaEventSchema = z.object({
@@ -176,6 +177,7 @@ export const ToolCallEndEventSchema = z.object({
   toolName: z.string(),
   result: z.unknown(),
   timestamp: z.number().meta({ description: "When tool call completed (Date.now())" }),
+  parentToolCallId: z.string().optional().meta({ description: "Set for nested PTC calls" }),
 });
 
 export const ReasoningDeltaEventSchema = z.object({
@@ -339,6 +341,7 @@ export const ToolPolicySchema = z.array(ToolPolicyFilterSchema).meta({
 export const ExperimentsSchema = z.object({
   postCompactionContext: z.boolean().optional(),
   programmaticToolCalling: z.boolean().optional(),
+  programmaticToolCallingExclusive: z.boolean().optional(),
 });
 
 // SendMessage options

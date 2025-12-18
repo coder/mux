@@ -211,6 +211,15 @@ export type DisplayedMessage =
       streamSequence?: number; // Local ordering within this assistant message
       isLastPartOfMessage?: boolean; // True if this is the last part of a multi-part message
       timestamp?: number;
+      // Nested tool calls for code_execution (from PTC streaming or reconstructed from result)
+      nestedCalls?: Array<{
+        toolCallId: string;
+        toolName: string;
+        input: unknown;
+        output?: unknown;
+        state: "input-available" | "output-available";
+        timestamp?: number;
+      }>;
     }
   | {
       type: "reasoning";

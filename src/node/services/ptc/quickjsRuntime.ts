@@ -11,6 +11,7 @@ import {
   type QuickJSHandle,
 } from "quickjs-emscripten-core";
 import { QuickJSAsyncFFI } from "@jitl/quickjs-wasmfile-release-asyncify/ffi";
+import { nanoid } from "nanoid";
 import type { IJSRuntime, IJSRuntimeFactory, RuntimeLimits } from "./runtime";
 import type { PTCEvent, PTCExecutionResult, PTCToolCallRecord, PTCConsoleRecord } from "./types";
 import { UNAVAILABLE_IDENTIFIERS } from "./staticAnalysis";
@@ -81,10 +82,15 @@ export class QuickJSRuntime implements IJSRuntime {
       // Convert QuickJS handles to JS values - cast to unknown at the FFI boundary
       const args: unknown[] = argHandles.map((h) => this.ctx.dump(h) as unknown);
       const startTime = Date.now();
+      // Generate our own callId for nested tool calls. Regular tool calls get IDs from
+      // the model (e.g. Anthropic's toolu_*, OpenAI's call_*), but PTC nested calls are
+      // executed in our sandbox, not requested by the model.
+      const callId = nanoid();
 
       // Emit start event
       this.eventHandler?.({
         type: "tool-call-start",
+        callId,
         toolName: name,
         args: args[0],
         startTime,
@@ -101,6 +107,7 @@ export class QuickJSRuntime implements IJSRuntime {
         // Emit end event
         this.eventHandler?.({
           type: "tool-call-end",
+          callId,
           toolName: name,
           args: args[0],
           result,
@@ -126,6 +133,7 @@ export class QuickJSRuntime implements IJSRuntime {
         // Emit end event with error
         this.eventHandler?.({
           type: "tool-call-end",
+          callId,
           toolName: name,
           args: args[0],
           error: errorStr,
@@ -162,10 +170,12 @@ export class QuickJSRuntime implements IJSRuntime {
         // Convert QuickJS handles to JS values - cast to unknown at the FFI boundary
         const args: unknown[] = argHandles.map((h) => this.ctx.dump(h) as unknown);
         const startTime = Date.now();
+        const callId = nanoid();
 
         // Emit start event
         this.eventHandler?.({
           type: "tool-call-start",
+          callId,
           toolName: fullName,
           args: args[0],
           startTime,
@@ -182,6 +192,7 @@ export class QuickJSRuntime implements IJSRuntime {
           // Emit end event
           this.eventHandler?.({
             type: "tool-call-end",
+            callId,
             toolName: fullName,
             args: args[0],
             result,
@@ -204,6 +215,7 @@ export class QuickJSRuntime implements IJSRuntime {
 
           this.eventHandler?.({
             type: "tool-call-end",
+            callId,
             toolName: fullName,
             args: args[0],
             error: errorStr,
@@ -409,8 +421,14 @@ export class QuickJSRuntime implements IJSRuntime {
 
   /**
    * Marshal a JavaScript value into a QuickJS handle.
+   *
+   * Recursively converts JS values to QuickJS handles with:
+   * - Cycle detection (circular refs become "[Circular]")
+   * - Native BigInt support
+   * - Preserved undefined in objects/arrays
+   * - Explicit markers for unserializable types (functions, symbols)
    */
-  private marshal(value: unknown): QuickJSHandle {
+  private marshal(value: unknown, seen = new WeakSet<object>()): QuickJSHandle {
     if (value === undefined) {
       return this.ctx.undefined;
     }
@@ -430,23 +448,60 @@ export class QuickJSRuntime implements IJSRuntime {
       return this.ctx.newBigInt(value);
     }
 
-    // For objects and arrays, serialize to JSON and parse in QuickJS
-    // This is safer than recursively marshaling, though less efficient
-    try {
-      const json = JSON.stringify(value);
-      const jsonHandle = this.ctx.newString(json);
-      const parseResult = this.ctx.evalCode(`JSON.parse(${JSON.stringify(json)})`);
-
-      jsonHandle.dispose();
-
-      if (parseResult.error) {
-        parseResult.error.dispose();
-        return this.ctx.undefined;
-      }
-      return parseResult.value;
-    } catch {
-      return this.ctx.undefined;
+    // Functions and symbols can't be marshaled - return explicit marker
+    if (typeof value === "function" || typeof value === "symbol") {
+      return this.marshalObject({ __unserializable__: typeof value }, seen);
     }
+
+    // Objects and arrays - recursively marshal with cycle detection
+    if (typeof value === "object") {
+      // Date → ISO string (matches JSON.stringify behavior)
+      if (value instanceof Date) {
+        return this.ctx.newString(value.toISOString());
+      }
+
+      // Check for circular reference - `seen` tracks current ancestors in the
+      // traversal path, not all visited objects. This correctly handles shared
+      // references (same object in multiple places) vs true cycles.
+      if (seen.has(value)) {
+        return this.ctx.newString("[Circular]");
+      }
+      seen.add(value);
+
+      try {
+        if (Array.isArray(value)) {
+          return this.marshalArray(value, seen);
+        }
+        return this.marshalObject(value as Record<string, unknown>, seen);
+      } finally {
+        // Remove from path after processing - allows same object to appear
+        // in multiple non-circular positions (shared references)
+        seen.delete(value);
+      }
+    }
+
+    // Unknown type - shouldn't happen but be defensive
+    return this.ctx.undefined;
+  }
+
+  private marshalArray(arr: unknown[], seen: WeakSet<object>): QuickJSHandle {
+    const handle = this.ctx.newArray();
+    for (let i = 0; i < arr.length; i++) {
+      const elem = this.marshal(arr[i], seen);
+      this.ctx.setProp(handle, i, elem);
+      elem.dispose();
+    }
+    return handle;
+  }
+
+  private marshalObject(obj: Record<string, unknown>, seen: WeakSet<object>): QuickJSHandle {
+    const handle = this.ctx.newObject();
+    for (const [key, val] of Object.entries(obj)) {
+      const valHandle = this.marshal(val, seen);
+      this.ctx.setProp(handle, key, valHandle);
+      valHandle.dispose();
+    }
+    return handle;
   }
 }
 

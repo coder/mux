@@ -13,6 +13,7 @@ import { WebFetchToolCall } from "../tools/WebFetchToolCall";
 import { BashBackgroundListToolCall } from "../tools/BashBackgroundListToolCall";
 import { BashBackgroundTerminateToolCall } from "../tools/BashBackgroundTerminateToolCall";
 import { BashOutputToolCall } from "../tools/BashOutputToolCall";
+import { CodeExecutionToolCall } from "../tools/CodeExecutionToolCall";
 import type {
   BashToolArgs,
   BashToolResult,
@@ -134,6 +135,15 @@ function isBashBackgroundTerminateTool(
 function isBashOutputTool(toolName: string, args: unknown): args is BashOutputToolArgs {
   if (toolName !== "bash_output") return false;
   return TOOL_DEFINITIONS.bash_output.schema.safeParse(args).success;
+}
+
+interface CodeExecutionToolArgs {
+  code: string;
+}
+
+function isCodeExecutionTool(toolName: string, args: unknown): args is CodeExecutionToolArgs {
+  if (toolName !== "code_execution") return false;
+  return TOOL_DEFINITIONS.code_execution.schema.safeParse(args).success;
 }
 
 export const ToolMessage: React.FC<ToolMessageProps> = ({
@@ -324,6 +334,19 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
           result={message.result as BashOutputToolResult | undefined}
           status={message.status}
           groupPosition={groupPosition}
+        />
+      </div>
+    );
+  }
+
+  if (isCodeExecutionTool(message.toolName, message.args)) {
+    return (
+      <div className={className}>
+        <CodeExecutionToolCall
+          args={message.args}
+          result={message.result as Parameters<typeof CodeExecutionToolCall>[0]["result"]}
+          status={message.status}
+          nestedCalls={message.nestedCalls}
         />
       </div>
     );

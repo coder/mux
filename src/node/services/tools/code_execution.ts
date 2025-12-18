@@ -36,6 +36,9 @@ export async function preGenerateMuxTypes(tools: Record<string, Tool>): Promise<
   await getCachedMuxTypes(toolBridge.getBridgeableTools());
 }
 
+/** PTC event with parentToolCallId attached by code_execution */
+export type PTCEventWithParent = PTCEvent & { parentToolCallId: string };
+
 /**
  * Create the code_execution tool.
  *
@@ -44,12 +47,12 @@ export async function preGenerateMuxTypes(tools: Record<string, Tool>): Promise<
  *
  * @param runtimeFactory Factory for creating QuickJS runtime instances
  * @param tools All available tools (will be filtered to bridgeable ones)
- * @param onEvent Callback for streaming events (tool calls, console output)
+ * @param emitNestedEvent Callback for streaming nested tool events (includes parentToolCallId)
  */
 export async function createCodeExecutionTool(
   runtimeFactory: IJSRuntimeFactory,
   tools: Record<string, Tool>,
-  onEvent?: (event: PTCEvent) => void
+  emitNestedEvent?: (event: PTCEventWithParent) => void
 ): Promise<Tool> {
   const toolBridge = new ToolBridge(tools);
   const bridgeableTools = toolBridge.getBridgeableTools();
@@ -84,7 +87,7 @@ ${muxTypes}
         ),
     }),
 
-    execute: async ({ code }, { abortSignal }): Promise<PTCExecutionResult> => {
+    execute: async ({ code }, { abortSignal, toolCallId }): Promise<PTCExecutionResult> => {
       const execStartTime = Date.now();
 
       // Static analysis before execution - catch syntax errors, forbidden patterns, and type errors
@@ -114,8 +117,11 @@ ${muxTypes}
         });
 
         // Subscribe to events for UI streaming
-        if (onEvent) {
-          runtime.onEvent(onEvent);
+        // Wrap callback to include parentToolCallId from AI SDK context
+        if (emitNestedEvent) {
+          runtime.onEvent((event: PTCEvent) => {
+            emitNestedEvent({ ...event, parentToolCallId: toolCallId });
+          });
         }
 
         // Register tools with abortSignal for mid-execution cancellation

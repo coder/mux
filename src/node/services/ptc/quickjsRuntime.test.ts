@@ -440,3 +440,180 @@ describe("sequential execution", () => {
     expect(callOrder).toEqual([1, 2, 3]);
   });
 });
+
+describe("marshal edge cases", () => {
+  let runtime: QuickJSRuntime;
+
+  beforeEach(async () => {
+    runtime = await QuickJSRuntime.create();
+  });
+
+  afterEach(() => {
+    runtime.dispose();
+  });
+
+  it("handles BigInt values natively", async () => {
+    runtime.registerFunction("getBigInt", () => Promise.resolve(BigInt("9007199254740993")));
+
+    const result = await runtime.eval("return getBigInt();");
+    expect(result.success).toBe(true);
+    // QuickJS returns bigints as numbers if they fit, or as BigInt
+    expect(result.result).toBe(9007199254740993n);
+  });
+
+  it("preserves undefined in objects", async () => {
+    runtime.registerFunction("getObjWithUndefined", () =>
+      Promise.resolve({ a: 1, b: undefined, c: 3 })
+    );
+
+    const result = await runtime.eval(`
+      const obj = getObjWithUndefined();
+      return { hasB: 'b' in obj, bValue: obj.b, a: obj.a, c: obj.c };
+    `);
+    expect(result.success).toBe(true);
+    expect(result.result).toEqual({ hasB: true, bValue: undefined, a: 1, c: 3 });
+  });
+
+  it("preserves undefined in arrays (not converted to null)", async () => {
+    runtime.registerFunction("getArrayWithUndefined", () => Promise.resolve([1, undefined, 3]));
+
+    const result = await runtime.eval(`
+      const arr = getArrayWithUndefined();
+      return { len: arr.length, first: arr[0], second: arr[1], third: arr[2] };
+    `);
+    expect(result.success).toBe(true);
+    expect(result.result).toEqual({ len: 3, first: 1, second: undefined, third: 3 });
+  });
+
+  it("handles circular references with [Circular] placeholder", async () => {
+    const circular: Record<string, unknown> = { a: 1 };
+    circular.self = circular;
+    runtime.registerFunction("getCircular", () => Promise.resolve(circular));
+
+    const result = await runtime.eval(`
+      const obj = getCircular();
+      return { a: obj.a, selfType: typeof obj.self, selfValue: obj.self };
+    `);
+    expect(result.success).toBe(true);
+    expect(result.result).toEqual({ a: 1, selfType: "string", selfValue: "[Circular]" });
+  });
+
+  it("marks functions as unserializable", async () => {
+    runtime.registerFunction("getFunction", () =>
+      Promise.resolve({ fn: () => "hello", value: 42 })
+    );
+
+    const result = await runtime.eval(`
+      const obj = getFunction();
+      return { fnType: obj.fn.__unserializable__, value: obj.value };
+    `);
+    expect(result.success).toBe(true);
+    expect(result.result).toEqual({ fnType: "function", value: 42 });
+  });
+
+  it("marks symbols as unserializable", async () => {
+    runtime.registerFunction("getSymbol", () =>
+      Promise.resolve({ sym: Symbol("test"), value: 42 })
+    );
+
+    const result = await runtime.eval(`
+      const obj = getSymbol();
+      return { symType: obj.sym.__unserializable__, value: obj.value };
+    `);
+    expect(result.success).toBe(true);
+    expect(result.result).toEqual({ symType: "symbol", value: 42 });
+  });
+
+  it("handles deeply nested objects", async () => {
+    runtime.registerFunction("getDeep", () =>
+      Promise.resolve({ a: { b: { c: { d: { e: "deep" } } } } })
+    );
+
+    const result = await runtime.eval("return getDeep().a.b.c.d.e;");
+    expect(result.success).toBe(true);
+    expect(result.result).toBe("deep");
+  });
+
+  it("handles arrays with mixed types", async () => {
+    runtime.registerFunction("getMixed", () =>
+      Promise.resolve([1, "two", { three: 3 }, [4, 5], null, true])
+    );
+
+    const result = await runtime.eval("return getMixed();");
+    expect(result.success).toBe(true);
+    expect(result.result).toEqual([1, "two", { three: 3 }, [4, 5], null, true]);
+  });
+
+  it("handles empty objects and arrays", async () => {
+    runtime.registerFunction("getEmpty", () => Promise.resolve({ obj: {}, arr: [] }));
+
+    const result = await runtime.eval("return getEmpty();");
+    expect(result.success).toBe(true);
+    expect(result.result).toEqual({ obj: {}, arr: [] });
+  });
+
+  it("converts Date to ISO string (matches JSON.stringify)", async () => {
+    const testDate = new Date("2024-06-15T12:30:00.000Z");
+    runtime.registerFunction("getDate", () =>
+      Promise.resolve({ created: testDate, nested: { date: testDate } })
+    );
+
+    const result = await runtime.eval("return getDate();");
+    expect(result.success).toBe(true);
+    expect(result.result).toEqual({
+      created: "2024-06-15T12:30:00.000Z",
+      nested: { date: "2024-06-15T12:30:00.000Z" },
+    });
+  });
+
+  it("handles shared references (same object in multiple places) without marking as circular", async () => {
+    // Shared reference is NOT circular - same object appears twice but no cycle
+    const shared = { id: 42, name: "shared" };
+    const obj = { a: shared, b: shared, c: { nested: shared } };
+    runtime.registerFunction("getShared", () => Promise.resolve(obj));
+
+    const result = await runtime.eval(`
+      const obj = getShared();
+      return {
+        aId: obj.a.id,
+        bId: obj.b.id,
+        cNestedId: obj.c.nested.id,
+        // Verify none are "[Circular]" strings
+        aType: typeof obj.a,
+        bType: typeof obj.b
+      };
+    `);
+    expect(result.success).toBe(true);
+    expect(result.result).toEqual({
+      aId: 42,
+      bId: 42,
+      cNestedId: 42,
+      aType: "object",
+      bType: "object",
+    });
+  });
+
+  it("still detects true circular references", async () => {
+    // True cycle: a -> b -> a
+    const a: Record<string, unknown> = { name: "a" };
+    const b: Record<string, unknown> = { name: "b" };
+    a.ref = b;
+    b.ref = a; // Creates cycle
+    runtime.registerFunction("getCycle", () => Promise.resolve(a));
+
+    const result = await runtime.eval(`
+      const obj = getCycle();
+      return {
+        name: obj.name,
+        refName: obj.ref.name,
+        refRefValue: obj.ref.ref  // This points back to 'a' - should be "[Circular]"
+      };
+    `);
+    expect(result.success).toBe(true);
+    expect(result.result).toEqual({
+      name: "a",
+      refName: "b",
+      refRefValue: "[Circular]",
+    });
+  });
+});

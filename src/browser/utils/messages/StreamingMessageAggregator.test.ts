@@ -641,4 +641,283 @@ describe("StreamingMessageAggregator", () => {
       });
     });
   });
+
+  describe("nested tool calls (PTC code_execution)", () => {
+    test("adds nested call to parent tool part on tool-call-start with parentToolCallId", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      // Start a stream with a code_execution tool call
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-1",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+      });
+
+      // Start parent code_execution tool
+      aggregator.handleToolCallStart({
+        type: "tool-call-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-1",
+        toolCallId: "parent-tool-1",
+        toolName: "code_execution",
+        args: { code: "mux.file_read({ filePath: 'test.txt' })" },
+        tokens: 10,
+        timestamp: 1000,
+      });
+
+      // Start nested tool call with parentToolCallId
+      aggregator.handleToolCallStart({
+        type: "tool-call-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-1",
+        toolCallId: "nested-tool-1",
+        toolName: "mux.file_read",
+        args: { filePath: "test.txt" },
+        tokens: 0,
+        timestamp: 1100,
+        parentToolCallId: "parent-tool-1",
+      });
+
+      // Tool parts become "tool" type in displayed messages (not "assistant")
+      const messages = aggregator.getDisplayedMessages();
+      const toolMsg = messages.find((m) => m.type === "tool" && m.toolCallId === "parent-tool-1");
+      expect(toolMsg).toBeDefined();
+
+      if (toolMsg?.type === "tool") {
+        expect(toolMsg.nestedCalls).toHaveLength(1);
+        expect(toolMsg.nestedCalls![0]).toEqual({
+          toolCallId: "nested-tool-1",
+          toolName: "mux.file_read",
+          state: "input-available",
+          input: { filePath: "test.txt" },
+          timestamp: 1100,
+        });
+      }
+    });
+
+    test("updates nested call with output on tool-call-end with parentToolCallId", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      // Setup: stream with parent and nested tool
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-1",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+      });
+
+      aggregator.handleToolCallStart({
+        type: "tool-call-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-1",
+        toolCallId: "parent-tool-1",
+        toolName: "code_execution",
+        args: { code: "test" },
+        tokens: 10,
+        timestamp: 1000,
+      });
+
+      aggregator.handleToolCallStart({
+        type: "tool-call-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-1",
+        toolCallId: "nested-tool-1",
+        toolName: "mux.file_read",
+        args: { filePath: "test.txt" },
+        tokens: 0,
+        timestamp: 1100,
+        parentToolCallId: "parent-tool-1",
+      });
+
+      // End nested tool call with result
+      aggregator.handleToolCallEnd({
+        type: "tool-call-end",
+        workspaceId: "test-workspace",
+        messageId: "msg-1",
+        toolCallId: "nested-tool-1",
+        toolName: "mux.file_read",
+        result: { success: true, content: "file content" },
+        timestamp: 1200,
+        parentToolCallId: "parent-tool-1",
+      });
+
+      const messages = aggregator.getDisplayedMessages();
+      const toolMsg = messages.find((m) => m.type === "tool" && m.toolCallId === "parent-tool-1");
+
+      if (toolMsg?.type === "tool") {
+        expect(toolMsg.nestedCalls).toHaveLength(1);
+        expect(toolMsg.nestedCalls![0].state).toBe("output-available");
+        expect(toolMsg.nestedCalls![0].output).toEqual({
+          success: true,
+          content: "file content",
+        });
+      }
+    });
+
+    test("handles multiple nested calls in sequence", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-1",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+      });
+
+      aggregator.handleToolCallStart({
+        type: "tool-call-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-1",
+        toolCallId: "parent-tool-1",
+        toolName: "code_execution",
+        args: { code: "multi-tool code" },
+        tokens: 10,
+        timestamp: 1000,
+      });
+
+      // First nested call
+      aggregator.handleToolCallStart({
+        type: "tool-call-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-1",
+        toolCallId: "nested-1",
+        toolName: "mux.file_read",
+        args: { filePath: "a.txt" },
+        tokens: 0,
+        timestamp: 1100,
+        parentToolCallId: "parent-tool-1",
+      });
+
+      aggregator.handleToolCallEnd({
+        type: "tool-call-end",
+        workspaceId: "test-workspace",
+        messageId: "msg-1",
+        toolCallId: "nested-1",
+        toolName: "mux.file_read",
+        result: { success: true, content: "content A" },
+        timestamp: 1150,
+        parentToolCallId: "parent-tool-1",
+      });
+
+      // Second nested call
+      aggregator.handleToolCallStart({
+        type: "tool-call-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-1",
+        toolCallId: "nested-2",
+        toolName: "mux.bash",
+        args: { script: "echo hello" },
+        tokens: 0,
+        timestamp: 1200,
+        parentToolCallId: "parent-tool-1",
+      });
+
+      aggregator.handleToolCallEnd({
+        type: "tool-call-end",
+        workspaceId: "test-workspace",
+        messageId: "msg-1",
+        toolCallId: "nested-2",
+        toolName: "mux.bash",
+        result: { success: true, output: "hello" },
+        timestamp: 1250,
+        parentToolCallId: "parent-tool-1",
+      });
+
+      const messages = aggregator.getDisplayedMessages();
+      const toolMsg = messages.find((m) => m.type === "tool" && m.toolCallId === "parent-tool-1");
+
+      if (toolMsg?.type === "tool") {
+        expect(toolMsg.nestedCalls).toHaveLength(2);
+
+        expect(toolMsg.nestedCalls![0].toolName).toBe("mux.file_read");
+        expect(toolMsg.nestedCalls![0].state).toBe("output-available");
+
+        expect(toolMsg.nestedCalls![1].toolName).toBe("mux.bash");
+        expect(toolMsg.nestedCalls![1].state).toBe("output-available");
+      }
+    });
+
+    test("falls through to create regular tool if parent not found", () => {
+      // Note: This is defensive behavior - if parentToolCallId is provided but parent
+      // doesn't exist, we fall through and create a regular tool part rather than dropping it.
+      // This handles edge cases where events arrive out of order.
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-1",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+      });
+
+      // Try to add nested call with non-existent parent
+      aggregator.handleToolCallStart({
+        type: "tool-call-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-1",
+        toolCallId: "nested-orphan",
+        toolName: "mux.file_read",
+        args: { filePath: "test.txt" },
+        tokens: 0,
+        timestamp: 1000,
+        parentToolCallId: "non-existent-parent",
+      });
+
+      // Falls through and creates a regular tool part (defensive behavior)
+      const messages = aggregator.getDisplayedMessages();
+      const toolParts = messages.filter((m) => m.type === "tool");
+      expect(toolParts).toHaveLength(1);
+      expect(toolParts[0].toolCallId).toBe("nested-orphan");
+    });
+
+    test("nested call end is ignored if nested call not found in parent", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-1",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+      });
+
+      aggregator.handleToolCallStart({
+        type: "tool-call-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-1",
+        toolCallId: "parent-tool-1",
+        toolName: "code_execution",
+        args: { code: "test" },
+        tokens: 10,
+        timestamp: 1000,
+      });
+
+      // Try to end a nested call that was never started - should not throw
+      aggregator.handleToolCallEnd({
+        type: "tool-call-end",
+        workspaceId: "test-workspace",
+        messageId: "msg-1",
+        toolCallId: "unknown-nested",
+        toolName: "mux.file_read",
+        result: { success: true },
+        timestamp: 1100,
+        parentToolCallId: "parent-tool-1",
+      });
+
+      // Parent should still exist with empty nestedCalls
+      const messages = aggregator.getDisplayedMessages();
+      const toolMsg = messages.find((m) => m.type === "tool" && m.toolCallId === "parent-tool-1");
+      expect(toolMsg).toBeDefined();
+
+      // nestedCalls may be undefined or empty, both are fine
+      if (toolMsg?.type === "tool") {
+        expect(toolMsg.nestedCalls ?? []).toHaveLength(0);
+      }
+    });
+  });
 });

@@ -378,6 +378,14 @@ export const TOOL_DEFINITIONS = {
       url: z.string().url().describe("The URL to fetch (http or https)"),
     }),
   },
+  code_execution: {
+    description:
+      "Execute JavaScript code in a sandboxed environment with access to Mux tools. " +
+      "Available for multi-tool workflows when PTC experiment is enabled.",
+    schema: z.object({
+      code: z.string().min(1).describe("JavaScript code to execute in the PTC sandbox"),
+    }),
+  },
 } as const;
 
 // -----------------------------------------------------------------------------

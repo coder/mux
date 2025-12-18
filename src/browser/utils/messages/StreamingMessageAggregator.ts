@@ -1085,6 +1085,27 @@ export class StreamingMessageAggregator {
     const message = this.messages.get(data.messageId);
     if (!message) return;
 
+    // If this is a nested call (from PTC code_execution), add to parent's nestedCalls
+    if (data.parentToolCallId) {
+      const parentPart = message.parts.find(
+        (part): part is DynamicToolPart =>
+          part.type === "dynamic-tool" && part.toolCallId === data.parentToolCallId
+      );
+      if (parentPart) {
+        // Initialize nestedCalls array if needed
+        parentPart.nestedCalls ??= [];
+        parentPart.nestedCalls.push({
+          toolCallId: data.toolCallId,
+          toolName: data.toolName,
+          state: "input-available",
+          input: data.args,
+          timestamp: data.timestamp,
+        });
+        this.invalidateCache();
+        return;
+      }
+    }
+
     // Check if this tool call already exists to prevent duplicates
     const existingToolPart = message.parts.find(
       (part): part is DynamicToolPart =>
@@ -1190,6 +1211,23 @@ export class StreamingMessageAggregator {
 
     const message = this.messages.get(data.messageId);
     if (message) {
+      // If nested, update in parent's nestedCalls array
+      if (data.parentToolCallId) {
+        const parentPart = message.parts.find(
+          (part): part is DynamicToolPart =>
+            part.type === "dynamic-tool" && part.toolCallId === data.parentToolCallId
+        );
+        if (parentPart?.nestedCalls) {
+          const nestedCall = parentPart.nestedCalls.find((nc) => nc.toolCallId === data.toolCallId);
+          if (nestedCall) {
+            nestedCall.state = "output-available";
+            nestedCall.output = data.result;
+            this.invalidateCache();
+            return;
+          }
+        }
+      }
+
       // Find the specific tool part by its ID and update it with the result
       // We don't move it - it stays in its original temporal position
       const toolPart = message.parts.find(
@@ -1516,6 +1554,37 @@ export class StreamingMessageAggregator {
                 status = "pending";
               }
 
+              // For code_execution, use streaming nestedCalls if present, or reconstruct from result
+              let nestedCalls = part.nestedCalls;
+              if (
+                !nestedCalls &&
+                part.toolName === "code_execution" &&
+                part.state === "output-available"
+              ) {
+                // Reconstruct nestedCalls from result.toolCalls (for historical replay)
+                const result = part.output as
+                  | {
+                      toolCalls?: Array<{
+                        toolName: string;
+                        args: unknown;
+                        result?: unknown;
+                        error?: string;
+                        duration_ms: number;
+                      }>;
+                    }
+                  | undefined;
+                if (result?.toolCalls) {
+                  nestedCalls = result.toolCalls.map((tc, idx) => ({
+                    toolCallId: `${part.toolCallId}-nested-${idx}`,
+                    toolName: tc.toolName,
+                    input: tc.args,
+                    output: tc.result ?? (tc.error ? { error: tc.error } : undefined),
+                    state: "output-available" as const,
+                    timestamp: part.timestamp,
+                  }));
+                }
+              }
+
               displayedMessages.push({
                 type: "tool",
                 id: `${message.id}-${partIndex}`,
@@ -1530,6 +1599,7 @@ export class StreamingMessageAggregator {
                 streamSequence: streamSeq++,
                 isLastPartOfMessage: isLastPart,
                 timestamp: part.timestamp ?? baseTimestamp,
+                nestedCalls,
               });
             }
           });

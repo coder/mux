@@ -10,6 +10,7 @@
  */
 export interface PTCToolCallStartEvent {
   type: "tool-call-start";
+  callId: string; // Unique ID for correlation with end event
   toolName: string;
   args: unknown;
   startTime: number;
@@ -20,6 +21,7 @@ export interface PTCToolCallStartEvent {
  */
 export interface PTCToolCallEndEvent {
   type: "tool-call-end";
+  callId: string; // Same ID as start event for correlation
   toolName: string;
   args: unknown;
   result?: unknown;

@@ -340,6 +340,49 @@ export function createGenericTool(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// CODE EXECUTION (PTC) TOOL FACTORIES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import type {
+  CodeExecutionResult,
+  NestedToolCall,
+} from "@/browser/components/tools/shared/codeExecutionTypes";
+
+/** Create a code_execution tool call with nested tools */
+export function createCodeExecutionTool(
+  toolCallId: string,
+  code: string,
+  result: CodeExecutionResult,
+  nestedCalls?: NestedToolCall[]
+): MuxPart & { nestedCalls?: NestedToolCall[] } {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "code_execution",
+    state: "output-available",
+    input: { code },
+    output: result,
+    nestedCalls,
+  };
+}
+
+/** Create a pending code_execution tool (executing state) */
+export function createPendingCodeExecutionTool(
+  toolCallId: string,
+  code: string,
+  nestedCalls?: NestedToolCall[]
+): MuxPart & { nestedCalls?: NestedToolCall[] } {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "code_execution",
+    state: "input-available",
+    input: { code },
+    nestedCalls,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // BACKGROUND BASH TOOL FACTORIES
 // ═══════════════════════════════════════════════════════════════════════════════
 

@@ -34,6 +34,12 @@ function applyGatewayTransform(modelId: string, gateway: GatewayState): string {
   return `mux-gateway:${provider}/${model}`;
 }
 
+interface ExperimentValues {
+  postCompactionContext: boolean | undefined;
+  programmaticToolCalling: boolean | undefined;
+  programmaticToolCallingExclusive: boolean | undefined;
+}
+
 /**
  * Construct SendMessageOptions from raw values
  * Shared logic for both hook and non-hook versions
@@ -47,7 +53,7 @@ function constructSendMessageOptions(
   providerOptions: MuxProviderOptions,
   fallbackModel: string,
   gateway: GatewayState,
-  postCompactionContext: boolean | undefined
+  experimentValues: ExperimentValues
 ): SendMessageOptions {
   // Ensure model is always a valid string (defensive against corrupted localStorage)
   const rawModel =
@@ -69,7 +75,9 @@ function constructSendMessageOptions(
     toolPolicy: modeToToolPolicy(mode),
     providerOptions,
     experiments: {
-      postCompactionContext,
+      postCompactionContext: experimentValues.postCompactionContext,
+      programmaticToolCalling: experimentValues.programmaticToolCalling,
+      programmaticToolCallingExclusive: experimentValues.programmaticToolCallingExclusive,
     },
   };
 }
@@ -113,6 +121,12 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
   // Subscribe to local override state so toggles apply immediately.
   // If undefined, the backend will apply the PostHog assignment.
   const postCompactionContext = useExperimentOverrideValue(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
+  const programmaticToolCalling = useExperimentOverrideValue(
+    EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING
+  );
+  const programmaticToolCallingExclusive = useExperimentOverrideValue(
+    EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE
+  );
 
   // Compute base model (canonical format) for UI components
   const rawModel =
@@ -126,7 +140,7 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
     providerOptions,
     defaultModel,
     gateway,
-    postCompactionContext
+    { postCompactionContext, programmaticToolCalling, programmaticToolCallingExclusive }
   );
 
   return { ...options, baseModel };

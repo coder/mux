@@ -629,7 +629,8 @@ export class AgentSession {
       options?.mode,
       recordFileState,
       changedFileAttachments.length > 0 ? changedFileAttachments : undefined,
-      postCompactionAttachments
+      postCompactionAttachments,
+      options?.experiments
     );
   }
 

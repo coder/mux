@@ -57,6 +57,11 @@ import type {
   StreamStartEvent,
 } from "@/common/types/stream";
 import { applyToolPolicy, type ToolPolicy } from "@/common/utils/tools/toolPolicy";
+import {
+  createCodeExecutionTool,
+  type PTCEventWithParent,
+} from "@/node/services/tools/code_execution";
+import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import { MockScenarioPlayer } from "./mock/mockScenarioPlayer";
 import { EnvHttpProxyAgent, type Dispatcher } from "undici";
 import { getPlanFilePath } from "@/common/utils/planStorage";
@@ -109,6 +114,13 @@ type FetchWithBunExtensions = typeof fetch & {
 
 const globalFetchWithExtras = fetch as FetchWithBunExtensions;
 const defaultFetchWithExtras = defaultFetchWithUnlimitedTimeout as FetchWithBunExtensions;
+
+// Singleton QuickJS runtime factory for PTC (WASM module is expensive to load)
+let quickjsRuntimeFactory: QuickJSRuntimeFactory | null = null;
+function getQuickJSRuntimeFactory(): QuickJSRuntimeFactory {
+  quickjsRuntimeFactory ??= new QuickJSRuntimeFactory();
+  return quickjsRuntimeFactory;
+}
 
 if (typeof globalFetchWithExtras.preconnect === "function") {
   defaultFetchWithExtras.preconnect = globalFetchWithExtras.preconnect.bind(globalFetchWithExtras);
@@ -930,7 +942,8 @@ export class AIService extends EventEmitter {
     mode?: string,
     recordFileState?: (filePath: string, state: FileState) => void,
     changedFileAttachments?: EditedFileAttachment[],
-    postCompactionAttachments?: PostCompactionAttachment[] | null
+    postCompactionAttachments?: PostCompactionAttachment[] | null,
+    experiments?: { programmaticToolCalling?: boolean; programmaticToolCallingExclusive?: boolean }
   ): Promise<Result<void, SendMessageError>> {
     try {
       if (this.mockModeEnabled && this.mockScenarioPlayer) {
@@ -1237,8 +1250,40 @@ export class AIService extends EventEmitter {
         mcpTools
       );
 
+      // Handle PTC experiments - add or replace tools with code_execution
+      let toolsWithPTC = allTools;
+      if (experiments?.programmaticToolCalling || experiments?.programmaticToolCallingExclusive) {
+        try {
+          // Create emit callback that forwards nested events to stream
+          // Only forward tool-call-start/end events, not console events
+          const emitNestedEvent = (event: PTCEventWithParent): void => {
+            if (event.type === "tool-call-start" || event.type === "tool-call-end") {
+              this.streamManager.emitNestedToolEvent(workspaceId, assistantMessageId, event);
+            }
+            // Console events are not streamed (appear in final result only)
+          };
+
+          const codeExecutionTool = await createCodeExecutionTool(
+            getQuickJSRuntimeFactory(),
+            allTools, // All tools available inside sandbox
+            emitNestedEvent
+          );
+
+          if (experiments?.programmaticToolCallingExclusive) {
+            // Exclusive mode: only code_execution available
+            toolsWithPTC = { code_execution: codeExecutionTool };
+          } else {
+            // Supplement mode: add code_execution alongside other tools
+            toolsWithPTC = { ...allTools, code_execution: codeExecutionTool };
+          }
+        } catch (error) {
+          // Fall back to base tools if PTC creation fails
+          log.error("Failed to create code_execution tool, falling back to base tools", { error });
+        }
+      }
+
       // Apply tool policy to filter tools (if policy provided)
-      const tools = applyToolPolicy(allTools, toolPolicy);
+      const tools = applyToolPolicy(toolsWithPTC, toolPolicy);
 
       const effectiveMcpStats: MCPWorkspaceStats =
         mcpStats ??

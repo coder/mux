@@ -778,6 +778,53 @@ export class StreamManager extends EventEmitter {
   }
 
   /**
+   * Emit nested tool events from PTC code_execution.
+   * These are forwarded to the frontend via the same event channel as regular tool events.
+   * The parentToolCallId field identifies which code_execution call spawned this nested call.
+   */
+  emitNestedToolEvent(
+    workspaceId: string,
+    messageId: string,
+    event: {
+      type: "tool-call-start" | "tool-call-end";
+      callId: string;
+      toolName: string;
+      args: unknown;
+      parentToolCallId: string;
+      startTime: number;
+      endTime?: number;
+      result?: unknown;
+      error?: string;
+    }
+  ): void {
+    if (event.type === "tool-call-start") {
+      this.emit("tool-call-start", {
+        type: "tool-call-start",
+        workspaceId,
+        messageId,
+        toolCallId: event.callId,
+        toolName: event.toolName,
+        args: event.args,
+        tokens: 0, // Nested calls don't count toward stream tokens
+        timestamp: event.startTime,
+        parentToolCallId: event.parentToolCallId,
+      });
+    } else if (event.type === "tool-call-end") {
+      this.emit("tool-call-end", {
+        type: "tool-call-end",
+        workspaceId,
+        messageId,
+        toolCallId: event.callId,
+        toolName: event.toolName,
+        result: event.result ?? (event.error ? { error: event.error } : undefined),
+        timestamp: event.endTime!,
+        parentToolCallId: event.parentToolCallId,
+      });
+    }
+    // Console events are not streamed (appear in final result only)
+  }
+
+  /**
    * Processes a stream with guaranteed cleanup, regardless of success or failure
    */
   private async processStreamWithCleanup(

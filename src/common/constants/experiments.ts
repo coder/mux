@@ -8,6 +8,7 @@
 export const EXPERIMENT_IDS = {
   POST_COMPACTION_CONTEXT: "post-compaction-context",
   PROGRAMMATIC_TOOL_CALLING: "programmatic-tool-calling",
+  PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE: "programmatic-tool-calling-exclusive",
 } as const;
 
 export type ExperimentId = (typeof EXPERIMENT_IDS)[keyof typeof EXPERIMENT_IDS];
@@ -48,6 +49,16 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "Programmatic Tool Calling",
     description: "Enable code_execution tool for multi-tool workflows in a sandboxed JS runtime",
     enabledByDefault: false,
+    userOverridable: true,
+    showInSettings: true,
+  },
+  [EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE]: {
+    id: EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE,
+    name: "PTC Exclusive Mode",
+    description: "Replace all tools with code_execution (forces PTC usage)",
+    enabledByDefault: false,
+    userOverridable: true,
+    showInSettings: true,
   },
 };
 
