@@ -26,7 +26,7 @@ function getProviderOptions(): MuxProviderOptions {
     { use1MContext: false }
   );
   const openai = readPersistedState<MuxProviderOptions["openai"]>("provider_options_openai", {
-    disableAutoTruncation: false,
+    disableAutoTruncation: true,
   });
   const google = readPersistedState<MuxProviderOptions["google"]>("provider_options_google", {});
 

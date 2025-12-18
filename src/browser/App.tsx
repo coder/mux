@@ -486,6 +486,14 @@ function AppInner() {
   // Handle keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // DEBUG: Log Cmd+Q presses to diagnose menu accelerator issues
+      if (e.metaKey && e.key.toLowerCase() === "q") {
+        console.log("[App] Cmd+Q detected in renderer", {
+          key: e.key,
+          metaKey: e.metaKey,
+          defaultPrevented: e.defaultPrevented,
+        });
+      }
       if (matchesKeybind(e, KEYBINDS.NEXT_WORKSPACE)) {
         e.preventDefault();
         handleNavigateWorkspace("next");

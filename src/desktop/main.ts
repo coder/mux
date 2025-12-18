@@ -144,6 +144,13 @@ function timestamp(): string {
 function createMenu() {
   const template: MenuItemConstructorOptions[] = [
     {
+      label: "File",
+      submenu:
+        process.platform === "darwin"
+          ? [{ role: "close" }] // macOS: Cmd+W to close window
+          : [{ role: "quit" }], // Windows/Linux: Quit in File menu
+    },
+    {
       label: "Edit",
       submenu: [
         { role: "undo" },
@@ -182,7 +189,14 @@ function createMenu() {
     },
     {
       label: "Window",
-      submenu: [{ role: "minimize" }, { role: "close" }],
+      submenu:
+        process.platform === "darwin"
+          ? [
+              // macOS Window menu - close is in File menu to avoid Cmd+Q/Cmd+W conflicts
+              { role: "minimize" },
+              { role: "zoom" },
+            ]
+          : [{ role: "minimize" }, { role: "close" }],
     },
   ];
 
@@ -206,7 +220,12 @@ function createMenu() {
         { role: "hideOthers" },
         { role: "unhide" },
         { type: "separator" },
-        { role: "quit" },
+        {
+          role: "quit",
+          click: () => {
+            console.log(`[${timestamp()}] Quit menu item clicked`);
+          },
+        },
       ],
     });
   }
@@ -504,7 +523,13 @@ function createWindow() {
     // First token count will use approximation, accurate count caches in background.
   });
 
+  // Log when window is about to close (can be prevented)
+  mainWindow.on("close", (event) => {
+    console.log(`[${timestamp()}] mainWindow 'close' event fired`);
+  });
+
   mainWindow.on("closed", () => {
+    console.log(`[${timestamp()}] mainWindow 'closed' event fired`);
     mainWindow = null;
   });
 }
@@ -573,12 +598,15 @@ if (gotTheLock) {
   let isDisposing = false;
 
   app.on("before-quit", (event) => {
+    console.log(`[${timestamp()}] app 'before-quit' event fired (isDisposing=${isDisposing}, hasServices=${!!services})`);
     // Skip if already disposing or no services to clean up
     if (isDisposing || !services) {
+      console.log(`[${timestamp()}] before-quit: skipping (already disposing or no services)`);
       return;
     }
 
     // Prevent quit, clean up, then quit again
+    console.log(`[${timestamp()}] before-quit: preventing quit, starting disposal`);
     event.preventDefault();
     isDisposing = true;
 
@@ -594,6 +622,7 @@ if (gotTheLock) {
   });
 
   app.on("window-all-closed", () => {
+    console.log(`[${timestamp()}] app 'window-all-closed' event fired (platform=${process.platform})`);
     if (process.platform !== "darwin") {
       app.quit();
     }
