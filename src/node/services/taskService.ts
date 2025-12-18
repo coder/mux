@@ -25,6 +25,7 @@ import {
 } from "@/common/types/message";
 import { isDynamicToolPart } from "@/common/types/toolParts";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import { detectDefaultTrunkBranch, getCurrentBranch, listLocalBranches } from "@/node/git";
 import * as crypto from "crypto";
 import assert from "@/common/utils/assert";
@@ -227,6 +228,11 @@ export class TaskService extends EventEmitter {
 
     await this.config.setWorkspaceTaskState(taskId, taskState);
 
+    // Emit metadata update so the renderer knows about parentWorkspaceId/agentType.
+    // The initial create() call emits metadata before these fields are set,
+    // so we need to re-emit after persisting the task state.
+    await this.workspaceService.emitMetadataUpdate(taskId);
+
     log.debug(`Created task workspace ${taskId} for parent ${parentWorkspaceId}`, {
       agentType,
       status: taskState.taskStatus,
@@ -270,7 +276,7 @@ export class TaskService extends EventEmitter {
    * Start a task that was previously created (either new or from queue).
    */
   private async startTask(taskId: string, options: CreateTaskOptions): Promise<void> {
-    const { prompt } = options;
+    const { prompt, parentWorkspaceId } = options;
 
     // Update task state to running
     const currentState = this.config.getWorkspaceTaskState(taskId);
@@ -282,10 +288,13 @@ export class TaskService extends EventEmitter {
       });
     }
 
+    // Inherit model/thinkingLevel from parent workspace to avoid forcing a specific provider.
+    const { model, thinkingLevel } = await this.getTaskAISettings(parentWorkspaceId);
+
     try {
       const result = await this.workspaceService.sendMessage(taskId, prompt, {
-        model: "anthropic:claude-sonnet-4-20250514", // Default model for agents
-        thinkingLevel: "medium",
+        model,
+        thinkingLevel,
         mode: "exec", // Agent tasks are always in exec mode
       });
 
@@ -693,6 +702,9 @@ export class TaskService extends EventEmitter {
         taskStatus: "awaiting_report",
       });
 
+      // Get parent's AI settings for the reminder message
+      const { model } = await this.getTaskAISettings(updatedState.parentWorkspaceId);
+
       // Send reminder message
       try {
         const result = await this.workspaceService.sendMessage(
@@ -700,8 +712,8 @@ export class TaskService extends EventEmitter {
           "Your task is complete but you haven't called agent_report yet. " +
             "Please call agent_report now with your findings.",
           {
-            model: "anthropic:claude-sonnet-4-20250514",
-            thinkingLevel: "low",
+            model,
+            thinkingLevel: "low", // Low thinking for simple reminder
             // Require only agent_report
             toolPolicy: [{ regex_match: "agent_report", action: "require" }],
             mode: "exec",
@@ -950,13 +962,14 @@ export class TaskService extends EventEmitter {
         });
       } else if (taskState.taskStatus === "running") {
         // Send continuation message for running tasks
+        const { model, thinkingLevel } = await this.getTaskAISettings(taskState.parentWorkspaceId);
         try {
           const result = await this.workspaceService.sendMessage(
             workspaceId,
             "Mux was restarted. Please continue your task and call agent_report when done.",
             {
-              model: "anthropic:claude-sonnet-4-20250514",
-              thinkingLevel: "medium",
+              model,
+              thinkingLevel,
               mode: "exec",
             }
           );
@@ -969,14 +982,15 @@ export class TaskService extends EventEmitter {
         }
       } else if (taskState.taskStatus === "awaiting_report") {
         // Send reminder message for tasks that finished without reporting
+        const { model } = await this.getTaskAISettings(taskState.parentWorkspaceId);
         try {
           const result = await this.workspaceService.sendMessage(
             workspaceId,
             "Mux was restarted. Your task appears to have finished but agent_report was not called. " +
               "Please call agent_report now with your findings.",
             {
-              model: "anthropic:claude-sonnet-4-20250514",
-              thinkingLevel: "low",
+              model,
+              thinkingLevel: "low", // Low thinking for simple reminder
               // Require only agent_report
               toolPolicy: [{ regex_match: "agent_report", action: "require" }],
               mode: "exec",
@@ -1121,6 +1135,21 @@ export class TaskService extends EventEmitter {
   ): Promise<FrontendWorkspaceMetadata | null> {
     const allMetadata = await this.config.getAllWorkspaceMetadata();
     return allMetadata.find((m) => m.id === workspaceId) ?? null;
+  }
+
+  /**
+   * Get AI settings (model, thinkingLevel) for a task by looking up its parent workspace.
+   * Falls back to defaults if parent metadata is unavailable.
+   */
+  private async getTaskAISettings(
+    parentWorkspaceId: string
+  ): Promise<{ model: string; thinkingLevel: ThinkingLevel }> {
+    const parentMetadata = await this.aiService.getWorkspaceMetadata(parentWorkspaceId);
+    const aiSettings = parentMetadata.success ? parentMetadata.data.aiSettings : undefined;
+    return {
+      model: aiSettings?.model ?? "anthropic:claude-sonnet-4-20250514",
+      thinkingLevel: aiSettings?.thinkingLevel ?? "medium",
+    };
   }
 
   /**

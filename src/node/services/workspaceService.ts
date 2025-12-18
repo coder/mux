@@ -747,6 +747,23 @@ export class WorkspaceService extends EventEmitter {
     return allMetadata.find((m) => m.id === workspaceId) ?? null;
   }
 
+  /**
+   * Emit a metadata update event for a workspace.
+   * Used when workspace metadata changes outside of normal workspaceService flows
+   * (e.g., when taskService sets parentWorkspaceId/agentType after workspace creation).
+   */
+  async emitMetadataUpdate(workspaceId: string): Promise<void> {
+    const allMetadata = await this.config.getAllWorkspaceMetadata();
+    const metadata = allMetadata.find((m) => m.id === workspaceId) ?? null;
+
+    const session = this.sessions.get(workspaceId);
+    if (session) {
+      session.emitMetadata(metadata);
+    } else {
+      this.emit("metadata", { workspaceId, metadata });
+    }
+  }
+
   async rename(workspaceId: string, newName: string): Promise<Result<{ newWorkspaceId: string }>> {
     try {
       if (this.aiService.isStreaming(workspaceId)) {

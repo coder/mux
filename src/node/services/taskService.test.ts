@@ -276,6 +276,11 @@ class FakeWorkspaceService {
     this.appendedMessages.push({ workspaceId, message: muxMessage });
     return Promise.resolve(Ok(undefined));
   }
+
+  emitMetadataUpdate(_workspaceId: string): Promise<void> {
+    // No-op in tests - we don't need to verify metadata emission
+    return Promise.resolve();
+  }
 }
 
 function createWorkspaceMetadata(

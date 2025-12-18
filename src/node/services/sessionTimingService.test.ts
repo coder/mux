@@ -79,6 +79,7 @@ describe("SessionTimingService", () => {
       messageId,
       toolCallId: "t1",
       toolName: "bash",
+      args: { cmd: "echo hi" },
       result: { ok: true },
       timestamp: startTime + 3000,
     });
@@ -166,6 +167,7 @@ describe("SessionTimingService", () => {
       messageId,
       toolCallId: "t1",
       toolName: "bash",
+      args: { cmd: "sleep" },
       result: { ok: true },
       timestamp: startTime + 10_100,
     });
