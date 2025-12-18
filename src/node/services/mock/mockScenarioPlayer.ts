@@ -266,6 +266,15 @@ export class MockScenarioPlayer {
   ): Promise<void> {
     switch (event.kind) {
       case "stream-start": {
+        // Mirror real runtime: emit stream-pending before stream-start
+        this.deps.aiService.emit("stream-pending", {
+          type: "stream-pending",
+          workspaceId,
+          messageId,
+          model: event.model,
+          historySequence,
+        });
+
         const payload: StreamStartEvent = {
           type: "stream-start",
           workspaceId,

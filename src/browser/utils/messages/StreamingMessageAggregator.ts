@@ -7,6 +7,7 @@ import type {
 } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type {
+  StreamPendingEvent,
   StreamStartEvent,
   StreamDeltaEvent,
   UsageDeltaEvent,
@@ -51,6 +52,17 @@ interface StreamingContext {
   isCompacting: boolean;
   model: string;
 }
+
+type InFlightStreamState =
+  | {
+      phase: "pending";
+      pendingAt: number;
+      model: string;
+    }
+  | {
+      phase: "active";
+      context: StreamingContext;
+    };
 
 /**
  * Check if a tool result indicates success (for tools that return { success: boolean })
@@ -136,7 +148,9 @@ function mergeAdjacentParts(parts: MuxMessage["parts"]): MuxMessage["parts"] {
 
 export class StreamingMessageAggregator {
   private messages = new Map<string, MuxMessage>();
-  private activeStreams = new Map<string, StreamingContext>();
+
+  // Streams that are in-flight (pending: `stream-pending` received; active: `stream-start` received).
+  private inFlightStreams = new Map<string, InFlightStreamState>();
 
   // Simple cache for derived values (invalidated on every mutation)
   private cachedAllMessages: MuxMessage[] | null = null;
@@ -336,12 +350,12 @@ export class StreamingMessageAggregator {
    * Called by handleStreamEnd, handleStreamAbort, and handleStreamError.
    *
    * Clears:
-   * - Active stream tracking (this.activeStreams)
+   * - In-flight stream tracking (this.inFlightStreams)
    * - Current TODOs (this.currentTodos) - reconstructed from history on reload
    * - Transient agentStatus (from displayStatus) - restored to persisted value
    */
   private cleanupStreamState(messageId: string): void {
-    this.activeStreams.delete(messageId);
+    this.inFlightStreams.delete(messageId);
     // Clear todos when stream ends - they're stream-scoped state
     // On reload, todos will be reconstructed from completed tool_write calls in history
     this.currentTodos = [];
@@ -461,8 +475,15 @@ export class StreamingMessageAggregator {
     this.pendingStreamStartTime = time;
   }
 
+  hasInFlightStreams(): boolean {
+    return this.inFlightStreams.size > 0;
+  }
   getActiveStreams(): StreamingContext[] {
-    return Array.from(this.activeStreams.values());
+    const active: StreamingContext[] = [];
+    for (const stream of this.inFlightStreams.values()) {
+      if (stream.phase === "active") active.push(stream.context);
+    }
+    return active;
   }
 
   /**
@@ -470,12 +491,15 @@ export class StreamingMessageAggregator {
    * Returns undefined if no streams are active
    */
   getActiveStreamMessageId(): string | undefined {
-    return this.activeStreams.keys().next().value;
+    for (const [messageId, stream] of this.inFlightStreams.entries()) {
+      if (stream.phase === "active") return messageId;
+    }
+    return undefined;
   }
 
   isCompacting(): boolean {
-    for (const context of this.activeStreams.values()) {
-      if (context.isCompacting) {
+    for (const stream of this.inFlightStreams.values()) {
+      if (stream.phase === "active" && stream.context.isCompacting) {
         return true;
       }
     }
@@ -484,8 +508,13 @@ export class StreamingMessageAggregator {
 
   getCurrentModel(): string | undefined {
     // If there's an active stream, return its model
-    for (const context of this.activeStreams.values()) {
-      return context.model;
+    for (const stream of this.inFlightStreams.values()) {
+      if (stream.phase === "active") return stream.context.model;
+    }
+
+    // If we're pending (stream-pending), return that model
+    for (const stream of this.inFlightStreams.values()) {
+      if (stream.phase === "pending") return stream.model;
     }
 
     // Otherwise, return the model from the most recent assistant message
@@ -501,12 +530,14 @@ export class StreamingMessageAggregator {
   }
 
   clearActiveStreams(): void {
-    this.activeStreams.clear();
+    this.setPendingStreamStartTime(null);
+    this.inFlightStreams.clear();
+    this.invalidateCache();
   }
 
   clear(): void {
     this.messages.clear();
-    this.activeStreams.clear();
+    this.inFlightStreams.clear();
     this.invalidateCache();
   }
 
@@ -529,8 +560,24 @@ export class StreamingMessageAggregator {
   }
 
   // Unified event handlers that encapsulate all complex logic
+  handleStreamPending(data: StreamPendingEvent): void {
+    // Clear pending stream start timestamp - backend has accepted the request.
+    this.setPendingStreamStartTime(null);
+
+    const existing = this.inFlightStreams.get(data.messageId);
+    if (existing?.phase === "active") return;
+
+    this.inFlightStreams.set(data.messageId, {
+      phase: "pending",
+      pendingAt: Date.now(),
+      model: data.model,
+    });
+
+    this.invalidateCache();
+  }
+
   handleStreamStart(data: StreamStartEvent): void {
-    // Clear pending stream start timestamp - stream has started
+    // Clear pending stream start timestamp - stream has started.
     this.setPendingStreamStartTime(null);
 
     // NOTE: We do NOT clear agentStatus or currentTodos here.
@@ -551,7 +598,7 @@ export class StreamingMessageAggregator {
 
     // Use messageId as key - ensures only ONE stream per message
     // If called twice (e.g., during replay), second call safely overwrites first
-    this.activeStreams.set(data.messageId, context);
+    this.inFlightStreams.set(data.messageId, { phase: "active", context });
 
     // Create initial streaming message with empty parts (deltas will append)
     const streamingMessage = createMuxMessage(data.messageId, "assistant", "", {
@@ -583,7 +630,8 @@ export class StreamingMessageAggregator {
 
   handleStreamEnd(data: StreamEndEvent): void {
     // Direct lookup by messageId - O(1) instead of O(n) find
-    const activeStream = this.activeStreams.get(data.messageId);
+    const stream = this.inFlightStreams.get(data.messageId);
+    const activeStream = stream?.phase === "active" ? stream.context : undefined;
 
     if (activeStream) {
       // Normal streaming case: we've been tracking this stream from the start
@@ -650,9 +698,10 @@ export class StreamingMessageAggregator {
 
   handleStreamAbort(data: StreamAbortEvent): void {
     // Direct lookup by messageId
-    const activeStream = this.activeStreams.get(data.messageId);
+    const stream = this.inFlightStreams.get(data.messageId);
+    if (!stream) return;
 
-    if (activeStream) {
+    if (stream.phase === "active") {
       // Mark the message as interrupted and merge metadata (consistent with handleStreamEnd)
       const message = this.messages.get(data.messageId);
       if (message?.metadata) {
@@ -665,36 +714,16 @@ export class StreamingMessageAggregator {
         // Compact parts even on abort - still reduces memory for partial messages
         this.compactMessageParts(message);
       }
-
-      // Clean up stream-scoped state (active stream tracking, TODOs)
-      this.cleanupStreamState(data.messageId);
-      this.invalidateCache();
     }
+
+    // Always clean up stream-scoped state (pending or active) to avoid wedging canInterrupt=true.
+    this.cleanupStreamState(data.messageId);
+    this.invalidateCache();
   }
 
   handleStreamError(data: StreamErrorMessage): void {
-    // Direct lookup by messageId
-    const activeStream = this.activeStreams.get(data.messageId);
-
-    if (activeStream) {
-      // Mark the message with error metadata
-      const message = this.messages.get(data.messageId);
-      if (message?.metadata) {
-        message.metadata.partial = true;
-        message.metadata.error = data.error;
-        message.metadata.errorType = data.errorType;
-
-        // Compact parts even on error - still reduces memory for partial messages
-        this.compactMessageParts(message);
-      }
-
-      // Clean up stream-scoped state (active stream tracking, TODOs)
-      this.cleanupStreamState(data.messageId);
-      this.invalidateCache();
-    } else {
-      // Pre-stream error (e.g., API key not configured before streaming starts)
-      // Create a synthetic error message since there's no active stream to attach to
-      // Get the highest historySequence from existing messages so this appears at the end
+    const createSyntheticErrorMessage = (): void => {
+      // Get the highest historySequence from existing messages so this appears at the end.
       const maxSequence = Math.max(
         0,
         ...Array.from(this.messages.values()).map((m) => m.metadata?.historySequence ?? 0)
@@ -712,8 +741,35 @@ export class StreamingMessageAggregator {
         },
       };
       this.messages.set(data.messageId, errorMessage);
+    };
+
+    const isTrackedStream = this.inFlightStreams.has(data.messageId);
+
+    if (isTrackedStream) {
+      // Mark the message with error metadata
+      const message = this.messages.get(data.messageId);
+      if (message?.metadata) {
+        message.metadata.partial = true;
+        message.metadata.error = data.error;
+        message.metadata.errorType = data.errorType;
+
+        // Compact parts even on error - still reduces memory for partial messages
+        this.compactMessageParts(message);
+      } else {
+        // Stream errored before stream-start created a message (pending-phase).
+        createSyntheticErrorMessage();
+      }
+
+      // Clean up stream-scoped state (active/connecting tracking, TODOs)
+      this.cleanupStreamState(data.messageId);
       this.invalidateCache();
+      return;
     }
+
+    // Pre-stream error (e.g., API key not configured before streaming starts)
+    // Create a synthetic error message since there's no tracked stream to attach to.
+    createSyntheticErrorMessage();
+    this.invalidateCache();
   }
 
   handleToolCallStart(data: ToolCallStartEvent): void {
@@ -844,7 +900,7 @@ export class StreamingMessageAggregator {
 
   handleReasoningEnd(_data: ReasoningEndEvent): void {
     // Reasoning-end is just a signal - no state to update
-    // Streaming status is inferred from activeStreams in getDisplayedMessages
+    // Streaming status is inferred from inFlightStreams in getDisplayedMessages
     this.invalidateCache();
   }
 
@@ -1044,7 +1100,7 @@ export class StreamingMessageAggregator {
 
           // Check if this message has an active stream (for inferring streaming status)
           // Direct Map.has() check - O(1) instead of O(n) iteration
-          const hasActiveStream = this.activeStreams.has(message.id);
+          const hasActiveStream = this.inFlightStreams.get(message.id)?.phase === "active";
 
           // Merge adjacent text/reasoning parts for display
           const mergedParts = mergeAdjacentParts(message.parts);

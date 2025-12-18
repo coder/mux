@@ -248,6 +248,58 @@ describe("StreamingMessageAggregator", () => {
       expect(aggregator.getCurrentTodos()).toHaveLength(0);
     });
 
+    test("should clear in-flight streams when pending stream aborts", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleStreamPending({
+        type: "stream-pending",
+        workspaceId: "test-workspace",
+        messageId: "msg1",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+      });
+
+      expect(aggregator.hasInFlightStreams()).toBe(true);
+
+      aggregator.handleStreamAbort({
+        type: "stream-abort",
+        workspaceId: "test-workspace",
+        messageId: "msg1",
+        metadata: {},
+      });
+
+      expect(aggregator.hasInFlightStreams()).toBe(false);
+    });
+
+    test("should surface stream-error when tracked stream errors before stream-start", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleStreamPending({
+        type: "stream-pending",
+        workspaceId: "test-workspace",
+        messageId: "msg1",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+      });
+
+      aggregator.handleStreamError({
+        type: "stream-error",
+        messageId: "msg1",
+        error: "Boom",
+        errorType: "unknown",
+      });
+
+      expect(aggregator.hasInFlightStreams()).toBe(false);
+
+      const displayed = aggregator.getDisplayedMessages();
+      const errorMsg = displayed.find((m) => m.type === "stream-error");
+      expect(errorMsg).toBeDefined();
+      if (errorMsg?.type === "stream-error") {
+        expect(errorMsg.error).toBe("Boom");
+        expect(errorMsg.errorType).toBe("unknown");
+      }
+    });
+
     test("should reconstruct todos on reload ONLY when reconnecting to active stream", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 

@@ -243,6 +243,35 @@ describe("hasInterruptedStream", () => {
     expect(hasInterruptedStream(messages, null)).toBe(true);
   });
 
+  it("returns false when pendingStreamStartTime is null but last user message timestamp is recent (replay/reload)", () => {
+    const justSentTimestamp = Date.now() - (PENDING_STREAM_START_GRACE_PERIOD_MS - 500);
+    const messages: DisplayedMessage[] = [
+      {
+        type: "user",
+        id: "user-1",
+        historyId: "user-1",
+        content: "Hello",
+        historySequence: 1,
+        timestamp: justSentTimestamp,
+      },
+    ];
+    expect(hasInterruptedStream(messages, null)).toBe(false);
+  });
+
+  it("returns true when pendingStreamStartTime is null and last user message timestamp is old (replay/reload)", () => {
+    const longAgoTimestamp = Date.now() - (PENDING_STREAM_START_GRACE_PERIOD_MS + 1000);
+    const messages: DisplayedMessage[] = [
+      {
+        type: "user",
+        id: "user-1",
+        historyId: "user-1",
+        content: "Hello",
+        historySequence: 1,
+        timestamp: longAgoTimestamp,
+      },
+    ];
+    expect(hasInterruptedStream(messages, null)).toBe(true);
+  });
   it("returns false when user message just sent (within grace period)", () => {
     const messages: DisplayedMessage[] = [
       {

@@ -80,15 +80,21 @@ export function hasInterruptedStream(
 ): boolean {
   if (messages.length === 0) return false;
 
-  // Don't show retry barrier if user message was sent very recently (within the grace period)
-  // This prevents flash during normal send flow while stream-start event arrives
-  // After the grace period, assume something is wrong and show the barrier
-  if (pendingStreamStartTime !== null) {
-    const elapsed = Date.now() - pendingStreamStartTime;
+  const lastMessage = messages[messages.length - 1];
+
+  // Don't show retry barrier if the last user message was sent very recently (within the grace period).
+  //
+  // We prefer the explicit pendingStreamStartTime (set during the live send flow).
+  // But during history replay / app reload, pendingStreamStartTime can be null even when the last
+  // message is a fresh user message. In that case, fall back to the user message timestamp.
+  const graceStartTime =
+    pendingStreamStartTime ??
+    (lastMessage.type === "user" ? (lastMessage.timestamp ?? null) : null);
+
+  if (graceStartTime !== null) {
+    const elapsed = Date.now() - graceStartTime;
     if (elapsed < PENDING_STREAM_START_GRACE_PERIOD_MS) return false;
   }
-
-  const lastMessage = messages[messages.length - 1];
 
   // ask_user_question is a special case: an unfinished tool call represents an
   // intentional "waiting for user input" state, not a stream interruption.

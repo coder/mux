@@ -164,6 +164,15 @@ export class WorkspaceStore {
       data: WorkspaceChatMessage
     ) => void
   > = {
+    "stream-pending": (workspaceId, aggregator, data) => {
+      aggregator.handleStreamPending(data as never);
+      if (this.onModelUsed) {
+        this.onModelUsed((data as { model: string }).model);
+      }
+      this.states.bump(workspaceId);
+      // Bump usage store so liveUsage can show the current model even before streaming starts
+      this.usageStore.bump(workspaceId);
+    },
     "stream-start": (workspaceId, aggregator, data) => {
       aggregator.handleStreamStart(data as never);
       if (this.onModelUsed) {
@@ -487,7 +496,7 @@ export class WorkspaceStore {
         name: metadata?.name ?? workspaceId, // Fall back to ID if metadata missing
         messages: aggregator.getDisplayedMessages(),
         queuedMessage: this.queuedMessages.get(workspaceId) ?? null,
-        canInterrupt: activeStreams.length > 0,
+        canInterrupt: activeStreams.length > 0 || aggregator.hasInFlightStreams(),
         isCompacting: aggregator.isCompacting(),
         awaitingUserQuestion: aggregator.hasAwaitingUserQuestion(),
         loading: !hasMessages && !isCaughtUp,
@@ -995,7 +1004,8 @@ export class WorkspaceStore {
       // Check if there's an active stream in buffered events (reconnection scenario)
       const pendingEvents = this.pendingStreamEvents.get(workspaceId) ?? [];
       const hasActiveStream = pendingEvents.some(
-        (event) => "type" in event && event.type === "stream-start"
+        (event) =>
+          "type" in event && (event.type === "stream-start" || event.type === "stream-pending")
       );
 
       // Load historical messages first

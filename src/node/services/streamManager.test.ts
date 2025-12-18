@@ -84,6 +84,7 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
       // Start first stream
       const result1 = await streamManager.startStream(
         workspaceId,
+        "assistant-1",
         [{ role: "user", content: "Say hello and nothing else" }],
         model,
         KNOWN_MODELS.SONNET.id,
@@ -102,6 +103,7 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
       // Start second stream - should cancel first
       const result2 = await streamManager.startStream(
         workspaceId,
+        "assistant-2",
         [{ role: "user", content: "Say goodbye and nothing else" }],
         model,
         KNOWN_MODELS.SONNET.id,
@@ -164,6 +166,11 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
     }
 
     const ensureStreamSafetyValue = Reflect.get(streamManager, "ensureStreamSafety") as unknown;
+    const pendingMessageIds: string[] = [];
+    streamManager.on("stream-pending", (event) => {
+      pendingMessageIds.push((event as { messageId: string }).messageId);
+    });
+
     if (typeof ensureStreamSafetyValue !== "function") {
       throw new Error("StreamManager.ensureStreamSafety is unavailable for testing");
     }
@@ -199,7 +206,10 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
       "createStreamAtomically",
       (
         wsId: string,
+        assistantMessageId: string,
         streamToken: string,
+        _runtimeTempDir: string,
+        _runtime: unknown,
         messages: unknown,
         modelArg: unknown,
         modelString: string,
@@ -228,7 +238,7 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
             providerMetadata: Promise.resolve(undefined),
           },
           abortController,
-          messageId: `test-${Math.random().toString(36).slice(2)}`,
+          messageId: assistantMessageId,
           token: streamToken,
           startTime: Date.now(),
           model: modelString,
@@ -274,6 +284,7 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
     const promises = [
       streamManager.startStream(
         workspaceId,
+        "assistant-mutex-1",
         [{ role: "user", content: "test 1" }],
         model,
         KNOWN_MODELS.SONNET.id,
@@ -285,6 +296,7 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
       ),
       streamManager.startStream(
         workspaceId,
+        "assistant-mutex-2",
         [{ role: "user", content: "test 2" }],
         model,
         KNOWN_MODELS.SONNET.id,
@@ -296,6 +308,7 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
       ),
       streamManager.startStream(
         workspaceId,
+        "assistant-mutex-3",
         [{ role: "user", content: "test 3" }],
         model,
         KNOWN_MODELS.SONNET.id,
@@ -317,6 +330,12 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
       expect(ensureOperations[i]).toBe("ensure-start");
       expect(ensureOperations[i + 1]).toBe("ensure-end");
     }
+
+    expect(pendingMessageIds).toEqual([
+      "assistant-mutex-1",
+      "assistant-mutex-2",
+      "assistant-mutex-3",
+    ]);
   });
 });
 

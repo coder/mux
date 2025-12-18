@@ -17,6 +17,10 @@ import {
   extractTextFromEvents,
   HAIKU_MODEL,
 } from "./helpers";
+import { configureTestRetries } from "./sendMessageTestHelpers";
+
+configureTestRetries(3);
+
 import type { StreamCollector } from "./streamCollector";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;

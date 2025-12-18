@@ -60,6 +60,10 @@ import { applyToolPolicy, type ToolPolicy } from "@/common/utils/tools/toolPolic
 import { MockScenarioPlayer } from "./mock/mockScenarioPlayer";
 import { EnvHttpProxyAgent, type Dispatcher } from "undici";
 import { getPlanFilePath } from "@/common/utils/planStorage";
+import {
+  forwardStreamLifecycleEvents,
+  STREAM_LIFECYCLE_EVENTS_DIRECT_FORWARD,
+} from "@/common/utils/streamLifecycle";
 import { getPlanModeInstruction } from "@/common/utils/ui/modeUtils";
 import type { UIMode } from "@/common/types/mode";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
@@ -354,9 +358,15 @@ export class AIService extends EventEmitter {
    * Forward all stream events from StreamManager to AIService consumers
    */
   private setupStreamEventForwarding(): void {
-    this.streamManager.on("stream-start", (data) => this.emit("stream-start", data));
-    this.streamManager.on("stream-delta", (data) => this.emit("stream-delta", data));
-    this.streamManager.on("stream-end", (data) => this.emit("stream-end", data));
+    forwardStreamLifecycleEvents({
+      events: STREAM_LIFECYCLE_EVENTS_DIRECT_FORWARD,
+      listen: (event, handler) => {
+        this.streamManager.on(event, handler);
+      },
+      emit: (event, payload) => {
+        this.emit(event, payload);
+      },
+    });
 
     // Handle stream-abort: dispose of partial based on abandonPartial flag
     this.streamManager.on("stream-abort", (data: StreamAbortEvent) => {
@@ -1472,6 +1482,7 @@ export class AIService extends EventEmitter {
       // Delegate to StreamManager with model instance, system message, tools, historySequence, and initial metadata
       const streamResult = await this.streamManager.startStream(
         workspaceId,
+        assistantMessageId,
         finalMessages,
         modelResult.data,
         modelString,

@@ -17,7 +17,8 @@ test("basic chat streaming flow", async ({ ui }) => {
 
   expect(timeline.events.length).toBeGreaterThan(0);
   const eventTypes = timeline.events.map((event) => event.type);
-  expect(eventTypes[0]).toBe("stream-start");
+  expect(eventTypes[0]).toBe("stream-pending");
+  expect(eventTypes.indexOf("stream-start")).toBeGreaterThan(0);
   const deltaCount = eventTypes.filter((type) => type === "stream-delta").length;
   expect(deltaCount).toBeGreaterThan(1);
   expect(eventTypes[eventTypes.length - 1]).toBe("stream-end");

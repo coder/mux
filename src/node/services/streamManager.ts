@@ -16,6 +16,7 @@ import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import { log } from "./log";
 import type {
+  StreamPendingEvent,
   StreamStartEvent,
   StreamEndEvent,
   UsageDeltaEvent,
@@ -599,6 +600,7 @@ export class StreamManager extends EventEmitter {
    */
   private createStreamAtomically(
     workspaceId: WorkspaceId,
+    assistantMessageId: string,
     streamToken: StreamToken,
     runtimeTempDir: string,
     runtime: Runtime,
@@ -683,7 +685,7 @@ export class StreamManager extends EventEmitter {
       throw error;
     }
 
-    const messageId = `assistant-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const messageId = assistantMessageId;
 
     const streamInfo: WorkspaceStreamInfo = {
       state: StreamState.STARTING,
@@ -1387,6 +1389,7 @@ export class StreamManager extends EventEmitter {
    */
   async startStream(
     workspaceId: string,
+    assistantMessageId: string,
     messages: ModelMessage[],
     model: LanguageModel,
     modelString: string,
@@ -1433,6 +1436,7 @@ export class StreamManager extends EventEmitter {
       // Step 4: Atomic stream creation and registration
       const streamInfo = this.createStreamAtomically(
         typedWorkspaceId,
+        assistantMessageId,
         streamToken,
         runtimeTempDir,
         runtime,
@@ -1448,6 +1452,16 @@ export class StreamManager extends EventEmitter {
         maxOutputTokens,
         toolPolicy
       );
+
+      // Emit stream-pending as soon as the stream is registered and abortable.
+      // This lets the frontend suppress RetryBarrier while providers are slow to produce stream-start.
+      this.emit("stream-pending", {
+        type: "stream-pending",
+        workspaceId,
+        messageId: streamInfo.messageId,
+        model: streamInfo.model,
+        historySequence,
+      } satisfies StreamPendingEvent);
 
       // Step 5: Track the processing promise for guaranteed cleanup
       // This allows cancelStreamSafely to wait for full exit
