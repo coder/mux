@@ -38,8 +38,8 @@ interface UseResizableSidebarOptions {
 }
 
 interface UseResizableSidebarResult {
-  /** Current sidebar width in pixels */
-  width: number;
+  /** Current sidebar width in pixels, or undefined if using default/auto width */
+  width: number | undefined;
   /** Whether user is actively dragging the resize handle */
   isResizing: boolean;
   /** Function to call on handle mouseDown to initiate resize */
@@ -55,9 +55,9 @@ export function useResizableSidebar({
   maxWidth,
   storageKey,
 }: UseResizableSidebarOptions): UseResizableSidebarResult {
-  // Load persisted width from localStorage on mount
-  // Always load persisted value regardless of enabled flag to maintain size across workspace switches
-  const [width, setWidth] = useState<number>(() => {
+  // Track whether user has manually resized (vs using default/auto width)
+  // null = no custom width saved, number = user has resized
+  const [customWidth, setCustomWidth] = useState<number | null>(() => {
     try {
       const stored = localStorage.getItem(storageKey);
       if (stored) {
@@ -69,7 +69,7 @@ export function useResizableSidebar({
     } catch {
       // Ignore storage errors (private browsing, quota exceeded, etc.)
     }
-    return defaultWidth;
+    return null; // No custom width - use default/auto
   });
 
   const [isResizing, setIsResizing] = useState(false);
@@ -80,13 +80,13 @@ export function useResizableSidebar({
 
   // Persist width changes to localStorage
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || customWidth === null) return;
     try {
-      localStorage.setItem(storageKey, width.toString());
+      localStorage.setItem(storageKey, customWidth.toString());
     } catch {
       // Ignore storage errors (private browsing, quota exceeded, etc.)
     }
-  }, [width, storageKey, enabled]);
+  }, [customWidth, storageKey, enabled]);
 
   /**
    * Handle mouse movement during drag
@@ -102,7 +102,7 @@ export function useResizableSidebar({
       const deltaX = startXRef.current - e.clientX;
       const newWidth = Math.max(minWidth, Math.min(maxWidth, startWidthRef.current + deltaX));
 
-      setWidth(newWidth);
+      setCustomWidth(newWidth);
     },
     [isResizing, minWidth, maxWidth]
   );
@@ -148,16 +148,20 @@ export function useResizableSidebar({
       if (!enabled) return;
       setIsResizing(true);
       startXRef.current = e.clientX;
-      startWidthRef.current = width;
+      // Use current width (custom or default) as starting point for resize
+      startWidthRef.current = customWidth ?? defaultWidth;
     },
-    [enabled, width]
+    [enabled, customWidth, defaultWidth]
   );
 
   // Dummy component for type compatibility (not rendered, actual handle is in AIView)
   const ResizeHandle: React.FC = () => null;
 
   return {
-    width: enabled ? width : defaultWidth,
+    // Return undefined if no custom width (allows caller to use auto/default sizing)
+    // Return the custom width when user has resized, regardless of enabled state
+    // (keeps width stable during tab switches for smooth transitions)
+    width: customWidth ?? undefined,
     isResizing,
     startResize,
     ResizeHandle,

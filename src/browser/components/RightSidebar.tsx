@@ -1,5 +1,5 @@
 import React from "react";
-import { RIGHT_SIDEBAR_TAB_KEY, RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
+import { RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
 import { useResizeObserver } from "@/browser/hooks/useResizeObserver";
@@ -23,6 +23,8 @@ interface SidebarContainerProps {
   customWidth?: number;
   /** Whether actively dragging resize handle (disables transition) */
   isResizing?: boolean;
+  /** Whether sidebar is collapsed (renders at 0 width for smooth transition) */
+  isCollapsed?: boolean;
   children: React.ReactNode;
   role: string;
   "aria-label": string;
@@ -32,28 +34,33 @@ interface SidebarContainerProps {
  * SidebarContainer - Main sidebar wrapper with dynamic width
  *
  * Width priority (first match wins):
- * 1. customWidth - From drag-resize (persisted per-tab)
- * 2. wide - Auto-calculated max width for Review tab (when not drag-resizing)
- * 3. default (300px) - Costs tab when no customWidth saved
+ * 1. isCollapsed - Render at 0 width (keeps DOM present for CSS transitions)
+ * 2. customWidth - From drag-resize (persisted per-tab)
+ * 3. wide - Auto-calculated max width for Review tab (when not drag-resizing)
+ * 4. default (300px) - Costs tab when no customWidth saved
  */
 const SidebarContainer: React.FC<SidebarContainerProps> = ({
   wide,
   customWidth,
   isResizing,
+  isCollapsed,
   children,
   role,
   "aria-label": ariaLabel,
 }) => {
-  const width = customWidth
-    ? `${customWidth}px`
-    : wide
-      ? "min(1200px, calc(100vw - 400px))"
-      : "300px";
+  const width = isCollapsed
+    ? "0px"
+    : customWidth
+      ? `${customWidth}px`
+      : wide
+        ? "min(1200px, calc(100vw - 400px))"
+        : "300px";
 
   return (
     <div
       className={cn(
         "bg-sidebar border-l border-border-light flex flex-col overflow-hidden flex-shrink-0",
+        // Animate width changes (tab switches, collapse/expand) - disable during drag resize
         !isResizing && "transition-[width] duration-200",
         // Mobile: full width
         "max-md:border-l-0 max-md:border-t max-md:border-border-light max-md:w-full max-md:relative max-md:max-h-[50vh]"
@@ -75,6 +82,10 @@ interface RightSidebarProps {
   workspaceId: string;
   workspacePath: string;
   chatAreaRef: React.RefObject<HTMLDivElement>;
+  /** Currently selected tab (owned by AIView to sync with width) */
+  selectedTab: TabType;
+  /** Tab change handler */
+  onTabChange: (tab: TabType) => void;
   /** Custom width in pixels (persisted per-tab, provided by AIView) */
   width?: number;
   /** Drag start handler for resize */
@@ -91,14 +102,14 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   workspaceId,
   workspacePath,
   chatAreaRef,
+  selectedTab,
+  onTabChange,
   width,
   onStartResize,
   isResizing = false,
   onReviewNote,
   isCreating = false,
 }) => {
-  // Global tab preference (not per-workspace)
-  const [selectedTab, setSelectedTab] = usePersistedState<TabType>(RIGHT_SIDEBAR_TAB_KEY, "costs");
 
   // Trigger for focusing Review panel (preserves hunk selection)
   const [focusTrigger, setFocusTrigger] = React.useState(0);
@@ -111,17 +122,17 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (matchesKeybind(e, KEYBINDS.COSTS_TAB)) {
         e.preventDefault();
-        setSelectedTab("costs");
+        onTabChange("costs");
       } else if (matchesKeybind(e, KEYBINDS.REVIEW_TAB)) {
         e.preventDefault();
-        setSelectedTab("review");
+        onTabChange("review");
         setFocusTrigger((prev) => prev + 1);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [setSelectedTab]);
+  }, [onTabChange]);
 
   const usage = useWorkspaceUsage(workspaceId);
   const chatAreaSize = useResizeObserver(chatAreaRef);
@@ -166,42 +177,35 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const [isHidden, setIsHidden] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false);
 
   React.useEffect(() => {
-    // Never hide when Review tab is active - code review needs space
-    if (selectedTab === "review") {
+    // If user has manually resized sidebar (custom width), disable auto-hide entirely
+    // to prevent oscillation (wide sidebar → small chat → collapse → expand chat → uncollapse → repeat)
+    if (width !== undefined) {
       if (isHidden) {
         setIsHidden(false);
       }
       return;
     }
 
-    // If sidebar is custom-resized wider than default, don't auto-hide
-    // (would cause oscillation between hidden and wide states)
-    if (width !== undefined && width > 300) {
-      if (isHidden) {
-        setIsHidden(false);
-      }
-      return;
-    }
-
-    // Normal hysteresis for Costs tab
+    // Auto-hide only for default-width sidebars using hysteresis
     if (chatAreaWidth <= COLLAPSE_THRESHOLD) {
       setIsHidden(true);
     } else if (chatAreaWidth >= EXPAND_THRESHOLD) {
       setIsHidden(false);
     }
     // Between thresholds: maintain current state (no change)
-  }, [chatAreaWidth, selectedTab, isHidden, setIsHidden, width]);
+  }, [chatAreaWidth, isHidden, setIsHidden, width]);
 
-  // Fully hide sidebar on small screens (context usage now shown in ChatInput)
-  if (isHidden) {
-    return null;
-  }
+  // Collapse sidebar on small screens (context usage now shown in ChatInput)
+  // Use isCollapsed prop instead of returning null to keep DOM present for CSS transitions
+  const isCollapsed = isHidden;
+  const wide = selectedTab === "review" && !width;
 
   return (
     <SidebarContainer
-      wide={selectedTab === "review" && !width} // Auto-wide only if not drag-resizing
+      wide={wide} // Auto-wide only if not drag-resizing
       customWidth={width} // Per-tab resized width from AIView
       isResizing={isResizing}
+      isCollapsed={isCollapsed}
       role="complementary"
       aria-label="Workspace insights"
     >
@@ -232,7 +236,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
                       ? "bg-hover text-foreground"
                       : "bg-transparent text-muted hover:bg-hover/50 hover:text-foreground"
                   )}
-                  onClick={() => setSelectedTab("costs")}
+                  onClick={() => onTabChange("costs")}
                   id={costsTabId}
                   role="tab"
                   type="button"
@@ -260,7 +264,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
                       ? "bg-hover text-foreground"
                       : "bg-transparent text-muted hover:bg-hover/50 hover:text-foreground"
                   )}
-                  onClick={() => setSelectedTab("review")}
+                  onClick={() => onTabChange("review")}
                   id={reviewTabId}
                   role="tab"
                   type="button"
