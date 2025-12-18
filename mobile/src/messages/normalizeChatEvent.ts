@@ -149,7 +149,8 @@ function transformMuxToDisplayed(message: MuxMessage): DisplayedMessage[] {
           isStreaming: false,
           isPartial: message.metadata?.partial ?? false,
           isLastPartOfMessage: isLastPart,
-          isCompacted: message.metadata?.compacted ?? false,
+          // Support both new enum ("user"|"idle") and legacy boolean (true)
+          isCompacted: !!message.metadata?.compacted,
           model: message.metadata?.model,
           timestamp: part.timestamp ?? baseTimestamp,
         });

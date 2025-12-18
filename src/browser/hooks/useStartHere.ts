@@ -47,7 +47,7 @@ export function useStartHere(
         content,
         {
           timestamp: Date.now(),
-          compacted: true,
+          compacted: "user",
         }
       );
 

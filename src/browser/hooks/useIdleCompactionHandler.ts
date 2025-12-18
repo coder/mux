@@ -9,7 +9,7 @@
  *
  * Status display is handled data-driven: the compaction request message includes
  * displayStatus metadata, which the aggregator reads to set sidebar status.
- * Status is cleared when the summary message with idleCompacted: true arrives.
+ * Status is cleared when the summary message with compacted: "idle" arrives.
  */
 
 import { useEffect, useRef } from "react";

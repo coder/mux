@@ -228,8 +228,7 @@ export class CompactionHandler {
       summary,
       {
         timestamp,
-        compacted: true,
-        idleCompacted: isIdleCompaction,
+        compacted: isIdleCompaction ? "idle" : "user",
         model: metadata.model,
         usage: metadata.usage,
         duration: metadata.duration,

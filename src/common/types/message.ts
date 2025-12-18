@@ -120,8 +120,9 @@ export interface MuxMetadata {
   synthetic?: boolean; // Whether this message was synthetically generated (e.g., [CONTINUE] sentinel)
   error?: string; // Error message if stream failed
   errorType?: StreamErrorType; // Error type/category if stream failed
-  compacted?: boolean; // Whether this message is a compacted summary of previous history
-  idleCompacted?: boolean; // Whether this compaction was auto-triggered due to workspace inactivity
+  // Compaction source: "user" (manual /compact), "idle" (auto-triggered), or legacy boolean `true`
+  // Readers should use helper: isCompacted = compacted !== undefined && compacted !== false
+  compacted?: "user" | "idle" | boolean;
   toolPolicy?: ToolPolicy; // Tool policy active when this message was sent (user messages only)
   mode?: string; // The mode (plan/exec/etc) active when this message was sent (assistant messages only)
   cmuxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box

@@ -157,7 +157,8 @@ export class IdleCompactionService {
 
     // 4. Already compacted? (last message is compacted summary)
     const lastMessage = messages[messages.length - 1];
-    if (lastMessage?.metadata?.compacted === true) {
+    // Support both new enum ("user"|"idle") and legacy boolean (true)
+    if (lastMessage?.metadata?.compacted) {
       return { eligible: false, reason: "already_compacted" };
     }
 

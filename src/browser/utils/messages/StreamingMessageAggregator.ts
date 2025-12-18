@@ -1095,8 +1095,9 @@ export class StreamingMessageAggregator {
                 isStreaming,
                 isPartial: message.metadata?.partial ?? false,
                 isLastPartOfMessage: isLastPart,
-                isCompacted: message.metadata?.compacted ?? false,
-                isIdleCompacted: message.metadata?.idleCompacted ?? false,
+                // Support both new enum ("user"|"idle") and legacy boolean (true)
+                isCompacted: !!message.metadata?.compacted,
+                isIdleCompacted: message.metadata?.compacted === "idle",
                 model: message.metadata?.model,
                 timestamp: part.timestamp ?? baseTimestamp,
               });
