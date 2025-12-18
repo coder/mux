@@ -65,8 +65,17 @@ export class ToolBridge {
     return Object.fromEntries(this.nonBridgeableTools.entries());
   }
 
-  /** Register all bridgeable tools on the runtime under `mux` namespace */
-  register(runtime: IJSRuntime, abortSignal?: AbortSignal): void {
+  /**
+   * Register all bridgeable tools on the runtime under `mux` namespace.
+   *
+   * Tools receive the runtime's abort signal, which is aborted when:
+   * - The sandbox timeout is exceeded
+   * - runtime.abort() is called (e.g., from the parent's abort signal)
+   *
+   * This ensures nested tool calls are cancelled when the sandbox times out,
+   * not just when the parent stream is cancelled.
+   */
+  register(runtime: IJSRuntime): void {
     const muxObj: Record<string, (...args: unknown[]) => Promise<unknown>> = {};
 
     for (const [name, tool] of this.bridgeableTools) {
@@ -75,6 +84,9 @@ export class ToolBridge {
       const toolName = name;
 
       muxObj[name] = async (args: unknown) => {
+        // Get the runtime's abort signal - this is aborted on timeout or manual abort
+        const abortSignal = runtime.getAbortSignal();
+
         // Check if already aborted before executing
         if (abortSignal?.aborted) {
           throw new Error("Execution aborted");

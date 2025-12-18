@@ -28,6 +28,7 @@ export class QuickJSRuntime implements IJSRuntime {
   private disposed = false;
   private eventHandler?: (event: PTCEvent) => void;
   private abortController?: AbortController;
+  private abortRequested = false; // Track abort requests before eval() starts
   private limits: RuntimeLimits = {};
   private consoleSetup = false;
 
@@ -243,6 +244,11 @@ export class QuickJSRuntime implements IJSRuntime {
     this.toolCalls = [];
     this.consoleOutput = [];
 
+    // Honor abort requests made before eval() was called
+    if (this.abortRequested) {
+      this.abortController.abort();
+    }
+
     // Set up console capturing (only once)
     if (!this.consoleSetup) {
       this.setupConsole();
@@ -263,6 +269,14 @@ export class QuickJSRuntime implements IJSRuntime {
       }
       return false; // Continue execution
     });
+
+    // Set up a real timeout timer that fires even during async suspension.
+    // The interrupt handler only runs during QuickJS execution, but when suspended
+    // waiting for an async host function (e.g., mux.bash()), it never fires.
+    // This timer ensures nested tools are cancelled when the deadline is exceeded.
+    const timeoutId = setTimeout(() => {
+      this.abortController?.abort();
+    }, timeoutMs);
 
     // Wrap code in function to allow return statements.
     // With asyncify, async host functions appear synchronous to QuickJS,
@@ -311,11 +325,18 @@ export class QuickJSRuntime implements IJSRuntime {
         consoleOutput: this.consoleOutput,
         duration_ms,
       };
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
   abort(): void {
+    this.abortRequested = true;
     this.abortController?.abort();
+  }
+
+  getAbortSignal(): AbortSignal | undefined {
+    return this.abortController?.signal;
   }
 
   dispose(): void {

@@ -60,6 +60,13 @@ export interface IJSRuntime extends Disposable {
   abort(): void;
 
   /**
+   * Get the abort signal for the current execution.
+   * This signal is aborted when the sandbox times out or abort() is called.
+   * Used by tool bridge to propagate cancellation to nested tool calls.
+   */
+  getAbortSignal(): AbortSignal | undefined;
+
+  /**
    * Clean up resources. Called automatically with `using` declarations.
    */
   dispose(): void;

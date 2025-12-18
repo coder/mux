@@ -28,6 +28,7 @@ function createMockRuntime(overrides: Partial<IJSRuntime> = {}): IJSRuntime {
     setLimits: mock((_limits: RuntimeLimits) => undefined),
     onEvent: mock((_handler: (event: PTCEvent) => void) => undefined),
     abort: mock(() => undefined),
+    getAbortSignal: mock(() => undefined),
     dispose: mock(() => undefined),
     [Symbol.dispose]: mock(() => undefined),
     ...overrides,
@@ -191,7 +192,7 @@ describe("ToolBridge", () => {
       expect(result).toEqual({ error: "Result not JSON-serializable" });
     });
 
-    it("passes abortSignal to tool execute", async () => {
+    it("uses runtime abort signal for tool cancellation", async () => {
       const mockExecute = mock((_args: unknown) => ({ result: "ok" }));
 
       const tools: Record<string, Tool> = {
@@ -207,16 +208,20 @@ describe("ToolBridge", () => {
           return undefined;
         }
       );
-      const mockRuntime = createMockRuntime({ registerObject: mockRegisterObject });
-
+      // Provide an abort signal via getAbortSignal
       const abortController = new AbortController();
-      bridge.register(mockRuntime, abortController.signal);
+      const mockRuntime = createMockRuntime({
+        registerObject: mockRegisterObject,
+        getAbortSignal: () => abortController.signal,
+      });
+
+      bridge.register(mockRuntime);
 
       await registeredMux.file_read({ filePath: "test.txt" });
       expect(mockExecute).toHaveBeenCalledTimes(1);
     });
 
-    it("throws if abortSignal is already aborted", async () => {
+    it("throws if runtime abort signal is already aborted", async () => {
       const mockExecute = mock(() => ({ result: "ok" }));
 
       const tools: Record<string, Tool> = {
@@ -232,11 +237,16 @@ describe("ToolBridge", () => {
           return undefined;
         }
       );
-      const mockRuntime = createMockRuntime({ registerObject: mockRegisterObject });
 
+      // Pre-abort the signal
       const abortController = new AbortController();
       abortController.abort();
-      bridge.register(mockRuntime, abortController.signal);
+      const mockRuntime = createMockRuntime({
+        registerObject: mockRegisterObject,
+        getAbortSignal: () => abortController.signal,
+      });
+
+      bridge.register(mockRuntime);
 
       // Type assertion needed because Record indexing returns T | undefined for ESLint
       const fileRead = registeredMux.file_read as (...args: unknown[]) => Promise<unknown>;

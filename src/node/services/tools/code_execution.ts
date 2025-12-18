@@ -129,12 +129,17 @@ ${muxTypes}
           });
         }
 
-        // Register tools with abortSignal for mid-execution cancellation
-        toolBridge.register(runtime, abortSignal);
+        // Register tools - they'll use runtime.getAbortSignal() for cancellation
+        toolBridge.register(runtime);
 
-        // Handle abort signal - interrupt sandbox at next checkpoint
+        // Handle abort signal - interrupt sandbox and cancel nested tools
         if (abortSignal) {
-          abortSignal.addEventListener("abort", () => runtime.abort(), { once: true });
+          // If already aborted, abort runtime immediately
+          if (abortSignal.aborted) {
+            runtime.abort();
+          } else {
+            abortSignal.addEventListener("abort", () => runtime.abort(), { once: true });
+          }
         }
 
         // Execute the code

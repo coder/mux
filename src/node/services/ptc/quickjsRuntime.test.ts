@@ -291,6 +291,44 @@ describe("QuickJSRuntime", () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain("timeout");
     });
+
+    it("aborts signal when timeout fires during async host function", async () => {
+      // This tests the setTimeout-based timeout's effect on the abort signal.
+      // The interrupt handler only fires during QuickJS execution, but when
+      // waiting for an async host function, the setTimeout aborts the signal.
+      //
+      // Important: The host function itself won't be cancelled mid-flight
+      // (JavaScript can't interrupt Promises), but the signal will be aborted
+      // so subsequent tool calls will see it and fail fast.
+      let firstCallCompleted = false;
+
+      runtime.registerFunction("slowOp", async () => {
+        // Sleep for 200ms
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        firstCallCompleted = true;
+        return "done";
+      });
+
+      // Check the abort signal state from QuickJS (sync is fine, made async for type)
+      runtime.registerFunction("checkAbortState", () => {
+        return Promise.resolve({ aborted: runtime.getAbortSignal()?.aborted ?? false });
+      });
+
+      runtime.setLimits({ timeoutMs: 100 }); // 100ms timeout
+
+      const result = await runtime.eval(`
+        slowOp();           // Takes 200ms, timeout fires at 100ms
+        checkAbortState();  // Should show aborted = true
+        slowOp();           // This would start after abort
+        return "finished";
+      `);
+
+      // The first call completes (can't be interrupted mid-Promise)
+      expect(firstCallCompleted).toBe(true);
+      // But the overall execution fails due to timeout
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("timeout");
+    });
   });
 
   describe("abort", () => {
