@@ -14,6 +14,7 @@ import type {
 import type { ChatStats } from "@/common/types/chatStats";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
+import type { TaskSettings } from "@/common/orpc/schemas/taskSettings";
 
 /** Session usage data structure matching SessionUsageFileSchema */
 export interface MockSessionUsage {
@@ -88,6 +89,8 @@ export interface MockORPCClientOptions {
   >;
   /** MCP test results - maps server name to tools list or error */
   mcpTestResults?: Map<string, { success: true; tools: string[] } | { success: false; error: string }>;
+  /** Task settings (maxParallelAgentTasks + maxTaskNestingDepth) */
+  taskSettings?: TaskSettings;
 }
 
 /**
@@ -122,6 +125,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     statsTabVariant = "control",
     mcpServers = new Map(),
     mcpOverrides = new Map(),
+    taskSettings: rawTaskSettings,
     mcpTestResults = new Map(),
   } = options;
 
@@ -141,6 +145,11 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
 
   const workspaceMap = new Map(workspaces.map((w) => [w.id, w]));
 
+
+  let taskSettings: TaskSettings = rawTaskSettings ?? {
+    maxParallelAgentTasks: 3,
+    maxTaskNestingDepth: 3,
+  };
   const mockStats: ChatStats = {
     consumers: [],
     totalTokens: 0,
@@ -166,6 +175,12 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     },
     telemetry: {
       track: async () => undefined,
+    },
+    tasks: {
+      getTaskSettings: async () => taskSettings,
+      setTaskSettings: async (input: TaskSettings) => {
+        taskSettings = input;
+      },
     },
     server: {
       getLaunchProject: async () => null,

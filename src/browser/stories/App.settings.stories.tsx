@@ -10,6 +10,7 @@
  */
 
 import type { APIClient } from "@/browser/contexts/API";
+import type { TaskSettings } from "@/common/orpc/schemas/taskSettings";
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
 import { selectWorkspace } from "./storyHelpers";
@@ -32,6 +33,8 @@ function setupSettingsStory(options: {
   providersList?: string[];
   /** Pre-set experiment states in localStorage before render */
   experiments?: Partial<Record<string, boolean>>;
+  /** Initial task settings values */
+  taskSettings?: TaskSettings;
 }): APIClient {
   const workspaces = [createWorkspace({ id: "ws-1", name: "main", projectName: "my-app" })];
 
@@ -47,6 +50,7 @@ function setupSettingsStory(options: {
 
   return createMockORPCClient({
     projects: groupWorkspacesByProject(workspaces),
+    taskSettings: options.taskSettings,
     workspaces,
     providersConfig: options.providersConfig ?? {},
     providersList: options.providersList ?? ["anthropic", "openai", "xai"],
@@ -165,6 +169,32 @@ export const ModelsConfigured: AppStory = {
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettingsToSection(canvasElement, "models");
+  },
+};
+
+/** Tasks section - shows agent task settings */
+export const Tasks: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSettingsStory({
+          taskSettings: {
+            maxParallelAgentTasks: 5,
+            maxTaskNestingDepth: 2,
+          },
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSection(canvasElement, "tasks");
+
+    const body = within(canvasElement.ownerDocument.body);
+    await body.findByText(/Agent task limits/i);
+
+    // Ensure the values were loaded from the API mock (not just initial defaults)
+    await body.findByDisplayValue("5");
+    await body.findByDisplayValue("2");
   },
 };
 
