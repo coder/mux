@@ -64,11 +64,15 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
           </PopoverTrigger>
         </TooltipTrigger>
         <TooltipContent side="bottom" align="end" className="w-80">
-          <ContextUsageBar data={data} autoCompactionThreshold={autoCompaction?.threshold} />
+          <ContextUsageBar data={data} autoCompaction={autoCompaction} />
         </TooltipContent>
       </Tooltip>
 
-      <PopoverContent side="bottom" align="end" className="w-80 overflow-visible p-3">
+      <PopoverContent
+        side="bottom"
+        align="end"
+        className="bg-modal-bg border-separator-light w-80 overflow-visible rounded px-[10px] py-[6px] text-[11px] font-normal shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
+      >
         <ContextUsageBar data={data} autoCompaction={autoCompaction} />
       </PopoverContent>
     </Popover>

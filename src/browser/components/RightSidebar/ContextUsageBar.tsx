@@ -1,18 +1,12 @@
 import React from "react";
 import { TokenMeter } from "./TokenMeter";
-import {
-  HorizontalThresholdSlider,
-  HorizontalThresholdIndicator,
-  type AutoCompactionConfig,
-} from "./ThresholdSlider";
+import { HorizontalThresholdSlider, type AutoCompactionConfig } from "./ThresholdSlider";
 import { formatTokens, type TokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
 
 interface ContextUsageBarProps {
   data: TokenMeterData;
   /** Auto-compaction settings for threshold slider */
   autoCompaction?: AutoCompactionConfig;
-  /** Show text-only indicator for auto-compaction threshold (for tooltips) */
-  autoCompactionThreshold?: number;
   showTitle?: boolean;
   testId?: string;
 }
@@ -20,7 +14,6 @@ interface ContextUsageBarProps {
 const ContextUsageBarComponent: React.FC<ContextUsageBarProps> = ({
   data,
   autoCompaction,
-  autoCompactionThreshold,
   showTitle = true,
   testId,
 }) => {
@@ -31,10 +24,6 @@ const ContextUsageBarComponent: React.FC<ContextUsageBarProps> = ({
   const percentageDisplay = data.maxTokens ? ` (${data.totalPercentage.toFixed(1)}%)` : "";
 
   const showWarning = !data.maxTokens;
-
-  // Show read-only indicator when threshold provided but no interactive config
-  const showReadOnlyIndicator =
-    autoCompactionThreshold !== undefined && !autoCompaction && data.maxTokens;
 
   return (
     <div data-testid={testId} className="relative flex flex-col gap-1">
@@ -54,9 +43,6 @@ const ContextUsageBarComponent: React.FC<ContextUsageBarProps> = ({
       <div className="relative w-full py-2">
         <TokenMeter segments={data.segments} orientation="horizontal" />
         {autoCompaction && data.maxTokens && <HorizontalThresholdSlider config={autoCompaction} />}
-        {showReadOnlyIndicator && (
-          <HorizontalThresholdIndicator threshold={autoCompactionThreshold} />
-        )}
       </div>
 
       {showWarning && (
