@@ -100,7 +100,13 @@ export function calculateTokenMeterData(
 }
 
 export function formatTokens(tokens: number): string {
-  return tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : tokens.toLocaleString();
+  if (tokens >= 1_000_000) {
+    return `${(tokens / 1_000_000).toFixed(1)}M`;
+  }
+  if (tokens >= 1_000) {
+    return `${(tokens / 1_000).toFixed(1)}k`;
+  }
+  return tokens.toLocaleString();
 }
 
 export function getSegmentLabel(type: TokenSegment["type"]): string {
