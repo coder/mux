@@ -23,6 +23,7 @@ import {
   type MuxFrontendMetadata,
 } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import { detectDefaultTrunkBranch, listLocalBranches } from "@/node/git";
 import * as crypto from "crypto";
 
 export interface CreateTaskOptions {
@@ -163,12 +164,27 @@ export class TaskService extends EventEmitter {
     // For local workspaces, this has no change in behavior
     const parentRuntime = parentMetadata.runtimeConfig;
 
+    // Detect trunk branch for worktree/SSH runtimes
+    // Local runtime doesn't need a trunk branch
+    let trunkBranch = "";
+    const isLocalRuntime =
+      parentRuntime.type === "local" &&
+      !("srcBaseDir" in parentRuntime && parentRuntime.srcBaseDir);
+    if (!isLocalRuntime) {
+      try {
+        const branches = await listLocalBranches(parentInfo.projectPath);
+        trunkBranch = (await detectDefaultTrunkBranch(parentInfo.projectPath, branches)) ?? "main";
+      } catch (error) {
+        log.warn(`Failed to detect trunk branch for agent task, using 'main':`, error);
+        trunkBranch = "main";
+      }
+    }
+
     // Create workspace via WorkspaceService
-    // Using empty trunk branch because agent workspaces don't need git isolation
     const createResult = await this.workspaceService.create(
       parentInfo.projectPath,
       workspaceName,
-      "", // No trunk branch - agent tasks share parent's working directory context
+      trunkBranch,
       workspaceTitle,
       parentRuntime // Inherit runtime from parent workspace
     );
@@ -247,8 +263,8 @@ export class TaskService extends EventEmitter {
         model: "anthropic:claude-sonnet-4-20250514", // Default model for agents
         thinkingLevel: "medium",
         toolPolicy: preset.toolPolicy,
+        additionalSystemInstructions: preset.systemPrompt,
         mode: "exec", // Agent tasks are always in exec mode
-        // System prompt override happens in AIService based on agentType
       });
 
       if (!result.success) {
@@ -508,13 +524,15 @@ export class TaskService extends EventEmitter {
       } else if (taskState.taskStatus === "running") {
         // Send continuation message for running tasks
         try {
+          const preset = getAgentPreset(taskState.agentType);
           const result = await this.workspaceService.sendMessage(
             workspaceId,
             "Mux was restarted. Please continue your task and call agent_report when done.",
             {
               model: "anthropic:claude-sonnet-4-20250514",
               thinkingLevel: "medium",
-              toolPolicy: getAgentPreset(taskState.agentType).toolPolicy,
+              toolPolicy: preset.toolPolicy,
+              additionalSystemInstructions: preset.systemPrompt,
               mode: "exec",
             }
           );
