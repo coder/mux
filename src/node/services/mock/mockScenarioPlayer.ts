@@ -316,6 +316,7 @@ export class MockScenarioPlayer {
           messageId,
           toolCallId: event.toolCallId,
           toolName: event.toolName,
+          args: event.args,
           result: event.result,
           timestamp: Date.now(),
         };

@@ -1386,8 +1386,13 @@ export class WorkspaceService extends EventEmitter {
         // Helper: update a message in-place if it contains this ask_user_question tool call.
         const tryFinalizeMessage = (
           msg: MuxMessage
-        ): Result<{ updated: MuxMessage; output: AskUserQuestionToolSuccessResult }> => {
+        ): Result<{
+          updated: MuxMessage;
+          input: unknown;
+          output: AskUserQuestionToolSuccessResult;
+        }> => {
           let foundToolCall = false;
+          let input: unknown = null;
           let output: AskUserQuestionToolSuccessResult | null = null;
           let errorMessage: string | null = null;
 
@@ -1402,6 +1407,9 @@ export class WorkspaceService extends EventEmitter {
               errorMessage = `toolCallId=${toolCallId} is toolName=${part.toolName}, expected ask_user_question`;
               return part;
             }
+
+            // Capture input for event
+            input = part.input;
 
             // Already answered - treat as idempotent.
             if (part.state === "output-available") {
@@ -1443,7 +1451,7 @@ export class WorkspaceService extends EventEmitter {
             return Err("ask_user_question output missing after update");
           }
 
-          return Ok({ updated: { ...msg, parts: updatedParts }, output });
+          return Ok({ updated: { ...msg, parts: updatedParts }, input, output });
         };
 
         // 1) Prefer partial.json (most common after restart while waiting)
@@ -1466,6 +1474,7 @@ export class WorkspaceService extends EventEmitter {
               messageId: finalized.data.updated.id,
               toolCallId,
               toolName: "ask_user_question",
+              args: finalized.data.input,
               result: finalized.data.output,
               timestamp: Date.now(),
             });
@@ -1533,6 +1542,7 @@ export class WorkspaceService extends EventEmitter {
           messageId: finalized.data.updated.id,
           toolCallId,
           toolName: "ask_user_question",
+          args: finalized.data.input,
           result: finalized.data.output,
           timestamp: Date.now(),
         });

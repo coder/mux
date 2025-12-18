@@ -61,6 +61,7 @@ export interface MockToolEndEvent extends MockAssistantEventBase {
   kind: "tool-end";
   toolCallId: string;
   toolName: string;
+  args?: unknown;
   result: unknown;
 }
 

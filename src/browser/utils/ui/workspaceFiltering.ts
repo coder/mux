@@ -20,7 +20,7 @@ export interface WorkspaceWithNesting extends FrontendWorkspaceMetadata {
  * Sort workspaces so children appear immediately after their parent.
  * Maintains recency order within each level.
  */
-function sortWithNesting(
+export function sortWithNesting(
   metadataList: FrontendWorkspaceMetadata[],
   workspaceRecency: Record<string, number>
 ): WorkspaceWithNesting[] {

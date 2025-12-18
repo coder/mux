@@ -174,6 +174,7 @@ export const ToolCallEndEventSchema = z.object({
   messageId: z.string(),
   toolCallId: z.string(),
   toolName: z.string(),
+  args: z.unknown().meta({ description: "Tool input arguments (for listeners that need args)" }),
   result: z.unknown(),
   timestamp: z.number().meta({ description: "When tool call completed (Date.now())" }),
 });

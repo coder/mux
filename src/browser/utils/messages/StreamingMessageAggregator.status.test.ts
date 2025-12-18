@@ -131,6 +131,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
     // Complete the tool call
     aggregator.handleToolCallEnd({
       type: "tool-call-end",
+      args: {},
       workspaceId: "workspace1",
       messageId,
       toolCallId,
@@ -173,6 +174,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
 
     aggregator.handleToolCallEnd({
       type: "tool-call-end",
+      args: {},
       workspaceId: "workspace1",
       messageId,
       toolCallId: "tool1",
@@ -197,6 +199,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
 
     aggregator.handleToolCallEnd({
       type: "tool-call-end",
+      args: {},
       workspaceId: "workspace1",
       messageId,
       toolCallId: "tool2",
@@ -237,6 +240,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
 
     aggregator.handleToolCallEnd({
       type: "tool-call-end",
+      args: {},
       workspaceId: "workspace1",
       messageId,
       toolCallId: "tool1",
@@ -290,6 +294,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
     // Complete with failure
     aggregator.handleToolCallEnd({
       type: "tool-call-end",
+      args: {},
       workspaceId: "workspace1",
       messageId,
       toolCallId: "tool1",
@@ -328,6 +333,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
 
     aggregator.handleToolCallEnd({
       type: "tool-call-end",
+      args: {},
       workspaceId: "workspace1",
       messageId: "msg1",
       toolCallId: "tool1",
@@ -393,6 +399,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
     // Complete with validation failure
     aggregator.handleToolCallEnd({
       type: "tool-call-end",
+      args: {},
       workspaceId: "workspace1",
       messageId,
       toolCallId: "tool1",
@@ -453,6 +460,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
     // Complete successfully
     aggregator.handleToolCallEnd({
       type: "tool-call-end",
+      args: {},
       workspaceId: "workspace1",
       messageId,
       toolCallId: "tool1",
@@ -699,6 +707,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
 
     aggregator.handleToolCallEnd({
       type: "tool-call-end",
+      args: {},
       workspaceId: "workspace1",
       messageId,
       toolCallId,
@@ -744,6 +753,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
     // Complete the tool call
     aggregator.handleToolCallEnd({
       type: "tool-call-end",
+      args: {},
       workspaceId: "workspace1",
       messageId,
       toolCallId,
@@ -788,6 +798,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
 
     aggregator.handleToolCallEnd({
       type: "tool-call-end",
+      args: {},
       workspaceId: "workspace1",
       messageId,
       toolCallId: "tool1",
@@ -812,6 +823,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
 
     aggregator.handleToolCallEnd({
       type: "tool-call-end",
+      args: {},
       workspaceId: "workspace1",
       messageId,
       toolCallId: "tool2",
@@ -840,6 +852,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
 
     aggregator.handleToolCallEnd({
       type: "tool-call-end",
+      args: {},
       workspaceId: "workspace1",
       messageId,
       toolCallId: "tool3",
@@ -883,6 +896,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
 
     aggregator.handleToolCallEnd({
       type: "tool-call-end",
+      args: {},
       workspaceId: "workspace1",
       messageId: messageId1,
       toolCallId: "tool1",
@@ -930,6 +944,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
 
     aggregator.handleToolCallEnd({
       type: "tool-call-end",
+      args: {},
       workspaceId: "workspace1",
       messageId: messageId2,
       toolCallId: "tool2",

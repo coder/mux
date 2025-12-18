@@ -345,6 +345,10 @@ export class Config {
               // GUARANTEE: All workspaces must have runtimeConfig (apply default if missing)
               runtimeConfig: workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
+              // Agent task workspace fields (optional - only set for subagent workspaces)
+              parentWorkspaceId: workspace.parentWorkspaceId,
+              agentType: workspace.agentType,
+              taskState: workspace.taskState,
             };
 
             // Migrate missing createdAt to config for next load

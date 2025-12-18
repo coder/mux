@@ -105,8 +105,12 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   const { canInterrupt, awaitingUserQuestion } = useWorkspaceSidebarState(workspaceId);
   const isWorking = canInterrupt && !awaitingUserQuestion;
 
-  // Calculate left padding based on nesting depth (base 9px + 16px per level)
-  const leftPadding = 9 + nestingDepth * 16;
+  // Sidebar indentation constants
+  const BASE_PADDING_PX = 9;
+  const NESTING_INDENT_PX = 16;
+
+  // Calculate left padding based on nesting depth
+  const leftPadding = BASE_PADDING_PX + nestingDepth * NESTING_INDENT_PX;
   const isAgentTask = Boolean(metadata.parentWorkspaceId);
 
   return (

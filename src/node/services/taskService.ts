@@ -448,12 +448,21 @@ export class TaskService extends EventEmitter {
 
   /**
    * Process the task queue - start next task if slot available.
+   * Re-checks running count after each task start to enforce parallel limits.
    */
   private async processQueue(): Promise<void> {
     const settings = this.config.getTaskSettings();
-    const runningCount = this.config.countRunningAgentTasks();
 
-    while (runningCount < settings.maxParallelAgentTasks && this.taskQueue.length > 0) {
+    // Re-check running count each iteration to enforce parallel limits correctly
+    while (this.taskQueue.length > 0) {
+      const runningCount = this.config.countRunningAgentTasks();
+      if (runningCount >= settings.maxParallelAgentTasks) {
+        log.debug(
+          `Task queue has ${this.taskQueue.length} waiting, but at parallel limit (${runningCount}/${settings.maxParallelAgentTasks})`
+        );
+        break;
+      }
+
       const next = this.taskQueue.shift();
       if (next) {
         log.debug(`Starting queued task ${next.taskId}`);

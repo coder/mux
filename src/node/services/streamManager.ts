@@ -765,6 +765,10 @@ export class StreamManager extends EventEmitter {
     // where the partial is read before the tool result is written, causing "amnesia".
     await this.flushPartialWrite(workspaceId, streamInfo);
 
+    // Get tool input args from toolCalls map for event
+    const toolCall = toolCalls.get(toolCallId);
+    const args = toolCall?.input;
+
     // Emit tool-call-end event (listeners can now safely read partial)
     this.emit("tool-call-end", {
       type: "tool-call-end",
@@ -772,6 +776,7 @@ export class StreamManager extends EventEmitter {
       messageId: streamInfo.messageId,
       toolCallId,
       toolName,
+      args,
       result: output,
       timestamp: Date.now(),
     } as ToolCallEndEvent);

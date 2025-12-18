@@ -18,19 +18,28 @@ export function TasksSection() {
   const { api } = useAPI();
   const [settings, setSettings] = useState<TaskSettings>(DEFAULT_TASK_SETTINGS);
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Load settings on mount
   useEffect(() => {
     if (api) {
-      void api.general.getTaskSettings().then((taskSettings) => {
-        setSettings({
-          maxParallelAgentTasks:
-            taskSettings.maxParallelAgentTasks ?? DEFAULT_TASK_SETTINGS.maxParallelAgentTasks,
-          maxTaskNestingDepth:
-            taskSettings.maxTaskNestingDepth ?? DEFAULT_TASK_SETTINGS.maxTaskNestingDepth,
+      api.general
+        .getTaskSettings()
+        .then((taskSettings) => {
+          setSettings({
+            maxParallelAgentTasks:
+              taskSettings.maxParallelAgentTasks ?? DEFAULT_TASK_SETTINGS.maxParallelAgentTasks,
+            maxTaskNestingDepth:
+              taskSettings.maxTaskNestingDepth ?? DEFAULT_TASK_SETTINGS.maxTaskNestingDepth,
+          });
+          setLoaded(true);
+        })
+        .catch((error) => {
+          console.error("Failed to load task settings:", error);
+          setLoadError("Failed to load settings");
+          // Still mark as loaded so user can interact with defaults
+          setLoaded(true);
         });
-        setLoaded(true);
-      });
     }
   }, [api]);
 
@@ -82,6 +91,9 @@ export function TasksSection() {
         <p className="text-muted mb-4 text-xs">
           Configure limits for agent subworkspaces spawned via the task tool.
         </p>
+        {loadError && (
+          <p className="mb-4 text-xs text-red-500">{loadError}. Using default values.</p>
+        )}
 
         <div className="space-y-4">
           <div className="flex items-center justify-between">

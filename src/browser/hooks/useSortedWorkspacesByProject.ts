@@ -3,65 +3,10 @@ import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { useWorkspaceRecency } from "@/browser/stores/WorkspaceStore";
 import { useStableReference, compareMaps } from "@/browser/hooks/useStableReference";
+import { sortWithNesting, type WorkspaceWithNesting } from "@/browser/utils/ui/workspaceFiltering";
 
-/** Workspace metadata extended with computed nesting depth */
-export interface WorkspaceWithNesting extends FrontendWorkspaceMetadata {
-  /** Nesting depth (0 = top-level, 1 = direct child, etc.) */
-  nestingDepth: number;
-}
-
-/**
- * Sort workspaces so children appear immediately after their parent.
- * Maintains recency order within each level.
- */
-function sortWithNesting(
-  metadataList: FrontendWorkspaceMetadata[],
-  workspaceRecency: Record<string, number>
-): WorkspaceWithNesting[] {
-  // Build parent→children map
-  const childrenByParent = new Map<string, FrontendWorkspaceMetadata[]>();
-  const topLevel: FrontendWorkspaceMetadata[] = [];
-
-  for (const ws of metadataList) {
-    const parentId = ws.parentWorkspaceId;
-    if (parentId) {
-      const siblings = childrenByParent.get(parentId) ?? [];
-      siblings.push(ws);
-      childrenByParent.set(parentId, siblings);
-    } else {
-      topLevel.push(ws);
-    }
-  }
-
-  // Sort by recency (most recent first)
-  const sortByRecency = (a: FrontendWorkspaceMetadata, b: FrontendWorkspaceMetadata) => {
-    const aTs = workspaceRecency[a.id] ?? 0;
-    const bTs = workspaceRecency[b.id] ?? 0;
-    return bTs - aTs;
-  };
-
-  topLevel.sort(sortByRecency);
-  for (const children of childrenByParent.values()) {
-    children.sort(sortByRecency);
-  }
-
-  // Flatten: parent, then children recursively
-  const result: WorkspaceWithNesting[] = [];
-
-  const visit = (ws: FrontendWorkspaceMetadata, depth: number) => {
-    result.push({ ...ws, nestingDepth: depth });
-    const children = childrenByParent.get(ws.id) ?? [];
-    for (const child of children) {
-      visit(child, depth + 1);
-    }
-  };
-
-  for (const ws of topLevel) {
-    visit(ws, 0);
-  }
-
-  return result;
-}
+// Re-export for backward compatibility
+export type { WorkspaceWithNesting };
 
 export function useSortedWorkspacesByProject() {
   const { projects } = useProjectContext();

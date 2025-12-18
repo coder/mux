@@ -171,6 +171,7 @@ describe("StreamingMessageAggregator", () => {
 
       aggregator.handleToolCallEnd({
         type: "tool-call-end",
+        args: {},
         workspaceId: "test-workspace",
         messageId: "msg1",
         toolCallId: "tool1",
@@ -228,6 +229,7 @@ describe("StreamingMessageAggregator", () => {
 
       aggregator.handleToolCallEnd({
         type: "tool-call-end",
+        args: {},
         workspaceId: "test-workspace",
         messageId: "msg1",
         toolCallId: "tool1",
@@ -363,6 +365,7 @@ describe("StreamingMessageAggregator", () => {
 
       aggregator.handleToolCallEnd({
         type: "tool-call-end",
+        args: {},
         workspaceId: "test-workspace",
         messageId: "msg1",
         toolCallId: "tool1",
