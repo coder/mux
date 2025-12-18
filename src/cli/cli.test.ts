@@ -69,6 +69,8 @@ async function createTestServer(authToken?: string): Promise<TestServerHandle> {
     tokenizerService: services.tokenizerService,
     serverService: services.serverService,
     mcpConfigService: services.mcpConfigService,
+    featureFlagService: services.featureFlagService,
+    sessionTimingService: services.sessionTimingService,
     mcpServerManager: services.mcpServerManager,
     experimentsService: services.experimentsService,
     menuEventService: services.menuEventService,

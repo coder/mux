@@ -182,6 +182,38 @@ export interface MCPServerConfigChangedPayload {
   tool_allowlist_size_b2?: number;
 }
 /**
+ * Stats tab event - tracks when users view timing stats.
+ */
+export interface StatsTabOpenedPayload {
+  viewMode: "session" | "last-request";
+  showModeBreakdown: boolean;
+}
+
+/**
+ * Stream timing computed - emitted by backend timing pipeline.
+ *
+ * All numeric metrics are base-2 rounded or bucketed to preserve privacy.
+ */
+export interface StreamTimingComputedPayload {
+  model: string;
+  mode: string;
+  duration_b2: number;
+  ttft_ms_b2: number;
+  tool_ms_b2: number;
+  streaming_ms_b2: number;
+  tool_percent_bucket: number;
+  invalid: boolean;
+}
+
+/**
+ * Stream timing invalid - emitted when any computed % would exceed 100%,
+ * durations are negative, or values are NaN.
+ */
+export interface StreamTimingInvalidPayload {
+  reason: string;
+}
+
+/**
  * Stream completion event - tracks when AI responses finish
  */
 export interface StreamCompletedPayload {
@@ -302,6 +334,9 @@ export type TelemetryEventPayload =
   | { event: "mcp_context_injected"; properties: MCPContextInjectedPayload }
   | { event: "mcp_server_tested"; properties: MCPServerTestedPayload }
   | { event: "mcp_server_config_changed"; properties: MCPServerConfigChangedPayload }
+  | { event: "stats_tab_opened"; properties: StatsTabOpenedPayload }
+  | { event: "stream_timing_computed"; properties: StreamTimingComputedPayload }
+  | { event: "stream_timing_invalid"; properties: StreamTimingInvalidPayload }
   | { event: "stream_completed"; properties: StreamCompletedPayload }
   | { event: "compaction_completed"; properties: CompactionCompletedPayload }
   | { event: "provider_configured"; properties: ProviderConfiguredPayload }

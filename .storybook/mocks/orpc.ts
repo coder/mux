@@ -6,7 +6,11 @@
 import type { APIClient } from "@/browser/contexts/API";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig } from "@/node/config";
-import type { WorkspaceChatMessage, ProvidersConfigMap } from "@/common/orpc/types";
+import type {
+  WorkspaceChatMessage,
+  ProvidersConfigMap,
+  WorkspaceStatsSnapshot,
+} from "@/common/orpc/types";
 import type { ChatStats } from "@/common/types/chatStats";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
@@ -69,6 +73,8 @@ export interface MockORPCClientOptions {
     }>
   >;
   /** Session usage data per workspace (for Costs tab) */
+  workspaceStatsSnapshots?: Map<string, WorkspaceStatsSnapshot>;
+  statsTabVariant?: "control" | "stats";
   sessionUsage?: Map<string, MockSessionUsage>;
   /** MCP server configuration per project */
   mcpServers?: Map<
@@ -112,10 +118,26 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     onProjectRemove,
     backgroundProcesses = new Map(),
     sessionUsage = new Map(),
+    workspaceStatsSnapshots = new Map<string, WorkspaceStatsSnapshot>(),
+    statsTabVariant = "control",
     mcpServers = new Map(),
     mcpOverrides = new Map(),
     mcpTestResults = new Map(),
   } = options;
+
+  // Feature flags
+  let statsTabOverride: "default" | "on" | "off" = "default";
+
+  const getStatsTabState = () => {
+    const enabled =
+      statsTabOverride === "on"
+        ? true
+        : statsTabOverride === "off"
+          ? false
+          : statsTabVariant === "stats";
+
+    return { enabled, variant: statsTabVariant, override: statsTabOverride } as const;
+  };
 
   const workspaceMap = new Map(workspaces.map((w) => [w.id, w]));
 
@@ -134,6 +156,16 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       countTokensBatch: async (_input: { model: string; texts: string[] }) =>
         _input.texts.map(() => 0),
       calculateStats: async () => mockStats,
+    },
+    features: {
+      getStatsTabState: async () => getStatsTabState(),
+      setStatsTabOverride: async (input: { override: "default" | "on" | "off" }) => {
+        statsTabOverride = input.override;
+        return getStatsTabState();
+      },
+    },
+    telemetry: {
+      track: async () => undefined,
     },
     server: {
       getLaunchProject: async () => null,
@@ -250,12 +282,12 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       },
       onMetadata: async function* () {
         // Empty generator - no metadata updates in mock
-        await new Promise(() => {}); // Never resolves, keeps stream open
+        return;
       },
       activity: {
         list: async () => ({}),
         subscribe: async function* () {
-          await new Promise(() => {}); // Never resolves
+          return;
         },
       },
       backgroundBashes: {
@@ -270,6 +302,18 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         },
         terminate: async () => ({ success: true, data: undefined }),
         sendToBackground: async () => ({ success: true, data: undefined }),
+      },
+      stats: {
+        subscribe: async function* (input: { workspaceId: string }) {
+          const snapshot = workspaceStatsSnapshots.get(input.workspaceId);
+          if (snapshot) {
+            yield snapshot;
+          }
+        },
+        clear: async (input: { workspaceId: string }) => {
+          workspaceStatsSnapshots.delete(input.workspaceId);
+          return { success: true, data: undefined };
+        },
       },
       getSessionUsage: async (input: { workspaceId: string }) => sessionUsage.get(input.workspaceId),
       mcp: {

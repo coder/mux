@@ -16,6 +16,8 @@ import type { MCPConfigService } from "@/node/services/mcpConfigService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import type { TelemetryService } from "@/node/services/telemetryService";
+import type { FeatureFlagService } from "@/node/services/featureFlagService";
+import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 
 export interface ORPCContext {
@@ -34,6 +36,8 @@ export interface ORPCContext {
   voiceService: VoiceService;
   mcpConfigService: MCPConfigService;
   mcpServerManager: MCPServerManager;
+  featureFlagService: FeatureFlagService;
+  sessionTimingService: SessionTimingService;
   telemetryService: TelemetryService;
   experimentsService: ExperimentsService;
   sessionUsageService: SessionUsageService;

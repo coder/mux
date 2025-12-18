@@ -55,6 +55,8 @@ import { SplashScreenProvider } from "./components/splashScreens/SplashScreenPro
 import { TutorialProvider } from "./contexts/TutorialContext";
 import { ConnectionStatusIndicator } from "./components/ConnectionStatusIndicator";
 import { TooltipProvider } from "./components/ui/tooltip";
+import { useFeatureFlags } from "./contexts/FeatureFlagsContext";
+import { FeatureFlagsProvider } from "./contexts/FeatureFlagsContext";
 import { ExperimentsProvider } from "./contexts/ExperimentsContext";
 import { getWorkspaceSidebarKey } from "./utils/workspace";
 
@@ -130,6 +132,11 @@ function AppInner() {
 
   // Get workspace store for command palette
   const workspaceStore = useWorkspaceStoreRaw();
+
+  const { statsTabState } = useFeatureFlags();
+  useEffect(() => {
+    workspaceStore.setStatsEnabled(Boolean(statsTabState?.enabled));
+  }, [workspaceStore, statsTabState?.enabled]);
 
   // Track telemetry when workspace selection changes
   const prevWorkspaceRef = useRef<WorkspaceSelection | null>(null);
@@ -449,6 +456,7 @@ function AppInner() {
     onToggleTheme: toggleTheme,
     onSetTheme: setThemePreference,
     onOpenSettings: openSettings,
+    onClearTimingStats: (workspaceId: string) => workspaceStore.clearTimingStats(workspaceId),
     api,
   };
 
@@ -761,17 +769,19 @@ function App() {
   return (
     <ThemeProvider>
       <ExperimentsProvider>
-        <TooltipProvider delayDuration={200}>
-          <SettingsProvider>
-            <SplashScreenProvider>
-              <TutorialProvider>
-                <CommandRegistryProvider>
-                  <AppInner />
-                </CommandRegistryProvider>
-              </TutorialProvider>
-            </SplashScreenProvider>
-          </SettingsProvider>
-        </TooltipProvider>
+        <FeatureFlagsProvider>
+          <TooltipProvider delayDuration={200}>
+            <SettingsProvider>
+              <SplashScreenProvider>
+                <TutorialProvider>
+                  <CommandRegistryProvider>
+                    <AppInner />
+                  </CommandRegistryProvider>
+                </TutorialProvider>
+              </SplashScreenProvider>
+            </SettingsProvider>
+          </TooltipProvider>
+        </FeatureFlagsProvider>
       </ExperimentsProvider>
     </ThemeProvider>
   );

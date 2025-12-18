@@ -605,6 +605,7 @@ export function createStreamingChatHandler(opts: {
         messageId: opts.streamingMessageId,
         model: opts.model,
         historySequence: opts.historySequence,
+        startTime: Date.now(),
       });
 
       // Send text delta if provided

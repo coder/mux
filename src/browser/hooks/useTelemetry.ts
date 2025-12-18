@@ -3,6 +3,7 @@ import {
   trackWorkspaceCreated,
   trackWorkspaceSwitched,
   trackMessageSent,
+  trackStatsTabOpened,
   trackStreamCompleted,
   trackProviderConfigured,
   trackCommandUsed,
@@ -62,6 +63,12 @@ export function useTelemetry() {
     []
   );
 
+  const statsTabOpened = useCallback(
+    (viewMode: "session" | "last-request", showModeBreakdown: boolean) => {
+      trackStatsTabOpened(viewMode, showModeBreakdown);
+    },
+    []
+  );
   const streamCompleted = useCallback(
     (model: string, wasInterrupted: boolean, durationSecs: number, outputTokens: number) => {
       trackStreamCompleted(model, wasInterrupted, durationSecs, outputTokens);
@@ -96,6 +103,7 @@ export function useTelemetry() {
     workspaceSwitched,
     workspaceCreated,
     messageSent,
+    statsTabOpened,
     streamCompleted,
     providerConfigured,
     commandUsed,

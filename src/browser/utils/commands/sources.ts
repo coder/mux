@@ -51,6 +51,7 @@ export interface BuildSourcesParams {
   onToggleTheme: () => void;
   onSetTheme: (theme: ThemeMode) => void;
   onOpenSettings?: (section?: string) => void;
+  onClearTimingStats?: (workspaceId: string) => void;
 }
 
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high", "xhigh"];
@@ -421,6 +422,15 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         run: () => {
           // Dispatch custom event; ChatInput listens for it
           window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.TOGGLE_VOICE_INPUT));
+        },
+      });
+      list.push({
+        id: CommandIds.chatClearTimingStats(),
+        title: "Clear Timing Stats",
+        subtitle: "Reset session timing data for this workspace",
+        section: section.chat,
+        run: () => {
+          p.onClearTimingStats?.(id);
         },
       });
     }

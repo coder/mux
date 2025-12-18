@@ -87,6 +87,19 @@ export function trackMessageSent(
 }
 
 /**
+ * Track stats tab opening.
+ */
+export function trackStatsTabOpened(
+  viewMode: "session" | "last-request",
+  showModeBreakdown: boolean
+): void {
+  trackEvent({
+    event: "stats_tab_opened",
+    properties: { viewMode, showModeBreakdown },
+  });
+}
+
+/**
  * Track stream completion
  * @param durationSecs - Raw duration in seconds (will be rounded to base-2)
  * @param outputTokens - Raw token count (will be rounded to base-2)

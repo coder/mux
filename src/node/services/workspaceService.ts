@@ -1071,6 +1071,15 @@ export class WorkspaceService extends EventEmitter {
           }
         }
 
+        const sourceTimingPath = path.join(sourceSessionDir, "session-timing.json");
+        const newTimingPath = path.join(newSessionDir, "session-timing.json");
+        try {
+          await fsPromises.copyFile(sourceTimingPath, newTimingPath);
+        } catch (error) {
+          if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
+            throw error;
+          }
+        }
         const sourceUsagePath = path.join(sourceSessionDir, "session-usage.json");
         const newUsagePath = path.join(newSessionDir, "session-usage.json");
         try {

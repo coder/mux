@@ -20,6 +20,7 @@ export interface MockStreamStartEvent extends MockAssistantEventBase {
   kind: "stream-start";
   messageId: string;
   model: string;
+  mode?: "plan" | "exec";
 }
 
 export interface MockStreamDeltaEvent extends MockAssistantEventBase {

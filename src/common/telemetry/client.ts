@@ -89,7 +89,7 @@ export function trackEvent(payload: TelemetryEventPayload): void {
   }
 
   const client = window.__ORPC_CLIENT__;
-  if (!client) {
+  if (!client?.telemetry?.track) {
     return;
   }
 

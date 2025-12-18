@@ -20,6 +20,18 @@ import { ServerService } from "@/node/services/serverService";
 import { MenuEventService } from "@/node/services/menuEventService";
 import { VoiceService } from "@/node/services/voiceService";
 import { TelemetryService } from "@/node/services/telemetryService";
+import type {
+  ReasoningDeltaEvent,
+  StreamAbortEvent,
+  StreamDeltaEvent,
+  StreamEndEvent,
+  StreamStartEvent,
+  ToolCallDeltaEvent,
+  ToolCallEndEvent,
+  ToolCallStartEvent,
+} from "@/common/types/stream";
+import { FeatureFlagService } from "@/node/services/featureFlagService";
+import { SessionTimingService } from "@/node/services/sessionTimingService";
 import { ExperimentsService } from "@/node/services/experimentsService";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import { MCPConfigService } from "@/node/services/mcpConfigService";
@@ -52,6 +64,8 @@ export class ServiceContainer {
   public readonly mcpConfigService: MCPConfigService;
   public readonly mcpServerManager: MCPServerManager;
   public readonly telemetryService: TelemetryService;
+  public readonly featureFlagService: FeatureFlagService;
+  public readonly sessionTimingService: SessionTimingService;
   public readonly experimentsService: ExperimentsService;
   public readonly sessionUsageService: SessionUsageService;
   private readonly initStateManager: InitStateManager;
@@ -122,6 +136,34 @@ export class ServiceContainer {
       telemetryService: this.telemetryService,
       muxHome: config.rootDir,
     });
+    this.featureFlagService = new FeatureFlagService(config, this.telemetryService);
+    this.sessionTimingService = new SessionTimingService(config, this.telemetryService);
+
+    // Backend timing stats (behind feature flag).
+    this.aiService.on("stream-start", (data: StreamStartEvent) =>
+      this.sessionTimingService.handleStreamStart(data)
+    );
+    this.aiService.on("stream-delta", (data: StreamDeltaEvent) =>
+      this.sessionTimingService.handleStreamDelta(data)
+    );
+    this.aiService.on("reasoning-delta", (data: ReasoningDeltaEvent) =>
+      this.sessionTimingService.handleReasoningDelta(data)
+    );
+    this.aiService.on("tool-call-start", (data: ToolCallStartEvent) =>
+      this.sessionTimingService.handleToolCallStart(data)
+    );
+    this.aiService.on("tool-call-delta", (data: ToolCallDeltaEvent) =>
+      this.sessionTimingService.handleToolCallDelta(data)
+    );
+    this.aiService.on("tool-call-end", (data: ToolCallEndEvent) =>
+      this.sessionTimingService.handleToolCallEnd(data)
+    );
+    this.aiService.on("stream-end", (data: StreamEndEvent) =>
+      this.sessionTimingService.handleStreamEnd(data)
+    );
+    this.aiService.on("stream-abort", (data: StreamAbortEvent) =>
+      this.sessionTimingService.handleStreamAbort(data)
+    );
     this.workspaceService.setExperimentsService(this.experimentsService);
   }
 
@@ -129,6 +171,14 @@ export class ServiceContainer {
     await this.extensionMetadata.initialize();
     // Initialize telemetry service
     await this.telemetryService.initialize();
+
+    // Initialize feature flag state (don't block startup on network).
+    this.featureFlagService
+      .getStatsTabState()
+      .then((state) => this.sessionTimingService.setStatsTabState(state))
+      .catch(() => {
+        // Ignore feature flag failures.
+      });
     await this.experimentsService.initialize();
     // Start idle compaction checker
     this.idleCompactionService.start();

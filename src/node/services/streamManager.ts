@@ -789,13 +789,16 @@ export class StreamManager extends EventEmitter {
       // Update state to streaming
       streamInfo.state = StreamState.STREAMING;
 
-      // Emit stream start event
+      // Emit stream start event (include mode from initialMetadata if available)
+      const streamStartMode = streamInfo.initialMetadata?.mode as "plan" | "exec" | undefined;
       this.emit("stream-start", {
         type: "stream-start",
         workspaceId: workspaceId as string,
         messageId: streamInfo.messageId,
         model: streamInfo.model,
         historySequence,
+        startTime: streamInfo.startTime,
+        ...(streamStartMode && { mode: streamStartMode }),
       } as StreamStartEvent);
 
       // Initialize token tracker for this model
@@ -1689,13 +1692,16 @@ export class StreamManager extends EventEmitter {
     // Initialize token tracker for this model (required for tokenization)
     await this.tokenTracker.setModel(streamInfo.model);
 
-    // Emit stream-start event
+    // Emit stream-start event (include mode from initialMetadata if available)
+    const replayMode = streamInfo.initialMetadata?.mode as "plan" | "exec" | undefined;
     this.emit("stream-start", {
       type: "stream-start",
       workspaceId,
       messageId: streamInfo.messageId,
       model: streamInfo.model,
       historySequence: streamInfo.historySequence,
+      startTime: streamInfo.startTime,
+      ...(replayMode && { mode: replayMode }),
     });
 
     // Replay accumulated parts as events using shared emission logic

@@ -735,7 +735,7 @@ describe("bash tool", () => {
     // Extremely minimal case - just enough to trigger rebase --continue
     const script = `
       T=$(mktemp -d) && cd "$T"
-      git init && git config user.email "t@t" && git config user.name "T"
+      git init && git config user.email "t@t" && git config user.name "T" && git config commit.gpgsign false
       echo a > f && git add f && git commit -m a
       git checkout -b b && echo b > f && git commit -am b
       git checkout main && echo c > f && git commit -am c

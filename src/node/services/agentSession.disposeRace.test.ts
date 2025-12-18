@@ -105,7 +105,8 @@ describe("AgentSession disposal race conditions", () => {
         workspaceId: "ws",
         messageId: "m1",
         model: "anthropic:claude-sonnet-4-5",
-        timestamp: Date.now(),
+        historySequence: 1,
+        startTime: Date.now(),
       })
     ).not.toThrow();
   });

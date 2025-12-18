@@ -40,6 +40,7 @@ export const CommandIds = {
   chatInterrupt: () => "chat:interrupt" as const,
   chatJumpBottom: () => "chat:jumpBottom" as const,
   chatVoiceInput: () => "chat:voiceInput" as const,
+  chatClearTimingStats: () => "chat:clearTimingStats" as const,
 
   // Mode commands
   modeToggle: () => "mode:toggle" as const,

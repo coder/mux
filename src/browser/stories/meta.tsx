@@ -38,8 +38,26 @@ interface AppWithMocksProps {
 }
 
 /** Wrapper that runs setup once and passes the client to AppLoader */
+function getStorybookStoryId(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  return params.get("id") ?? params.get("path");
+}
+
 export const AppWithMocks: FC<AppWithMocksProps> = ({ setup }) => {
+  const lastStoryIdRef = useRef<string | null>(null);
   const clientRef = useRef<APIClient | null>(null);
+
+  const storyId = getStorybookStoryId();
+  if (lastStoryIdRef.current !== storyId) {
+    lastStoryIdRef.current = storyId;
+    clientRef.current = setup();
+  }
+
   clientRef.current ??= setup();
+
   return <AppLoader client={clientRef.current} />;
 };

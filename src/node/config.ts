@@ -6,7 +6,12 @@ import writeFileAtomic from "write-file-atomic";
 import { log } from "@/node/services/log";
 import type { WorkspaceMetadata, FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { Secret, SecretsConfig } from "@/common/types/secrets";
-import type { Workspace, ProjectConfig, ProjectsConfig } from "@/common/types/project";
+import type {
+  Workspace,
+  ProjectConfig,
+  ProjectsConfig,
+  FeatureFlagOverride,
+} from "@/common/types/project";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { getMuxHome } from "@/common/constants/paths";
@@ -57,6 +62,7 @@ export class Config {
           projects?: unknown;
           serverSshHost?: string;
           viewedSplashScreens?: string[];
+          featureFlagOverrides?: Record<string, "default" | "on" | "off">;
         };
 
         // Config is stored as array of [path, config] pairs
@@ -72,6 +78,7 @@ export class Config {
             projects: projectsMap,
             serverSshHost: parsed.serverSshHost,
             viewedSplashScreens: parsed.viewedSplashScreens,
+            featureFlagOverrides: parsed.featureFlagOverrides,
           };
         }
       }
@@ -95,11 +102,15 @@ export class Config {
         projects: Array<[string, ProjectConfig]>;
         serverSshHost?: string;
         viewedSplashScreens?: string[];
+        featureFlagOverrides?: ProjectsConfig["featureFlagOverrides"];
       } = {
         projects: Array.from(config.projects.entries()),
       };
       if (config.serverSshHost) {
         data.serverSshHost = config.serverSshHost;
+      }
+      if (config.featureFlagOverrides) {
+        data.featureFlagOverrides = config.featureFlagOverrides;
       }
       if (config.viewedSplashScreens) {
         data.viewedSplashScreens = config.viewedSplashScreens;
@@ -119,6 +130,32 @@ export class Config {
     const config = this.loadConfigOrDefault();
     const newConfig = fn(config);
     await this.saveConfig(newConfig);
+  }
+
+  /**
+   * Cross-client feature flag overrides (shared via ~/.mux/config.json).
+   */
+  getFeatureFlagOverride(flagKey: string): FeatureFlagOverride {
+    const config = this.loadConfigOrDefault();
+    const override = config.featureFlagOverrides?.[flagKey];
+    if (override === "on" || override === "off" || override === "default") {
+      return override;
+    }
+    return "default";
+  }
+
+  async setFeatureFlagOverride(flagKey: string, override: FeatureFlagOverride): Promise<void> {
+    await this.editConfig((config) => {
+      const next = { ...(config.featureFlagOverrides ?? {}) };
+      if (override === "default") {
+        delete next[flagKey];
+      } else {
+        next[flagKey] = override;
+      }
+
+      config.featureFlagOverrides = Object.keys(next).length > 0 ? next : undefined;
+      return config;
+    });
   }
 
   /**

@@ -1343,6 +1343,8 @@ export class AIService extends EventEmitter {
           messageId: assistantMessageId,
           model: modelString,
           historySequence,
+          startTime: Date.now(),
+          ...(uiMode && { mode: uiMode }),
         };
         this.emit("stream-start", streamStartEvent);
 
@@ -1378,6 +1380,8 @@ export class AIService extends EventEmitter {
           messageId: assistantMessageId,
           model: modelString,
           historySequence,
+          startTime: Date.now(),
+          ...(uiMode && { mode: uiMode }),
         };
         this.emit("stream-start", streamStartEvent);
 

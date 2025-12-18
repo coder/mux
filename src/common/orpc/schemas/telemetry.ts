@@ -127,6 +127,26 @@ const TelemetryMCPServerConfigActionSchema = z.enum([
   "set_headers",
 ]);
 
+const StatsTabOpenedPropertiesSchema = z.object({
+  viewMode: z.enum(["session", "last-request"]),
+  showModeBreakdown: z.boolean(),
+});
+
+const StreamTimingComputedPropertiesSchema = z.object({
+  model: z.string(),
+  mode: z.string(),
+  duration_b2: z.number(),
+  ttft_ms_b2: z.number(),
+  tool_ms_b2: z.number(),
+  streaming_ms_b2: z.number(),
+  tool_percent_bucket: z.number(),
+  invalid: z.boolean(),
+});
+
+const StreamTimingInvalidPropertiesSchema = z.object({
+  reason: z.string(),
+});
+
 const MCPServerConfigChangedPropertiesSchema = z.object({
   action: TelemetryMCPServerConfigActionSchema,
   transport: TelemetryMCPServerTransportSchema,
@@ -196,6 +216,18 @@ export const TelemetryEventSchema = z.discriminatedUnion("event", [
   z.object({
     event: z.literal("mcp_server_tested"),
     properties: MCPServerTestedPropertiesSchema,
+  }),
+  z.object({
+    event: z.literal("stats_tab_opened"),
+    properties: StatsTabOpenedPropertiesSchema,
+  }),
+  z.object({
+    event: z.literal("stream_timing_computed"),
+    properties: StreamTimingComputedPropertiesSchema,
+  }),
+  z.object({
+    event: z.literal("stream_timing_invalid"),
+    properties: StreamTimingInvalidPropertiesSchema,
   }),
   z.object({
     event: z.literal("mcp_server_config_changed"),

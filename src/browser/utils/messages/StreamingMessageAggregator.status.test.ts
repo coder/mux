@@ -113,6 +113,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId,
       model: "test-model",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     // Add a status_set tool call
@@ -155,6 +156,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId,
       model: "test-model",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     // First status_set
@@ -218,6 +220,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId,
       model: "test-model",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     // Set status
@@ -269,6 +272,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId,
       model: "test-model",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     // Add a status_set tool call
@@ -308,6 +312,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId: "msg1",
       model: "test-model",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     aggregator.handleToolCallStart({
@@ -370,6 +375,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId,
       model: "test-model",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     // Add a status_set tool call with invalid emoji
@@ -429,6 +435,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId,
       model: "test-model",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     // Add a successful status_set tool call
@@ -672,6 +679,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId,
       model: "test-model",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     // Status_set with long message (would be truncated by backend)
@@ -717,6 +725,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId,
       model: "test-model",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     // Add a status_set tool call with URL
@@ -761,6 +770,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId,
       model: "test-model",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     // First status with URL
@@ -855,6 +865,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId: messageId1,
       model: "test-model",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     // Set status with URL in first stream
@@ -902,6 +913,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId: messageId2,
       model: "test-model",
       historySequence: 2,
+      startTime: Date.now(),
     });
 
     // Set new status WITHOUT URL - should use the last URL ever seen

@@ -40,6 +40,12 @@ export const StreamStartEventSchema = z.object({
   historySequence: z.number().meta({
     description: "Backend assigns global message ordering",
   }),
+  startTime: z.number().meta({
+    description: "Backend timestamp when stream started (Date.now())",
+  }),
+  mode: z.enum(["plan", "exec"]).optional().meta({
+    description: "Agent mode (plan/exec) for this stream",
+  }),
 });
 
 export const StreamDeltaEventSchema = z.object({

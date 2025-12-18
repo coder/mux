@@ -328,6 +328,7 @@ describe("WorkspaceStore", () => {
           messageId: "msg1",
           model: "claude-opus-4",
           workspaceId: "test-workspace",
+          startTime: Date.now(),
         };
         await new Promise<void>((resolve) => {
           setTimeout(resolve, 10);
@@ -433,6 +434,7 @@ describe("WorkspaceStore", () => {
           messageId: "msg1",
           model: "claude-sonnet-4",
           workspaceId: "test-workspace",
+          startTime: Date.now(),
         };
         await new Promise<void>((resolve) => {
           setTimeout(resolve, 10);
@@ -476,6 +478,7 @@ describe("WorkspaceStore", () => {
           messageId: "msg1",
           model: "claude-sonnet-4",
           workspaceId: "test-workspace",
+          startTime: Date.now(),
         };
         await new Promise<void>((resolve) => {
           setTimeout(resolve, 10);

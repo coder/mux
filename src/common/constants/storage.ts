@@ -175,6 +175,7 @@ export const VIM_ENABLED_KEY = "vimEnabled";
  * Git status indicator display mode (global)
  * Stores: "line-delta" | "divergence"
  */
+
 export const GIT_STATUS_INDICATOR_MODE_KEY = "gitStatusIndicatorMode";
 
 /**
@@ -246,6 +247,15 @@ export function getFileTreeExpandStateKey(workspaceId: string): string {
  */
 export function getStatusStateKey(workspaceId: string): string {
   return `statusState:${workspaceId}`;
+}
+
+/**
+ * Get the localStorage key for session timing stats for a workspace
+ * Stores aggregate timing data: totalDurationMs, totalToolExecutionMs, totalTtftMs, ttftCount, responseCount
+ * Format: "sessionTiming:{workspaceId}"
+ */
+export function getSessionTimingKey(workspaceId: string): string {
+  return `sessionTiming:${workspaceId}`;
 }
 
 /**

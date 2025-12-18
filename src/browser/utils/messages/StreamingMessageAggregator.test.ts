@@ -149,6 +149,7 @@ describe("StreamingMessageAggregator", () => {
         messageId: "msg1",
         historySequence: 1,
         model: "claude-3-5-sonnet-20241022",
+        startTime: Date.now(),
       });
 
       // Simulate todo_write tool call
@@ -208,6 +209,7 @@ describe("StreamingMessageAggregator", () => {
         messageId: "msg1",
         historySequence: 1,
         model: "claude-3-5-sonnet-20241022",
+        startTime: Date.now(),
       });
 
       // Simulate todo_write
@@ -343,6 +345,7 @@ describe("StreamingMessageAggregator", () => {
         messageId: "msg1",
         historySequence: 1,
         model: "claude-3-5-sonnet-20241022",
+        startTime: Date.now(),
       });
 
       aggregator.handleToolCallStart({

@@ -19,6 +19,7 @@ export {
   trackWorkspaceCreated,
   trackWorkspaceSwitched,
   trackMessageSent,
+  trackStatsTabOpened,
   trackStreamCompleted,
   trackProviderConfigured,
   trackCommandUsed,

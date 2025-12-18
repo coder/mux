@@ -6,7 +6,12 @@
  */
 
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { WorkspaceChatMessage, ChatMuxMessage, ProvidersConfigMap } from "@/common/orpc/types";
+import type {
+  WorkspaceChatMessage,
+  ChatMuxMessage,
+  ProvidersConfigMap,
+  WorkspaceStatsSnapshot,
+} from "@/common/orpc/types";
 import type { APIClient } from "@/browser/contexts/API";
 import {
   SELECTED_WORKSPACE_KEY,
@@ -161,6 +166,7 @@ export interface SimpleChatSetupOptions {
   providersConfig?: ProvidersConfigMap;
   backgroundProcesses?: BackgroundProcessFixture[];
   /** Session usage data for Costs tab */
+  statsTabEnabled?: boolean;
   sessionUsage?: MockSessionUsage;
   /** Optional custom chat handler for emitting additional events (e.g., queued-message-changed) */
   onChat?: (workspaceId: string, emit: (msg: WorkspaceChatMessage) => void) => void;
@@ -216,6 +222,7 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
     executeBash: createGitStatusExecutor(gitStatus),
     providersConfig: opts.providersConfig,
     backgroundProcesses: bgProcesses,
+    statsTabVariant: opts.statsTabEnabled ? "stats" : "control",
     sessionUsage: sessionUsageMap,
   });
 }
@@ -235,6 +242,7 @@ export interface StreamingChatSetupOptions {
   streamText?: string;
   pendingTool?: { toolCallId: string; toolName: string; args: object };
   gitStatus?: GitStatusFixture;
+  statsTabEnabled?: boolean;
 }
 
 /**
@@ -272,12 +280,48 @@ export function setupStreamingChatStory(opts: StreamingChatSetupOptions): APICli
   // Set localStorage for workspace selection
   selectWorkspace(workspaces[0]);
 
+  const workspaceStatsSnapshots = new Map<string, WorkspaceStatsSnapshot>();
+  if (opts.statsTabEnabled) {
+    workspaceStatsSnapshots.set(workspaceId, {
+      workspaceId,
+      generatedAt: Date.now(),
+      active: {
+        messageId: opts.streamingMessageId,
+        model: "openai:gpt-4o",
+        elapsedMs: 2000,
+        ttftMs: 200,
+        toolExecutionMs: 0,
+        modelTimeMs: 2000,
+        streamingMs: 1800,
+        outputTokens: 100,
+        reasoningTokens: 0,
+        liveTokenCount: 100,
+        liveTPS: 50,
+        invalid: false,
+        anomalies: [],
+      },
+      session: {
+        totalDurationMs: 0,
+        totalToolExecutionMs: 0,
+        totalStreamingMs: 0,
+        totalTtftMs: 0,
+        ttftCount: 0,
+        responseCount: 0,
+        totalOutputTokens: 0,
+        totalReasoningTokens: 0,
+        byModel: {},
+      },
+    });
+  }
+
   // Return ORPC client
   return createMockORPCClient({
     projects: groupWorkspacesByProject(workspaces),
     workspaces,
     onChat: createOnChatAdapter(chatHandlers),
     executeBash: createGitStatusExecutor(gitStatus),
+    workspaceStatsSnapshots,
+    statsTabVariant: opts.statsTabEnabled ? "stats" : "control",
   });
 }
 

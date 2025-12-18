@@ -1,10 +1,17 @@
 import React from "react";
 import { RIGHT_SIDEBAR_TAB_KEY, RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
+import { useWorkspaceUsage, useWorkspaceStatsSnapshot } from "@/browser/stores/WorkspaceStore";
+import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useResizeObserver } from "@/browser/hooks/useResizeObserver";
+import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
+import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { CostsTab } from "./RightSidebar/CostsTab";
+import { StatsTab } from "./RightSidebar/StatsTab";
+import { VerticalTokenMeter } from "./RightSidebar/VerticalTokenMeter";
 import { ReviewPanel } from "./RightSidebar/CodeReview/ReviewPanel";
+import { calculateTokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
 import { sumUsageHistory, type ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
@@ -17,7 +24,17 @@ export interface ReviewStats {
   read: number;
 }
 
+/** Format duration for tab display (compact format) */
+function formatTabDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60000) return `${Math.round(ms / 1000)}s`;
+  const mins = Math.floor(ms / 60000);
+  const secs = Math.round((ms % 60000) / 1000);
+  return secs > 0 ? `${mins}m${secs}s` : `${mins}m`;
+}
+
 interface SidebarContainerProps {
+  collapsed: boolean;
   wide?: boolean;
   /** Custom width from drag-resize (persisted per-tab by AIView) */
   customWidth?: number;
@@ -32,11 +49,13 @@ interface SidebarContainerProps {
  * SidebarContainer - Main sidebar wrapper with dynamic width
  *
  * Width priority (first match wins):
- * 1. customWidth - From drag-resize (persisted per-tab)
- * 2. wide - Auto-calculated max width for Review tab (when not drag-resizing)
- * 3. default (300px) - Costs tab when no customWidth saved
+ * 1. collapsed (20px) - Shows vertical token meter only
+ * 2. customWidth - From drag-resize (persisted per-tab)
+ * 3. wide - Auto-calculated max width for Review tab (when not drag-resizing)
+ * 4. default (300px) - Costs tab when no customWidth saved
  */
 const SidebarContainer: React.FC<SidebarContainerProps> = ({
+  collapsed,
   wide,
   customWidth,
   isResizing,
@@ -44,19 +63,23 @@ const SidebarContainer: React.FC<SidebarContainerProps> = ({
   role,
   "aria-label": ariaLabel,
 }) => {
-  const width = customWidth
-    ? `${customWidth}px`
-    : wide
-      ? "min(1200px, calc(100vw - 400px))"
-      : "300px";
+  const width = collapsed
+    ? "20px"
+    : customWidth
+      ? `${customWidth}px`
+      : wide
+        ? "min(1200px, calc(100vw - 400px))"
+        : "300px";
 
   return (
     <div
       className={cn(
         "bg-sidebar border-l border-border-light flex flex-col overflow-hidden flex-shrink-0",
         !isResizing && "transition-[width] duration-200",
-        // Mobile: full width
-        "max-md:border-l-0 max-md:border-t max-md:border-border-light max-md:w-full max-md:relative max-md:max-h-[50vh]"
+        collapsed && "sticky right-0 z-10 shadow-[-2px_0_4px_rgba(0,0,0,0.2)]",
+        // Mobile: Show vertical meter when collapsed (20px), full width when expanded
+        "max-md:border-l-0 max-md:border-t max-md:border-border-light",
+        !collapsed && "max-md:w-full max-md:relative max-md:max-h-[50vh]"
       )}
       style={{ width }}
       role={role}
@@ -67,7 +90,7 @@ const SidebarContainer: React.FC<SidebarContainerProps> = ({
   );
 };
 
-type TabType = "costs" | "review";
+type TabType = "costs" | "stats" | "review";
 
 export type { TabType };
 
@@ -100,6 +123,15 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Global tab preference (not per-workspace)
   const [selectedTab, setSelectedTab] = usePersistedState<TabType>(RIGHT_SIDEBAR_TAB_KEY, "costs");
 
+  const { statsTabState } = useFeatureFlags();
+  const statsTabEnabled = Boolean(statsTabState?.enabled);
+
+  React.useEffect(() => {
+    if (!statsTabEnabled && selectedTab === "stats") {
+      setSelectedTab("costs");
+    }
+  }, [statsTabEnabled, selectedTab, setSelectedTab]);
+
   // Trigger for focusing Review panel (preserves hunk selection)
   const [focusTrigger, setFocusTrigger] = React.useState(0);
 
@@ -116,21 +148,33 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         e.preventDefault();
         setSelectedTab("review");
         setFocusTrigger((prev) => prev + 1);
+      } else if (statsTabEnabled && matchesKeybind(e, KEYBINDS.STATS_TAB)) {
+        e.preventDefault();
+        setSelectedTab("stats");
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [setSelectedTab]);
+  }, [setSelectedTab, statsTabEnabled]);
 
   const usage = useWorkspaceUsage(workspaceId);
+
+  const { options } = useProviderOptions();
+  const use1M = options.anthropic?.use1MContext ?? false;
   const chatAreaSize = useResizeObserver(chatAreaRef);
 
   const baseId = `right-sidebar-${workspaceId}`;
   const costsTabId = `${baseId}-tab-costs`;
+  const statsTabId = `${baseId}-tab-stats`;
   const reviewTabId = `${baseId}-tab-review`;
   const costsPanelId = `${baseId}-panel-costs`;
+  const statsPanelId = `${baseId}-panel-stats`;
   const reviewPanelId = `${baseId}-panel-review`;
+
+  // Use lastContextUsage for context window display (last step = actual context size)
+  const lastUsage = usage?.liveUsage ?? usage?.lastContextUsage;
+  const model = lastUsage?.model ?? null;
 
   // Calculate session cost for tab display
   const sessionCost = React.useMemo(() => {
@@ -152,60 +196,100 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     return total > 0 ? total : null;
   }, [usage.sessionTotal, usage.liveCostUsage]);
 
-  // Auto-hide sidebar on small screens using hysteresis to prevent oscillation
-  // - Observe ChatArea width directly (independent of sidebar width)
-  // - ChatArea has min-width and flex: 1
-  // - Collapse when chatAreaWidth <= 800px (tight space)
-  // - Expand when chatAreaWidth >= 1100px (lots of space)
-  // - Between 800-1100: maintain current state (dead zone)
-  const COLLAPSE_THRESHOLD = 800;
-  const EXPAND_THRESHOLD = 1100;
+  const statsSnapshot = useWorkspaceStatsSnapshot(workspaceId);
+
+  const sessionDuration = (() => {
+    if (!statsTabEnabled) return null;
+    const baseDuration = statsSnapshot?.session?.totalDurationMs ?? 0;
+    const activeDuration = statsSnapshot?.active?.elapsedMs ?? 0;
+    const total = baseDuration + activeDuration;
+    return total > 0 ? total : null;
+  })();
+
+  // Auto-compaction settings: threshold per-model
+  const { threshold: autoCompactThreshold, setThreshold: setAutoCompactThreshold } =
+    useAutoCompactionSettings(workspaceId, model);
+
+  // Memoize vertical meter data calculation to prevent unnecessary re-renders
+  const verticalMeterData = React.useMemo(() => {
+    return lastUsage
+      ? calculateTokenMeterData(lastUsage, model ?? "unknown", use1M, true)
+      : { segments: [], totalTokens: 0, totalPercentage: 0 };
+  }, [lastUsage, model, use1M]);
+
+  // Calculate if we should show collapsed view with hysteresis
+  // Strategy: Observe ChatArea width directly (independent of sidebar width)
+  // - ChatArea has min-width: 750px and flex: 1
+  // - Use hysteresis to prevent oscillation:
+  //   * Collapse when chatAreaWidth <= 800px (tight space)
+  //   * Expand when chatAreaWidth >= 1100px (lots of space)
+  //   * Between 800-1100: maintain current state (dead zone)
+  const COLLAPSE_THRESHOLD = 800; // Collapse below this
+  const EXPAND_THRESHOLD = 1100; // Expand above this
   const chatAreaWidth = chatAreaSize?.width ?? 1000; // Default to large to avoid flash
 
   // Persist collapsed state globally (not per-workspace) since chat area width is shared
-  const [isHidden, setIsHidden] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false);
+  // This prevents animation flash when switching workspaces - sidebar maintains its state
+  const [showCollapsed, setShowCollapsed] = usePersistedState<boolean>(
+    RIGHT_SIDEBAR_COLLAPSED_KEY,
+    false
+  );
 
   React.useEffect(() => {
-    // Never hide when Review tab is active - code review needs space
+    // Never collapse when Review tab is active - code review needs space
     if (selectedTab === "review") {
-      if (isHidden) {
-        setIsHidden(false);
+      if (showCollapsed) {
+        setShowCollapsed(false);
       }
       return;
     }
 
-    // If sidebar is custom-resized wider than default, don't auto-hide
-    // (would cause oscillation between hidden and wide states)
+    // If the sidebar is custom-resized (wider than the default Costs width),
+    // auto-collapse based on chatAreaWidth can oscillate between expanded and
+    // collapsed states (because collapsed is 20px but expanded can be much wider),
+    // which looks like a constant flash. In that case, keep it expanded and let
+    // the user resize manually.
     if (width !== undefined && width > 300) {
-      if (isHidden) {
-        setIsHidden(false);
+      if (showCollapsed) {
+        setShowCollapsed(false);
       }
       return;
     }
 
-    // Normal hysteresis for Costs tab
+    // Normal hysteresis for Costs/Tools tabs
     if (chatAreaWidth <= COLLAPSE_THRESHOLD) {
-      setIsHidden(true);
+      setShowCollapsed(true);
     } else if (chatAreaWidth >= EXPAND_THRESHOLD) {
-      setIsHidden(false);
+      setShowCollapsed(false);
     }
     // Between thresholds: maintain current state (no change)
-  }, [chatAreaWidth, selectedTab, isHidden, setIsHidden, width]);
+  }, [chatAreaWidth, selectedTab, showCollapsed, setShowCollapsed, width]);
 
-  // Fully hide sidebar on small screens (context usage now shown in ChatInput)
-  if (isHidden) {
-    return null;
-  }
+  // Single render point for VerticalTokenMeter
+  // Shows when: (1) collapsed, OR (2) Review tab is active
+  const showMeter = showCollapsed || selectedTab === "review";
+  const autoCompactionProps = React.useMemo(
+    () => ({
+      threshold: autoCompactThreshold,
+      setThreshold: setAutoCompactThreshold,
+    }),
+    [autoCompactThreshold, setAutoCompactThreshold]
+  );
+  const verticalMeter = showMeter ? (
+    <VerticalTokenMeter data={verticalMeterData} autoCompaction={autoCompactionProps} />
+  ) : null;
 
   return (
     <SidebarContainer
+      collapsed={showCollapsed}
       wide={selectedTab === "review" && !width} // Auto-wide only if not drag-resizing
       customWidth={width} // Per-tab resized width from AIView
       isResizing={isResizing}
       role="complementary"
       aria-label="Workspace insights"
     >
-      <div className="flex h-full flex-row">
+      {/* Full view when not collapsed */}
+      <div className={cn("flex-row h-full", !showCollapsed ? "flex" : "hidden")}>
         {/* Resize handle (left edge) */}
         {onStartResize && (
           <div
@@ -215,6 +299,11 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
             )}
             onMouseDown={(e) => onStartResize(e as unknown as React.MouseEvent)}
           />
+        )}
+
+        {/* Render meter when Review tab is active */}
+        {selectedTab === "review" && (
+          <div className="bg-sidebar flex w-5 shrink-0 flex-col">{verticalMeter}</div>
         )}
 
         <div className="flex min-w-0 flex-1 flex-col">
@@ -286,6 +375,36 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
                 {formatKeybind(KEYBINDS.REVIEW_TAB)}
               </TooltipContent>
             </Tooltip>
+            {statsTabEnabled && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    className={cn(
+                      "rounded-md px-3 py-1 text-xs font-medium transition-all duration-150 flex items-baseline gap-1.5",
+                      selectedTab === "stats"
+                        ? "bg-hover text-foreground"
+                        : "bg-transparent text-muted hover:bg-hover/50 hover:text-foreground"
+                    )}
+                    onClick={() => setSelectedTab("stats")}
+                    id={statsTabId}
+                    role="tab"
+                    type="button"
+                    aria-selected={selectedTab === "stats"}
+                    aria-controls={statsPanelId}
+                  >
+                    Stats
+                    {sessionDuration !== null && (
+                      <span className="text-muted text-[10px]">
+                        {formatTabDuration(sessionDuration)}
+                      </span>
+                    )}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" align="center">
+                  {formatKeybind(KEYBINDS.STATS_TAB)}
+                </TooltipContent>
+              </Tooltip>
+            )}
           </div>
           <div
             className={cn("flex-1 overflow-y-auto", selectedTab === "review" ? "p-0" : "p-[15px]")}
@@ -313,9 +432,18 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
                 />
               </div>
             )}
+            {statsTabEnabled && selectedTab === "stats" && (
+              <div role="tabpanel" id={statsPanelId} aria-labelledby={statsTabId}>
+                <ErrorBoundary workspaceInfo="Stats tab">
+                  <StatsTab workspaceId={workspaceId} />
+                </ErrorBoundary>
+              </div>
+            )}
           </div>
         </div>
       </div>
+      {/* Render meter in collapsed view when sidebar is collapsed */}
+      <div className={cn("h-full", showCollapsed ? "flex" : "hidden")}>{verticalMeter}</div>
     </SidebarContainer>
   );
 };

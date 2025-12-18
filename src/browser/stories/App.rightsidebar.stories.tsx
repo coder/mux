@@ -5,7 +5,7 @@
  */
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { setupSimpleChatStory } from "./storyHelpers";
+import { setupSimpleChatStory, setupStreamingChatStory } from "./storyHelpers";
 import { createUserMessage, createAssistantMessage } from "./mockFactory";
 import { within, userEvent, waitFor } from "@storybook/test";
 import {
@@ -197,6 +197,91 @@ export const ReviewTab: AppStory = {
 
     await waitFor(() => {
       canvas.getByRole("tab", { name: /^review/i, selected: true });
+    });
+  },
+};
+
+/**
+ * Stats tab when idle (no timing data) - shows placeholder message
+ */
+export const StatsTabIdle: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("stats"));
+
+        return setupSimpleChatStory({
+          workspaceId: "ws-stats-idle",
+          workspaceName: "feature/stats",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Help me with something", { historySequence: 1 }),
+            createAssistantMessage("msg-2", "Sure, I can help with that.", { historySequence: 2 }),
+          ],
+          sessionUsage: createSessionUsage(0.25),
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Feature flags are async, so allow more time.
+    const statsTab = await canvas.findByRole("tab", { name: /^stats/i }, { timeout: 3000 });
+    await userEvent.click(statsTab);
+
+    await waitFor(() => {
+      canvas.getByText(/no timing data yet/i);
+    });
+  },
+};
+
+/**
+ * Stats tab during active streaming - shows timing statistics
+ */
+export const StatsTabStreaming: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("stats"));
+
+        return setupStreamingChatStory({
+          workspaceId: "ws-stats-streaming",
+          workspaceName: "feature/streaming",
+          projectName: "my-app",
+          statsTabEnabled: true,
+          messages: [
+            createUserMessage("msg-1", "Write a comprehensive test suite", { historySequence: 1 }),
+          ],
+          streamingMessageId: "msg-2",
+          historySequence: 2,
+          streamText: "I'll create a test suite for you. Let me start by analyzing...",
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Feature flags are async; wait for Stats tab to appear, then select it.
+    const statsTab = await canvas.findByRole("tab", { name: /^stats/i }, { timeout: 5000 });
+    await userEvent.click(statsTab);
+
+    await waitFor(
+      () => {
+        canvas.getByRole("tab", { name: /^stats/i, selected: true });
+      },
+      { timeout: 5000 }
+    );
+
+    // Verify timing header is shown (with pulsing active indicator)
+    await waitFor(() => {
+      canvas.getByText(/timing/i);
+    });
+
+    // Verify timing table components are displayed
+    await waitFor(() => {
+      canvas.getByText(/model time/i);
     });
   },
 };

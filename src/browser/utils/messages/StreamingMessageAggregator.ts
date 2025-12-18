@@ -32,6 +32,7 @@ import { isDynamicToolPart } from "@/common/types/toolParts";
 import { z } from "zod";
 import { createDeltaStorage, type DeltaRecordStorage } from "./StreamingTPSCalculator";
 import { computeRecencyTimestamp } from "./recency";
+import { assert } from "@/common/utils/assert";
 import { getStatusStateKey } from "@/common/constants/storage";
 
 // Maximum number of messages to display in the DOM for performance
@@ -46,10 +47,30 @@ type AgentStatus = z.infer<typeof AgentStatusSchema>;
 const MAX_DISPLAYED_MESSAGES = 128;
 
 interface StreamingContext {
-  startTime: number;
+  /** Backend timestamp when stream started (Date.now()) */
+  serverStartTime: number;
+  /**
+   * Offset to translate backend timestamps into the renderer clock.
+   * Computed as: `Date.now() - lastServerTimestamp`.
+   */
+  clockOffsetMs: number;
+  /** Most recent backend timestamp observed for this stream */
+  lastServerTimestamp: number;
+
   isComplete: boolean;
   isCompacting: boolean;
   model: string;
+
+  /** Timestamp of first content token (text or reasoning delta) - backend Date.now() */
+  serverFirstTokenTime: number | null;
+
+  /** Accumulated tool execution time in ms */
+  toolExecutionMs: number;
+  /** Map of tool call start times for in-progress tool calls (backend timestamps) */
+  pendingToolStarts: Map<string, number>;
+
+  /** Mode (plan/exec) */
+  mode?: "plan" | "exec";
 }
 
 /**
@@ -189,6 +210,35 @@ export class StreamingMessageAggregator {
   // (or the user retries) so retry UI/backoff logic doesn't misfire on send failures.
   private pendingStreamStartTime: number | null = null;
 
+  // Last completed stream timing stats (preserved after stream ends for display)
+  // Unlike activeStreams, this persists until the next stream starts
+  private lastCompletedStreamStats: {
+    startTime: number;
+    endTime: number;
+    firstTokenTime: number | null;
+    toolExecutionMs: number;
+    model: string;
+    outputTokens: number;
+    reasoningTokens: number;
+    streamingMs: number; // Time from first token to end (for accurate tok/s)
+    mode?: "plan" | "exec"; // Mode in which this response occurred
+  } | null = null;
+
+  // Session-level timing stats: model -> stats (totals computed on-the-fly)
+  private sessionTimingStats: Record<
+    string,
+    {
+      totalDurationMs: number;
+      totalToolExecutionMs: number;
+      totalTtftMs: number;
+      ttftCount: number;
+      responseCount: number;
+      totalOutputTokens: number;
+      totalReasoningTokens: number;
+      totalStreamingMs: number; // Cumulative streaming time (for accurate tok/s)
+    }
+  > = {};
+
   // Workspace creation timestamp (used for recency calculation)
   // REQUIRED: Backend guarantees every workspace has createdAt via config.ts
   private readonly createdAt: string;
@@ -196,7 +246,7 @@ export class StreamingMessageAggregator {
   constructor(createdAt: string, workspaceId?: string) {
     this.createdAt = createdAt;
     this.workspaceId = workspaceId;
-    // Load persisted agent status from localStorage
+    // Load persisted state from localStorage
     if (workspaceId) {
       const persistedStatus = this.loadPersistedAgentStatus();
       if (persistedStatus) {
@@ -241,6 +291,38 @@ export class StreamingMessageAggregator {
     } catch {
       // Ignore localStorage errors
     }
+  }
+
+  /** Clear all session timing stats (in-memory only). */
+  clearSessionTimingStats(): void {
+    this.sessionTimingStats = {};
+    this.lastCompletedStreamStats = null;
+  }
+
+  private updateStreamClock(context: StreamingContext, serverTimestamp: number): void {
+    assert(context, "updateStreamClock requires context");
+    assert(typeof serverTimestamp === "number", "updateStreamClock requires serverTimestamp");
+
+    // Only update if this timestamp is >= the most recent one we've seen.
+    // During stream replay, older historical parts may be re-emitted out of order.
+    //
+    // NOTE: This is a display-oriented clock translation (not true synchronization).
+    // We refresh the offset whenever we see a newer backend timestamp. If the renderer clock
+    // drifts significantly during a very long stream, the translated times may be off by a
+    // small amount, which is acceptable for UI stats.
+    if (serverTimestamp < context.lastServerTimestamp) {
+      return;
+    }
+
+    context.lastServerTimestamp = serverTimestamp;
+    context.clockOffsetMs = Date.now() - serverTimestamp;
+  }
+
+  private translateServerTime(context: StreamingContext, serverTimestamp: number): number {
+    assert(context, "translateServerTime requires context");
+    assert(typeof serverTimestamp === "number", "translateServerTime requires serverTimestamp");
+
+    return serverTimestamp + context.clockOffsetMs;
   }
   private invalidateCache(): void {
     this.cachedAllMessages = null;
@@ -339,8 +421,97 @@ export class StreamingMessageAggregator {
    * - Active stream tracking (this.activeStreams)
    * - Current TODOs (this.currentTodos) - reconstructed from history on reload
    * - Transient agentStatus (from displayStatus) - restored to persisted value
+   *
+   * Preserves:
+   * - lastCompletedStreamStats - timing stats from this stream for display after completion
    */
   private cleanupStreamState(messageId: string): void {
+    // Capture timing stats before removing the stream context
+    const context = this.activeStreams.get(messageId);
+    if (context) {
+      const endTime = Date.now();
+      const message = this.messages.get(messageId);
+
+      // Prefer backend-provided duration (computed in the same clock domain as tool/delta timestamps).
+      // Fall back to renderer-based timing translated into the renderer clock.
+      const durationMsFromMetadata = message?.metadata?.duration;
+      const fallbackStartTime = this.translateServerTime(context, context.serverStartTime);
+      const fallbackDurationMs = Math.max(0, endTime - fallbackStartTime);
+      const durationMs =
+        typeof durationMsFromMetadata === "number" && Number.isFinite(durationMsFromMetadata)
+          ? durationMsFromMetadata
+          : fallbackDurationMs;
+
+      const ttftMs =
+        context.serverFirstTokenTime !== null
+          ? Math.max(0, context.serverFirstTokenTime - context.serverStartTime)
+          : null;
+
+      // Get output tokens from cumulative usage (if available)
+      const cumulativeUsage = this.activeStreamUsage.get(messageId)?.cumulative.usage;
+      const outputTokens = cumulativeUsage?.outputTokens ?? 0;
+      const reasoningTokens = cumulativeUsage?.reasoningTokens ?? 0;
+
+      // Account for in-progress tool calls (can happen on abort/error)
+      let totalToolExecutionMs = context.toolExecutionMs;
+      if (context.pendingToolStarts.size > 0) {
+        const serverEndTime = context.serverStartTime + durationMs;
+        for (const toolStartTime of context.pendingToolStarts.values()) {
+          const toolMs = serverEndTime - toolStartTime;
+          if (toolMs > 0) {
+            totalToolExecutionMs += toolMs;
+          }
+        }
+      }
+
+      // Streaming duration excludes TTFT and tool execution - used for avg tok/s
+      const streamingMs = Math.max(0, durationMs - (ttftMs ?? 0) - totalToolExecutionMs);
+
+      const mode = (message?.metadata?.mode ?? context.mode) as "plan" | "exec" | undefined;
+
+      // Store last completed stream stats (include durations anchored in the renderer clock)
+      const startTime = endTime - durationMs;
+      const firstTokenTime = ttftMs !== null ? startTime + ttftMs : null;
+      this.lastCompletedStreamStats = {
+        startTime,
+        endTime,
+        firstTokenTime,
+        toolExecutionMs: totalToolExecutionMs,
+        model: context.model,
+        outputTokens,
+        reasoningTokens,
+        streamingMs,
+        mode,
+      };
+
+      // Use composite key model:mode for per-model+mode stats
+      // Old data (no mode) will just use model as key, maintaining backward compat
+      const statsKey = mode ? `${context.model}:${mode}` : context.model;
+
+      // Accumulate into per-model stats (totals computed on-the-fly in getSessionTimingStats)
+      const modelStats = this.sessionTimingStats[statsKey] ?? {
+        totalDurationMs: 0,
+        totalToolExecutionMs: 0,
+        totalTtftMs: 0,
+        ttftCount: 0,
+        responseCount: 0,
+        totalOutputTokens: 0,
+        totalReasoningTokens: 0,
+        totalStreamingMs: 0,
+      };
+      modelStats.totalDurationMs += durationMs;
+      modelStats.totalToolExecutionMs += totalToolExecutionMs;
+      modelStats.responseCount += 1;
+      modelStats.totalOutputTokens += outputTokens;
+      modelStats.totalReasoningTokens += reasoningTokens;
+      modelStats.totalStreamingMs += streamingMs;
+      if (ttftMs !== null) {
+        modelStats.totalTtftMs += ttftMs;
+        modelStats.ttftCount += 1;
+      }
+      this.sessionTimingStats[statsKey] = modelStats;
+    }
+
     this.activeStreams.delete(messageId);
     // Clear todos when stream ends - they're stream-scoped state
     // On reload, todos will be reconstructed from completed tool_write calls in history
@@ -461,6 +632,179 @@ export class StreamingMessageAggregator {
     this.pendingStreamStartTime = time;
   }
 
+  /**
+   * Get timing statistics for the active stream (if any).
+   * Returns null if no active stream exists.
+   * Includes live token count and TPS for real-time display.
+   */
+  getActiveStreamTimingStats(): {
+    startTime: number;
+    firstTokenTime: number | null;
+    toolExecutionMs: number;
+    model: string;
+    /** Live token count from streaming deltas */
+    liveTokenCount: number;
+    /** Live tokens-per-second (trailing window) */
+    liveTPS: number;
+    /** Mode (plan/exec) for this stream */
+    mode?: "plan" | "exec";
+  } | null {
+    // Get the first (and typically only) active stream
+    const entries = Array.from(this.activeStreams.entries());
+    if (entries.length === 0) return null;
+    const [messageId, context] = entries[0];
+
+    const now = Date.now();
+
+    const startTime = this.translateServerTime(context, context.serverStartTime);
+    const firstTokenTime =
+      context.serverFirstTokenTime !== null
+        ? this.translateServerTime(context, context.serverFirstTokenTime)
+        : null;
+
+    // Include time from currently-executing tools (not just completed ones)
+    let totalToolMs = context.toolExecutionMs;
+    for (const toolStartServerTime of context.pendingToolStarts.values()) {
+      const toolStartTime = this.translateServerTime(context, toolStartServerTime);
+      totalToolMs += Math.max(0, now - toolStartTime);
+    }
+
+    return {
+      startTime,
+      firstTokenTime,
+      toolExecutionMs: totalToolMs,
+      model: context.model,
+      liveTokenCount: this.getStreamingTokenCount(messageId),
+      liveTPS: this.getStreamingTPS(messageId),
+      mode: context.mode,
+    };
+  }
+
+  /**
+   * Get timing statistics from the last completed stream.
+   * Returns null if no stream has completed yet in this session.
+   * Unlike getActiveStreamTimingStats, this includes endTime and token counts.
+   */
+  getLastCompletedStreamStats(): {
+    startTime: number;
+    endTime: number;
+    firstTokenTime: number | null;
+    toolExecutionMs: number;
+    model: string;
+    outputTokens: number;
+    reasoningTokens: number;
+    streamingMs: number;
+    mode?: "plan" | "exec";
+  } | null {
+    return this.lastCompletedStreamStats;
+  }
+
+  /**
+   * Get aggregate timing statistics across all completed streams in this session.
+   * Totals are computed on-the-fly from per-model data.
+   * Returns null if no streams have completed yet.
+   *
+   * Session timing keys use format "model" or "model:mode" (e.g., "claude-opus-4:plan").
+   * The byModelAndMode map preserves this structure for mode breakdown display.
+   */
+  getSessionTimingStats(): {
+    totalDurationMs: number;
+    totalToolExecutionMs: number;
+    totalStreamingMs: number;
+    averageTtftMs: number | null;
+    responseCount: number;
+    totalOutputTokens: number;
+    totalReasoningTokens: number;
+    /** Per-model timing breakdown (keys are composite: "model" or "model:mode") */
+    byModel: Record<
+      string,
+      {
+        totalDurationMs: number;
+        totalToolExecutionMs: number;
+        totalStreamingMs: number;
+        averageTtftMs: number | null;
+        responseCount: number;
+        totalOutputTokens: number;
+        totalReasoningTokens: number;
+        /** Mode extracted from composite key, undefined for old data */
+        mode?: "plan" | "exec";
+      }
+    >;
+  } | null {
+    const modelEntries = Object.entries(this.sessionTimingStats);
+    if (modelEntries.length === 0) return null;
+
+    // Aggregate totals from per-model stats
+    let totalDurationMs = 0;
+    let totalToolExecutionMs = 0;
+    let totalStreamingMs = 0;
+    let totalTtftMs = 0;
+    let ttftCount = 0;
+    let responseCount = 0;
+    let totalOutputTokens = 0;
+    let totalReasoningTokens = 0;
+
+    const byModel: Record<
+      string,
+      {
+        totalDurationMs: number;
+        totalToolExecutionMs: number;
+        totalStreamingMs: number;
+        averageTtftMs: number | null;
+        responseCount: number;
+        totalOutputTokens: number;
+        totalReasoningTokens: number;
+        mode?: "plan" | "exec";
+      }
+    > = {};
+
+    for (const [key, stats] of modelEntries) {
+      // Parse composite key: "model" or "model:mode"
+      // Model names can contain colons (e.g., "mux-gateway:provider/model")
+      // so we look for ":plan" or ":exec" suffix specifically
+      let mode: "plan" | "exec" | undefined;
+      if (key.endsWith(":plan")) {
+        mode = "plan";
+      } else if (key.endsWith(":exec")) {
+        mode = "exec";
+      }
+
+      // Accumulate totals
+      totalDurationMs += stats.totalDurationMs;
+      totalToolExecutionMs += stats.totalToolExecutionMs;
+      totalStreamingMs += stats.totalStreamingMs ?? 0;
+      totalTtftMs += stats.totalTtftMs;
+      ttftCount += stats.ttftCount;
+      responseCount += stats.responseCount;
+      totalOutputTokens += stats.totalOutputTokens;
+      totalReasoningTokens += stats.totalReasoningTokens;
+
+      // Convert to display format (with computed average)
+      // Keep composite key as-is - StatsTab will parse/aggregate as needed
+      byModel[key] = {
+        totalDurationMs: stats.totalDurationMs,
+        totalToolExecutionMs: stats.totalToolExecutionMs,
+        totalStreamingMs: stats.totalStreamingMs ?? 0,
+        averageTtftMs: stats.ttftCount > 0 ? stats.totalTtftMs / stats.ttftCount : null,
+        responseCount: stats.responseCount,
+        totalOutputTokens: stats.totalOutputTokens,
+        totalReasoningTokens: stats.totalReasoningTokens,
+        mode,
+      };
+    }
+
+    return {
+      totalDurationMs,
+      totalToolExecutionMs,
+      totalStreamingMs,
+      averageTtftMs: ttftCount > 0 ? totalTtftMs / ttftCount : null,
+      responseCount,
+      totalOutputTokens,
+      totalReasoningTokens,
+      byModel,
+    };
+  }
+
   getActiveStreams(): StreamingContext[] {
     return Array.from(this.activeStreams.values());
   }
@@ -542,11 +886,18 @@ export class StreamingMessageAggregator {
     const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
     const isCompacting = lastUserMsg?.metadata?.muxMetadata?.type === "compaction-request";
 
+    const now = Date.now();
     const context: StreamingContext = {
-      startTime: Date.now(),
+      serverStartTime: data.startTime,
+      clockOffsetMs: now - data.startTime,
+      lastServerTimestamp: data.startTime,
       isComplete: false,
       isCompacting,
       model: data.model,
+      serverFirstTokenTime: null,
+      toolExecutionMs: 0,
+      pendingToolStarts: new Map(),
+      mode: data.mode,
     };
 
     // Use messageId as key - ensures only ONE stream per message
@@ -567,6 +918,16 @@ export class StreamingMessageAggregator {
   handleStreamDelta(data: StreamDeltaEvent): void {
     const message = this.messages.get(data.messageId);
     if (!message) return;
+
+    const context = this.activeStreams.get(data.messageId);
+    if (context) {
+      this.updateStreamClock(context, data.timestamp);
+
+      // Track first token time (only for non-empty deltas)
+      if (data.delta.length > 0 && context.serverFirstTokenTime === null) {
+        context.serverFirstTokenTime = data.timestamp;
+      }
+    }
 
     // Append each delta as a new part (merging happens at display time)
     message.parts.push({
@@ -593,8 +954,12 @@ export class StreamingMessageAggregator {
         const updatedMetadata: MuxMetadata = {
           ...message.metadata,
           ...data.metadata,
-          duration: Date.now() - activeStream.startTime,
         };
+
+        const durationMs = data.metadata.duration;
+        if (typeof durationMs === "number" && Number.isFinite(durationMs)) {
+          this.updateStreamClock(activeStream, activeStream.serverStartTime + durationMs);
+        }
         message.metadata = updatedMetadata;
 
         // Update tool parts with their results if provided
@@ -731,6 +1096,13 @@ export class StreamingMessageAggregator {
       return;
     }
 
+    // Track tool start time for execution duration calculation
+    const context = this.activeStreams.get(data.messageId);
+    if (context) {
+      this.updateStreamClock(context, data.timestamp);
+      context.pendingToolStarts.set(data.toolCallId, data.timestamp);
+    }
+
     // Add tool part to maintain temporal order
     const toolPart: DynamicToolPartPending = {
       type: "dynamic-tool",
@@ -804,6 +1176,18 @@ export class StreamingMessageAggregator {
   }
 
   handleToolCallEnd(data: ToolCallEndEvent): void {
+    // Track tool execution duration
+    const context = this.activeStreams.get(data.messageId);
+    if (context) {
+      this.updateStreamClock(context, data.timestamp);
+
+      const startTime = context.pendingToolStarts.get(data.toolCallId);
+      if (startTime !== undefined) {
+        context.toolExecutionMs += data.timestamp - startTime;
+        context.pendingToolStarts.delete(data.toolCallId);
+      }
+    }
+
     const message = this.messages.get(data.messageId);
     if (message) {
       // Find the specific tool part by its ID and update it with the result
@@ -828,6 +1212,16 @@ export class StreamingMessageAggregator {
   handleReasoningDelta(data: ReasoningDeltaEvent): void {
     const message = this.messages.get(data.messageId);
     if (!message) return;
+
+    const context = this.activeStreams.get(data.messageId);
+    if (context) {
+      this.updateStreamClock(context, data.timestamp);
+
+      // Track first token time (reasoning also counts as first token)
+      if (data.delta.length > 0 && context.serverFirstTokenTime === null) {
+        context.serverFirstTokenTime = data.timestamp;
+      }
+    }
 
     // Append each delta as a new part (merging happens at display time)
     message.parts.push({

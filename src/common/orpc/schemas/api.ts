@@ -14,6 +14,7 @@ import {
   TerminalSessionSchema,
 } from "./terminal";
 import { BashToolResultSchema, FileTreeNodeSchema } from "./tools";
+import { WorkspaceStatsSnapshotSchema } from "./workspaceStats";
 import { FrontendWorkspaceMetadataSchema, WorkspaceActivitySnapshotSchema } from "./workspace";
 import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 import {
@@ -447,6 +448,16 @@ export const workspace = {
     }),
     output: ResultSchema(z.void(), z.string()),
   },
+  stats: {
+    subscribe: {
+      input: z.object({ workspaceId: z.string() }),
+      output: eventIterator(WorkspaceStatsSnapshotSchema),
+    },
+    clear: {
+      input: z.object({ workspaceId: z.string() }),
+      output: ResultSchema(z.void(), z.string()),
+    },
+  },
   getSessionUsage: {
     input: z.object({ workspaceId: z.string() }),
     output: SessionUsageFileSchema.optional(),
@@ -599,6 +610,26 @@ const EditorConfigSchema = z.object({
   editor: EditorTypeSchema,
   customCommand: z.string().optional(),
 });
+
+const StatsTabVariantSchema = z.enum(["control", "stats"]);
+const StatsTabOverrideSchema = z.enum(["default", "on", "off"]);
+const StatsTabStateSchema = z.object({
+  enabled: z.boolean(),
+  variant: StatsTabVariantSchema,
+  override: StatsTabOverrideSchema,
+});
+
+// Feature gates (PostHog-backed)
+export const features = {
+  getStatsTabState: {
+    input: z.void(),
+    output: StatsTabStateSchema,
+  },
+  setStatsTabOverride: {
+    input: z.object({ override: StatsTabOverrideSchema }),
+    output: StatsTabStateSchema,
+  },
+};
 
 // General
 export const general = {

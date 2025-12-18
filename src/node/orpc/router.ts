@@ -9,6 +9,7 @@ import type {
   UpdateStatus,
   WorkspaceActivitySnapshot,
   WorkspaceChatMessage,
+  WorkspaceStatsSnapshot,
   FrontendWorkspaceMetadataSchemaType,
 } from "@/common/orpc/types";
 import { createAuthMiddleware } from "./authMiddleware";
@@ -92,6 +93,24 @@ export const router = (authToken?: string) => {
             ...config,
             serverSshHost: input.sshHost ?? undefined,
           }));
+        }),
+    },
+    features: {
+      getStatsTabState: t
+        .input(schemas.features.getStatsTabState.input)
+        .output(schemas.features.getStatsTabState.output)
+        .handler(async ({ context }) => {
+          const state = await context.featureFlagService.getStatsTabState();
+          context.sessionTimingService.setStatsTabState(state);
+          return state;
+        }),
+      setStatsTabOverride: t
+        .input(schemas.features.setStatsTabOverride.input)
+        .output(schemas.features.setStatsTabOverride.output)
+        .handler(async ({ context, input }) => {
+          const state = await context.featureFlagService.setStatsTabOverride(input.override);
+          context.sessionTimingService.setStatsTabState(state);
+          return state;
         }),
     },
     providers: {
@@ -976,6 +995,55 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.sessionUsageService.getSessionUsage(input.workspaceId);
         }),
+      stats: {
+        subscribe: t
+          .input(schemas.workspace.stats.subscribe.input)
+          .output(schemas.workspace.stats.subscribe.output)
+          .handler(async function* ({ context, input }) {
+            const workspaceId = input.workspaceId;
+
+            context.sessionTimingService.addSubscriber(workspaceId);
+
+            const queue = createAsyncEventQueue<WorkspaceStatsSnapshot>();
+            let pending = Promise.resolve();
+
+            const enqueueSnapshot = () => {
+              pending = pending.then(async () => {
+                queue.push(await context.sessionTimingService.getSnapshot(workspaceId));
+              });
+            };
+
+            const onChange = (changedWorkspaceId: string) => {
+              if (changedWorkspaceId !== workspaceId) {
+                return;
+              }
+              enqueueSnapshot();
+            };
+
+            context.sessionTimingService.onStatsChange(onChange);
+
+            try {
+              queue.push(await context.sessionTimingService.getSnapshot(workspaceId));
+              yield* queue.iterate();
+            } finally {
+              queue.end();
+              context.sessionTimingService.offStatsChange(onChange);
+              context.sessionTimingService.removeSubscriber(workspaceId);
+            }
+          }),
+        clear: t
+          .input(schemas.workspace.stats.clear.input)
+          .output(schemas.workspace.stats.clear.output)
+          .handler(async ({ context, input }) => {
+            try {
+              await context.sessionTimingService.clearTimingFile(input.workspaceId);
+              return { success: true, data: undefined };
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              return { success: false, error: message };
+            }
+          }),
+      },
       mcp: {
         get: t
           .input(schemas.workspace.mcp.get.input)

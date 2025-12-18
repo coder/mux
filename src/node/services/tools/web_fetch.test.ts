@@ -1,5 +1,3 @@
-import { shouldRunIntegrationTests } from "../../../../tests/testUtils";
-
 import { describe, it, expect } from "bun:test";
 import { createWebFetchTool } from "./web_fetch";
 import type { WebFetchToolArgs, WebFetchToolResult } from "@/common/types/tools";
@@ -12,7 +10,7 @@ import type { ToolCallOptions } from "ai";
 
 // ToolCallOptions stub for testing
 
-const itInternet = shouldRunIntegrationTests() ? it : it.skip;
+const itIntegration = process.env.TEST_INTEGRATION === "1" ? it : it.skip;
 const toolCallOptions: ToolCallOptions = {
   toolCallId: "test-call-id",
   messages: [],
@@ -35,7 +33,7 @@ function createTestWebFetchTool() {
 
 describe("web_fetch tool", () => {
   // Integration test: fetch a real public URL
-  itInternet("should fetch and convert a real web page to markdown", async () => {
+  itIntegration("should fetch and convert a real web page to markdown", async () => {
     using testEnv = createTestWebFetchTool();
     const args: WebFetchToolArgs = {
       // example.com is a stable, simple HTML page maintained by IANA
@@ -55,7 +53,7 @@ describe("web_fetch tool", () => {
   });
 
   // Integration test: fetch plain text endpoint (not HTML)
-  itInternet("should fetch plain text content without HTML processing", async () => {
+  itIntegration("should fetch plain text content without HTML processing", async () => {
     using testEnv = createTestWebFetchTool();
     const args: WebFetchToolArgs = {
       // Cloudflare's trace endpoint returns plain text diagnostics
@@ -76,7 +74,7 @@ describe("web_fetch tool", () => {
     }
   });
 
-  itInternet("should handle DNS failure gracefully", async () => {
+  itIntegration("should handle DNS failure gracefully", async () => {
     using testEnv = createTestWebFetchTool();
     const args: WebFetchToolArgs = {
       // .invalid TLD is reserved and guaranteed to never resolve
@@ -221,7 +219,7 @@ describe("web_fetch tool", () => {
   });
 
   // Test HTTP error handling with body parsing
-  it("should include HTTP status code in error for non-2xx responses", async () => {
+  itIntegration("should include HTTP status code in error for non-2xx responses", async () => {
     using testEnv = createTestWebFetchTool();
     const args: WebFetchToolArgs = {
       // httpbin.dev reliably returns the requested status code
@@ -236,7 +234,7 @@ describe("web_fetch tool", () => {
     }
   });
 
-  it("should detect Cloudflare challenge pages", async () => {
+  itIntegration("should detect Cloudflare challenge pages", async () => {
     using testEnv = createTestWebFetchTool();
     const args: WebFetchToolArgs = {
       // platform.openai.com is known to serve Cloudflare challenges

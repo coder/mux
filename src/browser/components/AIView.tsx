@@ -41,11 +41,13 @@ import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
 import { useThinking } from "@/browser/contexts/ThinkingContext";
 import {
   useWorkspaceState,
   useWorkspaceAggregator,
   useWorkspaceUsage,
+  useWorkspaceStatsSnapshot,
 } from "@/browser/stores/WorkspaceStore";
 import { WorkspaceHeader } from "./WorkspaceHeader";
 import { getModelName } from "@/common/utils/ai/models";
@@ -106,7 +108,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
   // Resizable RightSidebar width - separate hooks per tab for independent persistence
   const costsSidebar = useResizableSidebar({
-    enabled: selectedRightTab === "costs",
+    // Costs + Stats share the same resizable width persistence
+    enabled: selectedRightTab === "costs" || selectedRightTab === "stats",
     defaultWidth: 300,
     minWidth: 300,
     maxWidth: 1200,
@@ -127,6 +130,9 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const startResize =
     selectedRightTab === "review" ? reviewSidebar.startResize : costsSidebar.startResize;
 
+  const statsSnapshot = useWorkspaceStatsSnapshot(workspaceId);
+  const { statsTabState } = useFeatureFlags();
+  const statsEnabled = Boolean(statsTabState?.enabled);
   const workspaceState = useWorkspaceState(workspaceId);
   const aggregator = useWorkspaceAggregator(workspaceId);
   const workspaceUsage = useWorkspaceUsage(workspaceId);
@@ -705,14 +711,18 @@ const AIViewInner: React.FC<AIViewProps> = ({
                     awaitingUserQuestion
                       ? undefined
                       : activeStreamMessageId
-                        ? aggregator?.getStreamingTokenCount(activeStreamMessageId)
+                        ? statsEnabled && statsSnapshot?.active?.messageId === activeStreamMessageId
+                          ? statsSnapshot.active.liveTokenCount
+                          : aggregator?.getStreamingTokenCount(activeStreamMessageId)
                         : undefined
                   }
                   tps={
                     awaitingUserQuestion
                       ? undefined
                       : activeStreamMessageId
-                        ? aggregator?.getStreamingTPS(activeStreamMessageId)
+                        ? statsEnabled && statsSnapshot?.active?.messageId === activeStreamMessageId
+                          ? statsSnapshot.active.liveTPS
+                          : aggregator?.getStreamingTPS(activeStreamMessageId)
                         : undefined
                   }
                 />

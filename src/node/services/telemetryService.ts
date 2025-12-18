@@ -271,6 +271,19 @@ export class TelemetryService {
    * Track a telemetry event.
    * Events are silently ignored when disabled.
    */
+
+  async getFeatureFlag(key: string): Promise<boolean | string | undefined> {
+    if (isTelemetryDisabledByEnv(process.env) || !this.client || !this.distinctId) {
+      return undefined;
+    }
+
+    try {
+      // `getFeatureFlag` will automatically emit $feature_flag_called.
+      return await this.client.getFeatureFlag(key, this.distinctId, { disableGeoip: true });
+    } catch {
+      return undefined;
+    }
+  }
   capture(payload: TelemetryEventPayload): void {
     if (isTelemetryDisabledByEnv(process.env) || !this.client || !this.distinctId) {
       return;

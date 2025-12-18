@@ -269,7 +269,13 @@ export const KEYBINDS = {
 
   /** Switch to Review tab in right sidebar */
   // macOS: Cmd+2, Win/Linux: Ctrl+2
+  // NOTE: Both Ctrl and Cmd work for switching tabs on Mac (macOS has no standard Cmd+number behavior)
+  // This differs from other keybinds where we distinguish Ctrl (literal) from Cmd (meta)
   REVIEW_TAB: { key: "2", ctrl: true, description: "Review tab" },
+
+  /** Switch to Stats tab in right sidebar */
+  // macOS: Cmd+3, Win/Linux: Ctrl+3
+  STATS_TAB: { key: "3", ctrl: true, description: "Stats tab" },
 
   /** Refresh diff in Code Review panel */
   // macOS: Cmd+R, Win/Linux: Ctrl+R

@@ -29,6 +29,7 @@ export type DeleteMessage = z.infer<typeof schemas.DeleteMessageSchema>;
 export type WorkspaceInitEvent = z.infer<typeof schemas.WorkspaceInitEventSchema>;
 export type UpdateStatus = z.infer<typeof schemas.UpdateStatusSchema>;
 export type ChatMuxMessage = z.infer<typeof schemas.ChatMuxMessageSchema>;
+export type WorkspaceStatsSnapshot = z.infer<typeof schemas.WorkspaceStatsSnapshotSchema>;
 export type WorkspaceActivitySnapshot = z.infer<typeof schemas.WorkspaceActivitySnapshotSchema>;
 export type FrontendWorkspaceMetadataSchemaType = z.infer<
   typeof schemas.FrontendWorkspaceMetadataSchema

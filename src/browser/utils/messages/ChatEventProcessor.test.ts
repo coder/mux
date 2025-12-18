@@ -13,6 +13,7 @@ describe("ChatEventProcessor - Reasoning Delta", () => {
       messageId,
       model: "gpt-4",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     // Send reasoning deltas
@@ -69,6 +70,7 @@ describe("ChatEventProcessor - Reasoning Delta", () => {
       messageId,
       model: "gpt-4",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     // Reasoning 1

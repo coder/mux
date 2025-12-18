@@ -19,6 +19,17 @@ export {
   WorkspaceMetadataSchema,
 } from "./schemas/workspace";
 
+// Workspace stats schemas
+export {
+  ActiveStreamStatsSchema,
+  CompletedStreamStatsSchema,
+  ModelTimingStatsSchema,
+  SessionTimingFileSchema,
+  SessionTimingStatsSchema,
+  TimingAnomalySchema,
+  WorkspaceStatsSnapshotSchema,
+} from "./schemas/workspaceStats";
+
 // Chat stats schemas
 export {
   ChatStatsSchema,
@@ -103,6 +114,7 @@ export {
 export {
   AWSCredentialStatusSchema,
   debug,
+  features,
   general,
   menu,
   nameGeneration,

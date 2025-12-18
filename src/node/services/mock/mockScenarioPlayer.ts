@@ -272,6 +272,8 @@ export class MockScenarioPlayer {
           messageId,
           model: event.model,
           historySequence,
+          startTime: Date.now(),
+          ...(event.mode && { mode: event.mode }),
         };
         this.deps.aiService.emit("stream-start", payload);
         break;
