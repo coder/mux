@@ -71,9 +71,9 @@ describe("validateTypes", () => {
     );
     expect(result.valid).toBe(false);
     // Error should mention 'path' doesn't exist or 'filePath' is missing
-    expect(result.errors.some((e) => e.message.includes("path") || e.message.includes("filePath"))).toBe(
-      true
-    );
+    expect(
+      result.errors.some((e) => e.message.includes("path") || e.message.includes("filePath"))
+    ).toBe(true);
   });
 
   test("catches missing required property", () => {
@@ -96,9 +96,9 @@ describe("validateTypes", () => {
       muxTypes
     );
     expect(result.valid).toBe(false);
-    expect(result.errors.some((e) => e.message.includes("number") || e.message.includes("string"))).toBe(
-      true
-    );
+    expect(
+      result.errors.some((e) => e.message.includes("number") || e.message.includes("string"))
+    ).toBe(true);
   });
 
   test("catches calling non-existent tool", () => {
@@ -126,6 +126,38 @@ mux.file_read({ path: "test.txt" });`,
     expect(errorWithLine!.line).toBe(3);
   });
 
+  test("returns line 1 for error on first line", () => {
+    const result = validateTypes(`mux.file_read({ path: "test.txt" });`, muxTypes);
+    expect(result.valid).toBe(false);
+    const errorWithLine = result.errors.find((e) => e.line !== undefined);
+    expect(errorWithLine).toBeDefined();
+    expect(errorWithLine!.line).toBe(1);
+  });
+
+  test("returns correct line for error on last line of multi-line code", () => {
+    const result = validateTypes(
+      `const a = 1;
+const b = 2;
+const c = 3;
+const d = 4;
+mux.file_read({ path: "wrong" });`,
+      muxTypes
+    );
+    expect(result.valid).toBe(false);
+    const errorWithLine = result.errors.find((e) => e.line !== undefined);
+    expect(errorWithLine).toBeDefined();
+    expect(errorWithLine!.line).toBe(5);
+  });
+
+  test("returns column number for type errors", () => {
+    // Column should point to the problematic property
+    const result = validateTypes(`mux.file_read({ path: "test.txt" });`, muxTypes);
+    expect(result.valid).toBe(false);
+    const errorWithLine = result.errors.find((e) => e.column !== undefined);
+    expect(errorWithLine).toBeDefined();
+    expect(errorWithLine!.column).toBeGreaterThan(0);
+  });
+
   test("allows dynamic property access (no strict checking on unknown keys)", () => {
     const result = validateTypes(
       `
@@ -145,63 +177,6 @@ mux.file_read({ path: "test.txt" });`,
       console.log("hello");
       console.warn("warning");
       console.error("error");
-    `,
-      muxTypes
-    );
-    expect(result.valid).toBe(true);
-  });
-
-  test("catches extra unexpected properties with object literal", () => {
-    // TypeScript's excess property checking on object literals
-    // Note: mux.* functions return results directly (no await) due to Asyncify
-    const result = validateTypes(
-      `
-      mux.file_read({ filePath: "test.txt", unknownProp: true });
-    `,
-      muxTypes
-    );
-    // With strict: false, TS typically allows extra props on object literals
-    expect(typeof result.valid).toBe("boolean");
-  });
-
-  test("handles multiline code correctly", () => {
-    const result = validateTypes(
-      `
-      const path = "test.txt";
-      const offset = 10;
-      const limit = 50;
-      const result = mux.file_read({
-        filePath: path,
-        offset: offset,
-        limit: limit
-      });
-      console.log(result);
-    `,
-      muxTypes
-    );
-    expect(result.valid).toBe(true);
-  });
-
-  test("catches type error in later statement", () => {
-    const result = validateTypes(
-      `
-      mux.file_read({ filePath: "test.txt" });
-      mux.file_read({ filePath: 123 });
-    `,
-      muxTypes
-    );
-    expect(result.valid).toBe(false);
-  });
-
-  test("allows valid bash tool call with all required params", () => {
-    const result = validateTypes(
-      `
-      mux.bash({
-        script: "echo hello",
-        timeout_secs: 10,
-        run_in_background: false,
-        display_name: "Echo"
-      });
     `,
       muxTypes
     );

@@ -127,6 +127,20 @@ describe("createCodeExecutionTool", () => {
       expect(result.error).toContain("Code analysis failed");
     });
 
+    it("includes line numbers for syntax errors with invalid tokens", async () => {
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge({}));
+
+      // Invalid token @ on line 2 - parser detects it on the exact line
+      const result = (await tool.execute!(
+        { code: "const x = 1;\nconst y = @;\nconst z = 3;" },
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("Code analysis failed");
+      expect(result.error).toContain("(line 2)");
+    });
+
     it("rejects code using unavailable globals", async () => {
       const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge({}));
 
@@ -165,7 +179,7 @@ describe("createCodeExecutionTool", () => {
       expect(result.error).toContain("require");
     });
 
-    it("includes line numbers for type errors", async () => {
+    it("includes line and column numbers for type errors", async () => {
       const mockTools: Record<string, Tool> = {
         bash: createMockTool("bash", z.object({ script: z.string() })),
       };
@@ -179,10 +193,10 @@ describe("createCodeExecutionTool", () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain("Code analysis failed");
       expect(result.error).toContain("scriptz");
-      expect(result.error).toContain("(line 2)");
+      expect(result.error).toContain("(line 2, col");
     });
 
-    it("includes line numbers for calling non-existent tools", async () => {
+    it("includes line and column for calling non-existent tools", async () => {
       const mockTools: Record<string, Tool> = {
         bash: createMockTool("bash", z.object({ script: z.string() })),
       };
@@ -195,7 +209,7 @@ describe("createCodeExecutionTool", () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain("Code analysis failed");
-      expect(result.error).toContain("(line 3)");
+      expect(result.error).toContain("(line 3, col");
     });
   });
 

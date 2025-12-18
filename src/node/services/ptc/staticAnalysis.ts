@@ -134,23 +134,28 @@ async function validateSyntax(code: string): Promise<AnalysisError | null> {
   });
 
   if (result.error) {
-    const errorObj: unknown = ctx.dump(result.error) as unknown;
+    const errorObj = ctx.dump(result.error) as Record<string, unknown>;
     result.error.dispose();
 
-    // Parse QuickJS error format to extract line/column
-    // ctx.dump returns an object like { name: "SyntaxError", message: "...", stack: "..." }
-    const errorStr =
-      typeof errorObj === "object" && errorObj !== null && "message" in errorObj
-        ? String((errorObj as { message: unknown }).message)
-        : String(errorObj);
-    const lineMatch = /line (\d+)/i.exec(errorStr);
-    const columnMatch = /column (\d+)/i.exec(errorStr);
+    // QuickJS error object has: { name, message, stack, fileName, lineNumber }
+    const message =
+      typeof errorObj.message === "string" ? errorObj.message : JSON.stringify(errorObj);
+    const rawLine = typeof errorObj.lineNumber === "number" ? errorObj.lineNumber : undefined;
+
+    // Only report line if it's within agent code bounds.
+    // The wrapper is `(function() { ${code} })` - all on one line with code inlined.
+    // So QuickJS line N = agent line N for lines within the code.
+    // Errors detected at the closing wrapper (missing braces, incomplete expressions)
+    // will have line numbers beyond the agent's code - don't report those.
+    const codeLines = code.split("\n").length;
+    const line =
+      rawLine !== undefined && rawLine >= 1 && rawLine <= codeLines ? rawLine : undefined;
 
     return {
       type: "syntax",
-      message: errorStr,
-      line: lineMatch ? parseInt(lineMatch[1], 10) : undefined,
-      column: columnMatch ? parseInt(columnMatch[1], 10) : undefined,
+      message,
+      line,
+      column: undefined, // QuickJS doesn't provide column for syntax errors
     };
   }
 

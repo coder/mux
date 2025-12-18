@@ -77,15 +77,16 @@ ${muxTypes}
     .filter((d) => !ts.flattenDiagnosticMessageText(d.messageText, "").includes("console"))
     .map((d) => {
       const message = ts.flattenDiagnosticMessageText(d.messageText, " ");
-      // Extract line number if available, adjusting for wrapper prefix
+      // Extract line number if available
       if (d.file && d.start !== undefined) {
         const { line, character } = d.file.getLineAndCharacterOfPosition(d.start);
-        // Line is 0-indexed; wrapper adds 1 line ("function __agent__() {\n")
-        // Only report line if it's in the agent's code (not in muxTypes after)
+        // TS line is 0-indexed. Wrapper adds 1 line before agent code, so:
+        // TS line 0 = wrapper, TS line 1 = agent line 1, TS line 2 = agent line 2, etc.
+        // This means TS 0-indexed line number equals agent 1-indexed line number.
+        // Only report if within agent code bounds (filter out wrapper and muxTypes)
         const agentCodeLines = code.split("\n").length;
-        const adjustedLine = line; // line 1 in file = line 0 (0-indexed) = agent line 1
-        if (adjustedLine >= 1 && adjustedLine <= agentCodeLines) {
-          return { message, line: adjustedLine, column: character + 1 };
+        if (line >= 1 && line <= agentCodeLines) {
+          return { message, line, column: character + 1 };
         }
       }
       return { message };

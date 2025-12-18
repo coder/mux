@@ -94,7 +94,12 @@ ${muxTypes}
       const analysis = await analyzeCode(code, muxTypes);
       if (!analysis.valid) {
         const errorMessages = analysis.errors.map((e) => {
-          const location = e.line ? ` (line ${e.line})` : "";
+          const location =
+            e.line && e.column
+              ? ` (line ${e.line}, col ${e.column})`
+              : e.line
+                ? ` (line ${e.line})`
+                : "";
           return `- ${e.message}${location}`;
         });
         return {
