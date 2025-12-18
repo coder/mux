@@ -21,5 +21,4 @@ describe("formatTokens", () => {
     expect(formatTokens(58_507_900)).toBe("58.5M");
     expect(formatTokens(4_133_000)).toBe("4.1M");
   });
-
 });
