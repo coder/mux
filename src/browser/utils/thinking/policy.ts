@@ -66,6 +66,11 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
     return ["high"];
   }
 
+  // Gemini 3 Flash supports 4 levels: off (minimal), low, medium, high
+  if (withoutProviderNamespace.includes("gemini-3-flash")) {
+    return ["off", "low", "medium", "high"];
+  }
+
   // Gemini 3 Pro only supports "low" and "high" reasoning levels
   if (withoutProviderNamespace.includes("gemini-3")) {
     return ["low", "high"];

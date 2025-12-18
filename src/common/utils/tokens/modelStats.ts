@@ -12,8 +12,8 @@ export interface ModelStats {
 }
 
 interface RawModelData {
-  max_input_tokens?: number | string;
-  max_output_tokens?: number | string;
+  max_input_tokens?: number | string | null;
+  max_output_tokens?: number | string | null;
   input_cost_per_token?: number;
   output_cost_per_token?: number;
   cache_creation_input_token_cost?: number;

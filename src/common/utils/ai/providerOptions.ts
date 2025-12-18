@@ -264,11 +264,18 @@ export function buildProviderOptions(
       };
 
       if (isGemini3) {
-        // Gemini 3 uses thinkingLevel (low/high) - map medium/xhigh to supported values
-        thinkingConfig.thinkingLevel =
-          effectiveThinking === "medium" || effectiveThinking === "xhigh"
-            ? "high"
-            : effectiveThinking;
+        const isFlash = modelString.includes("gemini-3-flash");
+        if (isFlash) {
+          // Flash supports: minimal (maps to off), low, medium, high
+          // When off, we don't set thinkingConfig at all (API defaults to minimal)
+          thinkingConfig.thinkingLevel = effectiveThinking === "xhigh" ? "high" : effectiveThinking;
+        } else {
+          // Pro only supports: low, high - map medium/xhigh to high
+          thinkingConfig.thinkingLevel =
+            effectiveThinking === "medium" || effectiveThinking === "xhigh"
+              ? "high"
+              : effectiveThinking;
+        }
       } else {
         // Gemini 2.5 uses thinkingBudget
         const budget = GEMINI_THINKING_BUDGETS[effectiveThinking];

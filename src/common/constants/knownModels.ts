@@ -83,6 +83,12 @@ const MODEL_DEFINITIONS = {
     aliases: ["gemini-3", "gemini-3-pro"],
     tokenizerOverride: "google/gemini-2.5-pro",
   },
+  GEMINI_3_FLASH: {
+    provider: "google",
+    providerModelId: "gemini-3-flash-preview",
+    aliases: ["gemini-3-flash"],
+    tokenizerOverride: "google/gemini-2.5-pro",
+  },
   GROK_4_1: {
     provider: "xai",
     providerModelId: "grok-4-1-fast",
