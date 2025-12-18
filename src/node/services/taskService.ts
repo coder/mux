@@ -493,10 +493,18 @@ export class TaskService {
     report: AgentTaskReport;
   }): Promise<void> {
     let finalized: { updated: MuxMessage; output: unknown } | null = null;
+    let shouldAutoResumeParent = false;
 
     // 1) Prefer partial.json (most common after restart while waiting).
     const parentPartial = await this.partialService.readPartial(params.parentWorkspaceId);
     if (parentPartial) {
+      const hasPendingToolCall = parentPartial.parts.some(
+        (part) =>
+          part.type === "dynamic-tool" &&
+          part.toolCallId === params.parentToolCallId &&
+          part.state === "input-available"
+      );
+
       finalized = this.updateTaskToolPartOutput(
         parentPartial,
         params.parentToolCallId,
@@ -505,6 +513,10 @@ export class TaskService {
       );
 
       if (finalized) {
+        if (hasPendingToolCall) {
+          shouldAutoResumeParent = true;
+        }
+
         const writeResult = await this.partialService.writePartial(
           params.parentWorkspaceId,
           finalized.updated
@@ -560,20 +572,19 @@ export class TaskService {
         return;
       }
 
-      // Guard against finalizing stale tool calls.
+      const hasPendingToolCall = best.parts.some(
+        (part) =>
+          part.type === "dynamic-tool" &&
+          part.toolCallId === params.parentToolCallId &&
+          part.state === "input-available"
+      );
+
       const maxSeq = Math.max(
         ...historyResult.data
           .map((m) => m.metadata?.historySequence)
           .filter((n): n is number => typeof n === "number")
       );
-      if (bestSeq !== maxSeq) {
-        log.error("Refusing to finalize task tool call: not the latest message", {
-          workspaceId: params.parentWorkspaceId,
-          toolSeq: bestSeq,
-          latestSeq: maxSeq,
-        });
-        return;
-      }
+      const wasLatestOrSecondLatest = bestSeq === maxSeq || bestSeq === maxSeq - 1;
 
       finalized = this.updateTaskToolPartOutput(
         best,
@@ -583,6 +594,10 @@ export class TaskService {
       );
       if (!finalized) {
         return;
+      }
+
+      if (hasPendingToolCall && wasLatestOrSecondLatest) {
+        shouldAutoResumeParent = true;
       }
 
       const updateResult = await this.historyService.updateHistory(
@@ -608,7 +623,7 @@ export class TaskService {
       } satisfies WorkspaceChatMessage);
     }
 
-    if (!finalized) {
+    if (!finalized || !shouldAutoResumeParent) {
       return;
     }
 
@@ -636,7 +651,13 @@ export class TaskService {
     childWorkspaceId: string,
     report: AgentTaskReport
   ): { updated: MuxMessage; output: unknown } | null {
-    let output: unknown;
+    const outputForTool = {
+      status: "completed",
+      childWorkspaceId,
+      reportMarkdown: report.reportMarkdown,
+    };
+
+    let output: unknown = null;
     let hasOutput = false;
     let changed = false;
 
@@ -646,19 +667,32 @@ export class TaskService {
       }
 
       if (part.state === "output-available") {
-        return part;
+        const existing = part.output;
+        const alreadyCompleted =
+          typeof existing === "object" &&
+          existing !== null &&
+          "status" in existing &&
+          (existing as { status?: unknown }).status === "completed" &&
+          "childWorkspaceId" in existing &&
+          (existing as { childWorkspaceId?: unknown }).childWorkspaceId === childWorkspaceId &&
+          "reportMarkdown" in existing &&
+          (existing as { reportMarkdown?: unknown }).reportMarkdown === report.reportMarkdown;
+
+        if (alreadyCompleted) {
+          return part;
+        }
+
+        output = outputForTool;
+        hasOutput = true;
+        changed = true;
+
+        const nextToolPart: MuxToolPart = {
+          ...part,
+          output: outputForTool,
+        };
+
+        return nextToolPart;
       }
-
-      const input = part.input;
-      const runInBackground =
-        typeof input === "object" &&
-        input !== null &&
-        "runInBackground" in input &&
-        (input as { runInBackground?: unknown }).runInBackground === true;
-
-      const outputForTool = runInBackground
-        ? { status: "started", childWorkspaceId }
-        : { status: "completed", childWorkspaceId, reportMarkdown: report.reportMarkdown };
 
       output = outputForTool;
       hasOutput = true;
