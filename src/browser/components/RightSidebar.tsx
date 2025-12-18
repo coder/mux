@@ -177,34 +177,23 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const [isHidden, setIsHidden] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false);
 
   React.useEffect(() => {
-    // Review tab: prefer not to hide, but still collapse if window is very small
-    // (chatAreaWidth is too cramped even for minimal chat)
-    if (selectedTab === "review") {
-      if (chatAreaWidth <= COLLAPSE_THRESHOLD) {
-        setIsHidden(true);
-      } else if (isHidden) {
-        setIsHidden(false);
-      }
-      return;
-    }
-
-    // If sidebar is custom-resized wider than default, don't auto-hide
-    // (would cause oscillation between hidden and wide states)
-    if (width !== undefined && width > 300) {
+    // If user has manually resized sidebar (custom width), disable auto-hide entirely
+    // to prevent oscillation (wide sidebar → small chat → collapse → expand chat → uncollapse → repeat)
+    if (width !== undefined) {
       if (isHidden) {
         setIsHidden(false);
       }
       return;
     }
 
-    // Normal hysteresis for Costs tab
+    // Auto-hide only for default-width sidebars using hysteresis
     if (chatAreaWidth <= COLLAPSE_THRESHOLD) {
       setIsHidden(true);
     } else if (chatAreaWidth >= EXPAND_THRESHOLD) {
       setIsHidden(false);
     }
     // Between thresholds: maintain current state (no change)
-  }, [chatAreaWidth, selectedTab, isHidden, setIsHidden, width]);
+  }, [chatAreaWidth, isHidden, setIsHidden, width]);
 
   // Collapse sidebar on small screens (context usage now shown in ChatInput)
   // Use isCollapsed prop instead of returning null to keep DOM present for CSS transitions
