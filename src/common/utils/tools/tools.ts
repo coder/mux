@@ -139,8 +139,13 @@ export async function getToolsForModel(
     propose_plan: createProposePlanTool(config),
     todo_write: createTodoWriteTool(config),
     todo_read: createTodoReadTool(config),
-    task: createTaskTool(config),
-    agent_report: createAgentReportTool(config),
+    // Task tooling is optional (not available in all entrypoints like the CLI / replay tools).
+    ...(config.taskService
+      ? {
+          task: createTaskTool(config),
+          agent_report: createAgentReportTool(config),
+        }
+      : {}),
     status_set: createStatusSetTool(config),
   };
 
