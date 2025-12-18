@@ -254,28 +254,41 @@ export const CodeBlocks: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await waitForChatMessagesLoaded(canvasElement);
 
-    const url = "https://github.com/coder/mux/pull/new/chat-autocomplete-b24r";
-
-    // Find the highlighted code block containing the URL.
-    const container = await waitFor(
+    // Wait for ALL code blocks with language hints to be highlighted.
+    // CODE_CONTENT has 3 language-tagged blocks (2× typescript, 1× text) that use async Shiki.
+    // Waiting for all prevents flaky snapshots from partial highlighting state.
+    await waitFor(
       () => {
-        const candidates = Array.from(canvasElement.querySelectorAll(".code-block-container"));
-        const found = candidates.find((el) => el.textContent?.includes(url));
-        if (!found) {
-          throw new Error("URL code block not found");
+        const candidates = canvasElement.querySelectorAll(".code-block-wrapper");
+        if (candidates.length < 3) {
+          throw new Error(`Expected 3 code-block-wrappers, found ${candidates.length}`);
         }
-        return found;
+        // Each must have highlighted spans (Shiki wraps tokens in spans)
+        for (const wrapper of candidates) {
+          if (!wrapper.querySelector(".code-line span")) {
+            throw new Error("Not all code blocks highlighted yet");
+          }
+        }
       },
       { timeout: 5000 }
     );
 
-    // Ensure we capture the post-highlight DOM (Shiki wraps tokens in spans).
-    await waitFor(
+    // Scroll to bottom and wait a frame for ResizeObserver to settle.
+    // Shiki highlighting can trigger useAutoScroll's ResizeObserver, causing scroll jitter.
+    const scrollContainer = canvasElement.querySelector('[data-testid="message-window"]');
+    if (scrollContainer) {
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+
+    const url = "https://github.com/coder/mux/pull/new/chat-autocomplete-b24r";
+    const container = await waitFor(
       () => {
-        const hasHighlightedSpans = container.querySelector(".code-line span");
-        if (!hasHighlightedSpans) {
-          throw new Error("Code block not highlighted yet");
-        }
+        const found = Array.from(canvasElement.querySelectorAll(".code-block-container")).find(
+          (c) => c.textContent?.includes(url)
+        );
+        if (!found) throw new Error("URL code block not found");
+        return found;
       },
       { timeout: 5000 }
     );
