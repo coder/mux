@@ -401,10 +401,13 @@ export class TaskService {
       return;
     }
 
-    // Mark reported.
-    await this.updateTaskWorkspace(workspaceId, {
-      taskStatus: "reported",
-    });
+    // Resolve any in-flight tool call awaiters first so foreground `task` calls don't hang even if
+    // persisting the report to parent history fails.
+    const deferred = this.pendingReportByWorkspaceId.get(workspaceId);
+    if (deferred) {
+      deferred.resolve(report);
+      this.pendingReportByWorkspaceId.delete(workspaceId);
+    }
 
     const preset = workspaceConfig.workspace.agentType
       ? getAgentPreset(workspaceConfig.workspace.agentType)
@@ -425,20 +428,22 @@ export class TaskService {
       reportMessage
     );
     if (!appendResult.success) {
-      throw new Error(appendResult.error);
+      log.error("Failed to append subagent report to parent history", {
+        workspaceId,
+        parentWorkspaceId,
+        error: appendResult.error,
+      });
+    } else {
+      this.workspaceService.emitChatEvent(parentWorkspaceId, {
+        ...reportMessage,
+        type: "message",
+      } satisfies WorkspaceChatMessage);
     }
 
-    this.workspaceService.emitChatEvent(parentWorkspaceId, {
-      ...reportMessage,
-      type: "message",
-    } satisfies WorkspaceChatMessage);
-
-    // Resolve any in-flight tool call awaiters.
-    const deferred = this.pendingReportByWorkspaceId.get(workspaceId);
-    if (deferred) {
-      deferred.resolve(report);
-      this.pendingReportByWorkspaceId.delete(workspaceId);
-    }
+    // Mark reported after best-effort delivery to the parent.
+    await this.updateTaskWorkspace(workspaceId, {
+      taskStatus: "reported",
+    });
 
     // Durable tool output + auto-resume for interrupted parent streams.
     const parentToolCallId = workspaceConfig.workspace.taskParentToolCallId;

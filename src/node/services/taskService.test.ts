@@ -258,6 +258,96 @@ describe("TaskService", () => {
     });
   });
 
+  describe("handleAgentReport", () => {
+    it("should resolve awaiters even if parent history append fails", async () => {
+      const parentWorkspaceId = "parent";
+      const childWorkspaceId = "child";
+
+      const workspace = {
+        id: childWorkspaceId,
+        path: "/tmp/agent",
+        name: "agent",
+        projectName: "proj",
+        projectPath: "/proj",
+        createdAt: "2025-01-01T00:00:00.000Z",
+        parentWorkspaceId,
+        agentType: "research",
+        taskStatus: "running",
+        taskModel: "openai:gpt-5-codex",
+      };
+
+      const projects = new Map([
+        [
+          "/proj",
+          {
+            workspaces: [workspace],
+          },
+        ],
+      ]);
+
+      let idCounter = 0;
+      const config = {
+        generateStableId: () => `id-${idCounter++}`,
+        getTaskSettings: () => ({
+          maxParallelAgentTasks: 3,
+          maxTaskNestingDepth: 3,
+        }),
+        listWorkspaceConfigs: () => [],
+        getWorkspaceConfig: (id: string) => {
+          if (id !== childWorkspaceId) {
+            return null;
+          }
+
+          return { projectPath: "/proj", workspace };
+        },
+        editConfig: (edit: (cfg: unknown) => unknown) => {
+          edit({ projects });
+        },
+      };
+
+      const historyService = {
+        getHistory: (_workspaceId: string) => Ok([]),
+        appendToHistory: (workspaceId: string, _message: MuxMessage) => {
+          if (workspaceId === parentWorkspaceId) {
+            return Err("disk full");
+          }
+
+          return Ok(undefined);
+        },
+      };
+
+      const partialService = {
+        readPartial: () => null,
+        writePartial: () => Ok(undefined),
+      };
+
+      const workspaceService = {
+        emitChatEvent: (_workspaceId: string, _event: unknown) => undefined,
+        emitWorkspaceMetadata: (_workspaceId: string) => undefined,
+        remove: (_workspaceId: string, _force?: boolean) => Ok(undefined),
+      };
+
+      const aiService = {
+        on: () => undefined,
+      };
+
+      const service = new TaskService(
+        config as never,
+        historyService as never,
+        partialService as never,
+        workspaceService as never,
+        aiService as never
+      );
+
+      const reportPromise = service.awaitAgentReport(childWorkspaceId);
+
+      await service.handleAgentReport(childWorkspaceId, { reportMarkdown: "hello" });
+
+      expect(await reportPromise).toEqual({ reportMarkdown: "hello" });
+      expect(workspace.taskStatus).toBe("reported");
+    });
+  });
+
   describe("onStreamEnd", () => {
     it("should finalize tasks when report enforcement resume fails", async () => {
       const parentWorkspaceId = "parent";
