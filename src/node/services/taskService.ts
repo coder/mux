@@ -331,7 +331,7 @@ export class TaskService extends EventEmitter {
     // This enables restart recovery - even if pendingCompletions was lost, the parent
     // will have the tool output when it resumes
     if (taskState.parentToolCallId) {
-      await this.injectToolOutputToParent(taskState, args);
+      await this.injectToolOutputToParent(workspaceId, taskState, args);
     } else {
       // Background task - post report as a message to parent history
       await this.postReportToParent(workspaceId, taskState, args);
@@ -389,6 +389,7 @@ export class TaskService extends EventEmitter {
    * persists across restarts.
    */
   private async injectToolOutputToParent(
+    taskId: string,
     taskState: TaskState,
     report: { reportMarkdown: string; title?: string }
   ): Promise<void> {
@@ -397,7 +398,7 @@ export class TaskService extends EventEmitter {
 
     const toolOutput: TaskToolResult = {
       status: "completed",
-      taskId: taskState.parentWorkspaceId, // The task workspace ID
+      taskId, // The child task workspace ID
       reportMarkdown: report.reportMarkdown,
       reportTitle: report.title,
     };
@@ -437,11 +438,11 @@ export class TaskService extends EventEmitter {
 
       // Couldn't find the tool call - fall back to posting as message
       log.warn(`Could not find parent tool call ${parentToolCallId}, posting as message instead`);
-      await this.postReportToParent(parentWorkspaceId, taskState, report);
+      await this.postReportToParent(taskId, taskState, report);
     } catch (error) {
       log.error(`Failed to inject tool output to parent ${parentWorkspaceId}:`, error);
       // Fall back to posting as message
-      await this.postReportToParent(parentWorkspaceId, taskState, report);
+      await this.postReportToParent(taskId, taskState, report);
     }
   }
 
