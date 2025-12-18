@@ -55,31 +55,13 @@ const SidebarContainer: React.FC<SidebarContainerProps> = ({
       : wide
         ? "min(1200px, calc(100vw - 400px))"
         : "300px";
-  console.log("[SidebarContainer] width calc:", { isCollapsed, customWidth, wide, computedWidth: width });
-
-  // Track previous width to detect tab switches vs resize drags
-  // Tab switches: large width jumps (e.g., 400→976) - no animation wanted
-  // Resize drags: small incremental changes - smooth animation wanted
-  const prevWidthRef = React.useRef<string>(width);
-  const widthDelta = Math.abs(
-    parseInt(width) - parseInt(prevWidthRef.current)
-  );
-  // Consider it a "tab switch" if width changes by more than 50px in one render
-  const isTabSwitch = !isNaN(widthDelta) && widthDelta > 50;
-  
-  React.useEffect(() => {
-    prevWidthRef.current = width;
-  }, [width]);
-
-  // Only animate during resize (small incremental changes), not tab switches
-  const shouldAnimate = !isResizing && !isTabSwitch;
-  console.log("[SidebarContainer] animation:", { width, prevWidth: prevWidthRef.current, widthDelta, isTabSwitch, shouldAnimate });
 
   return (
     <div
       className={cn(
         "bg-sidebar border-l border-border-light flex flex-col overflow-hidden flex-shrink-0",
-        shouldAnimate && "transition-[width] duration-200",
+        // Animate width changes (tab switches, collapse/expand) - disable during drag resize
+        !isResizing && "transition-[width] duration-200",
         // Mobile: full width
         "max-md:border-l-0 max-md:border-t max-md:border-border-light max-md:w-full max-md:relative max-md:max-h-[50vh]"
       )}
@@ -228,13 +210,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Use isCollapsed prop instead of returning null to keep DOM present for CSS transitions
   const isCollapsed = isHidden;
   const wide = selectedTab === "review" && !width;
-  console.log("[RightSidebar] render:", {
-    selectedTab,
-    width,
-    wide,
-    isCollapsed,
-    isHidden,
-  });
 
   return (
     <SidebarContainer
