@@ -102,6 +102,7 @@ export class TaskService {
       if (task.taskStatus === "running") {
         void this.resumeTaskWorkspace(task).catch((error: unknown) => {
           log.error("Failed to resume agent task workspace", { workspaceId: task.id, error });
+          void this.handleTaskStartFailure(task.id, error);
         });
       }
 
@@ -117,6 +118,75 @@ export class TaskService {
 
     // Start any queued tasks within the configured parallelism limit.
     await this.queueScheduling();
+  }
+
+  private formatErrorForReport(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+
+    if (typeof error === "string") {
+      return error;
+    }
+
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+
+  private async handleTaskStartFailure(workspaceId: string, error: unknown): Promise<void> {
+    const workspaceConfig = this.config.getWorkspaceConfig(workspaceId);
+    if (!workspaceConfig) {
+      log.error("Failed to handle agent task start failure: unknown workspace", {
+        workspaceId,
+        error,
+      });
+      return;
+    }
+
+    const agentType = workspaceConfig.workspace.agentType ?? "unknown";
+    const model = workspaceConfig.workspace.taskModel ?? DEFAULT_MODEL;
+
+    const reportMarkdown = [
+      "Mux failed to start this agent task workspace.",
+      "",
+      `- Agent preset: \`${agentType}\``,
+      `- Model: \`${model}\``,
+      "",
+      "Error:",
+      "```",
+      this.formatErrorForReport(error),
+      "```",
+      "",
+      "Suggested next steps:",
+      "- Verify the model string is supported by the selected provider.",
+      "- Verify you have an API key set for that provider.",
+    ].join("\n");
+
+    // If this isn't a properly-parented task workspace, at least mark it complete so it doesn't
+    // consume a scheduler slot indefinitely.
+    if (!workspaceConfig.workspace.parentWorkspaceId) {
+      await this.updateTaskWorkspace(workspaceId, { taskStatus: "reported" });
+      await this.maybeCleanupReportedWorkspace(workspaceId);
+      await this.queueScheduling();
+      return;
+    }
+
+    try {
+      await this.handleAgentReport(workspaceId, { reportMarkdown });
+    } catch (reportError: unknown) {
+      // Ensure a failed report doesn't leave the queue stuck.
+      log.error("Failed to forward agent task start failure report", {
+        workspaceId,
+        error: reportError,
+      });
+
+      await this.updateTaskWorkspace(workspaceId, { taskStatus: "reported" });
+      await this.maybeCleanupReportedWorkspace(workspaceId);
+      await this.queueScheduling();
+    }
   }
 
   async createAgentTask(params: CreateAgentTaskParams): Promise<{ childWorkspaceId: string }> {
@@ -770,9 +840,11 @@ export class TaskService {
   }
 
   private async resumeTaskWorkspace(workspace: AgentTaskWorkspace): Promise<void> {
-    const preset = workspace.agentType ? getAgentPreset(workspace.agentType) : undefined;
+    assert(workspace.agentType, "resumeTaskWorkspace requires agentType");
+
+    const preset = getAgentPreset(workspace.agentType);
     if (!preset) {
-      return;
+      throw new Error(`Unknown agent preset: ${workspace.agentType}`);
     }
 
     await this.ensureTaskPromptSeeded(workspace);
@@ -836,8 +908,10 @@ export class TaskService {
 
     for (const workspace of queued) {
       await this.updateTaskWorkspace(workspace.id, { taskStatus: "running" });
+
       void this.resumeTaskWorkspace(workspace).catch((error: unknown) => {
         log.error("Failed to start queued agent task", { workspaceId: workspace.id, error });
+        void this.handleTaskStartFailure(workspace.id, error);
       });
     }
   }
