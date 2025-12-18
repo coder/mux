@@ -15,6 +15,7 @@ import { createCodeExecutionTool } from "./code_execution";
 import { createFileReadTool } from "./file_read";
 import { createBashTool } from "./bash";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
+import { ToolBridge } from "@/node/services/ptc/toolBridge";
 import type { Tool, ToolCallOptions } from "ai";
 import type { PTCEvent, PTCExecutionResult, PTCToolCallEndEvent } from "@/node/services/ptc/types";
 import { createTestToolConfig, TestTempDir, getTestDeps } from "./testHelpers";
@@ -52,8 +53,10 @@ describe("code_execution integration tests", () => {
 
       // Track events
       const events: PTCEvent[] = [];
-      const codeExecutionTool = await createCodeExecutionTool(runtimeFactory, tools, (e) =>
-        events.push(e)
+      const codeExecutionTool = await createCodeExecutionTool(
+        runtimeFactory,
+        new ToolBridge(tools),
+        (e) => events.push(e)
       );
 
       // Execute code that reads the file
@@ -94,7 +97,10 @@ describe("code_execution integration tests", () => {
       const fileReadTool = createFileReadTool(toolConfig);
       const tools: Record<string, Tool> = { file_read: fileReadTool };
 
-      const codeExecutionTool = await createCodeExecutionTool(runtimeFactory, tools);
+      const codeExecutionTool = await createCodeExecutionTool(
+        runtimeFactory,
+        new ToolBridge(tools)
+      );
 
       const code = `
         const result = mux.file_read({ filePath: "nonexistent.txt" });
@@ -129,8 +135,10 @@ describe("code_execution integration tests", () => {
       const tools: Record<string, Tool> = { bash: bashTool };
 
       const events: PTCEvent[] = [];
-      const codeExecutionTool = await createCodeExecutionTool(runtimeFactory, tools, (e) =>
-        events.push(e)
+      const codeExecutionTool = await createCodeExecutionTool(
+        runtimeFactory,
+        new ToolBridge(tools),
+        (e) => events.push(e)
       );
 
       // Execute a simple echo command
@@ -182,8 +190,10 @@ describe("code_execution integration tests", () => {
       };
 
       const events: PTCEvent[] = [];
-      const codeExecutionTool = await createCodeExecutionTool(runtimeFactory, tools, (e) =>
-        events.push(e)
+      const codeExecutionTool = await createCodeExecutionTool(
+        runtimeFactory,
+        new ToolBridge(tools),
+        (e) => events.push(e)
       );
 
       // Code that creates a file with bash, then reads it with file_read
@@ -252,7 +262,10 @@ describe("code_execution integration tests", () => {
       const fileReadTool = createFileReadTool(toolConfig);
       const tools: Record<string, Tool> = { file_read: fileReadTool };
 
-      const codeExecutionTool = await createCodeExecutionTool(runtimeFactory, tools);
+      const codeExecutionTool = await createCodeExecutionTool(
+        runtimeFactory,
+        new ToolBridge(tools)
+      );
 
       // Call file_read without required filePath argument
       const code = `
@@ -284,8 +297,10 @@ describe("code_execution integration tests", () => {
       const tools: Record<string, Tool> = { throwing_tool: throwingTool };
 
       const events: PTCEvent[] = [];
-      const codeExecutionTool = await createCodeExecutionTool(runtimeFactory, tools, (e) =>
-        events.push(e)
+      const codeExecutionTool = await createCodeExecutionTool(
+        runtimeFactory,
+        new ToolBridge(tools),
+        (e) => events.push(e)
       );
 
       const code = `
@@ -318,8 +333,10 @@ describe("code_execution integration tests", () => {
       const tools: Record<string, Tool> = { file_read: fileReadTool };
 
       const events: PTCEvent[] = [];
-      const codeExecutionTool = await createCodeExecutionTool(runtimeFactory, tools, (e) =>
-        events.push(e)
+      const codeExecutionTool = await createCodeExecutionTool(
+        runtimeFactory,
+        new ToolBridge(tools),
+        (e) => events.push(e)
       );
 
       const code = `

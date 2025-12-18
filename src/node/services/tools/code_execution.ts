@@ -9,9 +9,10 @@
 import { tool } from "ai";
 import { z } from "zod";
 import type { Tool } from "ai";
+import { ToolBridge } from "@/node/services/ptc/toolBridge";
 import type { IJSRuntimeFactory } from "@/node/services/ptc/runtime";
 import type { PTCEvent, PTCExecutionResult } from "@/node/services/ptc/types";
-import { ToolBridge } from "@/node/services/ptc/toolBridge";
+
 import { analyzeCode } from "@/node/services/ptc/staticAnalysis";
 import { getCachedMuxTypes, clearTypeCache } from "@/node/services/ptc/typeGenerator";
 
@@ -46,15 +47,14 @@ export type PTCEventWithParent = PTCEvent & { parentToolCallId: string };
  * from the tool schemas, which requires async JSON Schema to TypeScript conversion.
  *
  * @param runtimeFactory Factory for creating QuickJS runtime instances
- * @param tools All available tools (will be filtered to bridgeable ones)
+ * @param toolBridge Bridge containing tools to expose in sandbox
  * @param emitNestedEvent Callback for streaming nested tool events (includes parentToolCallId)
  */
 export async function createCodeExecutionTool(
   runtimeFactory: IJSRuntimeFactory,
-  tools: Record<string, Tool>,
+  toolBridge: ToolBridge,
   emitNestedEvent?: (event: PTCEventWithParent) => void
 ): Promise<Tool> {
-  const toolBridge = new ToolBridge(tools);
   const bridgeableTools = toolBridge.getBridgeableTools();
 
   // Generate mux types for type validation and documentation (cached by tool set hash)

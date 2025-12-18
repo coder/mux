@@ -24,18 +24,22 @@ const EXCLUDED_TOOLS = new Set([
  */
 export class ToolBridge {
   private readonly bridgeableTools: Map<string, Tool>;
+  private readonly nonBridgeableTools: Map<string, Tool>;
 
   constructor(tools: Record<string, Tool>) {
     this.bridgeableTools = new Map();
+    this.nonBridgeableTools = new Map();
 
     for (const [name, tool] of Object.entries(tools)) {
-      // Skip excluded tools
-      if (EXCLUDED_TOOLS.has(name)) continue;
+      // code_execution is the tool that uses the bridge, not a candidate for bridging
+      if (name === "code_execution") continue;
 
-      // Skip tools without execute function (provider-native like web_search)
-      if (!this.hasExecute(tool)) continue;
-
-      this.bridgeableTools.set(name, tool);
+      const isBridgeable = !EXCLUDED_TOOLS.has(name) && this.hasExecute(tool);
+      if (isBridgeable) {
+        this.bridgeableTools.set(name, tool);
+      } else {
+        this.nonBridgeableTools.set(name, tool);
+      }
     }
   }
 
@@ -47,6 +51,18 @@ export class ToolBridge {
   /** Get the bridgeable tools as a Record */
   getBridgeableTools(): Record<string, Tool> {
     return Object.fromEntries(this.bridgeableTools.entries());
+  }
+
+  /**
+   * Get tools that cannot be bridged into the sandbox.
+   * These are tools that either:
+   * - Are explicitly excluded (UI-specific, mode-specific)
+   * - Don't have an execute function (provider-native like web_search)
+   *
+   * In exclusive PTC mode, these should still be available to the model directly.
+   */
+  getNonBridgeableTools(): Record<string, Tool> {
+    return Object.fromEntries(this.nonBridgeableTools.entries());
   }
 
   /** Register all bridgeable tools on the runtime under `mux` namespace */

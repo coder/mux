@@ -5,6 +5,7 @@
 import { describe, it, expect, mock } from "bun:test";
 import { createCodeExecutionTool, clearTypeCaches } from "./code_execution";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
+import { ToolBridge } from "@/node/services/ptc/toolBridge";
 import type { Tool, ToolCallOptions } from "ai";
 import type { PTCEvent, PTCExecutionResult } from "@/node/services/ptc/types";
 import { z } from "zod";
@@ -62,7 +63,7 @@ describe("createCodeExecutionTool", () => {
         bash: createMockTool("bash", z.object({ script: z.string() }), () => ({ output: "ok" })),
       };
 
-      const tool = await createCodeExecutionTool(runtimeFactory, mockTools);
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge(mockTools));
 
       const desc = (tool as { description?: string }).description ?? "";
       // Description now contains TypeScript definitions instead of prose
@@ -83,7 +84,7 @@ describe("createCodeExecutionTool", () => {
         })),
       };
 
-      const tool = await createCodeExecutionTool(runtimeFactory, mockTools);
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge(mockTools));
 
       const desc = (tool as { description?: string }).description ?? "";
       // Description now contains TypeScript definitions
@@ -104,7 +105,7 @@ describe("createCodeExecutionTool", () => {
         } satisfies Tool,
       };
 
-      const tool = await createCodeExecutionTool(runtimeFactory, mockTools);
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge(mockTools));
 
       const desc = (tool as { description?: string }).description ?? "";
       // Description now contains TypeScript definitions
@@ -115,7 +116,7 @@ describe("createCodeExecutionTool", () => {
 
   describe("static analysis", () => {
     it("rejects code with syntax errors", async () => {
-      const tool = await createCodeExecutionTool(runtimeFactory, {});
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge({}));
 
       const result = (await tool.execute!(
         { code: "const x = {" }, // Unclosed brace
@@ -127,7 +128,7 @@ describe("createCodeExecutionTool", () => {
     });
 
     it("rejects code using unavailable globals", async () => {
-      const tool = await createCodeExecutionTool(runtimeFactory, {});
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge({}));
 
       const result = (await tool.execute!(
         { code: "const env = process.env" },
@@ -140,7 +141,7 @@ describe("createCodeExecutionTool", () => {
     });
 
     it("rejects code using require()", async () => {
-      const tool = await createCodeExecutionTool(runtimeFactory, {});
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge({}));
 
       const result = (await tool.execute!(
         { code: 'const fs = require("fs")' },
@@ -155,7 +156,7 @@ describe("createCodeExecutionTool", () => {
 
   describe("code execution", () => {
     it("executes simple code and returns result", async () => {
-      const tool = await createCodeExecutionTool(runtimeFactory, {});
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge({}));
 
       const result = (await tool.execute!(
         { code: "return 1 + 2" },
@@ -167,7 +168,7 @@ describe("createCodeExecutionTool", () => {
     });
 
     it("captures console.log output", async () => {
-      const tool = await createCodeExecutionTool(runtimeFactory, {});
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge({}));
 
       const result = (await tool.execute!(
         { code: 'console.log("hello", 123); return "done"' },
@@ -182,7 +183,7 @@ describe("createCodeExecutionTool", () => {
     });
 
     it("records tool execution time", async () => {
-      const tool = await createCodeExecutionTool(runtimeFactory, {});
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge({}));
 
       const result = (await tool.execute!(
         { code: "return 42" },
@@ -211,7 +212,7 @@ describe("createCodeExecutionTool", () => {
         file_read: createMockTool("file_read", z.object({ filePath: z.string() }), mockExecute),
       };
 
-      const tool = await createCodeExecutionTool(runtimeFactory, mockTools);
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge(mockTools));
 
       const result = (await tool.execute!(
         { code: 'return mux.file_read({ filePath: "test.txt" })' },
@@ -231,7 +232,7 @@ describe("createCodeExecutionTool", () => {
         file_read: createMockTool("file_read", z.object({ filePath: z.string() })),
       };
 
-      const tool = await createCodeExecutionTool(runtimeFactory, mockTools);
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge(mockTools));
 
       const result = (await tool.execute!(
         { code: 'mux.file_read({ filePath: "a.txt" }); return "done"' },
@@ -254,7 +255,7 @@ describe("createCodeExecutionTool", () => {
         file_read: createMockTool("file_read", z.object({ filePath: z.string() })),
       };
 
-      const tool = await createCodeExecutionTool(runtimeFactory, mockTools);
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge(mockTools));
 
       const result = (await tool.execute!(
         { code: "return mux.file_read({ wrongField: 123 })" },
@@ -274,7 +275,7 @@ describe("createCodeExecutionTool", () => {
         }),
       };
 
-      const tool = await createCodeExecutionTool(runtimeFactory, mockTools);
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge(mockTools));
 
       const result = (await tool.execute!(
         { code: "return mux.failing_tool({})" },
@@ -300,7 +301,7 @@ describe("createCodeExecutionTool", () => {
         }),
       };
 
-      const tool = await createCodeExecutionTool(runtimeFactory, mockTools);
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge(mockTools));
 
       const result = (await tool.execute!(
         {
@@ -332,7 +333,11 @@ describe("createCodeExecutionTool", () => {
         })),
       };
 
-      const tool = await createCodeExecutionTool(runtimeFactory, mockTools, onEvent);
+      const tool = await createCodeExecutionTool(
+        runtimeFactory,
+        new ToolBridge(mockTools),
+        onEvent
+      );
 
       await tool.execute!(
         { code: 'return mux.file_read({ filePath: "test.txt" })' },
@@ -351,7 +356,7 @@ describe("createCodeExecutionTool", () => {
       const events: PTCEvent[] = [];
       const onEvent = (event: PTCEvent) => events.push(event);
 
-      const tool = await createCodeExecutionTool(runtimeFactory, {}, onEvent);
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge({}), onEvent);
 
       await tool.execute!(
         { code: 'console.log("test"); console.warn("warning"); return 1' },
@@ -375,7 +380,7 @@ describe("createCodeExecutionTool", () => {
         }),
       };
 
-      const tool = await createCodeExecutionTool(runtimeFactory, mockTools);
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge(mockTools));
       const abortController = new AbortController();
 
       // Abort immediately
@@ -401,8 +406,8 @@ describe("createCodeExecutionTool", () => {
         })),
       };
 
-      const tool1 = await createCodeExecutionTool(runtimeFactory, mockTools);
-      const tool2 = await createCodeExecutionTool(runtimeFactory, mockTools);
+      const tool1 = await createCodeExecutionTool(runtimeFactory, new ToolBridge(mockTools));
+      const tool2 = await createCodeExecutionTool(runtimeFactory, new ToolBridge(mockTools));
 
       const desc1 = (tool1 as { description?: string }).description ?? "";
       const desc2 = (tool2 as { description?: string }).description ?? "";
@@ -428,8 +433,8 @@ describe("createCodeExecutionTool", () => {
         })),
       };
 
-      const tool1 = await createCodeExecutionTool(runtimeFactory, tools1);
-      const tool2 = await createCodeExecutionTool(runtimeFactory, tools2);
+      const tool1 = await createCodeExecutionTool(runtimeFactory, new ToolBridge(tools1));
+      const tool2 = await createCodeExecutionTool(runtimeFactory, new ToolBridge(tools2));
 
       const desc1 = (tool1 as { description?: string }).description ?? "";
       const desc2 = (tool2 as { description?: string }).description ?? "";
@@ -447,12 +452,12 @@ describe("createCodeExecutionTool", () => {
       };
 
       // First call to populate cache
-      await createCodeExecutionTool(runtimeFactory, mockTools);
+      await createCodeExecutionTool(runtimeFactory, new ToolBridge(mockTools));
 
       // Clear and verify new generation works
       clearTypeCaches();
 
-      const tool = await createCodeExecutionTool(runtimeFactory, mockTools);
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge(mockTools));
       const desc = (tool as { description?: string }).description ?? "";
       expect(desc).toContain("function file_read");
     });
