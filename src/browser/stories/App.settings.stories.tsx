@@ -200,3 +200,11 @@ export const ExperimentsToggleOff: AppStory = {
     // Default state is OFF - no clicks needed
   },
 };
+
+/** Tasks section - shows agent task limits configuration */
+export const Tasks: AppStory = {
+  render: () => <AppWithMocks setup={() => setupSettingsStory({})} />,
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSection(canvasElement, "tasks");
+  },
+};

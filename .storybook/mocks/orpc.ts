@@ -184,6 +184,11 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       tick: async function* () {
         // No-op generator
       },
+      getTaskSettings: async () => ({
+        maxParallelAgentTasks: 3,
+        maxTaskNestingDepth: 3,
+      }),
+      setTaskSettings: async () => undefined,
     },
     projects: {
       list: async () => Array.from(projects.entries()),

@@ -428,7 +428,11 @@ export class TaskService extends EventEmitter {
     }
   }
 
-  private async postFailureToParent(taskId: string, taskState: TaskState, error: string): Promise<void> {
+  private async postFailureToParent(
+    taskId: string,
+    taskState: TaskState,
+    error: string
+  ): Promise<void> {
     try {
       const preset = getAgentPreset(taskState.agentType);
       const title = `${preset.name} Task Failed`;
@@ -476,7 +480,10 @@ export class TaskService extends EventEmitter {
       if (partial) {
         const finalized = this.tryFinalizeTaskToolCall(partial, parentToolCallId, toolOutput);
         if (finalized) {
-          const writeResult = await this.partialService.writePartial(parentWorkspaceId, finalized.updated);
+          const writeResult = await this.partialService.writePartial(
+            parentWorkspaceId,
+            finalized.updated
+          );
           if (!writeResult.success) {
             throw new Error(writeResult.error);
           }
@@ -624,7 +631,11 @@ export class TaskService extends EventEmitter {
 
     // Re-check state
     const updatedState = this.config.getWorkspaceTaskState(workspaceId);
-    if (!updatedState || updatedState.taskStatus === "reported" || updatedState.taskStatus === "failed") {
+    if (
+      !updatedState ||
+      updatedState.taskStatus === "reported" ||
+      updatedState.taskStatus === "failed"
+    ) {
       return;
     }
 
@@ -673,7 +684,9 @@ export class TaskService extends EventEmitter {
 
     if (updatedState.taskStatus === "awaiting_report") {
       // Reminder stream ended and agent_report still wasn't called. Fall back to best-effort report.
-      log.warn(`Task ${workspaceId} still missing agent_report after reminder, using fallback report`);
+      log.warn(
+        `Task ${workspaceId} still missing agent_report after reminder, using fallback report`
+      );
       const fallback = await this.synthesizeFallbackReportMarkdown(workspaceId);
       await this.handleAgentReport(workspaceId, {
         reportMarkdown: fallback,
@@ -857,7 +870,10 @@ export class TaskService extends EventEmitter {
 
       // If the parent is also a completed task workspace, it might now be eligible for cleanup.
       const parentTaskState = this.config.getWorkspaceTaskState(taskState.parentWorkspaceId);
-      if (parentTaskState && (parentTaskState.taskStatus === "reported" || parentTaskState.taskStatus === "failed")) {
+      if (
+        parentTaskState &&
+        (parentTaskState.taskStatus === "reported" || parentTaskState.taskStatus === "failed")
+      ) {
         await this.cleanupTaskSubtree(taskState.parentWorkspaceId, seen);
       }
     } catch (error) {
@@ -943,7 +959,9 @@ export class TaskService extends EventEmitter {
       const allMetadata = await this.config.getAllWorkspaceMetadata();
       const completedTaskIds = allMetadata
         .filter(
-          (m) => m.taskState && (m.taskState.taskStatus === "reported" || m.taskState.taskStatus === "failed")
+          (m) =>
+            m.taskState &&
+            (m.taskState.taskStatus === "reported" || m.taskState.taskStatus === "failed")
         )
         .map((m) => m.id);
 
@@ -980,7 +998,8 @@ export class TaskService extends EventEmitter {
       }
 
       // Prefer resuming with the model used for the interrupted assistant message.
-      const modelFromPartial = typeof partial.metadata?.model === "string" ? partial.metadata.model : "";
+      const modelFromPartial =
+        typeof partial.metadata?.model === "string" ? partial.metadata.model : "";
 
       const metadataResult = await this.aiService.getWorkspaceMetadata(parentWorkspaceId);
       const aiSettings = metadataResult.success ? metadataResult.data.aiSettings : undefined;
@@ -997,7 +1016,10 @@ export class TaskService extends EventEmitter {
         ...(normalizedMode ? { mode: normalizedMode } : {}),
       });
       if (!resumeResult.success) {
-        log.error(`Failed to auto-resume parent workspace ${parentWorkspaceId}:`, resumeResult.error);
+        log.error(
+          `Failed to auto-resume parent workspace ${parentWorkspaceId}:`,
+          resumeResult.error
+        );
       }
     } catch (error) {
       log.error(`Failed to auto-resume parent workspace ${parentWorkspaceId}:`, error);

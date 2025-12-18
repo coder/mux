@@ -110,7 +110,11 @@ export function hasInterruptedStream(
   // restart, which drops the unfinished tool call from the prompt and can lead
   // to duplicate task spawns. TaskService injects the tool output and auto-resumes
   // the parent once the subagent reports.
-  if (lastMessage.type === "tool" && lastMessage.toolName === "task" && lastMessage.status === "executing") {
+  if (
+    lastMessage.type === "tool" &&
+    lastMessage.toolName === "task" &&
+    lastMessage.status === "executing"
+  ) {
     return false;
   }
 

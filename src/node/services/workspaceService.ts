@@ -1155,7 +1155,10 @@ export class WorkspaceService extends EventEmitter {
       // If this workspace has a pending `task` tool call in partial.json and isn't currently
       // streaming, starting a new stream would drop the unfinished tool call from the prompt
       // (ignoreIncompleteToolCalls=true) and can lead to duplicate task spawns.
-      if (!this.aiService.isStreaming(workspaceId) && (await this.hasPendingTaskToolCalls(workspaceId))) {
+      if (
+        !this.aiService.isStreaming(workspaceId) &&
+        (await this.hasPendingTaskToolCalls(workspaceId))
+      ) {
         return Err({
           type: "unknown",
           raw: "Workspace is awaiting a subagent task. Please wait for it to complete; it will auto-resume when ready.",
@@ -1284,7 +1287,8 @@ export class WorkspaceService extends EventEmitter {
     }
 
     return partial.parts.some(
-      (part) => isDynamicToolPart(part) && part.toolName === "task" && part.state !== "output-available"
+      (part) =>
+        isDynamicToolPart(part) && part.toolName === "task" && part.state !== "output-available"
     );
   }
 
@@ -1765,9 +1769,15 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  async appendToHistoryAndEmit(workspaceId: string, muxMessage: MuxMessage): Promise<Result<void, string>> {
+  async appendToHistoryAndEmit(
+    workspaceId: string,
+    muxMessage: MuxMessage
+  ): Promise<Result<void, string>> {
     try {
-      assert(workspaceId && workspaceId.trim().length > 0, "appendToHistoryAndEmit requires workspaceId");
+      assert(
+        workspaceId && workspaceId.trim().length > 0,
+        "appendToHistoryAndEmit requires workspaceId"
+      );
 
       const appendResult = await this.historyService.appendToHistory(workspaceId, muxMessage);
       if (!appendResult.success) {

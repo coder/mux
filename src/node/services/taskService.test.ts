@@ -15,19 +15,19 @@ import type { SendMessageError } from "@/common/types/errors";
 import { Err, Ok, type Result } from "@/common/types/result";
 import assert from "@/common/utils/assert";
 
-type SendMessageCall = {
+interface SendMessageCall {
   workspaceId: string;
   message: string;
   options: SendMessageOptions | undefined;
-};
+}
 
-type CreateCall = {
+interface CreateCall {
   projectPath: string;
   branchName: string;
   trunkBranch: string | undefined;
   title: string | undefined;
   runtimeConfig: RuntimeConfig | undefined;
-};
+}
 
 class FakeAIService extends EventEmitter {
   private readonly streaming = new Set<string>();
@@ -49,11 +49,9 @@ class FakeAIService extends EventEmitter {
     this.metadataById.set(metadata.id, metadata);
   }
 
-  async getWorkspaceMetadata(
-    workspaceId: string
-  ): Promise<Result<FrontendWorkspaceMetadata, string>> {
+  getWorkspaceMetadata(workspaceId: string): Promise<Result<FrontendWorkspaceMetadata, string>> {
     const metadata = this.metadataById.get(workspaceId);
-    return metadata ? Ok(metadata) : Err(`Workspace ${workspaceId} not found`);
+    return Promise.resolve(metadata ? Ok(metadata) : Err(`Workspace ${workspaceId} not found`));
   }
 }
 
@@ -96,7 +94,7 @@ class FakeConfig {
     return this.taskStateById.get(workspaceId);
   }
 
-  async setWorkspaceTaskState(workspaceId: string, taskState: TaskState): Promise<void> {
+  setWorkspaceTaskState(workspaceId: string, taskState: TaskState): Promise<void> {
     this.taskStateById.set(workspaceId, taskState);
 
     const existing = this.metadataById.get(workspaceId);
@@ -108,6 +106,7 @@ class FakeConfig {
         taskState,
       });
     }
+    return Promise.resolve();
   }
 
   countRunningAgentTasks(): number {
@@ -156,8 +155,8 @@ class FakeConfig {
     return result;
   }
 
-  async getAllWorkspaceMetadata(): Promise<FrontendWorkspaceMetadata[]> {
-    return [...this.metadataById.values()];
+  getAllWorkspaceMetadata(): Promise<FrontendWorkspaceMetadata[]> {
+    return Promise.resolve([...this.metadataById.values()]);
   }
 }
 
@@ -168,13 +167,13 @@ class FakePartialService {
     this.partialByWorkspaceId.set(workspaceId, partial);
   }
 
-  async readPartial(workspaceId: string): Promise<MuxMessage | null> {
-    return this.partialByWorkspaceId.get(workspaceId) ?? null;
+  readPartial(workspaceId: string): Promise<MuxMessage | null> {
+    return Promise.resolve(this.partialByWorkspaceId.get(workspaceId) ?? null);
   }
 
-  async writePartial(workspaceId: string, msg: MuxMessage): Promise<Result<void, string>> {
+  writePartial(workspaceId: string, msg: MuxMessage): Promise<Result<void, string>> {
     this.partialByWorkspaceId.set(workspaceId, msg);
-    return Ok(undefined);
+    return Promise.resolve(Ok(undefined));
   }
 }
 
@@ -185,20 +184,20 @@ class FakeHistoryService {
     this.historyByWorkspaceId.set(workspaceId, history);
   }
 
-  async getHistory(workspaceId: string): Promise<Result<MuxMessage[], string>> {
-    return Ok(this.historyByWorkspaceId.get(workspaceId) ?? []);
+  getHistory(workspaceId: string): Promise<Result<MuxMessage[], string>> {
+    return Promise.resolve(Ok(this.historyByWorkspaceId.get(workspaceId) ?? []));
   }
 
-  async updateHistory(workspaceId: string, msg: MuxMessage): Promise<Result<void, string>> {
+  updateHistory(workspaceId: string, msg: MuxMessage): Promise<Result<void, string>> {
     const existing = this.historyByWorkspaceId.get(workspaceId) ?? [];
     const idx = existing.findIndex((m) => m.id === msg.id);
     if (idx === -1) {
-      return Err(`Message ${msg.id} not found`);
+      return Promise.resolve(Err(`Message ${msg.id} not found`));
     }
     const updated = [...existing];
     updated[idx] = msg;
     this.historyByWorkspaceId.set(workspaceId, updated);
-    return Ok(undefined);
+    return Promise.resolve(Ok(undefined));
   }
 }
 
@@ -206,8 +205,10 @@ class FakeWorkspaceService {
   private nextWorkspaceId = 1;
   readonly createCalls: CreateCall[] = [];
   readonly sendMessageCalls: SendMessageCall[] = [];
-  readonly resumeStreamCalls: Array<{ workspaceId: string; options: SendMessageOptions | undefined }> =
-    [];
+  readonly resumeStreamCalls: Array<{
+    workspaceId: string;
+    options: SendMessageOptions | undefined;
+  }> = [];
   readonly removedWorkspaceIds: string[] = [];
   readonly appendedMessages: Array<{ workspaceId: string; message: MuxMessage }> = [];
 
@@ -218,7 +219,7 @@ class FakeWorkspaceService {
     private readonly aiService: FakeAIService
   ) {}
 
-  async create(
+  create(
     projectPath: string,
     branchName: string,
     trunkBranch: string | undefined,
@@ -240,38 +241,38 @@ class FakeWorkspaceService {
     this.config.addWorkspace(metadata, metadata.namedWorkspacePath);
     this.aiService.setWorkspaceMetadata(metadata);
 
-    return Ok({ metadata });
+    return Promise.resolve(Ok({ metadata }));
   }
 
-  async sendMessage(
+  sendMessage(
     workspaceId: string,
     message: string,
     options: SendMessageOptions | undefined = undefined
   ): Promise<Result<void, SendMessageError>> {
     this.sendMessageCalls.push({ workspaceId, message, options });
-    return this.sendMessageResult;
+    return Promise.resolve(this.sendMessageResult);
   }
 
-  async resumeStream(
+  resumeStream(
     workspaceId: string,
     options: SendMessageOptions | undefined = undefined
   ): Promise<Result<void, SendMessageError>> {
     this.resumeStreamCalls.push({ workspaceId, options });
-    return Ok(undefined);
+    return Promise.resolve(Ok(undefined));
   }
 
-  async remove(workspaceId: string): Promise<Result<void, string>> {
+  remove(workspaceId: string): Promise<Result<void, string>> {
     this.removedWorkspaceIds.push(workspaceId);
     this.config.removeWorkspace(workspaceId);
-    return Ok(undefined);
+    return Promise.resolve(Ok(undefined));
   }
 
-  async appendToHistoryAndEmit(
+  appendToHistoryAndEmit(
     workspaceId: string,
     muxMessage: MuxMessage
   ): Promise<Result<void, string>> {
     this.appendedMessages.push({ workspaceId, message: muxMessage });
-    return Ok(undefined);
+    return Promise.resolve(Ok(undefined));
   }
 }
 
@@ -346,7 +347,7 @@ describe("TaskService", () => {
     globalThis.setTimeout = realSetTimeout;
   });
 
-  it("throws if parent workspace not found", async () => {
+  it("throws if parent workspace not found", () => {
     const config = new FakeConfig();
     const aiService = new FakeAIService();
     const workspaceService = new FakeWorkspaceService(config, aiService);
@@ -361,7 +362,7 @@ describe("TaskService", () => {
       aiService as unknown as AIService
     );
 
-    await expect(
+    return expect(
       taskService.createTask({
         parentWorkspaceId: "missing",
         agentType: "research",
@@ -371,7 +372,7 @@ describe("TaskService", () => {
     ).rejects.toThrow("Parent workspace missing not found");
   });
 
-  it("enforces maxTaskNestingDepth", async () => {
+  it("enforces maxTaskNestingDepth", () => {
     const config = new FakeConfig();
     config.setTaskSettings({ maxTaskNestingDepth: 1 });
 
@@ -395,7 +396,7 @@ describe("TaskService", () => {
       aiService as unknown as AIService
     );
 
-    await expect(
+    return expect(
       taskService.createTask({
         parentWorkspaceId: "child",
         agentType: "research",
@@ -565,7 +566,7 @@ describe("TaskService", () => {
     const taskPart = parentPartialAfter.parts.find(
       (p) => p.type === "dynamic-tool" && p.toolName === "task" && p.toolCallId === "call_1"
     );
-    assert(taskPart && taskPart.type === "dynamic-tool", "expected dynamic tool part");
+    assert(taskPart?.type === "dynamic-tool", "expected dynamic tool part");
     expect(taskPart.state).toBe("output-available");
 
     // Synthetic tool-call-end for the task tool should be emitted for UI update.
