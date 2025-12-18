@@ -1,6 +1,7 @@
 import type { IncomingHttpHeaders } from "http";
 import type { Config } from "@/node/config";
 import type { AIService } from "@/node/services/aiService";
+import type { TaskService } from "@/node/services/taskService";
 import type { ProjectService } from "@/node/services/projectService";
 import type { WorkspaceService } from "@/node/services/workspaceService";
 import type { ProviderService } from "@/node/services/providerService";
@@ -22,6 +23,7 @@ import type { SessionUsageService } from "@/node/services/sessionUsageService";
 
 export interface ORPCContext {
   config: Config;
+  taskService: TaskService;
   aiService: AIService;
   projectService: ProjectService;
   workspaceService: WorkspaceService;

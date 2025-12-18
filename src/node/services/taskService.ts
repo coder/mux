@@ -120,6 +120,16 @@ export class TaskService {
     await this.queueScheduling();
   }
 
+  /**
+   * Trigger a scheduler pass (e.g. after task settings change).
+   *
+   * Note: This does not block on any agent model calls; it only advances queued tasks into
+   * "running" and kicks off their resume streams.
+   */
+  async rescheduleQueuedTasks(): Promise<void> {
+    await this.queueScheduling();
+  }
+
   private formatErrorForReport(error: unknown): string {
     if (error instanceof Error) {
       return error.message;

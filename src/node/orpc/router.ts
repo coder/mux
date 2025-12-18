@@ -81,6 +81,7 @@ export const router = (authToken?: string) => {
         .output(schemas.tasks.setTaskSettings.output)
         .handler(async ({ context, input }) => {
           await context.config.setTaskSettings(input);
+          await context.taskService.rescheduleQueuedTasks();
         }),
     },
     server: {

@@ -57,6 +57,7 @@ async function createTestServer(authToken?: string): Promise<TestServerHandle> {
 
   // Build context
   const context: ORPCContext = {
+    taskService: services.taskService,
     config: services.config,
     aiService: services.aiService,
     projectService: services.projectService,

@@ -69,6 +69,7 @@ export async function createTestEnvironment(): Promise<TestEnvironment> {
   services.windowService.setMainWindow(mockWindow);
 
   const orpcContext: ORPCContext = {
+    taskService: services.taskService,
     config: services.config,
     aiService: services.aiService,
     projectService: services.projectService,
