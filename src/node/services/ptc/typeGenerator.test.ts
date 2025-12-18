@@ -1,7 +1,7 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, beforeEach } from "bun:test";
 import { z } from "zod";
 import type { Tool } from "ai";
-import { generateMuxTypes } from "./typeGenerator";
+import { generateMuxTypes, getCachedMuxTypes, clearTypeCache } from "./typeGenerator";
 
 /**
  * Create a mock tool with the given schema and optional execute function.
@@ -229,5 +229,55 @@ describe("generateMuxTypes", () => {
     expect(types).toContain("declare namespace mux {");
     expect(types).toContain("}");
     expect(types).toContain("declare var console");
+  });
+});
+
+describe("getCachedMuxTypes", () => {
+  beforeEach(() => {
+    clearTypeCache();
+  });
+
+  test("invalidates cache when tool schema changes", async () => {
+    const toolV1 = createMockTool(z.object({ name: z.string() }));
+    const toolV2 = createMockTool(z.object({ name: z.string(), age: z.number() }));
+
+    const types1 = await getCachedMuxTypes({ my_tool: toolV1 });
+    expect(types1).toContain("name: string");
+    expect(types1).not.toContain("age");
+
+    // Same tool name, different schema - should regenerate
+    const types2 = await getCachedMuxTypes({ my_tool: toolV2 });
+    expect(types2).toContain("name: string");
+    expect(types2).toContain("age: number");
+  });
+
+  test("invalidates cache when tool description changes", async () => {
+    const tool1: Tool = {
+      description: "Version 1",
+      inputSchema: z.object({ x: z.string() }),
+      execute: () => Promise.resolve({ success: true }),
+    } as unknown as Tool;
+
+    const tool2: Tool = {
+      description: "Version 2",
+      inputSchema: z.object({ x: z.string() }),
+      execute: () => Promise.resolve({ success: true }),
+    } as unknown as Tool;
+
+    const types1 = await getCachedMuxTypes({ my_tool: tool1 });
+    expect(types1).toContain("Version 1");
+
+    const types2 = await getCachedMuxTypes({ my_tool: tool2 });
+    expect(types2).toContain("Version 2");
+  });
+
+  test("returns cached types when tools are identical", async () => {
+    const tool = createMockTool(z.object({ value: z.string() }));
+
+    const types1 = await getCachedMuxTypes({ my_tool: tool });
+    const types2 = await getCachedMuxTypes({ my_tool: tool });
+
+    // Should be the exact same object reference (cached)
+    expect(types1).toBe(types2);
   });
 });

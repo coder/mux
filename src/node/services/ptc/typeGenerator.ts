@@ -56,18 +56,27 @@ export function clearTypeCache(): void {
 }
 
 /**
- * Hash tool names to detect when tool set changes.
+ * Hash tool definitions (names, schemas, descriptions) to detect when tools change.
+ * This ensures cache invalidation when schemas are updated, not just when tool names change.
  */
-function hashToolNames(tools: Record<string, Tool>): string {
-  const names = Object.keys(tools).sort().join(",");
-  return createHash("md5").update(names).digest("hex");
+function hashToolDefinitions(tools: Record<string, Tool>): string {
+  const sortedNames = Object.keys(tools).sort();
+  const toolData = sortedNames.map((name) => {
+    const tool = tools[name];
+    return {
+      name,
+      schema: getInputJsonSchema(tool),
+      description: tool.description ?? "",
+    };
+  });
+  return createHash("md5").update(JSON.stringify(toolData)).digest("hex");
 }
 
 /**
- * Get cached mux types or generate new ones if tool set changed.
+ * Get cached mux types or generate new ones if tool definitions changed.
  */
 export async function getCachedMuxTypes(tools: Record<string, Tool>): Promise<string> {
-  const hash = hashToolNames(tools);
+  const hash = hashToolDefinitions(tools);
   const cached = cache.fullTypes.get(hash);
   if (cached) {
     return cached;
