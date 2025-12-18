@@ -174,7 +174,7 @@ describe("partitionWorkspacesByAge", () => {
     const workspaces = [parent, child];
 
     const workspaceRecency = {
-      parent: now - 1 * ONE_DAY_MS, // recent
+      parent: now - 12 * 60 * 60 * 1000, // recent (< 1 day)
       child: now - 60 * ONE_DAY_MS, // old (but should inherit parent's)
     };
 
