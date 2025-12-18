@@ -2,38 +2,39 @@ import type { MuxFrontendMetadata, MuxMessage, MuxMetadata } from "@/common/type
 
 interface LegacyMuxMetadata extends MuxMetadata {
   cmuxMetadata?: MuxFrontendMetadata;
+  idleCompacted?: boolean;
 }
 
 /**
- * Normalize persisted messages that were stored before the mux rename.
+ * Normalize persisted messages from older builds.
  *
- * Older builds recorded frontend metadata under `metadata.cmuxMetadata`.
- * After the rename, the field lives under `metadata.muxMetadata`.
- *
- * This helper upgrades the legacy field on read so UI code keeps working.
+ * Migrations:
+ * - `cmuxMetadata` → `muxMetadata` (mux rename)
+ * - `{ compacted: true, idleCompacted: true }` → `{ compacted: "idle" }`
  */
 export function normalizeLegacyMuxMetadata(message: MuxMessage): MuxMessage {
   const metadata = message.metadata as LegacyMuxMetadata | undefined;
-  if (metadata?.cmuxMetadata === undefined) {
-    return message;
+  if (!metadata) return message;
+
+  let normalized: MuxMetadata = { ...metadata };
+  let changed = false;
+
+  // Migrate cmuxMetadata → muxMetadata
+  if (metadata.cmuxMetadata !== undefined) {
+    const { cmuxMetadata, ...rest } = normalized as LegacyMuxMetadata;
+    normalized = rest;
+    if (!metadata.muxMetadata) {
+      normalized.muxMetadata = cmuxMetadata;
+    }
+    changed = true;
   }
 
-  const { cmuxMetadata, ...rest } = metadata;
-  const normalizedMetadata: MuxMetadata = rest;
-
-  if (metadata.muxMetadata) {
-    // Message already has the new field; just drop the legacy copy.
-    return {
-      ...message,
-      metadata: normalizedMetadata,
-    };
+  // Migrate idleCompacted: true → compacted: "idle"
+  if (metadata.idleCompacted === true) {
+    const { idleCompacted, ...rest } = normalized as LegacyMuxMetadata;
+    normalized = { ...rest, compacted: "idle" };
+    changed = true;
   }
 
-  return {
-    ...message,
-    metadata: {
-      ...normalizedMetadata,
-      muxMetadata: cmuxMetadata,
-    },
-  };
+  return changed ? { ...message, metadata: normalized } : message;
 }
