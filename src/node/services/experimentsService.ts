@@ -4,7 +4,9 @@ import { getMuxHome } from "@/common/constants/paths";
 import type { ExperimentValue } from "@/common/orpc/types";
 import { log } from "@/node/services/log";
 import type { TelemetryService } from "@/node/services/telemetryService";
+
 import * as fs from "fs/promises";
+import writeFileAtomic from "write-file-atomic";
 import * as path from "path";
 
 export type { ExperimentValue };
@@ -298,7 +300,7 @@ export class ExperimentsService {
       };
 
       await fs.mkdir(this.muxHome, { recursive: true });
-      await fs.writeFile(this.cacheFilePath, JSON.stringify(payload, null, 2), "utf-8");
+      await writeFileAtomic(this.cacheFilePath, JSON.stringify(payload, null, 2), "utf-8");
     } catch {
       // Ignore cache persistence failures
     }
