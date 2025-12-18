@@ -234,6 +234,16 @@ export class TaskService extends EventEmitter {
 
     this.emit("task-created", { taskId, parentWorkspaceId });
 
+    // For foreground tasks, register the pending completion BEFORE starting the task.
+    // This ensures that if startTask fails synchronously, handleTaskFailure can find
+    // and reject the promise, preventing the parent stream from hanging indefinitely.
+    let completionPromise: Promise<CreateTaskResult> | undefined;
+    if (!runInBackground) {
+      completionPromise = new Promise<CreateTaskResult>((resolve, reject) => {
+        this.pendingCompletions.set(taskId, { resolve, reject });
+      });
+    }
+
     if (shouldQueue) {
       // Add to queue
       this.taskQueue.push({ taskId, options });
@@ -252,10 +262,8 @@ export class TaskService extends EventEmitter {
       };
     }
 
-    // Wait for completion
-    return new Promise<CreateTaskResult>((resolve, reject) => {
-      this.pendingCompletions.set(taskId, { resolve, reject });
-    });
+    // Wait for completion (promise was registered before startTask to handle early failures)
+    return completionPromise!;
   }
 
   /**

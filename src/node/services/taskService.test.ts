@@ -406,6 +406,56 @@ describe("TaskService", () => {
     ).rejects.toThrow(/Maximum task nesting depth/);
   });
 
+  it("rejects foreground task promise when startTask fails early", async () => {
+    // This test verifies that foreground tasks properly reject their promise
+    // when sendMessage fails, instead of leaving the parent stream hanging.
+    const config = new FakeConfig();
+    const parent = createWorkspaceMetadata("parent");
+    config.addWorkspace(parent);
+
+    const aiService = new FakeAIService();
+    aiService.setWorkspaceMetadata(parent);
+
+    const workspaceService = new FakeWorkspaceService(config, aiService);
+    const historyService = new FakeHistoryService();
+    const partialService = new FakePartialService();
+
+    // Make sendMessage fail
+    workspaceService.sendMessageResult = Err({
+      type: "unknown",
+      raw: "simulated sendMessage failure",
+    });
+
+    const taskService = new TaskService(
+      config as unknown as Config,
+      workspaceService as unknown as WorkspaceService,
+      historyService as unknown as HistoryService,
+      partialService as unknown as PartialService,
+      aiService as unknown as AIService
+    );
+
+    // Foreground task (runInBackground: false) should reject when startTask fails
+    let error: Error | null = null;
+    try {
+      await taskService.createTask({
+        parentWorkspaceId: "parent",
+        agentType: "research",
+        prompt: "will fail",
+        runInBackground: false,
+        parentToolCallId: "tool_call_1",
+      });
+    } catch (e) {
+      error = e as Error;
+    }
+
+    expect(error).not.toBeNull();
+    expect(error?.message).toBe("simulated sendMessage failure");
+
+    // Verify task state is set to failed
+    const taskState = config.getWorkspaceTaskState("task_1");
+    expect(taskState?.taskStatus).toBe("failed");
+  });
+
   it("queues tasks when maxParallelAgentTasks reached and inherits parent runtime", async () => {
     const config = new FakeConfig();
     config.setTaskSettings({ maxParallelAgentTasks: 1 });
