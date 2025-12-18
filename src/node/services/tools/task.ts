@@ -16,8 +16,6 @@ export interface TaskToolConfig {
   workspaceId: string;
   /** TaskService for creating and managing agent tasks */
   taskService: TaskService;
-  /** Tool call ID for this invocation (used for result injection) */
-  toolCallId?: string;
 }
 
 /**
@@ -27,7 +25,7 @@ export function createTaskTool(config: TaskToolConfig) {
   return tool({
     description: TOOL_DEFINITIONS.task.description,
     inputSchema: TOOL_DEFINITIONS.task.schema,
-    execute: async (args): Promise<TaskToolResult> => {
+    execute: async (args, { toolCallId }): Promise<TaskToolResult> => {
       const { subagent_type, prompt, description, run_in_background } = args;
 
       try {
@@ -36,7 +34,8 @@ export function createTaskTool(config: TaskToolConfig) {
           agentType: subagent_type,
           prompt,
           description,
-          parentToolCallId: config.toolCallId,
+          // Pass toolCallId for foreground tasks so result can be injected on restart
+          parentToolCallId: run_in_background ? undefined : toolCallId,
           runInBackground: run_in_background ?? false,
         });
 

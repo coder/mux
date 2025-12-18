@@ -13,8 +13,9 @@ import { EventEmitter } from "events";
 import type { Config } from "@/node/config";
 import type { WorkspaceService } from "@/node/services/workspaceService";
 import type { HistoryService } from "@/node/services/historyService";
+import type { PartialService } from "@/node/services/partialService";
 import type { AIService } from "@/node/services/aiService";
-import type { AgentType, TaskState } from "@/common/types/task";
+import type { AgentType, TaskState, TaskToolResult } from "@/common/types/task";
 import { getAgentPreset } from "@/common/constants/agentPresets";
 import { log } from "@/node/services/log";
 import {
@@ -22,6 +23,7 @@ import {
   type MuxMessage,
   type MuxFrontendMetadata,
 } from "@/common/types/message";
+import { isDynamicToolPart } from "@/common/types/toolParts";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { detectDefaultTrunkBranch, listLocalBranches } from "@/node/git";
 import * as crypto from "crypto";
@@ -85,6 +87,7 @@ export class TaskService extends EventEmitter {
     private readonly config: Config,
     private readonly workspaceService: WorkspaceService,
     private readonly historyService: HistoryService,
+    private readonly partialService: PartialService,
     private readonly aiService: AIService
   ) {
     super();
@@ -324,8 +327,15 @@ export class TaskService extends EventEmitter {
       });
     }
 
-    // Post report to parent workspace history
-    await this.postReportToParent(workspaceId, taskState, args);
+    // If this was a foreground task, inject the result into the parent's tool call
+    // This enables restart recovery - even if pendingCompletions was lost, the parent
+    // will have the tool output when it resumes
+    if (taskState.parentToolCallId) {
+      await this.injectToolOutputToParent(taskState, args);
+    } else {
+      // Background task - post report as a message to parent history
+      await this.postReportToParent(workspaceId, taskState, args);
+    }
 
     // Process queue (a slot freed up)
     await this.processQueue();
@@ -371,6 +381,95 @@ export class TaskService extends EventEmitter {
     } catch (error) {
       log.error(`Failed to post report to parent ${taskState.parentWorkspaceId}:`, error);
     }
+  }
+
+  /**
+   * Inject task tool output into the parent workspace's pending tool call.
+   * This updates the parent's partial.json or chat.jsonl so the tool result
+   * persists across restarts.
+   */
+  private async injectToolOutputToParent(
+    taskState: TaskState,
+    report: { reportMarkdown: string; title?: string }
+  ): Promise<void> {
+    const { parentWorkspaceId, parentToolCallId } = taskState;
+    if (!parentToolCallId) return;
+
+    const toolOutput: TaskToolResult = {
+      status: "completed",
+      taskId: taskState.parentWorkspaceId, // The task workspace ID
+      reportMarkdown: report.reportMarkdown,
+      reportTitle: report.title,
+    };
+
+    try {
+      // Try to update partial.json first (most likely location for in-flight tool call)
+      const partial = await this.partialService.readPartial(parentWorkspaceId);
+      if (partial) {
+        const updated = this.updateToolCallOutput(partial, parentToolCallId, toolOutput);
+        if (updated) {
+          await this.partialService.writePartial(parentWorkspaceId, updated);
+          log.debug(`Injected task result into parent partial`, {
+            parentWorkspaceId,
+            parentToolCallId,
+          });
+          return;
+        }
+      }
+
+      // Fall back to chat history
+      const historyResult = await this.historyService.getHistory(parentWorkspaceId);
+      if (historyResult.success) {
+        // Find the message with this tool call (search from newest to oldest)
+        for (let i = historyResult.data.length - 1; i >= 0; i--) {
+          const msg = historyResult.data[i];
+          const updated = this.updateToolCallOutput(msg, parentToolCallId, toolOutput);
+          if (updated) {
+            await this.historyService.updateHistory(parentWorkspaceId, updated);
+            log.debug(`Injected task result into parent history`, {
+              parentWorkspaceId,
+              parentToolCallId,
+            });
+            return;
+          }
+        }
+      }
+
+      // Couldn't find the tool call - fall back to posting as message
+      log.warn(`Could not find parent tool call ${parentToolCallId}, posting as message instead`);
+      await this.postReportToParent(parentWorkspaceId, taskState, report);
+    } catch (error) {
+      log.error(`Failed to inject tool output to parent ${parentWorkspaceId}:`, error);
+      // Fall back to posting as message
+      await this.postReportToParent(parentWorkspaceId, taskState, report);
+    }
+  }
+
+  /**
+   * Update a tool call's output in a message. Returns the updated message if found, null otherwise.
+   */
+  private updateToolCallOutput(
+    msg: MuxMessage,
+    toolCallId: string,
+    output: TaskToolResult
+  ): MuxMessage | null {
+    let found = false;
+    const updatedParts = msg.parts.map((part) => {
+      if (!isDynamicToolPart(part) || part.toolCallId !== toolCallId) {
+        return part;
+      }
+      if (part.toolName !== "task") {
+        return part;
+      }
+      found = true;
+      return {
+        ...part,
+        state: "output-available" as const,
+        output,
+      };
+    });
+
+    return found ? { ...msg, parts: updatedParts } : null;
   }
 
   /**

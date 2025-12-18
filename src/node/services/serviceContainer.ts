@@ -115,6 +115,7 @@ export class ServiceContainer {
       config,
       this.workspaceService,
       this.historyService,
+      this.partialService,
       this.aiService
     );
     // Wire TaskService to AIService for task tool access
