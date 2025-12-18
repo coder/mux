@@ -298,6 +298,26 @@ export async function buildSystemMessage(
   const runtimeType = metadata.runtimeConfig?.type ?? "local";
 
   // Build system message
+
+  // Internal system prompt strategy for agent/subagent tasks.
+  //
+  // We intentionally *do not* include user/project custom instructions here.
+  // The agent preset provides the entire behavioral prompt via `additionalSystemInstructions`.
+  if (mode === "agent") {
+    const agentInstructions = additionalSystemInstructions?.trim();
+    if (!agentInstructions) {
+      throw new Error("Agent mode requires additionalSystemInstructions");
+    }
+
+    let systemMessage = `${PRELUDE.trim()}\n\n${buildEnvironmentContext(workspacePath, runtimeType)}`;
+
+    if (mcpServers && Object.keys(mcpServers).length > 0) {
+      systemMessage += buildMCPContext(mcpServers);
+    }
+
+    systemMessage += `\n\n${agentInstructions}`;
+    return systemMessage;
+  }
   let systemMessage = `${PRELUDE.trim()}\n\n${buildEnvironmentContext(workspacePath, runtimeType)}`;
 
   // Add MCP context if servers are configured

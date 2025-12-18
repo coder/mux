@@ -18,6 +18,38 @@ import { getMuxHome } from "@/common/constants/paths";
 import { PlatformPaths } from "@/common/utils/paths";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 
+interface TaskSettingsConfig {
+  maxParallelAgentTasks: number;
+  maxTaskNestingDepth: number;
+}
+
+const DEFAULT_TASK_SETTINGS: TaskSettingsConfig = {
+  maxParallelAgentTasks: 3,
+  maxTaskNestingDepth: 3,
+};
+
+function normalizeTaskSettingsConfig(input: unknown): TaskSettingsConfig {
+  const raw = (input ?? {}) as Partial<Record<keyof TaskSettingsConfig, unknown>>;
+
+  const rawMaxParallel =
+    typeof raw.maxParallelAgentTasks === "number" ? raw.maxParallelAgentTasks : undefined;
+  const rawMaxDepth =
+    typeof raw.maxTaskNestingDepth === "number" ? raw.maxTaskNestingDepth : undefined;
+
+  // Clamp to safe ranges.
+  const maxParallelAgentTasks =
+    typeof rawMaxParallel === "number" && Number.isFinite(rawMaxParallel)
+      ? Math.min(10, Math.max(1, Math.floor(rawMaxParallel)))
+      : DEFAULT_TASK_SETTINGS.maxParallelAgentTasks;
+
+  const maxTaskNestingDepth =
+    typeof rawMaxDepth === "number" && Number.isFinite(rawMaxDepth)
+      ? Math.min(5, Math.max(1, Math.floor(rawMaxDepth)))
+      : DEFAULT_TASK_SETTINGS.maxTaskNestingDepth;
+
+  return { maxParallelAgentTasks, maxTaskNestingDepth };
+}
+
 // Re-export project types from dedicated types file (for preload usage)
 export type { Workspace, ProjectConfig, ProjectsConfig };
 
@@ -62,7 +94,8 @@ export class Config {
           projects?: unknown;
           serverSshHost?: string;
           viewedSplashScreens?: string[];
-          featureFlagOverrides?: Record<string, "default" | "on" | "off">;
+          taskSettings?: unknown;
+          featureFlagOverrides?: Record<string, FeatureFlagOverride>;
         };
 
         // Config is stored as array of [path, config] pairs
@@ -78,6 +111,7 @@ export class Config {
             projects: projectsMap,
             serverSshHost: parsed.serverSshHost,
             viewedSplashScreens: parsed.viewedSplashScreens,
+            taskSettings: normalizeTaskSettingsConfig(parsed.taskSettings),
             featureFlagOverrides: parsed.featureFlagOverrides,
           };
         }
@@ -89,6 +123,7 @@ export class Config {
     // Return default config
     return {
       projects: new Map(),
+      taskSettings: DEFAULT_TASK_SETTINGS,
     };
   }
 
@@ -102,9 +137,11 @@ export class Config {
         projects: Array<[string, ProjectConfig]>;
         serverSshHost?: string;
         viewedSplashScreens?: string[];
+        taskSettings?: TaskSettingsConfig;
         featureFlagOverrides?: ProjectsConfig["featureFlagOverrides"];
       } = {
         projects: Array.from(config.projects.entries()),
+        taskSettings: normalizeTaskSettingsConfig(config.taskSettings),
       };
       if (config.serverSshHost) {
         data.serverSshHost = config.serverSshHost;
@@ -130,6 +167,43 @@ export class Config {
     const config = this.loadConfigOrDefault();
     const newConfig = fn(config);
     await this.saveConfig(newConfig);
+  }
+
+  getTaskSettings(): TaskSettingsConfig {
+    const config = this.loadConfigOrDefault();
+    return normalizeTaskSettingsConfig(config.taskSettings);
+  }
+
+  async setTaskSettings(settings: TaskSettingsConfig): Promise<void> {
+    await this.editConfig((config) => ({
+      ...config,
+      taskSettings: normalizeTaskSettingsConfig(settings),
+    }));
+  }
+
+  getWorkspaceConfig(
+    workspaceId: string
+  ): { workspace: Workspace & { id: string }; projectPath: string } | null {
+    const config = this.loadConfigOrDefault();
+    for (const [projectPath, projectConfig] of config.projects.entries()) {
+      const workspace = projectConfig.workspaces.find((w) => w.id === workspaceId);
+      if (workspace) {
+        // `workspace.id` is guaranteed defined by the predicate above.
+        return { workspace: workspace as Workspace & { id: string }, projectPath };
+      }
+    }
+    return null;
+  }
+
+  listWorkspaceConfigs(): Array<{ workspace: Workspace; projectPath: string }> {
+    const config = this.loadConfigOrDefault();
+    const result: Array<{ workspace: Workspace; projectPath: string }> = [];
+    for (const [projectPath, projectConfig] of config.projects.entries()) {
+      for (const workspace of projectConfig.workspaces) {
+        result.push({ workspace, projectPath });
+      }
+    }
+    return result;
   }
 
   /**

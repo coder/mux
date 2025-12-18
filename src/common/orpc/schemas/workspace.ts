@@ -24,6 +24,18 @@ export const WorkspaceMetadataSchema = z.object({
     description:
       "ISO 8601 timestamp of when workspace was created (optional for backward compatibility)",
   }),
+  parentWorkspaceId: z.string().optional().meta({
+    description:
+      "If set, this workspace is a child (sub-workspace) of the given parent workspace id.",
+  }),
+  agentType: z.string().optional().meta({
+    description:
+      "If set, this workspace is an agent task workspace using the named preset (e.g. 'research').",
+  }),
+  taskStatus: z
+    .enum(["queued", "running", "awaiting_report", "reported"])
+    .optional()
+    .meta({ description: "Task lifecycle status for agent task workspaces." }),
   runtimeConfig: RuntimeConfigSchema.meta({
     description: "Runtime configuration for this workspace (always set, defaults to local on load)",
   }),

@@ -343,6 +343,21 @@ export class WorkspaceService extends EventEmitter {
     return session;
   }
 
+  public emitChatEvent(workspaceId: string, message: WorkspaceChatMessage): void {
+    assert(typeof workspaceId === "string", "workspaceId must be a string");
+    const trimmed = workspaceId.trim();
+    assert(trimmed.length > 0, "workspaceId must not be empty");
+
+    const session = this.sessions.get(trimmed);
+    if (session) {
+      session.emitChatEvent(message);
+      return;
+    }
+
+    // If no session exists (workspace not open), emit directly.
+    this.emit("chat", { workspaceId: trimmed, message });
+  }
+
   public disposeSession(workspaceId: string): void {
     const trimmed = workspaceId.trim();
     const session = this.sessions.get(trimmed);
@@ -742,6 +757,10 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  async emitWorkspaceMetadata(workspaceId: string): Promise<void> {
+    const metadata = await this.getInfo(workspaceId);
+    this.emit("metadata", { workspaceId, metadata });
+  }
   async getInfo(workspaceId: string): Promise<FrontendWorkspaceMetadata | null> {
     const allMetadata = await this.config.getAllWorkspaceMetadata();
     return allMetadata.find((m) => m.id === workspaceId) ?? null;

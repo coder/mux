@@ -48,13 +48,69 @@ export function buildSortedWorkspacesByProject(
     }
   }
 
-  // Sort each project's workspaces by recency (sort mutates in place)
-  for (const metadataList of result.values()) {
+  // Sort each project's workspaces by recency (sort mutates in place), then
+  // flatten parent/child workspaces so sub-workspaces render directly beneath their parent.
+  for (const [projectPath, metadataList] of result.entries()) {
     metadataList.sort((a, b) => {
       const aTimestamp = workspaceRecency[a.id] ?? 0;
       const bTimestamp = workspaceRecency[b.id] ?? 0;
       return bTimestamp - aTimestamp;
     });
+
+    const metadataById = new Map(metadataList.map((m) => [m.id, m] as const));
+    const childrenByParent = new Map<string, FrontendWorkspaceMetadata[]>();
+
+    for (const workspace of metadataList) {
+      const parentId = workspace.parentWorkspaceId;
+      if (!parentId || !metadataById.has(parentId)) {
+        continue;
+      }
+      const list = childrenByParent.get(parentId) ?? [];
+      list.push(workspace);
+      childrenByParent.set(parentId, list);
+    }
+
+    const roots = metadataList.filter((workspace) => {
+      const parentId = workspace.parentWorkspaceId;
+      return !parentId || !metadataById.has(parentId);
+    });
+
+    const flattened: FrontendWorkspaceMetadata[] = [];
+    const seen = new Set<string>();
+
+    const visit = (workspace: FrontendWorkspaceMetadata, depth = 0) => {
+      if (seen.has(workspace.id)) {
+        return;
+      }
+
+      // Safety valve against cycles.
+      if (depth > 100) {
+        return;
+      }
+
+      seen.add(workspace.id);
+      flattened.push(workspace);
+
+      const children = childrenByParent.get(workspace.id);
+      if (!children) {
+        return;
+      }
+
+      for (const child of children) {
+        visit(child, depth + 1);
+      }
+    };
+
+    for (const root of roots) {
+      visit(root);
+    }
+
+    // If we had cycles or missing parents, ensure we still render every workspace.
+    for (const workspace of metadataList) {
+      visit(workspace);
+    }
+
+    result.set(projectPath, flattened);
   }
 
   return result;
@@ -93,6 +149,34 @@ export function partitionWorkspacesByAge(
     return { recent: [], buckets: AGE_THRESHOLDS_DAYS.map(() => []) };
   }
 
+  const metadataById = new Map(workspaces.map((w) => [w.id, w] as const));
+  const effectiveRecencyCache = new Map<string, number>();
+
+  const getEffectiveRecencyTimestamp = (workspaceId: string, depth = 0): number => {
+    const cached = effectiveRecencyCache.get(workspaceId);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    // Safety valve against cycles.
+    if (depth > 100) {
+      const fallback = workspaceRecency[workspaceId] ?? 0;
+      effectiveRecencyCache.set(workspaceId, fallback);
+      return fallback;
+    }
+
+    const workspace = metadataById.get(workspaceId);
+    const parentId = workspace?.parentWorkspaceId;
+    if (parentId && metadataById.has(parentId)) {
+      const parentTs = getEffectiveRecencyTimestamp(parentId, depth + 1);
+      effectiveRecencyCache.set(workspaceId, parentTs);
+      return parentTs;
+    }
+
+    const ts = workspaceRecency[workspaceId] ?? 0;
+    effectiveRecencyCache.set(workspaceId, ts);
+    return ts;
+  };
   const now = Date.now();
   const thresholdMs = AGE_THRESHOLDS_DAYS.map((d) => d * DAY_MS);
 
@@ -100,7 +184,7 @@ export function partitionWorkspacesByAge(
   const buckets: FrontendWorkspaceMetadata[][] = AGE_THRESHOLDS_DAYS.map(() => []);
 
   for (const workspace of workspaces) {
-    const recencyTimestamp = workspaceRecency[workspace.id] ?? 0;
+    const recencyTimestamp = getEffectiveRecencyTimestamp(workspace.id);
     const age = now - recencyTimestamp;
 
     if (age < thresholdMs[0]) {

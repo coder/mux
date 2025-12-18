@@ -6,6 +6,7 @@ import { BranchListResultSchema, ImagePartSchema, MuxMessageSchema } from "./mes
 import { ProjectConfigSchema } from "./project";
 import { ResultSchema } from "./result";
 import { RuntimeConfigSchema } from "./runtime";
+import { TaskSettingsSchema } from "./taskSettings";
 import { SecretSchema } from "./secrets";
 import { SendMessageOptionsSchema, UpdateStatusSchema, WorkspaceChatMessageSchema } from "./stream";
 import {
@@ -580,6 +581,18 @@ export const splashScreens = {
     input: z.object({
       splashId: z.string(),
     }),
+    output: z.void(),
+  },
+};
+
+// Task settings
+export const tasks = {
+  getTaskSettings: {
+    input: z.void(),
+    output: TaskSettingsSchema,
+  },
+  setTaskSettings: {
+    input: TaskSettingsSchema,
     output: z.void(),
   },
 };

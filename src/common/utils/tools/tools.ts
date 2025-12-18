@@ -10,6 +10,8 @@ import { createFileEditInsertTool } from "@/node/services/tools/file_edit_insert
 import { createAskUserQuestionTool } from "@/node/services/tools/ask_user_question";
 import { createProposePlanTool } from "@/node/services/tools/propose_plan";
 import { createTodoWriteTool, createTodoReadTool } from "@/node/services/tools/todo";
+import { createTaskTool } from "@/node/services/tools/task";
+import { createAgentReportTool } from "@/node/services/tools/agent_report";
 import { createStatusSetTool } from "@/node/services/tools/status_set";
 import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
 import { log } from "@/node/services/log";
@@ -19,6 +21,7 @@ import type { Runtime } from "@/node/runtime/Runtime";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { UIMode } from "@/common/types/mode";
+import type { TaskService } from "@/node/services/taskService";
 import type { FileState } from "@/node/services/agentSession";
 
 /**
@@ -37,6 +40,10 @@ export interface ToolConfiguration {
   niceness?: number;
   /** Temporary directory for tool outputs in runtime's context (local or remote) */
   runtimeTempDir: string;
+  /** Model id for this stream (used by agent task tools) */
+  model?: string;
+  /** Agent task service (optional; may be absent in some contexts) */
+  taskService?: TaskService;
   /** Overflow policy for bash tool output (optional, not exposed to AI) */
   overflow_policy?: "truncate" | "tmpfile";
   /** Background process manager for bash tool (optional, AI-only) */
@@ -132,6 +139,8 @@ export async function getToolsForModel(
     propose_plan: createProposePlanTool(config),
     todo_write: createTodoWriteTool(config),
     todo_read: createTodoReadTool(config),
+    task: createTaskTool(config),
+    agent_report: createAgentReportTool(config),
     status_set: createStatusSetTool(config),
   };
 

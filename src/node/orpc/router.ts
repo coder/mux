@@ -69,6 +69,20 @@ export const router = (authToken?: string) => {
           });
         }),
     },
+    tasks: {
+      getTaskSettings: t
+        .input(schemas.tasks.getTaskSettings.input)
+        .output(schemas.tasks.getTaskSettings.output)
+        .handler(({ context }) => {
+          return context.config.getTaskSettings();
+        }),
+      setTaskSettings: t
+        .input(schemas.tasks.setTaskSettings.input)
+        .output(schemas.tasks.setTaskSettings.output)
+        .handler(async ({ context, input }) => {
+          await context.config.setTaskSettings(input);
+        }),
+    },
     server: {
       getLaunchProject: t
         .input(schemas.server.getLaunchProject.input)

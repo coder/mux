@@ -26,6 +26,7 @@ import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import { secretsToRecord } from "@/common/types/secrets";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import type { TaskService } from "@/node/services/taskService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { FileState, EditedFileAttachment } from "@/node/services/agentSession";
 import { log } from "./log";
@@ -311,6 +312,7 @@ export class AIService extends EventEmitter {
   private readonly initStateManager: InitStateManager;
   private readonly mockModeEnabled: boolean;
   private readonly mockScenarioPlayer?: MockScenarioPlayer;
+  private taskService?: TaskService;
   private readonly backgroundProcessManager?: BackgroundProcessManager;
 
   constructor(
@@ -345,6 +347,10 @@ export class AIService extends EventEmitter {
 
   setTelemetryService(service: TelemetryService): void {
     this.telemetryService = service;
+  }
+
+  setTaskService(taskService: TaskService): void {
+    this.taskService = taskService;
   }
   setMCPServerManager(manager: MCPServerManager): void {
     this.mcpServerManager = manager;
@@ -989,6 +995,8 @@ export class AIService extends EventEmitter {
           cwd: process.cwd(),
           runtime: earlyRuntime,
           runtimeTempDir: os.tmpdir(),
+          model: modelString,
+          taskService: this.taskService,
           secrets: {},
           mode: uiMode,
         },
@@ -1220,6 +1228,8 @@ export class AIService extends EventEmitter {
               thinkingLevel: thinkingLevel ?? "off",
             }
           ),
+          model: modelString,
+          taskService: this.taskService,
           runtimeTempDir,
           backgroundProcessManager: this.backgroundProcessManager,
           // Plan/exec mode configuration for plan file access.

@@ -21,6 +21,7 @@ export interface WorkspaceListItemProps {
   metadata: FrontendWorkspaceMetadata;
   projectPath: string;
   projectName: string;
+  indentLevel?: number;
   isSelected: boolean;
   isDeleting?: boolean;
   /** @deprecated No longer used since status dot was removed, kept for API compatibility */
@@ -36,6 +37,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   metadata,
   projectPath,
   projectName,
+  indentLevel = 0,
   isSelected,
   isDeleting,
   lastReadTimestamp: _lastReadTimestamp,
@@ -46,6 +48,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   // Destructure metadata for convenience
   const { id: workspaceId, namedWorkspacePath, status } = metadata;
   const isCreating = status === "creating";
+  const paddingLeft = 9 + indentLevel * 16;
   const isDisabled = isCreating || isDeleting;
   const gitStatus = useGitStatus(workspaceId);
 
@@ -106,13 +109,14 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
     <React.Fragment>
       <div
         className={cn(
-          "py-1.5 pl-[9px] pr-2 border-l-[3px] border-transparent transition-all duration-150 text-[13px] relative flex gap-2",
+          "py-1.5 pr-2 border-l-[3px] border-transparent transition-all duration-150 text-[13px] relative flex gap-2",
           isDisabled
             ? "cursor-default opacity-70"
             : "cursor-pointer hover:bg-hover [&:hover_button]:opacity-100",
           isSelected && !isDisabled && "bg-hover border-l-blue-400",
           isDeleting && "pointer-events-none"
         )}
+        style={{ paddingLeft }}
         onClick={() => {
           if (isDisabled) return;
           onSelectWorkspace({

@@ -224,6 +224,16 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   );
 
   // Wrapper to close sidebar on mobile after adding workspace
+
+  const workspaceMetadataById = (() => {
+    const map = new Map<string, FrontendWorkspaceMetadata>();
+    for (const list of sortedWorkspacesByProject.values()) {
+      for (const metadata of list) {
+        map.set(metadata.id, metadata);
+      }
+    }
+    return map;
+  })();
   const handleAddWorkspace = useCallback(
     (projectPath: string) => {
       onAddWorkspace(projectPath);
@@ -613,20 +623,39 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 workspaceRecency
                               );
 
-                              const renderWorkspace = (metadata: FrontendWorkspaceMetadata) => (
-                                <WorkspaceListItem
-                                  key={metadata.id}
-                                  metadata={metadata}
-                                  projectPath={projectPath}
-                                  projectName={projectName}
-                                  isSelected={selectedWorkspace?.workspaceId === metadata.id}
-                                  isDeleting={deletingWorkspaceIds.has(metadata.id)}
-                                  lastReadTimestamp={lastReadTimestamps[metadata.id] ?? 0}
-                                  onSelectWorkspace={handleSelectWorkspace}
-                                  onRemoveWorkspace={handleRemoveWorkspace}
-                                  onToggleUnread={_onToggleUnread}
-                                />
-                              );
+                              const renderWorkspace = (metadata: FrontendWorkspaceMetadata) => {
+                                let indentLevel = 0;
+                                let current: FrontendWorkspaceMetadata | undefined = metadata;
+                                const seen = new Set<string>([metadata.id]);
+
+                                while (current?.parentWorkspaceId) {
+                                  const parentMetadata = workspaceMetadataById.get(
+                                    current.parentWorkspaceId
+                                  );
+                                  if (!parentMetadata || seen.has(parentMetadata.id)) {
+                                    break;
+                                  }
+                                  indentLevel += 1;
+                                  seen.add(parentMetadata.id);
+                                  current = parentMetadata;
+                                }
+
+                                return (
+                                  <WorkspaceListItem
+                                    key={metadata.id}
+                                    metadata={metadata}
+                                    projectPath={projectPath}
+                                    projectName={projectName}
+                                    isSelected={selectedWorkspace?.workspaceId === metadata.id}
+                                    indentLevel={indentLevel}
+                                    isDeleting={deletingWorkspaceIds.has(metadata.id)}
+                                    lastReadTimestamp={lastReadTimestamps[metadata.id] ?? 0}
+                                    onSelectWorkspace={handleSelectWorkspace}
+                                    onRemoveWorkspace={handleRemoveWorkspace}
+                                    onToggleUnread={_onToggleUnread}
+                                  />
+                                );
+                              };
 
                               // Find the next tier with workspaces (skip empty tiers)
                               const findNextNonEmptyTier = (startIndex: number): number => {

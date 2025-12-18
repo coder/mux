@@ -163,6 +163,26 @@ describe("partitionWorkspacesByAge", () => {
     expect(buckets[2]).toHaveLength(1);
     expect(buckets[2][0].id).toBe("bucket2");
   });
+
+  it("uses the parent workspace's recency for child workspaces", () => {
+    const parent = createWorkspace("parent");
+    const child: FrontendWorkspaceMetadata = {
+      ...createWorkspace("child"),
+      parentWorkspaceId: "parent",
+    };
+
+    const workspaces = [parent, child];
+
+    const workspaceRecency = {
+      parent: now - 1 * ONE_DAY_MS, // recent
+      child: now - 60 * ONE_DAY_MS, // old (but should inherit parent's)
+    };
+
+    const { recent, buckets } = partitionWorkspacesByAge(workspaces, workspaceRecency);
+
+    expect(recent.map((w) => w.id)).toEqual(["parent", "child"]);
+    expect(getAllOld(buckets)).toHaveLength(0);
+  });
 });
 
 describe("formatDaysThreshold", () => {
@@ -272,8 +292,43 @@ describe("buildSortedWorkspacesByProject", () => {
     };
 
     const result = buildSortedWorkspacesByProject(projects, metadata, recency);
-
     expect(result.get("/project/a")?.map((w) => w.id)).toEqual(["ws2", "ws3", "ws1"]);
+  });
+
+  it("nests child workspaces directly under their parent", () => {
+    const now = Date.now();
+    const projects = new Map<string, ProjectConfig>([
+      [
+        "/project/a",
+        {
+          workspaces: [
+            { path: "/a/parent", id: "parent" },
+            { path: "/a/child", id: "child" },
+          ],
+        },
+      ],
+    ]);
+
+    const parent = createWorkspace("parent", "/project/a");
+    const child: FrontendWorkspaceMetadata = {
+      ...createWorkspace("child", "/project/a"),
+      parentWorkspaceId: "parent",
+    };
+
+    const metadata = new Map<string, FrontendWorkspaceMetadata>([
+      ["parent", parent],
+      ["child", child],
+    ]);
+
+    // Child is more recent, but should still render under its parent.
+    const recency = {
+      parent: now - 2 * 60 * 60 * 1000,
+      child: now - 1 * 60 * 60 * 1000,
+    };
+
+    const result = buildSortedWorkspacesByProject(projects, metadata, recency);
+
+    expect(result.get("/project/a")?.map((w) => w.id)).toEqual(["parent", "child"]);
   });
 
   it("should not duplicate workspaces that exist in both config and have creating status", () => {

@@ -111,6 +111,8 @@ export {
 } from "./schemas/stream";
 
 // API router schemas
+export { TaskSettingsSchema, type TaskSettings } from "./schemas/taskSettings";
+
 export {
   AWSCredentialStatusSchema,
   debug,
@@ -124,6 +126,7 @@ export {
   ProvidersConfigMapSchema,
   server,
   splashScreens,
+  tasks,
   experiments,
   ExperimentValueSchema,
   telemetry,

@@ -233,6 +233,32 @@ export const TOOL_DEFINITIONS = {
       "Each question must include 2–4 options; an 'Other' choice is provided automatically.",
     schema: AskUserQuestionToolArgsSchema,
   },
+  task: {
+    description:
+      "Run a subagent task in a new sub-workspace. " +
+      "The subagent MUST end by calling agent_report with its reportMarkdown. " +
+      "Unless runInBackground is true, this tool will wait for that report.",
+    schema: z.object({
+      agentType: z
+        .enum(["research", "explore"])
+        .describe("Which built-in agent preset to run (e.g. 'research', 'explore')."),
+      prompt: z.string().describe("The task instructions for the subagent."),
+      runInBackground: z
+        .boolean()
+        .optional()
+        .describe("If true, start the task and return immediately without waiting for the report."),
+    }),
+  },
+  agent_report: {
+    description:
+      "Send a final report back to the parent agent for this agent task workspace. " +
+      "Must be called exactly once at the end.",
+    schema: z.object({
+      reportMarkdown: z
+        .string()
+        .describe("A final, well-structured report to send back to the parent agent."),
+    }),
+  },
   propose_plan: {
     description:
       "Signal that your plan is complete and ready for user approval. " +
@@ -424,6 +450,8 @@ export function getAvailableTools(modelString: string, mode?: "plan" | "exec"): 
     "propose_plan",
     "todo_write",
     "todo_read",
+    "task",
+    "agent_report",
     "status_set",
     "web_fetch",
   ];

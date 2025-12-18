@@ -1308,16 +1308,31 @@ export class SSHRuntime implements Runtime {
     }
   }
 
-  forkWorkspace(_params: WorkspaceForkParams): Promise<WorkspaceForkResult> {
-    // SSH forking is not yet implemented due to unresolved complexities:
-    // - Users expect the new workspace's filesystem state to match the remote workspace,
-    //   not the local project (which may be out of sync or on a different commit)
-    // - This requires: detecting the branch, copying remote state, handling uncommitted changes
-    // - For now, users should create a new workspace from the desired branch instead
-    return Promise.resolve({
-      success: false,
-      error: "Forking SSH workspaces is not yet implemented. Create a new workspace instead.",
+  async forkWorkspace(params: WorkspaceForkParams): Promise<WorkspaceForkResult> {
+    // SSH workspaces are branch-based: the workspace name is the branch name.
+    // We intentionally do not attempt to copy uncommitted changes.
+    const sourceBranch = params.sourceWorkspaceName;
+
+    const createResult = await this.createWorkspace({
+      projectPath: params.projectPath,
+      branchName: params.newWorkspaceName,
+      trunkBranch: sourceBranch,
+      directoryName: params.newWorkspaceName,
+      initLogger: params.initLogger,
     });
+
+    if (!createResult.success) {
+      return {
+        success: false,
+        error: createResult.error,
+      };
+    }
+
+    return {
+      success: true,
+      workspacePath: createResult.workspacePath,
+      sourceBranch,
+    };
   }
 
   /**
