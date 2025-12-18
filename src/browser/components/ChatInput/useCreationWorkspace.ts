@@ -214,10 +214,11 @@ export function useCreationWorkspace({
       try {
         const result = await api.projects.listBranches({ projectPath });
         if (!mounted) return;
-        setBranches(result.branches);
-        setRemoteBranches(result.remoteBranches);
-        setRemoteBranchGroups(result.remoteBranchGroups);
-        setRecommendedTrunk(result.recommendedTrunk);
+        // Defensive: tolerate older backends/mocks that may omit newer fields.
+        setBranches(result.branches ?? []);
+        setRemoteBranches(result.remoteBranches ?? []);
+        setRemoteBranchGroups(result.remoteBranchGroups ?? []);
+        setRecommendedTrunk(result.recommendedTrunk ?? null);
       } catch (err) {
         console.error("Failed to load branches:", err);
       } finally {
