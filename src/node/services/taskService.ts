@@ -427,10 +427,12 @@ export class TaskService {
       ? `### Subagent report (${preset.agentType})\n\n`
       : "### Subagent report\n\n";
 
+    const messageTimestamp = Date.now();
     const reportMessage = createMuxMessage(
       this.config.generateStableId(),
       "assistant",
-      `${reportHeader}${report.reportMarkdown}`
+      `${reportHeader}${report.reportMarkdown}`,
+      { timestamp: messageTimestamp }
     );
 
     const appendResult = await this.historyService.appendToHistory(
@@ -448,6 +450,7 @@ export class TaskService {
         ...reportMessage,
         type: "message",
       } satisfies WorkspaceChatMessage);
+      await this.workspaceService.bumpRecencyTimestamp(parentWorkspaceId, messageTimestamp);
     }
 
     // Mark reported after best-effort delivery to the parent.

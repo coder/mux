@@ -210,6 +210,19 @@ export class WorkspaceService extends EventEmitter {
     this.emit("activity", { workspaceId, activity: snapshot });
   }
 
+  /**
+   * Bump recency/activity for a workspace.
+   *
+   * Useful when the backend appends messages outside of the normal send/stream lifecycle
+   * (e.g. subagent reports written into a parent workspace).
+   */
+  public async bumpRecencyTimestamp(workspaceId: string, timestamp?: number): Promise<void> {
+    assert(typeof workspaceId === "string", "workspaceId must be a string");
+    const trimmed = workspaceId.trim();
+    assert(trimmed.length > 0, "workspaceId must not be empty");
+
+    await this.updateRecencyTimestamp(trimmed, timestamp);
+  }
   private async updateRecencyTimestamp(workspaceId: string, timestamp?: number): Promise<void> {
     try {
       const snapshot = await this.extensionMetadata.updateRecency(
