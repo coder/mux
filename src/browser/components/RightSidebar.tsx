@@ -226,8 +226,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
   // Collapse sidebar on small screens (context usage now shown in ChatInput)
   // Use isCollapsed prop instead of returning null to keep DOM present for CSS transitions
-  // Review tab is never collapsed (needs space for code review)
-  const isCollapsed = isHidden && selectedTab !== "review";
+  const isCollapsed = isHidden;
   const wide = selectedTab === "review" && !width;
   console.log("[RightSidebar] render:", {
     selectedTab,
