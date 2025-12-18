@@ -1152,6 +1152,16 @@ export class WorkspaceService extends EventEmitter {
         });
       }
 
+      // If this workspace has a pending `task` tool call in partial.json and isn't currently
+      // streaming, starting a new stream would drop the unfinished tool call from the prompt
+      // (ignoreIncompleteToolCalls=true) and can lead to duplicate task spawns.
+      if (!this.aiService.isStreaming(workspaceId) && (await this.hasPendingTaskToolCalls(workspaceId))) {
+        return Err({
+          type: "unknown",
+          raw: "Workspace is awaiting a subagent task. Please wait for it to complete; it will auto-resume when ready.",
+        });
+      }
+
       const session = this.getOrCreateSession(workspaceId);
 
       // Skip recency update for idle compaction - preserve original "last used" time
@@ -1267,6 +1277,17 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  private async hasPendingTaskToolCalls(workspaceId: string): Promise<boolean> {
+    const partial = await this.partialService.readPartial(workspaceId);
+    if (!partial) {
+      return false;
+    }
+
+    return partial.parts.some(
+      (part) => isDynamicToolPart(part) && part.toolName === "task" && part.state !== "output-available"
+    );
+  }
+
   async resumeStream(
     workspaceId: string,
     options: SendMessageOptions | undefined = { model: "claude-3-5-sonnet-latest" }
@@ -1278,6 +1299,13 @@ export class WorkspaceService extends EventEmitter {
         return Err({
           type: "unknown",
           raw: "Workspace is being renamed. Please wait and try again.",
+        });
+      }
+
+      if (await this.hasPendingTaskToolCalls(workspaceId)) {
+        return Err({
+          type: "unknown",
+          raw: "Workspace is awaiting a subagent task. Please wait for it to complete; it will auto-resume when ready.",
         });
       }
 
@@ -1736,6 +1764,32 @@ export class WorkspaceService extends EventEmitter {
       return {};
     }
   }
+
+  async appendToHistoryAndEmit(workspaceId: string, muxMessage: MuxMessage): Promise<Result<void, string>> {
+    try {
+      assert(workspaceId && workspaceId.trim().length > 0, "appendToHistoryAndEmit requires workspaceId");
+
+      const appendResult = await this.historyService.appendToHistory(workspaceId, muxMessage);
+      if (!appendResult.success) {
+        return Err(appendResult.error);
+      }
+
+      // Add type: "message" for discriminated union (MuxMessage doesn't have it)
+      const typedMessage = { ...muxMessage, type: "message" as const };
+      const session = this.sessions.get(workspaceId);
+      if (session) {
+        session.emitChatEvent(typedMessage);
+      } else {
+        this.emit("chat", { workspaceId, message: typedMessage });
+      }
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to append message: ${message}`);
+    }
+  }
+
   async getChatHistory(workspaceId: string): Promise<MuxMessage[]> {
     try {
       const history = await this.historyService.getHistory(workspaceId);

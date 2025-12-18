@@ -103,6 +103,17 @@ export function hasInterruptedStream(
     return false;
   }
 
+  // task is also a special case: an unfinished tool call represents an intentional
+  // "waiting for subagent task completion" state, not a stream interruption.
+  //
+  // Treating it as interrupted causes RetryBarrier + auto-resume to fire on app
+  // restart, which drops the unfinished tool call from the prompt and can lead
+  // to duplicate task spawns. TaskService injects the tool output and auto-resumes
+  // the parent once the subagent reports.
+  if (lastMessage.type === "tool" && lastMessage.toolName === "task" && lastMessage.status === "executing") {
+    return false;
+  }
+
   return (
     lastMessage.type === "stream-error" || // Stream errored out (show UI for ALL error types)
     lastMessage.type === "user" || // No response received yet (app restart during slow model)

@@ -49,6 +49,7 @@ import type { TelemetryService } from "@/node/services/telemetryService";
 import { getRuntimeTypeForTelemetry, roundToBase2 } from "@/common/telemetry/utils";
 import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpServerManager";
 import type { TaskService } from "@/node/services/taskService";
+import { getAgentPreset, getAgentToolPolicy } from "@/common/constants/agentPresets";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type {
@@ -1064,6 +1065,8 @@ export class AIService extends EventEmitter {
       // Construct plan mode instruction if in plan mode
       // This is done backend-side because we have access to the plan file path
       let effectiveAdditionalInstructions = additionalSystemInstructions;
+      let includeCustomInstructions = true;
+      let effectiveToolPolicy: ToolPolicy | undefined = toolPolicy;
       const planFilePath = getPlanFilePath(metadata.name, metadata.projectName);
 
       // Read plan file (handles legacy migration transparently)
@@ -1079,6 +1082,17 @@ export class AIService extends EventEmitter {
         effectiveAdditionalInstructions = additionalSystemInstructions
           ? `${planModeInstruction}\n\n${additionalSystemInstructions}`
           : planModeInstruction;
+      }
+
+      // Agent-task workspaces enforce preset tool policy + system prompt centrally.
+      // V1 uses "replace" semantics: ignore workspace/user custom instructions and use the preset prompt.
+      if (metadata.agentType) {
+        const preset = getAgentPreset(metadata.agentType);
+        effectiveToolPolicy = getAgentToolPolicy(metadata.agentType, toolPolicy);
+        includeCustomInstructions = false;
+        effectiveAdditionalInstructions = effectiveAdditionalInstructions
+          ? `${preset.systemPrompt}\n\n${effectiveAdditionalInstructions}`
+          : preset.systemPrompt;
       }
 
       // Read plan content for mode transition (plan → exec)
@@ -1160,7 +1174,8 @@ export class AIService extends EventEmitter {
         mode,
         effectiveAdditionalInstructions,
         modelString,
-        mcpServers
+        mcpServers,
+        { includeCustomInstructions }
       );
 
       // Count system message tokens for cost tracking
@@ -1246,7 +1261,7 @@ export class AIService extends EventEmitter {
       );
 
       // Apply tool policy to filter tools (if policy provided)
-      const tools = applyToolPolicy(allTools, toolPolicy);
+      const tools = applyToolPolicy(allTools, effectiveToolPolicy);
 
       const effectiveMcpStats: MCPWorkspaceStats =
         mcpStats ??
@@ -1296,7 +1311,7 @@ export class AIService extends EventEmitter {
         workspaceId,
         model: modelString,
         toolNames: Object.keys(tools),
-        hasToolPolicy: Boolean(toolPolicy),
+        hasToolPolicy: Boolean(effectiveToolPolicy && effectiveToolPolicy.length > 0),
       });
 
       // Create assistant message placeholder with historySequence from backend

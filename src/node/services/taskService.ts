@@ -25,8 +25,9 @@ import {
 } from "@/common/types/message";
 import { isDynamicToolPart } from "@/common/types/toolParts";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import { detectDefaultTrunkBranch, listLocalBranches } from "@/node/git";
+import { detectDefaultTrunkBranch, getCurrentBranch, listLocalBranches } from "@/node/git";
 import * as crypto from "crypto";
+import assert from "@/common/utils/assert";
 
 export interface CreateTaskOptions {
   parentWorkspaceId: string;
@@ -136,6 +137,14 @@ export class TaskService extends EventEmitter {
       throw new Error(`Parent workspace ${parentWorkspaceId} not found`);
     }
 
+    // Guardrail: disallow spawning new tasks from a workspace that already reported completion.
+    const parentTaskState = this.config.getWorkspaceTaskState(parentWorkspaceId);
+    if (parentTaskState?.taskStatus === "reported") {
+      throw new Error(
+        `Cannot spawn subagent task from workspace ${parentWorkspaceId} after agent_report was called`
+      );
+    }
+
     // Check nesting depth limit
     const settings = this.config.getTaskSettings();
     const parentDepth = this.config.getWorkspaceNestingDepth(parentWorkspaceId);
@@ -169,16 +178,22 @@ export class TaskService extends EventEmitter {
 
     // Detect trunk branch for worktree/SSH runtimes
     // Local runtime doesn't need a trunk branch
-    let trunkBranch = "";
-    const isLocalRuntime =
-      parentRuntime.type === "local" &&
-      !("srcBaseDir" in parentRuntime && parentRuntime.srcBaseDir);
+    let trunkBranch: string | undefined = undefined;
+    const isLocalRuntime = parentRuntime.type === "local";
     if (!isLocalRuntime) {
       try {
-        const branches = await listLocalBranches(parentInfo.projectPath);
-        trunkBranch = (await detectDefaultTrunkBranch(parentInfo.projectPath, branches)) ?? "main";
+        // Prefer forking from the parent's current branch for worktree runtimes.
+        // This keeps the child task aligned with the parent's working branch.
+        if (parentRuntime.type === "worktree") {
+          trunkBranch = (await getCurrentBranch(parentMetadata.namedWorkspacePath)) ?? undefined;
+        }
+
+        if (!trunkBranch) {
+          const branches = await listLocalBranches(parentInfo.projectPath);
+          trunkBranch = await detectDefaultTrunkBranch(parentInfo.projectPath, branches);
+        }
       } catch (error) {
-        log.warn(`Failed to detect trunk branch for agent task, using 'main':`, error);
+        log.warn(`Failed to detect base branch for agent task, using 'main':`, error);
         trunkBranch = "main";
       }
     }
@@ -247,8 +262,7 @@ export class TaskService extends EventEmitter {
    * Start a task that was previously created (either new or from queue).
    */
   private async startTask(taskId: string, options: CreateTaskOptions): Promise<void> {
-    const { agentType, prompt } = options;
-    const preset = getAgentPreset(agentType);
+    const { prompt } = options;
 
     // Update task state to running
     const currentState = this.config.getWorkspaceTaskState(taskId);
@@ -261,12 +275,9 @@ export class TaskService extends EventEmitter {
     }
 
     try {
-      // Send message with preset's tool policy and system prompt
       const result = await this.workspaceService.sendMessage(taskId, prompt, {
         model: "anthropic:claude-sonnet-4-20250514", // Default model for agents
         thinkingLevel: "medium",
-        toolPolicy: preset.toolPolicy,
-        additionalSystemInstructions: preset.systemPrompt,
         mode: "exec", // Agent tasks are always in exec mode
       });
 
@@ -296,16 +307,32 @@ export class TaskService extends EventEmitter {
       return;
     }
 
+    if (taskState.taskStatus === "reported") {
+      log.debug(`Ignoring duplicate agent_report for task ${workspaceId}`);
+      return;
+    }
+    if (taskState.taskStatus === "failed") {
+      log.warn(`Ignoring agent_report for failed task ${workspaceId}`);
+      return;
+    }
+
+    assert(
+      typeof args.reportMarkdown === "string" && args.reportMarkdown.trim().length > 0,
+      "agent_report reportMarkdown must be a non-empty string"
+    );
+
     log.debug(`Task ${workspaceId} reported`, { title: args.title });
 
     // Update task state
-    await this.config.setWorkspaceTaskState(workspaceId, {
+    const reportedState: TaskState = {
       ...taskState,
       taskStatus: "reported",
       reportedAt: new Date().toISOString(),
       reportMarkdown: args.reportMarkdown,
       reportTitle: args.title,
-    });
+    };
+
+    await this.config.setWorkspaceTaskState(workspaceId, reportedState);
 
     // Emit event for external listeners
     this.emit("task-completed", {
@@ -327,22 +354,35 @@ export class TaskService extends EventEmitter {
       });
     }
 
-    // If this was a foreground task, inject the result into the parent's tool call
-    // This enables restart recovery - even if pendingCompletions was lost, the parent
-    // will have the tool output when it resumes
-    if (taskState.parentToolCallId) {
-      await this.injectToolOutputToParent(workspaceId, taskState, args);
-    } else {
-      // Background task - post report as a message to parent history
-      await this.postReportToParent(workspaceId, taskState, args);
+    // Always append the report to the parent workspace history for user visibility.
+    await this.postReportToParent(workspaceId, reportedState, args);
+
+    // If this was a foreground task, also inject the tool output into the parent's pending tool call.
+    // This enables restart recovery: if pendingCompletions was lost, the parent will still have output
+    // persisted in partial.json or chat.jsonl.
+    if (reportedState.parentToolCallId) {
+      const toolOutput: TaskToolResult = {
+        status: "completed",
+        taskId: workspaceId,
+        reportMarkdown: args.reportMarkdown,
+        reportTitle: args.title,
+      };
+      const injected = await this.injectToolOutputToParent(
+        reportedState.parentWorkspaceId,
+        reportedState.parentToolCallId,
+        toolOutput
+      );
+      if (injected) {
+        await this.maybeResumeParentStream(reportedState.parentWorkspaceId);
+      }
     }
 
     // Process queue (a slot freed up)
     await this.processQueue();
 
-    // Schedule cleanup (delay slightly to ensure all events propagate)
+    // Schedule cleanup (delay slightly to ensure all events propagate).
     setTimeout(() => {
-      void this.cleanupTask(workspaceId);
+      void this.cleanupTaskSubtree(workspaceId);
     }, 1000);
   }
 
@@ -358,7 +398,7 @@ export class TaskService extends EventEmitter {
       const preset = getAgentPreset(taskState.agentType);
       const title = report.title ?? `${preset.name} Report`;
 
-      // Create a system message with the report content
+      // Append an assistant message to the parent history so the user can read the report.
       const reportMessage: MuxMessage = createMuxMessage(
         crypto.randomBytes(8).toString("hex"), // Generate unique ID
         "assistant",
@@ -374,8 +414,13 @@ export class TaskService extends EventEmitter {
         }
       );
 
-      // Append to parent history
-      await this.historyService.appendToHistory(taskState.parentWorkspaceId, reportMessage);
+      const appendResult = await this.workspaceService.appendToHistoryAndEmit(
+        taskState.parentWorkspaceId,
+        reportMessage
+      );
+      if (!appendResult.success) {
+        throw new Error(appendResult.error);
+      }
 
       log.debug(`Posted task report to parent ${taskState.parentWorkspaceId}`, { taskId, title });
     } catch (error) {
@@ -383,38 +428,70 @@ export class TaskService extends EventEmitter {
     }
   }
 
+  private async postFailureToParent(taskId: string, taskState: TaskState, error: string): Promise<void> {
+    try {
+      const preset = getAgentPreset(taskState.agentType);
+      const title = `${preset.name} Task Failed`;
+
+      const failureMessage: MuxMessage = createMuxMessage(
+        crypto.randomBytes(8).toString("hex"),
+        "assistant",
+        `## ❌ ${title}\n\n${error}`,
+        {
+          timestamp: Date.now(),
+          muxMetadata: {
+            type: "task-failed" as const,
+            taskId,
+            agentType: taskState.agentType,
+            error,
+          } as unknown as MuxFrontendMetadata,
+        }
+      );
+
+      const appendResult = await this.workspaceService.appendToHistoryAndEmit(
+        taskState.parentWorkspaceId,
+        failureMessage
+      );
+      if (!appendResult.success) {
+        throw new Error(appendResult.error);
+      }
+    } catch (postError) {
+      log.error(`Failed to post task failure to parent ${taskState.parentWorkspaceId}:`, postError);
+    }
+  }
+
   /**
    * Inject task tool output into the parent workspace's pending tool call.
-   * This updates the parent's partial.json or chat.jsonl so the tool result
-   * persists across restarts.
+   * Persists the output into partial.json or chat.jsonl and emits a synthetic
+   * tool-call-end event so the UI updates immediately after restart recovery.
    */
   private async injectToolOutputToParent(
-    taskId: string,
-    taskState: TaskState,
-    report: { reportMarkdown: string; title?: string }
-  ): Promise<void> {
-    const { parentWorkspaceId, parentToolCallId } = taskState;
-    if (!parentToolCallId) return;
-
-    const toolOutput: TaskToolResult = {
-      status: "completed",
-      taskId, // The child task workspace ID
-      reportMarkdown: report.reportMarkdown,
-      reportTitle: report.title,
-    };
-
+    parentWorkspaceId: string,
+    parentToolCallId: string,
+    toolOutput: TaskToolResult
+  ): Promise<boolean> {
     try {
       // Try to update partial.json first (most likely location for in-flight tool call)
       const partial = await this.partialService.readPartial(parentWorkspaceId);
       if (partial) {
-        const updated = this.updateToolCallOutput(partial, parentToolCallId, toolOutput);
-        if (updated) {
-          await this.partialService.writePartial(parentWorkspaceId, updated);
+        const finalized = this.tryFinalizeTaskToolCall(partial, parentToolCallId, toolOutput);
+        if (finalized) {
+          const writeResult = await this.partialService.writePartial(parentWorkspaceId, finalized.updated);
+          if (!writeResult.success) {
+            throw new Error(writeResult.error);
+          }
+          this.emitSyntheticToolCallEnd(
+            parentWorkspaceId,
+            finalized.updated.id,
+            parentToolCallId,
+            finalized.input,
+            toolOutput
+          );
           log.debug(`Injected task result into parent partial`, {
             parentWorkspaceId,
             parentToolCallId,
           });
-          return;
+          return true;
         }
       }
 
@@ -424,45 +501,74 @@ export class TaskService extends EventEmitter {
         // Find the message with this tool call (search from newest to oldest)
         for (let i = historyResult.data.length - 1; i >= 0; i--) {
           const msg = historyResult.data[i];
-          const updated = this.updateToolCallOutput(msg, parentToolCallId, toolOutput);
-          if (updated) {
-            await this.historyService.updateHistory(parentWorkspaceId, updated);
+          const finalized = this.tryFinalizeTaskToolCall(msg, parentToolCallId, toolOutput);
+          if (finalized) {
+            const updateResult = await this.historyService.updateHistory(
+              parentWorkspaceId,
+              finalized.updated
+            );
+            if (!updateResult.success) {
+              throw new Error(updateResult.error);
+            }
+            this.emitSyntheticToolCallEnd(
+              parentWorkspaceId,
+              finalized.updated.id,
+              parentToolCallId,
+              finalized.input,
+              toolOutput
+            );
             log.debug(`Injected task result into parent history`, {
               parentWorkspaceId,
               parentToolCallId,
             });
-            return;
+            return true;
           }
         }
       }
 
-      // Couldn't find the tool call - fall back to posting as message
-      log.warn(`Could not find parent tool call ${parentToolCallId}, posting as message instead`);
-      await this.postReportToParent(taskId, taskState, report);
+      log.warn(`Could not find parent task tool call ${parentToolCallId} to inject output`, {
+        parentWorkspaceId,
+      });
+      return false;
     } catch (error) {
       log.error(`Failed to inject tool output to parent ${parentWorkspaceId}:`, error);
-      // Fall back to posting as message
-      await this.postReportToParent(taskId, taskState, report);
+      return false;
     }
   }
 
   /**
-   * Update a tool call's output in a message. Returns the updated message if found, null otherwise.
+   * Update the output for a `task` tool call in a message.
+   * Returns null if tool call not found or invalid.
    */
-  private updateToolCallOutput(
+  private tryFinalizeTaskToolCall(
     msg: MuxMessage,
     toolCallId: string,
     output: TaskToolResult
-  ): MuxMessage | null {
-    let found = false;
+  ): { updated: MuxMessage; input: unknown } | null {
+    let foundToolCall = false;
+    let input: unknown = null;
+    let errorMessage: string | null = null;
+
     const updatedParts = msg.parts.map((part) => {
       if (!isDynamicToolPart(part) || part.toolCallId !== toolCallId) {
         return part;
       }
+
+      foundToolCall = true;
+
       if (part.toolName !== "task") {
+        errorMessage = `toolCallId=${toolCallId} is toolName=${part.toolName}, expected task`;
         return part;
       }
-      found = true;
+
+      // Capture tool input for synthetic tool-call-end event.
+      input = part.input;
+
+      // Idempotent: already has output.
+      if (part.state === "output-available") {
+        return part;
+      }
+
       return {
         ...part,
         state: "output-available" as const,
@@ -470,7 +576,34 @@ export class TaskService extends EventEmitter {
       };
     });
 
-    return found ? { ...msg, parts: updatedParts } : null;
+    if (errorMessage) {
+      log.warn(errorMessage);
+      return null;
+    }
+    if (!foundToolCall) {
+      return null;
+    }
+
+    return { updated: { ...msg, parts: updatedParts }, input };
+  }
+
+  private emitSyntheticToolCallEnd(
+    workspaceId: string,
+    messageId: string,
+    toolCallId: string,
+    args: unknown,
+    result: unknown
+  ): void {
+    this.aiService.emit("tool-call-end", {
+      type: "tool-call-end",
+      workspaceId,
+      messageId,
+      toolCallId,
+      toolName: "task",
+      args,
+      result,
+      timestamp: Date.now(),
+    });
   }
 
   /**
@@ -478,7 +611,11 @@ export class TaskService extends EventEmitter {
    */
   private async handleStreamEnd(workspaceId: string): Promise<void> {
     const taskState = this.config.getWorkspaceTaskState(workspaceId);
-    if (taskState?.taskStatus !== "running") {
+    if (!taskState) {
+      return;
+    }
+
+    if (taskState.taskStatus !== "running" && taskState.taskStatus !== "awaiting_report") {
       return;
     }
 
@@ -487,45 +624,112 @@ export class TaskService extends EventEmitter {
 
     // Re-check state
     const updatedState = this.config.getWorkspaceTaskState(workspaceId);
-    if (!updatedState || updatedState.taskStatus === "reported") {
+    if (!updatedState || updatedState.taskStatus === "reported" || updatedState.taskStatus === "failed") {
       return;
     }
 
-    // Agent didn't call agent_report - send reminder
-    log.warn(`Task ${workspaceId} stream ended without agent_report, sending reminder`);
+    if (updatedState.taskStatus === "running") {
+      // Agent didn't call agent_report - send reminder
+      log.warn(`Task ${workspaceId} stream ended without agent_report, sending reminder`);
 
-    await this.config.setWorkspaceTaskState(workspaceId, {
-      ...updatedState,
-      taskStatus: "awaiting_report",
-    });
+      await this.config.setWorkspaceTaskState(workspaceId, {
+        ...updatedState,
+        taskStatus: "awaiting_report",
+      });
 
-    // Send reminder message
-    try {
-      const result = await this.workspaceService.sendMessage(
-        workspaceId,
-        "Your task is complete but you haven't called agent_report yet. " +
-          "Please call agent_report now with your findings.",
-        {
-          model: "anthropic:claude-sonnet-4-20250514",
-          thinkingLevel: "low",
-          // Require only agent_report
-          toolPolicy: [{ regex_match: "agent_report", action: "require" }],
-          mode: "exec",
+      // Send reminder message
+      try {
+        const result = await this.workspaceService.sendMessage(
+          workspaceId,
+          "Your task is complete but you haven't called agent_report yet. " +
+            "Please call agent_report now with your findings.",
+          {
+            model: "anthropic:claude-sonnet-4-20250514",
+            thinkingLevel: "low",
+            // Require only agent_report
+            toolPolicy: [{ regex_match: "agent_report", action: "require" }],
+            mode: "exec",
+          }
+        );
+
+        if (!result.success) {
+          const errMsg =
+            result.error?.type === "unknown"
+              ? result.error.raw
+              : (result.error?.type ?? "Unknown error");
+          throw new Error(errMsg);
         }
-      );
-
-      if (!result.success) {
-        const errMsg =
-          result.error?.type === "unknown"
-            ? result.error.raw
-            : (result.error?.type ?? "Unknown error");
-        throw new Error(errMsg);
+      } catch (error) {
+        log.error(`Failed to send reminder to task ${workspaceId}, using fallback report:`, error);
+        const fallback = await this.synthesizeFallbackReportMarkdown(workspaceId);
+        await this.handleAgentReport(workspaceId, {
+          reportMarkdown: fallback,
+          title: "Fallback Report (agent_report missing)",
+        });
       }
-    } catch (error) {
-      log.error(`Failed to send reminder to task ${workspaceId}:`, error);
-      // Fall back to posting whatever we have
-      await this.handleTaskFailure(workspaceId, "Task did not call agent_report after reminder");
+
+      return;
     }
+
+    if (updatedState.taskStatus === "awaiting_report") {
+      // Reminder stream ended and agent_report still wasn't called. Fall back to best-effort report.
+      log.warn(`Task ${workspaceId} still missing agent_report after reminder, using fallback report`);
+      const fallback = await this.synthesizeFallbackReportMarkdown(workspaceId);
+      await this.handleAgentReport(workspaceId, {
+        reportMarkdown: fallback,
+        title: "Fallback Report (agent_report missing)",
+      });
+      return;
+    }
+  }
+
+  private async synthesizeFallbackReportMarkdown(workspaceId: string): Promise<string> {
+    try {
+      const lastAssistantText = await this.getLastAssistantTextFromWorkspace(workspaceId);
+      if (lastAssistantText.trim().length > 0) {
+        return (
+          "⚠️ `agent_report` was not called. Using the last assistant output from the task workspace as a fallback.\n\n" +
+          lastAssistantText
+        );
+      }
+      return "⚠️ `agent_report` was not called, and no assistant text was captured from the task workspace.";
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return `⚠️ \`agent_report\` was not called, and fallback extraction failed: ${message}`;
+    }
+  }
+
+  private async getLastAssistantTextFromWorkspace(workspaceId: string): Promise<string> {
+    const extractText = (msg: MuxMessage): string => {
+      return msg.parts
+        .filter((part): part is { type: "text"; text: string } => part.type === "text")
+        .map((part) => part.text)
+        .join("");
+    };
+
+    const partial = await this.partialService.readPartial(workspaceId);
+    if (partial && partial.role === "assistant") {
+      const text = extractText(partial).trim();
+      if (text.length > 0) {
+        return text;
+      }
+    }
+
+    const historyResult = await this.historyService.getHistory(workspaceId);
+    if (!historyResult.success) {
+      return "";
+    }
+
+    for (let i = historyResult.data.length - 1; i >= 0; i--) {
+      const msg = historyResult.data[i];
+      if (msg.role !== "assistant") continue;
+      const text = extractText(msg).trim();
+      if (text.length > 0) {
+        return text;
+      }
+    }
+
+    return "";
   }
 
   /**
@@ -535,10 +739,21 @@ export class TaskService extends EventEmitter {
     const taskState = this.config.getWorkspaceTaskState(taskId);
     if (!taskState) return;
 
-    await this.config.setWorkspaceTaskState(taskId, {
+    if (taskState.taskStatus === "failed") {
+      log.debug(`Ignoring duplicate failure for task ${taskId}`);
+      return;
+    }
+    if (taskState.taskStatus === "reported") {
+      log.warn(`Ignoring task failure after report for task ${taskId}`, { error });
+      return;
+    }
+
+    const failedState: TaskState = {
       ...taskState,
       taskStatus: "failed",
-    });
+    };
+
+    await this.config.setWorkspaceTaskState(taskId, failedState);
 
     this.emit("task-failed", {
       taskId,
@@ -553,12 +768,32 @@ export class TaskService extends EventEmitter {
       pending.reject(new Error(error));
     }
 
+    // Always append a failure message to the parent workspace history for user visibility.
+    await this.postFailureToParent(taskId, failedState, error);
+
+    // If this was a foreground task, inject a failed tool output so the parent stream can resume safely.
+    if (failedState.parentToolCallId) {
+      const toolOutput: TaskToolResult = {
+        status: "failed",
+        taskId,
+        error,
+      };
+      const injected = await this.injectToolOutputToParent(
+        failedState.parentWorkspaceId,
+        failedState.parentToolCallId,
+        toolOutput
+      );
+      if (injected) {
+        await this.maybeResumeParentStream(failedState.parentWorkspaceId);
+      }
+    }
+
     // Process queue
     await this.processQueue();
 
     // Cleanup
     setTimeout(() => {
-      void this.cleanupTask(taskId);
+      void this.cleanupTaskSubtree(taskId);
     }, 1000);
   }
 
@@ -588,12 +823,43 @@ export class TaskService extends EventEmitter {
   }
 
   /**
-   * Cleanup a completed/failed task workspace.
+   * Cleanup a completed/failed task workspace, but only once its subtree is gone.
+   * This prevents orphaned child tasks from disappearing in the UI.
    */
-  private async cleanupTask(taskId: string): Promise<void> {
+  private async cleanupTaskSubtree(taskId: string, seen = new Set<string>()): Promise<void> {
+    if (seen.has(taskId)) {
+      return;
+    }
+    seen.add(taskId);
+
     try {
+      const taskState = this.config.getWorkspaceTaskState(taskId);
+      if (!taskState) {
+        return;
+      }
+
+      if (taskState.taskStatus !== "reported" && taskState.taskStatus !== "failed") {
+        return;
+      }
+
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const hasChildren = allMetadata.some((m) => m.parentWorkspaceId === taskId);
+      if (hasChildren) {
+        log.debug(`Skipping cleanup for task ${taskId} - has child workspaces`);
+        return;
+      }
+
       log.debug(`Cleaning up task workspace ${taskId}`);
-      await this.workspaceService.remove(taskId);
+      const removeResult = await this.workspaceService.remove(taskId);
+      if (!removeResult.success) {
+        throw new Error(removeResult.error);
+      }
+
+      // If the parent is also a completed task workspace, it might now be eligible for cleanup.
+      const parentTaskState = this.config.getWorkspaceTaskState(taskState.parentWorkspaceId);
+      if (parentTaskState && (parentTaskState.taskStatus === "reported" || parentTaskState.taskStatus === "failed")) {
+        await this.cleanupTaskSubtree(taskState.parentWorkspaceId, seen);
+      }
     } catch (error) {
       log.error(`Failed to cleanup task workspace ${taskId}:`, error);
     }
@@ -624,15 +890,12 @@ export class TaskService extends EventEmitter {
       } else if (taskState.taskStatus === "running") {
         // Send continuation message for running tasks
         try {
-          const preset = getAgentPreset(taskState.agentType);
           const result = await this.workspaceService.sendMessage(
             workspaceId,
             "Mux was restarted. Please continue your task and call agent_report when done.",
             {
               model: "anthropic:claude-sonnet-4-20250514",
               thinkingLevel: "medium",
-              toolPolicy: preset.toolPolicy,
-              additionalSystemInstructions: preset.systemPrompt,
               mode: "exec",
             }
           );
@@ -670,6 +933,102 @@ export class TaskService extends EventEmitter {
 
     // Process queue after rehydration
     await this.processQueue();
+
+    // Best-effort cleanup of completed task workspaces left over from a previous run.
+    await this.cleanupCompletedTaskWorkspaces();
+  }
+
+  private async cleanupCompletedTaskWorkspaces(): Promise<void> {
+    try {
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const completedTaskIds = allMetadata
+        .filter(
+          (m) => m.taskState && (m.taskState.taskStatus === "reported" || m.taskState.taskStatus === "failed")
+        )
+        .map((m) => m.id);
+
+      for (const taskId of completedTaskIds) {
+        await this.cleanupTaskSubtree(taskId);
+      }
+    } catch (error) {
+      log.error("Failed to cleanup completed task workspaces on startup:", error);
+    }
+  }
+
+  private async maybeResumeParentStream(parentWorkspaceId: string): Promise<void> {
+    try {
+      if (this.aiService.isStreaming(parentWorkspaceId)) {
+        return;
+      }
+
+      const partial = await this.partialService.readPartial(parentWorkspaceId);
+      if (!partial) {
+        return;
+      }
+
+      const hasPendingTaskToolCalls = partial.parts.some(
+        (part) =>
+          isDynamicToolPart(part) && part.toolName === "task" && part.state !== "output-available"
+      );
+      if (hasPendingTaskToolCalls) {
+        return;
+      }
+
+      // Only resume once the parent has no remaining active descendant tasks.
+      if (await this.hasActiveDescendantTasks(parentWorkspaceId)) {
+        return;
+      }
+
+      // Prefer resuming with the model used for the interrupted assistant message.
+      const modelFromPartial = typeof partial.metadata?.model === "string" ? partial.metadata.model : "";
+
+      const metadataResult = await this.aiService.getWorkspaceMetadata(parentWorkspaceId);
+      const aiSettings = metadataResult.success ? metadataResult.data.aiSettings : undefined;
+      const fallbackModel = aiSettings?.model ?? "anthropic:claude-sonnet-4-20250514";
+      const model = modelFromPartial.trim().length > 0 ? modelFromPartial : fallbackModel;
+
+      const thinkingLevel = aiSettings?.thinkingLevel;
+      const mode = partial.metadata?.mode;
+      const normalizedMode = mode === "plan" || mode === "exec" ? mode : undefined;
+
+      const resumeResult = await this.workspaceService.resumeStream(parentWorkspaceId, {
+        model,
+        ...(thinkingLevel ? { thinkingLevel } : {}),
+        ...(normalizedMode ? { mode: normalizedMode } : {}),
+      });
+      if (!resumeResult.success) {
+        log.error(`Failed to auto-resume parent workspace ${parentWorkspaceId}:`, resumeResult.error);
+      }
+    } catch (error) {
+      log.error(`Failed to auto-resume parent workspace ${parentWorkspaceId}:`, error);
+    }
+  }
+
+  private async hasActiveDescendantTasks(parentWorkspaceId: string): Promise<boolean> {
+    const activeTasks = this.config.getActiveAgentTaskWorkspaces();
+    if (activeTasks.length === 0) {
+      return false;
+    }
+
+    const allMetadata = await this.config.getAllWorkspaceMetadata();
+    const parentMap = new Map<string, string | undefined>();
+    for (const meta of allMetadata) {
+      parentMap.set(meta.id, meta.parentWorkspaceId);
+    }
+
+    for (const { workspaceId } of activeTasks) {
+      let current: string | undefined = workspaceId;
+      while (current) {
+        const parent = parentMap.get(current);
+        if (!parent) break;
+        if (parent === parentWorkspaceId) {
+          return true;
+        }
+        current = parent;
+      }
+    }
+
+    return false;
   }
 
   /**

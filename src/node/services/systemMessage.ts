@@ -251,47 +251,54 @@ export async function buildSystemMessage(
   mode?: string,
   additionalSystemInstructions?: string,
   modelString?: string,
-  mcpServers?: MCPServerMap
+  mcpServers?: MCPServerMap,
+  options?: { includeCustomInstructions?: boolean }
 ): Promise<string> {
   if (!metadata) throw new Error("Invalid workspace metadata: metadata is required");
   if (!workspacePath) throw new Error("Invalid workspace path: workspacePath is required");
 
-  // Read instruction sets
-  const [globalInstructions, contextInstructions] = await readInstructionSources(
-    metadata,
-    runtime,
-    workspacePath
-  );
+  const includeCustomInstructions = options?.includeCustomInstructions ?? true;
 
-  // Combine: global + context (workspace takes precedence over project) after stripping scoped sections
-  const sanitizeScopedInstructions = (input?: string | null): string | undefined => {
-    if (!input) return undefined;
-    const stripped = stripScopedInstructionSections(input);
-    return stripped.trim().length > 0 ? stripped : undefined;
-  };
-
-  const customInstructionSources = [
-    sanitizeScopedInstructions(globalInstructions),
-    sanitizeScopedInstructions(contextInstructions),
-  ].filter((value): value is string => Boolean(value));
-  const customInstructions = customInstructionSources.join("\n\n");
-
-  // Extract mode-specific section (context first, then global fallback)
+  let customInstructions = "";
   let modeContent: string | null = null;
-  if (mode) {
-    modeContent =
-      (contextInstructions && extractModeSection(contextInstructions, mode)) ??
-      (globalInstructions && extractModeSection(globalInstructions, mode)) ??
-      null;
-  }
-
-  // Extract model-specific section based on active model identifier (context first)
   let modelContent: string | null = null;
-  if (modelString) {
-    modelContent =
-      (contextInstructions && extractModelSection(contextInstructions, modelString)) ??
-      (globalInstructions && extractModelSection(globalInstructions, modelString)) ??
-      null;
+
+  if (includeCustomInstructions) {
+    // Read instruction sets
+    const [globalInstructions, contextInstructions] = await readInstructionSources(
+      metadata,
+      runtime,
+      workspacePath
+    );
+
+    // Combine: global + context (workspace takes precedence over project) after stripping scoped sections
+    const sanitizeScopedInstructions = (input?: string | null): string | undefined => {
+      if (!input) return undefined;
+      const stripped = stripScopedInstructionSections(input);
+      return stripped.trim().length > 0 ? stripped : undefined;
+    };
+
+    const customInstructionSources = [
+      sanitizeScopedInstructions(globalInstructions),
+      sanitizeScopedInstructions(contextInstructions),
+    ].filter((value): value is string => Boolean(value));
+    customInstructions = customInstructionSources.join("\n\n");
+
+    // Extract mode-specific section (context first, then global fallback)
+    if (mode) {
+      modeContent =
+        (contextInstructions && extractModeSection(contextInstructions, mode)) ??
+        (globalInstructions && extractModeSection(globalInstructions, mode)) ??
+        null;
+    }
+
+    // Extract model-specific section based on active model identifier (context first)
+    if (modelString) {
+      modelContent =
+        (contextInstructions && extractModelSection(contextInstructions, modelString)) ??
+        (globalInstructions && extractModelSection(globalInstructions, modelString)) ??
+        null;
+    }
   }
 
   // Get runtime type from metadata (defaults to "local" for legacy workspaces without runtimeConfig)
