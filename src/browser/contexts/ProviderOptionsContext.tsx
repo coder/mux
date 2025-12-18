@@ -1,5 +1,9 @@
-import React, { createContext, useContext } from "react";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import React, { createContext, useContext, useLayoutEffect } from "react";
+import {
+  readPersistedState,
+  updatePersistedState,
+  usePersistedState,
+} from "@/browser/hooks/usePersistedState";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 
 interface ProviderOptionsContextType {
@@ -11,6 +15,10 @@ interface ProviderOptionsContextType {
 
 const ProviderOptionsContext = createContext<ProviderOptionsContextType | undefined>(undefined);
 
+const OPENAI_OPTIONS_KEY = "provider_options_openai";
+// One-time migration key: force disableAutoTruncation to true for existing users
+const OPENAI_TRUNCATION_MIGRATION_KEY = "provider_options_openai_truncation_migrated";
+
 export function ProviderOptionsProvider({ children }: { children: React.ReactNode }) {
   const [anthropicOptions, setAnthropicOptions] = usePersistedState<
     MuxProviderOptions["anthropic"]
@@ -19,11 +27,19 @@ export function ProviderOptionsProvider({ children }: { children: React.ReactNod
   });
 
   const [openaiOptions, setOpenAIOptions] = usePersistedState<MuxProviderOptions["openai"]>(
-    "provider_options_openai",
-    {
-      disableAutoTruncation: false,
-    }
+    OPENAI_OPTIONS_KEY,
+    { disableAutoTruncation: true }
   );
+
+  // One-time migration: force disableAutoTruncation to true for existing users
+  useLayoutEffect(() => {
+    const alreadyMigrated = readPersistedState<boolean>(OPENAI_TRUNCATION_MIGRATION_KEY, false);
+    if (alreadyMigrated) {
+      return;
+    }
+    updatePersistedState(OPENAI_OPTIONS_KEY, { disableAutoTruncation: true });
+    updatePersistedState(OPENAI_TRUNCATION_MIGRATION_KEY, true);
+  }, []);
 
   const [googleOptions, setGoogleOptions] = usePersistedState<MuxProviderOptions["google"]>(
     "provider_options_google",
