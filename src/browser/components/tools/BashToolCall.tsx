@@ -39,6 +39,12 @@ interface BashToolCallProps {
   onSendToBackground?: () => void;
 }
 
+const EMPTY_LIVE_OUTPUT = {
+  stdout: "",
+  stderr: "",
+  truncated: false,
+};
+
 export const BashToolCall: React.FC<BashToolCallProps> = ({
   workspaceId,
   toolCallId,
@@ -108,9 +114,14 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
     status === "completed" && result && "backgroundProcessId" in result ? "backgrounded" : status;
 
   const resultHasOutput = typeof (result as { output?: unknown } | undefined)?.output === "string";
-  const showLiveOutput = Boolean(
-    liveOutput && !isBackground && (status === "executing" || !resultHasOutput)
-  );
+
+  const hasLiveOutputSource = Boolean(workspaceId && toolCallId);
+  const showLiveOutput =
+    !isBackground &&
+    hasLiveOutputSource &&
+    (status === "executing" || (Boolean(liveOutput) && !resultHasOutput));
+
+  const liveOutputView = liveOutput ?? EMPTY_LIVE_OUTPUT;
   const liveLabelSuffix = status === "executing" ? " (live)" : " (tail)";
 
   return (
@@ -176,9 +187,9 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
 
       {expanded && (
         <ToolDetails>
-          {showLiveOutput && liveOutput && (
+          {showLiveOutput && (
             <>
-              {liveOutput.truncated && (
+              {liveOutputView.truncated && (
                 <div className="text-muted px-2 text-[10px] italic">
                   Live output truncated (showing last ~1MB)
                 </div>
@@ -191,10 +202,10 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
                   onScroll={(e) => updatePinned(e.currentTarget, stdoutPinnedRef)}
                   className={cn(
                     "px-2 py-1.5",
-                    liveOutput.stdout.length === 0 && "text-muted italic"
+                    liveOutputView.stdout.length === 0 && "text-muted italic"
                   )}
                 >
-                  {liveOutput.stdout.length > 0 ? liveOutput.stdout : "No output yet"}
+                  {liveOutputView.stdout.length > 0 ? liveOutputView.stdout : "No output yet"}
                 </DetailContent>
               </DetailSection>
 
@@ -205,10 +216,10 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
                   onScroll={(e) => updatePinned(e.currentTarget, stderrPinnedRef)}
                   className={cn(
                     "px-2 py-1.5",
-                    liveOutput.stderr.length === 0 && "text-muted italic"
+                    liveOutputView.stderr.length === 0 && "text-muted italic"
                   )}
                 >
-                  {liveOutput.stderr.length > 0 ? liveOutput.stderr : "No output yet"}
+                  {liveOutputView.stderr.length > 0 ? liveOutputView.stderr : "No output yet"}
                 </DetailContent>
               </DetailSection>
             </>
@@ -248,7 +259,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
             </>
           )}
 
-          {status === "executing" && !result && (
+          {status === "executing" && !result && !showLiveOutput && (
             <DetailSection>
               <DetailContent className="px-2 py-1.5">
                 Waiting for result
