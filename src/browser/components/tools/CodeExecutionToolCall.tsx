@@ -47,7 +47,7 @@ export const CodeExecutionToolCall: React.FC<CodeExecutionToolCallProps> = ({
   const isComplete = status === "completed" || status === "failed";
 
   return (
-    <fieldset className="flex flex-col gap-3 rounded-lg border border-dashed border-white/20 px-3 pt-2 pb-3">
+    <fieldset className="border-foreground/20 flex flex-col gap-3 rounded-lg border border-dashed px-3 pt-2 pb-3">
       {/* Legend title with status - sits on the border */}
       <legend className="flex items-center gap-2 px-2">
         <span className="text-foreground text-sm font-medium">Code Execution</span>
@@ -73,7 +73,7 @@ export const CodeExecutionToolCall: React.FC<CodeExecutionToolCallProps> = ({
           <span>Show code</span>
         </button>
         {codeExpanded && (
-          <div className="mt-2 rounded border border-white/10 bg-black/20 p-2">
+          <div className="border-foreground/10 bg-code-bg mt-2 rounded border p-2">
             <HighlightedCode language="javascript" code={args.code} />
           </div>
         )}
@@ -99,7 +99,7 @@ export const CodeExecutionToolCall: React.FC<CodeExecutionToolCallProps> = ({
           {consoleOutput.length > 0 && <span className="text-muted">({consoleOutput.length})</span>}
         </button>
         {consoleExpanded && (
-          <div className="mt-2 rounded border border-white/10 bg-black/20 p-2">
+          <div className="border-foreground/10 bg-code-bg mt-2 rounded border p-2">
             {consoleOutput.length > 0 ? (
               <ConsoleOutputDisplay output={consoleOutput} />
             ) : (
