@@ -1,6 +1,8 @@
 export interface LiveBashOutputView {
   stdout: string;
   stderr: string;
+  /** Combined output in emission order (stdout/stderr interleaved). */
+  combined: string;
   truncated: boolean;
 }
 
@@ -21,6 +23,11 @@ export interface LiveBashOutputInternal extends LiveBashOutputView {
   totalBytes: number;
 }
 
+function normalizeNewlines(text: string): string {
+  // Many CLIs print "progress" output using carriage returns so they can update a single line.
+  // In our UI, that reads better as actual line breaks.
+  return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
 function getUtf8ByteLength(text: string): number {
   return new TextEncoder().encode(text).length;
 }
@@ -39,17 +46,20 @@ export function appendLiveBashOutputChunk(
     ({
       stdout: "",
       stderr: "",
+      combined: "",
       truncated: false,
       segments: [],
       totalBytes: 0,
     } satisfies LiveBashOutputInternal);
 
-  if (chunk.text.length === 0) return base;
+  const normalizedText = normalizeNewlines(chunk.text);
+  if (normalizedText.length === 0) return base;
 
   // Clone for purity (tests + avoids hidden mutation assumptions).
   const next: LiveBashOutputInternal = {
     stdout: base.stdout,
     stderr: base.stderr,
+    combined: base.combined,
     truncated: base.truncated,
     segments: base.segments.slice(),
     totalBytes: base.totalBytes,
@@ -57,12 +67,13 @@ export function appendLiveBashOutputChunk(
 
   const segment: LiveBashOutputSegment = {
     isError: chunk.isError,
-    text: chunk.text,
-    bytes: getUtf8ByteLength(chunk.text),
+    text: normalizedText,
+    bytes: getUtf8ByteLength(normalizedText),
   };
 
   next.segments.push(segment);
   next.totalBytes += segment.bytes;
+  next.combined += segment.text;
   if (segment.isError) {
     next.stderr += segment.text;
   } else {
@@ -75,6 +86,7 @@ export function appendLiveBashOutputChunk(
 
     next.totalBytes -= removed.bytes;
     next.truncated = true;
+    next.combined = next.combined.slice(removed.text.length);
 
     if (removed.isError) {
       next.stderr = next.stderr.slice(removed.text.length);
@@ -91,5 +103,10 @@ export function appendLiveBashOutputChunk(
 }
 
 export function toLiveBashOutputView(state: LiveBashOutputInternal): LiveBashOutputView {
-  return { stdout: state.stdout, stderr: state.stderr, truncated: state.truncated };
+  return {
+    stdout: state.stdout,
+    stderr: state.stderr,
+    combined: state.combined,
+    truncated: state.truncated,
+  };
 }

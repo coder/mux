@@ -41,6 +41,7 @@ interface BashToolCallProps {
 const EMPTY_LIVE_OUTPUT = {
   stdout: "",
   stderr: "",
+  combined: "",
   truncated: false,
 };
 
@@ -68,7 +69,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   };
 
   const liveOutputView = liveOutput ?? EMPTY_LIVE_OUTPUT;
-  const combinedLiveOutput = liveOutputView.stdout + liveOutputView.stderr;
+  const combinedLiveOutput = liveOutputView.combined;
 
   useEffect(() => {
     const el = outputRef.current;
@@ -109,8 +110,6 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
 
   const showLiveOutput =
     !isBackground && (status === "executing" || (Boolean(liveOutput) && !resultHasOutput));
-
-  const liveLabelSuffix = status === "executing" ? " (live)" : " (tail)";
 
   return (
     <ToolContainer expanded={expanded}>
@@ -189,7 +188,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
               )}
 
               <DetailSection>
-                <DetailLabel>{`Output${liveLabelSuffix}`}</DetailLabel>
+                <DetailLabel>Output</DetailLabel>
                 <DetailContent
                   ref={outputRef}
                   onScroll={(e) => updatePinned(e.currentTarget)}
