@@ -679,6 +679,11 @@ export class WorkspaceStore {
 
   // Cache sidebar state objects to return stable references
   private sidebarStateCache = new Map<string, WorkspaceSidebarState>();
+  // Map from workspaceId -> the WorkspaceState reference used to compute sidebarStateCache.
+  // React's useSyncExternalStore may call getSnapshot() multiple times per render; this
+  // ensures getWorkspaceSidebarState() returns a referentially stable snapshot for a given
+  // MapStore version even when timingStats would otherwise change via Date.now().
+  private sidebarStateSourceState = new Map<string, WorkspaceState>();
 
   /**
    * Get sidebar state for a workspace (subset of full state).
@@ -687,6 +692,12 @@ export class WorkspaceStore {
    */
   getWorkspaceSidebarState(workspaceId: string): WorkspaceSidebarState {
     const fullState = this.getWorkspaceState(workspaceId);
+
+    const cached = this.sidebarStateCache.get(workspaceId);
+    if (cached && this.sidebarStateSourceState.get(workspaceId) === fullState) {
+      return cached;
+    }
+
     const aggregator = this.aggregators.get(workspaceId);
 
     // Get timing stats: prefer active stream, fall back to last completed
@@ -711,9 +722,7 @@ export class WorkspaceStore {
     // Get session-level aggregate stats
     const sessionStats = aggregator?.getSessionTimingStats() ?? null;
 
-    const cached = this.sidebarStateCache.get(workspaceId);
-
-    // Return cached if values match (timing stats checked by reference since they change frequently)
+    // Return cached if values match.
     if (
       cached &&
       cached.canInterrupt === fullState.canInterrupt &&
@@ -728,6 +737,9 @@ export class WorkspaceStore {
         (cached.sessionStats?.totalDurationMs === sessionStats?.totalDurationMs &&
           cached.sessionStats?.responseCount === sessionStats?.responseCount))
     ) {
+      // Even if we re-use the cached object, mark it as derived from the current
+      // WorkspaceState so repeated getSnapshot() reads during this render are stable.
+      this.sidebarStateSourceState.set(workspaceId, fullState);
       return cached;
     }
 
@@ -742,6 +754,7 @@ export class WorkspaceStore {
       sessionStats,
     };
     this.sidebarStateCache.set(workspaceId, newState);
+    this.sidebarStateSourceState.set(workspaceId, fullState);
     return newState;
   }
 
@@ -1143,6 +1156,7 @@ export class WorkspaceStore {
     this.recencyCache.delete(workspaceId);
     this.previousSidebarValues.delete(workspaceId);
     this.sidebarStateCache.delete(workspaceId);
+    this.sidebarStateSourceState.delete(workspaceId);
     this.workspaceCreatedAt.delete(workspaceId);
     this.workspaceStats.delete(workspaceId);
     this.statsStore.delete(workspaceId);

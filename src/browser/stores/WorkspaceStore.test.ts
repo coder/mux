@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach, mock, type Mock } from "bun:test";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { StreamStartEvent, ToolCallStartEvent } from "@/common/types/stream";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { WorkspaceStore } from "./WorkspaceStore";
@@ -368,6 +369,61 @@ describe("WorkspaceStore", () => {
       const state1 = store.getWorkspaceState("test-workspace");
       const state2 = store.getWorkspaceState("test-workspace");
       expect(state1).toBe(state2);
+    });
+
+    it("getWorkspaceSidebarState() returns same reference when WorkspaceState hasn't changed", () => {
+      const originalNow = Date.now;
+      let now = 1000;
+      Date.now = () => now;
+
+      try {
+        const workspaceId = "test-workspace";
+        createAndAddWorkspace(store, workspaceId);
+
+        const aggregator = store.getAggregator(workspaceId);
+        expect(aggregator).toBeDefined();
+        if (!aggregator) {
+          throw new Error("Expected aggregator to exist");
+        }
+
+        const streamStart: StreamStartEvent = {
+          type: "stream-start",
+          workspaceId,
+          messageId: "msg1",
+          model: "claude-opus-4",
+          historySequence: 1,
+          startTime: 500,
+          mode: "exec",
+        };
+        aggregator.handleStreamStart(streamStart);
+
+        const toolStart: ToolCallStartEvent = {
+          type: "tool-call-start",
+          workspaceId,
+          messageId: "msg1",
+          toolCallId: "tool1",
+          toolName: "test_tool",
+          args: {},
+          tokens: 0,
+          timestamp: 600,
+        };
+        aggregator.handleToolCallStart(toolStart);
+
+        // Simulate store update (MapStore version bump) after handling events.
+        store.bumpState(workspaceId);
+
+        now = 1300;
+        const sidebar1 = store.getWorkspaceSidebarState(workspaceId);
+
+        // Advance time without a store bump. Without snapshot caching, this would
+        // produce a new object due to Date.now()-derived timing stats.
+        now = 1350;
+        const sidebar2 = store.getWorkspaceSidebarState(workspaceId);
+
+        expect(sidebar2).toBe(sidebar1);
+      } finally {
+        Date.now = originalNow;
+      }
     });
 
     it("syncWorkspaces() does not emit when workspaces unchanged", () => {
