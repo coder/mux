@@ -27,18 +27,11 @@ import {
   TaskToolArgsSchema,
 } from "@/common/utils/tools/toolDefinitions";
 import { formatSendMessageError } from "@/node/services/utils/sendMessageError";
-import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 
 export type TaskKind = "agent";
 
 export type AgentTaskStatus = NonNullable<WorkspaceConfigEntry["taskStatus"]>;
-
-const NULL_INIT_LOGGER: InitLogger = {
-  logStep: () => undefined,
-  logStdout: () => undefined,
-  logStderr: () => undefined,
-  logComplete: () => undefined,
-};
 
 export interface TaskCreateArgs {
   parentWorkspaceId: string;
@@ -155,7 +148,6 @@ function getIsoNow(): string {
 
 function taskQueueDebug(message: string, details?: Record<string, unknown>): void {
   if (process.env.MUX_DEBUG_TASK_QUEUE !== "1") return;
-  // eslint-disable-next-line no-console
   console.log(`[task-queue] ${message}`, details ?? {});
 }
 
@@ -191,6 +183,41 @@ export class TaskService {
         log.error("TaskService.handleStreamEnd failed", { error });
       });
     });
+  }
+
+  private async emitWorkspaceMetadata(workspaceId: string): Promise<void> {
+    assert(workspaceId.length > 0, "emitWorkspaceMetadata: workspaceId must be non-empty");
+
+    const allMetadata = await this.config.getAllWorkspaceMetadata();
+    const metadata = allMetadata.find((m) => m.id === workspaceId) ?? null;
+    this.workspaceService.emit("metadata", { workspaceId, metadata });
+  }
+
+  private async editWorkspaceEntry(
+    workspaceId: string,
+    updater: (workspace: WorkspaceConfigEntry) => void,
+    options?: { allowMissing?: boolean }
+  ): Promise<boolean> {
+    assert(workspaceId.length > 0, "editWorkspaceEntry: workspaceId must be non-empty");
+
+    let found = false;
+    await this.config.editConfig((config) => {
+      for (const [_projectPath, project] of config.projects) {
+        const ws = project.workspaces.find((w) => w.id === workspaceId);
+        if (!ws) continue;
+        updater(ws);
+        found = true;
+        return config;
+      }
+
+      if (options?.allowMissing) {
+        return config;
+      }
+
+      throw new Error(`editWorkspaceEntry: workspace ${workspaceId} not found`);
+    });
+
+    return found;
   }
 
   async initialize(): Promise<void> {
@@ -413,9 +440,7 @@ export class TaskService {
       });
 
       // Emit metadata update so the UI sees the workspace immediately.
-      const allMetadata = await this.config.getAllWorkspaceMetadata();
-      const childMeta = allMetadata.find((m) => m.id === taskId) ?? null;
-      this.workspaceService.emit("metadata", { workspaceId: taskId, metadata: childMeta });
+      await this.emitWorkspaceMetadata(taskId);
 
       // NOTE: Do NOT persist the prompt into chat history until the task actually starts.
       // Otherwise the frontend treats "last message is user" as an interrupted stream and
@@ -480,28 +505,26 @@ export class TaskService {
         config.projects.set(parentMeta.projectPath, projectConfig);
       }
 
-        projectConfig.workspaces.push({
-          path: workspacePath,
-          id: taskId,
-          name: workspaceName,
+      projectConfig.workspaces.push({
+        path: workspacePath,
+        id: taskId,
+        name: workspaceName,
         title: args.description,
         createdAt,
         runtimeConfig: taskRuntimeConfig,
-          aiSettings: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
-          parentWorkspaceId,
-          agentType,
-          taskStatus: shouldQueue ? "queued" : "running",
-          taskTrunkBranch: trunkBranch,
-          taskModelString,
-          taskThinkingLevel: effectiveThinkingLevel,
-        });
+        aiSettings: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
+        parentWorkspaceId,
+        agentType,
+        taskStatus: "running",
+        taskTrunkBranch: trunkBranch,
+        taskModelString,
+        taskThinkingLevel: effectiveThinkingLevel,
+      });
       return config;
     });
 
     // Emit metadata update so the UI sees the workspace immediately.
-    const allMetadata = await this.config.getAllWorkspaceMetadata();
-    const childMeta = allMetadata.find((m) => m.id === taskId) ?? null;
-    this.workspaceService.emit("metadata", { workspaceId: taskId, metadata: childMeta });
+    await this.emitWorkspaceMetadata(taskId);
 
     // Kick init hook (best-effort, async).
     void runtime
@@ -1139,7 +1162,8 @@ export class TaskService {
 
       const workspaceName = task.name.trim();
       let workspacePath =
-        coerceNonEmptyString(task.path) ?? runtime.getWorkspacePath(task.projectPath, workspaceName);
+        coerceNonEmptyString(task.path) ??
+        runtime.getWorkspacePath(task.projectPath, workspaceName);
 
       let workspaceExists = false;
       try {
@@ -1150,7 +1174,9 @@ export class TaskService {
       }
 
       const inMemoryInit = this.initStateManager.getInitState(taskId);
-      const persistedInit = inMemoryInit ? null : await this.initStateManager.readInitStatus(taskId);
+      const persistedInit = inMemoryInit
+        ? null
+        : await this.initStateManager.readInitStatus(taskId);
 
       // Ensure the workspace exists before starting. Queued tasks should not create worktrees/directories
       // until they are actually dequeued.
@@ -1230,16 +1256,14 @@ export class TaskService {
         });
 
         // Persist any corrected path/trunkBranch for restart-safe init.
-        await this.config.editConfig((cfg) => {
-          for (const [_projectPath, project] of cfg.projects) {
-            const ws = project.workspaces.find((w) => w.id === taskId);
-            if (!ws) continue;
+        await this.editWorkspaceEntry(
+          taskId,
+          (ws) => {
             ws.path = workspacePath;
             ws.taskTrunkBranch = trunkBranch;
-            return cfg;
-          }
-          return cfg;
-        });
+          },
+          { allowMissing: true }
+        );
       }
 
       // If init has not yet run for this workspace, start it now (best-effort, async).
@@ -1304,7 +1328,7 @@ export class TaskService {
           log.error("Failed to start queued task", { taskId, error: resumeResult.error });
           taskQueueDebug("TaskService.maybeStartQueuedTasks resumeStream failed", {
             taskId,
-            error: String(resumeResult.error),
+            error: resumeResult.error,
           });
           continue;
         }
@@ -1319,23 +1343,14 @@ export class TaskService {
   private async setTaskStatus(workspaceId: string, status: AgentTaskStatus): Promise<void> {
     assert(workspaceId.length > 0, "setTaskStatus: workspaceId must be non-empty");
 
-    await this.config.editConfig((config) => {
-      for (const [_projectPath, project] of config.projects) {
-        const ws = project.workspaces.find((w) => w.id === workspaceId);
-        if (ws) {
-          ws.taskStatus = status;
-          if (status === "running") {
-            ws.taskPrompt = undefined;
-          }
-          return config;
-        }
+    await this.editWorkspaceEntry(workspaceId, (ws) => {
+      ws.taskStatus = status;
+      if (status === "running") {
+        ws.taskPrompt = undefined;
       }
-      throw new Error(`setTaskStatus: workspace ${workspaceId} not found`);
     });
 
-    const allMetadata = await this.config.getAllWorkspaceMetadata();
-    const metadata = allMetadata.find((m) => m.id === workspaceId) ?? null;
-    this.workspaceService.emit("metadata", { workspaceId, metadata });
+    await this.emitWorkspaceMetadata(workspaceId);
 
     if (status === "running") {
       const waiters = this.pendingStartWaitersByTaskId.get(workspaceId);
@@ -1445,26 +1460,17 @@ export class TaskService {
       "posting its last assistant output as a fallback.)*\n\n" +
       (lastText?.trim().length ? lastText : "(No assistant output found.)");
 
-    await this.config.editConfig((config) => {
-      for (const [_projectPath, project] of config.projects) {
-        const ws = project.workspaces.find((w) => w.id === childWorkspaceId);
-        if (ws) {
-          ws.taskStatus = "reported";
-          ws.reportedAt = getIsoNow();
-          return config;
-        }
-      }
-      return config;
-    });
-
     // Notify clients immediately even if we can't delete the workspace yet.
-    const updatedMetadata = (await this.config.getAllWorkspaceMetadata()).find(
-      (m) => m.id === childWorkspaceId
+    await this.editWorkspaceEntry(
+      childWorkspaceId,
+      (ws) => {
+        ws.taskStatus = "reported";
+        ws.reportedAt = getIsoNow();
+      },
+      { allowMissing: true }
     );
-    this.workspaceService.emit("metadata", {
-      workspaceId: childWorkspaceId,
-      metadata: updatedMetadata ?? null,
-    });
+
+    await this.emitWorkspaceMetadata(childWorkspaceId);
 
     await this.deliverReportToParent(parentWorkspaceId, entry, {
       reportMarkdown,
@@ -1560,26 +1566,17 @@ export class TaskService {
       return;
     }
 
-    await this.config.editConfig((config) => {
-      for (const [_projectPath, project] of config.projects) {
-        const ws = project.workspaces.find((w) => w.id === childWorkspaceId);
-        if (ws) {
-          ws.taskStatus = "reported";
-          ws.reportedAt = getIsoNow();
-          return config;
-        }
-      }
-      return config;
-    });
-
     // Notify clients immediately even if we can't delete the workspace yet.
-    const updatedMetadata = (await this.config.getAllWorkspaceMetadata()).find(
-      (m) => m.id === childWorkspaceId
+    await this.editWorkspaceEntry(
+      childWorkspaceId,
+      (ws) => {
+        ws.taskStatus = "reported";
+        ws.reportedAt = getIsoNow();
+      },
+      { allowMissing: true }
     );
-    this.workspaceService.emit("metadata", {
-      workspaceId: childWorkspaceId,
-      metadata: updatedMetadata ?? null,
-    });
+
+    await this.emitWorkspaceMetadata(childWorkspaceId);
 
     // `agent_report` is terminal. Stop the child stream immediately to prevent any further token
     // usage and to ensure parallelism accounting never "frees" a slot while the stream is still

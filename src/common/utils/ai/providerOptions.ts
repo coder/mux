@@ -19,7 +19,7 @@ import {
 } from "@/common/types/thinking";
 import { log } from "@/node/services/log";
 import type { MuxMessage } from "@/common/types/message";
-import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { normalizeGatewayModel } from "./models";
 
 /**

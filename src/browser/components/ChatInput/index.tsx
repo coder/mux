@@ -22,7 +22,7 @@ import { ModelSettings } from "../ModelSettings";
 import { useAPI } from "@/browser/contexts/API";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
-import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import {
   getModelKey,

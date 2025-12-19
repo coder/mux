@@ -3,7 +3,7 @@ import type { ThinkingLevel } from "@/common/types/thinking";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import { getThinkingPolicyForModel } from "@/browser/utils/thinking/policy";
+import { getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 
 // Uses CSS variable --color-thinking-mode for theme compatibility
 // Glow is applied via CSS using color-mix with the theme color

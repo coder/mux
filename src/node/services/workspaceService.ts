@@ -51,7 +51,7 @@ import { defaultModel, isValidModelFormat, normalizeGatewayModel } from "@/commo
 import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
 import type { WorkspaceAISettingsSchema } from "@/common/orpc/schemas";
-import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 
 import { DisposableTempDir } from "@/node/services/tempDir";
@@ -79,7 +79,6 @@ function isWorkspaceNameCollision(error: string | undefined): boolean {
 
 function taskQueueDebug(message: string, details?: Record<string, unknown>): void {
   if (process.env.MUX_DEBUG_TASK_QUEUE !== "1") return;
-  // eslint-disable-next-line no-console
   console.log(`[task-queue] ${message}`, details ?? {});
 }
 

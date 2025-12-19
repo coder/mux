@@ -10,7 +10,7 @@ import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
-import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { useProviderOptions } from "./useProviderOptions";
 import type { GatewayState } from "./useGatewayModels";
 import { useExperimentOverrideValue } from "./useExperiments";

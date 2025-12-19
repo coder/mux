@@ -40,7 +40,7 @@ import {
   getModelKey,
 } from "@/common/constants/storage";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
-import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import type { BranchListResult } from "@/common/orpc/types";
 import { useTelemetry } from "./hooks/useTelemetry";

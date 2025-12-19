@@ -4,7 +4,7 @@ import { matchesKeybind, KEYBINDS, isEditableElement } from "@/browser/utils/ui/
 import { getModelKey } from "@/common/constants/storage";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import type { ThinkingLevel } from "@/common/types/thinking";
-import { getThinkingPolicyForModel } from "@/browser/utils/thinking/policy";
+import { getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { isCompactingStream, cancelCompaction } from "@/browser/utils/compaction/handler";

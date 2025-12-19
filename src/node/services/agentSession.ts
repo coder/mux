@@ -24,7 +24,7 @@ import type { SendMessageError } from "@/common/types/errors";
 import { createUnknownSendMessageError } from "@/node/services/utils/sendMessageError";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
-import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import type { MuxFrontendMetadata, ContinueMessage } from "@/common/types/message";
 import { prepareUserMessageForSend } from "@/common/types/message";
 import { createRuntime } from "@/node/runtime/runtimeFactory";

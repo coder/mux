@@ -7,6 +7,7 @@ import {
   normalizeTaskSettings,
   type TaskSettings,
   type SubagentAiDefaults,
+  type SubagentAiDefaultsEntry,
 } from "@/common/types/tasks";
 import { BUILT_IN_SUBAGENTS } from "@/common/constants/agents";
 import type { ThinkingLevel } from "@/common/types/thinking";
@@ -19,7 +20,33 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/browser/components/ui/select";
-import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/browser/utils/thinking/policy";
+import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
+
+const INHERIT = "__inherit__";
+const ALL_THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh"] as const;
+
+function updateSubagentDefaultEntry(
+  previous: SubagentAiDefaults,
+  agentType: string,
+  update: (entry: SubagentAiDefaultsEntry) => void
+): SubagentAiDefaults {
+  const next = { ...previous };
+  const existing = next[agentType] ?? {};
+  const updated: SubagentAiDefaultsEntry = { ...existing };
+  update(updated);
+
+  if (updated.modelString && updated.thinkingLevel) {
+    updated.thinkingLevel = enforceThinkingPolicy(updated.modelString, updated.thinkingLevel);
+  }
+
+  if (!updated.modelString && !updated.thinkingLevel) {
+    delete next[agentType];
+  } else {
+    next[agentType] = updated;
+  }
+
+  return next;
+}
 
 export function TasksSection() {
   const { api } = useAPI();
@@ -30,6 +57,10 @@ export function TasksSection() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savingRef = useRef(false);
+  const pendingSaveRef = useRef<{
+    taskSettings: TaskSettings;
+    subagentAiDefaults: SubagentAiDefaults;
+  } | null>(null);
 
   const { models, hiddenModels } = useModelsFromSettings();
 
@@ -74,7 +105,8 @@ export function TasksSection() {
     if (!api) return;
     if (!loaded) return;
     if (loadFailed) return;
-    if (savingRef.current) return;
+
+    pendingSaveRef.current = { taskSettings, subagentAiDefaults };
 
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
@@ -82,15 +114,27 @@ export function TasksSection() {
     }
 
     saveTimerRef.current = setTimeout(() => {
-      savingRef.current = true;
-      void api.config
-        .saveConfig({ taskSettings, subagentAiDefaults })
-        .catch((error: unknown) => {
-          setSaveError(error instanceof Error ? error.message : String(error));
-        })
-        .finally(() => {
-          savingRef.current = false;
-        });
+      const flush = () => {
+        if (savingRef.current) return;
+        if (!api) return;
+
+        const payload = pendingSaveRef.current;
+        if (!payload) return;
+
+        pendingSaveRef.current = null;
+        savingRef.current = true;
+        void api.config
+          .saveConfig(payload)
+          .catch((error: unknown) => {
+            setSaveError(error instanceof Error ? error.message : String(error));
+          })
+          .finally(() => {
+            savingRef.current = false;
+            flush();
+          });
+      };
+
+      flush();
     }, 400);
 
     return () => {
@@ -111,57 +155,29 @@ export function TasksSection() {
     setTaskSettings((prev) => normalizeTaskSettings({ ...prev, maxTaskNestingDepth: parsed }));
   };
 
-  const INHERIT = "__inherit__";
-
   const setSubagentModel = (agentType: string, value: string) => {
-    setSubagentAiDefaults((prev) => {
-      const next = { ...prev };
-      const existing = next[agentType] ?? {};
-      const updated = { ...existing };
-
-      if (value === INHERIT) {
-        delete updated.modelString;
-      } else {
-        updated.modelString = value;
-      }
-
-      if (updated.modelString && updated.thinkingLevel) {
-        updated.thinkingLevel = enforceThinkingPolicy(updated.modelString, updated.thinkingLevel);
-      }
-
-      if (!updated.modelString && !updated.thinkingLevel) {
-        delete next[agentType];
-      } else {
-        next[agentType] = updated;
-      }
-
-      return next;
-    });
+    setSubagentAiDefaults((prev) =>
+      updateSubagentDefaultEntry(prev, agentType, (updated) => {
+        if (value === INHERIT) {
+          delete updated.modelString;
+        } else {
+          updated.modelString = value;
+        }
+      })
+    );
   };
 
   const setSubagentThinking = (agentType: string, value: string) => {
-    setSubagentAiDefaults((prev) => {
-      const next = { ...prev };
-      const existing = next[agentType] ?? {};
-      const updated = { ...existing };
+    setSubagentAiDefaults((prev) =>
+      updateSubagentDefaultEntry(prev, agentType, (updated) => {
+        if (value === INHERIT) {
+          delete updated.thinkingLevel;
+          return;
+        }
 
-      if (value === INHERIT) {
-        delete updated.thinkingLevel;
-      } else {
-        const requested = value as ThinkingLevel;
-        updated.thinkingLevel = updated.modelString
-          ? enforceThinkingPolicy(updated.modelString, requested)
-          : requested;
-      }
-
-      if (!updated.modelString && !updated.thinkingLevel) {
-        delete next[agentType];
-      } else {
-        next[agentType] = updated;
-      }
-
-      return next;
-    });
+        updated.thinkingLevel = value as ThinkingLevel;
+      })
+    );
   };
 
   return (
@@ -224,9 +240,7 @@ export function TasksSection() {
             const modelValue = entry?.modelString ?? INHERIT;
             const thinkingValue = entry?.thinkingLevel ?? INHERIT;
             const allowedThinkingLevels =
-              modelValue !== INHERIT
-                ? getThinkingPolicyForModel(modelValue)
-                : (["off", "low", "medium", "high", "xhigh"] as const);
+              modelValue !== INHERIT ? getThinkingPolicyForModel(modelValue) : ALL_THINKING_LEVELS;
 
             return (
               <div

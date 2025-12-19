@@ -1,5 +1,5 @@
 import assert from "@/common/utils/assert";
-import type { ThinkingLevel } from "./thinking";
+import { coerceThinkingLevel, type ThinkingLevel } from "./thinking";
 
 export interface TaskSettings {
   maxParallelAgentTasks: number;
@@ -40,19 +40,7 @@ export function normalizeSubagentAiDefaults(raw: unknown): SubagentAiDefaults {
         ? entry.modelString.trim()
         : undefined;
 
-    const thinkingLevel = (() => {
-      const value = entry.thinkingLevel;
-      if (
-        value === "off" ||
-        value === "low" ||
-        value === "medium" ||
-        value === "high" ||
-        value === "xhigh"
-      ) {
-        return value;
-      }
-      return undefined;
-    })();
+    const thinkingLevel = coerceThinkingLevel(entry.thinkingLevel);
 
     if (!modelString && !thinkingLevel) {
       continue;

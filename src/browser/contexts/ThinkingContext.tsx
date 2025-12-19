@@ -15,7 +15,7 @@ import {
 } from "@/common/constants/storage";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
-import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { useAPI } from "@/browser/contexts/API";
 
 interface ThinkingContextType {

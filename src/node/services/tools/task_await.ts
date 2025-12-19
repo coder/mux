@@ -1,9 +1,14 @@
-import assert from "node:assert/strict";
-
 import { tool } from "ai";
 
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TaskAwaitToolResultSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+
+import {
+  dedupeStrings,
+  parseToolResult,
+  requireTaskService,
+  requireWorkspaceId,
+} from "./toolUtils";
 
 function coerceTimeoutMs(timeoutSecs: unknown): number | undefined {
   if (typeof timeoutSecs !== "number" || !Number.isFinite(timeoutSecs)) return undefined;
@@ -17,8 +22,8 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
     description: TOOL_DEFINITIONS.task_await.description,
     inputSchema: TOOL_DEFINITIONS.task_await.schema,
     execute: async (args, { abortSignal }): Promise<unknown> => {
-      assert(config.workspaceId, "task_await requires workspaceId");
-      assert(config.taskService, "task_await requires taskService");
+      const workspaceId = requireWorkspaceId(config, "task_await");
+      const taskService = requireTaskService(config, "task_await");
 
       const timeoutMs = coerceTimeoutMs(args.timeout_secs);
 
@@ -26,18 +31,18 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
         args.task_ids && args.task_ids.length > 0 ? args.task_ids : null;
 
       const candidateTaskIds =
-        requestedIds ?? config.taskService.listActiveDescendantAgentTaskIds(config.workspaceId);
+        requestedIds ?? taskService.listActiveDescendantAgentTaskIds(workspaceId);
 
-      const uniqueTaskIds = Array.from(new Set(candidateTaskIds));
+      const uniqueTaskIds = dedupeStrings(candidateTaskIds);
 
       const results = await Promise.all(
         uniqueTaskIds.map(async (taskId) => {
-          if (!config.taskService!.isDescendantAgentTask(config.workspaceId!, taskId)) {
+          if (!taskService.isDescendantAgentTask(workspaceId, taskId)) {
             return { status: "invalid_scope" as const, taskId };
           }
 
           try {
-            const report = await config.taskService!.waitForAgentReport(taskId, {
+            const report = await taskService.waitForAgentReport(taskId, {
               timeoutMs,
               abortSignal,
             });
@@ -57,7 +62,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               return { status: "not_found" as const, taskId };
             }
             if (/timed out/i.test(message)) {
-              const status = config.taskService!.getAgentTaskStatus(taskId);
+              const status = taskService.getAgentTaskStatus(taskId);
               if (status === "queued" || status === "running" || status === "awaiting_report") {
                 return { status, taskId };
               }
@@ -75,13 +80,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
         })
       );
 
-      const output = { results };
-      const parsed = TaskAwaitToolResultSchema.safeParse(output);
-      if (!parsed.success) {
-        throw new Error(`task_await tool result validation failed: ${parsed.error.message}`);
-      }
-
-      return parsed.data;
+      return parseToolResult(TaskAwaitToolResultSchema, { results }, "task_await");
     },
   });
 };

@@ -47,6 +47,151 @@ function createMockInitStateManager(): InitStateManager {
   } as unknown as InitStateManager;
 }
 
+async function createTestConfig(rootDir: string): Promise<Config> {
+  const config = new Config(rootDir);
+  await fsPromises.mkdir(config.srcDir, { recursive: true });
+  return config;
+}
+
+async function createTestProject(
+  rootDir: string,
+  name = "repo",
+  options?: { initGit?: boolean }
+): Promise<string> {
+  const projectPath = path.join(rootDir, name);
+  await fsPromises.mkdir(projectPath, { recursive: true });
+  if (options?.initGit ?? true) {
+    initGitRepo(projectPath);
+  }
+  return projectPath;
+}
+
+function stubStableIds(config: Config, ids: string[], fallbackId = "fffffffff0"): void {
+  let nextIdIndex = 0;
+  const configWithStableId = config as unknown as { generateStableId: () => string };
+  configWithStableId.generateStableId = () => ids[nextIdIndex++] ?? fallbackId;
+}
+
+function createAIServiceMocks(
+  config: Config,
+  overrides?: Partial<{
+    isStreaming: ReturnType<typeof mock>;
+    getWorkspaceMetadata: ReturnType<typeof mock>;
+    stopStream: ReturnType<typeof mock>;
+    on: ReturnType<typeof mock>;
+    off: ReturnType<typeof mock>;
+  }>
+): {
+  aiService: AIService;
+  isStreaming: ReturnType<typeof mock>;
+  getWorkspaceMetadata: ReturnType<typeof mock>;
+  stopStream: ReturnType<typeof mock>;
+  on: ReturnType<typeof mock>;
+  off: ReturnType<typeof mock>;
+} {
+  const isStreaming = overrides?.isStreaming ?? mock(() => false);
+  const getWorkspaceMetadata =
+    overrides?.getWorkspaceMetadata ??
+    mock(async (workspaceId: string): Promise<Result<WorkspaceMetadata>> => {
+      const all = await config.getAllWorkspaceMetadata();
+      const found = all.find((m) => m.id === workspaceId);
+      return found ? Ok(found) : Err("not found");
+    });
+
+  const stopStream =
+    overrides?.stopStream ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
+
+  const on = overrides?.on ?? mock(() => undefined);
+  const off = overrides?.off ?? mock(() => undefined);
+
+  return {
+    aiService: { isStreaming, getWorkspaceMetadata, stopStream, on, off } as unknown as AIService,
+    isStreaming,
+    getWorkspaceMetadata,
+    stopStream,
+    on,
+    off,
+  };
+}
+
+function createWorkspaceServiceMocks(
+  overrides?: Partial<{
+    sendMessage: ReturnType<typeof mock>;
+    resumeStream: ReturnType<typeof mock>;
+    remove: ReturnType<typeof mock>;
+    emit: ReturnType<typeof mock>;
+  }>
+): {
+  workspaceService: WorkspaceService;
+  sendMessage: ReturnType<typeof mock>;
+  resumeStream: ReturnType<typeof mock>;
+  remove: ReturnType<typeof mock>;
+  emit: ReturnType<typeof mock>;
+} {
+  const sendMessage =
+    overrides?.sendMessage ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
+  const resumeStream =
+    overrides?.resumeStream ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
+  const remove =
+    overrides?.remove ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
+  const emit = overrides?.emit ?? mock(() => true);
+
+  return {
+    workspaceService: {
+      sendMessage,
+      resumeStream,
+      remove,
+      emit,
+    } as unknown as WorkspaceService,
+    sendMessage,
+    resumeStream,
+    remove,
+    emit,
+  };
+}
+
+function createTaskServiceHarness(
+  config: Config,
+  overrides?: {
+    aiService?: AIService;
+    workspaceService?: WorkspaceService;
+    initStateManager?: InitStateManager;
+  }
+): {
+  historyService: HistoryService;
+  partialService: PartialService;
+  taskService: TaskService;
+  aiService: AIService;
+  workspaceService: WorkspaceService;
+  initStateManager: InitStateManager;
+} {
+  const historyService = new HistoryService(config);
+  const partialService = new PartialService(config, historyService);
+
+  const aiService = overrides?.aiService ?? createAIServiceMocks(config).aiService;
+  const workspaceService =
+    overrides?.workspaceService ?? createWorkspaceServiceMocks().workspaceService;
+  const initStateManager = overrides?.initStateManager ?? createMockInitStateManager();
+
+  const taskService = new TaskService(
+    config,
+    historyService,
+    partialService,
+    aiService,
+    workspaceService,
+    initStateManager
+  );
+
+  return {
+    historyService,
+    partialService,
+    taskService,
+    aiService,
+    workspaceService,
+    initStateManager,
+  };
+}
+
 describe("TaskService", () => {
   let rootDir: string;
 
@@ -59,18 +204,10 @@ describe("TaskService", () => {
   });
 
   test("enforces maxTaskNestingDepth", async () => {
-    const config = new Config(rootDir);
-    await fsPromises.mkdir(config.srcDir, { recursive: true });
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"], "dddddddddd");
 
-    // Deterministic IDs for workspace names.
-    const ids = ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"];
-    let nextIdIndex = 0;
-    const configWithStableId = config as unknown as { generateStableId: () => string };
-    configWithStableId.generateStableId = () => ids[nextIdIndex++] ?? "dddddddddd";
-
-    const projectPath = path.join(rootDir, "repo");
-    await fsPromises.mkdir(projectPath, { recursive: true });
-    initGitRepo(projectPath);
+    const projectPath = await createTestProject(rootDir);
 
     const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
     const runtime = createRuntime(runtimeConfig, { projectPath });
@@ -109,40 +246,7 @@ describe("TaskService", () => {
       ]),
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 1 },
     });
-
-    const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
-
-    const aiService: AIService = {
-      isStreaming: mock(() => false),
-      getWorkspaceMetadata: mock(
-        async (workspaceId: string): Promise<Result<WorkspaceMetadata>> => {
-          const all = await config.getAllWorkspaceMetadata();
-          const found = all.find((m) => m.id === workspaceId);
-          return found ? Ok(found) : Err("not found");
-        }
-      ),
-      on: mock(() => undefined),
-      off: mock(() => undefined),
-    } as unknown as AIService;
-
-    const workspaceService: WorkspaceService = {
-      sendMessage: mock(() => Promise.resolve(Ok(undefined))),
-      resumeStream: mock(() => Promise.resolve(Ok(undefined))),
-      remove: mock(() => Promise.resolve(Ok(undefined))),
-      emit: mock(() => true),
-    } as unknown as WorkspaceService;
-
-    const initStateManager = createMockInitStateManager();
-
-    const taskService = new TaskService(
-      config,
-      historyService,
-      partialService,
-      aiService,
-      workspaceService,
-      initStateManager
-    );
+    const { taskService } = createTaskServiceHarness(config);
 
     const first = await taskService.create({
       parentWorkspaceId: parentId,
@@ -166,17 +270,10 @@ describe("TaskService", () => {
   }, 20_000);
 
   test("queues tasks when maxParallelAgentTasks is reached and starts them when a slot frees", async () => {
-    const config = new Config(rootDir);
-    await fsPromises.mkdir(config.srcDir, { recursive: true });
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc", "dddddddddd"], "eeeeeeeeee");
 
-    const ids = ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc", "dddddddddd"];
-    let nextIdIndex = 0;
-    const configWithStableId = config as unknown as { generateStableId: () => string };
-    configWithStableId.generateStableId = () => ids[nextIdIndex++] ?? "eeeeeeeeee";
-
-    const projectPath = path.join(rootDir, "repo");
-    await fsPromises.mkdir(projectPath, { recursive: true });
-    initGitRepo(projectPath);
+    const projectPath = await createTestProject(rootDir);
 
     const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
     const runtime = createRuntime(runtimeConfig, { projectPath });
@@ -229,41 +326,8 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
     });
 
-    const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
-
-    const aiService: AIService = {
-      isStreaming: mock(() => false),
-      getWorkspaceMetadata: mock(
-        async (workspaceId: string): Promise<Result<WorkspaceMetadata>> => {
-          const all = await config.getAllWorkspaceMetadata();
-          const found = all.find((m) => m.id === workspaceId);
-          return found ? Ok(found) : Err("not found");
-        }
-      ),
-      on: mock(() => undefined),
-      off: mock(() => undefined),
-    } as unknown as AIService;
-
-    const sendMessage = mock(() => Promise.resolve(Ok(undefined)));
-
-    const workspaceService: WorkspaceService = {
-      sendMessage,
-      resumeStream: mock(() => Promise.resolve(Ok(undefined))),
-      remove: mock(() => Promise.resolve(Ok(undefined))),
-      emit: mock(() => true),
-    } as unknown as WorkspaceService;
-
-    const initStateManager = createMockInitStateManager();
-
-    const taskService = new TaskService(
-      config,
-      historyService,
-      partialService,
-      aiService,
-      workspaceService,
-      initStateManager
-    );
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
     const running = await taskService.create({
       parentWorkspaceId: parent1Id,
@@ -312,17 +376,10 @@ describe("TaskService", () => {
   }, 20_000);
 
   test("does not run init hooks for queued tasks until they start", async () => {
-    const config = new Config(rootDir);
-    await fsPromises.mkdir(config.srcDir, { recursive: true });
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"], "dddddddddd");
 
-    const ids = ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"];
-    let nextIdIndex = 0;
-    const configWithStableId = config as unknown as { generateStableId: () => string };
-    configWithStableId.generateStableId = () => ids[nextIdIndex++] ?? "dddddddddd";
-
-    const projectPath = path.join(rootDir, "repo");
-    await fsPromises.mkdir(projectPath, { recursive: true });
-    initGitRepo(projectPath);
+    const projectPath = await createTestProject(rootDir);
 
     const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
     const runtime = createRuntime(runtimeConfig, { projectPath });
@@ -358,40 +415,12 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
     });
 
-    const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
     const initStateManager = new RealInitStateManager(config);
-
-    const aiService: AIService = {
-      isStreaming: mock(() => false),
-      getWorkspaceMetadata: mock(
-        async (workspaceId: string): Promise<Result<WorkspaceMetadata>> => {
-          const all = await config.getAllWorkspaceMetadata();
-          const found = all.find((m) => m.id === workspaceId);
-          return found ? Ok(found) : Err("not found");
-        }
-      ),
-      on: mock(() => undefined),
-      off: mock(() => undefined),
-    } as unknown as AIService;
-
-    const sendMessage = mock(() => Promise.resolve(Ok(undefined)));
-
-    const workspaceService: WorkspaceService = {
-      sendMessage,
-      resumeStream: mock(() => Promise.resolve(Ok(undefined))),
-      remove: mock(() => Promise.resolve(Ok(undefined))),
-      emit: mock(() => true),
-    } as unknown as WorkspaceService;
-
-    const taskService = new TaskService(
-      config,
-      historyService,
-      partialService,
-      aiService,
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, {
       workspaceService,
-      initStateManager as unknown as InitStateManager
-    );
+      initStateManager: initStateManager as unknown as InitStateManager,
+    });
 
     const running = await taskService.create({
       parentWorkspaceId: parentId,
@@ -421,13 +450,23 @@ describe("TaskService", () => {
       .flatMap((p) => p.workspaces)
       .find((w) => w.id === queued.data.taskId);
     expect(queuedEntryBeforeStart).toBeTruthy();
-    await expect(fsPromises.stat(queuedEntryBeforeStart!.path)).rejects.toThrow();
+    await fsPromises.stat(queuedEntryBeforeStart!.path).then(
+      () => {
+        throw new Error("Expected queued task workspace path to not exist before start");
+      },
+      () => undefined
+    );
 
     const queuedInitStatusPath = path.join(
       config.getSessionDir(queued.data.taskId),
       "init-status.json"
     );
-    await expect(fsPromises.stat(queuedInitStatusPath)).rejects.toThrow();
+    await fsPromises.stat(queuedInitStatusPath).then(
+      () => {
+        throw new Error("Expected queued task init-status to not exist before start");
+      },
+      () => undefined
+    );
 
     // Free slot and start queued tasks.
     await config.editConfig((cfg) => {
@@ -451,18 +490,18 @@ describe("TaskService", () => {
 
     // Init should start only once the task is dequeued.
     await initStateManager.waitForInit(queued.data.taskId);
-    await expect(fsPromises.stat(queuedInitStatusPath)).resolves.toBeTruthy();
+    expect(await fsPromises.stat(queuedInitStatusPath)).toBeTruthy();
 
     const cfgAfterStart = config.loadConfigOrDefault();
     const queuedEntryAfterStart = Array.from(cfgAfterStart.projects.values())
       .flatMap((p) => p.workspaces)
       .find((w) => w.id === queued.data.taskId);
     expect(queuedEntryAfterStart).toBeTruthy();
-    await expect(fsPromises.stat(queuedEntryAfterStart!.path)).resolves.toBeTruthy();
+    expect(await fsPromises.stat(queuedEntryAfterStart!.path)).toBeTruthy();
   }, 20_000);
 
   test("does not start queued tasks while a reported task is still streaming", async () => {
-    const config = new Config(rootDir);
+    const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
     const rootWorkspaceId = "root-111";
@@ -499,33 +538,11 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
     });
 
-    const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
-
-    const aiService: AIService = {
+    const { aiService } = createAIServiceMocks(config, {
       isStreaming: mock((workspaceId: string) => workspaceId === reportedTaskId),
-      on: mock(() => undefined),
-      off: mock(() => undefined),
-    } as unknown as AIService;
-
-    const resumeStream = mock(() => Promise.resolve(Ok(undefined)));
-    const workspaceService: WorkspaceService = {
-      sendMessage: mock(() => Promise.resolve(Ok(undefined))),
-      resumeStream,
-      remove: mock(() => Promise.resolve(Ok(undefined))),
-      emit: mock(() => true),
-    } as unknown as WorkspaceService;
-
-    const initStateManager = createMockInitStateManager();
-
-    const taskService = new TaskService(
-      config,
-      historyService,
-      partialService,
-      aiService,
-      workspaceService,
-      initStateManager
-    );
+    });
+    const { workspaceService, resumeStream } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
     await taskService.initialize();
 
@@ -539,17 +556,10 @@ describe("TaskService", () => {
   });
 
   test("allows multiple agent tasks under the same parent up to maxParallelAgentTasks", async () => {
-    const config = new Config(rootDir);
-    await fsPromises.mkdir(config.srcDir, { recursive: true });
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"], "dddddddddd");
 
-    const ids = ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"];
-    let nextIdIndex = 0;
-    const configWithStableId = config as unknown as { generateStableId: () => string };
-    configWithStableId.generateStableId = () => ids[nextIdIndex++] ?? "dddddddddd";
-
-    const projectPath = path.join(rootDir, "repo");
-    await fsPromises.mkdir(projectPath, { recursive: true });
-    initGitRepo(projectPath);
+    const projectPath = await createTestProject(rootDir);
 
     const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
     const runtime = createRuntime(runtimeConfig, { projectPath });
@@ -588,40 +598,7 @@ describe("TaskService", () => {
       ]),
       taskSettings: { maxParallelAgentTasks: 2, maxTaskNestingDepth: 3 },
     });
-
-    const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
-
-    const aiService: AIService = {
-      isStreaming: mock(() => false),
-      getWorkspaceMetadata: mock(
-        async (workspaceId: string): Promise<Result<WorkspaceMetadata>> => {
-          const all = await config.getAllWorkspaceMetadata();
-          const found = all.find((m) => m.id === workspaceId);
-          return found ? Ok(found) : Err("not found");
-        }
-      ),
-      on: mock(() => undefined),
-      off: mock(() => undefined),
-    } as unknown as AIService;
-
-    const workspaceService: WorkspaceService = {
-      sendMessage: mock(() => Promise.resolve(Ok(undefined))),
-      resumeStream: mock(() => Promise.resolve(Ok(undefined))),
-      remove: mock(() => Promise.resolve(Ok(undefined))),
-      emit: mock(() => true),
-    } as unknown as WorkspaceService;
-
-    const initStateManager = createMockInitStateManager();
-
-    const taskService = new TaskService(
-      config,
-      historyService,
-      partialService,
-      aiService,
-      workspaceService,
-      initStateManager
-    );
+    const { taskService } = createTaskServiceHarness(config);
 
     const first = await taskService.create({
       parentWorkspaceId: parentId,
@@ -655,16 +632,10 @@ describe("TaskService", () => {
   }, 20_000);
 
   test("supports creating agent tasks from local (project-dir) workspaces without requiring git", async () => {
-    const config = new Config(rootDir);
-    await fsPromises.mkdir(config.srcDir, { recursive: true });
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
 
-    const ids = ["aaaaaaaaaa"];
-    let nextIdIndex = 0;
-    const configWithStableId = config as unknown as { generateStableId: () => string };
-    configWithStableId.generateStableId = () => ids[nextIdIndex++] ?? "bbbbbbbbbb";
-
-    const projectPath = path.join(rootDir, "repo");
-    await fsPromises.mkdir(projectPath, { recursive: true });
+    const projectPath = await createTestProject(rootDir, "repo", { initGit: false });
 
     const parentId = "1111111111";
     await config.saveConfig({
@@ -687,40 +658,7 @@ describe("TaskService", () => {
       ]),
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
     });
-
-    const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
-
-    const aiService: AIService = {
-      isStreaming: mock(() => false),
-      getWorkspaceMetadata: mock(
-        async (workspaceId: string): Promise<Result<WorkspaceMetadata>> => {
-          const all = await config.getAllWorkspaceMetadata();
-          const found = all.find((m) => m.id === workspaceId);
-          return found ? Ok(found) : Err("not found");
-        }
-      ),
-      on: mock(() => undefined),
-      off: mock(() => undefined),
-    } as unknown as AIService;
-
-    const workspaceService: WorkspaceService = {
-      sendMessage: mock(() => Promise.resolve(Ok(undefined))),
-      resumeStream: mock(() => Promise.resolve(Ok(undefined))),
-      remove: mock(() => Promise.resolve(Ok(undefined))),
-      emit: mock(() => true),
-    } as unknown as WorkspaceService;
-
-    const initStateManager = createMockInitStateManager();
-
-    const taskService = new TaskService(
-      config,
-      historyService,
-      partialService,
-      aiService,
-      workspaceService,
-      initStateManager
-    );
+    const { taskService } = createTaskServiceHarness(config);
 
     const created = await taskService.create({
       parentWorkspaceId: parentId,
@@ -744,16 +682,10 @@ describe("TaskService", () => {
   }, 20_000);
 
   test("applies subagentAiDefaults model + thinking overrides on task create", async () => {
-    const config = new Config(rootDir);
-    await fsPromises.mkdir(config.srcDir, { recursive: true });
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
 
-    const ids = ["aaaaaaaaaa"];
-    let nextIdIndex = 0;
-    const configWithStableId = config as unknown as { generateStableId: () => string };
-    configWithStableId.generateStableId = () => ids[nextIdIndex++] ?? "bbbbbbbbbb";
-
-    const projectPath = path.join(rootDir, "repo");
-    await fsPromises.mkdir(projectPath, { recursive: true });
+    const projectPath = await createTestProject(rootDir, "repo", { initGit: false });
 
     const parentId = "1111111111";
     await config.saveConfig({
@@ -779,41 +711,8 @@ describe("TaskService", () => {
         explore: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
       },
     });
-
-    const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
-
-    const aiService: AIService = {
-      isStreaming: mock(() => false),
-      getWorkspaceMetadata: mock(
-        async (workspaceId: string): Promise<Result<WorkspaceMetadata>> => {
-          const all = await config.getAllWorkspaceMetadata();
-          const found = all.find((m) => m.id === workspaceId);
-          return found ? Ok(found) : Err("not found");
-        }
-      ),
-      on: mock(() => undefined),
-      off: mock(() => undefined),
-    } as unknown as AIService;
-
-    const sendMessage = mock(() => Promise.resolve(Ok(undefined)));
-    const workspaceService: WorkspaceService = {
-      sendMessage,
-      resumeStream: mock(() => Promise.resolve(Ok(undefined))),
-      remove: mock(() => Promise.resolve(Ok(undefined))),
-      emit: mock(() => true),
-    } as unknown as WorkspaceService;
-
-    const initStateManager = createMockInitStateManager();
-
-    const taskService = new TaskService(
-      config,
-      historyService,
-      partialService,
-      aiService,
-      workspaceService,
-      initStateManager
-    );
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
     const created = await taskService.create({
       parentWorkspaceId: parentId,
@@ -843,7 +742,7 @@ describe("TaskService", () => {
   }, 20_000);
 
   test("auto-resumes a parent workspace until background tasks finish", async () => {
-    const config = new Config(rootDir);
+    const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
     const rootWorkspaceId = "root-111";
@@ -878,33 +777,9 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
     });
 
-    const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
-
-    const aiService: AIService = {
-      isStreaming: mock(() => false),
-      on: mock(() => undefined),
-      off: mock(() => undefined),
-    } as unknown as AIService;
-
-    const resumeStream = mock(() => Promise.resolve(Ok(undefined)));
-    const workspaceService: WorkspaceService = {
-      sendMessage: mock(() => Promise.resolve(Ok(undefined))),
-      resumeStream,
-      remove: mock(() => Promise.resolve(Ok(undefined))),
-      emit: mock(() => true),
-    } as unknown as WorkspaceService;
-
-    const initStateManager = createMockInitStateManager();
-
-    const taskService = new TaskService(
-      config,
-      historyService,
-      partialService,
-      aiService,
-      workspaceService,
-      initStateManager
-    );
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, resumeStream } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
     const internal = taskService as unknown as {
       handleStreamEnd: (event: { type: "stream-end"; workspaceId: string }) => Promise<void>;
@@ -934,7 +809,7 @@ describe("TaskService", () => {
   });
 
   test("terminateDescendantAgentTask stops stream, removes workspace, and rejects waiters", async () => {
-    const config = new Config(rootDir);
+    const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
     const rootWorkspaceId = "root-111";
@@ -962,35 +837,9 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
     });
 
-    const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
-
-    const stopStream = mock(() => Promise.resolve(Ok(undefined)));
-    const aiService: AIService = {
-      isStreaming: mock(() => false),
-      stopStream,
-      on: mock(() => undefined),
-      off: mock(() => undefined),
-    } as unknown as AIService;
-
-    const remove = mock(() => Promise.resolve(Ok(undefined)));
-    const workspaceService: WorkspaceService = {
-      sendMessage: mock(() => Promise.resolve(Ok(undefined))),
-      resumeStream: mock(() => Promise.resolve(Ok(undefined))),
-      remove,
-      emit: mock(() => true),
-    } as unknown as WorkspaceService;
-
-    const initStateManager = createMockInitStateManager();
-
-    const taskService = new TaskService(
-      config,
-      historyService,
-      partialService,
-      aiService,
-      workspaceService,
-      initStateManager
-    );
+    const { aiService, stopStream } = createAIServiceMocks(config);
+    const { workspaceService, remove } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
     const waiter = taskService.waitForAgentReport(taskId, { timeoutMs: 10_000 });
 
@@ -1015,7 +864,7 @@ describe("TaskService", () => {
   });
 
   test("terminateDescendantAgentTask terminates descendant tasks leaf-first", async () => {
-    const config = new Config(rootDir);
+    const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
     const rootWorkspaceId = "root-111";
@@ -1052,35 +901,9 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
     });
 
-    const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
-
-    const stopStream = mock(() => Promise.resolve(Ok(undefined)));
-    const aiService: AIService = {
-      isStreaming: mock(() => false),
-      stopStream,
-      on: mock(() => undefined),
-      off: mock(() => undefined),
-    } as unknown as AIService;
-
-    const remove = mock(() => Promise.resolve(Ok(undefined)));
-    const workspaceService: WorkspaceService = {
-      sendMessage: mock(() => Promise.resolve(Ok(undefined))),
-      resumeStream: mock(() => Promise.resolve(Ok(undefined))),
-      remove,
-      emit: mock(() => true),
-    } as unknown as WorkspaceService;
-
-    const initStateManager = createMockInitStateManager();
-
-    const taskService = new TaskService(
-      config,
-      historyService,
-      partialService,
-      aiService,
-      workspaceService,
-      initStateManager
-    );
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, remove } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
     const terminateResult = await taskService.terminateDescendantAgentTask(
       rootWorkspaceId,
@@ -1095,7 +918,7 @@ describe("TaskService", () => {
   });
 
   test("initialize resumes awaiting_report tasks after restart", async () => {
-    const config = new Config(rootDir);
+    const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
     const parentId = "parent-111";
@@ -1123,34 +946,9 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
     });
 
-    const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
-
-    const aiService: AIService = {
-      isStreaming: mock(() => false),
-      on: mock(() => undefined),
-      off: mock(() => undefined),
-    } as unknown as AIService;
-
-    const resumeStream = mock(() => Promise.resolve(Ok(undefined)));
-
-    const workspaceService: WorkspaceService = {
-      sendMessage: mock(() => Promise.resolve(Ok(undefined))),
-      resumeStream,
-      remove: mock(() => Promise.resolve(Ok(undefined))),
-      emit: mock(() => true),
-    } as unknown as WorkspaceService;
-
-    const initStateManager = createMockInitStateManager();
-
-    const taskService = new TaskService(
-      config,
-      historyService,
-      partialService,
-      aiService,
-      workspaceService,
-      initStateManager
-    );
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, resumeStream } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
     await taskService.initialize();
 
@@ -1163,7 +961,7 @@ describe("TaskService", () => {
   });
 
   test("waitForAgentReport does not time out while task is queued", async () => {
-    const config = new Config(rootDir);
+    const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
     const parentId = "parent-111";
@@ -1191,32 +989,7 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
     });
 
-    const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
-
-    const aiService: AIService = {
-      isStreaming: mock(() => false),
-      on: mock(() => undefined),
-      off: mock(() => undefined),
-    } as unknown as AIService;
-
-    const workspaceService: WorkspaceService = {
-      sendMessage: mock(() => Promise.resolve(Ok(undefined))),
-      resumeStream: mock(() => Promise.resolve(Ok(undefined))),
-      remove: mock(() => Promise.resolve(Ok(undefined))),
-      emit: mock(() => true),
-    } as unknown as WorkspaceService;
-
-    const initStateManager = createMockInitStateManager();
-
-    const taskService = new TaskService(
-      config,
-      historyService,
-      partialService,
-      aiService,
-      workspaceService,
-      initStateManager
-    );
+    const { taskService } = createTaskServiceHarness(config);
 
     // Timeout is short so the test would fail if the timer started while queued.
     const reportPromise = taskService.waitForAgentReport(childId, { timeoutMs: 50 });
@@ -1237,7 +1010,7 @@ describe("TaskService", () => {
   });
 
   test("waitForAgentReport returns cached report even after workspace is removed", async () => {
-    const config = new Config(rootDir);
+    const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
     const parentId = "parent-111";
@@ -1265,32 +1038,7 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
     });
 
-    const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
-
-    const aiService: AIService = {
-      isStreaming: mock(() => false),
-      on: mock(() => undefined),
-      off: mock(() => undefined),
-    } as unknown as AIService;
-
-    const workspaceService: WorkspaceService = {
-      sendMessage: mock(() => Promise.resolve(Ok(undefined))),
-      resumeStream: mock(() => Promise.resolve(Ok(undefined))),
-      remove: mock(() => Promise.resolve(Ok(undefined))),
-      emit: mock(() => true),
-    } as unknown as WorkspaceService;
-
-    const initStateManager = createMockInitStateManager();
-
-    const taskService = new TaskService(
-      config,
-      historyService,
-      partialService,
-      aiService,
-      workspaceService,
-      initStateManager
-    );
+    const { taskService } = createTaskServiceHarness(config);
 
     const internal = taskService as unknown as {
       resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
@@ -1305,7 +1053,7 @@ describe("TaskService", () => {
   });
 
   test("does not request agent_report on stream end while task has active descendants", async () => {
-    const config = new Config(rootDir);
+    const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
     const rootWorkspaceId = "root-111";
@@ -1342,34 +1090,8 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
     });
 
-    const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
-
-    const aiService: AIService = {
-      isStreaming: mock(() => false),
-      on: mock(() => undefined),
-      off: mock(() => undefined),
-    } as unknown as AIService;
-
-    const sendMessage = mock(() => Promise.resolve(Ok(undefined)));
-    const emit = mock(() => true);
-    const workspaceService: WorkspaceService = {
-      sendMessage,
-      resumeStream: mock(() => Promise.resolve(Ok(undefined))),
-      remove: mock(() => Promise.resolve(Ok(undefined))),
-      emit,
-    } as unknown as WorkspaceService;
-
-    const initStateManager = createMockInitStateManager();
-
-    const taskService = new TaskService(
-      config,
-      historyService,
-      partialService,
-      aiService,
-      workspaceService,
-      initStateManager
-    );
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
     const internal = taskService as unknown as {
       handleStreamEnd: (event: { type: "stream-end"; workspaceId: string }) => Promise<void>;
@@ -1386,7 +1108,7 @@ describe("TaskService", () => {
   });
 
   test("reverts awaiting_report to running on stream end while task has active descendants", async () => {
-    const config = new Config(rootDir);
+    const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
     const rootWorkspaceId = "root-111";
@@ -1423,34 +1145,8 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
     });
 
-    const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
-
-    const aiService: AIService = {
-      isStreaming: mock(() => false),
-      on: mock(() => undefined),
-      off: mock(() => undefined),
-    } as unknown as AIService;
-
-    const sendMessage = mock(() => Promise.resolve(Ok(undefined)));
-    const emit = mock(() => true);
-    const workspaceService: WorkspaceService = {
-      sendMessage,
-      resumeStream: mock(() => Promise.resolve(Ok(undefined))),
-      remove: mock(() => Promise.resolve(Ok(undefined))),
-      emit,
-    } as unknown as WorkspaceService;
-
-    const initStateManager = createMockInitStateManager();
-
-    const taskService = new TaskService(
-      config,
-      historyService,
-      partialService,
-      aiService,
-      workspaceService,
-      initStateManager
-    );
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
     const internal = taskService as unknown as {
       handleStreamEnd: (event: { type: "stream-end"; workspaceId: string }) => Promise<void>;
@@ -1467,15 +1163,10 @@ describe("TaskService", () => {
   });
 
   test("rolls back created workspace when initial sendMessage fails", async () => {
-    const config = new Config(rootDir);
-    await fsPromises.mkdir(config.srcDir, { recursive: true });
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "aaaaaaaaaa");
 
-    const configWithStableId = config as unknown as { generateStableId: () => string };
-    configWithStableId.generateStableId = () => "aaaaaaaaaa";
-
-    const projectPath = path.join(rootDir, "repo");
-    await fsPromises.mkdir(projectPath, { recursive: true });
-    initGitRepo(projectPath);
+    const projectPath = await createTestProject(rootDir);
 
     const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
     const runtime = createRuntime(runtimeConfig, { projectPath });
@@ -1513,45 +1204,10 @@ describe("TaskService", () => {
       ]),
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
     });
-
-    const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
-
-    const aiService: AIService = {
-      isStreaming: mock(() => false),
-      getWorkspaceMetadata: mock(
-        async (workspaceId: string): Promise<Result<WorkspaceMetadata>> => {
-          const all = await config.getAllWorkspaceMetadata();
-          const found = all.find((m) => m.id === workspaceId);
-          return found ? Ok(found) : Err("not found");
-        }
-      ),
-      on: mock(() => undefined),
-      off: mock(() => undefined),
-    } as unknown as AIService;
-
-    const sendMessage = mock(() => Promise.resolve(Err("send failed")));
-    const resumeStream = mock(() => Promise.resolve(Ok(undefined)));
-    const remove = mock(() => Promise.resolve(Ok(undefined)));
-    const emit = mock(() => true);
-
-    const workspaceService: WorkspaceService = {
-      sendMessage,
-      resumeStream,
-      remove,
-      emit,
-    } as unknown as WorkspaceService;
-
-    const initStateManager = createMockInitStateManager();
-
-    const taskService = new TaskService(
-      config,
-      historyService,
-      partialService,
-      aiService,
-      workspaceService,
-      initStateManager
-    );
+    const { aiService } = createAIServiceMocks(config);
+    const failingSendMessage = mock(() => Promise.resolve(Err("send failed")));
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage: failingSendMessage });
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
     const created = await taskService.create({
       parentWorkspaceId: parentId,
@@ -1580,7 +1236,7 @@ describe("TaskService", () => {
   }, 20_000);
 
   test("agent_report posts report to parent, finalizes pending task tool output, and triggers cleanup", async () => {
-    const config = new Config(rootDir);
+    const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
     const parentId = "parent-111";
@@ -1608,8 +1264,12 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
     });
 
-    const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, resumeStream, remove, emit } = createWorkspaceServiceMocks();
+    const { historyService, partialService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
 
     const parentPartial = createMuxMessage(
       "assistant-parent-partial",
@@ -1647,35 +1307,6 @@ describe("TaskService", () => {
     );
     const writeChildPartial = await partialService.writePartial(childId, childPartial);
     expect(writeChildPartial.success).toBe(true);
-
-    const aiService: AIService = {
-      isStreaming: mock(() => false),
-      on: mock(() => undefined),
-      off: mock(() => undefined),
-    } as unknown as AIService;
-
-    const sendMessage = mock(() => Promise.resolve(Ok(undefined)));
-    const resumeStream = mock(() => Promise.resolve(Ok(undefined)));
-    const remove = mock(() => Promise.resolve(Ok(undefined)));
-    const emit = mock(() => true);
-
-    const workspaceService: WorkspaceService = {
-      sendMessage,
-      resumeStream,
-      remove,
-      emit,
-    } as unknown as WorkspaceService;
-
-    const initStateManager = createMockInitStateManager();
-
-    const taskService = new TaskService(
-      config,
-      historyService,
-      partialService,
-      aiService,
-      workspaceService,
-      initStateManager
-    );
 
     const internal = taskService as unknown as {
       handleAgentReport: (event: {
@@ -1741,7 +1372,7 @@ describe("TaskService", () => {
   });
 
   test("agent_report updates queued/running task tool output in parent history", async () => {
-    const config = new Config(rootDir);
+    const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
     const parentId = "parent-111";
@@ -1769,8 +1400,12 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
     });
 
-    const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, resumeStream, remove } = createWorkspaceServiceMocks();
+    const { historyService, partialService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
 
     const parentHistoryMessage = createMuxMessage(
       "assistant-parent-history",
@@ -1812,34 +1447,6 @@ describe("TaskService", () => {
     );
     const writeChildPartial = await partialService.writePartial(childId, childPartial);
     expect(writeChildPartial.success).toBe(true);
-
-    const aiService: AIService = {
-      isStreaming: mock(() => false),
-      on: mock(() => undefined),
-      off: mock(() => undefined),
-    } as unknown as AIService;
-
-    const resumeStream = mock(() => Promise.resolve(Ok(undefined)));
-    const remove = mock(() => Promise.resolve(Ok(undefined)));
-    const emit = mock(() => true);
-
-    const workspaceService: WorkspaceService = {
-      sendMessage: mock(() => Promise.resolve(Ok(undefined))),
-      resumeStream,
-      remove,
-      emit,
-    } as unknown as WorkspaceService;
-
-    const initStateManager = createMockInitStateManager();
-
-    const taskService = new TaskService(
-      config,
-      historyService,
-      partialService,
-      aiService,
-      workspaceService,
-      initStateManager
-    );
 
     const internal = taskService as unknown as {
       handleAgentReport: (event: {
@@ -1901,7 +1508,7 @@ describe("TaskService", () => {
   });
 
   test("missing agent_report triggers one reminder, then posts fallback output and cleans up", async () => {
-    const config = new Config(rootDir);
+    const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
     const parentId = "parent-111";
@@ -1930,8 +1537,13 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
     });
 
-    const historyService = new HistoryService(config);
-    const partialService = new PartialService(config, historyService);
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage, resumeStream, remove, emit } =
+      createWorkspaceServiceMocks();
+    const { historyService, partialService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
 
     const parentPartial = createMuxMessage(
       "assistant-parent-partial",
@@ -1959,35 +1571,6 @@ describe("TaskService", () => {
     );
     const appendChildHistory = await historyService.appendToHistory(childId, assistantOutput);
     expect(appendChildHistory.success).toBe(true);
-
-    const aiService: AIService = {
-      isStreaming: mock(() => false),
-      on: mock(() => undefined),
-      off: mock(() => undefined),
-    } as unknown as AIService;
-
-    const sendMessage = mock(() => Promise.resolve(Ok(undefined)));
-    const resumeStream = mock(() => Promise.resolve(Ok(undefined)));
-    const remove = mock(() => Promise.resolve(Ok(undefined)));
-    const emit = mock(() => true);
-
-    const workspaceService: WorkspaceService = {
-      sendMessage,
-      resumeStream,
-      remove,
-      emit,
-    } as unknown as WorkspaceService;
-
-    const initStateManager = createMockInitStateManager();
-
-    const taskService = new TaskService(
-      config,
-      historyService,
-      partialService,
-      aiService,
-      workspaceService,
-      initStateManager
-    );
 
     const internal = taskService as unknown as {
       handleStreamEnd: (event: { type: "stream-end"; workspaceId: string }) => Promise<void>;

@@ -11,7 +11,7 @@ import { toGatewayModel, migrateGatewayModel } from "@/browser/hooks/useGatewayM
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
-import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
