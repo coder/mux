@@ -19,6 +19,7 @@ import type { Runtime } from "@/node/runtime/Runtime";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { UIMode } from "@/common/types/mode";
+import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { FileState } from "@/node/services/agentSession";
 
 /**
@@ -45,6 +46,11 @@ export interface ToolConfiguration {
   mode?: UIMode;
   /** Plan file path - only this file can be edited in plan mode */
   planFilePath?: string;
+  /**
+   * Optional callback for emitting UI-only workspace chat events.
+   * Used for streaming bash stdout/stderr to the UI without sending it to the model.
+   */
+  emitChatEvent?: (event: WorkspaceChatMessage) => void;
   /** Workspace ID for tracking background processes and plan storage */
   workspaceId?: string;
   /** Callback to record file state for external edit detection (plan files) */

@@ -1268,6 +1268,13 @@ export class AIService extends EventEmitter {
           // - read: plan file is readable in all modes (useful context)
           // - write: enforced by file_edit_* tools (plan file is read-only outside plan mode)
           mode: uiMode,
+          emitChatEvent: (event) => {
+            // Defensive: tools should only emit events for the workspace they belong to.
+            if ("workspaceId" in event && event.workspaceId !== workspaceId) {
+              return;
+            }
+            this.emit(event.type, event as never);
+          },
           planFilePath,
           workspaceId,
           // External edit detection callback

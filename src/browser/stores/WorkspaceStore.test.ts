@@ -626,4 +626,89 @@ describe("WorkspaceStore", () => {
       expect(state2.loading).toBe(true); // Fresh workspace, not caught up
     });
   });
+
+  describe("bash-output events", () => {
+    it("retains live output when bash tool result has no output", async () => {
+      const workspaceId = "bash-output-workspace-1";
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield {
+          type: "bash-output",
+          workspaceId,
+          toolCallId: "call-1",
+          text: "out\n",
+          isError: false,
+          timestamp: 1,
+        };
+        yield {
+          type: "bash-output",
+          workspaceId,
+          toolCallId: "call-1",
+          text: "err\n",
+          isError: true,
+          timestamp: 2,
+        };
+        // Simulate tmpfile overflow: tool result has no output field.
+        yield {
+          type: "tool-call-end",
+          workspaceId,
+          messageId: "m1",
+          toolCallId: "call-1",
+          toolName: "bash",
+          result: { success: false, error: "overflow", exitCode: -1, wall_duration_ms: 1 },
+          timestamp: 3,
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const live = store.getBashToolLiveOutput(workspaceId, "call-1");
+      expect(live).not.toBeNull();
+      expect(live?.stdout).toContain("out");
+      expect(live?.stderr).toContain("err");
+    });
+
+    it("clears live output when bash tool result includes output", async () => {
+      const workspaceId = "bash-output-workspace-2";
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield {
+          type: "bash-output",
+          workspaceId,
+          toolCallId: "call-2",
+          text: "out\n",
+          isError: false,
+          timestamp: 1,
+        };
+        yield {
+          type: "tool-call-end",
+          workspaceId,
+          messageId: "m2",
+          toolCallId: "call-2",
+          toolName: "bash",
+          result: { success: true, output: "done", exitCode: 0, wall_duration_ms: 1 },
+          timestamp: 2,
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const live = store.getBashToolLiveOutput(workspaceId, "call-2");
+      expect(live).toBeNull();
+    });
+  });
 });

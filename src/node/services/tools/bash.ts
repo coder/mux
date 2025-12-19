@@ -12,6 +12,7 @@ import {
 } from "@/common/constants/toolLimits";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 
+import type { BashOutputEvent } from "@/common/types/stream";
 import type { BashToolResult } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
@@ -391,9 +392,93 @@ ${script}`;
         triggerFileTruncation
       );
 
+      // UI-only incremental output streaming over workspace.onChat (not sent to the model).
+      // We flush chunked text rather than per-line to keep overhead low.
+      let liveOutputStopped = false;
+      let liveStdoutBuffer = "";
+      let liveStderrBuffer = "";
+      let liveOutputTimer: ReturnType<typeof setInterval> | null = null;
+
+      const LIVE_FLUSH_INTERVAL_MS = 75;
+      const MAX_LIVE_EVENT_CHARS = 32_768;
+
+      const emitBashOutput = (isError: boolean, text: string): void => {
+        if (!config.emitChatEvent || !config.workspaceId || !toolCallId) return;
+        if (liveOutputStopped) return;
+        if (text.length === 0) return;
+
+        config.emitChatEvent({
+          type: "bash-output",
+          workspaceId: config.workspaceId,
+          toolCallId,
+          text,
+          isError,
+          timestamp: Date.now(),
+        } satisfies BashOutputEvent);
+      };
+
+      const flushLiveOutput = (): void => {
+        if (liveOutputStopped) return;
+
+        const flush = (isError: boolean, buffer: string): void => {
+          if (buffer.length === 0) return;
+          for (let i = 0; i < buffer.length; i += MAX_LIVE_EVENT_CHARS) {
+            emitBashOutput(isError, buffer.slice(i, i + MAX_LIVE_EVENT_CHARS));
+          }
+        };
+
+        if (liveStdoutBuffer.length > 0) {
+          const buf = liveStdoutBuffer;
+          liveStdoutBuffer = "";
+          flush(false, buf);
+        }
+
+        if (liveStderrBuffer.length > 0) {
+          const buf = liveStderrBuffer;
+          liveStderrBuffer = "";
+          flush(true, buf);
+        }
+      };
+
+      const stopLiveOutput = (flush: boolean): void => {
+        if (liveOutputStopped) return;
+        if (flush) flushLiveOutput();
+
+        liveOutputStopped = true;
+
+        if (liveOutputTimer) {
+          clearInterval(liveOutputTimer);
+          liveOutputTimer = null;
+        }
+
+        liveStdoutBuffer = "";
+        liveStderrBuffer = "";
+      };
+
+      if (config.emitChatEvent && config.workspaceId && toolCallId) {
+        liveOutputTimer = setInterval(flushLiveOutput, LIVE_FLUSH_INTERVAL_MS);
+      }
+
+      const appendLiveOutput = (isError: boolean, text: string): void => {
+        if (!config.emitChatEvent || !config.workspaceId || !toolCallId) return;
+        if (liveOutputStopped) return;
+        if (text.length === 0) return;
+
+        if (isError) {
+          liveStderrBuffer += text;
+          if (liveStderrBuffer.length >= MAX_LIVE_EVENT_CHARS) flushLiveOutput();
+        } else {
+          liveStdoutBuffer += text;
+          if (liveStdoutBuffer.length >= MAX_LIVE_EVENT_CHARS) flushLiveOutput();
+        }
+      };
+
       // Consume a ReadableStream<Uint8Array> and emit lines to lineHandler.
       // Uses TextDecoder streaming to preserve multibyte boundaries.
-      const consumeStream = async (stream: ReadableStream<Uint8Array>): Promise<void> => {
+      const consumeStream = async (
+        stream: ReadableStream<Uint8Array>,
+        isError: boolean
+      ): Promise<void> => {
         const reader = stream.getReader();
         const decoder = new TextDecoder("utf-8");
         let carry = "";
@@ -420,6 +505,7 @@ ${script}`;
             if (done) break;
             // Decode chunk (streaming keeps partial code points)
             const text = decoder.decode(value, { stream: true });
+            appendLiveOutput(isError, text);
             carry += text;
             // Split into lines; support both \n and \r\n
             let start = 0;
@@ -449,7 +535,10 @@ ${script}`;
           // Flush decoder for any trailing bytes and emit the last line (if any)
           try {
             const tail = decoder.decode();
-            if (tail) carry += tail;
+            if (tail) {
+              appendLiveOutput(isError, tail);
+              carry += tail;
+            }
             if (carry.length > 0 && !truncationState.fileTruncated) {
               lineHandler(carry);
             }
@@ -460,8 +549,8 @@ ${script}`;
       };
 
       // Start consuming stdout and stderr concurrently (using UI branches)
-      const consumeStdout = consumeStream(stdoutForUI);
-      const consumeStderr = consumeStream(stderrForUI);
+      const consumeStdout = consumeStream(stdoutForUI, false);
+      const consumeStderr = consumeStream(stderrForUI, true);
 
       // Create a promise that resolves when user clicks "Background"
       const backgroundPromise = new Promise<void>((resolve) => {
@@ -481,6 +570,17 @@ ${script}`;
         if (result === "backgrounded" || backgrounded) {
           // Unregister foreground process
           fgRegistration?.unregister();
+
+          // Stop UI-only output streaming before migrating to background.
+          stopLiveOutput(true);
+
+          // Stop consuming UI stream branches - further output should be handled by bash_output.
+          stdoutForUI.cancel().catch(() => {
+            /* ignore */ return;
+          });
+          stderrForUI.cancel().catch(() => {
+            /* ignore */ return;
+          });
 
           // Detach from abort signal - process should continue running
           // even when the stream ends and fires abort
@@ -565,6 +665,8 @@ ${script}`;
           exitCode: -1,
           wall_duration_ms: Math.round(performance.now() - startTime),
         };
+      } finally {
+        stopLiveOutput(true);
       }
 
       // Unregister foreground process on normal completion

@@ -8,12 +8,14 @@ import type { TodoItem } from "@/common/types/tools";
 import { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getRetryStateKey } from "@/common/constants/storage";
+import { BASH_TRUNCATE_MAX_TOTAL_BYTES } from "@/common/constants/toolLimits";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { useSyncExternalStore } from "react";
 import {
   isCaughtUpMessage,
   isStreamError,
   isDeleteMessage,
+  isBashOutputEvent,
   isMuxMessage,
   isQueuedMessageChanged,
   isRestoreToInput,
@@ -30,6 +32,12 @@ import type { z } from "zod";
 import type { SessionUsageFileSchema } from "@/common/orpc/schemas/chatStats";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { createFreshRetryState } from "@/browser/utils/messages/retryState";
+import {
+  appendLiveBashOutputChunk,
+  toLiveBashOutputView,
+  type LiveBashOutputInternal,
+  type LiveBashOutputView,
+} from "@/browser/utils/messages/liveBashOutputBuffer";
 import { trackStreamCompleted } from "@/common/telemetry";
 
 export interface WorkspaceState {
@@ -252,6 +260,10 @@ export class WorkspaceStore {
   private statsStore = new MapStore<string, WorkspaceStatsSnapshot | null>();
   private statsUnsubscribers = new Map<string, () => void>();
   // Cumulative session usage (from session-usage.json)
+
+  // UI-only incremental bash output streamed via bash-output events (not persisted).
+  // Keyed by toolCallId.
+  private liveBashOutput = new Map<string, Map<string, LiveBashOutputInternal>>();
   private sessionUsage = new Map<string, z.infer<typeof SessionUsageFileSchema>>();
 
   // Idle compaction notification callbacks (called when backend signals idle compaction needed)
@@ -365,6 +377,21 @@ export class WorkspaceStore {
       this.scheduleIdleStateBump(workspaceId);
     },
     "tool-call-end": (workspaceId, aggregator, data) => {
+      const toolCallEnd = data as Extract<WorkspaceChatMessage, { type: "tool-call-end" }>;
+
+      // Cleanup live bash output once the real tool result contains output.
+      // If output is missing (e.g. tmpfile overflow), keep the tail buffer so the UI still shows something.
+      if (toolCallEnd.toolName === "bash") {
+        const output = (toolCallEnd.result as { output?: unknown } | undefined)?.output;
+        if (typeof output === "string") {
+          const perWorkspace = this.liveBashOutput.get(workspaceId);
+          perWorkspace?.delete(toolCallEnd.toolCallId);
+          if (perWorkspace?.size === 0) {
+            this.liveBashOutput.delete(workspaceId);
+          }
+        }
+      }
+
       aggregator.handleToolCallEnd(data as never);
       this.states.bump(workspaceId);
       this.consumerManager.scheduleCalculation(workspaceId, aggregator);
@@ -613,6 +640,31 @@ export class WorkspaceStore {
     }
   }
 
+  private cleanupStaleLiveBashOutput(
+    workspaceId: string,
+    aggregator: StreamingMessageAggregator
+  ): void {
+    const perWorkspace = this.liveBashOutput.get(workspaceId);
+    if (!perWorkspace || perWorkspace.size === 0) return;
+
+    const activeToolCallIds = new Set<string>();
+    for (const msg of aggregator.getDisplayedMessages()) {
+      if (msg.type === "tool" && msg.toolName === "bash") {
+        activeToolCallIds.add(msg.toolCallId);
+      }
+    }
+
+    for (const toolCallId of Array.from(perWorkspace.keys())) {
+      if (!activeToolCallIds.has(toolCallId)) {
+        perWorkspace.delete(toolCallId);
+      }
+    }
+
+    if (perWorkspace.size === 0) {
+      this.liveBashOutput.delete(workspaceId);
+    }
+  }
+
   /**
    * Subscribe to store changes (any workspace).
    * Delegates to MapStore's subscribeAny.
@@ -632,6 +684,12 @@ export class WorkspaceStore {
   subscribeKey = (workspaceId: string, listener: () => void) => {
     return this.states.subscribeKey(workspaceId, listener);
   };
+
+  getBashToolLiveOutput(workspaceId: string, toolCallId: string): LiveBashOutputView | null {
+    const perWorkspace = this.liveBashOutput.get(workspaceId);
+    const state = perWorkspace?.get(toolCallId);
+    return state ? toLiveBashOutputView(state) : null;
+  }
 
   /**
    * Assert that workspace exists and return its aggregator.
@@ -1146,6 +1204,7 @@ export class WorkspaceStore {
     this.workspaceCreatedAt.delete(workspaceId);
     this.workspaceStats.delete(workspaceId);
     this.statsStore.delete(workspaceId);
+    this.liveBashOutput.delete(workspaceId);
     this.sessionUsage.delete(workspaceId);
   }
 
@@ -1196,7 +1255,11 @@ export class WorkspaceStore {
     this.pendingStreamEvents.clear();
     this.workspaceStats.clear();
     this.statsStore.clear();
+    this.liveBashOutput.clear();
     this.sessionUsage.clear();
+    this.recencyCache.clear();
+    this.previousSidebarValues.clear();
+    this.sidebarStateCache.clear();
     this.workspaceCreatedAt.clear();
   }
 
@@ -1366,10 +1429,32 @@ export class WorkspaceStore {
 
     if (isDeleteMessage(data)) {
       aggregator.handleDeleteMessage(data);
+      this.cleanupStaleLiveBashOutput(workspaceId, aggregator);
       this.states.bump(workspaceId);
       this.checkAndBumpRecencyIfChanged();
       this.usageStore.bump(workspaceId);
       this.consumerManager.scheduleCalculation(workspaceId, aggregator);
+      return;
+    }
+
+    if (isBashOutputEvent(data)) {
+      if (data.text.length === 0) return;
+
+      const perWorkspace =
+        this.liveBashOutput.get(workspaceId) ?? new Map<string, LiveBashOutputInternal>();
+
+      const prev = perWorkspace.get(data.toolCallId);
+      const next = appendLiveBashOutputChunk(
+        prev,
+        { text: data.text, isError: data.isError },
+        BASH_TRUNCATE_MAX_TOTAL_BYTES
+      );
+
+      perWorkspace.set(data.toolCallId, next);
+      this.liveBashOutput.set(workspaceId, perWorkspace);
+
+      // High-frequency: throttle UI updates like other delta-style events.
+      this.scheduleIdleStateBump(workspaceId);
       return;
     }
 
@@ -1483,6 +1568,27 @@ export function useWorkspaceSidebarState(workspaceId: string): WorkspaceSidebarS
   return useSyncExternalStore(
     (listener) => store.subscribeKey(workspaceId, listener),
     () => store.getWorkspaceSidebarState(workspaceId)
+  );
+}
+
+/**
+ * Hook to get UI-only live stdout/stderr for a running bash tool call.
+ */
+export function useBashToolLiveOutput(
+  workspaceId: string | undefined,
+  toolCallId: string | undefined
+): LiveBashOutputView | null {
+  const store = getStoreInstance();
+
+  return useSyncExternalStore(
+    (listener) => {
+      if (!workspaceId) return () => undefined;
+      return store.subscribeKey(workspaceId, listener);
+    },
+    () => {
+      if (!workspaceId || !toolCallId) return null;
+      return store.getBashToolLiveOutput(workspaceId, toolCallId);
+    }
   );
 }
 

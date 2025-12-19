@@ -164,6 +164,8 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
     return (
       <div className={className}>
         <BashToolCall
+          workspaceId={workspaceId}
+          toolCallId={message.toolCallId}
           args={message.args}
           result={message.result as BashToolResult | undefined}
           status={message.status}

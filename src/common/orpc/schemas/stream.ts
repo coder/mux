@@ -169,6 +169,20 @@ export const ToolCallDeltaEventSchema = z.object({
   timestamp: z.number().meta({ description: "When delta was received (Date.now())" }),
 });
 
+/**
+ * UI-only incremental output from the bash tool.
+ *
+ * This is intentionally NOT part of the tool result returned to the model.
+ * It is streamed over workspace.onChat so users can "peek" while the tool is running.
+ */
+export const BashOutputEventSchema = z.object({
+  type: z.literal("bash-output"),
+  workspaceId: z.string(),
+  toolCallId: z.string(),
+  text: z.string(),
+  isError: z.boolean().meta({ description: "True if this chunk is from stderr" }),
+  timestamp: z.number().meta({ description: "When output was flushed (Date.now())" }),
+});
 export const ToolCallEndEventSchema = z.object({
   type: z.literal("tool-call-end"),
   workspaceId: z.string(),
@@ -294,6 +308,7 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   ToolCallStartEventSchema,
   ToolCallDeltaEventSchema,
   ToolCallEndEventSchema,
+  BashOutputEventSchema,
   // Reasoning events
   ReasoningDeltaEventSchema,
   ReasoningEndEventSchema,

@@ -118,18 +118,20 @@ export const DetailLabel: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
   />
 );
 
-export const DetailContent: React.FC<React.HTMLAttributes<HTMLPreElement>> = ({
-  className,
-  ...props
-}) => (
-  <pre
-    className={cn(
-      "m-0 bg-code-bg rounded-sm text-[11px] leading-relaxed whitespace-pre-wrap break-words max-h-[200px] overflow-y-auto",
-      className
-    )}
-    {...props}
-  />
+export const DetailContent = React.forwardRef<HTMLPreElement, React.HTMLAttributes<HTMLPreElement>>(
+  ({ className, ...props }, ref) => (
+    <pre
+      ref={ref}
+      className={cn(
+        "m-0 bg-code-bg rounded-sm text-[11px] leading-relaxed whitespace-pre-wrap break-words max-h-[200px] overflow-y-auto",
+        className
+      )}
+      {...props}
+    />
+  )
 );
+
+DetailContent.displayName = "DetailContent";
 
 export const LoadingDots: React.FC<React.HTMLAttributes<HTMLSpanElement>> = ({
   className,

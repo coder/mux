@@ -1,6 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { createBashTool } from "./bash";
+import type { BashOutputEvent } from "@/common/types/stream";
 import type { BashToolArgs, BashToolResult } from "@/common/types/tools";
 import { BASH_MAX_TOTAL_BYTES } from "@/common/constants/toolLimits";
 import * as fs from "fs";
@@ -51,6 +52,49 @@ describe("bash tool", () => {
       expect(result.output).toBe("hello");
       expect(result.exitCode).toBe(0);
     }
+  });
+
+  it("should emit bash-output events when emitChatEvent is provided", async () => {
+    const tempDir = new TestTempDir("test-bash-live-output");
+    const events: BashOutputEvent[] = [];
+
+    const config = createTestToolConfig(process.cwd());
+    config.runtimeTempDir = tempDir.path;
+    config.emitChatEvent = (event) => {
+      if (event.type === "bash-output") {
+        events.push(event);
+      }
+    };
+
+    const tool = createBashTool(config);
+
+    const args: BashToolArgs = {
+      script: "echo out && echo err 1>&2",
+      timeout_secs: 5,
+      run_in_background: false,
+      display_name: "test",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+    expect(result.success).toBe(true);
+
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.every((e) => e.workspaceId === config.workspaceId)).toBe(true);
+    expect(events.every((e) => e.toolCallId === mockToolCallOptions.toolCallId)).toBe(true);
+
+    const stdoutText = events
+      .filter((e) => !e.isError)
+      .map((e) => e.text)
+      .join("");
+    const stderrText = events
+      .filter((e) => e.isError)
+      .map((e) => e.text)
+      .join("");
+
+    expect(stdoutText).toContain("out");
+    expect(stderrText).toContain("err");
+
+    tempDir[Symbol.dispose]();
   });
 
   it("should handle multi-line output", async () => {

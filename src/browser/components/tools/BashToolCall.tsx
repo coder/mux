@@ -23,9 +23,12 @@ import {
   type ToolStatus,
 } from "./shared/toolUtils";
 import { cn } from "@/common/lib/utils";
+import { useBashToolLiveOutput } from "@/browser/stores/WorkspaceStore";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 
 interface BashToolCallProps {
+  workspaceId?: string;
+  toolCallId?: string;
   args: BashToolArgs;
   result?: BashToolResult;
   status?: ToolStatus;
@@ -37,6 +40,8 @@ interface BashToolCallProps {
 }
 
 export const BashToolCall: React.FC<BashToolCallProps> = ({
+  workspaceId,
+  toolCallId,
   args,
   result,
   status = "pending",
@@ -46,6 +51,34 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
 }) => {
   const { expanded, toggleExpanded } = useToolExpansion();
   const [elapsedTime, setElapsedTime] = useState(0);
+
+  const liveOutput = useBashToolLiveOutput(workspaceId, toolCallId);
+
+  const stdoutRef = useRef<HTMLPreElement>(null);
+  const stderrRef = useRef<HTMLPreElement>(null);
+  const stdoutPinnedRef = useRef(true);
+  const stderrPinnedRef = useRef(true);
+
+  const updatePinned = (el: HTMLPreElement, pinnedRef: React.MutableRefObject<boolean>) => {
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    pinnedRef.current = distanceToBottom < 40;
+  };
+
+  useEffect(() => {
+    const el = stdoutRef.current;
+    if (!el) return;
+    if (stdoutPinnedRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [liveOutput?.stdout]);
+
+  useEffect(() => {
+    const el = stderrRef.current;
+    if (!el) return;
+    if (stderrPinnedRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [liveOutput?.stderr]);
   const startTimeRef = useRef<number>(startedAt ?? Date.now());
 
   // Track elapsed time for pending/executing status
@@ -73,6 +106,12 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   // but for a foreground→background migration we want to show "backgrounded"
   const effectiveStatus: ToolStatus =
     status === "completed" && result && "backgroundProcessId" in result ? "backgrounded" : status;
+
+  const resultHasOutput = typeof (result as { output?: unknown } | undefined)?.output === "string";
+  const showLiveOutput = Boolean(
+    liveOutput && !isBackground && (status === "executing" || !resultHasOutput)
+  );
+  const liveLabelSuffix = status === "executing" ? " (live)" : " (tail)";
 
   return (
     <ToolContainer expanded={expanded}>
@@ -137,6 +176,43 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
 
       {expanded && (
         <ToolDetails>
+          {showLiveOutput && liveOutput && (
+            <>
+              {liveOutput.truncated && (
+                <div className="text-muted px-2 text-[10px] italic">
+                  Live output truncated (showing last ~1MB)
+                </div>
+              )}
+
+              <DetailSection>
+                <DetailLabel>{`Stdout${liveLabelSuffix}`}</DetailLabel>
+                <DetailContent
+                  ref={stdoutRef}
+                  onScroll={(e) => updatePinned(e.currentTarget, stdoutPinnedRef)}
+                  className={cn(
+                    "px-2 py-1.5",
+                    liveOutput.stdout.length === 0 && "text-muted italic"
+                  )}
+                >
+                  {liveOutput.stdout.length > 0 ? liveOutput.stdout : "No output yet"}
+                </DetailContent>
+              </DetailSection>
+
+              <DetailSection>
+                <DetailLabel>{`Stderr${liveLabelSuffix}`}</DetailLabel>
+                <DetailContent
+                  ref={stderrRef}
+                  onScroll={(e) => updatePinned(e.currentTarget, stderrPinnedRef)}
+                  className={cn(
+                    "px-2 py-1.5",
+                    liveOutput.stderr.length === 0 && "text-muted italic"
+                  )}
+                >
+                  {liveOutput.stderr.length > 0 ? liveOutput.stderr : "No output yet"}
+                </DetailContent>
+              </DetailSection>
+            </>
+          )}
           <DetailSection>
             <DetailLabel>Script</DetailLabel>
             <DetailContent className="px-2 py-1.5">{args.script}</DetailContent>
