@@ -535,6 +535,18 @@ export class WorkspaceStore {
       return;
     }
 
+    // requestIdleCallback is not available in some environments (e.g. Node-based unit tests).
+    // Fall back to a regular timeout so we still throttle bumps.
+    if (typeof requestIdleCallback !== "function") {
+      const handle = setTimeout(() => {
+        this.deltaIdleHandles.delete(workspaceId);
+        this.states.bump(workspaceId);
+      }, 0);
+
+      this.deltaIdleHandles.set(workspaceId, handle as unknown as number);
+      return;
+    }
+
     const handle = requestIdleCallback(
       () => {
         this.deltaIdleHandles.delete(workspaceId);
@@ -591,7 +603,11 @@ export class WorkspaceStore {
   private cancelPendingIdleBump(workspaceId: string): void {
     const handle = this.deltaIdleHandles.get(workspaceId);
     if (handle) {
-      cancelIdleCallback(handle);
+      if (typeof cancelIdleCallback === "function") {
+        cancelIdleCallback(handle);
+      } else {
+        clearTimeout(handle as unknown as number);
+      }
       this.deltaIdleHandles.delete(workspaceId);
     }
   }
@@ -1172,11 +1188,7 @@ export class WorkspaceStore {
     this.consumerManager.removeWorkspace(workspaceId);
 
     // Clean up idle callback to prevent stale callbacks
-    const handle = this.deltaIdleHandles.get(workspaceId);
-    if (handle) {
-      cancelIdleCallback(handle);
-      this.deltaIdleHandles.delete(workspaceId);
-    }
+    this.cancelPendingIdleBump(workspaceId);
 
     const statsUnsubscribe = this.statsUnsubscribers.get(workspaceId);
     if (statsUnsubscribe) {

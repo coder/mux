@@ -67,7 +67,7 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 ## Refactoring & Runtime Etiquette
 
 - Use `git mv` to retain history when moving files.
-- Never kill the running mux process; rely on `make test` / `make typecheck` for validation.
+- Never kill the running mux process; rely on `make typecheck` + targeted `bun test path/to/file.test.ts` for validation (run `make test` only when necessary; it can be slow).
 
 ## Testing Doctrine
 

@@ -559,10 +559,12 @@ ${script}`;
 
       // Wait for process exit and stream consumption concurrently
       // Also race with the background promise to detect early return request
+      const foregroundCompletion = Promise.all([execStream.exitCode, consumeStdout, consumeStderr]);
+
       let exitCode: number;
       try {
         const result = await Promise.race([
-          Promise.all([execStream.exitCode, consumeStdout, consumeStderr]),
+          foregroundCompletion,
           backgroundPromise.then(() => "backgrounded" as const),
         ]);
 
@@ -581,6 +583,10 @@ ${script}`;
           stderrForUI.cancel().catch(() => {
             /* ignore */ return;
           });
+
+          // Avoid unhandled promise rejections if the cancelled UI readers cause
+          // the foreground consumption promise to reject after we return.
+          void foregroundCompletion.catch(() => undefined);
 
           // Detach from abort signal - process should continue running
           // even when the stream ends and fires abort
