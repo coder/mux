@@ -671,8 +671,14 @@ describe("WorkspaceStore", () => {
 
       const live = store.getBashToolLiveOutput(workspaceId, "call-1");
       expect(live).not.toBeNull();
-      expect(live?.stdout).toContain("out");
-      expect(live?.stderr).toContain("err");
+      if (!live) throw new Error("Expected live output");
+
+      // getSnapshot in useSyncExternalStore requires referential stability when unchanged.
+      const liveAgain = store.getBashToolLiveOutput(workspaceId, "call-1");
+      expect(liveAgain).toBe(live);
+
+      expect(live.stdout).toContain("out");
+      expect(live.stderr).toContain("err");
     });
 
     it("clears live output when bash tool result includes output", async () => {

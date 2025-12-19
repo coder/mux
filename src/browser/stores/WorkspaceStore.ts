@@ -34,7 +34,6 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { createFreshRetryState } from "@/browser/utils/messages/retryState";
 import {
   appendLiveBashOutputChunk,
-  toLiveBashOutputView,
   type LiveBashOutputInternal,
   type LiveBashOutputView,
 } from "@/browser/utils/messages/liveBashOutputBuffer";
@@ -704,7 +703,10 @@ export class WorkspaceStore {
   getBashToolLiveOutput(workspaceId: string, toolCallId: string): LiveBashOutputView | null {
     const perWorkspace = this.liveBashOutput.get(workspaceId);
     const state = perWorkspace?.get(toolCallId);
-    return state ? toLiveBashOutputView(state) : null;
+
+    // Important: return the stored object reference so useSyncExternalStore sees a stable snapshot.
+    // (Returning a fresh object every call can trigger an infinite re-render loop.)
+    return state ?? null;
   }
 
   /**
