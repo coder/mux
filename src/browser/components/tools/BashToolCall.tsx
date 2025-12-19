@@ -11,7 +11,6 @@ import {
   DetailSection,
   DetailLabel,
   DetailContent,
-  LoadingDots,
   ToolIcon,
   ErrorBox,
   ExitCodeBadge,
@@ -60,31 +59,24 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
 
   const liveOutput = useBashToolLiveOutput(workspaceId, toolCallId);
 
-  const stdoutRef = useRef<HTMLPreElement>(null);
-  const stderrRef = useRef<HTMLPreElement>(null);
-  const stdoutPinnedRef = useRef(true);
-  const stderrPinnedRef = useRef(true);
+  const outputRef = useRef<HTMLPreElement>(null);
+  const outputPinnedRef = useRef(true);
 
-  const updatePinned = (el: HTMLPreElement, pinnedRef: React.MutableRefObject<boolean>) => {
+  const updatePinned = (el: HTMLPreElement) => {
     const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    pinnedRef.current = distanceToBottom < 40;
+    outputPinnedRef.current = distanceToBottom < 40;
   };
 
-  useEffect(() => {
-    const el = stdoutRef.current;
-    if (!el) return;
-    if (stdoutPinnedRef.current) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [liveOutput?.stdout]);
+  const liveOutputView = liveOutput ?? EMPTY_LIVE_OUTPUT;
+  const combinedLiveOutput = liveOutputView.stdout + liveOutputView.stderr;
 
   useEffect(() => {
-    const el = stderrRef.current;
+    const el = outputRef.current;
     if (!el) return;
-    if (stderrPinnedRef.current) {
+    if (outputPinnedRef.current) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [liveOutput?.stderr]);
+  }, [combinedLiveOutput]);
   const startTimeRef = useRef<number>(startedAt ?? Date.now());
 
   // Track elapsed time for pending/executing status
@@ -115,13 +107,9 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
 
   const resultHasOutput = typeof (result as { output?: unknown } | undefined)?.output === "string";
 
-  const hasLiveOutputSource = Boolean(workspaceId && toolCallId);
   const showLiveOutput =
-    !isBackground &&
-    hasLiveOutputSource &&
-    (status === "executing" || (Boolean(liveOutput) && !resultHasOutput));
+    !isBackground && (status === "executing" || (Boolean(liveOutput) && !resultHasOutput));
 
-  const liveOutputView = liveOutput ?? EMPTY_LIVE_OUTPUT;
   const liveLabelSuffix = status === "executing" ? " (live)" : " (tail)";
 
   return (
@@ -187,6 +175,11 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
 
       {expanded && (
         <ToolDetails>
+          <DetailSection>
+            <DetailLabel>Script</DetailLabel>
+            <DetailContent className="px-2 py-1.5">{args.script}</DetailContent>
+          </DetailSection>
+
           {showLiveOutput && (
             <>
               {liveOutputView.truncated && (
@@ -196,38 +189,20 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
               )}
 
               <DetailSection>
-                <DetailLabel>{`Stdout${liveLabelSuffix}`}</DetailLabel>
+                <DetailLabel>{`Output${liveLabelSuffix}`}</DetailLabel>
                 <DetailContent
-                  ref={stdoutRef}
-                  onScroll={(e) => updatePinned(e.currentTarget, stdoutPinnedRef)}
+                  ref={outputRef}
+                  onScroll={(e) => updatePinned(e.currentTarget)}
                   className={cn(
                     "px-2 py-1.5",
-                    liveOutputView.stdout.length === 0 && "text-muted italic"
+                    combinedLiveOutput.length === 0 && "text-muted italic"
                   )}
                 >
-                  {liveOutputView.stdout.length > 0 ? liveOutputView.stdout : "No output yet"}
-                </DetailContent>
-              </DetailSection>
-
-              <DetailSection>
-                <DetailLabel>{`Stderr${liveLabelSuffix}`}</DetailLabel>
-                <DetailContent
-                  ref={stderrRef}
-                  onScroll={(e) => updatePinned(e.currentTarget, stderrPinnedRef)}
-                  className={cn(
-                    "px-2 py-1.5",
-                    liveOutputView.stderr.length === 0 && "text-muted italic"
-                  )}
-                >
-                  {liveOutputView.stderr.length > 0 ? liveOutputView.stderr : "No output yet"}
+                  {combinedLiveOutput.length > 0 ? combinedLiveOutput : "No output yet"}
                 </DetailContent>
               </DetailSection>
             </>
           )}
-          <DetailSection>
-            <DetailLabel>Script</DetailLabel>
-            <DetailContent className="px-2 py-1.5">{args.script}</DetailContent>
-          </DetailSection>
 
           {result && (
             <>
@@ -257,15 +232,6 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
                 )
               )}
             </>
-          )}
-
-          {status === "executing" && !result && !showLiveOutput && (
-            <DetailSection>
-              <DetailContent className="px-2 py-1.5">
-                Waiting for result
-                <LoadingDots />
-              </DetailContent>
-            </DetailSection>
           )}
         </ToolDetails>
       )}
