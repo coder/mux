@@ -6,7 +6,7 @@ import {
   type ExperimentId,
 } from "@/common/constants/experiments";
 import { Switch } from "@/browser/components/ui/switch";
-import { useFeatureFlags, type StatsTabOverride } from "@/browser/contexts/FeatureFlagsContext";
+import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 
@@ -48,35 +48,29 @@ function ExperimentRow(props: ExperimentRowProps) {
   );
 }
 
-function StatsTabOverrideRow() {
-  const { statsTabState, setStatsTabOverride } = useFeatureFlags();
+function StatsTabRow() {
+  const { statsTabState, setStatsTabEnabled } = useFeatureFlags();
 
-  const onChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const value = e.target.value as StatsTabOverride;
-    setStatsTabOverride(value).catch(() => {
-      // ignore
-    });
-  };
+  const handleToggle = useCallback(
+    (enabled: boolean) => {
+      setStatsTabEnabled(enabled).catch(() => {
+        // ignore
+      });
+    },
+    [setStatsTabEnabled]
+  );
 
   return (
     <div className="flex items-center justify-between py-3">
       <div className="flex-1 pr-4">
         <div className="text-foreground text-sm font-medium">Stats tab</div>
-        <div className="text-muted mt-0.5 text-xs">
-          PostHog experiment-gated timing stats sidebar. Experiment variant:{" "}
-          {statsTabState?.variant ?? "—"}.
-        </div>
+        <div className="text-muted mt-0.5 text-xs">Show timing statistics in the right sidebar</div>
       </div>
-      <select
-        className="bg-background text-foreground border-border-light rounded-md border px-2 py-1 text-xs"
-        value={statsTabState?.override ?? "default"}
-        onChange={onChange}
-        aria-label="Stats tab override"
-      >
-        <option value="default">Default (experiment)</option>
-        <option value="on">Always on</option>
-        <option value="off">Always off</option>
-      </select>
+      <Switch
+        checked={statsTabState?.enabled ?? false}
+        onCheckedChange={handleToggle}
+        aria-label="Toggle Stats tab"
+      />
     </div>
   );
 }
@@ -105,7 +99,7 @@ export function ExperimentsSection() {
         Experimental features that are still in development. Enable at your own risk.
       </p>
       <div className="divide-border-light divide-y">
-        <StatsTabOverrideRow />
+        <StatsTabRow />
         {experiments.map((exp) => (
           <ExperimentRow
             key={exp.id}

@@ -26,19 +26,14 @@ function isStorybook(): boolean {
   return false;
 }
 
-export type StatsTabVariant = "control" | "stats";
-export type StatsTabOverride = "default" | "on" | "off";
-
 export interface StatsTabState {
   enabled: boolean;
-  variant: StatsTabVariant;
-  override: StatsTabOverride;
 }
 
 interface FeatureFlagsContextValue {
   statsTabState: StatsTabState | null;
   refreshStatsTabState: () => Promise<void>;
-  setStatsTabOverride: (override: StatsTabOverride) => Promise<void>;
+  setStatsTabEnabled: (enabled: boolean) => Promise<void>;
 }
 
 const FeatureFlagsContext = createContext<FeatureFlagsContextValue | null>(null);
@@ -53,7 +48,7 @@ export function FeatureFlagsProvider(props: { children: ReactNode }) {
   const { api } = useAPI();
   const [statsTabState, setStatsTabState] = useState<StatsTabState | null>(() => {
     if (isStorybook()) {
-      return { enabled: true, variant: "stats", override: "default" };
+      return { enabled: true };
     }
 
     return null;
@@ -61,21 +56,21 @@ export function FeatureFlagsProvider(props: { children: ReactNode }) {
 
   const refreshStatsTabState = async (): Promise<void> => {
     if (!api) {
-      setStatsTabState({ enabled: false, variant: "control", override: "default" });
+      setStatsTabState({ enabled: false });
       return;
     }
 
     const state = await api.features.getStatsTabState();
-    setStatsTabState(state);
+    setStatsTabState({ enabled: state.enabled });
   };
 
-  const setStatsTabOverride = async (override: StatsTabOverride): Promise<void> => {
+  const setStatsTabEnabled = async (enabled: boolean): Promise<void> => {
     if (!api) {
       throw new Error("ORPC client not initialized");
     }
 
-    const state = await api.features.setStatsTabOverride({ override });
-    setStatsTabState(state);
+    const state = await api.features.setStatsTabOverride({ override: enabled ? "on" : "off" });
+    setStatsTabState({ enabled: state.enabled });
   };
 
   useEffect(() => {
@@ -86,22 +81,22 @@ export function FeatureFlagsProvider(props: { children: ReactNode }) {
     (async () => {
       try {
         if (!api) {
-          setStatsTabState({ enabled: false, variant: "control", override: "default" });
+          setStatsTabState({ enabled: false });
           return;
         }
 
         const state = await api.features.getStatsTabState();
-        setStatsTabState(state);
+        setStatsTabState({ enabled: state.enabled });
       } catch {
         // Treat as disabled if we can't fetch.
-        setStatsTabState({ enabled: false, variant: "control", override: "default" });
+        setStatsTabState({ enabled: false });
       }
     })();
   }, [api]);
 
   return (
     <FeatureFlagsContext.Provider
-      value={{ statsTabState, refreshStatsTabState, setStatsTabOverride }}
+      value={{ statsTabState, refreshStatsTabState, setStatsTabEnabled }}
     >
       {props.children}
     </FeatureFlagsContext.Provider>
