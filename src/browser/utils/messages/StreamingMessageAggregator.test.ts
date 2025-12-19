@@ -653,6 +653,7 @@ describe("StreamingMessageAggregator", () => {
         messageId: "msg-1",
         historySequence: 1,
         model: "claude-3-5-sonnet-20241022",
+        startTime: Date.now(),
       });
 
       // Start parent code_execution tool
@@ -707,6 +708,7 @@ describe("StreamingMessageAggregator", () => {
         messageId: "msg-1",
         historySequence: 1,
         model: "claude-3-5-sonnet-20241022",
+        startTime: Date.now(),
       });
 
       aggregator.handleToolCallStart({
@@ -766,6 +768,7 @@ describe("StreamingMessageAggregator", () => {
         messageId: "msg-1",
         historySequence: 1,
         model: "claude-3-5-sonnet-20241022",
+        startTime: Date.now(),
       });
 
       aggregator.handleToolCallStart({
@@ -853,6 +856,7 @@ describe("StreamingMessageAggregator", () => {
         messageId: "msg-1",
         historySequence: 1,
         model: "claude-3-5-sonnet-20241022",
+        startTime: Date.now(),
       });
 
       // Try to add nested call with non-existent parent
@@ -884,6 +888,7 @@ describe("StreamingMessageAggregator", () => {
         messageId: "msg-1",
         historySequence: 1,
         model: "claude-3-5-sonnet-20241022",
+        startTime: Date.now(),
       });
 
       aggregator.handleToolCallStart({

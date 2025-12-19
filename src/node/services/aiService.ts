@@ -1279,8 +1279,13 @@ export class AIService extends EventEmitter {
         mcpTools
       );
 
+      // Apply tool policy FIRST - this must happen before PTC to ensure sandbox
+      // respects allow/deny filters. The policy-filtered tools are passed to
+      // ToolBridge so the mux.* API only exposes policy-allowed tools.
+      const policyFilteredTools = applyToolPolicy(allTools, toolPolicy);
+
       // Handle PTC experiments - add or replace tools with code_execution
-      let toolsWithPTC = allTools;
+      let tools = policyFilteredTools;
       if (experiments?.programmaticToolCalling || experiments?.programmaticToolCallingExclusive) {
         try {
           // Lazy-load PTC modules only when experiments are enabled
@@ -1295,8 +1300,8 @@ export class AIService extends EventEmitter {
             // Console events are not streamed (appear in final result only)
           };
 
-          // ToolBridge determines which tools can be bridged into the sandbox
-          const toolBridge = new ptc.ToolBridge(allTools);
+          // ToolBridge uses policy-filtered tools - sandbox only exposes allowed tools
+          const toolBridge = new ptc.ToolBridge(policyFilteredTools);
 
           // Singleton runtime factory (WASM module is expensive to load)
           ptc.runtimeFactory ??= new ptc.QuickJSRuntimeFactory();
@@ -1310,21 +1315,18 @@ export class AIService extends EventEmitter {
           if (experiments?.programmaticToolCallingExclusive) {
             // Exclusive mode: code_execution + non-bridgeable tools (web_search, propose_plan, etc.)
             // Non-bridgeable tools can't be used from within code_execution, so they're still
-            // available directly to the model
+            // available directly to the model (subject to policy)
             const nonBridgeable = toolBridge.getNonBridgeableTools();
-            toolsWithPTC = { ...nonBridgeable, code_execution: codeExecutionTool };
+            tools = { ...nonBridgeable, code_execution: codeExecutionTool };
           } else {
-            // Supplement mode: add code_execution alongside other tools
-            toolsWithPTC = { ...allTools, code_execution: codeExecutionTool };
+            // Supplement mode: add code_execution alongside policy-filtered tools
+            tools = { ...policyFilteredTools, code_execution: codeExecutionTool };
           }
         } catch (error) {
-          // Fall back to base tools if PTC creation fails
+          // Fall back to policy-filtered tools if PTC creation fails
           log.error("Failed to create code_execution tool, falling back to base tools", { error });
         }
       }
-
-      // Apply tool policy to filter tools (if policy provided)
-      const tools = applyToolPolicy(toolsWithPTC, toolPolicy);
 
       const effectiveMcpStats: MCPWorkspaceStats =
         mcpStats ??
