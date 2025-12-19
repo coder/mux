@@ -10,7 +10,7 @@ import type { PartialService } from "@/node/services/partialService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import { log } from "@/node/services/log";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
-import type { WorkspaceCreationResult } from "@/node/runtime/Runtime";
+import type { InitLogger, WorkspaceCreationResult } from "@/node/runtime/Runtime";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import { Ok, Err, type Result } from "@/common/types/result";
 import type { TaskSettings } from "@/common/types/tasks";
@@ -32,6 +32,13 @@ import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 export type TaskKind = "agent";
 
 export type AgentTaskStatus = NonNullable<WorkspaceConfigEntry["taskStatus"]>;
+
+const NULL_INIT_LOGGER: InitLogger = {
+  logStep: () => undefined,
+  logStdout: () => undefined,
+  logStderr: () => undefined,
+  logComplete: () => undefined,
+};
 
 export interface TaskCreateArgs {
   parentWorkspaceId: string;
@@ -146,6 +153,12 @@ function getIsoNow(): string {
   return new Date().toISOString();
 }
 
+function taskQueueDebug(message: string, details?: Record<string, unknown>): void {
+  if (process.env.MUX_DEBUG_TASK_QUEUE !== "1") return;
+  // eslint-disable-next-line no-console
+  console.log(`[task-queue] ${message}`, details ?? {});
+}
+
 export class TaskService {
   private readonly mutex = new AsyncMutex();
   private readonly pendingWaitersByTaskId = new Map<string, PendingTaskWaiter[]>();
@@ -243,6 +256,19 @@ export class TaskService {
     }
   }
 
+  private startWorkspaceInit(workspaceId: string, projectPath: string): InitLogger {
+    assert(workspaceId.length > 0, "startWorkspaceInit: workspaceId must be non-empty");
+    assert(projectPath.length > 0, "startWorkspaceInit: projectPath must be non-empty");
+
+    this.initStateManager.startInit(workspaceId, projectPath);
+    return {
+      logStep: (message: string) => this.initStateManager.appendOutput(workspaceId, message, false),
+      logStdout: (line: string) => this.initStateManager.appendOutput(workspaceId, line, false),
+      logStderr: (line: string) => this.initStateManager.appendOutput(workspaceId, line, true),
+      logComplete: (exitCode: number) => void this.initStateManager.endInit(workspaceId, exitCode),
+    };
+  }
+
   async create(args: TaskCreateArgs): Promise<Result<TaskCreateResult, string>> {
     const parentWorkspaceId = coerceNonEmptyString(args.parentWorkspaceId);
     if (!parentWorkspaceId) {
@@ -324,16 +350,88 @@ export class TaskService {
       projectPath: parentMeta.projectPath,
     });
 
-    // Init status streaming (mirrors WorkspaceService.create)
-    this.initStateManager.startInit(taskId, parentMeta.projectPath);
-    const initLogger = {
-      logStep: (message: string) => this.initStateManager.appendOutput(taskId, message, false),
-      logStdout: (line: string) => this.initStateManager.appendOutput(taskId, line, false),
-      logStderr: (line: string) => this.initStateManager.appendOutput(taskId, line, true),
-      logComplete: (exitCode: number) => void this.initStateManager.endInit(taskId, exitCode),
-    };
-
     const createdAt = getIsoNow();
+
+    taskQueueDebug("TaskService.create decision", {
+      parentWorkspaceId,
+      taskId,
+      agentType,
+      workspaceName,
+      createdAt,
+      activeCount,
+      maxParallelAgentTasks: taskSettings.maxParallelAgentTasks,
+      shouldQueue,
+      runtimeType: taskRuntimeConfig.type,
+      promptLength: prompt.length,
+      model: taskModelString,
+      thinkingLevel: effectiveThinkingLevel,
+    });
+
+    if (shouldQueue) {
+      const trunkBranch = coerceNonEmptyString(parentMeta.name);
+      if (!trunkBranch) {
+        return Err("Task.create: parent workspace name missing (cannot queue task)");
+      }
+
+      // NOTE: Queued tasks are persisted immediately, but their workspace is created later
+      // when a parallel slot is available. This ensures queued tasks don't create worktrees
+      // or run init hooks until they actually start.
+      const workspacePath = runtime.getWorkspacePath(parentMeta.projectPath, workspaceName);
+
+      taskQueueDebug("TaskService.create queued (persist-only)", {
+        taskId,
+        workspaceName,
+        parentWorkspaceId,
+        trunkBranch,
+        workspacePath,
+      });
+
+      await this.config.editConfig((config) => {
+        let projectConfig = config.projects.get(parentMeta.projectPath);
+        if (!projectConfig) {
+          projectConfig = { workspaces: [] };
+          config.projects.set(parentMeta.projectPath, projectConfig);
+        }
+
+        projectConfig.workspaces.push({
+          path: workspacePath,
+          id: taskId,
+          name: workspaceName,
+          title: args.description,
+          createdAt,
+          runtimeConfig: taskRuntimeConfig,
+          aiSettings: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
+          parentWorkspaceId,
+          agentType,
+          taskStatus: "queued",
+          taskPrompt: prompt,
+          taskTrunkBranch: trunkBranch,
+          taskModelString,
+          taskThinkingLevel: effectiveThinkingLevel,
+        });
+        return config;
+      });
+
+      // Emit metadata update so the UI sees the workspace immediately.
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const childMeta = allMetadata.find((m) => m.id === taskId) ?? null;
+      this.workspaceService.emit("metadata", { workspaceId: taskId, metadata: childMeta });
+
+      // NOTE: Do NOT persist the prompt into chat history until the task actually starts.
+      // Otherwise the frontend treats "last message is user" as an interrupted stream and
+      // will auto-retry / backoff-spam resume attempts while the task is queued.
+      taskQueueDebug("TaskService.create queued persisted (prompt stored in config)", {
+        taskId,
+        workspaceName,
+      });
+
+      // Schedule queue processing (best-effort).
+      void this.maybeStartQueuedTasks();
+      taskQueueDebug("TaskService.create queued scheduled maybeStartQueuedTasks", { taskId });
+      return Ok({ taskId, kind: "agent", status: "queued" });
+    }
+
+    const initLogger = this.startWorkspaceInit(taskId, parentMeta.projectPath);
 
     // Note: Local project-dir runtimes share the same directory (unsafe by design).
     // For worktree/ssh runtimes we attempt a fork first; otherwise fall back to createWorkspace.
@@ -358,12 +456,21 @@ export class TaskService {
         });
 
     if (!createResult.success || !createResult.workspacePath) {
+      initLogger.logComplete(-1);
       return Err(
         `Task.create: failed to create agent workspace (${createResult.error ?? "unknown error"})`
       );
     }
 
     const workspacePath = createResult.workspacePath;
+
+    taskQueueDebug("TaskService.create started (workspace created)", {
+      taskId,
+      workspaceName,
+      workspacePath,
+      trunkBranch,
+      forkSuccess: forkResult.success,
+    });
 
     // Persist workspace entry before starting work so it's durable across crashes.
     await this.config.editConfig((config) => {
@@ -373,20 +480,21 @@ export class TaskService {
         config.projects.set(parentMeta.projectPath, projectConfig);
       }
 
-      projectConfig.workspaces.push({
-        path: workspacePath,
-        id: taskId,
-        name: workspaceName,
+        projectConfig.workspaces.push({
+          path: workspacePath,
+          id: taskId,
+          name: workspaceName,
         title: args.description,
         createdAt,
         runtimeConfig: taskRuntimeConfig,
-        aiSettings: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
-        parentWorkspaceId,
-        agentType,
-        taskStatus: shouldQueue ? "queued" : "running",
-        taskModelString,
-        taskThinkingLevel: effectiveThinkingLevel,
-      });
+          aiSettings: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
+          parentWorkspaceId,
+          agentType,
+          taskStatus: shouldQueue ? "queued" : "running",
+          taskTrunkBranch: trunkBranch,
+          taskModelString,
+          taskThinkingLevel: effectiveThinkingLevel,
+        });
       return config;
     });
 
@@ -409,24 +517,6 @@ export class TaskService {
         initLogger.logStderr(`Initialization failed: ${errorMessage}`);
         initLogger.logComplete(-1);
       });
-
-    if (shouldQueue) {
-      // Persist the prompt as the first user message so the task can be resumed later.
-      const messageId = `user-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
-      const userMessage = createMuxMessage(messageId, "user", prompt, {
-        timestamp: Date.now(),
-      });
-
-      const appendResult = await this.historyService.appendToHistory(taskId, userMessage);
-      if (!appendResult.success) {
-        await this.rollbackFailedTaskCreate(runtime, parentMeta.projectPath, workspaceName, taskId);
-        return Err(`Task.create: failed to persist queued prompt (${appendResult.error})`);
-      }
-
-      // Schedule queue processing (best-effort).
-      void this.maybeStartQueuedTasks();
-      return Ok({ taskId, kind: "agent", status: "queued" });
-    }
 
     // Start immediately (counts towards parallel limit).
     const sendResult = await this.workspaceService.sendMessage(taskId, prompt, {
@@ -986,6 +1076,11 @@ export class TaskService {
 
     const activeCount = this.countActiveAgentTasks(config);
     const availableSlots = Math.max(0, taskSettings.maxParallelAgentTasks - activeCount);
+    taskQueueDebug("TaskService.maybeStartQueuedTasks summary", {
+      activeCount,
+      maxParallelAgentTasks: taskSettings.maxParallelAgentTasks,
+      availableSlots,
+    });
     if (availableSlots === 0) return;
 
     const queued = this.listAgentTaskWorkspaces(config)
@@ -994,25 +1089,230 @@ export class TaskService {
         const aTime = a.createdAt ? Date.parse(a.createdAt) : 0;
         const bTime = b.createdAt ? Date.parse(b.createdAt) : 0;
         return aTime - bTime;
-      })
-      .slice(0, availableSlots);
-
-    for (const task of queued) {
-      if (!task.id) continue;
-
-      // Start by resuming from the queued prompt in history.
-      const model = task.taskModelString ?? defaultModel;
-      const resumeResult = await this.workspaceService.resumeStream(task.id, {
-        model,
-        thinkingLevel: task.taskThinkingLevel,
       });
 
-      if (!resumeResult.success) {
-        log.error("Failed to start queued task", { taskId: task.id, error: resumeResult.error });
+    taskQueueDebug("TaskService.maybeStartQueuedTasks candidates", {
+      queuedCount: queued.length,
+      queuedIds: queued.map((t) => t.id).filter((id): id is string => typeof id === "string"),
+    });
+
+    let startedCount = 0;
+    for (const task of queued) {
+      if (startedCount >= availableSlots) {
+        break;
+      }
+      if (!task.id) continue;
+      const taskId = task.id;
+
+      assert(typeof task.name === "string" && task.name.trim().length > 0, "Task name missing");
+
+      const parentId = coerceNonEmptyString(task.parentWorkspaceId);
+      if (!parentId) {
+        log.error("Queued task missing parentWorkspaceId; cannot start", { taskId });
         continue;
       }
 
-      await this.setTaskStatus(task.id, "running");
+      const parentEntry = this.findWorkspaceEntry(config, parentId);
+      if (!parentEntry) {
+        log.error("Queued task parent not found; cannot start", { taskId, parentId });
+        continue;
+      }
+
+      const parentWorkspaceName = coerceNonEmptyString(parentEntry.workspace.name);
+      if (!parentWorkspaceName) {
+        log.error("Queued task parent missing workspace name; cannot start", {
+          taskId,
+          parentId,
+        });
+        continue;
+      }
+
+      const runtimeConfig = task.runtimeConfig ?? parentEntry.workspace.runtimeConfig;
+      if (!runtimeConfig) {
+        log.error("Queued task missing runtimeConfig; cannot start", { taskId });
+        continue;
+      }
+
+      const runtime = createRuntime(runtimeConfig, {
+        projectPath: task.projectPath,
+      });
+
+      const workspaceName = task.name.trim();
+      let workspacePath =
+        coerceNonEmptyString(task.path) ?? runtime.getWorkspacePath(task.projectPath, workspaceName);
+
+      let workspaceExists = false;
+      try {
+        await runtime.stat(workspacePath);
+        workspaceExists = true;
+      } catch {
+        workspaceExists = false;
+      }
+
+      const inMemoryInit = this.initStateManager.getInitState(taskId);
+      const persistedInit = inMemoryInit ? null : await this.initStateManager.readInitStatus(taskId);
+
+      // Ensure the workspace exists before starting. Queued tasks should not create worktrees/directories
+      // until they are actually dequeued.
+      let trunkBranch =
+        typeof task.taskTrunkBranch === "string" && task.taskTrunkBranch.trim().length > 0
+          ? task.taskTrunkBranch.trim()
+          : parentWorkspaceName;
+      if (trunkBranch.length === 0) {
+        trunkBranch = "main";
+      }
+
+      let shouldRunInit = !inMemoryInit && !persistedInit;
+      let initLogger: InitLogger | null = null;
+      const getInitLogger = (): InitLogger => {
+        if (initLogger) return initLogger;
+        initLogger = this.startWorkspaceInit(taskId, task.projectPath);
+        return initLogger;
+      };
+
+      taskQueueDebug("TaskService.maybeStartQueuedTasks start attempt", {
+        taskId,
+        workspaceName,
+        parentId,
+        parentWorkspaceName,
+        runtimeType: runtimeConfig.type,
+        workspacePath,
+        workspaceExists,
+        trunkBranch,
+        shouldRunInit,
+        inMemoryInit: Boolean(inMemoryInit),
+        persistedInit: Boolean(persistedInit),
+      });
+
+      // If the workspace doesn't exist yet, create it now (fork preferred, else createWorkspace).
+      if (!workspaceExists) {
+        shouldRunInit = true;
+        const initLogger = getInitLogger();
+
+        const forkResult = await runtime.forkWorkspace({
+          projectPath: task.projectPath,
+          sourceWorkspaceName: parentWorkspaceName,
+          newWorkspaceName: workspaceName,
+          initLogger,
+        });
+
+        trunkBranch = forkResult.success ? (forkResult.sourceBranch ?? trunkBranch) : trunkBranch;
+        const createResult: WorkspaceCreationResult = forkResult.success
+          ? { success: true as const, workspacePath: forkResult.workspacePath }
+          : await runtime.createWorkspace({
+              projectPath: task.projectPath,
+              branchName: workspaceName,
+              trunkBranch,
+              directoryName: workspaceName,
+              initLogger,
+            });
+
+        if (!createResult.success || !createResult.workspacePath) {
+          initLogger.logComplete(-1);
+          const errorMessage = createResult.error ?? "unknown error";
+          log.error("Failed to create queued task workspace", { taskId, error: errorMessage });
+          taskQueueDebug("TaskService.maybeStartQueuedTasks createWorkspace failed", {
+            taskId,
+            error: errorMessage,
+            forkSuccess: forkResult.success,
+          });
+          continue;
+        }
+
+        workspacePath = createResult.workspacePath;
+        workspaceExists = true;
+
+        taskQueueDebug("TaskService.maybeStartQueuedTasks workspace created", {
+          taskId,
+          workspacePath,
+          forkSuccess: forkResult.success,
+          trunkBranch,
+        });
+
+        // Persist any corrected path/trunkBranch for restart-safe init.
+        await this.config.editConfig((cfg) => {
+          for (const [_projectPath, project] of cfg.projects) {
+            const ws = project.workspaces.find((w) => w.id === taskId);
+            if (!ws) continue;
+            ws.path = workspacePath;
+            ws.taskTrunkBranch = trunkBranch;
+            return cfg;
+          }
+          return cfg;
+        });
+      }
+
+      // If init has not yet run for this workspace, start it now (best-effort, async).
+      // This is intentionally coupled to task start so queued tasks don't run init hooks
+      // (SSH sync, .mux/init scripts, etc.) until they actually begin execution.
+      if (shouldRunInit) {
+        const initLogger = getInitLogger();
+        taskQueueDebug("TaskService.maybeStartQueuedTasks initWorkspace starting", {
+          taskId,
+          workspacePath,
+          trunkBranch,
+        });
+        void runtime
+          .initWorkspace({
+            projectPath: task.projectPath,
+            branchName: workspaceName,
+            trunkBranch,
+            workspacePath,
+            initLogger,
+          })
+          .catch((error: unknown) => {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            initLogger.logStderr(`Initialization failed: ${errorMessage}`);
+            initLogger.logComplete(-1);
+          });
+      }
+
+      const model = task.taskModelString ?? defaultModel;
+      const queuedPrompt = coerceNonEmptyString(task.taskPrompt);
+      if (queuedPrompt) {
+        taskQueueDebug("TaskService.maybeStartQueuedTasks sendMessage starting (dequeue)", {
+          taskId,
+          model,
+          promptLength: queuedPrompt.length,
+        });
+        const sendResult = await this.workspaceService.sendMessage(
+          taskId,
+          queuedPrompt,
+          { model, thinkingLevel: task.taskThinkingLevel },
+          { allowQueuedAgentTask: true }
+        );
+        if (!sendResult.success) {
+          log.error("Failed to start queued task via sendMessage", {
+            taskId,
+            error: sendResult.error,
+          });
+          continue;
+        }
+      } else {
+        // Backward compatibility: older queued tasks persisted their prompt in chat history.
+        taskQueueDebug("TaskService.maybeStartQueuedTasks resumeStream starting (legacy dequeue)", {
+          taskId,
+          model,
+        });
+        const resumeResult = await this.workspaceService.resumeStream(
+          taskId,
+          { model, thinkingLevel: task.taskThinkingLevel },
+          { allowQueuedAgentTask: true }
+        );
+
+        if (!resumeResult.success) {
+          log.error("Failed to start queued task", { taskId, error: resumeResult.error });
+          taskQueueDebug("TaskService.maybeStartQueuedTasks resumeStream failed", {
+            taskId,
+            error: String(resumeResult.error),
+          });
+          continue;
+        }
+      }
+
+      await this.setTaskStatus(taskId, "running");
+      taskQueueDebug("TaskService.maybeStartQueuedTasks started", { taskId });
+      startedCount += 1;
     }
   }
 
@@ -1024,6 +1324,9 @@ export class TaskService {
         const ws = project.workspaces.find((w) => w.id === workspaceId);
         if (ws) {
           ws.taskStatus = status;
+          if (status === "running") {
+            ws.taskPrompt = undefined;
+          }
           return config;
         }
       }

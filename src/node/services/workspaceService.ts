@@ -77,6 +77,12 @@ function isWorkspaceNameCollision(error: string | undefined): boolean {
   return error?.includes("Workspace already exists") ?? false;
 }
 
+function taskQueueDebug(message: string, details?: Record<string, unknown>): void {
+  if (process.env.MUX_DEBUG_TASK_QUEUE !== "1") return;
+  // eslint-disable-next-line no-console
+  console.log(`[task-queue] ${message}`, details ?? {});
+}
+
 /**
  * Generates a unique workspace name by appending a random suffix
  */
@@ -1137,7 +1143,8 @@ export class WorkspaceService extends EventEmitter {
       | (SendMessageOptions & {
           imageParts?: ImagePart[];
         })
-      | undefined = { model: defaultModel }
+      | undefined = { model: defaultModel },
+    internal?: { allowQueuedAgentTask?: boolean }
   ): Promise<Result<void, SendMessageError>> {
     log.debug("sendMessage handler: Received", {
       workspaceId,
@@ -1153,6 +1160,32 @@ export class WorkspaceService extends EventEmitter {
         return Err({
           type: "unknown",
           raw: "Workspace is being renamed. Please wait and try again.",
+        });
+      }
+
+      // Guard: queued agent tasks must not start streaming via generic sendMessage calls.
+      // They should only be started by TaskService once a parallel slot is available.
+      if (!internal?.allowQueuedAgentTask) {
+        const config = this.config.loadConfigOrDefault();
+        for (const [_projectPath, project] of config.projects) {
+          const ws = project.workspaces.find((w) => w.id === workspaceId);
+          if (!ws) continue;
+          if (ws.parentWorkspaceId && ws.taskStatus === "queued") {
+            taskQueueDebug("WorkspaceService.sendMessage blocked (queued task)", {
+              workspaceId,
+              stack: new Error("sendMessage blocked").stack,
+            });
+            return Err({
+              type: "unknown",
+              raw: "This agent task is queued and cannot start yet. Wait for a slot to free.",
+            });
+          }
+          break;
+        }
+      } else {
+        taskQueueDebug("WorkspaceService.sendMessage allowed (internal dequeue)", {
+          workspaceId,
+          stack: new Error("sendMessage internal").stack,
         });
       }
 
@@ -1273,7 +1306,8 @@ export class WorkspaceService extends EventEmitter {
 
   async resumeStream(
     workspaceId: string,
-    options: SendMessageOptions | undefined = { model: "claude-3-5-sonnet-latest" }
+    options: SendMessageOptions | undefined = { model: "claude-3-5-sonnet-latest" },
+    internal?: { allowQueuedAgentTask?: boolean }
   ): Promise<Result<void, SendMessageError>> {
     try {
       // Block streaming while workspace is being renamed to prevent path conflicts
@@ -1282,6 +1316,32 @@ export class WorkspaceService extends EventEmitter {
         return Err({
           type: "unknown",
           raw: "Workspace is being renamed. Please wait and try again.",
+        });
+      }
+
+      // Guard: queued agent tasks must not be resumed by generic UI/API calls.
+      // TaskService is responsible for dequeuing and starting them.
+      if (!internal?.allowQueuedAgentTask) {
+        const config = this.config.loadConfigOrDefault();
+        for (const [_projectPath, project] of config.projects) {
+          const ws = project.workspaces.find((w) => w.id === workspaceId);
+          if (!ws) continue;
+          if (ws.parentWorkspaceId && ws.taskStatus === "queued") {
+            taskQueueDebug("WorkspaceService.resumeStream blocked (queued task)", {
+              workspaceId,
+              stack: new Error("resumeStream blocked").stack,
+            });
+            return Err({
+              type: "unknown",
+              raw: "This agent task is queued and cannot start yet. Wait for a slot to free.",
+            });
+          }
+          break;
+        }
+      } else {
+        taskQueueDebug("WorkspaceService.resumeStream allowed (internal dequeue)", {
+          workspaceId,
+          stack: new Error("resumeStream internal").stack,
         });
       }
 

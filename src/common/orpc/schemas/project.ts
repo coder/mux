@@ -50,6 +50,14 @@ export const WorkspaceConfigSchema = z.object({
   taskThinkingLevel: ThinkingLevelSchema.optional().meta({
     description: "Thinking level used for this agent task (used for restart-safe resumptions).",
   }),
+  taskPrompt: z.string().optional().meta({
+    description:
+      "Initial prompt for a queued agent task (persisted only until the task actually starts).",
+  }),
+  taskTrunkBranch: z.string().optional().meta({
+    description:
+      "Trunk branch used to create/init this agent task workspace (used for restart-safe init on queued tasks).",
+  }),
   mcp: WorkspaceMCPOverridesSchema.optional().meta({
     description: "Per-workspace MCP overrides (disabled servers, tool allowlists)",
   }),

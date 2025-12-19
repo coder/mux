@@ -15,6 +15,7 @@ import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { AIService } from "@/node/services/aiService";
 import type { WorkspaceService } from "@/node/services/workspaceService";
 import type { InitStateManager } from "@/node/services/initStateManager";
+import { InitStateManager as RealInitStateManager } from "@/node/services/initStateManager";
 
 function initGitRepo(projectPath: string): void {
   execSync("git init -b main", { cwd: projectPath, stdio: "ignore" });
@@ -34,6 +35,16 @@ function createNullInitLogger() {
     logStderr: (_line: string) => undefined,
     logComplete: (_exitCode: number) => undefined,
   };
+}
+
+function createMockInitStateManager(): InitStateManager {
+  return {
+    startInit: mock(() => undefined),
+    appendOutput: mock(() => undefined),
+    endInit: mock(() => Promise.resolve()),
+    getInitState: mock(() => undefined),
+    readInitStatus: mock(() => Promise.resolve(null)),
+  } as unknown as InitStateManager;
 }
 
 describe("TaskService", () => {
@@ -122,11 +133,7 @@ describe("TaskService", () => {
       emit: mock(() => true),
     } as unknown as WorkspaceService;
 
-    const initStateManager: InitStateManager = {
-      startInit: mock(() => undefined),
-      appendOutput: mock(() => undefined),
-      endInit: mock(() => Promise.resolve()),
-    } as unknown as InitStateManager;
+    const initStateManager = createMockInitStateManager();
 
     const taskService = new TaskService(
       config,
@@ -238,20 +245,16 @@ describe("TaskService", () => {
       off: mock(() => undefined),
     } as unknown as AIService;
 
-    const resumeStream = mock(() => Promise.resolve(Ok(undefined)));
+    const sendMessage = mock(() => Promise.resolve(Ok(undefined)));
 
     const workspaceService: WorkspaceService = {
-      sendMessage: mock(() => Promise.resolve(Ok(undefined))),
-      resumeStream,
+      sendMessage,
+      resumeStream: mock(() => Promise.resolve(Ok(undefined))),
       remove: mock(() => Promise.resolve(Ok(undefined))),
       emit: mock(() => true),
     } as unknown as WorkspaceService;
 
-    const initStateManager: InitStateManager = {
-      startInit: mock(() => undefined),
-      appendOutput: mock(() => undefined),
-      endInit: mock(() => Promise.resolve()),
-    } as unknown as InitStateManager;
+    const initStateManager = createMockInitStateManager();
 
     const taskService = new TaskService(
       config,
@@ -294,13 +297,168 @@ describe("TaskService", () => {
 
     await taskService.initialize();
 
-    expect(resumeStream).toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith(
+      queued.data.taskId,
+      "task 2",
+      expect.anything(),
+      expect.objectContaining({ allowQueuedAgentTask: true })
+    );
 
     const cfg = config.loadConfigOrDefault();
     const started = Array.from(cfg.projects.values())
       .flatMap((p) => p.workspaces)
       .find((w) => w.id === queued.data.taskId);
     expect(started?.taskStatus).toBe("running");
+  }, 20_000);
+
+  test("does not run init hooks for queued tasks until they start", async () => {
+    const config = new Config(rootDir);
+    await fsPromises.mkdir(config.srcDir, { recursive: true });
+
+    const ids = ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"];
+    let nextIdIndex = 0;
+    const configWithStableId = config as unknown as { generateStableId: () => string };
+    configWithStableId.generateStableId = () => ids[nextIdIndex++] ?? "dddddddddd";
+
+    const projectPath = path.join(rootDir, "repo");
+    await fsPromises.mkdir(projectPath, { recursive: true });
+    initGitRepo(projectPath);
+
+    const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
+    const runtime = createRuntime(runtimeConfig, { projectPath });
+    const initLogger = createNullInitLogger();
+
+    const parentName = "parent";
+    await runtime.createWorkspace({
+      projectPath,
+      branchName: parentName,
+      trunkBranch: "main",
+      directoryName: parentName,
+      initLogger,
+    });
+
+    const parentId = "1111111111";
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: runtime.getWorkspacePath(projectPath, parentName),
+                id: parentId,
+                name: parentName,
+                createdAt: new Date().toISOString(),
+                runtimeConfig,
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    const historyService = new HistoryService(config);
+    const partialService = new PartialService(config, historyService);
+    const initStateManager = new RealInitStateManager(config);
+
+    const aiService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(
+        async (workspaceId: string): Promise<Result<WorkspaceMetadata>> => {
+          const all = await config.getAllWorkspaceMetadata();
+          const found = all.find((m) => m.id === workspaceId);
+          return found ? Ok(found) : Err("not found");
+        }
+      ),
+      on: mock(() => undefined),
+      off: mock(() => undefined),
+    } as unknown as AIService;
+
+    const sendMessage = mock(() => Promise.resolve(Ok(undefined)));
+
+    const workspaceService: WorkspaceService = {
+      sendMessage,
+      resumeStream: mock(() => Promise.resolve(Ok(undefined))),
+      remove: mock(() => Promise.resolve(Ok(undefined))),
+      emit: mock(() => true),
+    } as unknown as WorkspaceService;
+
+    const taskService = new TaskService(
+      config,
+      historyService,
+      partialService,
+      aiService,
+      workspaceService,
+      initStateManager as unknown as InitStateManager
+    );
+
+    const running = await taskService.create({
+      parentWorkspaceId: parentId,
+      kind: "agent",
+      agentType: "explore",
+      prompt: "task 1",
+    });
+    expect(running.success).toBe(true);
+    if (!running.success) return;
+
+    // Wait for running task init (fire-and-forget) so the init-status file exists.
+    await initStateManager.waitForInit(running.data.taskId);
+
+    const queued = await taskService.create({
+      parentWorkspaceId: parentId,
+      kind: "agent",
+      agentType: "explore",
+      prompt: "task 2",
+    });
+    expect(queued.success).toBe(true);
+    if (!queued.success) return;
+    expect(queued.data.status).toBe("queued");
+
+    // Queued tasks should not create a worktree directory until they're dequeued.
+    const cfgBeforeStart = config.loadConfigOrDefault();
+    const queuedEntryBeforeStart = Array.from(cfgBeforeStart.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === queued.data.taskId);
+    expect(queuedEntryBeforeStart).toBeTruthy();
+    await expect(fsPromises.stat(queuedEntryBeforeStart!.path)).rejects.toThrow();
+
+    const queuedInitStatusPath = path.join(
+      config.getSessionDir(queued.data.taskId),
+      "init-status.json"
+    );
+    await expect(fsPromises.stat(queuedInitStatusPath)).rejects.toThrow();
+
+    // Free slot and start queued tasks.
+    await config.editConfig((cfg) => {
+      for (const [_project, project] of cfg.projects) {
+        const ws = project.workspaces.find((w) => w.id === running.data.taskId);
+        if (ws) {
+          ws.taskStatus = "reported";
+        }
+      }
+      return cfg;
+    });
+
+    await taskService.initialize();
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      queued.data.taskId,
+      "task 2",
+      expect.anything(),
+      expect.objectContaining({ allowQueuedAgentTask: true })
+    );
+
+    // Init should start only once the task is dequeued.
+    await initStateManager.waitForInit(queued.data.taskId);
+    await expect(fsPromises.stat(queuedInitStatusPath)).resolves.toBeTruthy();
+
+    const cfgAfterStart = config.loadConfigOrDefault();
+    const queuedEntryAfterStart = Array.from(cfgAfterStart.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === queued.data.taskId);
+    expect(queuedEntryAfterStart).toBeTruthy();
+    await expect(fsPromises.stat(queuedEntryAfterStart!.path)).resolves.toBeTruthy();
   }, 20_000);
 
   test("does not start queued tasks while a reported task is still streaming", async () => {
@@ -358,11 +516,7 @@ describe("TaskService", () => {
       emit: mock(() => true),
     } as unknown as WorkspaceService;
 
-    const initStateManager: InitStateManager = {
-      startInit: mock(() => undefined),
-      appendOutput: mock(() => undefined),
-      endInit: mock(() => Promise.resolve()),
-    } as unknown as InitStateManager;
+    const initStateManager = createMockInitStateManager();
 
     const taskService = new TaskService(
       config,
@@ -458,11 +612,7 @@ describe("TaskService", () => {
       emit: mock(() => true),
     } as unknown as WorkspaceService;
 
-    const initStateManager: InitStateManager = {
-      startInit: mock(() => undefined),
-      appendOutput: mock(() => undefined),
-      endInit: mock(() => Promise.resolve()),
-    } as unknown as InitStateManager;
+    const initStateManager = createMockInitStateManager();
 
     const taskService = new TaskService(
       config,
@@ -561,11 +711,7 @@ describe("TaskService", () => {
       emit: mock(() => true),
     } as unknown as WorkspaceService;
 
-    const initStateManager: InitStateManager = {
-      startInit: mock(() => undefined),
-      appendOutput: mock(() => undefined),
-      endInit: mock(() => Promise.resolve()),
-    } as unknown as InitStateManager;
+    const initStateManager = createMockInitStateManager();
 
     const taskService = new TaskService(
       config,
@@ -658,11 +804,7 @@ describe("TaskService", () => {
       emit: mock(() => true),
     } as unknown as WorkspaceService;
 
-    const initStateManager: InitStateManager = {
-      startInit: mock(() => undefined),
-      appendOutput: mock(() => undefined),
-      endInit: mock(() => Promise.resolve()),
-    } as unknown as InitStateManager;
+    const initStateManager = createMockInitStateManager();
 
     const taskService = new TaskService(
       config,
@@ -753,11 +895,7 @@ describe("TaskService", () => {
       emit: mock(() => true),
     } as unknown as WorkspaceService;
 
-    const initStateManager: InitStateManager = {
-      startInit: mock(() => undefined),
-      appendOutput: mock(() => undefined),
-      endInit: mock(() => Promise.resolve()),
-    } as unknown as InitStateManager;
+    const initStateManager = createMockInitStateManager();
 
     const taskService = new TaskService(
       config,
@@ -843,11 +981,7 @@ describe("TaskService", () => {
       emit: mock(() => true),
     } as unknown as WorkspaceService;
 
-    const initStateManager: InitStateManager = {
-      startInit: mock(() => undefined),
-      appendOutput: mock(() => undefined),
-      endInit: mock(() => Promise.resolve()),
-    } as unknown as InitStateManager;
+    const initStateManager = createMockInitStateManager();
 
     const taskService = new TaskService(
       config,
@@ -937,11 +1071,7 @@ describe("TaskService", () => {
       emit: mock(() => true),
     } as unknown as WorkspaceService;
 
-    const initStateManager: InitStateManager = {
-      startInit: mock(() => undefined),
-      appendOutput: mock(() => undefined),
-      endInit: mock(() => Promise.resolve()),
-    } as unknown as InitStateManager;
+    const initStateManager = createMockInitStateManager();
 
     const taskService = new TaskService(
       config,
@@ -1011,11 +1141,7 @@ describe("TaskService", () => {
       emit: mock(() => true),
     } as unknown as WorkspaceService;
 
-    const initStateManager: InitStateManager = {
-      startInit: mock(() => undefined),
-      appendOutput: mock(() => undefined),
-      endInit: mock(() => Promise.resolve()),
-    } as unknown as InitStateManager;
+    const initStateManager = createMockInitStateManager();
 
     const taskService = new TaskService(
       config,
@@ -1081,11 +1207,7 @@ describe("TaskService", () => {
       emit: mock(() => true),
     } as unknown as WorkspaceService;
 
-    const initStateManager: InitStateManager = {
-      startInit: mock(() => undefined),
-      appendOutput: mock(() => undefined),
-      endInit: mock(() => Promise.resolve()),
-    } as unknown as InitStateManager;
+    const initStateManager = createMockInitStateManager();
 
     const taskService = new TaskService(
       config,
@@ -1159,11 +1281,7 @@ describe("TaskService", () => {
       emit: mock(() => true),
     } as unknown as WorkspaceService;
 
-    const initStateManager: InitStateManager = {
-      startInit: mock(() => undefined),
-      appendOutput: mock(() => undefined),
-      endInit: mock(() => Promise.resolve()),
-    } as unknown as InitStateManager;
+    const initStateManager = createMockInitStateManager();
 
     const taskService = new TaskService(
       config,
@@ -1242,11 +1360,7 @@ describe("TaskService", () => {
       emit,
     } as unknown as WorkspaceService;
 
-    const initStateManager: InitStateManager = {
-      startInit: mock(() => undefined),
-      appendOutput: mock(() => undefined),
-      endInit: mock(() => Promise.resolve()),
-    } as unknown as InitStateManager;
+    const initStateManager = createMockInitStateManager();
 
     const taskService = new TaskService(
       config,
@@ -1327,11 +1441,7 @@ describe("TaskService", () => {
       emit,
     } as unknown as WorkspaceService;
 
-    const initStateManager: InitStateManager = {
-      startInit: mock(() => undefined),
-      appendOutput: mock(() => undefined),
-      endInit: mock(() => Promise.resolve()),
-    } as unknown as InitStateManager;
+    const initStateManager = createMockInitStateManager();
 
     const taskService = new TaskService(
       config,
@@ -1432,11 +1542,7 @@ describe("TaskService", () => {
       emit,
     } as unknown as WorkspaceService;
 
-    const initStateManager: InitStateManager = {
-      startInit: mock(() => undefined),
-      appendOutput: mock(() => undefined),
-      endInit: mock(() => Promise.resolve()),
-    } as unknown as InitStateManager;
+    const initStateManager = createMockInitStateManager();
 
     const taskService = new TaskService(
       config,
@@ -1560,11 +1666,7 @@ describe("TaskService", () => {
       emit,
     } as unknown as WorkspaceService;
 
-    const initStateManager: InitStateManager = {
-      startInit: mock(() => undefined),
-      appendOutput: mock(() => undefined),
-      endInit: mock(() => Promise.resolve()),
-    } as unknown as InitStateManager;
+    const initStateManager = createMockInitStateManager();
 
     const taskService = new TaskService(
       config,
@@ -1728,11 +1830,7 @@ describe("TaskService", () => {
       emit,
     } as unknown as WorkspaceService;
 
-    const initStateManager: InitStateManager = {
-      startInit: mock(() => undefined),
-      appendOutput: mock(() => undefined),
-      endInit: mock(() => Promise.resolve()),
-    } as unknown as InitStateManager;
+    const initStateManager = createMockInitStateManager();
 
     const taskService = new TaskService(
       config,
@@ -1880,11 +1978,7 @@ describe("TaskService", () => {
       emit,
     } as unknown as WorkspaceService;
 
-    const initStateManager: InitStateManager = {
-      startInit: mock(() => undefined),
-      appendOutput: mock(() => undefined),
-      endInit: mock(() => Promise.resolve()),
-    } as unknown as InitStateManager;
+    const initStateManager = createMockInitStateManager();
 
     const taskService = new TaskService(
       config,

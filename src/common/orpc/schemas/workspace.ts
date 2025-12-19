@@ -2,6 +2,8 @@ import { z } from "zod";
 import { RuntimeConfigSchema } from "./runtime";
 import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 
+const ThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh"]);
+
 export const WorkspaceMetadataSchema = z.object({
   id: z.string().meta({
     description:
@@ -37,6 +39,27 @@ export const WorkspaceMetadataSchema = z.object({
   agentType: z.string().optional().meta({
     description:
       'If set, selects an agent preset for this workspace (e.g., "research" or "explore").',
+  }),
+  taskStatus: z.enum(["queued", "running", "awaiting_report", "reported"]).optional().meta({
+    description:
+      "Agent task lifecycle status for child workspaces (queued|running|awaiting_report|reported).",
+  }),
+  reportedAt: z.string().optional().meta({
+    description: "ISO 8601 timestamp for when an agent task reported completion (optional).",
+  }),
+  taskModelString: z.string().optional().meta({
+    description: "Model string used to run this agent task (used for restart-safe resumptions).",
+  }),
+  taskThinkingLevel: ThinkingLevelSchema.optional().meta({
+    description: "Thinking level used for this agent task (used for restart-safe resumptions).",
+  }),
+  taskPrompt: z.string().optional().meta({
+    description:
+      "Initial prompt for a queued agent task (persisted only until the task actually starts).",
+  }),
+  taskTrunkBranch: z.string().optional().meta({
+    description:
+      "Trunk branch used to create/init this agent task workspace (used for restart-safe init on queued tasks).",
   }),
   status: z.enum(["creating"]).optional().meta({
     description:

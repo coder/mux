@@ -358,6 +358,12 @@ export class Config {
               aiSettings: workspace.aiSettings,
               parentWorkspaceId: workspace.parentWorkspaceId,
               agentType: workspace.agentType,
+              taskStatus: workspace.taskStatus,
+              reportedAt: workspace.reportedAt,
+              taskModelString: workspace.taskModelString,
+              taskThinkingLevel: workspace.taskThinkingLevel,
+              taskPrompt: workspace.taskPrompt,
+              taskTrunkBranch: workspace.taskTrunkBranch,
             };
 
             // Migrate missing createdAt to config for next load
@@ -403,6 +409,12 @@ export class Config {
             // Preserve tree/task metadata when present in config (metadata.json won't have it)
             metadata.parentWorkspaceId ??= workspace.parentWorkspaceId;
             metadata.agentType ??= workspace.agentType;
+            metadata.taskStatus ??= workspace.taskStatus;
+            metadata.reportedAt ??= workspace.reportedAt;
+            metadata.taskModelString ??= workspace.taskModelString;
+            metadata.taskThinkingLevel ??= workspace.taskThinkingLevel;
+            metadata.taskPrompt ??= workspace.taskPrompt;
+            metadata.taskTrunkBranch ??= workspace.taskTrunkBranch;
             // Migrate to config for next load
             workspace.id = metadata.id;
             workspace.name = metadata.name;
@@ -429,6 +441,12 @@ export class Config {
               aiSettings: workspace.aiSettings,
               parentWorkspaceId: workspace.parentWorkspaceId,
               agentType: workspace.agentType,
+              taskStatus: workspace.taskStatus,
+              reportedAt: workspace.reportedAt,
+              taskModelString: workspace.taskModelString,
+              taskThinkingLevel: workspace.taskThinkingLevel,
+              taskPrompt: workspace.taskPrompt,
+              taskTrunkBranch: workspace.taskTrunkBranch,
             };
 
             // Save to config for next load
@@ -456,6 +474,12 @@ export class Config {
             aiSettings: workspace.aiSettings,
             parentWorkspaceId: workspace.parentWorkspaceId,
             agentType: workspace.agentType,
+            taskStatus: workspace.taskStatus,
+            reportedAt: workspace.reportedAt,
+            taskModelString: workspace.taskModelString,
+            taskThinkingLevel: workspace.taskThinkingLevel,
+            taskPrompt: workspace.taskPrompt,
+            taskTrunkBranch: workspace.taskTrunkBranch,
           };
           workspaceMetadata.push(this.addPathsToMetadata(metadata, workspace.path, projectPath));
         }

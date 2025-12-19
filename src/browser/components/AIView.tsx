@@ -73,6 +73,7 @@ import { ReviewsBanner } from "./ReviewsBanner";
 import type { ReviewNoteData } from "@/common/types/review";
 import { PopoverError } from "./PopoverError";
 import { ConnectionStatusIndicator } from "./ConnectionStatusIndicator";
+import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 
 interface AIViewProps {
   workspaceId: string;
@@ -99,6 +100,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
   status,
 }) => {
   const { api } = useAPI();
+  const { workspaceMetadata } = useWorkspaceContext();
   const chatAreaRef = useRef<HTMLDivElement>(null);
 
   // Track which right sidebar tab is selected (listener: true to sync with RightSidebar changes)
@@ -134,6 +136,14 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const { statsTabState } = useFeatureFlags();
   const statsEnabled = Boolean(statsTabState?.enabled);
   const workspaceState = useWorkspaceState(workspaceId);
+  const meta = workspaceMetadata.get(workspaceId);
+  const isQueuedAgentTask = Boolean(meta?.parentWorkspaceId) && meta?.taskStatus === "queued";
+  const queuedAgentTaskPrompt =
+    isQueuedAgentTask && typeof meta?.taskPrompt === "string" && meta.taskPrompt.trim().length > 0
+      ? meta.taskPrompt
+      : null;
+  const shouldShowQueuedAgentTaskPrompt =
+    Boolean(queuedAgentTaskPrompt) && (workspaceState?.messages.length ?? 0) === 0;
   const aggregator = useWorkspaceAggregator(workspaceId);
   const workspaceUsage = useWorkspaceUsage(workspaceId);
 
@@ -727,6 +737,14 @@ const AIViewInner: React.FC<AIViewProps> = ({
                   }
                 />
               )}
+              {shouldShowQueuedAgentTaskPrompt && (
+                <QueuedMessage
+                  message={{
+                    id: `queued-agent-task-${workspaceId}`,
+                    content: queuedAgentTaskPrompt ?? "",
+                  }}
+                />
+              )}
               {workspaceState?.queuedMessage && (
                 <QueuedMessage
                   message={workspaceState.queuedMessage}
@@ -775,7 +793,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
           onMessageSent={handleMessageSent}
           onTruncateHistory={handleClearHistory}
           onProviderConfig={handleProviderConfig}
-          disabled={!projectName || !workspaceName}
+          disabled={!projectName || !workspaceName || isQueuedAgentTask}
           isCompacting={isCompacting}
           editingMessage={editingMessage}
           onCancelEdit={handleCancelEdit}

@@ -51,6 +51,7 @@ import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpSer
 import type { TaskService } from "@/node/services/taskService";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 import type { ThinkingLevel } from "@/common/types/thinking";
+import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import type {
   StreamAbortEvent,
   StreamDeltaEvent,
@@ -342,6 +343,36 @@ function parseModelString(modelString: string): [string, string] {
   const providerName = colonIndex !== -1 ? modelString.slice(0, colonIndex) : modelString;
   const modelId = colonIndex !== -1 ? modelString.slice(colonIndex + 1) : "";
   return [providerName, modelId];
+}
+
+function getTaskDepthFromConfig(
+  config: ReturnType<Config["loadConfigOrDefault"]>,
+  workspaceId: string
+): number {
+  const parentById = new Map<string, string | undefined>();
+  for (const project of config.projects.values()) {
+    for (const workspace of project.workspaces) {
+      if (!workspace.id) continue;
+      parentById.set(workspace.id, workspace.parentWorkspaceId);
+    }
+  }
+
+  let depth = 0;
+  let current = workspaceId;
+  for (let i = 0; i < 32; i++) {
+    const parent = parentById.get(current);
+    if (!parent) break;
+    depth += 1;
+    current = parent;
+  }
+
+  if (depth >= 32) {
+    throw new Error(
+      `getTaskDepthFromConfig: possible parentWorkspaceId cycle starting at ${workspaceId}`
+    );
+  }
+
+  return depth;
 }
 
 export class AIService extends EventEmitter {
@@ -1199,7 +1230,23 @@ export class AIService extends EventEmitter {
         }
       }
 
+      const cfg = this.config.loadConfigOrDefault();
+      const taskSettings = cfg.taskSettings ?? DEFAULT_TASK_SETTINGS;
+      const taskDepth = getTaskDepthFromConfig(cfg, workspaceId);
+      const shouldDisableTaskToolsForDepth = taskDepth >= taskSettings.maxTaskNestingDepth;
+
       const agentPreset = getAgentPreset(metadata.agentType);
+      const agentSystemPrompt = agentPreset
+        ? shouldDisableTaskToolsForDepth
+          ? [
+              agentPreset.systemPrompt,
+              "",
+              "Nesting:",
+              `- Task delegation is disabled in this workspace (taskDepth=${taskDepth}, maxTaskNestingDepth=${taskSettings.maxTaskNestingDepth}).`,
+              "- Do not call task/task_await/task_list/task_terminate.",
+            ].join("\n")
+          : agentPreset.systemPrompt
+        : undefined;
 
       // Build system message from workspace metadata
       const systemMessage = await buildSystemMessage(
@@ -1210,7 +1257,7 @@ export class AIService extends EventEmitter {
         effectiveAdditionalInstructions,
         modelString,
         mcpServers,
-        agentPreset ? { variant: "agent", agentSystemPrompt: agentPreset.systemPrompt } : undefined
+        agentSystemPrompt ? { variant: "agent", agentSystemPrompt } : undefined
       );
 
       // Count system message tokens for cost tracking
@@ -1303,10 +1350,18 @@ export class AIService extends EventEmitter {
         mcpTools
       );
 
-      // Preset tool policy must be applied last so callers cannot re-enable restricted tools.
-      const effectiveToolPolicy = agentPreset
-        ? [...(toolPolicy ?? []), ...agentPreset.toolPolicy]
-        : toolPolicy;
+      const depthToolPolicy: ToolPolicy = shouldDisableTaskToolsForDepth
+        ? [
+            { regex_match: "task", action: "disable" },
+            { regex_match: "task_.*", action: "disable" },
+          ]
+        : [];
+
+      // Preset + depth tool policies must be applied last so callers cannot re-enable restricted tools.
+      const effectiveToolPolicy =
+        agentPreset || depthToolPolicy.length > 0
+          ? [...(toolPolicy ?? []), ...(agentPreset?.toolPolicy ?? []), ...depthToolPolicy]
+          : toolPolicy;
 
       // Apply tool policy FIRST - this must happen before PTC to ensure sandbox
       // respects allow/deny filters. The policy-filtered tools are passed to
