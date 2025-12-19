@@ -5,6 +5,7 @@
 
 import type { z } from "zod";
 import type { ProjectConfigSchema, WorkspaceConfigSchema } from "../orpc/schemas";
+import type { TaskSettings, SubagentAiDefaults } from "./tasks";
 
 export type Workspace = z.infer<typeof WorkspaceConfigSchema>;
 
@@ -20,4 +21,8 @@ export interface ProjectsConfig {
   viewedSplashScreens?: string[];
   /** Cross-client feature flag overrides (shared via ~/.mux/config.json). */
   featureFlagOverrides?: Record<string, FeatureFlagOverride>;
+  /** Global task settings (agent sub-workspaces, queue limits, nesting depth) */
+  taskSettings?: TaskSettings;
+  /** Per-subagent default model + thinking overrides. Missing values inherit from the parent workspace. */
+  subagentAiDefaults?: SubagentAiDefaults;
 }

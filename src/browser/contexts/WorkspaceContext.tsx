@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
   type SetStateAction,
@@ -164,6 +165,13 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     null
   );
 
+  // Used by async subscription handlers to safely access the most recent metadata map
+  // without triggering render-phase state updates.
+  const workspaceMetadataRef = useRef(workspaceMetadata);
+  useEffect(() => {
+    workspaceMetadataRef.current = workspaceMetadata;
+  }, [workspaceMetadata]);
+
   const loadWorkspaceMetadata = useCallback(async () => {
     if (!api) return false; // Return false to indicate metadata wasn't loaded
     try {
@@ -308,6 +316,54 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         for await (const event of iterator) {
           if (signal.aborted) break;
 
+          if (event.metadata === null) {
+            // Workspace deleted - clean up workspace-scoped persisted state.
+            deleteWorkspaceStorage(event.workspaceId);
+
+            // If the user is currently viewing a deleted child workspace, fall back to its parent.
+            // Otherwise, fall back to another workspace in the same project (best effort).
+            const deletedMeta = workspaceMetadataRef.current.get(event.workspaceId);
+            setSelectedWorkspace((current) => {
+              if (current?.workspaceId !== event.workspaceId) {
+                return current;
+              }
+
+              const parentWorkspaceId = deletedMeta?.parentWorkspaceId;
+              if (parentWorkspaceId) {
+                const parentMeta = workspaceMetadataRef.current.get(parentWorkspaceId);
+                if (parentMeta) {
+                  return {
+                    workspaceId: parentMeta.id,
+                    projectPath: parentMeta.projectPath,
+                    projectName: parentMeta.projectName,
+                    namedWorkspacePath: parentMeta.namedWorkspacePath,
+                  };
+                }
+              }
+
+              const projectPath = deletedMeta?.projectPath;
+              const fallbackMeta =
+                (projectPath
+                  ? Array.from(workspaceMetadataRef.current.values()).find(
+                      (meta) => meta.projectPath === projectPath && meta.id !== event.workspaceId
+                    )
+                  : null) ??
+                Array.from(workspaceMetadataRef.current.values()).find(
+                  (meta) => meta.id !== event.workspaceId
+                );
+              if (!fallbackMeta) {
+                return null;
+              }
+
+              return {
+                workspaceId: fallbackMeta.id,
+                projectPath: fallbackMeta.projectPath,
+                projectName: fallbackMeta.projectName,
+                namedWorkspacePath: fallbackMeta.namedWorkspacePath,
+              };
+            });
+          }
+
           if (event.metadata !== null) {
             ensureCreatedAt(event.metadata);
             seedWorkspaceLocalStorageFromBackend(event.metadata);
@@ -348,7 +404,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     return () => {
       controller.abort();
     };
-  }, [refreshProjects, setWorkspaceMetadata, api]);
+  }, [refreshProjects, setSelectedWorkspace, setWorkspaceMetadata, api]);
 
   const createWorkspace = useCallback(
     async (

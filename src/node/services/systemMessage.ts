@@ -155,9 +155,10 @@ export function extractToolInstructions(
   globalInstructions: string | null,
   contextInstructions: string | null,
   modelString: string,
-  mode?: "plan" | "exec"
+  mode?: "plan" | "exec",
+  options?: { enableAgentReport?: boolean }
 ): Record<string, string> {
-  const availableTools = getAvailableTools(modelString, mode);
+  const availableTools = getAvailableTools(modelString, mode, options);
   const toolInstructions: Record<string, string> = {};
 
   for (const toolName of availableTools) {
@@ -199,7 +200,9 @@ export async function readToolInstructions(
     workspacePath
   );
 
-  return extractToolInstructions(globalInstructions, contextInstructions, modelString, mode);
+  return extractToolInstructions(globalInstructions, contextInstructions, modelString, mode, {
+    enableAgentReport: Boolean(metadata.parentWorkspaceId),
+  });
 }
 
 /**
@@ -251,10 +254,34 @@ export async function buildSystemMessage(
   mode?: string,
   additionalSystemInstructions?: string,
   modelString?: string,
-  mcpServers?: MCPServerMap
+  mcpServers?: MCPServerMap,
+  options?: {
+    variant?: "default" | "agent";
+    agentSystemPrompt?: string;
+  }
 ): Promise<string> {
   if (!metadata) throw new Error("Invalid workspace metadata: metadata is required");
   if (!workspacePath) throw new Error("Invalid workspace path: workspacePath is required");
+
+  // Read instruction sets
+  // Get runtime type from metadata (defaults to "local" for legacy workspaces without runtimeConfig)
+  const runtimeType = metadata.runtimeConfig?.type ?? "local";
+
+  // Build system message
+  let systemMessage = `${PRELUDE.trim()}\n\n${buildEnvironmentContext(workspacePath, runtimeType)}`;
+
+  // Add MCP context if servers are configured
+  if (mcpServers && Object.keys(mcpServers).length > 0) {
+    systemMessage += buildMCPContext(mcpServers);
+  }
+
+  if (options?.variant === "agent") {
+    const agentPrompt = options.agentSystemPrompt?.trim();
+    if (agentPrompt) {
+      systemMessage += `\n<agent-instructions>\n${agentPrompt}\n</agent-instructions>`;
+    }
+    return systemMessage;
+  }
 
   // Read instruction sets
   const [globalInstructions, contextInstructions] = await readInstructionSources(
@@ -292,17 +319,6 @@ export async function buildSystemMessage(
       (contextInstructions && extractModelSection(contextInstructions, modelString)) ??
       (globalInstructions && extractModelSection(globalInstructions, modelString)) ??
       null;
-  }
-
-  // Get runtime type from metadata (defaults to "local" for legacy workspaces without runtimeConfig)
-  const runtimeType = metadata.runtimeConfig?.type ?? "local";
-
-  // Build system message
-  let systemMessage = `${PRELUDE.trim()}\n\n${buildEnvironmentContext(workspacePath, runtimeType)}`;
-
-  // Add MCP context if servers are configured
-  if (mcpServers && Object.keys(mcpServers).length > 0) {
-    systemMessage += buildMCPContext(mcpServers);
   }
 
   if (customInstructions) {

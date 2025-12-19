@@ -82,6 +82,229 @@ export const AskUserQuestionToolResultSchema = z
     answers: z.record(z.string(), z.string()),
   })
   .strict();
+
+// -----------------------------------------------------------------------------
+// task (sub-workspaces as subagents)
+// -----------------------------------------------------------------------------
+
+export const TaskToolArgsSchema = z
+  .object({
+    subagent_type: z.string().min(1),
+    prompt: z.string().min(1),
+    description: z.string().optional(),
+    run_in_background: z.boolean().default(false),
+  })
+  .strict();
+
+export const TaskToolQueuedResultSchema = z
+  .object({
+    status: z.enum(["queued", "running"]),
+    taskId: z.string(),
+  })
+  .strict();
+
+export const TaskToolCompletedResultSchema = z
+  .object({
+    status: z.literal("completed"),
+    taskId: z.string().optional(),
+    reportMarkdown: z.string(),
+    title: z.string().optional(),
+    agentType: z.string().optional(),
+  })
+  .strict();
+
+export const TaskToolResultSchema = z.discriminatedUnion("status", [
+  TaskToolQueuedResultSchema,
+  TaskToolCompletedResultSchema,
+]);
+
+// -----------------------------------------------------------------------------
+// task_await (await one or more sub-agent tasks)
+// -----------------------------------------------------------------------------
+
+export const TaskAwaitToolArgsSchema = z
+  .object({
+    task_ids: z
+      .array(z.string().min(1))
+      .optional()
+      .describe(
+        "List of task IDs to await. When omitted, waits for all active descendant tasks of the current workspace."
+      ),
+    timeout_secs: z
+      .number()
+      .positive()
+      .optional()
+      .describe(
+        "Maximum time to wait in seconds for each task. " +
+          "If exceeded, the result returns status=queued|running|awaiting_report (task is still active). " +
+          "Optional, defaults to 10 minutes."
+      ),
+  })
+  .strict();
+
+export const TaskAwaitToolCompletedResultSchema = z
+  .object({
+    status: z.literal("completed"),
+    taskId: z.string(),
+    reportMarkdown: z.string(),
+    title: z.string().optional(),
+  })
+  .strict();
+
+export const TaskAwaitToolActiveResultSchema = z
+  .object({
+    status: z.enum(["queued", "running", "awaiting_report"]),
+    taskId: z.string(),
+  })
+  .strict();
+
+export const TaskAwaitToolNotFoundResultSchema = z
+  .object({
+    status: z.literal("not_found"),
+    taskId: z.string(),
+  })
+  .strict();
+
+export const TaskAwaitToolInvalidScopeResultSchema = z
+  .object({
+    status: z.literal("invalid_scope"),
+    taskId: z.string(),
+  })
+  .strict();
+
+export const TaskAwaitToolErrorResultSchema = z
+  .object({
+    status: z.literal("error"),
+    taskId: z.string(),
+    error: z.string(),
+  })
+  .strict();
+
+export const TaskAwaitToolResultSchema = z
+  .object({
+    results: z.array(
+      z.discriminatedUnion("status", [
+        TaskAwaitToolCompletedResultSchema,
+        TaskAwaitToolActiveResultSchema,
+        TaskAwaitToolNotFoundResultSchema,
+        TaskAwaitToolInvalidScopeResultSchema,
+        TaskAwaitToolErrorResultSchema,
+      ])
+    ),
+  })
+  .strict();
+
+// -----------------------------------------------------------------------------
+// task_terminate (terminate one or more sub-agent tasks)
+// -----------------------------------------------------------------------------
+
+export const TaskTerminateToolArgsSchema = z
+  .object({
+    task_ids: z
+      .array(z.string().min(1))
+      .min(1)
+      .describe(
+        "List of task IDs to terminate. Each must be a descendant sub-agent task of the current workspace."
+      ),
+  })
+  .strict();
+
+export const TaskTerminateToolTerminatedResultSchema = z
+  .object({
+    status: z.literal("terminated"),
+    taskId: z.string(),
+    terminatedTaskIds: z
+      .array(z.string())
+      .describe("All terminated task IDs (includes descendants)"),
+  })
+  .strict();
+
+export const TaskTerminateToolNotFoundResultSchema = z
+  .object({
+    status: z.literal("not_found"),
+    taskId: z.string(),
+  })
+  .strict();
+
+export const TaskTerminateToolInvalidScopeResultSchema = z
+  .object({
+    status: z.literal("invalid_scope"),
+    taskId: z.string(),
+  })
+  .strict();
+
+export const TaskTerminateToolErrorResultSchema = z
+  .object({
+    status: z.literal("error"),
+    taskId: z.string(),
+    error: z.string(),
+  })
+  .strict();
+
+export const TaskTerminateToolResultSchema = z
+  .object({
+    results: z.array(
+      z.discriminatedUnion("status", [
+        TaskTerminateToolTerminatedResultSchema,
+        TaskTerminateToolNotFoundResultSchema,
+        TaskTerminateToolInvalidScopeResultSchema,
+        TaskTerminateToolErrorResultSchema,
+      ])
+    ),
+  })
+  .strict();
+
+// -----------------------------------------------------------------------------
+// task_list (list descendant sub-agent tasks)
+// -----------------------------------------------------------------------------
+
+const TaskListStatusSchema = z.enum(["queued", "running", "awaiting_report", "reported"]);
+const TaskListThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh"]);
+
+export const TaskListToolArgsSchema = z
+  .object({
+    statuses: z
+      .array(TaskListStatusSchema)
+      .optional()
+      .describe(
+        "Task statuses to include. Defaults to active tasks: queued, running, awaiting_report."
+      ),
+  })
+  .strict();
+
+export const TaskListToolTaskSchema = z
+  .object({
+    taskId: z.string(),
+    status: TaskListStatusSchema,
+    parentWorkspaceId: z.string(),
+    agentType: z.string().optional(),
+    workspaceName: z.string().optional(),
+    title: z.string().optional(),
+    createdAt: z.string().optional(),
+    modelString: z.string().optional(),
+    thinkingLevel: TaskListThinkingLevelSchema.optional(),
+    depth: z.number().int().min(0),
+  })
+  .strict();
+
+export const TaskListToolResultSchema = z
+  .object({
+    tasks: z.array(TaskListToolTaskSchema),
+  })
+  .strict();
+
+// -----------------------------------------------------------------------------
+// agent_report (explicit subagent -> parent report)
+// -----------------------------------------------------------------------------
+
+export const AgentReportToolArgsSchema = z
+  .object({
+    reportMarkdown: z.string().min(1),
+    title: z.string().optional(),
+  })
+  .strict();
+
+export const AgentReportToolResultSchema = z.object({ success: z.literal(true) }).strict();
 const FILE_EDIT_FILE_PATH = z
   .string()
   .describe("Path to the file to edit (absolute or relative to the current workspace)");
@@ -240,6 +463,41 @@ export const TOOL_DEFINITIONS = {
       "You must write your plan to the plan file before calling this tool. " +
       "After calling this tool, do not paste the plan contents or mention the plan file path; the UI already shows the full plan.",
     schema: z.object({}),
+  },
+  task: {
+    description:
+      "Spawn a sub-agent task in a child workspace. " +
+      "Use this to delegate work to specialized presets like research or explore. " +
+      "If run_in_background is false, this tool blocks until the sub-agent calls agent_report, then returns the report. " +
+      "If run_in_background is true, you can await it later with task_await.",
+    schema: TaskToolArgsSchema,
+  },
+  task_await: {
+    description:
+      "Wait for one or more sub-agent tasks to finish and return their reports. " +
+      "This is similar to Promise.allSettled(): you always get per-task results. " +
+      "Possible statuses: completed, queued, running, awaiting_report, not_found, invalid_scope, error.",
+    schema: TaskAwaitToolArgsSchema,
+  },
+  task_terminate: {
+    description:
+      "Terminate one or more sub-agent tasks immediately. " +
+      "This stops their AI streams and deletes their workspaces (best-effort). " +
+      "No report will be delivered; any in-progress work is discarded. " +
+      "If the task has descendant sub-agent tasks, they are terminated too.",
+    schema: TaskTerminateToolArgsSchema,
+  },
+  task_list: {
+    description:
+      "List descendant sub-agent tasks for the current workspace, including their status and metadata. " +
+      "Use this after compaction or interruptions to rediscover which tasks are still active.",
+    schema: TaskListToolArgsSchema,
+  },
+  agent_report: {
+    description:
+      "Report the final result of a sub-agent task back to the parent workspace. " +
+      "Call this exactly once when you have a final answer (after any spawned sub-tasks complete).",
+    schema: AgentReportToolArgsSchema,
   },
   todo_write: {
     description:
@@ -620,8 +878,13 @@ export function getToolSchemas(): Record<string, ToolSchema> {
  * @param mode Optional mode ("plan" | "exec") - ask_user_question only available in plan mode
  * @returns Array of tool names available for the model
  */
-export function getAvailableTools(modelString: string, mode?: "plan" | "exec"): string[] {
+export function getAvailableTools(
+  modelString: string,
+  mode?: "plan" | "exec",
+  options?: { enableAgentReport?: boolean }
+): string[] {
   const [provider] = modelString.split(":");
+  const enableAgentReport = options?.enableAgentReport ?? true;
 
   // Base tools available for all models
   const baseTools = [
@@ -636,6 +899,11 @@ export function getAvailableTools(modelString: string, mode?: "plan" | "exec"): 
     // ask_user_question only available in plan mode
     ...(mode === "plan" ? ["ask_user_question"] : []),
     "propose_plan",
+    "task",
+    "task_await",
+    "task_terminate",
+    "task_list",
+    ...(enableAgentReport ? ["agent_report"] : []),
     "todo_write",
     "todo_read",
     "status_set",

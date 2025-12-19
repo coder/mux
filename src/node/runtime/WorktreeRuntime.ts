@@ -18,6 +18,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { expandTilde } from "./tildeExpansion";
 import { LocalBaseRuntime } from "./LocalBaseRuntime";
 import { toPosixPath } from "@/node/utils/paths";
+import { log } from "@/node/services/log";
 
 /**
  * Worktree runtime implementation that executes commands and file operations
@@ -221,6 +222,25 @@ export class WorktreeRuntime extends LocalBaseRuntime {
     // In-place workspaces are identified by projectPath === workspaceName
     // These are direct workspace directories (e.g., CLI/benchmark sessions), not git worktrees
     const isInPlace = projectPath === workspaceName;
+    const shouldDeleteBranch = !isInPlace && workspaceName.startsWith("agent_");
+
+    const tryDeleteBranch = async () => {
+      if (!shouldDeleteBranch) return;
+      const deleteFlag = force ? "-D" : "-d";
+      try {
+        using deleteProc = execAsync(
+          `git -C "${projectPath}" branch ${deleteFlag} "${workspaceName}"`
+        );
+        await deleteProc.result;
+      } catch (error) {
+        // Best-effort: workspace deletion should not fail just because branch cleanup failed.
+        log.debug("Failed to delete git branch after removing worktree", {
+          projectPath,
+          workspaceName,
+          error: getErrorMessage(error),
+        });
+      }
+    };
 
     // Compute workspace path using the canonical method
     const deletedPath = this.getWorkspacePath(projectPath, workspaceName);
@@ -239,6 +259,9 @@ export class WorktreeRuntime extends LocalBaseRuntime {
           // Ignore prune errors - directory is already deleted, which is the goal
         }
       }
+
+      // Best-effort: if this looks like an agent workspace, also delete the branch.
+      await tryDeleteBranch();
       return { success: true, deletedPath };
     }
 
@@ -259,6 +282,8 @@ export class WorktreeRuntime extends LocalBaseRuntime {
       );
       await proc.result;
 
+      // Best-effort: if this looks like an agent workspace, also delete the branch.
+      await tryDeleteBranch();
       return { success: true, deletedPath };
     } catch (error) {
       const message = getErrorMessage(error);
@@ -279,6 +304,7 @@ export class WorktreeRuntime extends LocalBaseRuntime {
           // Ignore prune errors
         }
         // Treat as success - workspace is gone (idempotent)
+        await tryDeleteBranch();
         return { success: true, deletedPath };
       }
 
@@ -301,6 +327,8 @@ export class WorktreeRuntime extends LocalBaseRuntime {
           });
           await rmProc.result;
 
+          // Best-effort: if this looks like an agent workspace, also delete the branch.
+          await tryDeleteBranch();
           return { success: true, deletedPath };
         } catch (rmError) {
           return {

@@ -23,6 +23,7 @@ export interface WorkspaceListItemProps {
   projectName: string;
   isSelected: boolean;
   isDeleting?: boolean;
+  depth?: number;
   /** @deprecated No longer used since status dot was removed, kept for API compatibility */
   lastReadTimestamp?: number;
   // Event handlers
@@ -38,6 +39,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   projectName,
   isSelected,
   isDeleting,
+  depth,
   lastReadTimestamp: _lastReadTimestamp,
   onSelectWorkspace,
   onRemoveWorkspace,
@@ -101,18 +103,21 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
 
   const { canInterrupt, awaitingUserQuestion } = useWorkspaceSidebarState(workspaceId);
   const isWorking = canInterrupt && !awaitingUserQuestion;
+  const safeDepth = typeof depth === "number" && Number.isFinite(depth) ? Math.max(0, depth) : 0;
+  const paddingLeft = 9 + Math.min(32, safeDepth) * 12;
 
   return (
     <React.Fragment>
       <div
         className={cn(
-          "py-1.5 pl-[9px] pr-2 border-l-[3px] border-transparent transition-all duration-150 text-[13px] relative flex gap-2",
+          "py-1.5 pr-2 border-l-[3px] border-transparent transition-all duration-150 text-[13px] relative flex gap-2",
           isDisabled
             ? "cursor-default opacity-70"
             : "cursor-pointer hover:bg-hover [&:hover_button]:opacity-100",
           isSelected && !isDisabled && "bg-hover border-l-blue-400",
           isDeleting && "pointer-events-none"
         )}
+        style={{ paddingLeft }}
         onClick={() => {
           if (isDisabled) return;
           onSelectWorkspace({

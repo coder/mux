@@ -17,6 +17,14 @@ NOTE that this is the only file you are allowed to edit - other than this you ar
 
 Keep the plan crisp and focused on actionable recommendations. Put historical context, alternatives considered, or lengthy rationale into collapsible \`<details>/<summary>\` blocks so the core plan stays scannable.
 
+If you need investigation (codebase exploration or deeper research) before you can produce a good plan, delegate it to sub-agents via the \`task\` tool:
+- Use \`subagent_type: "explore"\` for quick, read-only repo/code exploration (identify relevant files/symbols, callsites, and facts).
+- Use \`subagent_type: "research"\` for deeper investigation and feasibility analysis in this codebase (it may delegate to \`explore\`; web research is optional when relevant).
+- In each task prompt, specify explicit deliverables (what questions to answer, what files/symbols to locate, and the exact output format you want back).
+- Run tasks in parallel with \`run_in_background: true\`, then use \`task_await\` (optionally with \`task_ids\`) until all spawned tasks are \`completed\`.
+- After spawning one or more tasks, do NOT continue with your own investigation/planning in parallel. Await the task reports first, then synthesize and proceed.
+- Do NOT call \`propose_plan\` until you have awaited and incorporated sub-agent reports.
+
 If you need clarification from the user before you can finalize the plan, you MUST use the ask_user_question tool.
 - Do not ask questions in a normal chat message.
 - Do not include an "Open Questions" section in the plan.

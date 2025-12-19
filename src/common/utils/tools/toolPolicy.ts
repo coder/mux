@@ -22,10 +22,11 @@ export type ToolPolicy = z.infer<typeof ToolPolicySchema>;
  * @returns Filtered tools based on policy
  *
  * Algorithm:
- * 1. Check if any tool is marked as "require"
- * 2. If a tool is required, disable all other tools (at most one can be required)
- * 3. Otherwise, start with default "allow" for all tools and apply filters in order
- * 4. Last matching filter wins
+ * - Filters are applied in order, with default behavior "allow all".
+ * - If any tool is marked as "require" (at most one tool may match across the whole policy),
+ *   only that tool remains eligible. Later filters may still disable it (resulting in no tools).
+ * - Without a required tool, enable/disable filters apply to all tools, and the last matching
+ *   filter wins for each tool.
  */
 export function applyToolPolicy(
   tools: Record<string, Tool>,
@@ -36,32 +37,49 @@ export function applyToolPolicy(
     return tools;
   }
 
-  // First pass: find any required tools
-  const requiredTools = new Set<string>();
+  const toolNames = Object.keys(tools);
+
+  // First pass: find a single required tool (if any), validating that the policy
+  // never results in multiple required matches.
+  let requiredTool: string | null = null;
   for (const filter of policy) {
-    if (filter.action === "require") {
-      const regex = new RegExp(`^${filter.regex_match}$`);
-      for (const toolName of Object.keys(tools)) {
-        if (regex.test(toolName)) {
-          requiredTools.add(toolName);
-        }
-      }
+    if (filter.action !== "require") continue;
+
+    const regex = new RegExp(`^${filter.regex_match}$`);
+    const matches = toolNames.filter((toolName) => regex.test(toolName));
+
+    if (matches.length > 1) {
+      throw new Error(
+        `Tool policy error: Multiple tools marked as required (${matches.join(", ")}). At most one tool can be required.`
+      );
     }
+    if (matches.length === 0) continue;
+
+    if (requiredTool && requiredTool !== matches[0]) {
+      throw new Error(
+        `Tool policy error: Multiple tools marked as required (${requiredTool}, ${matches[0]}). At most one tool can be required.`
+      );
+    }
+    requiredTool = matches[0];
   }
 
-  // Validate: at most one tool can be required
-  if (requiredTools.size > 1) {
-    throw new Error(
-      `Tool policy error: Multiple tools marked as required (${Array.from(requiredTools).join(", ")}). At most one tool can be required.`
-    );
-  }
+  // If a tool is required, only that tool remains eligible, but later filters may disable it.
+  if (requiredTool) {
+    let enabled = true; // Default allow
 
-  // If a tool is required, return only that tool
-  if (requiredTools.size === 1) {
-    const requiredTool = Array.from(requiredTools)[0];
-    return {
-      [requiredTool]: tools[requiredTool],
-    };
+    for (const filter of policy) {
+      const regex = new RegExp(`^${filter.regex_match}$`);
+      if (!regex.test(requiredTool)) continue;
+
+      if (filter.action === "disable") {
+        enabled = false;
+        continue;
+      }
+      // enable/require both imply enabled for the required tool at this point in the policy
+      enabled = true;
+    }
+
+    return enabled ? { [requiredTool]: tools[requiredTool] } : {};
   }
 
   // No required tools: apply standard enable/disable logic
@@ -69,7 +87,7 @@ export function applyToolPolicy(
   const toolStatus = new Map<string, boolean>();
 
   // Initialize all tools as enabled (default allow)
-  for (const toolName of Object.keys(tools)) {
+  for (const toolName of toolNames) {
     toolStatus.set(toolName, true);
   }
 
@@ -81,7 +99,7 @@ export function applyToolPolicy(
     const shouldEnable = filter.action === "enable";
 
     // Apply filter to matching tools
-    for (const toolName of Object.keys(tools)) {
+    for (const toolName of toolNames) {
       if (regex.test(toolName)) {
         toolStatus.set(toolName, shouldEnable);
       }

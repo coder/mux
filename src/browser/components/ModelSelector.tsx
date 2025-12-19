@@ -20,6 +20,8 @@ interface ModelSelectorProps {
   onChange: (value: string) => void;
   models: string[];
   hiddenModels?: string[];
+  emptyLabel?: string;
+  inputPlaceholder?: string;
   onComplete?: () => void;
   defaultModel?: string | null;
   onSetDefaultModel?: (model: string) => void;
@@ -39,6 +41,8 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       onChange,
       models,
       hiddenModels = [],
+      emptyLabel,
+      inputPlaceholder,
       onComplete,
       defaultModel,
       onSetDefaultModel,
@@ -229,6 +233,19 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     }, [highlightedIndex]);
 
     if (!isEditing) {
+      if (value.trim().length === 0) {
+        return (
+          <div ref={containerRef} className="relative flex items-center gap-1">
+            <div
+              className="text-muted-light hover:bg-hover flex cursor-pointer items-center gap-1 rounded-sm px-1 py-0.5 text-[11px] transition-colors duration-200"
+              onClick={handleClick}
+            >
+              <span>{emptyLabel ?? ""}</span>
+            </div>
+          </div>
+        );
+      }
+
       const gatewayActive = gateway.isModelRoutingThroughGateway(value);
 
       // Parse provider and model name from value (format: "provider:model-name")
@@ -276,7 +293,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
             value={inputValue}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
-            placeholder="provider:model-name"
+            placeholder={inputPlaceholder ?? "provider:model-name"}
             className="text-light bg-dark border-border-light font-monospace focus:border-exec-mode w-48 rounded-sm border px-1 py-0.5 text-[10px] leading-[11px] outline-none"
           />
           {error && (

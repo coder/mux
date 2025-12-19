@@ -39,6 +39,7 @@ import type { PostCompactionAttachment, PostCompactionExclusions } from "@/commo
 import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
 import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
 import { isValidModelFormat } from "@/common/utils/ai/models";
+import { log } from "@/node/services/log";
 
 /**
  * Tracked file state for detecting external edits.
@@ -415,7 +416,21 @@ export class AgentSession {
         options.editMessageId
       );
       if (!truncateResult.success) {
-        return Err(createUnknownSendMessageError(truncateResult.error));
+        const isMissingEditTarget =
+          truncateResult.error.includes("Message with ID") &&
+          truncateResult.error.includes("not found in history");
+        if (isMissingEditTarget) {
+          // This can happen if the frontend is briefly out-of-sync with persisted history
+          // (e.g., compaction/truncation completed and removed the message while the UI still
+          // shows it as editable). Treat as a no-op truncation so the user can recover.
+          log.warn("editMessageId not found in history; proceeding without truncation", {
+            workspaceId: this.workspaceId,
+            editMessageId: options.editMessageId,
+            error: truncateResult.error,
+          });
+        } else {
+          return Err(createUnknownSendMessageError(truncateResult.error));
+        }
       }
     }
 

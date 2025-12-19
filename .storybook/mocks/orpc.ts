@@ -13,6 +13,13 @@ import type {
 } from "@/common/orpc/types";
 import type { ChatStats } from "@/common/types/chatStats";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
+import {
+  DEFAULT_TASK_SETTINGS,
+  normalizeSubagentAiDefaults,
+  normalizeTaskSettings,
+  type SubagentAiDefaults,
+  type TaskSettings,
+} from "@/common/types/tasks";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 
 /** Session usage data structure matching SessionUsageFileSchema */
@@ -46,6 +53,10 @@ export interface MockSessionUsage {
 export interface MockORPCClientOptions {
   projects?: Map<string, ProjectConfig>;
   workspaces?: FrontendWorkspaceMetadata[];
+  /** Initial task settings for config.getConfig (e.g., Settings → Tasks section) */
+  taskSettings?: Partial<TaskSettings>;
+  /** Initial per-subagent AI defaults for config.getConfig (e.g., Settings → Tasks section) */
+  subagentAiDefaults?: SubagentAiDefaults;
   /** Per-workspace chat callback. Return messages to emit, or use the callback for streaming. */
   onChat?: (workspaceId: string, emit: (msg: WorkspaceChatMessage) => void) => (() => void) | void;
   /** Mock for executeBash per workspace */
@@ -123,6 +134,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     mcpServers = new Map(),
     mcpOverrides = new Map(),
     mcpTestResults = new Map(),
+    taskSettings: initialTaskSettings,
+    subagentAiDefaults: initialSubagentAiDefaults,
   } = options;
 
   // Feature flags
@@ -140,6 +153,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   };
 
   const workspaceMap = new Map(workspaces.map((w) => [w.id, w]));
+  let taskSettings = normalizeTaskSettings(initialTaskSettings ?? DEFAULT_TASK_SETTINGS);
+  let subagentAiDefaults = normalizeSubagentAiDefaults(initialSubagentAiDefaults ?? {});
 
   const mockStats: ChatStats = {
     consumers: [],
@@ -171,6 +186,16 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       getLaunchProject: async () => null,
       getSshHost: async () => null,
       setSshHost: async () => undefined,
+    },
+    config: {
+      getConfig: async () => ({ taskSettings, subagentAiDefaults }),
+      saveConfig: async (input: { taskSettings: unknown; subagentAiDefaults?: unknown }) => {
+        taskSettings = normalizeTaskSettings(input.taskSettings);
+        if (input.subagentAiDefaults !== undefined) {
+          subagentAiDefaults = normalizeSubagentAiDefaults(input.subagentAiDefaults);
+        }
+        return undefined;
+      },
     },
     providers: {
       list: async () => providersList,

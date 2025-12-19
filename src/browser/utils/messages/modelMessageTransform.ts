@@ -566,6 +566,106 @@ function mergeConsecutiveUserMessages(messages: ModelMessage[]): ModelMessage[] 
   return merged;
 }
 
+function ensureAnthropicThinkingBeforeToolCalls(messages: ModelMessage[]): ModelMessage[] {
+  const result: ModelMessage[] = [];
+
+  for (const msg of messages) {
+    if (msg.role !== "assistant") {
+      result.push(msg);
+      continue;
+    }
+
+    const assistantMsg = msg;
+    if (typeof assistantMsg.content === "string") {
+      result.push(msg);
+      continue;
+    }
+
+    const content = assistantMsg.content;
+    const hasToolCall = content.some((part) => part.type === "tool-call");
+    if (!hasToolCall) {
+      result.push(msg);
+      continue;
+    }
+
+    let reasoningParts = content.filter((part) => part.type === "reasoning");
+    const nonReasoningParts = content.filter((part) => part.type !== "reasoning");
+
+    // If no reasoning is present, try to merge it from the immediately preceding assistant message
+    // if that message consists of reasoning-only parts. This commonly happens after splitting.
+    if (reasoningParts.length === 0 && result.length > 0) {
+      const prev = result[result.length - 1];
+      if (prev.role === "assistant") {
+        const prevAssistant = prev;
+        if (typeof prevAssistant.content !== "string") {
+          const prevIsReasoningOnly =
+            prevAssistant.content.length > 0 &&
+            prevAssistant.content.every((part) => part.type === "reasoning");
+          if (prevIsReasoningOnly) {
+            result.pop();
+            reasoningParts = prevAssistant.content.filter((part) => part.type === "reasoning");
+          }
+        }
+      }
+    }
+
+    // Anthropic extended thinking requires tool-use assistant messages to start with a thinking block.
+    // If we still have no reasoning available, insert an empty reasoning part as a minimal placeholder.
+    if (reasoningParts.length === 0) {
+      reasoningParts = [{ type: "reasoning" as const, text: "" }];
+    }
+
+    result.push({
+      ...assistantMsg,
+      content: [...reasoningParts, ...nonReasoningParts],
+    });
+  }
+
+  // Anthropic extended thinking also requires the *final* assistant message in the request
+  // to start with a thinking block. If the last assistant message is text-only (common for
+  // synthetic messages like sub-agent reports), insert an empty reasoning part as a minimal
+  // placeholder. This transformation affects only the provider request, not stored history/UI.
+  for (let i = result.length - 1; i >= 0; i--) {
+    const msg = result[i];
+    if (msg.role !== "assistant") {
+      continue;
+    }
+
+    const assistantMsg = msg;
+
+    if (typeof assistantMsg.content === "string") {
+      // String-only assistant messages need converting to part arrays to insert reasoning.
+      const text = assistantMsg.content;
+      // If it's truly empty, leave it unchanged (it will be filtered elsewhere).
+      if (text.length === 0) break;
+      result[i] = {
+        ...assistantMsg,
+        content: [
+          { type: "reasoning" as const, text: "" },
+          { type: "text" as const, text },
+        ],
+      };
+      break;
+    }
+
+    const content = assistantMsg.content;
+    if (content.length === 0) {
+      break;
+    }
+    if (content[0].type === "reasoning") {
+      break;
+    }
+
+    result[i] = {
+      ...assistantMsg,
+      content: [{ type: "reasoning" as const, text: "" }, ...content],
+    };
+    break;
+  }
+
+  return result;
+}
+
 /**
  * Transform messages to ensure provider API compliance.
  * Applies multiple transformation passes based on provider requirements:
@@ -582,7 +682,11 @@ function mergeConsecutiveUserMessages(messages: ModelMessage[]): ModelMessage[] 
  * @param messages The messages to transform
  * @param provider The provider name (e.g., "anthropic", "openai")
  */
-export function transformModelMessages(messages: ModelMessage[], provider: string): ModelMessage[] {
+export function transformModelMessages(
+  messages: ModelMessage[],
+  provider: string,
+  options?: { anthropicThinkingEnabled?: boolean }
+): ModelMessage[] {
   // Pass 0: Coalesce consecutive parts to reduce JSON overhead from streaming (applies to all providers)
   const coalesced = coalesceConsecutiveParts(messages);
 
@@ -596,8 +700,13 @@ export function transformModelMessages(messages: ModelMessage[], provider: strin
     // Only filter out reasoning-only messages (messages with no text/tool-call content)
     reasoningHandled = filterReasoningOnlyMessages(split);
   } else if (provider === "anthropic") {
-    // Anthropic: Filter out reasoning-only messages (API rejects messages with only reasoning)
-    reasoningHandled = filterReasoningOnlyMessages(split);
+    // Anthropic: When extended thinking is enabled, preserve reasoning-only messages and ensure
+    // tool-call messages start with reasoning. When it's disabled, filter reasoning-only messages.
+    if (options?.anthropicThinkingEnabled) {
+      reasoningHandled = ensureAnthropicThinkingBeforeToolCalls(split);
+    } else {
+      reasoningHandled = filterReasoningOnlyMessages(split);
+    }
   } else {
     // Unknown provider: no reasoning handling
     reasoningHandled = split;

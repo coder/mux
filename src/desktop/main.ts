@@ -326,6 +326,7 @@ async function loadServices(): Promise<void> {
     aiService: services.aiService,
     projectService: services.projectService,
     workspaceService: services.workspaceService,
+    taskService: services.taskService,
     providerService: services.providerService,
     terminalService: services.terminalService,
     editorService: services.editorService,

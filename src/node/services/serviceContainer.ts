@@ -38,6 +38,7 @@ import { MCPConfigService } from "@/node/services/mcpConfigService";
 import { MCPServerManager } from "@/node/services/mcpServerManager";
 import { SessionUsageService } from "@/node/services/sessionUsageService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
+import { TaskService } from "@/node/services/taskService";
 
 /**
  * ServiceContainer - Central dependency container for all backend services.
@@ -52,6 +53,7 @@ export class ServiceContainer {
   public readonly aiService: AIService;
   public readonly projectService: ProjectService;
   public readonly workspaceService: WorkspaceService;
+  public readonly taskService: TaskService;
   public readonly providerService: ProviderService;
   public readonly terminalService: TerminalService;
   public readonly editorService: EditorService;
@@ -108,6 +110,15 @@ export class ServiceContainer {
       this.backgroundProcessManager
     );
     this.workspaceService.setMCPServerManager(this.mcpServerManager);
+    this.taskService = new TaskService(
+      config,
+      this.historyService,
+      this.partialService,
+      this.aiService,
+      this.workspaceService,
+      this.initStateManager
+    );
+    this.aiService.setTaskService(this.taskService);
     // Idle compaction service - auto-compacts workspaces after configured idle period
     this.idleCompactionService = new IdleCompactionService(
       config,
@@ -180,6 +191,7 @@ export class ServiceContainer {
         // Ignore feature flag failures.
       });
     await this.experimentsService.initialize();
+    await this.taskService.initialize();
     // Start idle compaction checker
     this.idleCompactionService.start();
   }

@@ -133,6 +133,28 @@ describe("modelMessageTransform", () => {
       expect(result[5].role).toBe("tool");
       expect((result[5] as ToolModelMessage).content[0]).toMatchObject({ toolCallId: "call2" });
     });
+
+    it("should insert empty reasoning for final assistant message when Anthropic thinking is enabled", () => {
+      const messages: ModelMessage[] = [
+        { role: "user", content: [{ type: "text", text: "Hello" }] },
+        { role: "assistant", content: [{ type: "text", text: "Subagent report text" }] },
+        { role: "user", content: [{ type: "text", text: "Continue" }] },
+      ];
+
+      const result = transformModelMessages(messages, "anthropic", {
+        anthropicThinkingEnabled: true,
+      });
+
+      // Find last assistant message and ensure it starts with reasoning
+      const lastAssistant = [...result]
+        .reverse()
+        .find((m): m is AssistantModelMessage => m.role === "assistant");
+      expect(lastAssistant).toBeTruthy();
+      expect(Array.isArray(lastAssistant?.content)).toBe(true);
+      if (Array.isArray(lastAssistant?.content)) {
+        expect(lastAssistant.content[0]).toEqual({ type: "reasoning", text: "" });
+      }
+    });
     it("should keep text-only messages unchanged", () => {
       const assistantMsg1: AssistantModelMessage = {
         role: "assistant",

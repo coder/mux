@@ -5,6 +5,7 @@
 
 import type { z } from "zod";
 import type {
+  AgentReportToolResultSchema,
   AskUserQuestionOptionSchema,
   AskUserQuestionQuestionSchema,
   AskUserQuestionToolResultSchema,
@@ -15,6 +16,7 @@ import type {
   FileEditInsertToolResultSchema,
   FileEditReplaceStringToolResultSchema,
   FileReadToolResultSchema,
+  TaskToolResultSchema,
   TOOL_DEFINITIONS,
   WebFetchToolResultSchema,
 } from "@/common/utils/tools/toolDefinitions";
@@ -149,6 +151,18 @@ export type AskUserQuestionQuestion = z.infer<typeof AskUserQuestionQuestionSche
 export type AskUserQuestionToolSuccessResult = z.infer<typeof AskUserQuestionToolResultSchema>;
 
 export type AskUserQuestionToolResult = AskUserQuestionToolSuccessResult | ToolErrorResult;
+
+// Task Tool Types
+export type TaskToolArgs = z.infer<typeof TOOL_DEFINITIONS.task.schema>;
+
+export type TaskToolSuccessResult = z.infer<typeof TaskToolResultSchema>;
+
+export type TaskToolResult = TaskToolSuccessResult | ToolErrorResult;
+
+// Agent Report Tool Types
+export type AgentReportToolArgs = z.infer<typeof TOOL_DEFINITIONS.agent_report.schema>;
+
+export type AgentReportToolResult = z.infer<typeof AgentReportToolResultSchema> | ToolErrorResult;
 
 // Propose Plan Tool Types
 // Args derived from schema

@@ -1,6 +1,104 @@
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig } from "@/common/types/project";
 
+export function flattenWorkspaceTree(
+  workspaces: FrontendWorkspaceMetadata[]
+): FrontendWorkspaceMetadata[] {
+  if (workspaces.length === 0) return [];
+
+  const byId = new Map<string, FrontendWorkspaceMetadata>();
+  for (const workspace of workspaces) {
+    byId.set(workspace.id, workspace);
+  }
+
+  const childrenByParent = new Map<string, FrontendWorkspaceMetadata[]>();
+  const roots: FrontendWorkspaceMetadata[] = [];
+
+  // Preserve input order for both roots and siblings by iterating in-order.
+  for (const workspace of workspaces) {
+    const parentId = workspace.parentWorkspaceId;
+    if (parentId && byId.has(parentId)) {
+      const children = childrenByParent.get(parentId) ?? [];
+      children.push(workspace);
+      childrenByParent.set(parentId, children);
+    } else {
+      roots.push(workspace);
+    }
+  }
+
+  const result: FrontendWorkspaceMetadata[] = [];
+  const visited = new Set<string>();
+
+  const visit = (workspace: FrontendWorkspaceMetadata, depth: number) => {
+    if (visited.has(workspace.id)) return;
+    visited.add(workspace.id);
+
+    // Cap depth defensively to avoid pathological cycles/graphs.
+    if (depth > 32) {
+      result.push(workspace);
+      return;
+    }
+
+    result.push(workspace);
+    const children = childrenByParent.get(workspace.id);
+    if (children) {
+      for (const child of children) {
+        visit(child, depth + 1);
+      }
+    }
+  };
+
+  for (const root of roots) {
+    visit(root, 0);
+  }
+
+  // Fallback: ensure we include any remaining nodes (cycles, missing parents, etc.).
+  for (const workspace of workspaces) {
+    if (!visited.has(workspace.id)) {
+      visit(workspace, 0);
+    }
+  }
+
+  return result;
+}
+
+export function computeWorkspaceDepthMap(
+  workspaces: FrontendWorkspaceMetadata[]
+): Record<string, number> {
+  const byId = new Map<string, FrontendWorkspaceMetadata>();
+  for (const workspace of workspaces) {
+    byId.set(workspace.id, workspace);
+  }
+
+  const depths = new Map<string, number>();
+  const visiting = new Set<string>();
+
+  const computeDepth = (workspaceId: string): number => {
+    const existing = depths.get(workspaceId);
+    if (existing !== undefined) return existing;
+
+    if (visiting.has(workspaceId)) {
+      // Cycle detected - treat as root.
+      return 0;
+    }
+
+    visiting.add(workspaceId);
+    const workspace = byId.get(workspaceId);
+    const parentId = workspace?.parentWorkspaceId;
+    const depth = parentId && byId.has(parentId) ? Math.min(computeDepth(parentId) + 1, 32) : 0;
+    visiting.delete(workspaceId);
+
+    depths.set(workspaceId, depth);
+    return depth;
+  };
+
+  for (const workspace of workspaces) {
+    computeDepth(workspace.id);
+  }
+
+  return Object.fromEntries(depths);
+}
+
 /**
  * Age thresholds for workspace filtering, in ascending order.
  * Each tier hides workspaces older than the specified duration.
@@ -55,6 +153,11 @@ export function buildSortedWorkspacesByProject(
       const bTimestamp = workspaceRecency[b.id] ?? 0;
       return bTimestamp - aTimestamp;
     });
+  }
+
+  // Ensure child workspaces appear directly below their parents.
+  for (const [projectPath, metadataList] of result) {
+    result.set(projectPath, flattenWorkspaceTree(metadataList));
   }
 
   return result;

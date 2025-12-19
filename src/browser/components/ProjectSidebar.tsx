@@ -17,6 +17,7 @@ import {
   partitionWorkspacesByAge,
   formatDaysThreshold,
   AGE_THRESHOLDS_DAYS,
+  computeWorkspaceDepthMap,
 } from "@/browser/utils/ui/workspaceFiltering";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { SidebarCollapseButton } from "./ui/SidebarCollapseButton";
@@ -609,6 +610,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             {(() => {
                               const allWorkspaces =
                                 sortedWorkspacesByProject.get(projectPath) ?? [];
+                              const depthByWorkspaceId = computeWorkspaceDepthMap(allWorkspaces);
                               const { recent, buckets } = partitionWorkspacesByAge(
                                 allWorkspaces,
                                 workspaceRecency
@@ -626,6 +628,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   onSelectWorkspace={handleSelectWorkspace}
                                   onRemoveWorkspace={handleRemoveWorkspace}
                                   onToggleUnread={_onToggleUnread}
+                                  depth={depthByWorkspaceId[metadata.id] ?? 0}
                                 />
                               );
 

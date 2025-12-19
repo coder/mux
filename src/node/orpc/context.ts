@@ -19,12 +19,14 @@ import type { TelemetryService } from "@/node/services/telemetryService";
 import type { FeatureFlagService } from "@/node/services/featureFlagService";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
+import type { TaskService } from "@/node/services/taskService";
 
 export interface ORPCContext {
   config: Config;
   aiService: AIService;
   projectService: ProjectService;
   workspaceService: WorkspaceService;
+  taskService: TaskService;
   providerService: ProviderService;
   terminalService: TerminalService;
   editorService: EditorService;

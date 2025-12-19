@@ -804,7 +804,9 @@ export class WorkspaceService extends EventEmitter {
       await this.config.editConfig((config) => {
         const projectConfig = config.projects.get(projectPath);
         if (projectConfig) {
-          const workspaceEntry = projectConfig.workspaces.find((w) => w.path === oldPath);
+          const workspaceEntry =
+            projectConfig.workspaces.find((w) => w.id === workspaceId) ??
+            projectConfig.workspaces.find((w) => w.path === oldPath);
           if (workspaceEntry) {
             workspaceEntry.name = newName;
             workspaceEntry.path = newPath;
@@ -854,7 +856,9 @@ export class WorkspaceService extends EventEmitter {
       await this.config.editConfig((config) => {
         const projectConfig = config.projects.get(projectPath);
         if (projectConfig) {
-          const workspaceEntry = projectConfig.workspaces.find((w) => w.path === workspacePath);
+          const workspaceEntry =
+            projectConfig.workspaces.find((w) => w.id === workspaceId) ??
+            projectConfig.workspaces.find((w) => w.path === workspacePath);
           if (workspaceEntry) {
             workspaceEntry.title = title;
           }
@@ -944,21 +948,21 @@ export class WorkspaceService extends EventEmitter {
       return Err(`Project not found: ${projectPath}`);
     }
 
-    const workspaceEntry = projectConfig.workspaces.find(
-      (w) => w.id === workspaceId || w.path === workspacePath
-    );
-    if (!workspaceEntry) {
+    const workspaceEntry = projectConfig.workspaces.find((w) => w.id === workspaceId);
+    const workspaceEntryWithFallback =
+      workspaceEntry ?? projectConfig.workspaces.find((w) => w.path === workspacePath);
+    if (!workspaceEntryWithFallback) {
       return Err("Workspace not found");
     }
 
-    const prev = workspaceEntry.aiSettings;
+    const prev = workspaceEntryWithFallback.aiSettings;
     const changed =
       prev?.model !== aiSettings.model || prev?.thinkingLevel !== aiSettings.thinkingLevel;
     if (!changed) {
       return Ok(false);
     }
 
-    workspaceEntry.aiSettings = aiSettings;
+    workspaceEntryWithFallback.aiSettings = aiSettings;
     await this.config.saveConfig(config);
 
     if (options?.emitMetadata !== false) {

@@ -114,6 +114,7 @@ export {
 // API router schemas
 export {
   AWSCredentialStatusSchema,
+  config,
   debug,
   features,
   general,
@@ -125,6 +126,7 @@ export {
   ProvidersConfigMapSchema,
   server,
   splashScreens,
+  tasks,
   experiments,
   ExperimentValueSchema,
   telemetry,

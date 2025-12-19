@@ -639,6 +639,31 @@ export class StreamManager extends EventEmitter {
       }
     }
 
+    // Anthropic Extended Thinking is incompatible with forced tool choice.
+    // If a tool is forced, disable thinking for this request to avoid API errors.
+    let finalProviderOptions = providerOptions;
+    const [provider] = normalizeGatewayModel(modelString).split(":", 2);
+    if (
+      toolChoice &&
+      provider === "anthropic" &&
+      providerOptions &&
+      typeof providerOptions === "object" &&
+      "anthropic" in providerOptions
+    ) {
+      const anthropicOptions = (providerOptions as { anthropic?: unknown }).anthropic;
+      if (
+        anthropicOptions &&
+        typeof anthropicOptions === "object" &&
+        "thinking" in anthropicOptions
+      ) {
+        const { thinking: _thinking, ...rest } = anthropicOptions as Record<string, unknown>;
+        finalProviderOptions = {
+          ...providerOptions,
+          anthropic: rest,
+        };
+      }
+    }
+
     // Apply cache control for Anthropic models
     let finalMessages = messages;
     let finalTools = tools;
@@ -675,7 +700,7 @@ export class StreamManager extends EventEmitter {
         // to complete complex tasks. The stopWhen condition allows the model to decide when it's done.
         ...(toolChoice ? { maxSteps: 1 } : { stopWhen: stepCountIs(100000) }),
         // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
-        providerOptions: providerOptions as any, // Pass provider-specific options (thinking/reasoning config)
+        providerOptions: finalProviderOptions as any, // Pass provider-specific options (thinking/reasoning config)
         // Default to 32000 tokens if not specified (Anthropic defaults to 4096)
         maxOutputTokens: maxOutputTokens ?? 32000,
       });

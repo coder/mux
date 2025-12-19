@@ -11,6 +11,11 @@ import { createAskUserQuestionTool } from "@/node/services/tools/ask_user_questi
 import { createProposePlanTool } from "@/node/services/tools/propose_plan";
 import { createTodoWriteTool, createTodoReadTool } from "@/node/services/tools/todo";
 import { createStatusSetTool } from "@/node/services/tools/status_set";
+import { createTaskTool } from "@/node/services/tools/task";
+import { createTaskAwaitTool } from "@/node/services/tools/task_await";
+import { createTaskTerminateTool } from "@/node/services/tools/task_terminate";
+import { createTaskListTool } from "@/node/services/tools/task_list";
+import { createAgentReportTool } from "@/node/services/tools/agent_report";
 import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
 import { log } from "@/node/services/log";
 import { sanitizeMCPToolsForOpenAI } from "@/common/utils/tools/schemaSanitizer";
@@ -18,6 +23,7 @@ import { sanitizeMCPToolsForOpenAI } from "@/common/utils/tools/schemaSanitizer"
 import type { Runtime } from "@/node/runtime/Runtime";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
+import type { TaskService } from "@/node/services/taskService";
 import type { UIMode } from "@/common/types/mode";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { FileState } from "@/node/services/agentSession";
@@ -55,6 +61,10 @@ export interface ToolConfiguration {
   workspaceId?: string;
   /** Callback to record file state for external edit detection (plan files) */
   recordFileState?: (filePath: string, state: FileState) => void;
+  /** Task orchestration for sub-agent tasks */
+  taskService?: TaskService;
+  /** Enable agent_report tool (only valid for child task workspaces) */
+  enableAgentReport?: boolean;
 }
 
 /**
@@ -136,6 +146,11 @@ export async function getToolsForModel(
   const nonRuntimeTools: Record<string, Tool> = {
     ...(config.mode === "plan" ? { ask_user_question: createAskUserQuestionTool(config) } : {}),
     propose_plan: createProposePlanTool(config),
+    task: createTaskTool(config),
+    task_await: createTaskAwaitTool(config),
+    task_terminate: createTaskTerminateTool(config),
+    task_list: createTaskListTool(config),
+    ...(config.enableAgentReport ? { agent_report: createAgentReportTool(config) } : {}),
     todo_write: createTodoWriteTool(config),
     todo_read: createTodoReadTool(config),
     status_set: createStatusSetTool(config),

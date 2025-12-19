@@ -30,6 +30,14 @@ export const WorkspaceMetadataSchema = z.object({
   aiSettings: WorkspaceAISettingsSchema.optional().meta({
     description: "Workspace-scoped AI settings (model + thinking level) persisted in config",
   }),
+  parentWorkspaceId: z.string().optional().meta({
+    description:
+      "If set, this workspace is a child workspace spawned from the parent workspaceId (enables nesting in UI and backend orchestration).",
+  }),
+  agentType: z.string().optional().meta({
+    description:
+      'If set, selects an agent preset for this workspace (e.g., "research" or "explore").',
+  }),
   status: z.enum(["creating"]).optional().meta({
     description:
       "Workspace creation status. 'creating' = pending setup (ephemeral, not persisted). Absent = ready.",

@@ -12,6 +12,11 @@ import type {
   ProjectsConfig,
   FeatureFlagOverride,
 } from "@/common/types/project";
+import {
+  DEFAULT_TASK_SETTINGS,
+  normalizeSubagentAiDefaults,
+  normalizeTaskSettings,
+} from "@/common/types/tasks";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { getMuxHome } from "@/common/constants/paths";
@@ -63,6 +68,8 @@ export class Config {
           serverSshHost?: string;
           viewedSplashScreens?: string[];
           featureFlagOverrides?: Record<string, "default" | "on" | "off">;
+          taskSettings?: unknown;
+          subagentAiDefaults?: unknown;
         };
 
         // Config is stored as array of [path, config] pairs
@@ -78,6 +85,8 @@ export class Config {
             projects: projectsMap,
             serverSshHost: parsed.serverSshHost,
             viewedSplashScreens: parsed.viewedSplashScreens,
+            taskSettings: normalizeTaskSettings(parsed.taskSettings),
+            subagentAiDefaults: normalizeSubagentAiDefaults(parsed.subagentAiDefaults),
             featureFlagOverrides: parsed.featureFlagOverrides,
           };
         }
@@ -89,6 +98,8 @@ export class Config {
     // Return default config
     return {
       projects: new Map(),
+      taskSettings: DEFAULT_TASK_SETTINGS,
+      subagentAiDefaults: {},
     };
   }
 
@@ -103,8 +114,11 @@ export class Config {
         serverSshHost?: string;
         viewedSplashScreens?: string[];
         featureFlagOverrides?: ProjectsConfig["featureFlagOverrides"];
+        taskSettings?: ProjectsConfig["taskSettings"];
+        subagentAiDefaults?: ProjectsConfig["subagentAiDefaults"];
       } = {
         projects: Array.from(config.projects.entries()),
+        taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
       };
       if (config.serverSshHost) {
         data.serverSshHost = config.serverSshHost;
@@ -114,6 +128,9 @@ export class Config {
       }
       if (config.viewedSplashScreens) {
         data.viewedSplashScreens = config.viewedSplashScreens;
+      }
+      if (config.subagentAiDefaults && Object.keys(config.subagentAiDefaults).length > 0) {
+        data.subagentAiDefaults = config.subagentAiDefaults;
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
@@ -339,6 +356,8 @@ export class Config {
               // GUARANTEE: All workspaces must have runtimeConfig (apply default if missing)
               runtimeConfig: workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
+              parentWorkspaceId: workspace.parentWorkspaceId,
+              agentType: workspace.agentType,
             };
 
             // Migrate missing createdAt to config for next load
@@ -381,6 +400,9 @@ export class Config {
             // Preserve any config-only fields that may not exist in legacy metadata.json
             metadata.aiSettings ??= workspace.aiSettings;
 
+            // Preserve tree/task metadata when present in config (metadata.json won't have it)
+            metadata.parentWorkspaceId ??= workspace.parentWorkspaceId;
+            metadata.agentType ??= workspace.agentType;
             // Migrate to config for next load
             workspace.id = metadata.id;
             workspace.name = metadata.name;
@@ -405,6 +427,8 @@ export class Config {
               // GUARANTEE: All workspaces must have runtimeConfig
               runtimeConfig: DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
+              parentWorkspaceId: workspace.parentWorkspaceId,
+              agentType: workspace.agentType,
             };
 
             // Save to config for next load
@@ -430,6 +454,8 @@ export class Config {
             // GUARANTEE: All workspaces must have runtimeConfig (even in error cases)
             runtimeConfig: DEFAULT_RUNTIME_CONFIG,
             aiSettings: workspace.aiSettings,
+            parentWorkspaceId: workspace.parentWorkspaceId,
+            agentType: workspace.agentType,
           };
           workspaceMetadata.push(this.addPathsToMetadata(metadata, workspace.path, projectPath));
         }

@@ -96,6 +96,75 @@ describe("WorkspaceContext", () => {
     expect(workspaceApi.onMetadata).toHaveBeenCalled();
   });
 
+  test("switches selection to parent when selected child workspace is deleted", async () => {
+    const parentId = "ws-parent";
+    const childId = "ws-child";
+
+    const workspaces: FrontendWorkspaceMetadata[] = [
+      createWorkspaceMetadata({
+        id: parentId,
+        projectPath: "/alpha",
+        projectName: "alpha",
+        name: "main",
+        namedWorkspacePath: "/alpha-main",
+      }),
+      createWorkspaceMetadata({
+        id: childId,
+        projectPath: "/alpha",
+        projectName: "alpha",
+        name: "agent_explore_ws-child",
+        namedWorkspacePath: "/alpha-agent",
+        parentWorkspaceId: parentId,
+      }),
+    ];
+
+    let emitDelete:
+      | ((event: { workspaceId: string; metadata: FrontendWorkspaceMetadata | null }) => void)
+      | null = null;
+
+    const { workspace: workspaceApi } = createMockAPI({
+      workspace: {
+        list: () => Promise.resolve(workspaces),
+        onMetadata: () =>
+          Promise.resolve(
+            (async function* () {
+              const event = await new Promise<{
+                workspaceId: string;
+                metadata: FrontendWorkspaceMetadata | null;
+              }>((resolve) => {
+                emitDelete = resolve;
+              });
+              yield event;
+            })() as unknown as Awaited<ReturnType<APIClient["workspace"]["onMetadata"]>>
+          ),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+      localStorage: {
+        [SELECTED_WORKSPACE_KEY]: JSON.stringify({
+          workspaceId: childId,
+          projectPath: "/alpha",
+          projectName: "alpha",
+          namedWorkspacePath: "/alpha-agent",
+        }),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(2));
+    await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe(childId));
+    await waitFor(() => expect(workspaceApi.onMetadata).toHaveBeenCalled());
+    await waitFor(() => expect(emitDelete).toBeTruthy());
+
+    act(() => {
+      emitDelete?.({ workspaceId: childId, metadata: null });
+    });
+
+    await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe(parentId));
+  });
+
   test("seeds model + thinking localStorage from backend metadata", async () => {
     const initialWorkspaces: FrontendWorkspaceMetadata[] = [
       createWorkspaceMetadata({

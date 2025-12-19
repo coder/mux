@@ -3,6 +3,8 @@ import { RuntimeConfigSchema } from "./runtime";
 import { WorkspaceMCPOverridesSchema } from "./mcp";
 import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 
+const ThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh"]);
+
 export const WorkspaceConfigSchema = z.object({
   path: z.string().meta({
     description: "Absolute path to workspace directory - REQUIRED for backward compatibility",
@@ -26,6 +28,27 @@ export const WorkspaceConfigSchema = z.object({
   }),
   aiSettings: WorkspaceAISettingsSchema.optional().meta({
     description: "Workspace-scoped AI settings (model + thinking level)",
+  }),
+  parentWorkspaceId: z.string().optional().meta({
+    description:
+      "If set, this workspace is a child workspace spawned from the parent workspaceId (enables nesting in UI and backend orchestration).",
+  }),
+  agentType: z.string().optional().meta({
+    description:
+      'If set, selects an agent preset for this workspace (e.g., "research" or "explore").',
+  }),
+  taskStatus: z.enum(["queued", "running", "awaiting_report", "reported"]).optional().meta({
+    description:
+      "Agent task lifecycle status for child workspaces (queued|running|awaiting_report|reported).",
+  }),
+  reportedAt: z.string().optional().meta({
+    description: "ISO 8601 timestamp for when an agent task reported completion (optional).",
+  }),
+  taskModelString: z.string().optional().meta({
+    description: "Model string used to run this agent task (used for restart-safe resumptions).",
+  }),
+  taskThinkingLevel: ThinkingLevelSchema.optional().meta({
+    description: "Thinking level used for this agent task (used for restart-safe resumptions).",
   }),
   mcp: WorkspaceMCPOverridesSchema.optional().meta({
     description: "Per-workspace MCP overrides (disabled servers, tool allowlists)",

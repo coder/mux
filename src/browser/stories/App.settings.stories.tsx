@@ -17,8 +17,9 @@ import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
 import { selectWorkspace } from "./storyHelpers";
 import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
-import { within, userEvent } from "@storybook/test";
+import { within, userEvent, waitFor } from "@storybook/test";
 import { getExperimentKey, EXPERIMENT_IDS } from "@/common/constants/experiments";
+import type { TaskSettings } from "@/common/types/tasks";
 
 export default {
   ...appMeta,
@@ -33,6 +34,7 @@ export default {
 function setupSettingsStory(options: {
   providersConfig?: Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>;
   providersList?: string[];
+  taskSettings?: Partial<TaskSettings>;
   /** Pre-set experiment states in localStorage before render */
   experiments?: Partial<Record<string, boolean>>;
 }): APIClient {
@@ -53,6 +55,7 @@ function setupSettingsStory(options: {
     workspaces,
     providersConfig: options.providersConfig ?? {},
     providersList: options.providersList ?? ["anthropic", "openai", "xai"],
+    taskSettings: options.taskSettings,
   });
 }
 
@@ -89,6 +92,50 @@ export const General: AppStory = {
   render: () => <AppWithMocks setup={() => setupSettingsStory({})} />,
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettingsToSection(canvasElement, "general");
+  },
+};
+
+/** Agents settings section - task parallelism and nesting controls */
+export const Tasks: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSettingsStory({
+          taskSettings: { maxParallelAgentTasks: 2, maxTaskNestingDepth: 4 },
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSection(canvasElement, "agents");
+
+    const body = within(canvasElement.ownerDocument.body);
+
+    await body.findByText(/Max Parallel Agent Tasks/i);
+    await body.findByText(/Max Task Nesting Depth/i);
+    await body.findByText(/Sub-agents/i);
+    await body.findByText(/Research/i);
+    await body.findByText(/Explore/i);
+
+    const inputs = await body.findAllByRole("spinbutton");
+    if (inputs.length !== 2) {
+      throw new Error(`Expected 2 task settings inputs, got ${inputs.length}`);
+    }
+
+    await waitFor(() => {
+      const maxParallelAgentTasks = (inputs[0] as HTMLInputElement).value;
+      const maxTaskNestingDepth = (inputs[1] as HTMLInputElement).value;
+      if (maxParallelAgentTasks !== "2") {
+        throw new Error(
+          `Expected maxParallelAgentTasks=2, got ${JSON.stringify(maxParallelAgentTasks)}`
+        );
+      }
+      if (maxTaskNestingDepth !== "4") {
+        throw new Error(
+          `Expected maxTaskNestingDepth=4, got ${JSON.stringify(maxTaskNestingDepth)}`
+        );
+      }
+    });
   },
 };
 

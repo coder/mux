@@ -20,6 +20,11 @@ import { readPlanFile } from "@/node/utils/runtime/helpers";
 import { secretsToRecord } from "@/common/types/secrets";
 import { roundToBase2 } from "@/common/telemetry/utils";
 import { createAsyncEventQueue } from "@/common/utils/asyncEventIterator";
+import {
+  DEFAULT_TASK_SETTINGS,
+  normalizeSubagentAiDefaults,
+  normalizeTaskSettings,
+} from "@/common/types/tasks";
 
 export const router = (authToken?: string) => {
   const t = os.$context<ORPCContext>().use(createAuthMiddleware(authToken));
@@ -111,6 +116,35 @@ export const router = (authToken?: string) => {
           const state = await context.featureFlagService.setStatsTabOverride(input.override);
           context.sessionTimingService.setStatsTabState(state);
           return state;
+        }),
+    },
+    config: {
+      getConfig: t
+        .input(schemas.config.getConfig.input)
+        .output(schemas.config.getConfig.output)
+        .handler(({ context }) => {
+          const config = context.config.loadConfigOrDefault();
+          return {
+            taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
+            subagentAiDefaults: config.subagentAiDefaults ?? {},
+          };
+        }),
+      saveConfig: t
+        .input(schemas.config.saveConfig.input)
+        .output(schemas.config.saveConfig.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const normalizedTaskSettings = normalizeTaskSettings(input.taskSettings);
+            const result = { ...config, taskSettings: normalizedTaskSettings };
+
+            if (input.subagentAiDefaults !== undefined) {
+              const normalizedDefaults = normalizeSubagentAiDefaults(input.subagentAiDefaults);
+              result.subagentAiDefaults =
+                Object.keys(normalizedDefaults).length > 0 ? normalizedDefaults : undefined;
+            }
+
+            return result;
+          });
         }),
     },
     providers: {
@@ -1068,6 +1102,31 @@ export const router = (authToken?: string) => {
             }
           }),
       },
+    },
+    tasks: {
+      create: t
+        .input(schemas.tasks.create.input)
+        .output(schemas.tasks.create.output)
+        .handler(({ context, input }) => {
+          const thinkingLevel =
+            input.thinkingLevel === "off" ||
+            input.thinkingLevel === "low" ||
+            input.thinkingLevel === "medium" ||
+            input.thinkingLevel === "high" ||
+            input.thinkingLevel === "xhigh"
+              ? input.thinkingLevel
+              : undefined;
+
+          return context.taskService.create({
+            parentWorkspaceId: input.parentWorkspaceId,
+            kind: input.kind,
+            agentType: input.agentType,
+            prompt: input.prompt,
+            description: input.description,
+            modelString: input.modelString,
+            thinkingLevel,
+          });
+        }),
     },
     window: {
       setTitle: t

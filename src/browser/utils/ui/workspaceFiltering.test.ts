@@ -180,7 +180,8 @@ describe("buildSortedWorkspacesByProject", () => {
   const createWorkspace = (
     id: string,
     projectPath: string,
-    status?: "creating"
+    status?: "creating",
+    parentWorkspaceId?: string
   ): FrontendWorkspaceMetadata => ({
     id,
     name: `workspace-${id}`,
@@ -189,6 +190,7 @@ describe("buildSortedWorkspacesByProject", () => {
     namedWorkspacePath: `${projectPath}/workspace-${id}`,
     runtimeConfig: DEFAULT_RUNTIME_CONFIG,
     status,
+    parentWorkspaceId,
   });
 
   it("should include workspaces from persisted config", () => {
@@ -274,6 +276,46 @@ describe("buildSortedWorkspacesByProject", () => {
     const result = buildSortedWorkspacesByProject(projects, metadata, recency);
 
     expect(result.get("/project/a")?.map((w) => w.id)).toEqual(["ws2", "ws3", "ws1"]);
+  });
+
+  it("should flatten child workspaces directly under their parent", () => {
+    const now = Date.now();
+    const projects = new Map<string, ProjectConfig>([
+      [
+        "/project/a",
+        {
+          workspaces: [
+            { path: "/a/root", id: "root" },
+            { path: "/a/child1", id: "child1" },
+            { path: "/a/child2", id: "child2" },
+            { path: "/a/grand", id: "grand" },
+          ],
+        },
+      ],
+    ]);
+
+    const metadata = new Map<string, FrontendWorkspaceMetadata>([
+      ["root", createWorkspace("root", "/project/a")],
+      ["child1", createWorkspace("child1", "/project/a", undefined, "root")],
+      ["child2", createWorkspace("child2", "/project/a", undefined, "root")],
+      ["grand", createWorkspace("grand", "/project/a", undefined, "child1")],
+    ]);
+
+    // Child workspaces are more recent than the parent, but should still render below it.
+    const recency = {
+      child1: now - 1000,
+      child2: now - 2000,
+      grand: now - 3000,
+      root: now - 4000,
+    };
+
+    const result = buildSortedWorkspacesByProject(projects, metadata, recency);
+    expect(result.get("/project/a")?.map((w) => w.id)).toEqual([
+      "root",
+      "child1",
+      "grand",
+      "child2",
+    ]);
   });
 
   it("should not duplicate workspaces that exist in both config and have creating status", () => {

@@ -480,6 +480,29 @@ export const workspace = {
 
 export type WorkspaceSendMessageOutput = z.infer<typeof workspace.sendMessage.output>;
 
+// Tasks (agent sub-workspaces)
+export const tasks = {
+  create: {
+    input: z.object({
+      parentWorkspaceId: z.string(),
+      kind: z.literal("agent"),
+      agentType: z.string(),
+      prompt: z.string(),
+      description: z.string().optional(),
+      modelString: z.string().optional(),
+      thinkingLevel: z.string().optional(),
+    }),
+    output: ResultSchema(
+      z.object({
+        taskId: z.string(),
+        kind: z.literal("agent"),
+        status: z.enum(["queued", "running"]),
+      }),
+      z.string()
+    ),
+  },
+};
+
 // Name generation for new workspaces (decoupled from workspace creation)
 export const nameGeneration = {
   generate: {
@@ -568,6 +591,39 @@ export const server = {
   },
   setSshHost: {
     input: z.object({ sshHost: z.string().nullable() }),
+    output: z.void(),
+  },
+};
+
+// Config (global settings)
+const SubagentAiDefaultsEntrySchema = z
+  .object({
+    modelString: z.string().min(1).optional(),
+    thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh"]).optional(),
+  })
+  .strict();
+
+const SubagentAiDefaultsSchema = z.record(z.string().min(1), SubagentAiDefaultsEntrySchema);
+
+export const config = {
+  getConfig: {
+    input: z.void(),
+    output: z.object({
+      taskSettings: z.object({
+        maxParallelAgentTasks: z.number().int(),
+        maxTaskNestingDepth: z.number().int(),
+      }),
+      subagentAiDefaults: SubagentAiDefaultsSchema,
+    }),
+  },
+  saveConfig: {
+    input: z.object({
+      taskSettings: z.object({
+        maxParallelAgentTasks: z.number().int(),
+        maxTaskNestingDepth: z.number().int(),
+      }),
+      subagentAiDefaults: SubagentAiDefaultsSchema.optional(),
+    }),
     output: z.void(),
   },
 };
