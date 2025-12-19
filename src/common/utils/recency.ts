@@ -26,9 +26,8 @@ export function computeRecencyFromMessages(
   const lastUserMsg = reversed.find(
     (m) => m.role === "user" && m.metadata?.timestamp && !isIdleCompactionRequest(m)
   );
-  const lastCompactedMsg = reversed.find(
-    (m) => m.metadata?.compacted === true && m.metadata?.timestamp
-  );
+  // Support both new enum ("user"|"idle") and legacy boolean (true)
+  const lastCompactedMsg = reversed.find((m) => m.metadata?.compacted && m.metadata?.timestamp);
   const candidates = [
     createdAt ?? null,
     lastUserMsg?.metadata?.timestamp ?? null,

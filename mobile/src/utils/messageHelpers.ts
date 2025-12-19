@@ -18,7 +18,7 @@ export function createCompactedMessage(content: string) {
     ],
     metadata: {
       timestamp,
-      compacted: true as const,
+      compacted: "user" as const,
     },
   };
 }

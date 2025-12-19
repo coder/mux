@@ -1659,7 +1659,8 @@ export class WorkspaceService extends EventEmitter {
     summaryMessage: MuxMessage,
     options?: { deletePlanFile?: boolean }
   ): Promise<Result<void>> {
-    const isCompaction = summaryMessage.metadata?.compacted === true;
+    // Support both new enum ("user"|"idle") and legacy boolean (true)
+    const isCompaction = !!summaryMessage.metadata?.compacted;
     if (!isCompaction && this.aiService.isStreaming(workspaceId)) {
       return Err(
         "Cannot replace history while stream is active. Press Esc to stop the stream first."

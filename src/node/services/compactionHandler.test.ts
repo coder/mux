@@ -336,7 +336,7 @@ describe("CompactionHandler", () => {
         usage,
         duration: 2000,
         systemMessageTokens: 100,
-        compacted: true,
+        compacted: "user",
       });
       expect(sevt.metadata?.providerMetadata).toBeUndefined();
     });
@@ -357,7 +357,7 @@ describe("CompactionHandler", () => {
       expect(streamMsg.metadata.duration).toBe(1234);
     });
 
-    it("should set compacted: true in summary metadata", async () => {
+    it("should set compacted in summary metadata", async () => {
       const compactionReq = createCompactionRequest();
       mockHistoryService.mockGetHistory(Ok([compactionReq]));
       mockHistoryService.mockClearHistory(Ok([0]));
@@ -367,7 +367,7 @@ describe("CompactionHandler", () => {
       await handler.handleCompletion(event);
 
       const appendedMsg = mockHistoryService.appendToHistory.mock.calls[0][1] as MuxMessage;
-      expect(appendedMsg.metadata?.compacted).toBe(true);
+      expect(appendedMsg.metadata?.compacted).toBe("user");
     });
   });
 
@@ -534,7 +534,7 @@ describe("CompactionHandler", () => {
         role: "assistant",
         parts: [{ type: "text", text: "Summary text" }],
         metadata: expect.objectContaining({
-          compacted: true,
+          compacted: "user",
           muxMetadata: { type: "normal" },
         }) as MuxMessage["metadata"],
       });
@@ -587,14 +587,14 @@ describe("CompactionHandler", () => {
       expect(summaryEvent).toBeDefined();
       const summaryMsg = summaryEvent?.data.message as MuxMessage;
       expect(summaryMsg.metadata?.timestamp).toBe(originalTimestamp);
-      expect(summaryMsg.metadata?.idleCompacted).toBe(true);
+      expect(summaryMsg.metadata?.compacted).toBe("idle");
     });
 
     it("should preserve recency from last compacted message if no user message", async () => {
       const compactedTimestamp = Date.now() - 7200 * 1000; // 2 hours ago
       const compactedMessage = createMuxMessage("compacted-1", "assistant", "Previous summary", {
         timestamp: compactedTimestamp,
-        compacted: true,
+        compacted: "user",
         historySequence: 0,
       });
       const idleCompactionReq = createMuxMessage("req-1", "user", "Summarize", {
@@ -616,7 +616,7 @@ describe("CompactionHandler", () => {
 
       const summaryEvent = emittedEvents.find((_e) => {
         const m = _e.data.message as MuxMessage | undefined;
-        return m?.role === "assistant" && m?.metadata?.idleCompacted;
+        return m?.role === "assistant" && m?.metadata?.compacted === "idle";
       });
       expect(summaryEvent).toBeDefined();
       const summaryMsg = summaryEvent?.data.message as MuxMessage;
@@ -628,7 +628,7 @@ describe("CompactionHandler", () => {
       const newerUserTimestamp = Date.now() - 3600 * 1000; // 1 hour ago
       const compactedMessage = createMuxMessage("compacted-1", "assistant", "Previous summary", {
         timestamp: olderCompactedTimestamp,
-        compacted: true,
+        compacted: "user",
         historySequence: 0,
       });
       const userMessage = createMuxMessage("user-1", "user", "Hello", {
@@ -654,7 +654,7 @@ describe("CompactionHandler", () => {
 
       const summaryEvent = emittedEvents.find((_e) => {
         const m = _e.data.message as MuxMessage | undefined;
-        return m?.role === "assistant" && m?.metadata?.idleCompacted;
+        return m?.role === "assistant" && m?.metadata?.compacted === "idle";
       });
       expect(summaryEvent).toBeDefined();
       const summaryMsg = summaryEvent?.data.message as MuxMessage;
@@ -696,7 +696,7 @@ describe("CompactionHandler", () => {
       const summaryMsg = summaryEvent?.data.message as MuxMessage;
       // Should use the OLD user message timestamp, NOT the fresh compaction request timestamp
       expect(summaryMsg.metadata?.timestamp).toBe(originalTimestamp);
-      expect(summaryMsg.metadata?.idleCompacted).toBe(true);
+      expect(summaryMsg.metadata?.compacted).toBe("idle");
     });
 
     it("should use current time for non-idle compaction", async () => {
@@ -725,7 +725,7 @@ describe("CompactionHandler", () => {
       // Should use current time, not the old user message timestamp
       expect(summaryMsg.metadata?.timestamp).toBeGreaterThanOrEqual(beforeTime);
       expect(summaryMsg.metadata?.timestamp).toBeLessThanOrEqual(afterTime);
-      expect(summaryMsg.metadata?.idleCompacted).toBeFalsy();
+      expect(summaryMsg.metadata?.compacted).toBe("user");
     });
   });
 });
