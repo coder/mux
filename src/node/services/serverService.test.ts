@@ -77,22 +77,19 @@ describe("ServerService.startServer", () => {
   }
 
   test("cleans up server when lockfile acquisition fails", async () => {
-    // Skip on Windows where chmod doesn't work the same way
-    if (process.platform === "win32") {
-      return;
-    }
-
     const service = new ServerService();
 
-    // Make muxHome read-only so lockfile.acquire() will fail
-    await fs.chmod(tempDir, 0o444);
+    // Make muxHome a file so lockfile.acquire() fails deterministically
+    // (chmod-based tests don’t work reliably when running as root).
+    const muxHomeFile = path.join(tempDir, "mux-home-file");
+    await fs.writeFile(muxHomeFile, "not-a-dir");
 
     let thrownError: Error | null = null;
 
     try {
       // Start server - this should fail when trying to write lockfile
       await service.startServer({
-        muxHome: tempDir,
+        muxHome: muxHomeFile,
         context: stubContext as ORPCContext,
         authToken: "test-token",
         port: 0, // random port
@@ -103,7 +100,7 @@ describe("ServerService.startServer", () => {
 
     // Verify that an error was thrown
     expect(thrownError).not.toBeNull();
-    expect(thrownError!.message).toMatch(/EACCES|permission denied/i);
+    expect(thrownError!.message).toMatch(/ENOTDIR|not a directory/i);
 
     // Verify the server is NOT left running
     expect(service.isServerRunning()).toBe(false);

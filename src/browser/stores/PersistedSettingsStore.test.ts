@@ -47,9 +47,17 @@ describe("PersistedSettingsStore", () => {
       );
     });
 
+    const change = (() => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((res) => {
+        resolve = () => res();
+      });
+      return { promise, resolve };
+    })();
+
     const onChanged = mock(() => {
       async function* iter() {
-        await Promise.resolve();
+        await change.promise;
         // Yield once to trigger a refresh.
         yield undefined;
       }
@@ -69,6 +77,8 @@ describe("PersistedSettingsStore", () => {
     await waitFor(() => {
       expect(persistedSettingsStore.getThinkingLevelForModel("openai:gpt-5.2")).toBe("high");
     });
+
+    change.resolve();
 
     await waitFor(() => {
       expect(persistedSettingsStore.getThinkingLevelForModel("openai:gpt-5.2")).toBe("low");
