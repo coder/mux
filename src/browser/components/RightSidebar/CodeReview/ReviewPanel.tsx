@@ -262,6 +262,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
     const performRefresh = () => {
+      // Skip if document not visible (user switched tabs/windows)
+      if (document.hidden) return;
+
       // Skip if user is actively entering a review note
       if (isUserInteractingRef.current) {
         pendingRefreshRef.current = true;
