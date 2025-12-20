@@ -2,7 +2,7 @@ import { os } from "@orpc/server";
 import * as schemas from "@/common/orpc/schemas";
 import type { ORPCContext } from "./context";
 import {
-  getPreferredNameModel,
+  findAvailableModel,
   generateWorkspaceIdentity,
 } from "@/node/services/workspaceTitleGenerator";
 import type {
@@ -521,8 +521,10 @@ export const router = (authToken?: string) => {
         .input(schemas.nameGeneration.generate.input)
         .output(schemas.nameGeneration.generate.output)
         .handler(async ({ context, input }) => {
-          // Prefer small/fast models, fall back to user's configured model
-          const model = (await getPreferredNameModel(context.aiService)) ?? input.fallbackModel;
+          // Try preferred models in order, fall back to user's configured model
+          const model =
+            (await findAvailableModel(context.aiService, input.preferredModels ?? [])) ??
+            input.fallbackModel;
           if (!model) {
             return {
               success: false,

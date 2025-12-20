@@ -47,6 +47,21 @@ export function isGatewayFormat(modelId: string): boolean {
 }
 
 /**
+ * Convert a canonical model string to mux-gateway format.
+ * Example: "anthropic:claude-haiku-4-5" → "mux-gateway:anthropic/claude-haiku-4-5"
+ *
+ * Unlike toGatewayModel(), this doesn't check if the user enabled gateway for
+ * this specific model - use it when gateway should be used unconditionally
+ * (e.g., for name generation with small models).
+ */
+export function formatAsGatewayModel(modelId: string): string {
+  const provider = getProvider(modelId);
+  if (!provider) return modelId;
+  const model = modelId.slice(provider.length + 1);
+  return `mux-gateway:${provider}/${model}`;
+}
+
+/**
  * Migrate a mux-gateway model to canonical format and enable gateway toggle.
  * Converts "mux-gateway:provider/model" to "provider:model" and marks it for gateway routing.
  *

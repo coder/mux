@@ -485,7 +485,9 @@ export const nameGeneration = {
   generate: {
     input: z.object({
       message: z.string(),
-      /** Model to use if preferred small models (Haiku, GPT-Mini) aren't available */
+      /** Models to try in order (frontend converts to gateway format if needed) */
+      preferredModels: z.array(z.string()).optional(),
+      /** Model to use if preferred models aren't available */
       fallbackModel: z.string().optional(),
     }),
     output: ResultSchema(

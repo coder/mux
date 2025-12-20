@@ -5,11 +5,7 @@ import { log } from "./log";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { SendMessageError } from "@/common/types/errors";
-import { getKnownModel } from "@/common/constants/knownModels";
 import crypto from "crypto";
-
-/** Models to try in order of preference for name generation (small, fast models) */
-const PREFERRED_MODELS = [getKnownModel("HAIKU").id, getKnownModel("GPT_MINI").id] as const;
 
 /** Schema for AI-generated workspace identity (area name + descriptive title) */
 const workspaceIdentitySchema = z.object({
@@ -36,17 +32,19 @@ export interface WorkspaceIdentity {
 }
 
 /**
- * Get the preferred model for name generation by testing which models the AIService
- * can actually create. This delegates credential checking to AIService, avoiding
- * duplication of provider-specific API key logic.
+ * Find the first model from the list that the AIService can create.
+ * Frontend is responsible for providing models in the correct format
+ * (direct or gateway) based on user configuration.
  */
-export async function getPreferredNameModel(aiService: AIService): Promise<string | null> {
-  for (const modelId of PREFERRED_MODELS) {
+export async function findAvailableModel(
+  aiService: AIService,
+  models: string[]
+): Promise<string | null> {
+  for (const modelId of models) {
     const result = await aiService.createModel(modelId);
     if (result.success) {
       return modelId;
     }
-    // If it's an API key error, try the next model; other errors are also skipped
   }
   return null;
 }

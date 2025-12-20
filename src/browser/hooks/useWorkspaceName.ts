@@ -1,5 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useAPI } from "@/browser/contexts/API";
+import { useGateway, formatAsGatewayModel } from "@/browser/hooks/useGatewayModels";
+import { getKnownModel } from "@/common/constants/knownModels";
 
 export interface UseWorkspaceNameOptions {
   /** The user's message to generate a name for */
@@ -48,9 +50,25 @@ export interface UseWorkspaceNameReturn extends WorkspaceNameState {
  * but allows manual override. If the user clears the manual name,
  * auto-generation resumes.
  */
+/** Small, fast models preferred for name generation */
+const PREFERRED_NAME_MODELS = [getKnownModel("HAIKU").id, getKnownModel("GPT_MINI").id];
+
 export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspaceNameReturn {
   const { message, debounceMs = 500, fallbackModel } = options;
   const { api } = useAPI();
+  // Use global gateway availability (configured + enabled), not per-model toggles.
+  // Name generation uses utility models (Haiku, GPT-Mini) that users don't explicitly
+  // add to their model list, so we can't rely on per-model gateway settings.
+  const { isActive: gatewayConfigured } = useGateway();
+
+  // Build preferred models list: try direct first, then gateway versions if available
+  const preferredModels = useMemo(() => {
+    const models: string[] = [...PREFERRED_NAME_MODELS];
+    if (gatewayConfigured) {
+      models.push(...PREFERRED_NAME_MODELS.map(formatAsGatewayModel));
+    }
+    return models;
+  }, [gatewayConfigured]);
 
   // Generated identity (name + title) from AI
   const [generatedIdentity, setGeneratedIdentity] = useState<WorkspaceIdentity | null>(null);
@@ -120,6 +138,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
       try {
         const result = await api.nameGeneration.generate({
           message: forMessage,
+          preferredModels,
           fallbackModel,
         });
 
@@ -162,7 +181,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
         }
       }
     },
-    [api, fallbackModel]
+    [api, preferredModels, fallbackModel]
   );
 
   // Debounced generation effect
