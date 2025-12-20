@@ -14,6 +14,10 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
       const workspaceId = requireWorkspaceId(config, "task");
       const taskService = requireTaskService(config, "task");
 
+      if (abortSignal?.aborted) {
+        throw new Error("Interrupted");
+      }
+
       const modelString =
         config.muxEnv && typeof config.muxEnv.MUX_MODEL_STRING === "string"
           ? config.muxEnv.MUX_MODEL_STRING

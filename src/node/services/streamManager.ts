@@ -1026,7 +1026,8 @@ export class StreamManager extends EventEmitter {
               error: unknown;
             };
 
-            log.error(`Tool execution error for '${toolErrorPart.toolName}'`, {
+            const logLevel = streamInfo.abortController.signal.aborted ? log.debug : log.error;
+            logLevel(`Tool execution error for '${toolErrorPart.toolName}'`, {
               toolCallId: toolErrorPart.toolCallId,
               error: toolErrorPart.error,
             });

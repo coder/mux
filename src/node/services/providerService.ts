@@ -15,7 +15,11 @@ export type { AWSCredentialStatus, ProviderConfigInfo, ProvidersConfigMap };
 export class ProviderService {
   private readonly emitter = new EventEmitter();
 
-  constructor(private readonly config: Config) {}
+  constructor(private readonly config: Config) {
+    // The provider config subscription may have many concurrent listeners (e.g. multiple windows).
+    // Avoid noisy MaxListenersExceededWarning for normal usage.
+    this.emitter.setMaxListeners(50);
+  }
 
   /**
    * Subscribe to config change events. Used by oRPC subscription handler.
