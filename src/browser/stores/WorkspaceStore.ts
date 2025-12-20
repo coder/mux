@@ -219,6 +219,22 @@ export interface WorkspaceConsumersState {
   isCalculating: boolean;
 }
 
+const ON_CHAT_RETRY_BASE_MS = 250;
+const ON_CHAT_RETRY_MAX_MS = 5000;
+
+type IteratorValidationFailedError = Error & { code: "EVENT_ITERATOR_VALIDATION_FAILED" };
+
+function isIteratorValidationFailed(error: unknown): error is IteratorValidationFailedError {
+  return (
+    error instanceof Error &&
+    (error as { code?: unknown }).code === "EVENT_ITERATOR_VALIDATION_FAILED"
+  );
+}
+
+function calculateOnChatBackoffMs(attempt: number): number {
+  return Math.min(ON_CHAT_RETRY_BASE_MS * 2 ** attempt, ON_CHAT_RETRY_MAX_MS);
+}
+
 /**
  * External store for workspace aggregators and streaming state.
  *
@@ -1130,6 +1146,23 @@ export class WorkspaceStore {
     });
   }
 
+  private isWorkspaceSubscribed(workspaceId: string): boolean {
+    return this.ipcUnsubscribers.has(workspaceId);
+  }
+
+  private async waitForClient(signal: AbortSignal): Promise<RouterClient<AppRouter> | null> {
+    while (!signal.aborted) {
+      if (this.client) {
+        return this.client;
+      }
+
+      // Wait for a client to be attached (e.g., initial connect or reconnect).
+      await this.sleepWithAbort(ON_CHAT_RETRY_BASE_MS, signal);
+    }
+
+    return null;
+  }
+
   /**
    * Reset derived UI state for a workspace so a fresh onChat replay can rebuild it.
    *
@@ -1137,7 +1170,7 @@ export class WorkspaceStore {
    * Without clearing, replayed history would be merged into stale state (loadHistoricalMessages
    * only adds/overwrites, it doesn't delete messages that disappeared due to compaction/truncation).
    */
-  private prepareForChatReplay(workspaceId: string): void {
+  private resetChatStateForReplay(workspaceId: string): void {
     const aggregator = this.aggregators.get(workspaceId);
     if (!aggregator) {
       return;
@@ -1170,20 +1203,21 @@ export class WorkspaceStore {
     let attempt = 0;
 
     while (!signal.aborted) {
-      try {
-        const client = this.client;
-        if (!client) {
-          // Wait for a client to be attached (e.g., initial connect or reconnect).
-          await this.sleepWithAbort(250, signal);
-          continue;
-        }
+      const client = this.client ?? (await this.waitForClient(signal));
+      if (!client || signal.aborted) {
+        return;
+      }
 
+      try {
         const iterator = await client.workspace.onChat({ workspaceId }, { signal });
 
         for await (const data of iterator) {
           if (signal.aborted) {
             return;
           }
+
+          // Connection is alive again - don't carry old backoff into the next failure.
+          attempt = 0;
 
           queueMicrotask(() => {
             this.handleChatMessage(workspaceId, data);
@@ -1208,28 +1242,22 @@ export class WorkspaceStore {
         // - The workspace was removed on server side (iterator ends with error)
         // - Connection dropped (WebSocket/MessagePort error)
         // Only suppress if workspace no longer exists (was removed during the race)
-        const isIteratorError =
-          error instanceof Error &&
-          "code" in error &&
-          error.code === "EVENT_ITERATOR_VALIDATION_FAILED";
-        const workspaceRemoved = !this.states.has(workspaceId);
-        if (isIteratorError && workspaceRemoved) {
+        if (isIteratorValidationFailed(error) && !this.isWorkspaceSubscribed(workspaceId)) {
           return;
         }
 
         console.error(`[WorkspaceStore] Error in onChat subscription for ${workspaceId}:`, error);
       }
 
+      const delayMs = calculateOnChatBackoffMs(attempt);
       attempt++;
 
-      // Exponential backoff (kept relatively slow to avoid churn in tests / rapid loops).
-      const delayMs = Math.min(250 * 2 ** (attempt - 1), 5000);
       await this.sleepWithAbort(delayMs, signal);
       if (signal.aborted) {
         return;
       }
 
-      this.prepareForChatReplay(workspaceId);
+      this.resetChatStateForReplay(workspaceId);
     }
   }
 
@@ -1279,10 +1307,10 @@ export class WorkspaceStore {
     const controller = new AbortController();
     const { signal } = controller;
 
+    this.ipcUnsubscribers.set(workspaceId, () => controller.abort());
+
     // Fire and forget the subscription loop (retries on errors)
     void this.runOnChatSubscription(workspaceId, signal);
-
-    this.ipcUnsubscribers.set(workspaceId, () => controller.abort());
 
     // Fetch persisted session usage (fire-and-forget)
     this.client?.workspace
