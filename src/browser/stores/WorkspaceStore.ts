@@ -219,6 +219,26 @@ export interface WorkspaceConsumersState {
   isCalculating: boolean;
 }
 
+interface WorkspaceChatTransientState {
+  caughtUp: boolean;
+  historicalMessages: MuxMessage[];
+  pendingStreamEvents: WorkspaceChatMessage[];
+  replayingHistory: boolean;
+  queuedMessage: QueuedMessage | null;
+  liveBashOutput: Map<string, LiveBashOutputInternal>;
+}
+
+function createInitialChatTransientState(): WorkspaceChatTransientState {
+  return {
+    caughtUp: false,
+    historicalMessages: [],
+    pendingStreamEvents: [],
+    replayingHistory: false,
+    queuedMessage: null,
+    liveBashOutput: new Map(),
+  };
+}
+
 const ON_CHAT_RETRY_BASE_MS = 250;
 const ON_CHAT_RETRY_MAX_MS = 5000;
 
@@ -263,11 +283,11 @@ export class WorkspaceStore {
   // Supporting data structures
   private aggregators = new Map<string, StreamingMessageAggregator>();
   private ipcUnsubscribers = new Map<string, () => void>();
-  private caughtUp = new Map<string, boolean>();
-  private historicalMessages = new Map<string, MuxMessage[]>();
-  private pendingStreamEvents = new Map<string, WorkspaceChatMessage[]>();
+
+  // Per-workspace ephemeral chat state (buffering, queued message, live bash output, etc.)
+  private chatTransientState = new Map<string, WorkspaceChatTransientState>();
+
   private workspaceMetadata = new Map<string, FrontendWorkspaceMetadata>(); // Store metadata for name lookup
-  private queuedMessages = new Map<string, QueuedMessage | null>(); // Cached queued messages
 
   // Workspace timing stats snapshots (from workspace.stats.subscribe)
   private statsEnabled = false;
@@ -276,9 +296,6 @@ export class WorkspaceStore {
   private statsUnsubscribers = new Map<string, () => void>();
   // Cumulative session usage (from session-usage.json)
 
-  // UI-only incremental bash output streamed via bash-output events (not persisted).
-  // Keyed by toolCallId.
-  private liveBashOutput = new Map<string, Map<string, LiveBashOutputInternal>>();
   private sessionUsage = new Map<string, z.infer<typeof SessionUsageFileSchema>>();
 
   // Idle compaction notification callbacks (called when backend signals idle compaction needed)
@@ -406,11 +423,8 @@ export class WorkspaceStore {
       if (toolCallEnd.toolName === "bash") {
         const output = (toolCallEnd.result as { output?: unknown } | undefined)?.output;
         if (typeof output === "string") {
-          const perWorkspace = this.liveBashOutput.get(workspaceId);
-          perWorkspace?.delete(toolCallEnd.toolCallId);
-          if (perWorkspace?.size === 0) {
-            this.liveBashOutput.delete(workspaceId);
-          }
+          const transient = this.chatTransientState.get(workspaceId);
+          transient?.liveBashOutput.delete(toolCallEnd.toolCallId);
         }
       }
 
@@ -467,7 +481,7 @@ export class WorkspaceStore {
           }
         : null;
 
-      this.queuedMessages.set(workspaceId, queuedMessage);
+      this.assertChatTransientState(workspaceId).queuedMessage = queuedMessage;
       this.states.bump(workspaceId);
     },
     "restore-to-input": (workspaceId, _aggregator, data) => {
@@ -492,9 +506,6 @@ export class WorkspaceStore {
 
   // Track previous sidebar state per workspace (to prevent unnecessary bumps)
   private previousSidebarValues = new Map<string, WorkspaceSidebarState>();
-
-  // Track workspaces currently replaying buffered history (to avoid O(N) scheduling)
-  private replayingHistory = new Set<string>();
 
   // Track model usage (optional integration point for model bookkeeping)
   private readonly onModelUsed?: (model: string) => void;
@@ -688,7 +699,7 @@ export class WorkspaceStore {
     workspaceId: string,
     aggregator: StreamingMessageAggregator
   ): void {
-    const perWorkspace = this.liveBashOutput.get(workspaceId);
+    const perWorkspace = this.chatTransientState.get(workspaceId)?.liveBashOutput;
     if (!perWorkspace || perWorkspace.size === 0) return;
 
     const activeToolCallIds = new Set<string>();
@@ -702,10 +713,6 @@ export class WorkspaceStore {
       if (!activeToolCallIds.has(toolCallId)) {
         perWorkspace.delete(toolCallId);
       }
-    }
-
-    if (perWorkspace.size === 0) {
-      this.liveBashOutput.delete(workspaceId);
     }
   }
 
@@ -730,8 +737,7 @@ export class WorkspaceStore {
   };
 
   getBashToolLiveOutput(workspaceId: string, toolCallId: string): LiveBashOutputView | null {
-    const perWorkspace = this.liveBashOutput.get(workspaceId);
-    const state = perWorkspace?.get(toolCallId);
+    const state = this.chatTransientState.get(workspaceId)?.liveBashOutput.get(toolCallId);
 
     // Important: return the stored object reference so useSyncExternalStore sees a stable snapshot.
     // (Returning a fresh object every call can trigger an infinite re-render loop.)
@@ -748,6 +754,12 @@ export class WorkspaceStore {
     return aggregator;
   }
 
+  private assertChatTransientState(workspaceId: string): WorkspaceChatTransientState {
+    const state = this.chatTransientState.get(workspaceId);
+    assert(state, `Workspace ${workspaceId} not found - must call addWorkspace() first`);
+    return state;
+  }
+
   /**
    * Get state for a specific workspace.
    * Lazy computation - only runs when version changes.
@@ -759,7 +771,7 @@ export class WorkspaceStore {
       const aggregator = this.assertGet(workspaceId);
 
       const hasMessages = aggregator.hasMessages();
-      const isCaughtUp = this.caughtUp.get(workspaceId) ?? false;
+      const transient = this.assertChatTransientState(workspaceId);
       const activeStreams = aggregator.getActiveStreams();
       const messages = aggregator.getAllMessages();
       const metadata = this.workspaceMetadata.get(workspaceId);
@@ -767,11 +779,11 @@ export class WorkspaceStore {
       return {
         name: metadata?.name ?? workspaceId, // Fall back to ID if metadata missing
         messages: aggregator.getDisplayedMessages(),
-        queuedMessage: this.queuedMessages.get(workspaceId) ?? null,
+        queuedMessage: transient.queuedMessage,
         canInterrupt: activeStreams.length > 0,
         isCompacting: aggregator.isCompacting(),
         awaitingUserQuestion: aggregator.hasAwaitingUserQuestion(),
-        loading: !hasMessages && !isCaughtUp,
+        loading: !hasMessages && !transient.caughtUp,
         muxMessages: messages,
         currentModel: aggregator.getCurrentModel() ?? null,
         recencyTimestamp: aggregator.getRecencyTimestamp(),
@@ -1044,7 +1056,7 @@ export class WorkspaceStore {
    */
   getWorkspaceConsumers(workspaceId: string): WorkspaceConsumersState {
     const aggregator = this.aggregators.get(workspaceId);
-    const isCaughtUp = this.caughtUp.get(workspaceId) ?? false;
+    const isCaughtUp = this.chatTransientState.get(workspaceId)?.caughtUp ?? false;
 
     // Lazy trigger check (runs on EVERY access, not just when MapStore recomputes)
     const cached = this.consumerManager.getCachedState(workspaceId);
@@ -1104,7 +1116,7 @@ export class WorkspaceStore {
     metadata?: { usage?: LanguageModelV2Usage }
   ): void {
     // During history replay: only bump usage, skip scheduling (caught-up schedules once at end)
-    if (this.replayingHistory.has(workspaceId)) {
+    if (this.chatTransientState.get(workspaceId)?.replayingHistory) {
       if (metadata?.usage) {
         this.usageStore.bump(workspaceId);
       }
@@ -1181,15 +1193,8 @@ export class WorkspaceStore {
 
     aggregator.clear();
 
-    // Clear non-persisted UI state that won't be re-emitted during replay.
-    this.queuedMessages.set(workspaceId, null);
-    this.liveBashOutput.delete(workspaceId);
-
-    // Reset replay buffers so we batch-load the next replay.
-    this.caughtUp.set(workspaceId, false);
-    this.historicalMessages.set(workspaceId, []);
-    this.pendingStreamEvents.set(workspaceId, []);
-    this.replayingHistory.delete(workspaceId);
+    // Reset per-workspace transient state so the next replay rebuilds from the backend source of truth.
+    this.chatTransientState.set(workspaceId, createInitialChatTransientState());
 
     this.states.bump(workspaceId);
     this.checkAndBumpRecencyIfChanged();
@@ -1291,12 +1296,9 @@ export class WorkspaceStore {
       this.derived.bump("recency");
     }
 
-    // Initialize state
-    if (!this.caughtUp.has(workspaceId)) {
-      this.caughtUp.set(workspaceId, false);
-    }
-    if (!this.historicalMessages.has(workspaceId)) {
-      this.historicalMessages.set(workspaceId, []);
+    // Initialize transient chat state
+    if (!this.chatTransientState.has(workspaceId)) {
+      this.chatTransientState.set(workspaceId, createInitialChatTransientState());
     }
 
     // Clear stale streaming state
@@ -1361,9 +1363,7 @@ export class WorkspaceStore {
     this.usageStore.delete(workspaceId);
     this.consumersStore.delete(workspaceId);
     this.aggregators.delete(workspaceId);
-    this.caughtUp.delete(workspaceId);
-    this.historicalMessages.delete(workspaceId);
-    this.pendingStreamEvents.delete(workspaceId);
+    this.chatTransientState.delete(workspaceId);
     this.recencyCache.delete(workspaceId);
     this.previousSidebarValues.delete(workspaceId);
     this.sidebarStateCache.delete(workspaceId);
@@ -1371,7 +1371,6 @@ export class WorkspaceStore {
     this.workspaceCreatedAt.delete(workspaceId);
     this.workspaceStats.delete(workspaceId);
     this.statsStore.delete(workspaceId);
-    this.liveBashOutput.delete(workspaceId);
     this.sessionUsage.delete(workspaceId);
   }
 
@@ -1417,12 +1416,9 @@ export class WorkspaceStore {
     this.usageStore.clear();
     this.consumersStore.clear();
     this.aggregators.clear();
-    this.caughtUp.clear();
-    this.historicalMessages.clear();
-    this.pendingStreamEvents.clear();
+    this.chatTransientState.clear();
     this.workspaceStats.clear();
     this.statsStore.clear();
-    this.liveBashOutput.clear();
     this.sessionUsage.clear();
     this.recencyCache.clear();
     this.previousSidebarValues.clear();
@@ -1511,36 +1507,35 @@ export class WorkspaceStore {
     // Aggregator must exist - IPC subscription happens in addWorkspace()
     const aggregator = this.assertGet(workspaceId);
 
-    const isCaughtUp = this.caughtUp.get(workspaceId) ?? false;
-    const historicalMsgs = this.historicalMessages.get(workspaceId) ?? [];
+    const transient = this.assertChatTransientState(workspaceId);
 
     if (isCaughtUpMessage(data)) {
       // Check if there's an active stream in buffered events (reconnection scenario)
-      const pendingEvents = this.pendingStreamEvents.get(workspaceId) ?? [];
+      const pendingEvents = transient.pendingStreamEvents;
       const hasActiveStream = pendingEvents.some(
         (event) => "type" in event && event.type === "stream-start"
       );
 
       // Load historical messages first
-      if (historicalMsgs.length > 0) {
-        aggregator.loadHistoricalMessages(historicalMsgs, hasActiveStream);
-        this.historicalMessages.set(workspaceId, []);
+      if (transient.historicalMessages.length > 0) {
+        aggregator.loadHistoricalMessages(transient.historicalMessages, hasActiveStream);
+        transient.historicalMessages.length = 0;
       }
 
       // Mark that we're replaying buffered history (prevents O(N) scheduling)
-      this.replayingHistory.add(workspaceId);
+      transient.replayingHistory = true;
 
       // Process buffered stream events now that history is loaded
       for (const event of pendingEvents) {
         this.processStreamEvent(workspaceId, aggregator, event);
       }
-      this.pendingStreamEvents.set(workspaceId, []);
+      pendingEvents.length = 0;
 
       // Done replaying buffered events
-      this.replayingHistory.delete(workspaceId);
+      transient.replayingHistory = false;
 
       // Mark as caught up
-      this.caughtUp.set(workspaceId, true);
+      transient.caughtUp = true;
       this.states.bump(workspaceId);
       this.checkAndBumpRecencyIfChanged(); // Messages loaded, update recency
 
@@ -1575,10 +1570,8 @@ export class WorkspaceStore {
     //
     // This is especially important for workspaces with long histories (100+ messages),
     // where unbuffered rendering would cause visible lag and UI stutter.
-    if (!isCaughtUp && this.isBufferedEvent(data)) {
-      const pending = this.pendingStreamEvents.get(workspaceId) ?? [];
-      pending.push(data);
-      this.pendingStreamEvents.set(workspaceId, pending);
+    if (!transient.caughtUp && this.isBufferedEvent(data)) {
+      transient.pendingStreamEvents.push(data);
       return;
     }
 
@@ -1630,18 +1623,16 @@ export class WorkspaceStore {
     if (isBashOutputEvent(data)) {
       if (data.text.length === 0) return;
 
-      const perWorkspace =
-        this.liveBashOutput.get(workspaceId) ?? new Map<string, LiveBashOutputInternal>();
+      const transient = this.assertChatTransientState(workspaceId);
 
-      const prev = perWorkspace.get(data.toolCallId);
+      const prev = transient.liveBashOutput.get(data.toolCallId);
       const next = appendLiveBashOutputChunk(
         prev,
         { text: data.text, isError: data.isError },
         BASH_TRUNCATE_MAX_TOTAL_BYTES
       );
 
-      perWorkspace.set(data.toolCallId, next);
-      this.liveBashOutput.set(workspaceId, perWorkspace);
+      transient.liveBashOutput.set(data.toolCallId, next);
 
       // High-frequency: throttle UI updates like other delta-style events.
       this.scheduleIdleStateBump(workspaceId);
@@ -1656,12 +1647,11 @@ export class WorkspaceStore {
 
     // Regular messages (MuxMessage without type field)
     if (isMuxMessage(data)) {
-      const isCaughtUp = this.caughtUp.get(workspaceId) ?? false;
-      if (!isCaughtUp) {
+      const transient = this.assertChatTransientState(workspaceId);
+
+      if (!transient.caughtUp) {
         // Buffer historical MuxMessages
-        const historicalMsgs = this.historicalMessages.get(workspaceId) ?? [];
-        historicalMsgs.push(data);
-        this.historicalMessages.set(workspaceId, historicalMsgs);
+        transient.historicalMessages.push(data);
       } else {
         // Process live events immediately (after history loaded)
         aggregator.handleMessage(data);
