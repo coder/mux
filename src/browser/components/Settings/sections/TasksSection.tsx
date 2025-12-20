@@ -145,6 +145,33 @@ export function TasksSection() {
     };
   }, [api, loaded, loadFailed, subagentAiDefaults, taskSettings]);
 
+  // Flush any pending debounced save on unmount so changes aren't lost.
+  useEffect(() => {
+    if (!api) return;
+    if (!loaded) return;
+    if (loadFailed) return;
+
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+
+      if (savingRef.current) return;
+      const payload = pendingSaveRef.current;
+      if (!payload) return;
+
+      pendingSaveRef.current = null;
+      savingRef.current = true;
+      void api.config
+        .saveConfig(payload)
+        .catch(() => undefined)
+        .finally(() => {
+          savingRef.current = false;
+        });
+    };
+  }, [api, loaded, loadFailed]);
+
   const setMaxParallelAgentTasks = (rawValue: string) => {
     const parsed = Number(rawValue);
     setTaskSettings((prev) => normalizeTaskSettings({ ...prev, maxParallelAgentTasks: parsed }));

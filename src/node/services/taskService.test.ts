@@ -1052,6 +1052,59 @@ describe("TaskService", () => {
     expect(report.title).toBe("t");
   });
 
+  test("waitForAgentReport cache is cleared by TTL cleanup", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child"),
+                id: childId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "running",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    const { taskService } = createTaskServiceHarness(config);
+
+    const internal = taskService as unknown as {
+      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
+      cleanupExpiredCompletedReports: (nowMs: number) => void;
+    };
+    internal.resolveWaiters(childId, { reportMarkdown: "ok", title: "t" });
+
+    await config.removeWorkspace(childId);
+
+    internal.cleanupExpiredCompletedReports(Date.now() + 2 * 60 * 60 * 1000);
+
+    let caught: unknown = null;
+    try {
+      await taskService.waitForAgentReport(childId, { timeoutMs: 10 });
+    } catch (error: unknown) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    if (caught instanceof Error) {
+      expect(caught.message).toMatch(/not found/i);
+    }
+  });
+
   test("does not request agent_report on stream end while task has active descendants", async () => {
     const config = await createTestConfig(rootDir);
 

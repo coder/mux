@@ -70,6 +70,9 @@ export interface DescendantAgentTaskInfo {
 
 type AgentTaskWorkspaceEntry = WorkspaceConfigEntry & { projectPath: string };
 
+const COMPLETED_REPORT_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const COMPLETED_REPORT_CACHE_MAX_ENTRIES = 128;
+
 interface PendingTaskWaiter {
   createdAt: number;
   resolve: (report: { reportMarkdown: string; title?: string }) => void;
@@ -155,7 +158,7 @@ export class TaskService {
   private readonly pendingStartWaitersByTaskId = new Map<string, PendingTaskStartWaiter[]>();
   private readonly completedReportsByTaskId = new Map<
     string,
-    { reportMarkdown: string; title?: string }
+    { reportMarkdown: string; title?: string; expiresAtMs: number }
   >();
   private readonly remindedAwaitingReport = new Set<string>();
 
@@ -676,7 +679,11 @@ export class TaskService {
 
     const cached = this.completedReportsByTaskId.get(taskId);
     if (cached) {
-      return Promise.resolve(cached);
+      const nowMs = Date.now();
+      if (cached.expiresAtMs > nowMs) {
+        return Promise.resolve({ reportMarkdown: cached.reportMarkdown, title: cached.title });
+      }
+      this.completedReportsByTaskId.delete(taskId);
     }
 
     const timeoutMs = options?.timeoutMs ?? 10 * 60 * 1000; // 10 minutes
@@ -1074,38 +1081,58 @@ export class TaskService {
   private async maybeStartQueuedTasks(): Promise<void> {
     await using _lock = await this.mutex.acquire();
 
-    const config = this.config.loadConfigOrDefault();
-    const taskSettings: TaskSettings = config.taskSettings ?? DEFAULT_TASK_SETTINGS;
+    const configAtStart = this.config.loadConfigOrDefault();
+    const taskSettingsAtStart: TaskSettings = configAtStart.taskSettings ?? DEFAULT_TASK_SETTINGS;
 
-    const activeCount = this.countActiveAgentTasks(config);
-    const availableSlots = Math.max(0, taskSettings.maxParallelAgentTasks - activeCount);
+    const activeCount = this.countActiveAgentTasks(configAtStart);
+    const availableSlots = Math.max(0, taskSettingsAtStart.maxParallelAgentTasks - activeCount);
     taskQueueDebug("TaskService.maybeStartQueuedTasks summary", {
       activeCount,
-      maxParallelAgentTasks: taskSettings.maxParallelAgentTasks,
+      maxParallelAgentTasks: taskSettingsAtStart.maxParallelAgentTasks,
       availableSlots,
     });
     if (availableSlots === 0) return;
 
-    const queued = this.listAgentTaskWorkspaces(config)
-      .filter((t) => t.taskStatus === "queued")
+    const queuedTaskIds = this.listAgentTaskWorkspaces(configAtStart)
+      .filter((t) => t.taskStatus === "queued" && typeof t.id === "string")
       .sort((a, b) => {
         const aTime = a.createdAt ? Date.parse(a.createdAt) : 0;
         const bTime = b.createdAt ? Date.parse(b.createdAt) : 0;
         return aTime - bTime;
-      });
+      })
+      .map((t) => t.id!);
 
     taskQueueDebug("TaskService.maybeStartQueuedTasks candidates", {
-      queuedCount: queued.length,
-      queuedIds: queued.map((t) => t.id).filter((id): id is string => typeof id === "string"),
+      queuedCount: queuedTaskIds.length,
+      queuedIds: queuedTaskIds,
     });
 
-    let startedCount = 0;
-    for (const task of queued) {
-      if (startedCount >= availableSlots) {
+    for (const taskId of queuedTaskIds) {
+      const config = this.config.loadConfigOrDefault();
+      const taskSettings: TaskSettings = config.taskSettings ?? DEFAULT_TASK_SETTINGS;
+      assert(
+        Number.isFinite(taskSettings.maxParallelAgentTasks) && taskSettings.maxParallelAgentTasks > 0,
+        "TaskService.maybeStartQueuedTasks: maxParallelAgentTasks must be a positive number"
+      );
+
+      const activeCount = this.countActiveAgentTasks(config);
+      if (activeCount >= taskSettings.maxParallelAgentTasks) {
         break;
       }
-      if (!task.id) continue;
-      const taskId = task.id;
+
+      const taskEntry = this.findWorkspaceEntry(config, taskId);
+      if (!taskEntry?.workspace.parentWorkspaceId) continue;
+      const task = taskEntry.workspace;
+      if (task.taskStatus !== "queued") continue;
+
+      // Defensive: tasks can begin streaming before taskStatus flips to "running".
+      if (this.aiService.isStreaming(taskId)) {
+        taskQueueDebug("TaskService.maybeStartQueuedTasks queued-but-streaming; marking running", {
+          taskId,
+        });
+        await this.setTaskStatus(taskId, "running");
+        continue;
+      }
 
       assert(typeof task.name === "string" && task.name.trim().length > 0, "Task name missing");
 
@@ -1137,13 +1164,13 @@ export class TaskService {
       }
 
       const runtime = createRuntime(runtimeConfig, {
-        projectPath: task.projectPath,
+        projectPath: taskEntry.projectPath,
       });
 
       const workspaceName = task.name.trim();
       let workspacePath =
         coerceNonEmptyString(task.path) ??
-        runtime.getWorkspacePath(task.projectPath, workspaceName);
+        runtime.getWorkspacePath(taskEntry.projectPath, workspaceName);
 
       let workspaceExists = false;
       try {
@@ -1157,6 +1184,20 @@ export class TaskService {
       const persistedInit = inMemoryInit
         ? null
         : await this.initStateManager.readInitStatus(taskId);
+
+      // Re-check capacity after awaiting IO to avoid dequeuing work (worktree creation/init) when
+      // another task became active in the meantime.
+      const latestConfig = this.config.loadConfigOrDefault();
+      const latestTaskSettings: TaskSettings = latestConfig.taskSettings ?? DEFAULT_TASK_SETTINGS;
+      const latestActiveCount = this.countActiveAgentTasks(latestConfig);
+      if (latestActiveCount >= latestTaskSettings.maxParallelAgentTasks) {
+        taskQueueDebug("TaskService.maybeStartQueuedTasks became full mid-loop", {
+          taskId,
+          activeCount: latestActiveCount,
+          maxParallelAgentTasks: latestTaskSettings.maxParallelAgentTasks,
+        });
+        break;
+      }
 
       // Ensure the workspace exists before starting. Queued tasks should not create worktrees/directories
       // until they are actually dequeued.
@@ -1172,7 +1213,7 @@ export class TaskService {
       let initLogger: InitLogger | null = null;
       const getInitLogger = (): InitLogger => {
         if (initLogger) return initLogger;
-        initLogger = this.startWorkspaceInit(taskId, task.projectPath);
+        initLogger = this.startWorkspaceInit(taskId, taskEntry.projectPath);
         return initLogger;
       };
 
@@ -1196,7 +1237,7 @@ export class TaskService {
         const initLogger = getInitLogger();
 
         const forkResult = await runtime.forkWorkspace({
-          projectPath: task.projectPath,
+          projectPath: taskEntry.projectPath,
           sourceWorkspaceName: parentWorkspaceName,
           newWorkspaceName: workspaceName,
           initLogger,
@@ -1206,7 +1247,7 @@ export class TaskService {
         const createResult: WorkspaceCreationResult = forkResult.success
           ? { success: true as const, workspacePath: forkResult.workspacePath }
           : await runtime.createWorkspace({
-              projectPath: task.projectPath,
+              projectPath: taskEntry.projectPath,
               branchName: workspaceName,
               trunkBranch,
               directoryName: workspaceName,
@@ -1258,7 +1299,7 @@ export class TaskService {
         });
         void runtime
           .initWorkspace({
-            projectPath: task.projectPath,
+            projectPath: taskEntry.projectPath,
             branchName: workspaceName,
             trunkBranch,
             workspacePath,
@@ -1316,7 +1357,6 @@ export class TaskService {
 
       await this.setTaskStatus(taskId, "running");
       taskQueueDebug("TaskService.maybeStartQueuedTasks started", { taskId });
-      startedCount += 1;
     }
   }
 
@@ -1613,8 +1653,31 @@ export class TaskService {
     }
   }
 
+  private cleanupExpiredCompletedReports(nowMs = Date.now()): void {
+    for (const [taskId, entry] of this.completedReportsByTaskId) {
+      if (entry.expiresAtMs <= nowMs) {
+        this.completedReportsByTaskId.delete(taskId);
+      }
+    }
+  }
+
+  private enforceCompletedReportCacheLimit(): void {
+    while (this.completedReportsByTaskId.size > COMPLETED_REPORT_CACHE_MAX_ENTRIES) {
+      const first = this.completedReportsByTaskId.keys().next();
+      if (first.done) break;
+      this.completedReportsByTaskId.delete(first.value);
+    }
+  }
+
   private resolveWaiters(taskId: string, report: { reportMarkdown: string; title?: string }): void {
-    this.completedReportsByTaskId.set(taskId, report);
+    const nowMs = Date.now();
+    this.cleanupExpiredCompletedReports(nowMs);
+    this.completedReportsByTaskId.set(taskId, {
+      reportMarkdown: report.reportMarkdown,
+      title: report.title,
+      expiresAtMs: nowMs + COMPLETED_REPORT_CACHE_TTL_MS,
+    });
+    this.enforceCompletedReportCacheLimit();
 
     const waiters = this.pendingWaitersByTaskId.get(taskId);
     if (!waiters || waiters.length === 0) {
@@ -1850,32 +1913,48 @@ export class TaskService {
   }
 
   private async cleanupReportedLeafTask(workspaceId: string): Promise<void> {
-    const config = this.config.loadConfigOrDefault();
-    const entry = this.findWorkspaceEntry(config, workspaceId);
-    if (!entry) return;
+    assert(workspaceId.length > 0, "cleanupReportedLeafTask: workspaceId must be non-empty");
 
-    const ws = entry.workspace;
-    if (!ws.parentWorkspaceId) return;
-    if (ws.taskStatus !== "reported") return;
+    let currentWorkspaceId = workspaceId;
+    const visited = new Set<string>();
+    for (let depth = 0; depth < 32; depth++) {
+      if (visited.has(currentWorkspaceId)) {
+        log.error("cleanupReportedLeafTask: possible parentWorkspaceId cycle", {
+          workspaceId: currentWorkspaceId,
+        });
+        return;
+      }
+      visited.add(currentWorkspaceId);
 
-    const hasChildren = this.listAgentTaskWorkspaces(config).some(
-      (t) => t.parentWorkspaceId === workspaceId
-    );
-    if (hasChildren) {
-      return;
+      const config = this.config.loadConfigOrDefault();
+      const entry = this.findWorkspaceEntry(config, currentWorkspaceId);
+      if (!entry) return;
+
+      const ws = entry.workspace;
+      const parentWorkspaceId = ws.parentWorkspaceId;
+      if (!parentWorkspaceId) return;
+      if (ws.taskStatus !== "reported") return;
+
+      const hasChildren = this.listAgentTaskWorkspaces(config).some(
+        (t) => t.parentWorkspaceId === currentWorkspaceId
+      );
+      if (hasChildren) return;
+
+      const removeResult = await this.workspaceService.remove(currentWorkspaceId, true);
+      if (!removeResult.success) {
+        log.error("Failed to auto-delete reported task workspace", {
+          workspaceId: currentWorkspaceId,
+          error: removeResult.error,
+        });
+        return;
+      }
+
+      currentWorkspaceId = parentWorkspaceId;
     }
 
-    const removeResult = await this.workspaceService.remove(workspaceId, true);
-    if (!removeResult.success) {
-      log.error("Failed to auto-delete reported task workspace", {
-        workspaceId,
-        error: removeResult.error,
-      });
-      return;
-    }
-
-    // Recursively attempt cleanup on parent if it's also a reported agent task.
-    await this.cleanupReportedLeafTask(ws.parentWorkspaceId);
+    log.error("cleanupReportedLeafTask: exceeded max parent traversal depth", {
+      workspaceId,
+    });
   }
 
   private findWorkspaceEntry(
