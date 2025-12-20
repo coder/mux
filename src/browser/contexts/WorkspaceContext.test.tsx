@@ -506,6 +506,59 @@ describe("WorkspaceContext", () => {
     expect(ctx().selectedWorkspace?.projectPath).toBe("/existing");
   });
 
+  test("launch project does not override pending workspace creation", async () => {
+    // Race condition test: if user starts creating a workspace while
+    // getLaunchProject is in flight, the launch project should not override
+
+    let resolveLaunchProject: (value: string | null) => void;
+    const launchProjectPromise = new Promise<string | null>((resolve) => {
+      resolveLaunchProject = resolve;
+    });
+
+    const initialWorkspaces = [
+      createWorkspaceMetadata({
+        id: "ws-launch",
+        projectPath: "/launch-project",
+        projectName: "launch-project",
+        name: "main",
+        namedWorkspacePath: "/launch-project-main",
+      }),
+    ];
+
+    createMockAPI({
+      workspace: {
+        list: () => Promise.resolve(initialWorkspaces),
+      },
+      server: {
+        getLaunchProject: () => launchProjectPromise,
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+
+    // User starts workspace creation (this sets pendingNewWorkspaceProject)
+    act(() => {
+      ctx().beginWorkspaceCreation("/new-project");
+    });
+
+    // Verify pending state is set
+    expect(ctx().pendingNewWorkspaceProject).toBe("/new-project");
+    expect(ctx().selectedWorkspace).toBeNull();
+
+    // Now the launch project response arrives
+    await act(async () => {
+      resolveLaunchProject!("/launch-project");
+      // Give effect time to process
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    // Should NOT have selected the launch project workspace because creation is pending
+    expect(ctx().selectedWorkspace).toBeNull();
+    expect(ctx().pendingNewWorkspaceProject).toBe("/new-project");
+  });
+
   test("WorkspaceProvider calls ProjectContext.refreshProjects after loading", async () => {
     // Verify that projects.list is called during workspace metadata loading
     const projectsListMock = mock(() => Promise.resolve([]));

@@ -59,6 +59,15 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
   }
 }
 
+export function toWorkspaceSelection(metadata: FrontendWorkspaceMetadata): WorkspaceSelection {
+  return {
+    workspaceId: metadata.id,
+    projectPath: metadata.projectPath,
+    projectName: metadata.projectName,
+    namedWorkspacePath: metadata.namedWorkspacePath,
+  };
+}
+
 /**
  * Ensure workspace metadata has createdAt timestamp.
  * DEFENSIVE: Backend guarantees createdAt, but default to 2025-01-01 if missing.
@@ -209,12 +218,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
       if (metadata) {
         // Restore from hash (overrides localStorage)
-        setSelectedWorkspace({
-          workspaceId: metadata.id,
-          projectPath: metadata.projectPath,
-          projectName: metadata.projectName,
-          namedWorkspacePath: metadata.namedWorkspacePath,
-        });
+        setSelectedWorkspace(toWorkspaceSelection(metadata));
       }
     } else if (hash.length > 1) {
       // Try to interpret hash as project path (for direct deep linking)
@@ -228,12 +232,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
       if (projectWorkspaces.length > 0) {
         const metadata = projectWorkspaces[0];
-        setSelectedWorkspace({
-          workspaceId: metadata.id,
-          projectPath: metadata.projectPath,
-          projectName: metadata.projectName,
-          namedWorkspacePath: metadata.namedWorkspacePath,
-        });
+        setSelectedWorkspace(toWorkspaceSelection(metadata));
       }
     }
     // Only run once when loading finishes
@@ -248,40 +247,53 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     // Skip if we already have a selected workspace (from localStorage or URL hash)
     if (selectedWorkspace) return;
 
+    // Skip if user is in the middle of creating a workspace
+    if (pendingNewWorkspaceProject) return;
+
+    let cancelled = false;
+
     const checkLaunchProject = async () => {
       // Only available in server mode (checked via platform/capabilities in future)
       // For now, try the call - it will return null if not applicable
       try {
         const launchProjectPath = await api.server.getLaunchProject(undefined);
-        if (!launchProjectPath) return;
+        if (cancelled || !launchProjectPath) return;
 
         // Find first workspace in this project
         const projectWorkspaces = Array.from(workspaceMetadata.values()).filter(
           (meta) => meta.projectPath === launchProjectPath
         );
 
-        if (projectWorkspaces.length > 0) {
-          // Select the first workspace in the project
-          const metadata = projectWorkspaces[0];
-          setSelectedWorkspace({
-            workspaceId: metadata.id,
-            projectPath: metadata.projectPath,
-            projectName: metadata.projectName,
-            namedWorkspacePath: metadata.namedWorkspacePath,
-          });
-        }
+        if (cancelled || projectWorkspaces.length === 0) return;
+
+        // Select the first workspace in the project.
+        // Use functional update to avoid race: user may have clicked a workspace
+        // while this async call was in flight.
+        const metadata = projectWorkspaces[0];
+        setSelectedWorkspace((current) => current ?? toWorkspaceSelection(metadata));
       } catch (error) {
-        // Ignore errors (e.g. method not found if running against old backend)
-        console.debug("Failed to check launch project:", error);
+        if (!cancelled) {
+          // Ignore errors (e.g. method not found if running against old backend)
+          console.debug("Failed to check launch project:", error);
+        }
       }
       // If no workspaces exist yet, just leave the project in the sidebar
       // The user will need to create a workspace
     };
 
     void checkLaunchProject();
-    // Only run once when loading finishes or selectedWorkspace changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, selectedWorkspace]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    api,
+    loading,
+    selectedWorkspace,
+    pendingNewWorkspaceProject,
+    workspaceMetadata,
+    setSelectedWorkspace,
+  ]);
 
   // Subscribe to metadata updates (for create/rename/delete operations)
   useEffect(() => {

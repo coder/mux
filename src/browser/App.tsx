@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useRef } from "react";
 import "./styles/globals.css";
-import { useWorkspaceContext } from "./contexts/WorkspaceContext";
+import { useWorkspaceContext, toWorkspaceSelection } from "./contexts/WorkspaceContext";
 import { useProjectContext } from "./contexts/ProjectContext";
 import type { WorkspaceSelection } from "./components/ProjectSidebar";
 import { LeftSidebar } from "./components/LeftSidebar";
@@ -114,7 +114,6 @@ function AppInner() {
   const startWorkspaceCreation = useStartWorkspaceCreation({
     projects,
     beginWorkspaceCreation,
-    setSelectedWorkspace,
   });
 
   useEffect(() => {
@@ -203,12 +202,7 @@ function AppInner() {
       } else if (!selectedWorkspace.namedWorkspacePath && metadata.namedWorkspacePath) {
         // Old localStorage entry missing namedWorkspacePath - update it once
         console.log(`Updating workspace ${selectedWorkspace.workspaceId} with missing fields`);
-        setSelectedWorkspace({
-          workspaceId: metadata.id,
-          projectPath: metadata.projectPath,
-          projectName: metadata.projectName,
-          namedWorkspacePath: metadata.namedWorkspacePath,
-        });
+        setSelectedWorkspace(toWorkspaceSelection(metadata));
       }
     }
   }, [selectedWorkspace, workspaceMetadata, setSelectedWorkspace]);
@@ -274,12 +268,7 @@ function AppInner() {
       const targetMetadata = sortedWorkspaces[targetIndex];
       if (!targetMetadata) return;
 
-      setSelectedWorkspace({
-        projectPath: selectedWorkspace.projectPath,
-        projectName: selectedWorkspace.projectName,
-        namedWorkspacePath: targetMetadata.namedWorkspacePath,
-        workspaceId: targetMetadata.id,
-      });
+      setSelectedWorkspace(toWorkspaceSelection(targetMetadata));
     },
     [selectedWorkspace, sortedWorkspacesByProject, setSelectedWorkspace]
   );
@@ -587,12 +576,7 @@ function AppInner() {
       });
 
       // Switch to the new workspace
-      setSelectedWorkspace({
-        workspaceId: workspaceInfo.id,
-        projectPath: workspaceInfo.projectPath,
-        projectName: workspaceInfo.projectName,
-        namedWorkspacePath: workspaceInfo.namedWorkspacePath,
-      });
+      setSelectedWorkspace(toWorkspaceSelection(workspaceInfo));
     };
 
     window.addEventListener(CUSTOM_EVENTS.WORKSPACE_FORK_SWITCH, handleForkSwitch as EventListener);
@@ -706,12 +690,7 @@ function AppInner() {
                                 // User has already selected another workspace - don't override
                                 return current;
                               }
-                              return {
-                                workspaceId: metadata.id,
-                                projectPath: metadata.projectPath,
-                                projectName: metadata.projectName,
-                                namedWorkspacePath: metadata.namedWorkspacePath,
-                              };
+                              return toWorkspaceSelection(metadata);
                             });
 
                             // Track telemetry
