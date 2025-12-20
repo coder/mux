@@ -268,6 +268,11 @@ export class WorkspaceStore {
   // Idle compaction notification callbacks (called when backend signals idle compaction needed)
   private idleCompactionCallbacks = new Set<(workspaceId: string) => void>();
 
+  // Tool-call-end callbacks (for file-modifying tool completions that trigger diff refresh)
+  private toolCallEndCallbacks = new Set<
+    (workspaceId: string, toolName: string, toolCallId: string) => void
+  >();
+
   // Idle callback handles for high-frequency delta events to reduce re-renders during streaming.
   // Data is always updated immediately in the aggregator; only UI notification is scheduled.
   // Using requestIdleCallback adapts to actual CPU availability rather than a fixed timer.
@@ -394,6 +399,7 @@ export class WorkspaceStore {
       aggregator.handleToolCallEnd(data as never);
       this.states.bump(workspaceId);
       this.consumerManager.scheduleCalculation(workspaceId, aggregator);
+      this.notifyToolCallEnd(workspaceId, toolCallEnd.toolName, toolCallEnd.toolCallId);
     },
     "reasoning-delta": (workspaceId, aggregator, data) => {
       aggregator.handleReasoningDelta(data as never);
@@ -1314,6 +1320,30 @@ export class WorkspaceStore {
     }
   }
 
+  /**
+   * Subscribe to tool-call-end events (for diff refresh on file modifications).
+   * Returns unsubscribe function.
+   */
+  onToolCallEnd(
+    callback: (workspaceId: string, toolName: string, toolCallId: string) => void
+  ): () => void {
+    this.toolCallEndCallbacks.add(callback);
+    return () => this.toolCallEndCallbacks.delete(callback);
+  }
+
+  /**
+   * Notify all listeners that a tool call completed.
+   */
+  private notifyToolCallEnd(workspaceId: string, toolName: string, toolCallId: string): void {
+    for (const callback of this.toolCallEndCallbacks) {
+      try {
+        callback(workspaceId, toolName, toolCallId);
+      } catch (error) {
+        console.error("Error in tool-call-end callback:", error);
+      }
+    }
+  }
+
   // Private methods
 
   /**
@@ -1548,6 +1578,8 @@ function getStoreInstance(): WorkspaceStore {
 export const workspaceStore = {
   onIdleCompactionNeeded: (callback: (workspaceId: string) => void) =>
     getStoreInstance().onIdleCompactionNeeded(callback),
+  onToolCallEnd: (callback: (workspaceId: string, toolName: string, toolCallId: string) => void) =>
+    getStoreInstance().onToolCallEnd(callback),
 };
 
 /**
