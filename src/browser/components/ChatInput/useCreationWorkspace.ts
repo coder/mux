@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig, RuntimeMode } from "@/common/types/runtime";
-import type { ThinkingLevel } from "@/common/types/thinking";
 import type { UIMode } from "@/common/types/mode";
 import { parseRuntimeString } from "@/browser/utils/chatCommands";
 import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
@@ -12,7 +11,6 @@ import {
   getInputImagesKey,
   getModelKey,
   getModeKey,
-  getThinkingLevelKey,
   getPendingScopeId,
   getProjectScopeId,
 } from "@/common/constants/storage";
@@ -47,13 +45,7 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
     updatePersistedState(getModeKey(workspaceId), projectMode);
   }
 
-  const projectThinkingLevel = readPersistedState<ThinkingLevel | null>(
-    getThinkingLevelKey(projectScopeId),
-    null
-  );
-  if (projectThinkingLevel !== null) {
-    updatePersistedState(getThinkingLevelKey(workspaceId), projectThinkingLevel);
-  }
+  // Note: thinking level is per-model (global), no workspace sync needed
 }
 
 interface UseCreationWorkspaceReturn {

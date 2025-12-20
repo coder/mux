@@ -9,7 +9,7 @@ import { useWorkspaceStoreRaw as getWorkspaceStoreRaw } from "@/browser/stores/W
 import {
   SELECTED_WORKSPACE_KEY,
   getModelKey,
-  getThinkingLevelKey,
+  getThinkingLevelByModelKey,
 } from "@/common/constants/storage";
 import type { RecursivePartial } from "@/browser/testUtils";
 
@@ -111,7 +111,7 @@ describe("WorkspaceContext", () => {
       localStorage: {
         // Seed with different values; backend should win.
         [getModelKey("ws-ai")]: JSON.stringify("anthropic:claude-3.5"),
-        [getThinkingLevelKey("ws-ai")]: JSON.stringify("low"),
+        [getThinkingLevelByModelKey("openai:gpt-5.2")]: JSON.stringify("low"),
       },
     });
 
@@ -122,9 +122,10 @@ describe("WorkspaceContext", () => {
     expect(JSON.parse(globalThis.localStorage.getItem(getModelKey("ws-ai"))!)).toBe(
       "openai:gpt-5.2"
     );
-    expect(JSON.parse(globalThis.localStorage.getItem(getThinkingLevelKey("ws-ai"))!)).toBe(
-      "xhigh"
-    );
+    // Thinking level is seeded per-model (to the model from aiSettings)
+    expect(
+      JSON.parse(globalThis.localStorage.getItem(getThinkingLevelByModelKey("openai:gpt-5.2"))!)
+    ).toBe("xhigh");
   });
   test("loads workspace metadata on mount", async () => {
     const initialWorkspaces: FrontendWorkspaceMetadata[] = [

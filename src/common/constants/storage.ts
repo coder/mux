@@ -58,18 +58,8 @@ export function getMCPTestResultsKey(projectPath: string): string {
 }
 
 /**
- * Get the localStorage key for thinking level preference per scope (workspace/project).
- * Format: "thinkingLevel:{scopeId}"
- */
-export function getThinkingLevelKey(scopeId: string): string {
-  return `thinkingLevel:${scopeId}`;
-}
-
-/**
- * LEGACY: Get the localStorage key for thinking level preference per model (global).
+ * Get the localStorage key for thinking level preference per model (global).
  * Format: "thinkingLevel:model:{modelName}"
- *
- * Kept for one-time migration to per-workspace thinking.
  */
 export function getThinkingLevelByModelKey(modelName: string): string {
   return `thinkingLevel:model:${modelName}`;
@@ -326,7 +316,6 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getInputKey,
   getInputImagesKey,
   getModeKey,
-  getThinkingLevelKey,
   getAutoRetryKey,
   getRetryStateKey,
   getReviewStateKey,
@@ -336,6 +325,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getReviewsKey,
   getAutoCompactionEnabledKey,
   getStatusStateKey,
+  // Note: thinking level is per-model (global), not per-workspace
   // Note: auto-compaction threshold is per-model, not per-workspace
 ];
 

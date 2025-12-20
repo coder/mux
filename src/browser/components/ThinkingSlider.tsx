@@ -199,7 +199,7 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
         </div>
       </TooltipTrigger>
       <TooltipContent align="center">
-        Thinking: {formatKeybind(KEYBINDS.TOGGLE_THINKING)} to cycle. Saved per workspace.
+        Thinking: {formatKeybind(KEYBINDS.TOGGLE_THINKING)} to cycle. Saved per model.
       </TooltipContent>
     </Tooltip>
   );

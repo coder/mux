@@ -15,7 +15,7 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import {
   deleteWorkspaceStorage,
   getModelKey,
-  getThinkingLevelKey,
+  getThinkingLevelByModelKey,
   SELECTED_WORKSPACE_KEY,
 } from "@/common/constants/storage";
 import { useAPI } from "@/browser/contexts/API";
@@ -49,9 +49,9 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
     }
   }
 
-  // Seed thinking level.
-  if (ai.thinkingLevel) {
-    const thinkingKey = getThinkingLevelKey(metadata.id);
+  // Seed thinking level for the model (per-model thinking).
+  if (ai.thinkingLevel && ai.model) {
+    const thinkingKey = getThinkingLevelByModelKey(ai.model);
     const existingThinking = readPersistedState<ThinkingLevel | undefined>(thinkingKey, undefined);
     if (existingThinking !== ai.thinkingLevel) {
       updatePersistedState(thinkingKey, ai.thinkingLevel);

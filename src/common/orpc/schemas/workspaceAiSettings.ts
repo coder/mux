@@ -1,11 +1,12 @@
 import { z } from "zod";
 
 /**
- * Workspace-scoped AI settings that should persist across devices.
+ * AI settings that should persist across devices.
  *
  * Notes:
  * - `model` must be canonical "provider:model" (NOT mux-gateway:provider/model).
- * - `thinkingLevel` is workspace-scoped (saved per workspace, not per-model).
+ * - `thinkingLevel` is per-model on the frontend (global). Backend stores the
+ *   last-used level per workspace to seed new devices.
  */
 export const WorkspaceAISettingsSchema = z.object({
   model: z.string().meta({ description: 'Canonical model id in the form "provider:model"' }),

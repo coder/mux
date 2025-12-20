@@ -34,11 +34,7 @@ import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sour
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
-import {
-  getThinkingLevelByModelKey,
-  getThinkingLevelKey,
-  getModelKey,
-} from "@/common/constants/storage";
+import { getThinkingLevelByModelKey, getModelKey } from "@/common/constants/storage";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
@@ -307,21 +303,12 @@ function AppInner() {
         return "off";
       }
 
-      const scopedKey = getThinkingLevelKey(workspaceId);
-      const scoped = readPersistedState<ThinkingLevel | undefined>(scopedKey, undefined);
-      if (scoped !== undefined) {
-        return THINKING_LEVELS.includes(scoped) ? scoped : "off";
-      }
-
-      // Migration: fall back to legacy per-model thinking and seed the workspace-scoped key.
+      // Per-model thinking level.
       const model = getModelForWorkspace(workspaceId);
-      const legacy = readPersistedState<ThinkingLevel | undefined>(
-        getThinkingLevelByModelKey(model),
-        undefined
-      );
-      if (legacy !== undefined && THINKING_LEVELS.includes(legacy)) {
-        updatePersistedState(scopedKey, legacy);
-        return legacy;
+      const thinkingKey = getThinkingLevelByModelKey(model);
+      const level = readPersistedState<ThinkingLevel | undefined>(thinkingKey, undefined);
+      if (level !== undefined && THINKING_LEVELS.includes(level)) {
+        return level;
       }
 
       return "off";
@@ -338,11 +325,11 @@ function AppInner() {
       const normalized = THINKING_LEVELS.includes(level) ? level : "off";
       const model = getModelForWorkspace(workspaceId);
       const effective = enforceThinkingPolicy(model, normalized);
-      const key = getThinkingLevelKey(workspaceId);
+      const thinkingKey = getThinkingLevelByModelKey(model);
 
       // Use the utility function which handles localStorage and event dispatch
       // ThinkingProvider will pick this up via its listener
-      updatePersistedState(key, effective);
+      updatePersistedState(thinkingKey, effective);
 
       // Persist to backend so the palette change follows the workspace across devices.
       if (api) {
