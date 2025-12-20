@@ -106,4 +106,42 @@ describe("task tool", () => {
       expect(caught.message).toMatch(/maxTaskNestingDepth/i);
     }
   });
+
+  it('should reject spawning "exec" tasks while in plan mode', async () => {
+    using tempDir = new TestTempDir("test-task-tool");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const create = mock(() =>
+      Ok({ taskId: "child-task", kind: "agent" as const, status: "running" as const })
+    );
+    const waitForAgentReport = mock(() =>
+      Promise.resolve({
+        reportMarkdown: "Hello from child",
+        title: "Result",
+      })
+    );
+    const taskService = { create, waitForAgentReport } as unknown as TaskService;
+
+    const tool = createTaskTool({
+      ...baseConfig,
+      mode: "plan",
+      taskService,
+    });
+
+    let caught: unknown = null;
+    try {
+      await Promise.resolve(
+        tool.execute!({ subagent_type: "exec", prompt: "do it" }, mockToolCallOptions)
+      );
+    } catch (error: unknown) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    if (caught instanceof Error) {
+      expect(caught.message).toMatch(/plan mode/i);
+    }
+    expect(create).not.toHaveBeenCalled();
+    expect(waitForAgentReport).not.toHaveBeenCalled();
+  });
 });

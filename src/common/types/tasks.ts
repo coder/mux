@@ -31,6 +31,7 @@ export function normalizeSubagentAiDefaults(raw: unknown): SubagentAiDefaults {
   for (const [agentTypeRaw, entryRaw] of Object.entries(record)) {
     const agentType = agentTypeRaw.trim().toLowerCase();
     if (!agentType) continue;
+    if (agentType === "exec") continue;
     if (!entryRaw || typeof entryRaw !== "object") continue;
 
     const entry = entryRaw as Record<string, unknown>;

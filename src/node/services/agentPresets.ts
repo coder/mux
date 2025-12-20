@@ -1,19 +1,13 @@
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 
 export interface AgentPreset {
-  /** Normalized agentType key (e.g., "research") */
+  /** Normalized agentType key (e.g., "explore" or "exec") */
   agentType: string;
   toolPolicy: ToolPolicy;
   systemPrompt: string;
 }
 
-const TASK_TOOL_NAMES = [
-  "task",
-  "task_await",
-  "task_list",
-  "task_terminate",
-  "agent_report",
-] as const;
+const REPORTING_TOOL_NAMES = ["agent_report"] as const;
 
 function enableOnly(...toolNames: readonly string[]): ToolPolicy {
   return [
@@ -25,14 +19,14 @@ function enableOnly(...toolNames: readonly string[]): ToolPolicy {
 const REPORTING_PROMPT_LINES = [
   "Reporting:",
   "- When you have a final answer, call agent_report exactly once.",
-  "- Do not call agent_report until any spawned sub-tasks have completed and you have integrated their results.",
+  "- Do not call agent_report until you have completed the assigned task and integrated all relevant findings.",
 ] as const;
 
 function buildSystemPrompt(args: {
   agentLabel: string;
   goals: string[];
   rules: string[];
-  delegation: string[];
+  delegation?: string[];
 }): string {
   return [
     `You are a ${args.agentLabel} sub-agent running inside a child workspace.`,
@@ -43,30 +37,32 @@ function buildSystemPrompt(args: {
     "Rules:",
     ...args.rules,
     "",
-    "Delegation:",
-    ...args.delegation,
-    "",
+    ...(args.delegation && args.delegation.length > 0
+      ? ["Delegation:", ...args.delegation, ""]
+      : []),
     ...REPORTING_PROMPT_LINES,
   ].join("\n");
 }
 
-const RESEARCH_PRESET: AgentPreset = {
-  agentType: "research",
-  toolPolicy: enableOnly("web_search", "web_fetch", "file_read", ...TASK_TOOL_NAMES),
+const EXEC_PRESET: AgentPreset = {
+  agentType: "exec",
+  toolPolicy: [
+    // Non-recursive: subagents must not spawn more subagents.
+    { regex_match: "task", action: "disable" },
+    { regex_match: "task_.*", action: "disable" },
+    // Only the main plan-mode session should call propose_plan.
+    { regex_match: "propose_plan", action: "disable" },
+  ],
   systemPrompt: buildSystemPrompt({
-    agentLabel: "Research",
+    agentLabel: "Exec",
     goals: [
-      "- Gather accurate, relevant information efficiently.",
-      "- Prefer primary sources and official docs when possible.",
+      "- Complete the assigned coding task end-to-end in this child workspace.",
+      "- Make minimal, correct changes that match existing codebase patterns.",
     ],
     rules: [
-      "- Do not edit files.",
-      "- Do not run bash commands unless explicitly enabled (assume it is not).",
-      "- If the task tool is available and you need repository exploration beyond file_read, delegate to an Explore sub-agent.",
-      "- Use task_list only for discovery (e.g. after interruptions). Do not poll task_list to wait; use task_await to wait for completion.",
-    ],
-    delegation: [
-      '- If available, use: task({ subagent_type: "explore", prompt: "..." }) when you need repo exploration.',
+      "- Do not call task/task_await/task_list/task_terminate (subagent recursion is disabled).",
+      "- Do not call propose_plan.",
+      "- Prefer small, reviewable diffs and run targeted checks when feasible.",
     ],
   }),
 };
@@ -79,29 +75,32 @@ const EXPLORE_PRESET: AgentPreset = {
     "bash_output",
     "bash_background_list",
     "bash_background_terminate",
-    ...TASK_TOOL_NAMES
+    "web_fetch",
+    "web_search",
+    "google_search",
+    ...REPORTING_TOOL_NAMES
   ),
   systemPrompt: buildSystemPrompt({
     agentLabel: "Explore",
     goals: [
       "- Explore the repository to answer the prompt using read-only investigation.",
-      "- Keep output concise and actionable (paths, symbols, and findings).",
+      "- Return concise, actionable findings (paths, symbols, callsites, and facts).",
     ],
     rules: [
-      "- Do not edit files.",
-      "- Treat bash as read-only: prefer commands like rg, ls, cat, git show, git diff (read-only).",
-      "- If the task tool is available and you need external information, delegate to a Research sub-agent.",
-      "- Use task_list only for discovery (e.g. after interruptions). Do not poll task_list to wait; use task_await to wait for completion.",
-    ],
-    delegation: [
-      '- If available, use: task({ subagent_type: "research", prompt: "..." }) when you need web research.',
+      "=== CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===",
+      "- You MUST NOT create, edit, delete, move, or copy files.",
+      "- You MUST NOT create temporary files anywhere (including /tmp).",
+      "- You MUST NOT use redirect operators (>, >>, |) or heredocs to write to files.",
+      "- You MUST NOT run commands that change system state (rm, mv, cp, mkdir, touch, git add/commit, installs, etc.).",
+      "- Use bash only for read-only operations (rg, ls, cat, git diff/show/log, etc.).",
+      "- Do not call task/task_await/task_list/task_terminate (subagent recursion is disabled).",
     ],
   }),
 };
 
 const PRESETS_BY_AGENT_TYPE: Record<string, AgentPreset> = {
-  research: RESEARCH_PRESET,
   explore: EXPLORE_PRESET,
+  exec: EXEC_PRESET,
 };
 
 export function getAgentPreset(agentType: string | undefined): AgentPreset | null {

@@ -18,6 +18,11 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         throw new Error("Interrupted");
       }
 
+      // Plan mode is explicitly non-executing. Allow only read-only exploration tasks.
+      if (config.mode === "plan" && args.subagent_type === "exec") {
+        throw new Error('In Plan Mode you may only spawn subagent_type: "explore" tasks.');
+      }
+
       const modelString =
         config.muxEnv && typeof config.muxEnv.MUX_MODEL_STRING === "string"
           ? config.muxEnv.MUX_MODEL_STRING

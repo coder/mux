@@ -926,9 +926,9 @@ describe("TaskService", () => {
               {
                 path: path.join(projectPath, "task"),
                 id: taskId,
-                name: "agent_research_task",
+                name: "agent_exec_task",
                 parentWorkspaceId: rootWorkspaceId,
-                agentType: "research",
+                agentType: "exec",
                 taskStatus: "running",
               },
             ],
@@ -982,9 +982,9 @@ describe("TaskService", () => {
               {
                 path: path.join(projectPath, "parent-task"),
                 id: parentTaskId,
-                name: "agent_research_parent",
+                name: "agent_exec_parent",
                 parentWorkspaceId: rootWorkspaceId,
-                agentType: "research",
+                agentType: "exec",
                 taskStatus: "running",
               },
               {
@@ -1224,9 +1224,9 @@ describe("TaskService", () => {
               {
                 path: path.join(projectPath, "parent-task"),
                 id: parentTaskId,
-                name: "agent_research_parent",
+                name: "agent_exec_parent",
                 parentWorkspaceId: rootWorkspaceId,
-                agentType: "research",
+                agentType: "exec",
                 taskStatus: "running",
               },
               {
@@ -1279,9 +1279,9 @@ describe("TaskService", () => {
               {
                 path: path.join(projectPath, "parent-task"),
                 id: parentTaskId,
-                name: "agent_research_parent",
+                name: "agent_exec_parent",
                 parentWorkspaceId: rootWorkspaceId,
-                agentType: "research",
+                agentType: "exec",
                 taskStatus: "awaiting_report",
               },
               {

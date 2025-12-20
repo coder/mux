@@ -1,6 +1,4 @@
-export const BUILT_IN_SUBAGENTS = [
-  { agentType: "research", label: "Research" },
-  { agentType: "explore", label: "Explore" },
-] as const;
+export const BUILT_IN_SUBAGENT_TYPES = ["explore", "exec"] as const;
+export type BuiltInSubagentType = (typeof BUILT_IN_SUBAGENT_TYPES)[number];
 
-export type BuiltInSubagentType = (typeof BUILT_IN_SUBAGENTS)[number]["agentType"];
+export const BUILT_IN_SUBAGENTS = [{ agentType: "explore", label: "Explore" }] as const;

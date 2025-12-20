@@ -13,6 +13,7 @@ import {
   STATUS_MESSAGE_MAX_LENGTH,
   WEB_FETCH_MAX_OUTPUT_BYTES,
 } from "@/common/constants/toolLimits";
+import { BUILT_IN_SUBAGENT_TYPES } from "@/common/constants/agents";
 import { TOOL_EDIT_WARNING } from "@/common/types/tools";
 
 import { zodToJsonSchema } from "zod-to-json-schema";
@@ -87,9 +88,14 @@ export const AskUserQuestionToolResultSchema = z
 // task (sub-workspaces as subagents)
 // -----------------------------------------------------------------------------
 
+const SubagentTypeSchema = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
+  z.enum(BUILT_IN_SUBAGENT_TYPES)
+);
+
 export const TaskToolArgsSchema = z
   .object({
-    subagent_type: z.string().min(1),
+    subagent_type: SubagentTypeSchema,
     prompt: z.string().min(1),
     description: z.string().optional(),
     run_in_background: z.boolean().default(false),
@@ -467,7 +473,7 @@ export const TOOL_DEFINITIONS = {
   task: {
     description:
       "Spawn a sub-agent task in a child workspace. " +
-      "Use this to delegate work to specialized presets like research or explore. " +
+      'Use this to delegate work to specialized presets like "explore" (read-only investigation) or "exec" (general-purpose coding in a child workspace). ' +
       "If run_in_background is false, this tool blocks until the sub-agent calls agent_report, then returns the report. " +
       "If run_in_background is true, you can await it later with task_await.",
     schema: TaskToolArgsSchema,

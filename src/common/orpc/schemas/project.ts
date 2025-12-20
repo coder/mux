@@ -34,8 +34,7 @@ export const WorkspaceConfigSchema = z.object({
       "If set, this workspace is a child workspace spawned from the parent workspaceId (enables nesting in UI and backend orchestration).",
   }),
   agentType: z.string().optional().meta({
-    description:
-      'If set, selects an agent preset for this workspace (e.g., "research" or "explore").',
+    description: 'If set, selects an agent preset for this workspace (e.g., "explore" or "exec").',
   }),
   taskStatus: z.enum(["queued", "running", "awaiting_report", "reported"]).optional().meta({
     description:

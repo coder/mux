@@ -114,8 +114,10 @@ export const Tasks: AppStory = {
     await body.findByText(/Max Parallel Agent Tasks/i);
     await body.findByText(/Max Task Nesting Depth/i);
     await body.findByText(/Sub-agents/i);
-    await body.findByText(/Research/i);
     await body.findByText(/Explore/i);
+    if (body.queryByText(/Exec/i)) {
+      throw new Error("Expected Exec sub-agent settings to be hidden (always inherits)");
+    }
 
     const inputs = await body.findAllByRole("spinbutton");
     if (inputs.length !== 2) {
