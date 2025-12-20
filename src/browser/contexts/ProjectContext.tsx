@@ -127,7 +127,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
   const getBranchesForProject = useCallback(
     async (projectPath: string): Promise<BranchListResult> => {
       if (!api) {
-        return { branches: [], recommendedTrunk: "" };
+        return { branches: [], remoteBranches: [], remoteBranchGroups: [], recommendedTrunk: null };
       }
       const branchResult = await api.projects.listBranches({ projectPath });
       const branches = branchResult.branches;
@@ -135,14 +135,38 @@ export function ProjectProvider(props: { children: ReactNode }) {
         ? branches.filter((branch): branch is string => typeof branch === "string")
         : [];
 
+      const sanitizedRemoteBranches = Array.isArray(branchResult.remoteBranches)
+        ? branchResult.remoteBranches.filter(
+            (branch): branch is string => typeof branch === "string"
+          )
+        : [];
+
+      const sanitizedRemoteBranchGroups = Array.isArray(branchResult.remoteBranchGroups)
+        ? branchResult.remoteBranchGroups
+            .filter(
+              (group): group is { remote: string; branches: string[]; truncated: boolean } =>
+                typeof group?.remote === "string" &&
+                Array.isArray(group.branches) &&
+                typeof group.truncated === "boolean"
+            )
+            .map((group) => ({
+              remote: group.remote,
+              branches: group.branches.filter((b): b is string => typeof b === "string"),
+              truncated: group.truncated,
+            }))
+            .filter((group) => group.remote.length > 0 && group.branches.length > 0)
+        : [];
+
       const recommended =
         typeof branchResult?.recommendedTrunk === "string" &&
         sanitizedBranches.includes(branchResult.recommendedTrunk)
           ? branchResult.recommendedTrunk
-          : (sanitizedBranches[0] ?? "");
+          : (sanitizedBranches[0] ?? null);
 
       return {
         branches: sanitizedBranches,
+        remoteBranches: sanitizedRemoteBranches,
+        remoteBranchGroups: sanitizedRemoteBranchGroups,
         recommendedTrunk: recommended,
       };
     },

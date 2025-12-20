@@ -1,15 +1,23 @@
 import React, { useCallback, useEffect } from "react";
 import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
+import { BranchNameInput } from "../BranchNameInput";
 import { Select } from "../Select";
-import { Loader2, Wand2 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { SSHIcon, WorktreeIcon, LocalIcon } from "../icons/RuntimeIcons";
 import { DocsLink } from "../DocsLink";
+import type { ExistingBranchSelection } from "@/common/types/branchSelection";
+import type { BranchListResult } from "@/common/orpc/types";
 import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
+
+export type BranchMode = "new" | "existing";
 
 interface CreationControlsProps {
   branches: string[];
+  /** Remote-only branches (not in local branches) */
+  remoteBranches: string[];
+  /** Remote-only branches grouped by remote name (e.g. origin/upstream) */
+  remoteBranchGroups: BranchListResult["remoteBranchGroups"];
   /** Whether branches have finished loading (to distinguish loading vs non-git repo) */
   branchesLoaded: boolean;
   trunkBranch: string;
@@ -25,6 +33,12 @@ interface CreationControlsProps {
   projectName: string;
   /** Workspace name/title generation state and actions */
   nameState: WorkspaceNameState;
+  /** Branch mode: "new" creates a new branch, "existing" uses an existing branch */
+  branchMode: BranchMode;
+  onBranchModeChange: (mode: BranchMode) => void;
+  /** Selected existing branch (when branchMode is "existing") */
+  selectedExistingBranch: ExistingBranchSelection | null;
+  onSelectedExistingBranchChange: (selection: ExistingBranchSelection | null) => void;
 }
 
 /** Runtime type button group with icons and colors */
@@ -144,7 +158,13 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
 
 /**
  * Prominent controls shown above the input during workspace creation.
- * Displays project name as header, workspace name with magic wand, and runtime/branch selectors.
+ * Displays project name as header, unified branch name input, and runtime/branch selectors.
+ *
+ * The branch name input is a combobox that:
+ * - Shows matching existing branches as user types
+ * - Selecting a branch → uses existing branch, hides "from main"
+ * - Typing a non-matching name → creates new branch with that name
+ * - Auto-generation via magic wand when input is empty
  */
 export function CreationControls(props: CreationControlsProps) {
   const { nameState } = props;
@@ -154,8 +174,11 @@ export function CreationControls(props: CreationControlsProps) {
   const isNonGitRepo = props.branchesLoaded && props.branches.length === 0;
 
   // Local runtime doesn't need a trunk branch selector (uses project dir as-is)
+  // Also hide it when using an existing branch (no need to specify "from main")
   const showTrunkBranchSelector =
-    props.branches.length > 0 && props.runtimeMode !== RUNTIME_MODE.LOCAL;
+    props.branches.length > 0 &&
+    props.runtimeMode !== RUNTIME_MODE.LOCAL &&
+    props.selectedExistingBranch === null;
 
   const { runtimeMode, onRuntimeModeChange } = props;
 
@@ -166,24 +189,22 @@ export function CreationControls(props: CreationControlsProps) {
     }
   }, [isNonGitRepo, runtimeMode, onRuntimeModeChange]);
 
-  const handleNameChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      nameState.setName(e.target.value);
+  const remoteGroups =
+    props.remoteBranchGroups.length > 0
+      ? props.remoteBranchGroups
+      : props.remoteBranches.length > 0
+        ? [{ remote: "origin", branches: props.remoteBranches, truncated: false }]
+        : [];
+
+  // Handle selecting an existing branch
+  const handleSelectExistingBranch = useCallback(
+    (selection: ExistingBranchSelection | null) => {
+      props.onSelectedExistingBranchChange(selection);
+      // Update branch mode based on selection
+      props.onBranchModeChange(selection ? "existing" : "new");
     },
-    [nameState]
+    [props]
   );
-
-  // Clicking into the input disables auto-generation so user can edit
-  const handleInputFocus = useCallback(() => {
-    if (nameState.autoGenerate) {
-      nameState.setAutoGenerate(false);
-    }
-  }, [nameState]);
-
-  // Toggle auto-generation via wand button
-  const handleWandClick = useCallback(() => {
-    nameState.setAutoGenerate(!nameState.autoGenerate);
-  }, [nameState]);
 
   return (
     <div className="mb-3 flex flex-col gap-4">
@@ -192,70 +213,31 @@ export function CreationControls(props: CreationControlsProps) {
         <h2 className="text-foreground shrink-0 text-lg font-semibold">{props.projectName}</h2>
         <span className="text-muted-foreground mx-2 text-lg">/</span>
 
-        {/* Name input with magic wand - uses grid overlay technique for auto-sizing */}
-        <div className="relative inline-grid items-center">
-          {/* Hidden sizer span - determines width based on content, minimum is placeholder width */}
-          <span className="invisible col-start-1 row-start-1 pr-7 text-lg font-semibold whitespace-pre">
-            {nameState.name || "workspace-name"}
+        {/* Unified branch name input with autocomplete */}
+        <BranchNameInput
+          value={nameState.name}
+          onChange={nameState.setName}
+          autoGenerate={nameState.autoGenerate}
+          onAutoGenerateChange={nameState.setAutoGenerate}
+          isGenerating={nameState.isGenerating}
+          error={nameState.error}
+          localBranches={props.branches}
+          remoteBranchGroups={remoteGroups}
+          branchesLoaded={props.branchesLoaded}
+          selectedExistingBranch={props.selectedExistingBranch}
+          onSelectExistingBranch={handleSelectExistingBranch}
+          disabled={props.disabled}
+        />
+
+        {/* Show remote indicator when existing remote branch is selected */}
+        {props.selectedExistingBranch?.kind === "remote" && (
+          <span className="text-muted-foreground ml-1 text-xs">
+            @{props.selectedExistingBranch.remote}
           </span>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <input
-                id="workspace-name"
-                type="text"
-                size={1}
-                value={nameState.name}
-                onChange={handleNameChange}
-                onFocus={handleInputFocus}
-                placeholder={nameState.isGenerating ? "Generating..." : "workspace-name"}
-                disabled={props.disabled}
-                className={cn(
-                  "col-start-1 row-start-1 min-w-0 bg-transparent border-border-medium focus:border-accent h-7 w-full rounded-md border border-transparent text-lg font-semibold focus:border focus:bg-bg-dark focus:outline-none disabled:opacity-50",
-                  nameState.autoGenerate ? "text-muted" : "text-foreground",
-                  nameState.error && "border-red-500"
-                )}
-              />
-            </TooltipTrigger>
-            <TooltipContent align="start" className="max-w-64">
-              A stable identifier used for git branches, worktree folders, and session directories.
-            </TooltipContent>
-          </Tooltip>
-          {/* Magic wand / loading indicator */}
-          <div className="absolute inset-y-0 right-0 flex items-center pr-2">
-            {nameState.isGenerating ? (
-              <Loader2 className="text-accent h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={handleWandClick}
-                    disabled={props.disabled}
-                    className="flex h-full items-center disabled:opacity-50"
-                    aria-label={
-                      nameState.autoGenerate ? "Disable auto-naming" : "Enable auto-naming"
-                    }
-                  >
-                    <Wand2
-                      className={cn(
-                        "h-3.5 w-3.5 transition-colors",
-                        nameState.autoGenerate
-                          ? "text-accent"
-                          : "text-muted-foreground opacity-50 hover:opacity-75"
-                      )}
-                    />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent align="center">
-                  {nameState.autoGenerate ? "Auto-naming enabled" : "Click to enable auto-naming"}
-                </TooltipContent>
-              </Tooltip>
-            )}
-          </div>
-        </div>
+        )}
 
         {/* Error display */}
-        {nameState.error && <span className="text-xs text-red-500">{nameState.error}</span>}
+        {nameState.error && <span className="ml-2 text-xs text-red-500">{nameState.error}</span>}
       </div>
 
       {/* Runtime type - button group */}
@@ -271,7 +253,7 @@ export function CreationControls(props: CreationControlsProps) {
             disabledModes={isNonGitRepo ? [RUNTIME_MODE.WORKTREE, RUNTIME_MODE.SSH] : undefined}
           />
 
-          {/* Branch selector - shown for worktree/SSH */}
+          {/* Branch selector - shown for worktree/SSH when creating new branch */}
           {showTrunkBranchSelector && (
             <div
               className="flex items-center gap-2"

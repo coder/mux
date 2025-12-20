@@ -2,12 +2,14 @@ import { useCallback, useEffect } from "react";
 import type { ProjectConfig } from "@/node/config";
 import { CUSTOM_EVENTS, type CustomEventPayloads } from "@/common/constants/events";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { parseExistingBranchSelection } from "@/common/types/branchSelection";
 import {
   getInputKey,
   getModelKey,
   getPendingScopeId,
   getProjectScopeId,
   getTrunkBranchKey,
+  getPrefilledExistingBranchKey,
 } from "@/common/constants/storage";
 
 export type StartWorkspaceCreationDetail =
@@ -43,6 +45,11 @@ export function persistWorkspaceCreationPrefill(
       getTrunkBranchKey(projectPath),
       normalizedTrunk.length > 0 ? normalizedTrunk : undefined
     );
+  }
+
+  if (detail.existingBranch !== undefined) {
+    const selection = parseExistingBranchSelection(detail.existingBranch);
+    persist(getPrefilledExistingBranchKey(projectPath), selection ?? undefined);
   }
 
   // Note: runtime is intentionally NOT persisted here - it's a one-time override.

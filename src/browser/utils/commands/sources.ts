@@ -8,6 +8,7 @@ import { CommandIds } from "@/browser/utils/commandIds";
 
 import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { ExistingBranchSelection } from "@/common/types/branchSelection";
 import type { BranchListResult } from "@/common/orpc/types";
 import type { WorkspaceState } from "@/browser/stores/WorkspaceStore";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -31,6 +32,11 @@ export interface BuildSourcesParams {
   onSetThinkingLevel: (workspaceId: string, level: ThinkingLevel) => void;
 
   onStartWorkspaceCreation: (projectPath: string) => void;
+  /** Start workspace creation flow with an existing branch pre-selected */
+  onStartWorkspaceCreationWithBranch: (
+    projectPath: string,
+    selection: ExistingBranchSelection
+  ) => void;
   getBranchesForProject: (projectPath: string) => Promise<BranchListResult>;
   onSelectWorkspace: (sel: {
     projectPath: string;
@@ -108,6 +114,75 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     const selected = p.selectedWorkspace;
     if (selected) {
       list.push(createWorkspaceForSelectedProjectAction(selected));
+
+      // Open Branch as Workspace - opens creation flow with existing branch pre-selected
+      list.push({
+        id: CommandIds.workspaceOpenBranch(),
+        title: "Open Branch as Workspace…",
+        subtitle: `for ${selected.projectName}`,
+        section: section.workspaces,
+        run: () => undefined,
+        prompt: {
+          title: "Open Branch as Workspace",
+          fields: [
+            {
+              type: "select",
+              name: "branch",
+              label: "Branch",
+              placeholder: "Search branches…",
+              getOptions: async () => {
+                const result = await p.getBranchesForProject(selected.projectPath);
+
+                const localOptions = result.branches.map((branch) => ({
+                  id: `local:${branch}`,
+                  label: branch,
+                  keywords: [branch],
+                }));
+
+                const groups =
+                  result.remoteBranchGroups.length > 0
+                    ? result.remoteBranchGroups
+                    : result.remoteBranches.length > 0
+                      ? [{ remote: "origin", branches: result.remoteBranches, truncated: false }]
+                      : [];
+
+                const remoteOptions = groups.flatMap((group) =>
+                  group.branches.map((branch) => ({
+                    id: `remote:${group.remote}:${branch}`,
+                    label: `${group.remote}/${branch}`,
+                    keywords: [branch, group.remote, "remote"],
+                  }))
+                );
+
+                return [...localOptions, ...remoteOptions];
+              },
+            },
+          ],
+          onSubmit: (vals) => {
+            const raw = vals.branch;
+
+            let selection: ExistingBranchSelection;
+            if (raw.startsWith("remote:")) {
+              const rest = raw.slice("remote:".length);
+              const firstColon = rest.indexOf(":");
+              console.assert(
+                firstColon > 0,
+                "Expected remote branch id to include remote and branch"
+              );
+              const remote = rest.slice(0, Math.max(0, firstColon));
+              const branch = rest.slice(Math.max(0, firstColon + 1));
+              selection = { kind: "remote", remote, branch };
+            } else if (raw.startsWith("local:")) {
+              selection = { kind: "local", branch: raw.slice("local:".length) };
+            } else {
+              // Back-compat: older prompt ids were raw branch names.
+              selection = { kind: "local", branch: raw };
+            }
+
+            p.onStartWorkspaceCreationWithBranch(selected.projectPath, selection);
+          },
+        },
+      });
     }
 
     // Switch to workspace
@@ -135,8 +210,10 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
 
     // Remove current workspace (rename action intentionally omitted until we add a proper modal)
     if (selected?.namedWorkspacePath) {
-      const workspaceDisplayName = `${selected.projectName}/${selected.namedWorkspacePath.split("/").pop() ?? selected.namedWorkspacePath}`;
       const selectedMeta = p.workspaceMetadata.get(selected.workspaceId);
+      // Use metadata.name if available (handles slashes correctly), fallback to path derivation
+      const workspaceName = selectedMeta?.name ?? selected.namedWorkspacePath;
+      const workspaceDisplayName = `${selected.projectName}/${workspaceName}`;
       list.push({
         id: CommandIds.workspaceOpenTerminalCurrent(),
         title: "Open Current Workspace in Terminal",

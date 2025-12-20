@@ -194,6 +194,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       pickDirectory: async () => null,
       listBranches: async () => ({
         branches: ["main", "develop", "feature/new-feature"],
+        remoteBranches: [],
+        remoteBranchGroups: [],
         recommendedTrunk: "main",
       }),
       remove: async (input: { projectPath: string }) => {
