@@ -162,6 +162,10 @@ export class TaskService {
   private readonly mutex = new AsyncMutex();
   private readonly pendingWaitersByTaskId = new Map<string, PendingTaskWaiter[]>();
   private readonly pendingStartWaitersByTaskId = new Map<string, PendingTaskStartWaiter[]>();
+  // Tracks workspaces currently blocked in a foreground wait (e.g. a task tool call awaiting
+  // agent_report). Used to avoid scheduler deadlocks when maxParallelAgentTasks is low and tasks
+  // spawn nested tasks in the foreground.
+  private readonly foregroundAwaitCountByWorkspaceId = new Map<string, number>();
   // Cache completed reports so callers can retrieve them even after the task workspace is removed.
   // Bounded by TTL + max entries (see COMPLETED_REPORT_CACHE_*).
   private readonly completedReportsByTaskId = new Map<
@@ -682,9 +686,39 @@ export class TaskService {
     }
   }
 
+  private isForegroundAwaiting(workspaceId: string): boolean {
+    const count = this.foregroundAwaitCountByWorkspaceId.get(workspaceId);
+    return typeof count === "number" && count > 0;
+  }
+
+  private startForegroundAwait(workspaceId: string): () => void {
+    assert(workspaceId.length > 0, "startForegroundAwait: workspaceId must be non-empty");
+
+    const current = this.foregroundAwaitCountByWorkspaceId.get(workspaceId) ?? 0;
+    assert(
+      Number.isInteger(current) && current >= 0,
+      "startForegroundAwait: expected non-negative integer counter"
+    );
+
+    this.foregroundAwaitCountByWorkspaceId.set(workspaceId, current + 1);
+
+    return () => {
+      const current = this.foregroundAwaitCountByWorkspaceId.get(workspaceId) ?? 0;
+      assert(
+        Number.isInteger(current) && current > 0,
+        "startForegroundAwait cleanup: expected positive integer counter"
+      );
+      if (current <= 1) {
+        this.foregroundAwaitCountByWorkspaceId.delete(workspaceId);
+      } else {
+        this.foregroundAwaitCountByWorkspaceId.set(workspaceId, current - 1);
+      }
+    };
+  }
+
   waitForAgentReport(
     taskId: string,
-    options?: { timeoutMs?: number; abortSignal?: AbortSignal }
+    options?: { timeoutMs?: number; abortSignal?: AbortSignal; requestingWorkspaceId?: string }
   ): Promise<{ reportMarkdown: string; title?: string }> {
     assert(taskId.length > 0, "waitForAgentReport: taskId must be non-empty");
 
@@ -700,6 +734,8 @@ export class TaskService {
     const timeoutMs = options?.timeoutMs ?? 10 * 60 * 1000; // 10 minutes
     assert(Number.isFinite(timeoutMs) && timeoutMs > 0, "waitForAgentReport: timeoutMs invalid");
 
+    const requestingWorkspaceId = coerceNonEmptyString(options?.requestingWorkspaceId);
+
     return new Promise<{ reportMarkdown: string; title?: string }>((resolve, reject) => {
       // Validate existence early to avoid waiting on never-resolving task IDs.
       const cfg = this.config.loadConfigOrDefault();
@@ -712,6 +748,9 @@ export class TaskService {
       let timeout: ReturnType<typeof setTimeout> | null = null;
       let startWaiter: PendingTaskStartWaiter | null = null;
       let abortListener: (() => void) | null = null;
+      let stopBlockingRequester: (() => void) | null = requestingWorkspaceId
+        ? this.startForegroundAwait(requestingWorkspaceId)
+        : null;
 
       const startReportTimeout = () => {
         if (timeout) return;
@@ -759,6 +798,14 @@ export class TaskService {
             options.abortSignal.removeEventListener("abort", abortListener);
             abortListener = null;
           }
+
+          if (stopBlockingRequester) {
+            try {
+              stopBlockingRequester();
+            } finally {
+              stopBlockingRequester = null;
+            }
+          }
         },
       };
 
@@ -797,6 +844,13 @@ export class TaskService {
         if (afterEntry?.workspace.taskStatus !== "queued") {
           cleanupStartWaiter();
           startReportTimeout();
+        }
+
+        // If the awaited task is queued and the caller is blocked in the foreground, ensure the
+        // scheduler runs after the waiter is registered. This avoids deadlocks when
+        // maxParallelAgentTasks is low.
+        if (requestingWorkspaceId) {
+          void this.maybeStartQueuedTasks();
         }
       } else {
         startReportTimeout();
@@ -1040,6 +1094,14 @@ export class TaskService {
     let activeCount = 0;
     for (const task of this.listAgentTaskWorkspaces(config)) {
       const status: AgentTaskStatus = task.taskStatus ?? "running";
+      // If this task workspace is blocked in a foreground wait, do not count it towards parallelism.
+      // This prevents deadlocks where a task spawns a nested task in the foreground while
+      // maxParallelAgentTasks is low (e.g. 1).
+      // Note: StreamManager can still report isStreaming() while a tool call is executing, so
+      // isStreaming is not a reliable signal for "actively doing work" here.
+      if (status === "running" && task.id && this.isForegroundAwaiting(task.id)) {
+        continue;
+      }
       if (status === "running" || status === "awaiting_report") {
         activeCount += 1;
         continue;

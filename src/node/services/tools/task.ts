@@ -44,6 +44,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
 
       const report = await taskService.waitForAgentReport(created.data.taskId, {
         abortSignal,
+        requestingWorkspaceId: workspaceId,
       });
 
       return parseToolResult(

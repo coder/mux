@@ -58,6 +58,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
             const report = await taskService.waitForAgentReport(taskId, {
               timeoutMs,
               abortSignal,
+              requestingWorkspaceId: workspaceId,
             });
             return {
               status: "completed" as const,

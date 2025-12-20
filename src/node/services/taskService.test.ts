@@ -375,6 +375,107 @@ describe("TaskService", () => {
     expect(started?.taskStatus).toBe("running");
   }, 20_000);
 
+  test("does not count foreground-awaiting tasks towards maxParallelAgentTasks", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"], "dddddddddd");
+
+    const projectPath = await createTestProject(rootDir);
+
+    let streamingWorkspaceId: string | null = null;
+    const { aiService } = createAIServiceMocks(config, {
+      isStreaming: mock((workspaceId: string) => workspaceId === streamingWorkspaceId),
+    });
+
+    const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
+    const runtime = createRuntime(runtimeConfig, { projectPath });
+    const initLogger = createNullInitLogger();
+
+    const rootName = "root";
+    await runtime.createWorkspace({
+      projectPath,
+      branchName: rootName,
+      trunkBranch: "main",
+      directoryName: rootName,
+      initLogger,
+    });
+
+    const rootWorkspaceId = "root-111";
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: runtime.getWorkspacePath(projectPath, rootName),
+                id: rootWorkspaceId,
+                name: rootName,
+                createdAt: new Date().toISOString(),
+                runtimeConfig,
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    const parentTask = await taskService.create({
+      parentWorkspaceId: rootWorkspaceId,
+      kind: "agent",
+      agentType: "explore",
+      prompt: "parent task",
+    });
+    expect(parentTask.success).toBe(true);
+    if (!parentTask.success) return;
+    streamingWorkspaceId = parentTask.data.taskId;
+
+    // With maxParallelAgentTasks=1, nested tasks will be created as queued.
+    const childTask = await taskService.create({
+      parentWorkspaceId: parentTask.data.taskId,
+      kind: "agent",
+      agentType: "explore",
+      prompt: "child task",
+    });
+    expect(childTask.success).toBe(true);
+    if (!childTask.success) return;
+    expect(childTask.data.status).toBe("queued");
+
+    // Simulate a foreground await from the parent task workspace. This should allow the queued child
+    // to start despite maxParallelAgentTasks=1, avoiding a scheduler deadlock.
+    const waiter = taskService.waitForAgentReport(childTask.data.taskId, {
+      timeoutMs: 10_000,
+      requestingWorkspaceId: parentTask.data.taskId,
+    });
+
+    const internal = taskService as unknown as {
+      maybeStartQueuedTasks: () => Promise<void>;
+      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
+    };
+
+    await internal.maybeStartQueuedTasks();
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      childTask.data.taskId,
+      "child task",
+      expect.anything(),
+      expect.objectContaining({ allowQueuedAgentTask: true })
+    );
+
+    const cfgAfterStart = config.loadConfigOrDefault();
+    const startedEntry = Array.from(cfgAfterStart.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === childTask.data.taskId);
+    expect(startedEntry?.taskStatus).toBe("running");
+
+    internal.resolveWaiters(childTask.data.taskId, { reportMarkdown: "ok" });
+    const report = await waiter;
+    expect(report.reportMarkdown).toBe("ok");
+  }, 20_000);
+
   test("does not run init hooks for queued tasks until they start", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"], "dddddddddd");
