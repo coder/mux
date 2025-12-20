@@ -29,6 +29,7 @@ import {
   shouldShowInterruptedBarrier,
   mergeConsecutiveStreamErrors,
   computeBashOutputGroupInfo,
+  getEditableUserMessageText,
 } from "@/browser/utils/messages/messageUtils";
 import { BashOutputCollapsedIndicator } from "./tools/BashOutputCollapsedIndicator";
 import { hasInterruptedStream } from "@/browser/utils/messages/retryEligibility";
@@ -60,7 +61,6 @@ import { CompactionWarning } from "./CompactionWarning";
 import { ConcurrentLocalWarning } from "./ConcurrentLocalWarning";
 import { BackgroundProcessesBanner } from "./BackgroundProcessesBanner";
 import { useBackgroundBashHandlers } from "@/browser/hooks/useBackgroundBashHandlers";
-import { buildCompactionEditText } from "@/browser/utils/compaction/format";
 import { checkAutoCompaction } from "@/browser/utils/compaction/autoCompactionCheck";
 import { executeCompaction } from "@/browser/utils/chatCommands";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
@@ -360,9 +360,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
     setEditingMessage({
       id: lastUserMessage.historyId,
-      content: lastUserMessage.compactionRequest
-        ? buildCompactionEditText(lastUserMessage.compactionRequest)
-        : lastUserMessage.content,
+      content: getEditableUserMessageText(lastUserMessage),
     });
     setAutoScroll(false); // Show jump-to-bottom indicator
 
