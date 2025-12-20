@@ -1111,7 +1111,8 @@ export class TaskService {
       const config = this.config.loadConfigOrDefault();
       const taskSettings: TaskSettings = config.taskSettings ?? DEFAULT_TASK_SETTINGS;
       assert(
-        Number.isFinite(taskSettings.maxParallelAgentTasks) && taskSettings.maxParallelAgentTasks > 0,
+        Number.isFinite(taskSettings.maxParallelAgentTasks) &&
+          taskSettings.maxParallelAgentTasks > 0,
         "TaskService.maybeStartQueuedTasks: maxParallelAgentTasks must be a positive number"
       );
 

@@ -788,7 +788,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
         <ConnectionStatusIndicator />
         {isQueuedAgentTask && (
           <div className="border-border-medium bg-background-secondary text-muted mb-2 rounded-md border px-3 py-2 text-xs">
-            This agent task is queued and will start automatically when a parallel slot is available.
+            This agent task is queued and will start automatically when a parallel slot is
+            available.
           </div>
         )}
         <ChatInput
