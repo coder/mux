@@ -639,11 +639,6 @@ export class SSHRuntime implements Runtime {
       // Step 3: Create bundle locally and pipe to remote file via SSH
       initLogger.logStep(`Creating git bundle...`);
 
-      // Ensure SSH connection is established before starting the bundle transfer
-      // Without this, the SSH command in the pipe may fail to connect, causing
-      // the git bundle process to receive SIGPIPE and report "pack-objects died"
-      await sshConnectionPool.acquireConnection(this.config);
-
       await new Promise<void>((resolve, reject) => {
         // Check if aborted before spawning
         if (abortSignal?.aborted) {
@@ -651,7 +646,20 @@ export class SSHRuntime implements Runtime {
           return;
         }
 
-        const sshArgs = [...this.buildSSHArgs(), this.config.host];
+        // Build SSH args with timeout options to detect connection failures quickly
+        // Without these, SSH can hang indefinitely, causing git to receive SIGPIPE
+        // and report the cryptic "pack-objects died" error
+        const sshArgs = [
+          "-T", // No PTY needed for piped data
+          ...this.buildSSHArgs(),
+          "-o",
+          "ConnectTimeout=15",
+          "-o",
+          "ServerAliveInterval=5",
+          "-o",
+          "ServerAliveCountMax=2",
+          this.config.host,
+        ];
         const command = `cd ${shescape.quote(projectPath)} && git bundle create - --all | ssh ${sshArgs.join(" ")} "cat > ${bundleTempPath}"`;
 
         log.debug(`Creating bundle: ${command}`);
