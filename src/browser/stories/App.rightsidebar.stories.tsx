@@ -103,7 +103,7 @@ export const CostsTab: AppStory = {
 
 /**
  * Costs tab showing cache create vs cache read differentiation.
- * Cache create (orange) is typically more expensive than cache read (grey).
+ * Cache create is more expensive than cache read; both render in grey tones.
  * This story uses realistic Anthropic-style usage where most input is cached.
  */
 export const CostsTabWithCacheCreate: AppStory = {
