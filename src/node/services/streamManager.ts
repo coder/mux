@@ -42,6 +42,9 @@ import type { SessionUsageService } from "./sessionUsageService";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 
+// Disable AI SDK warning logging (e.g., "setting `toolChoice` to `none` is not supported")
+globalThis.AI_SDK_LOG_WARNINGS = false;
+
 // Type definitions for stream parts with extended properties
 interface ReasoningDeltaPart {
   type: "reasoning-delta";
