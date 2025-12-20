@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
+import { useSettings } from "@/browser/contexts/SettingsContext";
 import {
   Trash2,
   Play,
@@ -174,10 +175,11 @@ const ToolAllowlistSection: React.FC<{
 export const ProjectSettingsSection: React.FC = () => {
   const { api } = useAPI();
   const { projects } = useProjectContext();
+  const { initialProjectPath } = useSettings();
   const projectList = Array.from(projects.keys());
 
   // Core state
-  const [selectedProject, setSelectedProject] = useState<string>("");
+  const [selectedProject, setSelectedProject] = useState<string>(initialProjectPath ?? "");
   const [servers, setServers] = useState<Record<string, MCPServerInfo>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -225,12 +227,14 @@ export const ProjectSettingsSection: React.FC = () => {
     setIdleHoursInput(idleHours?.toString() ?? "24");
   }, [idleHours]);
 
-  // Set default project when projects load
+  // Set project when initialProjectPath changes or default to first project
   useEffect(() => {
-    if (projectList.length > 0 && !selectedProject) {
+    if (initialProjectPath && projectList.includes(initialProjectPath)) {
+      setSelectedProject(initialProjectPath);
+    } else if (projectList.length > 0 && !selectedProject) {
       setSelectedProject(projectList[0]);
     }
-  }, [projectList, selectedProject]);
+  }, [projectList, selectedProject, initialProjectPath]);
 
   const refresh = useCallback(async () => {
     if (!api || !selectedProject) return;

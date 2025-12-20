@@ -158,20 +158,24 @@ async function openProjectSettings(canvasElement: HTMLElement): Promise<void> {
   mcpHeading.scrollIntoView({ block: "start" });
 }
 
-/** Open the workspace MCP modal */
-async function openWorkspaceMCPModal(canvasElement: HTMLElement): Promise<void> {
+/** Open project settings by clicking MCP button in workspace header */
+async function openProjectSettingsViaMCPButton(canvasElement: HTMLElement): Promise<void> {
   const canvas = within(canvasElement);
   const body = within(canvasElement.ownerDocument.body);
 
   // Wait for workspace header to load
   await canvas.findByTestId("workspace-header", {}, { timeout: 10000 });
 
-  // Click the MCP server button in the header
+  // Click the MCP server button in the header - now opens project settings
   const mcpButton = await canvas.findByTestId("workspace-mcp-button");
   await userEvent.click(mcpButton);
 
-  // Wait for dialog
+  // Wait for settings dialog
   await body.findByRole("dialog");
+
+  // Scroll to MCP Servers section
+  const mcpHeading = await body.findByText("MCP Servers");
+  mcpHeading.scrollIntoView({ behavior: "instant", block: "start" });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -283,11 +287,11 @@ export const ProjectSettingsWithToolAllowlist: AppStory = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// WORKSPACE MCP MODAL STORIES
+// MCP BUTTON NAVIGATION STORIES
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/** Workspace MCP modal with servers from project (no overrides) */
-export const WorkspaceMCPNoOverrides: AppStory = {
+/** MCP button in header opens project settings with MCP servers visible */
+export const MCPButtonOpensProjectSettings: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() =>
@@ -306,18 +310,18 @@ export const WorkspaceMCPNoOverrides: AppStory = {
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await openWorkspaceMCPModal(canvasElement);
+    await openProjectSettingsViaMCPButton(canvasElement);
 
     const body = within(canvasElement.ownerDocument.body);
 
-    // Both servers should be shown and enabled
+    // Both servers should be shown in project settings
     await body.findByText("mux");
     await body.findByText("posthog");
   },
 };
 
-/** Workspace MCP modal - server disabled at project level, can be enabled */
-export const WorkspaceMCPProjectDisabledServer: AppStory = {
+/** MCP button opens project settings with disabled server */
+export const MCPButtonWithDisabledServer: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() =>
@@ -336,114 +340,13 @@ export const WorkspaceMCPProjectDisabledServer: AppStory = {
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await openWorkspaceMCPModal(canvasElement);
+    await openProjectSettingsViaMCPButton(canvasElement);
 
     const body = within(canvasElement.ownerDocument.body);
 
-    // posthog should show "(disabled at project level)" but switch should still be toggleable
-    await body.findByText("posthog");
-    await body.findByText(/disabled at project level/i);
-  },
-};
-
-/** Workspace MCP modal - server disabled at project level, enabled at workspace level */
-export const WorkspaceMCPEnabledOverride: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupMCPStory({
-          servers: {
-            mux: { command: "npx -y @anthropics/mux-server", disabled: false },
-            posthog: { command: "npx -y posthog-mcp-server", disabled: true },
-          },
-          workspaceOverrides: {
-            enabledServers: ["posthog"],
-          },
-          testResults: {
-            mux: MOCK_TOOLS,
-            posthog: POSTHOG_TOOLS,
-          },
-          preCacheTools: true,
-        })
-      }
-    />
-  ),
-  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await openWorkspaceMCPModal(canvasElement);
-
-    const body = within(canvasElement.ownerDocument.body);
-
-    // posthog should be enabled despite project-level disable
-    await body.findByText("posthog");
-    await body.findByText(/disabled at project level/i);
-
-    // The switch should be ON (enabled at workspace level)
-  },
-};
-
-/** Workspace MCP modal - server enabled at project level, disabled at workspace level */
-export const WorkspaceMCPDisabledOverride: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupMCPStory({
-          servers: {
-            mux: { command: "npx -y @anthropics/mux-server", disabled: false },
-            posthog: { command: "npx -y posthog-mcp-server", disabled: false },
-          },
-          workspaceOverrides: {
-            disabledServers: ["posthog"],
-          },
-          testResults: {
-            mux: MOCK_TOOLS,
-            posthog: POSTHOG_TOOLS,
-          },
-          preCacheTools: true,
-        })
-      }
-    />
-  ),
-  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await openWorkspaceMCPModal(canvasElement);
-
-    const body = within(canvasElement.ownerDocument.body);
-
-    // mux should be enabled, posthog should be disabled
+    // Both servers should be visible
     await body.findByText("mux");
     await body.findByText("posthog");
-  },
-};
-
-/** Workspace MCP modal with tool allowlist filtering */
-export const WorkspaceMCPWithToolAllowlist: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupMCPStory({
-          servers: {
-            posthog: { command: "npx -y posthog-mcp-server", disabled: false },
-          },
-          workspaceOverrides: {
-            toolAllowlist: {
-              posthog: ["docs-search", "error-details", "list-errors"],
-            },
-          },
-          testResults: {
-            posthog: POSTHOG_TOOLS,
-          },
-          preCacheTools: true,
-        })
-      }
-    />
-  ),
-  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await openWorkspaceMCPModal(canvasElement);
-
-    const body = within(canvasElement.ownerDocument.body);
-    await body.findByText("posthog");
-
-    // Should show filtered tool count
-    await body.findByText(/3 of 14 tools enabled/i);
   },
 };
 
@@ -451,7 +354,7 @@ export const WorkspaceMCPWithToolAllowlist: AppStory = {
 // INTERACTION STORIES
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/** Interact with tool selector - click All/None buttons */
+/** Interact with tool selector in project settings - click All/None buttons */
 export const ToolSelectorInteraction: AppStory = {
   render: () => (
     <AppWithMocks
@@ -469,7 +372,7 @@ export const ToolSelectorInteraction: AppStory = {
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await openWorkspaceMCPModal(canvasElement);
+    await openProjectSettingsViaMCPButton(canvasElement);
 
     const body = within(canvasElement.ownerDocument.body);
 
@@ -489,7 +392,7 @@ export const ToolSelectorInteraction: AppStory = {
   },
 };
 
-/** Toggle server enabled state in workspace modal */
+/** Toggle server enabled state in project settings */
 export const ToggleServerEnabled: AppStory = {
   render: () => (
     <AppWithMocks
@@ -509,7 +412,7 @@ export const ToggleServerEnabled: AppStory = {
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await openWorkspaceMCPModal(canvasElement);
+    await openProjectSettingsViaMCPButton(canvasElement);
 
     const body = within(canvasElement.ownerDocument.body);
 
