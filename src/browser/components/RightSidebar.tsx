@@ -10,12 +10,12 @@ import {
   usePersistedState,
 } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceUsage, useWorkspaceStatsSnapshot } from "@/browser/stores/WorkspaceStore";
-import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
-import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
 import { CostsTab } from "./RightSidebar/CostsTab";
 
 import { ReviewPanel } from "./RightSidebar/CodeReview/ReviewPanel";
+import { ErrorBoundary } from "./ErrorBoundary";
+import { StatsTab } from "./RightSidebar/StatsTab";
 
 import { sumUsageHistory, type ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
@@ -33,6 +33,7 @@ import {
   isRightSidebarLayoutState,
   moveTabToTabset,
   parseRightSidebarLayoutState,
+  removeTabEverywhere,
   reorderTabInTabset,
   selectTabInFocusedTabset,
   selectTabInTabset,
@@ -56,7 +57,7 @@ export interface ReviewStats {
 }
 
 /** Format duration for tab display (compact format) */
-function _formatTabDuration(ms: number): string {
+function formatTabDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
   if (ms < 60000) return `${Math.round(ms / 1000)}s`;
   const mins = Math.floor(ms / 60000);
@@ -80,7 +81,7 @@ interface SidebarContainerProps {
  * SidebarContainer - Main sidebar wrapper with dynamic width
  *
  * Width priority (first match wins):
- * 1. collapsed (20px) - Shows vertical token meter only
+ * 1. collapsed (20px) - Shows collapse button only
  * 2. customWidth - From drag-resize (always available now)
  * 3. wide - Auto-calculated max width for Review/Terminal tabs (when not resizing)
  * 4. default (300px) - Fallback for Costs tab
@@ -153,6 +154,8 @@ interface RightSidebarTabsetNodeProps {
   reviewStats: ReviewStats | null;
   onReviewStatsChange: (stats: ReviewStats | null) => void;
   sessionCost: number | null;
+  statsTabEnabled: boolean;
+  sessionDuration: number | null;
   setLayout: (updater: (prev: RightSidebarLayoutState) => RightSidebarLayoutState) => void;
 }
 
@@ -164,7 +167,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
     props.node.activeTab === "terminal" ? "overflow-hidden p-0" : "overflow-y-auto",
     props.node.activeTab === "review"
       ? "p-0"
-      : props.node.activeTab === "costs"
+      : props.node.activeTab === "costs" || props.node.activeTab === "stats"
         ? "p-[15px]"
         : "p-0"
   );
@@ -289,7 +292,11 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
     }
   };
 
-  const items = props.node.tabs.map((tab) => {
+  const items = props.node.tabs.flatMap((tab) => {
+    if (tab === "stats" && !props.statsTabEnabled) {
+      return [];
+    }
+
     const tabId = `${tabsetBaseId}-tab-${tab}`;
     const panelId = `${tabsetBaseId}-panel-${tab}`;
 
@@ -298,7 +305,9 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
         ? formatKeybind(KEYBINDS.COSTS_TAB)
         : tab === "review"
           ? formatKeybind(KEYBINDS.REVIEW_TAB)
-          : formatKeybind(KEYBINDS.TERMINAL_TAB);
+          : tab === "terminal"
+            ? formatKeybind(KEYBINDS.TERMINAL_TAB)
+            : formatKeybind(KEYBINDS.STATS_TAB);
 
     const label =
       tab === "costs" ? (
@@ -324,19 +333,30 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
             </span>
           )}
         </>
+      ) : tab === "stats" ? (
+        <>
+          Stats
+          {props.sessionDuration !== null && (
+            <span className="text-muted text-[10px]">
+              {formatTabDuration(props.sessionDuration)}
+            </span>
+          )}
+        </>
       ) : (
         <>Terminal</>
       );
 
-    return {
-      id: tabId,
-      panelId,
-      selected: props.node.activeTab === tab,
-      onSelect: () => selectTab(tab),
-      label,
-      tooltip,
-      tab,
-    };
+    return [
+      {
+        id: tabId,
+        panelId,
+        selected: props.node.activeTab === tab,
+        onSelect: () => selectTab(tab),
+        label,
+        tooltip,
+        tab,
+      },
+    ];
   });
 
   const handleTabReorder = (fromIndex: number, toIndex: number) => {
@@ -353,10 +373,12 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
   const costsPanelId = `${tabsetBaseId}-panel-costs`;
   const reviewPanelId = `${tabsetBaseId}-panel-review`;
   const terminalPanelId = `${tabsetBaseId}-panel-terminal`;
+  const statsPanelId = `${tabsetBaseId}-panel-stats`;
 
   const costsTabId = `${tabsetBaseId}-tab-costs`;
   const reviewTabId = `${tabsetBaseId}-tab-review`;
   const terminalTabId = `${tabsetBaseId}-tab-terminal`;
+  const statsTabId = `${tabsetBaseId}-tab-stats`;
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" onMouseDownCapture={setFocused}>
@@ -436,6 +458,19 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
           </div>
         )}
 
+        {props.node.tabs.includes("stats") && props.statsTabEnabled && (
+          <div
+            role="tabpanel"
+            id={statsPanelId}
+            aria-labelledby={statsTabId}
+            hidden={props.node.activeTab !== "stats"}
+          >
+            <ErrorBoundary workspaceInfo="Stats tab">
+              <StatsTab workspaceId={props.workspaceId} />
+            </ErrorBoundary>
+          </div>
+        )}
+
         {props.node.activeTab === "review" && (
           <div role="tabpanel" id={reviewPanelId} aria-labelledby={reviewTabId} className="h-full">
             <ReviewPanel
@@ -500,6 +535,17 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     [layoutRaw, initialActiveTab]
   );
 
+  // If the Stats tab feature is disabled, ensure it doesn't linger in persisted layouts.
+  React.useEffect(() => {
+    if (statsTabEnabled) return;
+
+    setLayoutRaw((prevRaw) => {
+      const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
+      const hasStats = collectActiveTabs(prev.root).includes("stats");
+      if (!hasStats) return prev;
+      return removeTabEverywhere(prev, "stats");
+    });
+  }, [initialActiveTab, setLayoutRaw, statsTabEnabled]);
   // If we ever deserialize an invalid layout (e.g. schema changes), reset to defaults.
   React.useEffect(() => {
     if (!isRightSidebarLayoutState(layoutRaw)) {
@@ -556,14 +602,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
   const usage = useWorkspaceUsage(workspaceId);
 
-  const { options } = useProviderOptions();
-  const _use1M = options.anthropic?.use1MContext ?? false;
-
   const baseId = `right-sidebar-${workspaceId}`;
-
-  // Use lastContextUsage for context window display (last step = actual context size)
-  const lastUsage = usage?.liveUsage ?? usage?.lastContextUsage;
-  const model = lastUsage?.model ?? null;
 
   // Calculate session cost for tab display
   const sessionCost = React.useMemo(() => {
@@ -587,17 +626,13 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
   const statsSnapshot = useWorkspaceStatsSnapshot(workspaceId);
 
-  const _sessionDuration = (() => {
+  const sessionDuration = (() => {
     if (!statsTabEnabled) return null;
     const baseDuration = statsSnapshot?.session?.totalDurationMs ?? 0;
     const activeDuration = statsSnapshot?.active?.elapsedMs ?? 0;
     const total = baseDuration + activeDuration;
     return total > 0 ? total : null;
   })();
-
-  // Auto-compaction settings: threshold per-model
-  const { threshold: _autoCompactThreshold, setThreshold: _setAutoCompactThreshold } =
-    useAutoCompactionSettings(workspaceId, model);
 
   const activeTabs = React.useMemo(() => collectActiveTabs(layout.root), [layout.root]);
 
@@ -647,6 +682,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         onReviewNote={onReviewNote}
         onReviewSelected={() => setFocusTrigger((prev) => prev + 1)}
         reviewStats={reviewStats}
+        statsTabEnabled={statsTabEnabled}
+        sessionDuration={sessionDuration}
         onReviewStatsChange={setReviewStats}
         sessionCost={sessionCost}
         setLayout={setLayout}
@@ -661,39 +698,36 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     <DndProvider backend={HTML5Backend}>
       <SidebarContainer
         collapsed={collapsed}
+        isResizing={isResizing}
         wide={hasWideTab && !width} // Auto-wide only if not drag-resizing
         customWidth={width} // Drag-resized width from AIView
         role="complementary"
         aria-label="Workspace insights"
       >
-        {/* Full view when not collapsed */}
-        <div className={cn("flex-row h-full", !collapsed ? "flex" : "hidden")}>
-          {/* Resize handle (left edge) - always available for sidebar resize */}
-          {onStartResize && (
-            <div
-              className={cn(
-                "w-0.5 flex-shrink-0 z-10 transition-[background] duration-150 cursor-col-resize",
-                isResizing ? "bg-accent" : "bg-border-light hover:bg-accent"
-              )}
-              onMouseDown={(e) => onStartResize(e as unknown as React.MouseEvent)}
-            />
-          )}
+        {!collapsed && (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-row">
+            {/* Resize handle (left edge) */}
+            {onStartResize && (
+              <div
+                className={cn(
+                  "w-0.5 flex-shrink-0 z-10 transition-[background] duration-150 cursor-col-resize",
+                  isResizing ? "bg-accent" : "bg-border-light hover:bg-accent"
+                )}
+                onMouseDown={(e) => onStartResize(e as unknown as React.MouseEvent)}
+              />
+            )}
 
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            {renderLayoutNode(layout.root)}
-          </div>
-        </div>
-
-        {/* Collapsed view - show collapse button to expand */}
-        {collapsed && (
-          <div className="flex h-full items-center justify-center p-2">
-            <SidebarCollapseButton
-              collapsed={collapsed}
-              onToggle={() => setCollapsed(false)}
-              side="right"
-            />
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+              {renderLayoutNode(layout.root)}
+            </div>
           </div>
         )}
+
+        <SidebarCollapseButton
+          collapsed={collapsed}
+          onToggle={() => setCollapsed(!collapsed)}
+          side="right"
+        />
       </SidebarContainer>
     </DndProvider>
   );

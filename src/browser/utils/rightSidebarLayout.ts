@@ -57,6 +57,9 @@ export interface RightSidebarLayoutState {
 }
 
 export function getDefaultRightSidebarLayoutState(activeTab: TabType): RightSidebarLayoutState {
+  const baseTabs: TabType[] = ["costs", "review", "terminal"];
+  const tabs = baseTabs.includes(activeTab) ? baseTabs : [...baseTabs, activeTab];
+
   return {
     version: 1,
     nextId: 2,
@@ -64,7 +67,7 @@ export function getDefaultRightSidebarLayoutState(activeTab: TabType): RightSide
     root: {
       type: "tabset",
       id: "tabset-1",
-      tabs: ["costs", "review", "terminal"],
+      tabs,
       activeTab,
     },
   };
@@ -101,6 +104,59 @@ function allocId(state: RightSidebarLayoutState, prefix: "tabset" | "split") {
   return { id, nextId: state.nextId + 1 };
 }
 
+function removeTabFromNode(
+  node: RightSidebarLayoutNode,
+  tab: TabType
+): RightSidebarLayoutNode | null {
+  if (node.type === "tabset") {
+    const tabs = node.tabs.filter((t) => t !== tab);
+    if (tabs.length === 0) return null;
+
+    const activeTab = node.activeTab === tab ? tabs[0] : node.activeTab;
+    return {
+      ...node,
+      tabs,
+      activeTab: tabs.includes(activeTab) ? activeTab : tabs[0],
+    };
+  }
+
+  const left = removeTabFromNode(node.children[0], tab);
+  const right = removeTabFromNode(node.children[1], tab);
+
+  if (!left && !right) {
+    return null;
+  }
+
+  // If one side goes empty, promote the other side to avoid empty panes.
+  if (!left) return right;
+  if (!right) return left;
+
+  return {
+    ...node,
+    children: [left, right],
+  };
+}
+
+export function removeTabEverywhere(
+  state: RightSidebarLayoutState,
+  tab: TabType
+): RightSidebarLayoutState {
+  const nextRoot = removeTabFromNode(state.root, tab);
+  if (!nextRoot) {
+    return getDefaultRightSidebarLayoutState("costs");
+  }
+
+  const focusedExists = findTabset(nextRoot, state.focusedTabsetId) !== null;
+  const focusedTabsetId = focusedExists
+    ? state.focusedTabsetId
+    : (findFirstTabsetId(nextRoot) ?? "tabset-1");
+
+  return {
+    ...state,
+    root: nextRoot,
+    focusedTabsetId,
+  };
+}
 function updateNode(
   node: RightSidebarLayoutNode,
   tabsetId: string,
