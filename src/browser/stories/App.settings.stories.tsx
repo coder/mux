@@ -5,6 +5,9 @@
  * - General (theme toggle)
  * - Providers (API key configuration)
  * - Models (custom model management)
+ * - Experiments
+ *
+ * NOTE: Projects/MCP stories live in App.mcp.stories.tsx
  *
  * Uses play functions to open the settings modal and navigate to sections.
  */
@@ -200,3 +203,5 @@ export const ExperimentsToggleOff: AppStory = {
     // Default state is OFF - no clicks needed
   },
 };
+
+// NOTE: Projects section stories live in App.projectSettings.stories.tsx

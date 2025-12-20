@@ -1,10 +1,10 @@
 /**
- * MCP (Model Context Protocol) configuration stories
+ * Project Settings stories
  *
- * Shows different states and interactions for MCP server configuration:
- * - Project-level settings (enable/disable servers, tool allowlists)
- * - Workspace-level overrides (enable disabled servers, disable enabled servers)
- * - Tool selection with All/None bulk actions
+ * Shows different states and interactions for project-level configuration:
+ * - MCP servers (enable/disable, tool allowlists)
+ * - Idle compaction settings
+ * - Workspace-level MCP overrides
  *
  * Uses play functions to navigate to settings and interact with the UI.
  */
@@ -19,7 +19,7 @@ import { getMCPTestResultsKey } from "@/common/constants/storage";
 
 export default {
   ...appMeta,
-  title: "App/MCP",
+  title: "App/Project Settings",
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
