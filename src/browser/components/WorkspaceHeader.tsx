@@ -3,7 +3,7 @@ import { Pencil, Server } from "lucide-react";
 import { GitStatusIndicator } from "./GitStatusIndicator";
 import { RuntimeBadge } from "./RuntimeBadge";
 import { BranchSelector } from "./BranchSelector";
-import { WorkspaceMCPModal } from "./WorkspaceMCPModal";
+
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
@@ -13,6 +13,7 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
+import { useSettings } from "@/browser/contexts/SettingsContext";
 
 interface WorkspaceHeaderProps {
   workspaceId: string;
@@ -36,8 +37,8 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const gitStatus = useGitStatus(workspaceId);
   const { canInterrupt } = useWorkspaceSidebarState(workspaceId);
   const { startSequence: startTutorial, isSequenceCompleted } = useTutorial();
+  const { open: openSettings } = useSettings();
   const [editorError, setEditorError] = useState<string | null>(null);
-  const [mcpModalOpen, setMcpModalOpen] = useState(false);
 
   const handleOpenTerminal = useCallback(() => {
     openTerminal(workspaceId, runtimeConfig);
@@ -96,7 +97,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => setMcpModalOpen(true)}
+              onClick={() => openSettings("projects", projectPath)}
               className="text-muted hover:text-foreground h-6 w-6 shrink-0"
               data-testid="workspace-mcp-button"
             >
@@ -104,7 +105,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom" align="center">
-            Configure MCP servers for this workspace
+            Configure MCP servers for this project
           </TooltipContent>
         </Tooltip>
         <Tooltip>
@@ -141,12 +142,6 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           </TooltipContent>
         </Tooltip>
       </div>
-      <WorkspaceMCPModal
-        workspaceId={workspaceId}
-        projectPath={projectPath}
-        open={mcpModalOpen}
-        onOpenChange={setMcpModalOpen}
-      />
     </div>
   );
 };

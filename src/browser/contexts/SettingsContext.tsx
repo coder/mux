@@ -10,7 +10,9 @@ import React, {
 interface SettingsContextValue {
   isOpen: boolean;
   activeSection: string;
-  open: (section?: string) => void;
+  /** Pre-selected project path when opening the projects section */
+  initialProjectPath: string | null;
+  open: (section?: string, projectPath?: string) => void;
   close: () => void;
   setActiveSection: (section: string) => void;
 }
@@ -28,9 +30,11 @@ const DEFAULT_SECTION = "general";
 export function SettingsProvider(props: { children: ReactNode }) {
   const [isOpen, setIsOpen] = useState(false);
   const [activeSection, setActiveSection] = useState(DEFAULT_SECTION);
+  const [initialProjectPath, setInitialProjectPath] = useState<string | null>(null);
 
-  const open = useCallback((section?: string) => {
+  const open = useCallback((section?: string, projectPath?: string) => {
     if (section) setActiveSection(section);
+    setInitialProjectPath(projectPath ?? null);
     setIsOpen(true);
   }, []);
 
@@ -42,11 +46,12 @@ export function SettingsProvider(props: { children: ReactNode }) {
     () => ({
       isOpen,
       activeSection,
+      initialProjectPath,
       open,
       close,
       setActiveSection,
     }),
-    [isOpen, activeSection, open, close]
+    [isOpen, activeSection, initialProjectPath, open, close]
   );
 
   return <SettingsContext.Provider value={value}>{props.children}</SettingsContext.Provider>;
