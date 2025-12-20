@@ -44,7 +44,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
       ).filterDescendantAgentTaskIds;
       const descendantTaskIdSet = new Set(
         typeof bulkFilter === "function"
-          ? bulkFilter(workspaceId, uniqueTaskIds)
+          ? bulkFilter.call(taskService, workspaceId, uniqueTaskIds)
           : uniqueTaskIds.filter((taskId) => taskService.isDescendantAgentTask(workspaceId, taskId))
       );
 
