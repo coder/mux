@@ -44,10 +44,37 @@ export function filterEmptyAssistantMessages(
       return false;
     }
 
-    // Keep assistant messages that have at least one text or tool part
-    const hasContent = msg.parts.some(
-      (part) => (part.type === "text" && part.text) || part.type === "dynamic-tool"
-    );
+    // Keep assistant messages that have at least one part that will survive
+    // conversion to provider ModelMessages.
+    //
+    // Important: We call convertToModelMessages(..., { ignoreIncompleteToolCalls: true }).
+    // That means *incomplete* tool calls (state: "input-available") will be dropped.
+    // If we treat them as content here, we can end up sending an assistant message that
+    // becomes empty after conversion, which the AI SDK rejects ("all messages must have
+    // non-empty content...") and can brick a workspace after a crash.
+    const hasContent = msg.parts.some((part) => {
+      if (part.type === "text") {
+        return part.text.length > 0;
+      }
+
+      // Reasoning-only messages are handled below (provider-dependent).
+      if (part.type === "reasoning") {
+        return false;
+      }
+
+      if (part.type === "dynamic-tool") {
+        // Only completed tool calls produce content that can be replayed to the model.
+        return part.state === "output-available";
+      }
+
+      // File/image parts count as content.
+      if (part.type === "file") {
+        return true;
+      }
+
+      // Future-proofing: unknown parts should not brick the request.
+      return true;
+    });
 
     if (hasContent) {
       return true;

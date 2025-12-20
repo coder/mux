@@ -1151,6 +1151,70 @@ describe("filterEmptyAssistantMessages", () => {
     expect(result2[0].id).toBe("assistant-1");
   });
 
+  it("should filter out assistant messages with only incomplete tool calls (input-available)", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Run a command" }],
+        metadata: { timestamp: 1000 },
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            state: "input-available",
+            toolCallId: "call-1",
+            toolName: "bash",
+            input: { script: "pwd" },
+          },
+        ],
+        metadata: { timestamp: 2000, partial: true },
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Continue" }],
+        metadata: { timestamp: 3000 },
+      },
+    ];
+
+    // Incomplete tool calls are dropped by convertToModelMessages(ignoreIncompleteToolCalls: true),
+    // so we must treat them as empty here to avoid generating an invalid request.
+    const result = filterEmptyAssistantMessages(messages, false);
+    expect(result.map((m) => m.id)).toEqual(["user-1", "user-2"]);
+  });
+
+  it("should preserve assistant messages with completed tool calls (output-available)", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Run a command" }],
+        metadata: { timestamp: 1000 },
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            state: "output-available",
+            toolCallId: "call-1",
+            toolName: "bash",
+            input: { script: "pwd" },
+            output: { stdout: "/home/user" },
+          },
+        ],
+        metadata: { timestamp: 2000 },
+      },
+    ];
+
+    const result = filterEmptyAssistantMessages(messages, false);
+    expect(result.map((m) => m.id)).toEqual(["user-1", "assistant-1"]);
+  });
   it("should filter out assistant messages with only empty text regardless of preserveReasoningOnly", () => {
     const messages: MuxMessage[] = [
       {
