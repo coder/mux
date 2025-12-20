@@ -475,6 +475,7 @@ export const TOOL_DEFINITIONS = {
   task_await: {
     description:
       "Wait for one or more sub-agent tasks to finish and return their reports. " +
+      "Use this tool to WAIT; do not poll task_list in a loop to wait for task completion (that is misuse and wastes tool calls). " +
       "This is similar to Promise.allSettled(): you always get per-task results. " +
       "Possible statuses: completed, queued, running, awaiting_report, not_found, invalid_scope, error.",
     schema: TaskAwaitToolArgsSchema,
@@ -490,7 +491,8 @@ export const TOOL_DEFINITIONS = {
   task_list: {
     description:
       "List descendant sub-agent tasks for the current workspace, including their status and metadata. " +
-      "Use this after compaction or interruptions to rediscover which tasks are still active.",
+      "Use this after compaction or interruptions to rediscover which tasks are still active. " +
+      "This is a discovery tool, NOT a waiting mechanism: if you need to wait for tasks to finish, call task_await (optionally omit task_ids to await all active descendant tasks).",
     schema: TaskListToolArgsSchema,
   },
   agent_report: {
