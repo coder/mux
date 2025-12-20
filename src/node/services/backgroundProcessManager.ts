@@ -107,6 +107,9 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
 
   constructor(bgOutputDir: string) {
     super();
+    // Background bash status can have many concurrent subscribers (e.g. multiple workspaces).
+    // Raise the default listener cap to avoid noisy MaxListenersExceededWarning.
+    this.setMaxListeners(50);
     this.bgOutputDir = bgOutputDir;
   }
 

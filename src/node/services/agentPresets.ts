@@ -63,6 +63,7 @@ const RESEARCH_PRESET: AgentPreset = {
       "- Do not edit files.",
       "- Do not run bash commands unless explicitly enabled (assume it is not).",
       "- If the task tool is available and you need repository exploration beyond file_read, delegate to an Explore sub-agent.",
+      "- Use task_list only for discovery (e.g. after interruptions). Do not poll task_list to wait; use task_await to wait for completion.",
     ],
     delegation: [
       '- If available, use: task({ subagent_type: "explore", prompt: "..." }) when you need repo exploration.',
@@ -90,6 +91,7 @@ const EXPLORE_PRESET: AgentPreset = {
       "- Do not edit files.",
       "- Treat bash as read-only: prefer commands like rg, ls, cat, git show, git diff (read-only).",
       "- If the task tool is available and you need external information, delegate to a Research sub-agent.",
+      "- Use task_list only for discovery (e.g. after interruptions). Do not poll task_list to wait; use task_await to wait for completion.",
     ],
     delegation: [
       '- If available, use: task({ subagent_type: "research", prompt: "..." }) when you need web research.',

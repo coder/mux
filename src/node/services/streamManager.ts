@@ -1481,6 +1481,13 @@ export class StreamManager extends EventEmitter {
   ): Promise<Result<StreamToken, SendMessageError>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
+    if (messages.length === 0) {
+      return Err({
+        type: "unknown",
+        raw: "Invalid prompt: messages must not be empty",
+      });
+    }
+
     // Get or create mutex for this workspace
     if (!this.streamLocks.has(typedWorkspaceId)) {
       this.streamLocks.set(typedWorkspaceId, new AsyncMutex());

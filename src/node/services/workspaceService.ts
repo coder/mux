@@ -113,6 +113,8 @@ export class WorkspaceService extends EventEmitter {
   private readonly postCompactionRefreshTimers = new Map<string, NodeJS.Timeout>();
   // Tracks workspaces currently being renamed to prevent streaming during rename
   private readonly renamingWorkspaces = new Set<string>();
+  // Tracks workspaces currently being removed to prevent new sessions/streams during deletion.
+  private readonly removingWorkspaces = new Set<string>();
 
   constructor(
     private readonly config: Config,
@@ -631,18 +633,19 @@ export class WorkspaceService extends EventEmitter {
   }
 
   async remove(workspaceId: string, force = false): Promise<Result<void>> {
+    const wasRemoving = this.removingWorkspaces.has(workspaceId);
+    this.removingWorkspaces.add(workspaceId);
+
     // Try to remove from runtime (filesystem)
     try {
       // Stop any active stream before deleting metadata/config to avoid tool calls racing with removal.
       try {
-        if (this.aiService.isStreaming(workspaceId)) {
-          const stopResult = await this.aiService.stopStream(workspaceId, { abandonPartial: true });
-          if (!stopResult.success) {
-            log.debug("Failed to stop stream during workspace removal", {
-              workspaceId,
-              error: stopResult.error,
-            });
-          }
+        const stopResult = await this.aiService.stopStream(workspaceId, { abandonPartial: true });
+        if (!stopResult.success) {
+          log.debug("Failed to stop stream during workspace removal", {
+            workspaceId,
+            error: stopResult.error,
+          });
         }
       } catch (error: unknown) {
         log.debug("Failed to stop stream during workspace removal (threw)", { workspaceId, error });
@@ -706,6 +709,10 @@ export class WorkspaceService extends EventEmitter {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Err(`Failed to remove workspace: ${message}`);
+    } finally {
+      if (!wasRemoving) {
+        this.removingWorkspaces.delete(workspaceId);
+      }
     }
   }
 
@@ -1173,6 +1180,23 @@ export class WorkspaceService extends EventEmitter {
         });
       }
 
+      // Block streaming while workspace is being removed to prevent races with config/session deletion.
+      if (this.removingWorkspaces.has(workspaceId)) {
+        log.debug("sendMessage blocked: workspace is being removed", { workspaceId });
+        return Err({
+          type: "unknown",
+          raw: "Workspace is being deleted. Please wait and try again.",
+        });
+      }
+
+      // Guard: avoid creating sessions for workspaces that don't exist anymore.
+      if (!this.config.findWorkspace(workspaceId)) {
+        return Err({
+          type: "unknown",
+          raw: "Workspace not found. It may have been deleted.",
+        });
+      }
+
       // Guard: queued agent tasks must not start streaming via generic sendMessage calls.
       // They should only be started by TaskService once a parallel slot is available.
       if (!internal?.allowQueuedAgentTask) {
@@ -1326,6 +1350,15 @@ export class WorkspaceService extends EventEmitter {
         return Err({
           type: "unknown",
           raw: "Workspace is being renamed. Please wait and try again.",
+        });
+      }
+
+      // Block streaming while workspace is being removed to prevent races with config/session deletion.
+      if (this.removingWorkspaces.has(workspaceId)) {
+        log.debug("resumeStream blocked: workspace is being removed", { workspaceId });
+        return Err({
+          type: "unknown",
+          raw: "Workspace is being deleted. Please wait and try again.",
         });
       }
 
