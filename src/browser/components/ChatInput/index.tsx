@@ -654,6 +654,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const { text, mode = "append", imageParts } = customEvent.detail;
 
       if (mode === "replace") {
+        if (editingMessage) {
+          return;
+        }
         restoreText(text);
       } else {
         appendText(text);
@@ -666,7 +669,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     window.addEventListener(CUSTOM_EVENTS.INSERT_TO_CHAT_INPUT, handler as EventListener);
     return () =>
       window.removeEventListener(CUSTOM_EVENTS.INSERT_TO_CHAT_INPUT, handler as EventListener);
-  }, [appendText, restoreText, restoreImages]);
+  }, [appendText, restoreText, restoreImages, editingMessage]);
 
   // Allow external components to open the Model Selector
   useEffect(() => {

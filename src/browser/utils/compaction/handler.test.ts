@@ -3,8 +3,13 @@ import type { APIClient } from "@/browser/contexts/API";
 import { cancelCompaction } from "./handler";
 
 describe("cancelCompaction", () => {
-  test("interrupts without restore-to-input and enters edit mode with full text", async () => {
-    const interruptStream = mock(() => Promise.resolve({ success: true }));
+  test("enters edit mode with full text before interrupting", async () => {
+    const calls: string[] = [];
+
+    const interruptStream = mock(() => {
+      calls.push("interrupt");
+      return Promise.resolve({ success: true });
+    });
 
     const client = {
       workspace: {
@@ -28,15 +33,19 @@ describe("cancelCompaction", () => {
       ],
     } as unknown as Parameters<typeof cancelCompaction>[2];
 
-    const startEditingMessage = mock(() => undefined);
+    const startEditingMessage = mock(() => {
+      calls.push("edit");
+      return undefined;
+    });
 
     const result = await cancelCompaction(client, "ws-1", aggregator, startEditingMessage);
 
     expect(result).toBe(true);
+    expect(startEditingMessage).toHaveBeenCalledWith("user-1", "/compact -t 100\nDo the thing");
     expect(interruptStream).toHaveBeenCalledWith({
       workspaceId: "ws-1",
-      options: { abandonPartial: true, restoreQueuedToInput: false },
+      options: { abandonPartial: true },
     });
-    expect(startEditingMessage).toHaveBeenCalledWith("user-1", "/compact -t 100\nDo the thing");
+    expect(calls).toEqual(["edit", "interrupt"]);
   });
 });

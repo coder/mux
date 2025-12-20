@@ -85,7 +85,7 @@ export type MuxFrontendMetadata = MuxFrontendMetadataBase &
   (
     | {
         type: "compaction-request";
-        rawCommand: string; // The /compact command line for display (excludes multiline continue payload)
+        rawCommand: string; // The original /compact command as typed by user (for display)
         parsed: CompactionRequestData;
         /** Source of compaction request: user-initiated (undefined) or idle-compaction (auto) */
         source?: "idle-compaction";

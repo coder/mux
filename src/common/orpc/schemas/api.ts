@@ -306,7 +306,6 @@ export const workspace = {
           soft: z.boolean().optional(),
           abandonPartial: z.boolean().optional(),
           sendQueuedImmediately: z.boolean().optional(),
-          restoreQueuedToInput: z.boolean().optional(),
         })
         .optional(),
     }),

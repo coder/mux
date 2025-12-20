@@ -77,16 +77,16 @@ export async function cancelCompaction(
     return false;
   }
 
+  // Enter edit mode first so any subsequent restore-to-input event from the interrupt can't
+  // clobber the edit buffer.
+  startEditingMessage(compactionRequestMsg.id, command);
+
   // Interrupt stream with abandonPartial flag
   // Backend detects this and skips compaction (Ctrl+C flow)
   await client.workspace.interruptStream({
     workspaceId,
-    options: { abandonPartial: true, restoreQueuedToInput: false },
+    options: { abandonPartial: true },
   });
-
-  // Enter edit mode on the compaction-request message with original command
-  // This lets user immediately edit the message or delete it
-  startEditingMessage(compactionRequestMsg.id, command);
 
   return true;
 }
