@@ -39,7 +39,6 @@ import type { PostCompactionAttachment, PostCompactionExclusions } from "@/commo
 import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
 import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
 import { isValidModelFormat } from "@/common/utils/ai/models";
-import { log } from "@/node/services/log";
 
 /**
  * Tracked file state for detecting external edits.
