@@ -1484,6 +1484,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         : `${formatKeybind(KEYBINDS.CANCEL_EDIT)} to cancel`;
       return `Edit your message... (${cancelHint}, ${formatKeybind(KEYBINDS.SEND_MESSAGE)} to send)`;
     }
+    if (disabled) {
+      const disabledReason = props.disabledReason;
+      if (typeof disabledReason === "string" && disabledReason.trim().length > 0) {
+        return disabledReason;
+      }
+    }
     if (isCompacting) {
       const interruptKeybind = vimEnabled
         ? KEYBINDS.INTERRUPT_STREAM_VIM

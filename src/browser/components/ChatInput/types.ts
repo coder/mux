@@ -28,6 +28,8 @@ export interface ChatInputWorkspaceVariant {
   onEditLastUserMessage?: () => void;
   canInterrupt?: boolean;
   disabled?: boolean;
+  /** Optional explanation displayed when input is disabled */
+  disabledReason?: string;
   onReady?: (api: ChatInputAPI) => void;
   autoCompactionCheck?: AutoCompactionCheckResult; // Computed in parent (AIView) to avoid duplicate calculation
   /** Reviews currently attached to chat (from useReviews hook) */

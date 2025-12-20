@@ -800,6 +800,11 @@ const AIViewInner: React.FC<AIViewProps> = ({
           onTruncateHistory={handleClearHistory}
           onProviderConfig={handleProviderConfig}
           disabled={!projectName || !workspaceName || isQueuedAgentTask}
+          disabledReason={
+            isQueuedAgentTask
+              ? "Queued — waiting for an available parallel task slot. This will start automatically."
+              : undefined
+          }
           isCompacting={isCompacting}
           editingMessage={editingMessage}
           onCancelEdit={handleCancelEdit}

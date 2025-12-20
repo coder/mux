@@ -156,6 +156,8 @@ export class TaskService {
   private readonly mutex = new AsyncMutex();
   private readonly pendingWaitersByTaskId = new Map<string, PendingTaskWaiter[]>();
   private readonly pendingStartWaitersByTaskId = new Map<string, PendingTaskStartWaiter[]>();
+  // Cache completed reports so callers can retrieve them even after the task workspace is removed.
+  // Bounded by TTL + max entries (see COMPLETED_REPORT_CACHE_*).
   private readonly completedReportsByTaskId = new Map<
     string,
     { reportMarkdown: string; title?: string; expiresAtMs: number }
