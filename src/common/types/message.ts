@@ -261,6 +261,7 @@ export type DisplayedMessage =
       lines: string[]; // Accumulated output lines (stderr prefixed with "ERROR:")
       exitCode: number | null; // Final exit code (null while running)
       timestamp: number;
+      durationMs: number | null; // Duration in milliseconds (null while running)
     }
   | {
       type: "plan-display"; // Ephemeral plan display from /plan command

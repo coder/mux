@@ -9,10 +9,22 @@ interface InitMessageProps {
   className?: string;
 }
 
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 10000) return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 60000) return `${Math.round(ms / 1000)}s`;
+  const mins = Math.floor(ms / 60000);
+  const secs = Math.round((ms % 60000) / 1000);
+  return `${mins}m ${secs}s`;
+}
+
 export const InitMessage = React.memo<InitMessageProps>(({ message, className }) => {
   const isError = message.status === "error";
   const isRunning = message.status === "running";
   const isSuccess = message.status === "success";
+
+  const durationText =
+    message.durationMs !== null ? ` in ${formatDuration(message.durationMs)}` : "";
 
   return (
     <div
@@ -43,23 +55,30 @@ export const InitMessage = React.memo<InitMessageProps>(({ message, className })
           {isRunning ? (
             <Shimmer colorClass="var(--color-accent)">Running init hook...</Shimmer>
           ) : isSuccess ? (
-            "Init hook completed"
+            `Init hook completed${durationText}`
           ) : (
-            <span className="text-error">Init hook failed (exit code {message.exitCode})</span>
+            <span className="text-error">
+              Init hook failed (exit code {message.exitCode}){durationText}
+            </span>
           )}
         </span>
       </div>
       <div className="text-muted mt-1 truncate font-mono text-[11px]">{message.hookPath}</div>
       {message.lines.length > 0 && (
-        <pre
+        <div
           className={cn(
-            "m-0 mt-2.5 max-h-[120px] overflow-auto rounded-sm",
-            "bg-black/30 px-2 py-1.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap",
+            "m-0 mt-2.5 flex max-h-[120px] flex-col-reverse overflow-auto rounded-sm",
+            "bg-black/30 px-2 py-1.5 font-mono text-[11px] leading-relaxed",
             isError ? "text-danger-soft" : "text-light"
           )}
         >
-          {message.lines.join("\n")}
-        </pre>
+          {/* flex-col-reverse with reversed array auto-scrolls to bottom */}
+          {message.lines.toReversed().map((line, i) => (
+            <div key={i} className="whitespace-pre-wrap">
+              {line}
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

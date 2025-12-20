@@ -200,7 +200,8 @@ export class StreamingMessageAggregator {
     hookPath: string;
     lines: string[];
     exitCode: number | null;
-    timestamp: number;
+    startTime: number;
+    endTime: number | null;
   } | null = null;
 
   // Track when we're waiting for stream-start after user message
@@ -1288,7 +1289,8 @@ export class StreamingMessageAggregator {
         hookPath: data.hookPath,
         lines: [],
         exitCode: null,
-        timestamp: data.timestamp,
+        startTime: data.timestamp,
+        endTime: null,
       };
       this.invalidateCache();
       return;
@@ -1321,6 +1323,7 @@ export class StreamingMessageAggregator {
       }
       this.initState.exitCode = data.exitCode;
       this.initState.status = data.exitCode === 0 ? "success" : "error";
+      this.initState.endTime = data.timestamp;
       this.invalidateCache();
       return;
     }
@@ -1624,6 +1627,10 @@ export class StreamingMessageAggregator {
 
       // Add init state if present (ephemeral, appears at top)
       if (this.initState) {
+        const durationMs =
+          this.initState.endTime !== null
+            ? this.initState.endTime - this.initState.startTime
+            : null;
         const initMessage: DisplayedMessage = {
           type: "workspace-init",
           id: "workspace-init",
@@ -1632,7 +1639,8 @@ export class StreamingMessageAggregator {
           hookPath: this.initState.hookPath,
           lines: [...this.initState.lines], // Shallow copy for React.memo change detection
           exitCode: this.initState.exitCode,
-          timestamp: this.initState.timestamp,
+          timestamp: this.initState.startTime,
+          durationMs,
         };
         displayedMessages.unshift(initMessage);
       }
