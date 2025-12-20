@@ -623,6 +623,13 @@ export class AgentSession {
     if (!historyResult.success) {
       return Err(createUnknownSendMessageError(historyResult.error));
     }
+    if (historyResult.data.length === 0) {
+      return Err(
+        createUnknownSendMessageError(
+          "Cannot resume stream: workspace history is empty. Send a new message instead."
+        )
+      );
+    }
 
     // Check for external file edits (timestamp-based polling)
     const changedFileAttachments = await this.getChangedFileAttachments();

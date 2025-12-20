@@ -633,6 +633,21 @@ export class WorkspaceService extends EventEmitter {
   async remove(workspaceId: string, force = false): Promise<Result<void>> {
     // Try to remove from runtime (filesystem)
     try {
+      // Stop any active stream before deleting metadata/config to avoid tool calls racing with removal.
+      try {
+        if (this.aiService.isStreaming(workspaceId)) {
+          const stopResult = await this.aiService.stopStream(workspaceId, { abandonPartial: true });
+          if (!stopResult.success) {
+            log.debug("Failed to stop stream during workspace removal", {
+              workspaceId,
+              error: stopResult.error,
+            });
+          }
+        }
+      } catch (error: unknown) {
+        log.debug("Failed to stop stream during workspace removal (threw)", { workspaceId, error });
+      }
+
       const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
       if (metadataResult.success) {
         const metadata = metadataResult.data;
@@ -1311,6 +1326,14 @@ export class WorkspaceService extends EventEmitter {
         return Err({
           type: "unknown",
           raw: "Workspace is being renamed. Please wait and try again.",
+        });
+      }
+
+      // Guard: avoid creating sessions for workspaces that don't exist anymore.
+      if (!this.config.findWorkspace(workspaceId)) {
+        return Err({
+          type: "unknown",
+          raw: "Workspace not found. It may have been deleted.",
         });
       }
 

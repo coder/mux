@@ -185,6 +185,8 @@ export class TaskService {
     this.aiService.on("tool-call-end", (payload: unknown) => {
       if (!isToolCallEndEvent(payload)) return;
       if (payload.toolName !== "agent_report") return;
+      // Ignore failed agent_report attempts (e.g. tool rejected due to active descendants).
+      if (!isSuccessfulToolResult(payload.result)) return;
       void this.handleAgentReport(payload).catch((error: unknown) => {
         log.error("TaskService.handleAgentReport failed", { error });
       });
@@ -1721,7 +1723,14 @@ export class TaskService {
     const childEntry = this.findWorkspaceEntry(cfgAfterReport, childWorkspaceId);
     const parentWorkspaceId = childEntry?.workspace.parentWorkspaceId;
     if (!parentWorkspaceId) {
-      log.error("agent_report called from non-task workspace", { childWorkspaceId });
+      const reason = childEntry ? "missing parentWorkspaceId" : "workspace not found in config";
+      log.debug("Ignoring agent_report: workspace is not an agent task", {
+        childWorkspaceId,
+        reason,
+      });
+      // Best-effort: resolve any foreground waiters even if we can't deliver to a parent.
+      this.resolveWaiters(childWorkspaceId, reportArgs);
+      void this.maybeStartQueuedTasks();
       return;
     }
 
@@ -1738,6 +1747,10 @@ export class TaskService {
 
     // Auto-resume any parent stream that was waiting on a task tool call (restart-safe).
     const postCfg = this.config.loadConfigOrDefault();
+    if (!this.findWorkspaceEntry(postCfg, parentWorkspaceId)) {
+      // Parent may have been cleaned up (e.g. it already reported and this was its last descendant).
+      return;
+    }
     const hasActiveDescendants = this.hasActiveDescendantAgentTasks(postCfg, parentWorkspaceId);
     if (!hasActiveDescendants && !this.aiService.isStreaming(parentWorkspaceId)) {
       const resumeResult = await this.workspaceService.resumeStream(parentWorkspaceId, {
