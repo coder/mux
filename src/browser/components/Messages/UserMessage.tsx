@@ -7,6 +7,7 @@ import { TerminalOutput } from "./TerminalOutput";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { copyToClipboard } from "@/browser/utils/clipboard";
+import { buildCompactionEditText } from "@/browser/utils/compaction/format";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { Clipboard, ClipboardCheck, Pencil } from "lucide-react";
@@ -48,7 +49,10 @@ export const UserMessage: React.FC<UserMessageProps> = ({
 
   const handleEdit = () => {
     if (onEdit && !isLocalCommandOutput) {
-      onEdit(message.historyId, content);
+      const editText = message.compactionRequest
+        ? buildCompactionEditText(message.compactionRequest)
+        : content;
+      onEdit(message.historyId, editText);
     }
   };
 

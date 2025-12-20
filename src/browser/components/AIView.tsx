@@ -60,6 +60,7 @@ import { CompactionWarning } from "./CompactionWarning";
 import { ConcurrentLocalWarning } from "./ConcurrentLocalWarning";
 import { BackgroundProcessesBanner } from "./BackgroundProcessesBanner";
 import { useBackgroundBashHandlers } from "@/browser/hooks/useBackgroundBashHandlers";
+import { buildCompactionEditText } from "@/browser/utils/compaction/format";
 import { checkAutoCompaction } from "@/browser/utils/compaction/autoCompactionCheck";
 import { executeCompaction } from "@/browser/utils/chatCommands";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
@@ -357,7 +358,12 @@ const AIViewInner: React.FC<AIViewProps> = ({
       return;
     }
 
-    setEditingMessage({ id: lastUserMessage.historyId, content: lastUserMessage.content });
+    setEditingMessage({
+      id: lastUserMessage.historyId,
+      content: lastUserMessage.compactionRequest
+        ? buildCompactionEditText(lastUserMessage.compactionRequest)
+        : lastUserMessage.content,
+    });
     setAutoScroll(false); // Show jump-to-bottom indicator
 
     // Scroll to the message being edited

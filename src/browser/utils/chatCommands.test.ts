@@ -166,6 +166,25 @@ describe("prepareCompactionMessage", () => {
     expect(metadata.parsed.continueMessage?.text).toBe("Continue with this");
   });
 
+  test("rawCommand excludes multiline continue payload", () => {
+    const sendMessageOptions = createBaseOptions();
+    const { metadata } = prepareCompactionMessage({
+      workspaceId: "ws-1",
+      maxOutputTokens: 2048,
+      model: "anthropic:claude-3-5-haiku",
+      continueMessage: { text: "Line 1\nLine 2" },
+      sendMessageOptions,
+    });
+
+    if (metadata.type !== "compaction-request") {
+      throw new Error("Expected compaction metadata");
+    }
+
+    expect(metadata.rawCommand).toBe("/compact -t 2048 -m anthropic:claude-3-5-haiku");
+    expect(metadata.rawCommand).not.toContain("Line 1");
+    expect(metadata.rawCommand).not.toContain("\n");
+  });
+
   test("omits default resume text from compaction prompt", () => {
     const sendMessageOptions = createBaseOptions();
     const { messageText, metadata } = prepareCompactionMessage({

@@ -1449,7 +1449,12 @@ export class WorkspaceService extends EventEmitter {
 
   async interruptStream(
     workspaceId: string,
-    options?: { soft?: boolean; abandonPartial?: boolean; sendQueuedImmediately?: boolean }
+    options?: {
+      soft?: boolean;
+      abandonPartial?: boolean;
+      sendQueuedImmediately?: boolean;
+      restoreQueuedToInput?: boolean;
+    }
   ): Promise<Result<void>> {
     try {
       const session = this.getOrCreateSession(workspaceId);
@@ -1470,6 +1475,9 @@ export class WorkspaceService extends EventEmitter {
       if (options?.sendQueuedImmediately) {
         // Send queued messages immediately instead of restoring to input
         session.sendQueuedMessages();
+      } else if (options?.restoreQueuedToInput === false) {
+        // Explicitly drop queued messages (used by cancel-compaction so we don't clobber edit mode)
+        session.clearQueue();
       } else {
         // Restore queued messages to input box for user-initiated interrupts
         session.restoreQueueToInput();
