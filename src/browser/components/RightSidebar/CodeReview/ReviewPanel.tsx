@@ -182,6 +182,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 }) => {
   const { api } = useAPI();
   const panelRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Unified diff state - discriminated union makes invalid states unrepresentable
@@ -248,6 +249,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   const isUserInteractingRef = useRef(false);
   const pendingRefreshRef = useRef(false);
 
+  // Save scroll position before refresh to restore after
+  const savedScrollTopRef = useRef<number | null>(null);
+
   const [filters, setFilters] = useState<ReviewFiltersType>({
     showReadHunks: showReadHunks,
     diffBase: diffBase,
@@ -273,6 +277,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
       // Skip if already refreshing (for origin/* bases with fetch)
       if (isRefreshingRef.current) return;
+
+      // Save scroll position before refresh
+      savedScrollTopRef.current = scrollContainerRef.current?.scrollTop ?? null;
 
       const originBranch = getOriginBranchForFetch(filters.diffBase);
       if (originBranch) {
@@ -324,6 +331,18 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       handleRefreshRef.current();
     }
   }, [isPanelFocused]);
+
+  // Restore scroll position after auto-refresh completes
+  useEffect(() => {
+    if (
+      diffState.status === "loaded" &&
+      savedScrollTopRef.current !== null &&
+      scrollContainerRef.current
+    ) {
+      scrollContainerRef.current.scrollTop = savedScrollTopRef.current;
+      savedScrollTopRef.current = null;
+    }
+  }, [diffState.status]);
 
   // Focus panel when focusTrigger changes (preserves current hunk selection)
 
@@ -989,7 +1008,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           </div>
 
           {/* Single scrollable area containing both file tree and hunks */}
-          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          <div ref={scrollContainerRef} className="flex min-h-0 flex-1 flex-col overflow-y-auto">
             {/* FileTree at the top */}
             {(fileTree ?? isLoadingTree) && (
               <div className="border-border-light flex w-full flex-[0_0_auto] flex-col overflow-hidden border-b">
