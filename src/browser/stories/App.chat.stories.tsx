@@ -15,6 +15,8 @@ import {
   createGenericTool,
   createPendingTool,
 } from "./mockFactory";
+
+import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getModelKey } from "@/common/constants/storage";
 import { setupSimpleChatStory, setupStreamingChatStory, setWorkspaceInput } from "./storyHelpers";
@@ -960,6 +962,130 @@ export const DiffPaddingAlignment: AppStory = {
           "The bottom red padding strip should align exactly with the gutter/content boundary. " +
           "Before the fix, the padding strip used ch units without font-monospace, " +
           "causing misalignment that scaled with line number width.",
+      },
+    },
+  },
+};
+
+/**
+ * Story showing the InitMessage component in success state.
+ * Tests the workspace init hook display with completed status.
+ */
+export const InitHookSuccess: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-init-success",
+          messages: [
+            createUserMessage("msg-1", "Start working on the project", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 100000,
+            }),
+          ],
+          onChat: (_wsId, emit) => {
+            // Emit init events to show completed init hook
+            setTimeout(() => {
+              emit({
+                type: "init-start",
+                hookPath: "/home/user/projects/my-app/.mux/init.sh",
+                timestamp: STABLE_TIMESTAMP - 110000,
+              } as WorkspaceChatMessage);
+              emit({
+                type: "init-output",
+                line: "Installing dependencies...",
+                timestamp: STABLE_TIMESTAMP - 109000,
+              } as WorkspaceChatMessage);
+              emit({
+                type: "init-output",
+                line: "Setting up environment variables...",
+                timestamp: STABLE_TIMESTAMP - 108000,
+              } as WorkspaceChatMessage);
+              emit({
+                type: "init-output",
+                line: "Starting development server...",
+                timestamp: STABLE_TIMESTAMP - 107000,
+              } as WorkspaceChatMessage);
+              emit({
+                type: "init-end",
+                exitCode: 0,
+                timestamp: STABLE_TIMESTAMP - 106000,
+              } as WorkspaceChatMessage);
+            }, 100);
+          },
+        })
+      }
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Shows the InitMessage component after a successful init hook execution. " +
+          "The message displays with a green checkmark, hook path, and output lines.",
+      },
+    },
+  },
+};
+
+/**
+ * Story showing the InitMessage component in error state.
+ * Tests the workspace init hook display with failed status.
+ */
+export const InitHookError: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-init-error",
+          messages: [
+            createUserMessage("msg-1", "Start working on the project", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 100000,
+            }),
+          ],
+          onChat: (_wsId, emit) => {
+            // Emit init events to show failed init hook
+            setTimeout(() => {
+              emit({
+                type: "init-start",
+                hookPath: "/home/user/projects/my-app/.mux/init.sh",
+                timestamp: STABLE_TIMESTAMP - 110000,
+              } as WorkspaceChatMessage);
+              emit({
+                type: "init-output",
+                line: "Installing dependencies...",
+                timestamp: STABLE_TIMESTAMP - 109000,
+              } as WorkspaceChatMessage);
+              emit({
+                type: "init-output",
+                line: "ERROR: Failed to install package 'missing-dep'",
+                timestamp: STABLE_TIMESTAMP - 108000,
+                isError: true,
+              } as WorkspaceChatMessage);
+              emit({
+                type: "init-output",
+                line: "ERROR: npm ERR! code E404",
+                timestamp: STABLE_TIMESTAMP - 107500,
+                isError: true,
+              } as WorkspaceChatMessage);
+              emit({
+                type: "init-end",
+                exitCode: 1,
+                timestamp: STABLE_TIMESTAMP - 107000,
+              } as WorkspaceChatMessage);
+            }, 100);
+          },
+        })
+      }
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Shows the InitMessage component after a failed init hook execution. " +
+          "The message displays with a red alert icon, error styling, and error output.",
       },
     },
   },
