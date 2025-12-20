@@ -157,6 +157,45 @@ describe("PartialService - Error Recovery", () => {
     expect(deletePartial).toHaveBeenCalledWith(workspaceId);
   });
 
+  test("commitToHistory should skip tool-only incomplete partials", async () => {
+    const workspaceId = "test-workspace";
+    const toolOnlyPartial: MuxMessage = {
+      id: "msg-1",
+      role: "assistant",
+      metadata: {
+        historySequence: 1,
+        timestamp: Date.now(),
+        model: "test-model",
+        partial: true,
+        error: "Stream interrupted",
+        errorType: "network",
+      },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "call-1",
+          toolName: "bash",
+          state: "input-available",
+          input: { script: "echo test", timeout_secs: 10, display_name: "Test" },
+        },
+      ],
+    };
+
+    partialService.readPartial = mock(() => Promise.resolve(toolOnlyPartial));
+    partialService.deletePartial = mock(() => Promise.resolve(Ok(undefined)));
+    mockHistoryService.getHistory = mock(() => Promise.resolve(Ok([])));
+
+    const result = await partialService.commitToHistory(workspaceId);
+    expect(result.success).toBe(true);
+
+    const appendToHistory = mockHistoryService.appendToHistory as ReturnType<typeof mock>;
+    const updateHistory = mockHistoryService.updateHistory as ReturnType<typeof mock>;
+    expect(appendToHistory).not.toHaveBeenCalled();
+    expect(updateHistory).not.toHaveBeenCalled();
+
+    const deletePartial = partialService.deletePartial as ReturnType<typeof mock>;
+    expect(deletePartial).toHaveBeenCalledWith(workspaceId);
+  });
   test("commitToHistory should skip empty errored partial", async () => {
     const workspaceId = "test-workspace";
     const emptyErrorPartial: MuxMessage = {

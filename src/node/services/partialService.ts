@@ -152,6 +152,31 @@ export class PartialService {
       }
 
       const existingMessages = historyResult.data;
+
+      const hasCommitWorthyParts = (partial.parts ?? []).some((part) => {
+        if (part.type === "text") {
+          return part.text.length > 0;
+        }
+
+        if (part.type === "reasoning") {
+          // Reasoning may be needed for provider-specific replay (e.g., Extended Thinking).
+          // It is real content and safe to persist.
+          return part.text.length > 0;
+        }
+
+        if (part.type === "file") {
+          return true;
+        }
+
+        if (part.type === "dynamic-tool") {
+          // Incomplete tool calls (input-available) are dropped when converting messages
+          // for provider requests (ignoreIncompleteToolCalls: true). Persisting a tool-only
+          // partial can brick future requests after a crash.
+          return part.state === "output-available";
+        }
+
+        return false;
+      });
       const existingMessage = existingMessages.find(
         (msg) => msg.metadata?.historySequence === partialSeq
       );
@@ -159,7 +184,7 @@ export class PartialService {
       const shouldCommit =
         (!existingMessage || // No message with this sequence yet
           (partial.parts?.length ?? 0) > (existingMessage.parts?.length ?? 0)) && // Partial has more parts
-        (partial.parts?.length ?? 0) > 0; // Don't commit empty messages
+        hasCommitWorthyParts; // Don't commit tool-only incomplete placeholders
 
       if (shouldCommit) {
         if (existingMessage) {
