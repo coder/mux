@@ -54,9 +54,18 @@ export interface ConnectionHealth {
 }
 
 /**
- * Backoff schedule in seconds: 1s → 5s → 10s → 20s → 40s → 60s (cap)
+ * Backoff schedule in seconds: 1s → 2s → 4s → 7s → 10s (cap)
+ * Kept short to avoid blocking user actions; thundering herd is mitigated by jitter.
  */
-const BACKOFF_SCHEDULE = [1, 5, 10, 20, 40, 60];
+const BACKOFF_SCHEDULE = [1, 2, 4, 7, 10];
+
+/**
+ * Add ±20% jitter to prevent thundering herd when multiple clients recover simultaneously.
+ */
+function withJitter(seconds: number): number {
+  const jitterFactor = 0.8 + Math.random() * 0.4; // 0.8 to 1.2
+  return seconds * jitterFactor;
+}
 
 /**
  * Time after which a "healthy" connection should be re-probed.
@@ -315,7 +324,7 @@ export class SSHConnectionPool {
     const current = this.health.get(key);
     const failures = (current?.consecutiveFailures ?? 0) + 1;
     const backoffIndex = Math.min(failures - 1, BACKOFF_SCHEDULE.length - 1);
-    const backoffSecs = BACKOFF_SCHEDULE[backoffIndex];
+    const backoffSecs = withJitter(BACKOFF_SCHEDULE[backoffIndex]);
 
     this.health.set(key, {
       status: "unhealthy",
@@ -326,7 +335,7 @@ export class SSHConnectionPool {
     });
 
     log.warn(
-      `SSH connection failed (${failures} consecutive). Backoff for ${backoffSecs}s. Error: ${error}`
+      `SSH connection failed (${failures} consecutive). Backoff for ${backoffSecs.toFixed(1)}s. Error: ${error}`
     );
   }
 
