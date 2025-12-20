@@ -68,7 +68,10 @@ export function reorderProjects(
 export function normalizeOrder(order: string[], projects: Map<string, ProjectConfig>): string[] {
   const present = new Set(projects.keys());
   const filtered = order.filter((p) => present.has(p));
-  const missing = Array.from(projects.keys()).filter((p) => !filtered.includes(p));
+  // Sort missing projects lexically for deterministic order (avoids flaky UI in Storybook)
+  const missing = Array.from(projects.keys())
+    .filter((p) => !filtered.includes(p))
+    .sort((a, b) => a.localeCompare(b));
   return [...missing, ...filtered];
 }
 

@@ -69,11 +69,25 @@ describe("projectOrdering", () => {
       expect(result).toEqual(["/a", "/b"]);
     });
 
-    it("prepends new projects to the front", () => {
+    it("prepends new projects to the front in lexical order", () => {
       const projects = createProjects(["/a", "/b", "/c", "/d"]);
       const order = ["/b", "/a"];
       const result = normalizeOrder(order, projects);
+      // /c and /d are missing from order, prepended in lexical order
       expect(result).toEqual(["/c", "/d", "/b", "/a"]);
+    });
+
+    it("sorts missing projects lexically for deterministic order", () => {
+      // Even if Map iteration order is non-lexical, missing projects should be sorted
+      const projects = new Map<string, ProjectConfig>([
+        ["/z-project", { workspaces: [] }],
+        ["/a-project", { workspaces: [] }],
+        ["/m-project", { workspaces: [] }],
+      ]);
+      const order: string[] = []; // empty order, all projects are "missing"
+      const result = normalizeOrder(order, projects);
+      // Should be lexically sorted regardless of Map insertion order
+      expect(result).toEqual(["/a-project", "/m-project", "/z-project"]);
     });
 
     it("preserves order of existing projects", () => {
