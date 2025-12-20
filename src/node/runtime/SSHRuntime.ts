@@ -625,6 +625,12 @@ export class SSHRuntime implements Runtime {
 
       // Step 2: Create bundle locally and pipe to remote file via SSH
       initLogger.logStep(`Creating git bundle...`);
+
+      // Ensure SSH connection is established before starting the bundle transfer
+      // Without this, the SSH command in the pipe may fail to connect, causing
+      // the git bundle process to receive SIGPIPE and report "pack-objects died"
+      await sshConnectionPool.acquireConnection(this.config);
+
       await new Promise<void>((resolve, reject) => {
         // Check if aborted before spawning
         if (abortSignal?.aborted) {
