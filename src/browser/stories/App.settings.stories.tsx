@@ -113,9 +113,18 @@ export const Tasks: AppStory = {
 
     await body.findByText(/Max Parallel Agent Tasks/i);
     await body.findByText(/Max Task Nesting Depth/i);
-    await body.findByText(/Sub-agents/i);
-    await body.findByText(/Explore/i);
-    if (body.queryByText(/Exec/i)) {
+    const subagentsHeading = await body.findByRole("heading", { name: /Sub-agents/i });
+    const subagentsSection = subagentsHeading.parentElement;
+    if (!subagentsSection) {
+      throw new Error("Expected Sub-agents section container to exist");
+    }
+
+    const subagents = within(subagentsSection);
+
+    await subagents.findByText(/^Explore$/i);
+
+    const execMatches = subagents.queryAllByText(/^Exec$/i);
+    if (execMatches.length > 0) {
       throw new Error("Expected Exec sub-agent settings to be hidden (always inherits)");
     }
 
