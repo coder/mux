@@ -16,6 +16,7 @@ import type { APIClient } from "@/browser/contexts/API";
 import {
   SELECTED_WORKSPACE_KEY,
   EXPANDED_PROJECTS_KEY,
+  RIGHT_SIDEBAR_COLLAPSED_KEY,
   getInputKey,
   getModelKey,
   getReviewsKey,
@@ -68,6 +69,16 @@ export function setWorkspaceModel(workspaceId: string, model: string): void {
 /** Expand projects in the sidebar */
 export function expandProjects(projectPaths: string[]): void {
   localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(projectPaths));
+}
+
+/** Collapse the right sidebar (default for most stories) */
+export function collapseRightSidebar(): void {
+  localStorage.setItem(RIGHT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(true));
+}
+
+/** Expand the right sidebar (for stories testing it) */
+export function expandRightSidebar(): void {
+  localStorage.setItem(RIGHT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(false));
 }
 
 /** Set reviews for a workspace */
@@ -191,8 +202,9 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
     ? new Map<string, GitStatusFixture>([[workspaceId, opts.gitStatus]])
     : undefined;
 
-  // Set localStorage for workspace selection
+  // Set localStorage for workspace selection and collapse right sidebar by default
   selectWorkspace(workspaces[0]);
+  collapseRightSidebar();
 
   // Set up background processes map
   const bgProcesses = opts.backgroundProcesses
@@ -277,8 +289,9 @@ export function setupStreamingChatStory(opts: StreamingChatSetupOptions): APICli
     ? new Map<string, GitStatusFixture>([[workspaceId, opts.gitStatus]])
     : undefined;
 
-  // Set localStorage for workspace selection
+  // Set localStorage for workspace selection and collapse right sidebar by default
   selectWorkspace(workspaces[0]);
+  collapseRightSidebar();
 
   const workspaceStatsSnapshots = new Map<string, WorkspaceStatsSnapshot>();
   if (opts.statsTabEnabled) {
@@ -353,8 +366,9 @@ export function setupCustomChatStory(opts: CustomChatSetupOptions): APIClient {
 
   const chatHandlers = new Map([[workspaceId, opts.chatHandler]]);
 
-  // Set localStorage for workspace selection
+  // Set localStorage for workspace selection and collapse right sidebar by default
   selectWorkspace(workspaces[0]);
+  collapseRightSidebar();
 
   // Return ORPC client
   return createMockORPCClient({

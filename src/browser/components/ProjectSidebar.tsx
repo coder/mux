@@ -19,6 +19,7 @@ import {
   AGE_THRESHOLDS_DAYS,
 } from "@/browser/utils/ui/workspaceFiltering";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
+import { SidebarCollapseButton } from "./ui/SidebarCollapseButton";
 import SecretsModal from "./SecretsModal";
 import type { Secret } from "@/common/types/secrets";
 import { ForceDeleteModal } from "./ForceDeleteModal";
@@ -714,21 +715,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
               </div>
             </>
           )}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={onToggleCollapsed}
-                aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-                className="text-muted border-dark hover:bg-hover hover:text-foreground mt-auto flex h-9 w-full cursor-pointer items-center justify-center border-t border-none bg-transparent p-0 text-sm transition-all duration-200"
-              >
-                {collapsed ? "»" : "«"}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent align="center">
-              {collapsed ? "Expand sidebar" : "Collapse sidebar"} (
-              {formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)})
-            </TooltipContent>
-          </Tooltip>
+          <SidebarCollapseButton
+            collapsed={collapsed}
+            onToggle={onToggleCollapsed}
+            side="left"
+            shortcut={formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)}
+          />
           {secretsModalState && (
             <SecretsModal
               isOpen={secretsModalState.isOpen}

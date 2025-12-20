@@ -5,7 +5,7 @@
  */
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { setupSimpleChatStory, setupStreamingChatStory } from "./storyHelpers";
+import { setupSimpleChatStory, setupStreamingChatStory, expandRightSidebar } from "./storyHelpers";
 import { createUserMessage, createAssistantMessage } from "./mockFactory";
 import { within, userEvent, waitFor } from "@storybook/test";
 import {
@@ -73,7 +73,7 @@ export const CostsTab: AppStory = {
         localStorage.setItem(RIGHT_SIDEBAR_COSTS_WIDTH_KEY, "350");
         localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
 
-        return setupSimpleChatStory({
+        const client = setupSimpleChatStory({
           workspaceId: "ws-costs",
           workspaceName: "feature/api",
           projectName: "my-app",
@@ -85,6 +85,8 @@ export const CostsTab: AppStory = {
           ],
           sessionUsage: createSessionUsage(0.56),
         });
+        expandRightSidebar();
+        return client;
       }}
     />
   ),
@@ -113,7 +115,7 @@ export const CostsTabWithCacheCreate: AppStory = {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
         localStorage.setItem(RIGHT_SIDEBAR_COSTS_WIDTH_KEY, "350");
 
-        return setupSimpleChatStory({
+        const client = setupSimpleChatStory({
           workspaceId: "ws-cache-create",
           workspaceName: "feature/caching",
           projectName: "my-app",
@@ -138,6 +140,8 @@ export const CostsTabWithCacheCreate: AppStory = {
             version: 1,
           },
         });
+        expandRightSidebar();
+        return client;
       }}
     />
   ),
@@ -168,7 +172,7 @@ export const ReviewTab: AppStory = {
         localStorage.setItem(RIGHT_SIDEBAR_COSTS_WIDTH_KEY, "350");
         localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
 
-        return setupSimpleChatStory({
+        const client = setupSimpleChatStory({
           workspaceId: "ws-review",
           workspaceName: "feature/review",
           projectName: "my-app",
@@ -178,6 +182,8 @@ export const ReviewTab: AppStory = {
           ],
           sessionUsage: createSessionUsage(0.42),
         });
+        expandRightSidebar();
+        return client;
       }}
     />
   ),
@@ -210,7 +216,7 @@ export const StatsTabIdle: AppStory = {
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("stats"));
 
-        return setupSimpleChatStory({
+        const client = setupSimpleChatStory({
           workspaceId: "ws-stats-idle",
           workspaceName: "feature/stats",
           projectName: "my-app",
@@ -220,6 +226,8 @@ export const StatsTabIdle: AppStory = {
           ],
           sessionUsage: createSessionUsage(0.25),
         });
+        expandRightSidebar();
+        return client;
       }}
     />
   ),
@@ -245,7 +253,7 @@ export const StatsTabStreaming: AppStory = {
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("stats"));
 
-        return setupStreamingChatStory({
+        const client = setupStreamingChatStory({
           workspaceId: "ws-stats-streaming",
           workspaceName: "feature/streaming",
           projectName: "my-app",
@@ -257,6 +265,8 @@ export const StatsTabStreaming: AppStory = {
           historySequence: 2,
           streamText: "I'll create a test suite for you. Let me start by analyzing...",
         });
+        expandRightSidebar();
+        return client;
       }}
     />
   ),

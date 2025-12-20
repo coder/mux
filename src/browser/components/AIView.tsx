@@ -797,7 +797,6 @@ const AIViewInner: React.FC<AIViewProps> = ({
         key={workspaceId}
         workspaceId={workspaceId}
         workspacePath={namedWorkspacePath}
-        chatAreaRef={chatAreaRef}
         width={sidebarWidth}
         onStartResize={startResize}
         isResizing={isResizing}
