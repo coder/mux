@@ -148,7 +148,7 @@ async function openProjectSettings(canvasElement: HTMLElement): Promise<void> {
   const settingsButton = await canvas.findByTestId("settings-button", {}, { timeout: 10000 });
   await userEvent.click(settingsButton);
 
-  await body.findByRole("dialog");
+  await body.findByRole("dialog", {}, { timeout: 10000 });
 
   const projectsButton = await body.findByRole("button", { name: /Projects/i });
   await userEvent.click(projectsButton);
@@ -171,7 +171,7 @@ async function openWorkspaceMCPModal(canvasElement: HTMLElement): Promise<void> 
   await userEvent.click(mcpButton);
 
   // Wait for dialog
-  await body.findByRole("dialog");
+  await body.findByRole("dialog", {}, { timeout: 10000 });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
