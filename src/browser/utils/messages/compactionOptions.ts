@@ -35,6 +35,7 @@ export function applyCompactionOverrides(
     thinkingLevel: baseOptions.thinkingLevel,
     maxOutputTokens: compactData.maxOutputTokens,
     mode: "compact" as const,
-    toolPolicy: [], // Disable all tools during compaction
+    // Disable all tools during compaction - regex .* matches all tool names
+    toolPolicy: [{ regex_match: ".*", action: "disable" }],
   };
 }

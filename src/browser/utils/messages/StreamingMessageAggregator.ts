@@ -70,7 +70,7 @@ interface StreamingContext {
   pendingToolStarts: Map<string, number>;
 
   /** Mode (plan/exec) */
-  mode?: "plan" | "exec";
+  mode?: string;
 }
 
 /**
@@ -222,7 +222,7 @@ export class StreamingMessageAggregator {
     outputTokens: number;
     reasoningTokens: number;
     streamingMs: number; // Time from first token to end (for accurate tok/s)
-    mode?: "plan" | "exec"; // Mode in which this response occurred
+    mode?: string; // Mode in which this response occurred
   } | null = null;
 
   // Session-level timing stats: model -> stats (totals computed on-the-fly)
@@ -468,7 +468,7 @@ export class StreamingMessageAggregator {
       // Streaming duration excludes TTFT and tool execution - used for avg tok/s
       const streamingMs = Math.max(0, durationMs - (ttftMs ?? 0) - totalToolExecutionMs);
 
-      const mode = (message?.metadata?.mode ?? context.mode) as "plan" | "exec" | undefined;
+      const mode = message?.metadata?.mode ?? context.mode;
 
       // Store last completed stream stats (include durations anchored in the renderer clock)
       const startTime = endTime - durationMs;
@@ -648,7 +648,7 @@ export class StreamingMessageAggregator {
     /** Live tokens-per-second (trailing window) */
     liveTPS: number;
     /** Mode (plan/exec) for this stream */
-    mode?: "plan" | "exec";
+    mode?: string;
   } | null {
     // Get the first (and typically only) active stream
     const entries = Array.from(this.activeStreams.entries());
@@ -695,7 +695,7 @@ export class StreamingMessageAggregator {
     outputTokens: number;
     reasoningTokens: number;
     streamingMs: number;
-    mode?: "plan" | "exec";
+    mode?: string;
   } | null {
     return this.lastCompletedStreamStats;
   }
@@ -728,7 +728,7 @@ export class StreamingMessageAggregator {
         totalOutputTokens: number;
         totalReasoningTokens: number;
         /** Mode extracted from composite key, undefined for old data */
-        mode?: "plan" | "exec";
+        mode?: string;
       }
     >;
   } | null {
@@ -755,7 +755,7 @@ export class StreamingMessageAggregator {
         responseCount: number;
         totalOutputTokens: number;
         totalReasoningTokens: number;
-        mode?: "plan" | "exec";
+        mode?: string;
       }
     > = {};
 
@@ -763,7 +763,7 @@ export class StreamingMessageAggregator {
       // Parse composite key: "model" or "model:mode"
       // Model names can contain colons (e.g., "mux-gateway:provider/model")
       // so we look for ":plan" or ":exec" suffix specifically
-      let mode: "plan" | "exec" | undefined;
+      let mode: string | undefined;
       if (key.endsWith(":plan")) {
         mode = "plan";
       } else if (key.endsWith(":exec")) {

@@ -43,8 +43,8 @@ export const StreamStartEventSchema = z.object({
   startTime: z.number().meta({
     description: "Backend timestamp when stream started (Date.now())",
   }),
-  mode: z.enum(["plan", "exec"]).optional().meta({
-    description: "Agent mode (plan/exec) for this stream",
+  mode: z.string().optional().meta({
+    description: "Agent mode for this stream",
   }),
 });
 

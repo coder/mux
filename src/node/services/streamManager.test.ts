@@ -511,6 +511,73 @@ describe("StreamManager - previousResponseId recovery", () => {
   });
 });
 
+describe("StreamManager - replayStream", () => {
+  test("replayStream snapshots parts so reconnect doesn't block until stream ends", async () => {
+    const mockHistoryService = createMockHistoryService();
+    const mockPartialService = createMockPartialService();
+    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+
+    // Suppress error events from bubbling up as uncaught exceptions during tests
+    streamManager.on("error", () => undefined);
+
+    const workspaceId = "ws-replay-snapshot";
+
+    const deltas: string[] = [];
+    streamManager.on("stream-delta", (event: { delta: string }) => {
+      deltas.push(event.delta);
+    });
+
+    // Inject an active stream into the private workspaceStreams map.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
+    if (!(workspaceStreamsValue instanceof Map)) {
+      throw new Error("StreamManager.workspaceStreams is not a Map");
+    }
+    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
+
+    const streamInfo = {
+      state: "streaming",
+      messageId: "msg-1",
+      model: "claude-sonnet-4",
+      historySequence: 1,
+      startTime: 123,
+      initialMetadata: {},
+      parts: [{ type: "text", text: "a", timestamp: 10 }],
+    };
+
+    workspaceStreams.set(workspaceId, streamInfo);
+
+    // Patch the private tokenTracker to (a) avoid worker setup and (b) mutate parts during replay.
+    const tokenTracker = Reflect.get(streamManager, "tokenTracker") as {
+      setModel: (model: string) => Promise<void>;
+      countTokens: (text: string) => Promise<number>;
+    };
+
+    tokenTracker.setModel = () => Promise.resolve();
+
+    let pushed = false;
+    tokenTracker.countTokens = async () => {
+      if (!pushed) {
+        pushed = true;
+        // While replay is mid-await, simulate the running stream appending more parts.
+        (streamInfo.parts as Array<{ type: string; text?: string; timestamp?: number }>).push({
+          type: "text",
+          text: "b",
+          timestamp: 20,
+        });
+      }
+      // Force an await boundary so the mutation happens during replay.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return 1;
+    };
+
+    await streamManager.replayStream(workspaceId);
+
+    // If replayStream iterates the live array, it would also emit "b".
+    expect(deltas).toEqual(["a"]);
+  });
+});
+
 describe("StreamManager - ask_user_question Partial Persistence", () => {
   // Note: The ask_user_question tool blocks waiting for user input.
   // If the app restarts during that wait, the partial must be persisted.

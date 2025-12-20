@@ -62,7 +62,7 @@ describe("applyCompactionOverrides", () => {
     const result = applyCompactionOverrides(baseOptions, compactData);
 
     expect(result.mode).toBe("compact");
-    expect(result.toolPolicy).toEqual([]);
+    expect(result.toolPolicy).toEqual([{ regex_match: ".*", action: "disable" }]);
   });
 
   it("disables all tools even when base options has tool policy", () => {
@@ -74,7 +74,7 @@ describe("applyCompactionOverrides", () => {
     const result = applyCompactionOverrides(baseWithTools, compactData);
 
     expect(result.mode).toBe("compact");
-    expect(result.toolPolicy).toEqual([]); // Tools always disabled for compaction
+    expect(result.toolPolicy).toEqual([{ regex_match: ".*", action: "disable" }]); // Tools always disabled for compaction
   });
 
   it("applies all overrides together", () => {

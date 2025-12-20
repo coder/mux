@@ -287,9 +287,22 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           data: { success: true, output: "", exitCode: 0, wall_duration_ms: 0 },
         };
       },
-      onChat: async function* (input: { workspaceId: string }) {
+      onChat: async function* (
+        input: { workspaceId: string },
+        options?: { signal?: AbortSignal }
+      ) {
         if (!onChat) {
+          // Default mock behavior: subscriptions should remain open.
+          // If this ends, WorkspaceStore will retry and reset state, which flakes stories.
           yield { type: "caught-up" } as WorkspaceChatMessage;
+
+          await new Promise<void>((resolve) => {
+            if (options?.signal?.aborted) {
+              resolve();
+              return;
+            }
+            options?.signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
           return;
         }
 

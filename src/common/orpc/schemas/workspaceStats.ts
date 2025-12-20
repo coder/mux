@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-const ModeSchema = z.enum(["plan", "exec"]);
+// Mode is a string to support any mode value (plan, exec, compact, etc.)
+const ModeSchema = z.string();
 
 export const TimingAnomalySchema = z.enum([
   "negative_duration",

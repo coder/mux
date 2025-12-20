@@ -37,7 +37,7 @@ const VIEW_MODE_OPTIONS: Array<ToggleOption<ViewMode>> = [
 interface ModelBreakdownEntry {
   key: string;
   model: string;
-  mode?: "plan" | "exec";
+  mode?: string;
   totalDurationMs: number;
   totalToolExecutionMs: number;
   totalStreamingMs: number;

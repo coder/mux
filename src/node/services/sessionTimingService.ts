@@ -48,7 +48,7 @@ interface ActiveStreamState {
   workspaceId: string;
   messageId: string;
   model: string;
-  mode?: "plan" | "exec";
+  mode?: string;
 
   startTimeMs: number;
   firstTokenTimeMs: number | null;
@@ -64,7 +64,7 @@ interface ActiveStreamState {
   lastEventTimestampMs: number;
 }
 
-function getModelKey(model: string, mode: "plan" | "exec" | undefined): string {
+function getModelKey(model: string, mode: string | undefined): string {
   return mode ? `${model}:${mode}` : model;
 }
 

@@ -1787,10 +1787,19 @@ export class StreamManager extends EventEmitter {
       ...(replayMode && { mode: replayMode }),
     });
 
-    // Replay accumulated parts as events using shared emission logic
-    // This guarantees replay produces identical events to the original stream
-    for (const part of streamInfo.parts) {
-      await this.emitPartAsEvent(typedWorkspaceId, streamInfo.messageId, part);
+    // Replay accumulated parts as events using shared emission logic.
+    // IMPORTANT: Snapshot the parts array up-front.
+    //
+    // streamInfo.parts is mutated while the stream is running. Because emitPartAsEvent() is async
+    // (tokenization happens in worker threads), iterating the live array would keep consuming newly
+    // appended parts and can effectively block until the stream ends.
+    //
+    // That blocks AgentSession.emitHistoricalEvents() from sending "caught-up" on reconnect,
+    // leaving the renderer stuck in "Loading workspace" and suppressing the streaming indicator.
+    const replayParts = streamInfo.parts.slice();
+    const replayMessageId = streamInfo.messageId;
+    for (const part of replayParts) {
+      await this.emitPartAsEvent(typedWorkspaceId, replayMessageId, part);
     }
   }
 

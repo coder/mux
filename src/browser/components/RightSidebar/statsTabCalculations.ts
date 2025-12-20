@@ -28,7 +28,7 @@ export interface ModelBreakdownEntry {
   tokensPerSec: number | null;
   avgTokensPerMsg: number | null;
   avgReasoningPerMsg: number | null;
-  mode?: "plan" | "exec";
+  mode?: string;
 }
 
 export interface ModelBreakdownData {
@@ -139,7 +139,7 @@ function getModelDisplayName(model: string): string {
 const MODE_SUFFIX_PLAN = ":plan" as const;
 const MODE_SUFFIX_EXEC = ":exec" as const;
 
-function parseStatsKey(key: string): { model: string; mode?: "plan" | "exec" } {
+function parseStatsKey(key: string): { model: string; mode?: string } {
   if (key.endsWith(MODE_SUFFIX_PLAN)) {
     return { model: key.slice(0, -MODE_SUFFIX_PLAN.length), mode: "plan" };
   }
@@ -220,7 +220,7 @@ export function computeModelBreakdownData(params: {
     ttftCount: number;
     liveTPS: number | null;
     liveTokenCount: number;
-    mode?: "plan" | "exec";
+    mode?: string;
   }
 
   const breakdown: Record<string, BreakdownEntry> = {};
@@ -287,7 +287,7 @@ export function computeModelBreakdownData(params: {
   const toModelBreakdownEntry = (
     model: string,
     stats: BreakdownEntry,
-    mode?: "plan" | "exec"
+    mode?: string
   ): ModelBreakdownEntry => {
     const modelTime = Math.max(0, stats.totalDuration - stats.toolExecutionMs);
     const avgTtft = stats.ttftCount > 0 ? stats.ttftSum / stats.ttftCount : null;

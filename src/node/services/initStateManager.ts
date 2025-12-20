@@ -100,7 +100,14 @@ export class InitStateManager extends EventEmitter {
     });
 
     // Emit init-output for each accumulated line with original timestamps
-    for (const timedLine of state.lines) {
+    // Defensive: state.lines could be undefined from old persisted data
+    const lines = state.lines ?? [];
+    for (const timedLine of lines) {
+      // Skip malformed entries (missing required fields)
+      if (typeof timedLine.line !== "string" || typeof timedLine.timestamp !== "number") {
+        log.warn(`[InitStateManager] Skipping malformed init-output:`, timedLine);
+        continue;
+      }
       events.push({
         type: "init-output",
         workspaceId,
