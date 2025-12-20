@@ -34,10 +34,13 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
         requestedIds ?? taskService.listActiveDescendantAgentTaskIds(workspaceId);
 
       const uniqueTaskIds = dedupeStrings(candidateTaskIds);
+      const descendantTaskIdSet = new Set(
+        taskService.filterDescendantAgentTaskIds(workspaceId, uniqueTaskIds)
+      );
 
       const results = await Promise.all(
         uniqueTaskIds.map(async (taskId) => {
-          if (!taskService.isDescendantAgentTask(workspaceId, taskId)) {
+          if (!descendantTaskIdSet.has(taskId)) {
             return { status: "invalid_scope" as const, taskId };
           }
 

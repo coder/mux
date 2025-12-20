@@ -73,6 +73,12 @@ type AgentTaskWorkspaceEntry = WorkspaceConfigEntry & { projectPath: string };
 const COMPLETED_REPORT_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const COMPLETED_REPORT_CACHE_MAX_ENTRIES = 128;
 
+interface AgentTaskIndex {
+  byId: Map<string, AgentTaskWorkspaceEntry>;
+  childrenByParent: Map<string, string[]>;
+  parentById: Map<string, string>;
+}
+
 interface PendingTaskWaiter {
   createdAt: number;
   resolve: (report: { reportMarkdown: string; title?: string }) => void;
@@ -582,16 +588,19 @@ export class TaskService {
         return Err("Task not found");
       }
 
-      if (!this.isDescendantAgentTask(ancestorWorkspaceId, taskId)) {
+      const index = this.buildAgentTaskIndex(cfg);
+      if (
+        !this.isDescendantAgentTaskUsingParentById(index.parentById, ancestorWorkspaceId, taskId)
+      ) {
         return Err("Task is not a descendant of this workspace");
       }
 
       // Terminate the entire subtree to avoid orphaned descendant tasks.
-      const descendants = this.listDescendantAgentTaskIds(cfg, taskId);
+      const descendants = this.listDescendantAgentTaskIdsFromIndex(index, taskId);
       const toTerminate = Array.from(new Set([taskId, ...descendants]));
 
       // Delete leaves first to avoid leaving children with missing parents.
-      const parentById = this.buildAgentTaskIndex(cfg).parentById;
+      const parentById = index.parentById;
       const depthById = new Map<string, number>();
       for (const id of toTerminate) {
         depthById.set(id, this.getTaskDepthFromParentById(parentById, id));
@@ -918,13 +927,35 @@ export class TaskService {
     return result;
   }
 
-  private listDescendantAgentTaskIds(
-    config: ReturnType<Config["loadConfigOrDefault"]>,
+  filterDescendantAgentTaskIds(ancestorWorkspaceId: string, taskIds: string[]): string[] {
+    assert(
+      ancestorWorkspaceId.length > 0,
+      "filterDescendantAgentTaskIds: ancestorWorkspaceId required"
+    );
+    assert(Array.isArray(taskIds), "filterDescendantAgentTaskIds: taskIds must be an array");
+
+    const cfg = this.config.loadConfigOrDefault();
+    const parentById = this.buildAgentTaskIndex(cfg).parentById;
+
+    const result: string[] = [];
+    for (const taskId of taskIds) {
+      if (typeof taskId !== "string" || taskId.length === 0) continue;
+      if (this.isDescendantAgentTaskUsingParentById(parentById, ancestorWorkspaceId, taskId)) {
+        result.push(taskId);
+      }
+    }
+
+    return result;
+  }
+
+  private listDescendantAgentTaskIdsFromIndex(
+    index: AgentTaskIndex,
     workspaceId: string
   ): string[] {
-    assert(workspaceId.length > 0, "listDescendantAgentTaskIds: workspaceId must be non-empty");
-
-    const index = this.buildAgentTaskIndex(config);
+    assert(
+      workspaceId.length > 0,
+      "listDescendantAgentTaskIdsFromIndex: workspaceId must be non-empty"
+    );
 
     const result: string[] = [];
     const stack: string[] = [...(index.childrenByParent.get(workspaceId) ?? [])];
@@ -947,7 +978,14 @@ export class TaskService {
 
     const cfg = this.config.loadConfigOrDefault();
     const parentById = this.buildAgentTaskIndex(cfg).parentById;
+    return this.isDescendantAgentTaskUsingParentById(parentById, ancestorWorkspaceId, taskId);
+  }
 
+  private isDescendantAgentTaskUsingParentById(
+    parentById: Map<string, string>,
+    ancestorWorkspaceId: string,
+    taskId: string
+  ): boolean {
     let current = taskId;
     for (let i = 0; i < 32; i++) {
       const parent = parentById.get(current);
@@ -957,7 +995,7 @@ export class TaskService {
     }
 
     throw new Error(
-      `isDescendantAgentTask: possible parentWorkspaceId cycle starting at ${taskId}`
+      `isDescendantAgentTaskUsingParentById: possible parentWorkspaceId cycle starting at ${taskId}`
     );
   }
 
@@ -977,11 +1015,7 @@ export class TaskService {
     return tasks;
   }
 
-  private buildAgentTaskIndex(config: ReturnType<Config["loadConfigOrDefault"]>): {
-    byId: Map<string, AgentTaskWorkspaceEntry>;
-    childrenByParent: Map<string, string[]>;
-    parentById: Map<string, string>;
-  } {
+  private buildAgentTaskIndex(config: ReturnType<Config["loadConfigOrDefault"]>): AgentTaskIndex {
     const byId = new Map<string, AgentTaskWorkspaceEntry>();
     const childrenByParent = new Map<string, string[]>();
     const parentById = new Map<string, string>();
