@@ -34,8 +34,18 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
         requestedIds ?? taskService.listActiveDescendantAgentTaskIds(workspaceId);
 
       const uniqueTaskIds = dedupeStrings(candidateTaskIds);
+      const bulkFilter = (
+        taskService as unknown as {
+          filterDescendantAgentTaskIds?: (
+            ancestorWorkspaceId: string,
+            taskIds: string[]
+          ) => string[];
+        }
+      ).filterDescendantAgentTaskIds;
       const descendantTaskIdSet = new Set(
-        taskService.filterDescendantAgentTaskIds(workspaceId, uniqueTaskIds)
+        typeof bulkFilter === "function"
+          ? bulkFilter(workspaceId, uniqueTaskIds)
+          : uniqueTaskIds.filter((taskId) => taskService.isDescendantAgentTask(workspaceId, taskId))
       );
 
       const results = await Promise.all(
