@@ -127,11 +127,6 @@ function makeReviewPanelCacheKey(params: {
 
 type ExecuteBashResult = Awaited<ReturnType<APIClient["workspace"]["executeBash"]>>;
 
-/** Check if a tool may modify files and should trigger diff refresh */
-function isFileModifyingTool(toolName: string): boolean {
-  return toolName.startsWith("file_edit_") || toolName === "bash";
-}
-
 /** Debounce delay for auto-refresh after tool completion */
 const TOOL_REFRESH_DEBOUNCE_MS = 3000;
 
@@ -203,6 +198,12 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // Each effect gets its own ref to avoid cross-effect interference.
   const lastDiffRefreshTriggerRef = useRef<number | null>(null);
   const lastFileTreeRefreshTriggerRef = useRef<number | null>(null);
+
+  // Check if tools completed while we were unmounted - skip cache on initial mount if so.
+  // Computed once on mount, consumed after first load to avoid re-fetching on every mount.
+  const skipCacheOnMountRef = useRef(
+    workspaceStore.getFileModifyingToolMs(workspaceId) !== undefined
+  );
 
   // Unified search state (per-workspace persistence)
   const [searchState, setSearchState] = usePersistedState<ReviewSearchState>(
@@ -309,11 +310,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       debounceTimer = setTimeout(performRefresh, TOOL_REFRESH_DEBOUNCE_MS);
     };
 
-    const unsubscribe = workspaceStore.onToolCallEnd((wsId, toolName) => {
-      if (wsId !== workspaceId) return;
-      if (!isFileModifyingTool(toolName)) return;
-      scheduleRefresh();
-    });
+    // Subscribe to file-modifying tool completions for this workspace
+    const unsubscribe = workspaceStore.subscribeFileModifyingTool(workspaceId, scheduleRefresh);
 
     return () => {
       unsubscribe();
@@ -422,8 +420,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       gitCommand: numstatCommand,
     });
 
-    // Fast path: use cached tree when switching workspaces (unless user explicitly refreshed).
-    if (!isManualRefresh) {
+    // Fast path: use cached tree when switching workspaces (unless user explicitly refreshed
+    // or tools completed while we were unmounted).
+    if (!isManualRefresh && !skipCacheOnMountRef.current) {
       const cachedTree = reviewPanelCache.get(cacheKey) as FileTreeNode | undefined;
       if (cachedTree) {
         setFileTree(cachedTree);
@@ -503,8 +502,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       gitCommand: diffCommand,
     });
 
-    // Fast path: use cached diff when switching workspaces (unless user explicitly refreshed).
-    if (!isManualRefresh) {
+    // Fast path: use cached diff when switching workspaces (unless user explicitly refreshed
+    // or tools completed while we were unmounted).
+    if (!isManualRefresh && !skipCacheOnMountRef.current) {
       const cached = reviewPanelCache.get(cacheKey) as ReviewPanelDiffCacheValue | undefined;
       if (cached) {
         setDiagnosticInfo(cached.diagnosticInfo);
@@ -522,6 +522,13 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           cancelled = true;
         };
       }
+    }
+
+    // Clear the skip-cache flag and store timestamp after first load.
+    // This prevents re-fetching on every filter change.
+    if (skipCacheOnMountRef.current) {
+      skipCacheOnMountRef.current = false;
+      workspaceStore.clearFileModifyingToolMs(workspaceId);
     }
 
     // Transition to appropriate loading state:

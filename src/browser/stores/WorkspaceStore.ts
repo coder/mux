@@ -268,10 +268,12 @@ export class WorkspaceStore {
   // Idle compaction notification callbacks (called when backend signals idle compaction needed)
   private idleCompactionCallbacks = new Set<(workspaceId: string) => void>();
 
-  // Tool-call-end callbacks (for file-modifying tool completions that trigger diff refresh)
-  private toolCallEndCallbacks = new Set<
-    (workspaceId: string, toolName: string, toolCallId: string) => void
-  >();
+  // Tracks when a file-modifying tool (file_edit_*, bash) last completed per workspace.
+  // ReviewPanel subscribes to trigger diff refresh. Two structures:
+  // - timestamps: actual Date.now() values for cache invalidation checks
+  // - subscriptions: MapStore for per-workspace subscription support
+  private fileModifyingToolMs = new Map<string, number>();
+  private fileModifyingToolSubs = new MapStore<string, void>();
 
   // Idle callback handles for high-frequency delta events to reduce re-renders during streaming.
   // Data is always updated immediately in the aggregator; only UI notification is scheduled.
@@ -399,7 +401,12 @@ export class WorkspaceStore {
       aggregator.handleToolCallEnd(data as never);
       this.states.bump(workspaceId);
       this.consumerManager.scheduleCalculation(workspaceId, aggregator);
-      this.notifyToolCallEnd(workspaceId, toolCallEnd.toolName, toolCallEnd.toolCallId);
+
+      // Track file-modifying tools for ReviewPanel diff refresh
+      if (toolCallEnd.toolName.startsWith("file_edit_") || toolCallEnd.toolName === "bash") {
+        this.fileModifyingToolMs.set(workspaceId, Date.now());
+        this.fileModifyingToolSubs.bump(workspaceId);
+      }
     },
     "reasoning-delta": (workspaceId, aggregator, data) => {
       aggregator.handleReasoningDelta(data as never);
@@ -1321,27 +1328,26 @@ export class WorkspaceStore {
   }
 
   /**
-   * Subscribe to tool-call-end events (for diff refresh on file modifications).
-   * Returns unsubscribe function.
+   * Subscribe to file-modifying tool completions for a workspace.
+   * Used by ReviewPanel to trigger diff refresh.
    */
-  onToolCallEnd(
-    callback: (workspaceId: string, toolName: string, toolCallId: string) => void
-  ): () => void {
-    this.toolCallEndCallbacks.add(callback);
-    return () => this.toolCallEndCallbacks.delete(callback);
+  subscribeFileModifyingTool(workspaceId: string, listener: () => void): () => void {
+    return this.fileModifyingToolSubs.subscribeKey(workspaceId, listener);
   }
 
   /**
-   * Notify all listeners that a tool call completed.
+   * Get when a file-modifying tool last completed for this workspace.
+   * Returns undefined if no tools have completed since last clear.
    */
-  private notifyToolCallEnd(workspaceId: string, toolName: string, toolCallId: string): void {
-    for (const callback of this.toolCallEndCallbacks) {
-      try {
-        callback(workspaceId, toolName, toolCallId);
-      } catch (error) {
-        console.error("Error in tool-call-end callback:", error);
-      }
-    }
+  getFileModifyingToolMs(workspaceId: string): number | undefined {
+    return this.fileModifyingToolMs.get(workspaceId);
+  }
+
+  /**
+   * Clear the file-modifying tool timestamp after ReviewPanel has consumed it.
+   */
+  clearFileModifyingToolMs(workspaceId: string): void {
+    this.fileModifyingToolMs.delete(workspaceId);
   }
 
   // Private methods
@@ -1578,8 +1584,12 @@ function getStoreInstance(): WorkspaceStore {
 export const workspaceStore = {
   onIdleCompactionNeeded: (callback: (workspaceId: string) => void) =>
     getStoreInstance().onIdleCompactionNeeded(callback),
-  onToolCallEnd: (callback: (workspaceId: string, toolName: string, toolCallId: string) => void) =>
-    getStoreInstance().onToolCallEnd(callback),
+  subscribeFileModifyingTool: (workspaceId: string, listener: () => void) =>
+    getStoreInstance().subscribeFileModifyingTool(workspaceId, listener),
+  getFileModifyingToolMs: (workspaceId: string) =>
+    getStoreInstance().getFileModifyingToolMs(workspaceId),
+  clearFileModifyingToolMs: (workspaceId: string) =>
+    getStoreInstance().clearFileModifyingToolMs(workspaceId),
 };
 
 /**
