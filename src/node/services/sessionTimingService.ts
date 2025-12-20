@@ -482,11 +482,15 @@ export class SessionTimingService {
 
     const model = normalizeGatewayModel(data.model);
 
+    // Validate mode: stats schema only accepts "plan" | "exec" for now.
+    // Custom modes will need schema updates when supported.
+    const mode = data.mode === "plan" || data.mode === "exec" ? data.mode : undefined;
+
     const state: ActiveStreamState = {
       workspaceId: data.workspaceId,
       messageId: data.messageId,
       model,
-      mode: data.mode,
+      mode,
       startTimeMs: data.startTime,
       firstTokenTimeMs: null,
       completedToolExecutionMs: 0,

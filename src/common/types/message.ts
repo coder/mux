@@ -124,7 +124,7 @@ export interface MuxMetadata {
   // Readers should use helper: isCompacted = compacted !== undefined && compacted !== false
   compacted?: "user" | "idle" | boolean;
   toolPolicy?: ToolPolicy; // Tool policy active when this message was sent (user messages only)
-  mode?: string; // The mode (plan/exec/etc) active when this message was sent (assistant messages only)
+  mode?: string; // The mode active when this message was sent (assistant messages only) - plan/exec today, custom modes in future
   cmuxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
   muxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
 }
