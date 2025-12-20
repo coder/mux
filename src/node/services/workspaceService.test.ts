@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach } from "bun:test";
+import { describe, expect, test, mock, beforeEach, jest } from "bun:test";
 import { WorkspaceService } from "./workspaceService";
 import type { Config } from "@/node/config";
 import type { HistoryService } from "./historyService";
@@ -230,5 +230,90 @@ describe("WorkspaceService post-compaction metadata refresh", () => {
       postCompaction?: { planPath: string | null };
     };
     expect(enriched.postCompaction?.planPath).toBe(postCompactionState.planPath);
+  });
+});
+
+describe("WorkspaceService.list post-compaction timeout", () => {
+  let workspaceService: WorkspaceService;
+  let mockConfig: Partial<Config>;
+
+  beforeEach(() => {
+    const mockAIService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() =>
+        Promise.resolve({ success: false as const, error: "not found" })
+      ),
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+    } as unknown as AIService;
+
+    const mockHistoryService: Partial<HistoryService> = {
+      getHistory: mock(() => Promise.resolve({ success: true as const, data: [] })),
+      appendToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
+    };
+
+    const fakeWorkspace: FrontendWorkspaceMetadata = {
+      id: "ssh-workspace",
+      name: "ws",
+      projectName: "proj",
+      projectPath: "/tmp/proj",
+      namedWorkspacePath: "/tmp/proj/ws",
+      runtimeConfig: { type: "ssh", host: "unreachable-host", srcBaseDir: "/home/user/proj" },
+    };
+
+    mockConfig = {
+      srcDir: "/tmp/test",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+      findWorkspace: mock(() => null),
+      getAllWorkspaceMetadata: mock(() => Promise.resolve([fakeWorkspace])),
+    };
+
+    const mockPartialService: Partial<PartialService> = {
+      commitToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
+    };
+
+    const mockInitStateManager: Partial<InitStateManager> = {};
+    const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
+    const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
+      cleanup: mock(() => Promise.resolve()),
+    };
+
+    workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      mockHistoryService as HistoryService,
+      mockPartialService as PartialService,
+      mockAIService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+  });
+
+  test("list returns quickly even when getPostCompactionState would hang (times out after 3s)", async () => {
+    // Simulate a slow SSH connection that never resolves
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    const neverResolves = new Promise<never>(() => {});
+    const getPostCompactionStateSpy = jest.spyOn(
+      workspaceService as unknown as { getPostCompactionState: () => Promise<unknown> },
+      "getPostCompactionState"
+    );
+    getPostCompactionStateSpy.mockReturnValue(neverResolves);
+
+    const startTime = Date.now();
+    const result = await workspaceService.list({ includePostCompaction: true });
+    const elapsed = Date.now() - startTime;
+
+    // Should complete within ~3s timeout + buffer, not hang for 2 minutes
+    expect(elapsed).toBeLessThan(5000);
+
+    // Should return workspace without post-compaction state (timeout fallback)
+    expect(result.length).toBe(1);
+    expect(result[0].id).toBe("ssh-workspace");
+    expect(result[0].postCompaction).toBeUndefined();
   });
 });

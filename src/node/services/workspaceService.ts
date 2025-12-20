@@ -747,12 +747,18 @@ export class WorkspaceService extends EventEmitter {
       }
 
       // Fetch post-compaction state for all workspaces in parallel
-      // Catch per-workspace errors to avoid failing the entire list if one workspace is unreachable
+      // Use a short timeout per workspace to avoid blocking app startup if SSH is unreachable
+      const POST_COMPACTION_TIMEOUT_MS = 3000;
       return Promise.all(
         metadata.map(async (ws) => {
           try {
-            const postCompaction = await this.getPostCompactionState(ws.id);
-            return { ...ws, postCompaction };
+            const postCompaction = await Promise.race([
+              this.getPostCompactionState(ws.id),
+              new Promise<null>((resolve) =>
+                setTimeout(() => resolve(null), POST_COMPACTION_TIMEOUT_MS)
+              ),
+            ]);
+            return postCompaction ? { ...ws, postCompaction } : ws;
           } catch {
             // Workspace runtime unavailable (e.g., SSH unreachable) - return without post-compaction state
             return ws;
