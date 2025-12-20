@@ -107,6 +107,7 @@
     --color-message-debug-border: rgba(255, 255, 255, 0.1);
     --color-message-debug-text: rgba(255, 255, 255, 0.8);
     --color-message-hidden-bg: rgba(255, 255, 255, 0.03);
+    --color-message-hidden-bg-hover: rgba(255, 255, 255, 0.07);
     --color-attachment-border: rgba(255, 255, 255, 0.1);
     --color-line-number-bg: rgba(0, 0, 0, 0.2);
     --color-line-number-text: rgba(255, 255, 255, 0.4);
@@ -361,6 +362,7 @@
   --color-message-debug-border: hsl(210 26% 82%);
   --color-message-debug-text: hsl(210 28% 32%);
   --color-message-hidden-bg: hsl(210 36% 94%);
+  --color-message-hidden-bg-hover: hsl(210 36% 88%);
   --color-attachment-border: hsl(210 24% 82%);
   --color-line-number-bg: hsl(210 34% 93%);
   --color-line-number-text: hsl(210 14% 46%);
@@ -601,6 +603,7 @@
   --color-message-debug-border: #93a1a1;
   --color-message-debug-text: #586e75;
   --color-message-hidden-bg: #f5efdc;
+  --color-message-hidden-bg-hover: #ede5cc;
   --color-attachment-border: #93a1a1;
   --color-line-number-bg: #eee8d5;
   --color-line-number-text: #839496;
@@ -816,6 +819,7 @@
   --color-message-debug-border: rgba(88, 110, 117, 0.4);
   --color-message-debug-text: #93a1a1;
   --color-message-hidden-bg: rgba(7, 54, 66, 0.3);
+  --color-message-hidden-bg-hover: rgba(7, 54, 66, 0.45);
   --color-attachment-border: rgba(88, 110, 117, 0.4);
   --color-line-number-bg: rgba(0, 43, 54, 0.5);
   --color-line-number-text: #586e75;
