@@ -1,13 +1,13 @@
-import { getModelKey, getThinkingLevelByModelKey, getModeKey } from "@/common/constants/storage";
+import { getModelKey, getModeKey } from "@/common/constants/storage";
 import { modeToToolPolicy } from "@/common/utils/ui/modeUtils";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { toGatewayModel, migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { UIMode } from "@/common/types/mode";
-import type { ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import { persistedSettingsStore } from "@/browser/stores/PersistedSettingsStore";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
@@ -47,11 +47,8 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
   // Transform to gateway format if gateway is enabled for this model
   const model = toGatewayModel(baseModel);
 
-  // Read thinking level (per-model).
-  const thinkingLevel = readPersistedState<ThinkingLevel>(
-    getThinkingLevelByModelKey(baseModel),
-    WORKSPACE_DEFAULTS.thinkingLevel
-  );
+  // Read thinking level (per-model, backend-authoritative with local fallback).
+  const thinkingLevel = persistedSettingsStore.getThinkingLevelForModel(baseModel);
 
   // Read mode (workspace-specific)
   const mode = readPersistedState<UIMode>(getModeKey(workspaceId), WORKSPACE_DEFAULTS.mode);

@@ -80,6 +80,7 @@ const mockWindow: BrowserWindow = {
     aiService: serviceContainer.aiService,
     projectService: serviceContainer.projectService,
     workspaceService: serviceContainer.workspaceService,
+    persistedSettingsService: serviceContainer.persistedSettingsService,
     providerService: serviceContainer.providerService,
     terminalService: serviceContainer.terminalService,
     editorService: serviceContainer.editorService,

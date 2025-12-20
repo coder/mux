@@ -3,6 +3,7 @@ import type { Config } from "@/node/config";
 import type { AIService } from "@/node/services/aiService";
 import type { ProjectService } from "@/node/services/projectService";
 import type { WorkspaceService } from "@/node/services/workspaceService";
+import type { PersistedSettingsService } from "@/node/services/persistedSettingsService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { TerminalService } from "@/node/services/terminalService";
 import type { EditorService } from "@/node/services/editorService";
@@ -25,6 +26,7 @@ export interface ORPCContext {
   aiService: AIService;
   projectService: ProjectService;
   workspaceService: WorkspaceService;
+  persistedSettingsService: PersistedSettingsService;
   providerService: ProviderService;
   terminalService: TerminalService;
   editorService: EditorService;

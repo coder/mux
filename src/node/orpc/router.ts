@@ -177,6 +177,57 @@ export const router = (authToken?: string) => {
           }
         }),
     },
+    persistedSettings: {
+      get: t
+        .input(schemas.persistedSettings.get.input)
+        .output(schemas.persistedSettings.get.output)
+        .handler(({ context }) => context.persistedSettingsService.get()),
+      setAIThinkingLevel: t
+        .input(schemas.persistedSettings.setAIThinkingLevel.input)
+        .output(schemas.persistedSettings.setAIThinkingLevel.output)
+        .handler(({ context, input }) =>
+          context.persistedSettingsService.setAIThinkingLevel(input.model, input.thinkingLevel)
+        ),
+      onChanged: t
+        .input(schemas.persistedSettings.onChanged.input)
+        .output(schemas.persistedSettings.onChanged.output)
+        .handler(async function* ({ context }) {
+          let resolveNext: (() => void) | null = null;
+          let pendingNotification = false;
+          let ended = false;
+
+          const push = () => {
+            if (ended) return;
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve();
+            } else {
+              pendingNotification = true;
+            }
+          };
+
+          const unsubscribe = context.persistedSettingsService.onChanged(push);
+
+          try {
+            while (!ended) {
+              if (pendingNotification) {
+                pendingNotification = false;
+                yield undefined;
+                continue;
+              }
+              await new Promise<void>((resolve) => {
+                resolveNext = resolve;
+              });
+              yield undefined;
+            }
+          } finally {
+            ended = true;
+            unsubscribe();
+          }
+        }),
+    },
+
     general: {
       listDirectory: t
         .input(schemas.general.listDirectory.input)

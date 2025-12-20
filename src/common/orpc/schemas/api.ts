@@ -16,7 +16,8 @@ import {
 import { BashToolResultSchema, FileTreeNodeSchema } from "./tools";
 import { WorkspaceStatsSnapshotSchema } from "./workspaceStats";
 import { FrontendWorkspaceMetadataSchema, WorkspaceActivitySnapshotSchema } from "./workspace";
-import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
+import { PersistedSettingsSchema } from "./persistedSettings";
+import { ThinkingLevelSchema, WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 import {
   MCPAddParamsSchema,
   MCPRemoveParamsSchema,
@@ -126,6 +127,25 @@ export const providers = {
   },
   // Subscription: emits when provider config changes (API keys, models, etc.)
   onConfigChanged: {
+    input: z.void(),
+    output: eventIterator(z.void()),
+  },
+};
+
+// Persisted settings (cross-device preferences)
+export const persistedSettings = {
+  get: {
+    input: z.void(),
+    output: PersistedSettingsSchema,
+  },
+  setAIThinkingLevel: {
+    input: z.object({
+      model: z.string(),
+      thinkingLevel: ThinkingLevelSchema.nullable(),
+    }),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  onChanged: {
     input: z.void(),
     output: eventIterator(z.void()),
   },

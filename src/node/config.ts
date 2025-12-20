@@ -16,6 +16,7 @@ import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { getMuxHome } from "@/common/constants/paths";
 import { PlatformPaths } from "@/common/utils/paths";
+import { PersistedSettingsSchema } from "@/common/orpc/schemas";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 
 // Re-export project types from dedicated types file (for preload usage)
@@ -60,27 +61,40 @@ export class Config {
         const data = fs.readFileSync(this.configFile, "utf-8");
         const parsed = JSON.parse(data) as {
           projects?: unknown;
+          persistedSettings?: unknown;
           serverSshHost?: string;
           viewedSplashScreens?: string[];
           featureFlagOverrides?: Record<string, "default" | "on" | "off">;
         };
 
+        const persistedSettings = (() => {
+          if (parsed.persistedSettings === undefined) {
+            return undefined;
+          }
+          const result = PersistedSettingsSchema.safeParse(parsed.persistedSettings);
+          return result.success ? result.data : undefined;
+        })();
+
         // Config is stored as array of [path, config] pairs
-        if (parsed.projects && Array.isArray(parsed.projects)) {
-          const rawPairs = parsed.projects as Array<[string, ProjectConfig]>;
-          // Migrate: normalize project paths by stripping trailing slashes
-          // This fixes configs created with paths like "/home/user/project/"
-          const normalizedPairs = rawPairs.map(([projectPath, projectConfig]) => {
-            return [stripTrailingSlashes(projectPath), projectConfig] as [string, ProjectConfig];
-          });
-          const projectsMap = new Map<string, ProjectConfig>(normalizedPairs);
-          return {
-            projects: projectsMap,
-            serverSshHost: parsed.serverSshHost,
-            viewedSplashScreens: parsed.viewedSplashScreens,
-            featureFlagOverrides: parsed.featureFlagOverrides,
-          };
-        }
+        const rawPairs =
+          parsed.projects && Array.isArray(parsed.projects)
+            ? (parsed.projects as Array<[string, ProjectConfig]>)
+            : [];
+
+        // Migrate: normalize project paths by stripping trailing slashes
+        // This fixes configs created with paths like "/home/user/project/"
+        const normalizedPairs = rawPairs.map(([projectPath, projectConfig]) => {
+          return [stripTrailingSlashes(projectPath), projectConfig] as [string, ProjectConfig];
+        });
+        const projectsMap = new Map<string, ProjectConfig>(normalizedPairs);
+
+        return {
+          persistedSettings,
+          projects: projectsMap,
+          serverSshHost: parsed.serverSshHost,
+          viewedSplashScreens: parsed.viewedSplashScreens,
+          featureFlagOverrides: parsed.featureFlagOverrides,
+        };
       }
     } catch (error) {
       log.error("Error loading config:", error);
@@ -100,12 +114,17 @@ export class Config {
 
       const data: {
         projects: Array<[string, ProjectConfig]>;
+        persistedSettings?: ProjectsConfig["persistedSettings"];
         serverSshHost?: string;
         viewedSplashScreens?: string[];
         featureFlagOverrides?: ProjectsConfig["featureFlagOverrides"];
       } = {
         projects: Array.from(config.projects.entries()),
       };
+      if (config.persistedSettings) {
+        data.persistedSettings = config.persistedSettings;
+      }
+
       if (config.serverSshHost) {
         data.serverSshHost = config.serverSshHost;
       }

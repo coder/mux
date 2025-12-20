@@ -21,6 +21,7 @@ export type SendMessageOptions = z.infer<typeof schemas.SendMessageOptionsSchema
 // Provider types (single source of truth - derived from schemas)
 export type AWSCredentialStatus = z.infer<typeof schemas.AWSCredentialStatusSchema>;
 export type ProviderConfigInfo = z.infer<typeof schemas.ProviderConfigInfoSchema>;
+export type PersistedSettings = z.infer<typeof schemas.PersistedSettingsSchema>;
 export type ProvidersConfigMap = z.infer<typeof schemas.ProvidersConfigMapSchema>;
 export type ImagePart = z.infer<typeof schemas.ImagePartSchema>;
 export type WorkspaceChatMessage = z.infer<typeof schemas.WorkspaceChatMessageSchema>;

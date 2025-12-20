@@ -327,6 +327,7 @@ async function loadServices(): Promise<void> {
     projectService: services.projectService,
     workspaceService: services.workspaceService,
     providerService: services.providerService,
+    persistedSettingsService: services.persistedSettingsService,
     terminalService: services.terminalService,
     editorService: services.editorService,
     windowService: services.windowService,

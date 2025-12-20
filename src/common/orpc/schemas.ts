@@ -11,6 +11,7 @@ export { RuntimeConfigSchema, RuntimeModeSchema } from "./schemas/runtime";
 export { ProjectConfigSchema, WorkspaceConfigSchema } from "./schemas/project";
 
 // Workspace schemas
+export { PersistedSettingsSchema } from "./schemas/persistedSettings";
 export { WorkspaceAISettingsSchema } from "./schemas/workspaceAiSettings";
 export {
   FrontendWorkspaceMetadataSchema,
@@ -121,6 +122,7 @@ export {
   nameGeneration,
   projects,
   ProviderConfigInfoSchema,
+  persistedSettings,
   providers,
   ProvidersConfigMapSchema,
   server,

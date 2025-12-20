@@ -9,13 +9,11 @@ import {
   type SetStateAction,
 } from "react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { ThinkingLevel } from "@/common/types/thinking";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import {
   deleteWorkspaceStorage,
   getModelKey,
-  getThinkingLevelByModelKey,
   SELECTED_WORKSPACE_KEY,
 } from "@/common/constants/storage";
 import { useAPI } from "@/browser/contexts/API";
@@ -32,7 +30,7 @@ import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 /**
  * Seed per-workspace localStorage from backend workspace metadata.
  *
- * This keeps a workspace's model/thinking consistent across devices/browsers.
+ * Model selection is workspace-scoped in localStorage; thinking is stored via persistedSettings.
  */
 function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadata): void {
   const ai = metadata.aiSettings;
@@ -46,15 +44,6 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
     const existingModel = readPersistedState<string | undefined>(modelKey, undefined);
     if (existingModel !== ai.model) {
       updatePersistedState(modelKey, ai.model);
-    }
-  }
-
-  // Seed thinking level for the model (per-model thinking).
-  if (ai.thinkingLevel && ai.model) {
-    const thinkingKey = getThinkingLevelByModelKey(ai.model);
-    const existingThinking = readPersistedState<ThinkingLevel | undefined>(thinkingKey, undefined);
-    if (existingThinking !== ai.thinkingLevel) {
-      updatePersistedState(thinkingKey, ai.thinkingLevel);
     }
   }
 }

@@ -9,6 +9,7 @@ import { PTYService } from "@/node/services/ptyService";
 import type { TerminalWindowManager } from "@/desktop/terminalWindowManager";
 import { ProjectService } from "@/node/services/projectService";
 import { WorkspaceService } from "@/node/services/workspaceService";
+import { PersistedSettingsService } from "@/node/services/persistedSettingsService";
 import { ProviderService } from "@/node/services/providerService";
 import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
 import { TerminalService } from "@/node/services/terminalService";
@@ -52,6 +53,7 @@ export class ServiceContainer {
   public readonly aiService: AIService;
   public readonly projectService: ProjectService;
   public readonly workspaceService: WorkspaceService;
+  public readonly persistedSettingsService: PersistedSettingsService;
   public readonly providerService: ProviderService;
   public readonly terminalService: TerminalService;
   public readonly editorService: EditorService;
@@ -116,6 +118,7 @@ export class ServiceContainer {
       (workspaceId) => this.workspaceService.emitIdleCompactionNeeded(workspaceId)
     );
     this.providerService = new ProviderService(config);
+    this.persistedSettingsService = new PersistedSettingsService(config);
     // Terminal services - PTYService is cross-platform
     this.ptyService = new PTYService();
     this.terminalService = new TerminalService(config, this.ptyService);

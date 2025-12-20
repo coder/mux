@@ -73,6 +73,7 @@ export async function createTestEnvironment(): Promise<TestEnvironment> {
     aiService: services.aiService,
     projectService: services.projectService,
     workspaceService: services.workspaceService,
+    persistedSettingsService: services.persistedSettingsService,
     providerService: services.providerService,
     terminalService: services.terminalService,
     editorService: services.editorService,

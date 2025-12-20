@@ -1,16 +1,19 @@
 import type { ReactNode } from "react";
-import React, { createContext, useContext, useMemo, useCallback } from "react";
+import React, {
+  createContext,
+  useContext,
+  useMemo,
+  useCallback,
+  useEffect,
+  useSyncExternalStore,
+} from "react";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import {
-  getModelKey,
-  getProjectScopeId,
-  getThinkingLevelByModelKey,
-  GLOBAL_SCOPE_ID,
-} from "@/common/constants/storage";
+import { getModelKey, getProjectScopeId, GLOBAL_SCOPE_ID } from "@/common/constants/storage";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { useAPI } from "@/browser/contexts/API";
+import { persistedSettingsStore } from "@/browser/stores/PersistedSettingsStore";
 
 interface ThinkingContextType {
   thinkingLevel: ThinkingLevel;
@@ -31,6 +34,18 @@ function getScopeId(workspaceId: string | undefined, projectPath: string | undef
 
 export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
   const { api } = useAPI();
+
+  useEffect(() => {
+    persistedSettingsStore.init(api);
+  }, [api]);
+
+  // Subscribe to persisted settings so we update thinking when the backend changes.
+  const persistedSnapshot = useSyncExternalStore(
+    (callback) => persistedSettingsStore.subscribe(callback),
+    () => persistedSettingsStore.getSnapshot(),
+    () => persistedSettingsStore.getSnapshot()
+  );
+
   const defaultModel = getDefaultModel();
   const scopeId = getScopeId(props.workspaceId, props.projectPath);
 
@@ -44,33 +59,17 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
     [rawModel, defaultModel]
   );
 
-  // Per-model thinking level (restored behavior).
-  const thinkingKey = useMemo(() => getThinkingLevelByModelKey(model), [model]);
-  const [thinkingLevel, setThinkingLevelInternal] = usePersistedState<ThinkingLevel>(
-    thinkingKey,
-    "off",
-    { listener: true }
-  );
+  const thinkingLevel =
+    persistedSnapshot.settings.ai?.thinkingLevelByModel?.[model] ??
+    persistedSettingsStore.getThinkingLevelForModel(model);
 
   const setThinkingLevel = useCallback(
     (level: ThinkingLevel) => {
-      setThinkingLevelInternal(level);
-
-      // Workspace variant: persist to backend so settings follow the workspace across devices.
-      if (!props.workspaceId || !api) {
-        return;
-      }
-
-      api.workspace
-        .updateAISettings({
-          workspaceId: props.workspaceId,
-          aiSettings: { model, thinkingLevel: level },
-        })
-        .catch(() => {
-          // Best-effort only. If offline or backend is old, the next sendMessage will persist.
-        });
+      persistedSettingsStore.setAIThinkingLevel(model, level).catch(() => {
+        // Best-effort. Store will heal on next refresh.
+      });
     },
-    [api, model, props.workspaceId, setThinkingLevelInternal]
+    [model]
   );
 
   // Memoize context value to prevent unnecessary re-renders of consumers.

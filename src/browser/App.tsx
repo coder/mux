@@ -7,11 +7,7 @@ import { LeftSidebar } from "./components/LeftSidebar";
 import { ProjectCreateModal } from "./components/ProjectCreateModal";
 import { AIView } from "./components/AIView";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import {
-  usePersistedState,
-  updatePersistedState,
-  readPersistedState,
-} from "./hooks/usePersistedState";
+import { usePersistedState, readPersistedState } from "./hooks/usePersistedState";
 import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
 import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
 import { useResumeManager } from "./hooks/useResumeManager";
@@ -34,7 +30,7 @@ import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sour
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
-import { getThinkingLevelByModelKey, getModelKey } from "@/common/constants/storage";
+import { getModelKey } from "@/common/constants/storage";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
@@ -42,6 +38,7 @@ import type { BranchListResult } from "@/common/orpc/types";
 import { useTelemetry } from "./hooks/useTelemetry";
 import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
 import { useStartWorkspaceCreation, getFirstProjectPath } from "./hooks/useStartWorkspaceCreation";
+import { persistedSettingsStore } from "@/browser/stores/PersistedSettingsStore";
 import { useAPI } from "@/browser/contexts/API";
 import { AuthTokenModal } from "@/browser/components/AuthTokenModal";
 
@@ -84,6 +81,10 @@ function AppInner() {
     [setTheme]
   );
   const { api, status, error, authenticate } = useAPI();
+
+  useEffect(() => {
+    persistedSettingsStore.init(api);
+  }, [api]);
 
   const {
     projects,
@@ -303,15 +304,8 @@ function AppInner() {
         return "off";
       }
 
-      // Per-model thinking level.
       const model = getModelForWorkspace(workspaceId);
-      const thinkingKey = getThinkingLevelByModelKey(model);
-      const level = readPersistedState<ThinkingLevel | undefined>(thinkingKey, undefined);
-      if (level !== undefined && THINKING_LEVELS.includes(level)) {
-        return level;
-      }
-
-      return "off";
+      return persistedSettingsStore.getThinkingLevelForModel(model);
     },
     [getModelForWorkspace]
   );
@@ -325,20 +319,10 @@ function AppInner() {
       const normalized = THINKING_LEVELS.includes(level) ? level : "off";
       const model = getModelForWorkspace(workspaceId);
       const effective = enforceThinkingPolicy(model, normalized);
-      const thinkingKey = getThinkingLevelByModelKey(model);
 
-      // Use the utility function which handles localStorage and event dispatch
-      // ThinkingProvider will pick this up via its listener
-      updatePersistedState(thinkingKey, effective);
-
-      // Persist to backend so the palette change follows the workspace across devices.
-      if (api) {
-        api.workspace
-          .updateAISettings({ workspaceId, aiSettings: { model, thinkingLevel: effective } })
-          .catch(() => {
-            // Best-effort only.
-          });
-      }
+      persistedSettingsStore.setAIThinkingLevel(model, effective).catch(() => {
+        // Best-effort only.
+      });
 
       // Dispatch toast notification event for UI feedback
       if (typeof window !== "undefined") {
@@ -349,7 +333,7 @@ function AppInner() {
         );
       }
     },
-    [api, getModelForWorkspace]
+    [getModelForWorkspace]
   );
 
   const registerParamsRef = useRef<BuildSourcesParams | null>(null);
