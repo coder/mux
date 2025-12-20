@@ -18,6 +18,7 @@ import {
 import type { MuxMessage, MuxTextPart } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type { Config, ProviderConfig } from "@/node/config";
+import { ExtensionManager } from "./extensions/extensionManager";
 import { StreamManager } from "./streamManager";
 import type { InitStateManager } from "./initStateManager";
 import type { SendMessageError } from "@/common/types/errors";
@@ -352,6 +353,7 @@ export class AIService extends EventEmitter {
   private readonly initStateManager: InitStateManager;
   private readonly mockModeEnabled: boolean;
   private readonly mockScenarioPlayer?: MockScenarioPlayer;
+  private readonly extensionManager: ExtensionManager;
   private readonly backgroundProcessManager?: BackgroundProcessManager;
 
   constructor(
@@ -371,6 +373,7 @@ export class AIService extends EventEmitter {
     this.partialService = partialService;
     this.initStateManager = initStateManager;
     this.backgroundProcessManager = backgroundProcessManager;
+    this.extensionManager = new ExtensionManager();
     this.streamManager = new StreamManager(historyService, partialService, sessionUsageService);
     void this.ensureSessionsDir();
     this.setupStreamEventForwarding();
@@ -1379,10 +1382,19 @@ export class AIService extends EventEmitter {
         },
       });
 
+      const toolsWithExtensions = this.extensionManager.wrapToolsWithPostToolUse(tools, {
+        workspaceId,
+        projectPath: metadata.projectPath,
+        workspacePath,
+        runtimeConfig: metadata.runtimeConfig,
+        runtimeTempDir,
+        runtime,
+      });
+
       log.info("AIService.streamMessage: tool configuration", {
         workspaceId,
         model: modelString,
-        toolNames: Object.keys(tools),
+        toolNames: Object.keys(toolsWithExtensions),
         hasToolPolicy: Boolean(toolPolicy),
       });
 
@@ -1549,7 +1561,7 @@ export class AIService extends EventEmitter {
           systemMessage,
           messages: finalMessages,
           tools: Object.fromEntries(
-            Object.entries(tools).map(([name, tool]) => [
+            Object.entries(toolsWithExtensions).map(([name, tool]) => [
               name,
               {
                 description: tool.description,
@@ -1578,7 +1590,7 @@ export class AIService extends EventEmitter {
         systemMessage,
         runtime,
         abortSignal,
-        tools,
+        toolsWithExtensions,
         {
           systemMessageTokens,
           timestamp: Date.now(),
