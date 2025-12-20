@@ -37,6 +37,38 @@ describe("task_await tool", () => {
     });
   });
 
+  it("supports filterDescendantAgentTaskIds without losing this binding", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-this-binding");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const waitForAgentReport = mock(() => Promise.resolve({ reportMarkdown: "ok" }));
+    const isDescendantAgentTask = mock(() => true);
+
+    const taskService = {
+      filterDescendantAgentTaskIds: function (ancestorWorkspaceId: string, taskIds: string[]) {
+        expect(this).toBe(taskService);
+        expect(ancestorWorkspaceId).toBe("parent-workspace");
+        expect(taskIds).toEqual(["t1"]);
+        return taskIds;
+      },
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      isDescendantAgentTask,
+      waitForAgentReport,
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["t1"] }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [{ status: "completed", taskId: "t1", reportMarkdown: "ok", title: undefined }],
+    });
+    expect(isDescendantAgentTask).toHaveBeenCalledTimes(0);
+    expect(waitForAgentReport).toHaveBeenCalledTimes(1);
+  });
+
   it("marks invalid_scope without calling waitForAgentReport", async () => {
     using tempDir = new TestTempDir("test-task-await-tool-invalid-scope");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
