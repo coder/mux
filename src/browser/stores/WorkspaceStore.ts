@@ -1108,6 +1108,131 @@ export class WorkspaceStore {
     }
   }
 
+  private sleepWithAbort(timeoutMs: number, signal: AbortSignal): Promise<void> {
+    return new Promise((resolve) => {
+      if (signal.aborted) {
+        resolve();
+        return;
+      }
+
+      const timeout = setTimeout(() => {
+        resolve();
+      }, timeoutMs);
+
+      signal.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(timeout);
+          resolve();
+        },
+        { once: true }
+      );
+    });
+  }
+
+  /**
+   * Reset derived UI state for a workspace so a fresh onChat replay can rebuild it.
+   *
+   * This is used when an onChat subscription ends unexpectedly (MessagePort/WebSocket hiccup).
+   * Without clearing, replayed history would be merged into stale state (loadHistoricalMessages
+   * only adds/overwrites, it doesn't delete messages that disappeared due to compaction/truncation).
+   */
+  private prepareForChatReplay(workspaceId: string): void {
+    const aggregator = this.aggregators.get(workspaceId);
+    if (!aggregator) {
+      return;
+    }
+
+    // Clear any pending UI bumps from deltas - we're about to rebuild the message list.
+    this.cancelPendingIdleBump(workspaceId);
+
+    aggregator.clear();
+
+    // Clear non-persisted UI state that won't be re-emitted during replay.
+    this.queuedMessages.set(workspaceId, null);
+    this.liveBashOutput.delete(workspaceId);
+
+    // Reset replay buffers so we batch-load the next replay.
+    this.caughtUp.set(workspaceId, false);
+    this.historicalMessages.set(workspaceId, []);
+    this.pendingStreamEvents.set(workspaceId, []);
+    this.replayingHistory.delete(workspaceId);
+
+    this.states.bump(workspaceId);
+    this.checkAndBumpRecencyIfChanged();
+  }
+
+  /**
+   * Subscribe to workspace chat events (history replay + live streaming).
+   * Retries on unexpected iterator termination to avoid requiring a full app restart.
+   */
+  private async runOnChatSubscription(workspaceId: string, signal: AbortSignal): Promise<void> {
+    let attempt = 0;
+
+    while (!signal.aborted) {
+      try {
+        const client = this.client;
+        if (!client) {
+          // Wait for a client to be attached (e.g., initial connect or reconnect).
+          await this.sleepWithAbort(250, signal);
+          continue;
+        }
+
+        const iterator = await client.workspace.onChat({ workspaceId }, { signal });
+
+        for await (const data of iterator) {
+          if (signal.aborted) {
+            return;
+          }
+
+          queueMicrotask(() => {
+            this.handleChatMessage(workspaceId, data);
+          });
+        }
+
+        // Iterator ended without an abort - treat as unexpected and retry.
+        if (signal.aborted) {
+          return;
+        }
+
+        console.warn(
+          `[WorkspaceStore] onChat subscription ended unexpectedly for ${workspaceId}; retrying...`
+        );
+      } catch (error) {
+        // Suppress errors when subscription was intentionally cleaned up
+        if (signal.aborted) {
+          return;
+        }
+
+        // EVENT_ITERATOR_VALIDATION_FAILED with ErrorEvent cause happens when:
+        // - The workspace was removed on server side (iterator ends with error)
+        // - Connection dropped (WebSocket/MessagePort error)
+        // Only suppress if workspace no longer exists (was removed during the race)
+        const isIteratorError =
+          error instanceof Error &&
+          "code" in error &&
+          error.code === "EVENT_ITERATOR_VALIDATION_FAILED";
+        const workspaceRemoved = !this.states.has(workspaceId);
+        if (isIteratorError && workspaceRemoved) {
+          return;
+        }
+
+        console.error(`[WorkspaceStore] Error in onChat subscription for ${workspaceId}:`, error);
+      }
+
+      attempt++;
+
+      // Exponential backoff (kept relatively slow to avoid churn in tests / rapid loops).
+      const delayMs = Math.min(250 * 2 ** (attempt - 1), 5000);
+      await this.sleepWithAbort(delayMs, signal);
+      if (signal.aborted) {
+        return;
+      }
+
+      this.prepareForChatReplay(workspaceId);
+    }
+  }
+
   /**
    * Add a workspace and subscribe to its IPC events.
    */
@@ -1151,59 +1276,32 @@ export class WorkspaceStore {
 
     // Subscribe to IPC events
     // Wrap in queueMicrotask to ensure IPC events don't update during React render
-    if (this.client) {
-      const controller = new AbortController();
-      const { signal } = controller;
+    const controller = new AbortController();
+    const { signal } = controller;
 
-      // Fire and forget the async loop
-      (async () => {
-        try {
-          const iterator = await this.client!.workspace.onChat({ workspaceId }, { signal });
+    // Fire and forget the subscription loop (retries on errors)
+    void this.runOnChatSubscription(workspaceId, signal);
 
-          for await (const data of iterator) {
-            if (signal.aborted) break;
-            queueMicrotask(() => {
-              this.handleChatMessage(workspaceId, data);
-            });
-          }
-        } catch (error) {
-          // Suppress errors when subscription was intentionally cleaned up
-          if (signal.aborted) return;
+    this.ipcUnsubscribers.set(workspaceId, () => controller.abort());
 
-          // EVENT_ITERATOR_VALIDATION_FAILED with ErrorEvent cause happens when:
-          // - The workspace was removed on server side (iterator ends with error)
-          // - Connection dropped (WebSocket/MessagePort error)
-          // Only suppress if workspace no longer exists (was removed during the race)
-          const isIteratorError =
-            error instanceof Error &&
-            "code" in error &&
-            error.code === "EVENT_ITERATOR_VALIDATION_FAILED";
-          const workspaceRemoved = !this.states.has(workspaceId);
-          if (isIteratorError && workspaceRemoved) return;
-
-          console.error(`[WorkspaceStore] Error in onChat subscription for ${workspaceId}:`, error);
+    // Fetch persisted session usage (fire-and-forget)
+    this.client?.workspace
+      .getSessionUsage({ workspaceId })
+      .then((data) => {
+        if (data) {
+          this.sessionUsage.set(workspaceId, data);
+          this.usageStore.bump(workspaceId);
         }
-      })();
+      })
+      .catch((error) => {
+        console.warn(`Failed to fetch session usage for ${workspaceId}:`, error);
+      });
 
-      this.ipcUnsubscribers.set(workspaceId, () => controller.abort());
+    if (this.statsEnabled) {
+      this.subscribeToStats(workspaceId);
+    }
 
-      // Fetch persisted session usage (fire-and-forget)
-      this.client.workspace
-        .getSessionUsage({ workspaceId })
-        .then((data) => {
-          if (data) {
-            this.sessionUsage.set(workspaceId, data);
-            this.usageStore.bump(workspaceId);
-          }
-        })
-        .catch((error) => {
-          console.warn(`Failed to fetch session usage for ${workspaceId}:`, error);
-        });
-
-      if (this.statsEnabled) {
-        this.subscribeToStats(workspaceId);
-      }
-    } else {
+    if (!this.client) {
       console.warn(`[WorkspaceStore] No ORPC client available for workspace ${workspaceId}`);
     }
   }
