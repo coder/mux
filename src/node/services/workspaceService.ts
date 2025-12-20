@@ -60,6 +60,7 @@ import type { AskUserQuestionToolSuccessResult, BashToolResult } from "@/common/
 import { secretsToRecord } from "@/common/types/secrets";
 
 import { movePlanFile, copyPlanFile } from "@/node/utils/runtime/helpers";
+import { taskQueueDebug } from "@/node/services/taskQueueDebug";
 
 /** Maximum number of retry attempts when workspace name collides */
 const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
@@ -75,11 +76,6 @@ const POST_COMPACTION_METADATA_REFRESH_DEBOUNCE_MS = 100;
  */
 function isWorkspaceNameCollision(error: string | undefined): boolean {
   return error?.includes("Workspace already exists") ?? false;
-}
-
-function taskQueueDebug(message: string, details?: Record<string, unknown>): void {
-  if (process.env.MUX_DEBUG_TASK_QUEUE !== "1") return;
-  console.log(`[task-queue] ${message}`, details ?? {});
 }
 
 /**

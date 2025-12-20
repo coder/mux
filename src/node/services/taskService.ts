@@ -28,6 +28,7 @@ import {
 } from "@/common/utils/tools/toolDefinitions";
 import { formatSendMessageError } from "@/node/services/utils/sendMessageError";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
+import { taskQueueDebug } from "@/node/services/taskQueueDebug";
 
 export type TaskKind = "agent";
 
@@ -66,6 +67,8 @@ export interface DescendantAgentTaskInfo {
   thinkingLevel?: ThinkingLevel;
   depth: number;
 }
+
+type AgentTaskWorkspaceEntry = WorkspaceConfigEntry & { projectPath: string };
 
 interface PendingTaskWaiter {
   createdAt: number;
@@ -144,11 +147,6 @@ function buildAgentWorkspaceName(agentType: string, workspaceId: string): string
 
 function getIsoNow(): string {
   return new Date().toISOString();
-}
-
-function taskQueueDebug(message: string, details?: Record<string, unknown>): void {
-  if (process.env.MUX_DEBUG_TASK_QUEUE !== "1") return;
-  console.log(`[task-queue] ${message}`, details ?? {});
 }
 
 export class TaskService {
@@ -588,9 +586,10 @@ export class TaskService {
       const toTerminate = Array.from(new Set([taskId, ...descendants]));
 
       // Delete leaves first to avoid leaving children with missing parents.
+      const parentById = this.buildAgentTaskIndex(cfg).parentById;
       const depthById = new Map<string, number>();
       for (const id of toTerminate) {
-        depthById.set(id, this.getTaskDepth(cfg, id));
+        depthById.set(id, this.getTaskDepthFromParentById(parentById, id));
       }
       toTerminate.sort((a, b) => (depthById.get(b) ?? 0) - (depthById.get(a) ?? 0));
 
@@ -827,28 +826,18 @@ export class TaskService {
     );
 
     const cfg = this.config.loadConfigOrDefault();
-    const childrenByParent = new Map<string, string[]>();
-    const statusById = new Map<string, AgentTaskStatus | undefined>();
-
-    for (const task of this.listAgentTaskWorkspaces(cfg)) {
-      statusById.set(task.id!, task.taskStatus);
-      const parent = task.parentWorkspaceId;
-      if (!parent) continue;
-      const list = childrenByParent.get(parent) ?? [];
-      list.push(task.id!);
-      childrenByParent.set(parent, list);
-    }
+    const index = this.buildAgentTaskIndex(cfg);
 
     const activeStatuses = new Set<AgentTaskStatus>(["queued", "running", "awaiting_report"]);
     const result: string[] = [];
-    const stack: string[] = [...(childrenByParent.get(workspaceId) ?? [])];
+    const stack: string[] = [...(index.childrenByParent.get(workspaceId) ?? [])];
     while (stack.length > 0) {
       const next = stack.pop()!;
-      const status = statusById.get(next);
+      const status = index.byId.get(next)?.taskStatus;
       if (status && activeStatuses.has(status)) {
         result.push(next);
       }
-      const children = childrenByParent.get(next);
+      const children = index.childrenByParent.get(next);
       if (children) {
         for (const child of children) {
           stack.push(child);
@@ -868,35 +857,18 @@ export class TaskService {
     const statusFilter = statuses && statuses.length > 0 ? new Set(statuses) : null;
 
     const cfg = this.config.loadConfigOrDefault();
-    const tasks = this.listAgentTaskWorkspaces(cfg);
-
-    const childrenByParent = new Map<
-      string,
-      Array<WorkspaceConfigEntry & { projectPath: string }>
-    >();
-    const byId = new Map<string, WorkspaceConfigEntry & { projectPath: string }>();
-
-    for (const task of tasks) {
-      const taskId = task.id!;
-      byId.set(taskId, task);
-
-      const parent = task.parentWorkspaceId;
-      if (!parent) continue;
-      const list = childrenByParent.get(parent) ?? [];
-      list.push(task);
-      childrenByParent.set(parent, list);
-    }
+    const index = this.buildAgentTaskIndex(cfg);
 
     const result: DescendantAgentTaskInfo[] = [];
 
     const stack: Array<{ taskId: string; depth: number }> = [];
-    for (const child of childrenByParent.get(workspaceId) ?? []) {
-      stack.push({ taskId: child.id!, depth: 1 });
+    for (const childTaskId of index.childrenByParent.get(workspaceId) ?? []) {
+      stack.push({ taskId: childTaskId, depth: 1 });
     }
 
     while (stack.length > 0) {
       const next = stack.pop()!;
-      const entry = byId.get(next.taskId);
+      const entry = index.byId.get(next.taskId);
       if (!entry) continue;
 
       assert(
@@ -920,8 +892,8 @@ export class TaskService {
         });
       }
 
-      for (const child of childrenByParent.get(next.taskId) ?? []) {
-        stack.push({ taskId: child.id!, depth: next.depth + 1 });
+      for (const childTaskId of index.childrenByParent.get(next.taskId) ?? []) {
+        stack.push({ taskId: childTaskId, depth: next.depth + 1 });
       }
     }
 
@@ -943,22 +915,14 @@ export class TaskService {
   ): string[] {
     assert(workspaceId.length > 0, "listDescendantAgentTaskIds: workspaceId must be non-empty");
 
-    const childrenByParent = new Map<string, string[]>();
-
-    for (const task of this.listAgentTaskWorkspaces(config)) {
-      const parent = task.parentWorkspaceId;
-      if (!parent) continue;
-      const list = childrenByParent.get(parent) ?? [];
-      list.push(task.id!);
-      childrenByParent.set(parent, list);
-    }
+    const index = this.buildAgentTaskIndex(config);
 
     const result: string[] = [];
-    const stack: string[] = [...(childrenByParent.get(workspaceId) ?? [])];
+    const stack: string[] = [...(index.childrenByParent.get(workspaceId) ?? [])];
     while (stack.length > 0) {
       const next = stack.pop()!;
       result.push(next);
-      const children = childrenByParent.get(next);
+      const children = index.childrenByParent.get(next);
       if (children) {
         for (const child of children) {
           stack.push(child);
@@ -973,10 +937,7 @@ export class TaskService {
     assert(taskId.length > 0, "isDescendantAgentTask: taskId required");
 
     const cfg = this.config.loadConfigOrDefault();
-    const parentById = new Map<string, string | undefined>();
-    for (const task of this.listAgentTaskWorkspaces(cfg)) {
-      parentById.set(task.id!, task.parentWorkspaceId);
-    }
+    const parentById = this.buildAgentTaskIndex(cfg).parentById;
 
     let current = taskId;
     for (let i = 0; i < 32; i++) {
@@ -995,8 +956,8 @@ export class TaskService {
 
   private listAgentTaskWorkspaces(
     config: ReturnType<Config["loadConfigOrDefault"]>
-  ): Array<WorkspaceConfigEntry & { projectPath: string }> {
-    const tasks: Array<WorkspaceConfigEntry & { projectPath: string }> = [];
+  ): AgentTaskWorkspaceEntry[] {
+    const tasks: AgentTaskWorkspaceEntry[] = [];
     for (const [projectPath, project] of config.projects) {
       for (const workspace of project.workspaces) {
         if (!workspace.id) continue;
@@ -1005,6 +966,31 @@ export class TaskService {
       }
     }
     return tasks;
+  }
+
+  private buildAgentTaskIndex(config: ReturnType<Config["loadConfigOrDefault"]>): {
+    byId: Map<string, AgentTaskWorkspaceEntry>;
+    childrenByParent: Map<string, string[]>;
+    parentById: Map<string, string>;
+  } {
+    const byId = new Map<string, AgentTaskWorkspaceEntry>();
+    const childrenByParent = new Map<string, string[]>();
+    const parentById = new Map<string, string>();
+
+    for (const task of this.listAgentTaskWorkspaces(config)) {
+      const taskId = task.id!;
+      byId.set(taskId, task);
+
+      const parent = task.parentWorkspaceId;
+      if (!parent) continue;
+
+      parentById.set(taskId, parent);
+      const list = childrenByParent.get(parent) ?? [];
+      list.push(taskId);
+      childrenByParent.set(parent, list);
+    }
+
+    return { byId, childrenByParent, parentById };
   }
 
   private countActiveAgentTasks(config: ReturnType<Config["loadConfigOrDefault"]>): number {
@@ -1033,27 +1019,17 @@ export class TaskService {
   ): boolean {
     assert(workspaceId.length > 0, "hasActiveDescendantAgentTasks: workspaceId must be non-empty");
 
-    const childrenByParent = new Map<string, string[]>();
-    const statusById = new Map<string, AgentTaskStatus | undefined>();
-
-    for (const task of this.listAgentTaskWorkspaces(config)) {
-      statusById.set(task.id!, task.taskStatus);
-      const parent = task.parentWorkspaceId;
-      if (!parent) continue;
-      const list = childrenByParent.get(parent) ?? [];
-      list.push(task.id!);
-      childrenByParent.set(parent, list);
-    }
+    const index = this.buildAgentTaskIndex(config);
 
     const activeStatuses = new Set<AgentTaskStatus>(["queued", "running", "awaiting_report"]);
-    const stack: string[] = [...(childrenByParent.get(workspaceId) ?? [])];
+    const stack: string[] = [...(index.childrenByParent.get(workspaceId) ?? [])];
     while (stack.length > 0) {
       const next = stack.pop()!;
-      const status = statusById.get(next);
+      const status = index.byId.get(next)?.taskStatus;
       if (status && activeStatuses.has(status)) {
         return true;
       }
-      const children = childrenByParent.get(next);
+      const children = index.childrenByParent.get(next);
       if (children) {
         for (const child of children) {
           stack.push(child);
@@ -1070,11 +1046,13 @@ export class TaskService {
   ): number {
     assert(workspaceId.length > 0, "getTaskDepth: workspaceId must be non-empty");
 
-    const parentById = new Map<string, string | undefined>();
-    for (const task of this.listAgentTaskWorkspaces(config)) {
-      parentById.set(task.id!, task.parentWorkspaceId);
-    }
+    return this.getTaskDepthFromParentById(
+      this.buildAgentTaskIndex(config).parentById,
+      workspaceId
+    );
+  }
 
+  private getTaskDepthFromParentById(parentById: Map<string, string>, workspaceId: string): number {
     let depth = 0;
     let current = workspaceId;
     for (let i = 0; i < 32; i++) {
@@ -1085,7 +1063,9 @@ export class TaskService {
     }
 
     if (depth >= 32) {
-      throw new Error(`getTaskDepth: possible parentWorkspaceId cycle starting at ${workspaceId}`);
+      throw new Error(
+        `getTaskDepthFromParentById: possible parentWorkspaceId cycle starting at ${workspaceId}`
+      );
     }
 
     return depth;
