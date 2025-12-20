@@ -48,7 +48,12 @@ globalThis.AI_SDK_LOG_WARNINGS = false;
 // Type definitions for stream parts with extended properties
 interface ReasoningDeltaPart {
   type: "reasoning-delta";
+  id: string;
+  // SDK uses 'delta' for streaming content, but some internal paths may use 'text'
+  delta?: string;
   text?: string;
+  // Provider-specific metadata (e.g., OpenAI's itemId for Responses API)
+  providerMetadata?: Record<string, unknown>;
 }
 
 // Branded types for compile-time safety
@@ -901,13 +906,20 @@ export class StreamManager extends EventEmitter {
 
           case "reasoning-delta": {
             // Both Anthropic and OpenAI use reasoning-delta for streaming reasoning content
-            const delta = (part as ReasoningDeltaPart).text ?? "";
+            const reasoningDelta = part as ReasoningDeltaPart;
+            // SDK uses 'delta' field for streaming content, fallback to 'text' for compatibility
+            const textContent = reasoningDelta.delta ?? reasoningDelta.text ?? "";
 
             // Append each delta as a new part (merging happens at display time)
+            // Preserve providerMetadata for OpenAI Responses API (contains itemId)
             const reasoningPart = {
               type: "reasoning" as const,
-              text: delta,
+              text: textContent,
               timestamp: Date.now(),
+              // Include provider metadata if present (required for OpenAI reasoning)
+              ...(reasoningDelta.providerMetadata && {
+                providerMetadata: reasoningDelta.providerMetadata,
+              }),
             };
             streamInfo.parts.push(reasoningPart);
 

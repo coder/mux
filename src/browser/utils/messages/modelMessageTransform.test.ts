@@ -481,7 +481,7 @@ describe("modelMessageTransform", () => {
   });
 
   describe("reasoning part handling for OpenAI", () => {
-    it("should preserve reasoning parts for OpenAI provider (managed via previousResponseId)", () => {
+    it("should preserve reasoning parts for OpenAI provider (with valid itemId)", () => {
       const messages: ModelMessage[] = [
         {
           role: "user",
@@ -490,7 +490,11 @@ describe("modelMessageTransform", () => {
         {
           role: "assistant",
           content: [
-            { type: "reasoning", text: "Let me think about this..." },
+            {
+              type: "reasoning",
+              text: "Let me think about this...",
+              providerOptions: { openai: { itemId: "item_123" } },
+            },
             { type: "text", text: "Here's the solution" },
           ],
         },
@@ -502,7 +506,11 @@ describe("modelMessageTransform", () => {
       expect(result).toHaveLength(2);
       expect(result[1].role).toBe("assistant");
       expect((result[1] as AssistantModelMessage).content).toEqual([
-        { type: "reasoning", text: "Let me think about this..." },
+        {
+          type: "reasoning",
+          text: "Let me think about this...",
+          providerOptions: { openai: { itemId: "item_123" } },
+        },
         { type: "text", text: "Here's the solution" },
       ]);
     });
@@ -555,7 +563,7 @@ describe("modelMessageTransform", () => {
       expect(result[0].role).toBe("user");
     });
 
-    it("should preserve tool calls when stripping reasoning for OpenAI", () => {
+    it("should preserve tool calls when filtering reasoning for OpenAI", () => {
       const messages: ModelMessage[] = [
         {
           role: "user",
@@ -564,7 +572,11 @@ describe("modelMessageTransform", () => {
         {
           role: "assistant",
           content: [
-            { type: "reasoning", text: "I need to check something..." },
+            {
+              type: "reasoning",
+              text: "I need to check something...",
+              providerOptions: { openai: { itemId: "item_456" } },
+            },
             { type: "text", text: "Let me check" },
             { type: "tool-call", toolCallId: "call1", toolName: "bash", input: { script: "pwd" } },
           ],
@@ -611,7 +623,7 @@ describe("modelMessageTransform", () => {
       expect(toolCallMessage).toBeDefined();
     });
 
-    it("should handle multiple reasoning parts for OpenAI", () => {
+    it("should handle multiple reasoning parts for OpenAI (with valid itemIds)", () => {
       const messages: ModelMessage[] = [
         {
           role: "user",
@@ -620,8 +632,16 @@ describe("modelMessageTransform", () => {
         {
           role: "assistant",
           content: [
-            { type: "reasoning", text: "First, I'll consider..." },
-            { type: "reasoning", text: "Then, I'll analyze..." },
+            {
+              type: "reasoning",
+              text: "First, I'll consider...",
+              providerOptions: { openai: { itemId: "item_789" } },
+            },
+            {
+              type: "reasoning",
+              text: "Then, I'll analyze...",
+              providerOptions: { openai: { itemId: "item_789" } },
+            },
             { type: "text", text: "Final answer" },
           ],
         },
@@ -633,9 +653,126 @@ describe("modelMessageTransform", () => {
       expect(result).toHaveLength(2);
       expect(result[1].role).toBe("assistant");
       expect((result[1] as AssistantModelMessage).content).toEqual([
-        { type: "reasoning", text: "First, I'll consider...Then, I'll analyze..." },
+        {
+          type: "reasoning",
+          text: "First, I'll consider...Then, I'll analyze...",
+          providerOptions: { openai: { itemId: "item_789" } },
+        },
         { type: "text", text: "Final answer" },
       ]);
+    });
+
+    it("should preserve providerOptions when coalescing reasoning parts for OpenAI", () => {
+      // OpenAI's Responses API returns reasoning with providerOptions.openai.itemId
+      // When coalescing multiple reasoning deltas, we should preserve providerOptions
+      const messages: ModelMessage[] = [
+        {
+          role: "user",
+          content: [{ type: "text", text: "Complex task" }],
+        },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "reasoning",
+              text: "First delta...",
+              providerOptions: { openai: { itemId: "reasoning_item_123" } },
+            },
+            {
+              type: "reasoning",
+              text: "Second delta...",
+              providerOptions: { openai: { itemId: "reasoning_item_123" } },
+            },
+            { type: "text", text: "Final answer" },
+          ],
+        },
+      ];
+
+      const result = transformModelMessages(messages, "openai");
+
+      expect(result).toHaveLength(2);
+      const assistantContent = (result[1] as AssistantModelMessage).content;
+      expect(Array.isArray(assistantContent)).toBe(true);
+      if (Array.isArray(assistantContent)) {
+        const reasoningPart = assistantContent.find((p) => p.type === "reasoning");
+        expect(reasoningPart).toBeDefined();
+        // Text should be merged
+        expect(reasoningPart?.text).toBe("First delta...Second delta...");
+        // providerOptions from first part should be preserved
+        expect(reasoningPart?.providerOptions).toEqual({
+          openai: { itemId: "reasoning_item_123" },
+        });
+      }
+    });
+
+    it("should filter out non-OpenAI reasoning parts (e.g., Claude thinking)", () => {
+      // When history contains reasoning from a different provider (like Claude),
+      // those parts should be filtered out when sending to OpenAI
+      const messages: ModelMessage[] = [
+        {
+          role: "user",
+          content: [{ type: "text", text: "Question" }],
+        },
+        {
+          role: "assistant",
+          content: [
+            // Claude-style reasoning (no OpenAI itemId)
+            { type: "reasoning", text: "Thinking about this..." },
+            { type: "text", text: "Here's my answer" },
+          ],
+        },
+      ];
+
+      const result = transformModelMessages(messages, "openai");
+
+      expect(result).toHaveLength(2);
+      const assistantContent = (result[1] as AssistantModelMessage).content;
+      expect(Array.isArray(assistantContent)).toBe(true);
+      if (Array.isArray(assistantContent)) {
+        // Reasoning without OpenAI itemId should be filtered out
+        const reasoningPart = assistantContent.find((p) => p.type === "reasoning");
+        expect(reasoningPart).toBeUndefined();
+        // Text should remain
+        const textPart = assistantContent.find((p) => p.type === "text");
+        expect(textPart?.text).toBe("Here's my answer");
+      }
+    });
+
+    it("should keep OpenAI reasoning and filter non-OpenAI reasoning in same message", () => {
+      // Edge case: message has both OpenAI and non-OpenAI reasoning parts
+      const messages: ModelMessage[] = [
+        {
+          role: "user",
+          content: [{ type: "text", text: "Question" }],
+        },
+        {
+          role: "assistant",
+          content: [
+            // Non-OpenAI reasoning (no itemId)
+            { type: "reasoning", text: "Some old thinking..." },
+            // OpenAI reasoning (with itemId)
+            {
+              type: "reasoning",
+              text: "New OpenAI thinking...",
+              providerOptions: { openai: { itemId: "item_123" } },
+            },
+            { type: "text", text: "Answer" },
+          ],
+        },
+      ];
+
+      const result = transformModelMessages(messages, "openai");
+
+      expect(result).toHaveLength(2);
+      const assistantContent = (result[1] as AssistantModelMessage).content;
+      expect(Array.isArray(assistantContent)).toBe(true);
+      if (Array.isArray(assistantContent)) {
+        // Only OpenAI reasoning should remain
+        const reasoningParts = assistantContent.filter((p) => p.type === "reasoning");
+        expect(reasoningParts).toHaveLength(1);
+        expect(reasoningParts[0].text).toBe("New OpenAI thinking...");
+        expect(reasoningParts[0].providerOptions).toEqual({ openai: { itemId: "item_123" } });
+      }
     });
   });
 });

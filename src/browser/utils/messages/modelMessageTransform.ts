@@ -464,6 +464,46 @@ function filterReasoningOnlyMessages(messages: ModelMessage[]): ModelMessage[] {
 }
 
 /**
+ * Filter out reasoning parts that don't have OpenAI's itemId.
+ * OpenAI's Responses API requires reasoning parts to have providerOptions.openai.itemId
+ * to properly associate them with the conversation state.
+ * Non-OpenAI reasoning (e.g., from Claude) can't be processed and would cause warnings.
+ */
+function filterNonOpenAIReasoningParts(messages: ModelMessage[]): ModelMessage[] {
+  return messages.map((msg) => {
+    if (msg.role !== "assistant") {
+      return msg;
+    }
+
+    // Skip string content
+    if (typeof msg.content === "string") {
+      return msg;
+    }
+
+    // Filter out reasoning parts without OpenAI's itemId
+    const filteredContent = msg.content.filter((part) => {
+      if (part.type !== "reasoning") {
+        return true;
+      }
+
+      // Keep reasoning parts that have OpenAI's itemId
+      const providerOpts = part.providerOptions as { openai?: { itemId?: string } } | undefined;
+      return providerOpts?.openai?.itemId != null;
+    });
+
+    // If all content was filtered out, return original to let filterReasoningOnlyMessages handle it
+    if (filteredContent.length === 0) {
+      return msg;
+    }
+
+    return {
+      ...msg,
+      content: filteredContent,
+    };
+  });
+}
+
+/**
  * Coalesce consecutive parts of the same type within each message.
  * Streaming creates many individual text/reasoning parts; merge them for easier debugging.
  * Also reduces JSON overhead when sending messages to the API.
@@ -583,17 +623,20 @@ function mergeConsecutiveUserMessages(messages: ModelMessage[]): ModelMessage[] 
  * @param provider The provider name (e.g., "anthropic", "openai")
  */
 export function transformModelMessages(messages: ModelMessage[], provider: string): ModelMessage[] {
-  // Pass 0: Coalesce consecutive parts to reduce JSON overhead from streaming (applies to all providers)
-  const coalesced = coalesceConsecutiveParts(messages);
+  // Pass 0: For OpenAI, filter out non-OpenAI reasoning parts FIRST (before coalescing)
+  // This prevents mixing non-OpenAI reasoning with valid OpenAI reasoning during coalescing
+  const prefiltered = provider === "openai" ? filterNonOpenAIReasoningParts(messages) : messages;
 
-  // Pass 1: Split mixed content messages (applies to all providers)
+  // Pass 1: Coalesce consecutive parts to reduce JSON overhead from streaming (applies to all providers)
+  const coalesced = coalesceConsecutiveParts(prefiltered);
+
+  // Pass 2: Split mixed content messages (applies to all providers)
   const split = splitMixedContentMessages(coalesced);
 
-  // Pass 2: Provider-specific reasoning handling
+  // Pass 3: Provider-specific reasoning handling
   let reasoningHandled: ModelMessage[];
   if (provider === "openai") {
-    // OpenAI: Keep reasoning parts - managed via previousResponseId
-    // Only filter out reasoning-only messages (messages with no text/tool-call content)
+    // OpenAI: Filter out reasoning-only messages (messages with no text/tool-call content)
     reasoningHandled = filterReasoningOnlyMessages(split);
   } else if (provider === "anthropic") {
     // Anthropic: Filter out reasoning-only messages (API rejects messages with only reasoning)
@@ -603,7 +646,7 @@ export function transformModelMessages(messages: ModelMessage[], provider: strin
     reasoningHandled = split;
   }
 
-  // Pass 3: Merge consecutive user messages (applies to all providers)
+  // Pass 4: Merge consecutive user messages (applies to all providers)
   const merged = mergeConsecutiveUserMessages(reasoningHandled);
 
   return merged;

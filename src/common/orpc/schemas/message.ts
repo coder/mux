@@ -16,6 +16,7 @@ export const MuxReasoningPartSchema = z.object({
   type: z.literal("reasoning"),
   text: z.string(),
   timestamp: z.number().optional(),
+  providerMetadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 // Base schema for tool parts - shared fields
