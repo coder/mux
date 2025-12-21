@@ -5,6 +5,7 @@
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
 import { expandProjects } from "./storyHelpers";
+import { createArchivedWorkspace } from "./mockFactory";
 import type { ProjectConfig } from "@/node/config";
 
 export default {
@@ -63,6 +64,34 @@ export const CreateWorkspaceMultipleProjects: AppStory = {
             projectWithNoWorkspaces("/Users/dev/mobile-client"),
           ]),
           workspaces: [],
+        });
+      }}
+    />
+  ),
+};
+
+/** Creation view with archived workspaces - shows archived section at bottom */
+export const CreateWorkspaceWithArchived: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        expandProjects(["/Users/dev/my-project"]);
+        return createMockORPCClient({
+          projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
+          workspaces: [
+            createArchivedWorkspace({
+              id: "archived-1",
+              name: "feature/old-feature",
+              projectName: "my-project",
+              projectPath: "/Users/dev/my-project",
+            }),
+            createArchivedWorkspace({
+              id: "archived-2",
+              name: "bugfix/resolved-issue",
+              projectName: "my-project",
+              projectPath: "/Users/dev/my-project",
+            }),
+          ],
         });
       }}
     />

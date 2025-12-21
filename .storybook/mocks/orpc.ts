@@ -251,7 +251,14 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       },
     },
     workspace: {
-      list: async () => workspaces,
+      list: async (input?: { archivedOnly?: boolean }) => {
+        if (input?.archivedOnly) {
+          return workspaces.filter((w) => w.archived);
+        }
+        return workspaces.filter((w) => !w.archived);
+      },
+      archive: async () => ({ success: true }),
+      unarchive: async () => ({ success: true }),
       create: async (input: { projectPath: string; branchName: string }) => ({
         success: true,
         metadata: {

@@ -104,6 +104,22 @@ export function createIncompatibleWorkspace(
   };
 }
 
+/** Create an archived workspace */
+export function createArchivedWorkspace(
+  opts: Partial<WorkspaceFixture> & {
+    id: string;
+    name: string;
+    projectName: string;
+    archivedAt?: string;
+  }
+): FrontendWorkspaceMetadata {
+  return {
+    ...createWorkspace(opts),
+    archived: true,
+    archivedAt: opts.archivedAt ?? new Date(NOW - 86400000).toISOString(), // 1 day ago
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // PROJECT FACTORY
 // ═══════════════════════════════════════════════════════════════════════════════
