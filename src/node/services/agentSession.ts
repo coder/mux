@@ -39,6 +39,7 @@ import type { PostCompactionAttachment, PostCompactionExclusions } from "@/commo
 import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
 import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
 import { isValidModelFormat } from "@/common/utils/ai/models";
+import { modeToToolPolicy } from "@/common/utils/ui/modeUtils";
 
 /**
  * Tracked file state for detecting external edits.
@@ -525,13 +526,15 @@ export class AgentSession {
       const { finalText, metadata } = prepareUserMessageForSend(continueMessage);
 
       // Build options for the queued message (strip compaction-specific fields)
+      // Use the mode from continueMessage to derive correct tool policy, not the compaction mode's disabled-all policy
+      const continueMode = continueMessage.mode ?? "exec";
       const sanitizedOptions: Omit<
         SendMessageOptions,
         "muxMetadata" | "mode" | "editMessageId" | "imageParts" | "maxOutputTokens"
       > & { imageParts?: typeof continueMessage.imageParts; muxMetadata?: typeof metadata } = {
         model: continueMessage.model ?? options.model,
         thinkingLevel: options.thinkingLevel,
-        toolPolicy: options.toolPolicy,
+        toolPolicy: modeToToolPolicy(continueMode),
         additionalSystemInstructions: options.additionalSystemInstructions,
         providerOptions: options.providerOptions,
         experiments: options.experiments,

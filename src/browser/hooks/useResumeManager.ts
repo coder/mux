@@ -180,6 +180,7 @@ export function useResumeManager() {
               text: lastUserMsg.compactionRequest.parsed.continueMessage?.text ?? "",
               imageParts: lastUserMsg.compactionRequest.parsed.continueMessage?.imageParts,
               model: lastUserMsg.compactionRequest.parsed.continueMessage?.model ?? options.model,
+              mode: lastUserMsg.compactionRequest.parsed.continueMessage?.mode ?? "exec",
             },
           });
         }

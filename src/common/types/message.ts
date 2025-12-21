@@ -26,10 +26,12 @@ export interface UserMessageContent {
 
 /**
  * Message to continue with after compaction.
- * Extends UserMessageContent with model preference.
+ * Extends UserMessageContent with model and mode preferences.
  */
 export interface ContinueMessage extends UserMessageContent {
   model?: string;
+  /** Mode for the continue message (determines tool policy). Defaults to 'exec'. */
+  mode?: "exec" | "plan";
 }
 
 // Parsed compaction request data (shared type for consistency)
