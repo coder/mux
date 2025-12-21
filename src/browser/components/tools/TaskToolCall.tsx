@@ -6,12 +6,12 @@ import {
   ToolName,
   StatusIndicator,
   ToolDetails,
-  ToolIcon,
   LoadingDots,
 } from "./shared/ToolPrimitives";
 import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./shared/toolUtils";
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
 import { cn } from "@/common/lib/utils";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import type {
   TaskToolArgs,
   TaskToolSuccessResult,
@@ -22,6 +22,35 @@ import type {
   TaskTerminateToolArgs,
   TaskTerminateToolSuccessResult,
 } from "@/common/types/tools";
+
+/**
+ * Clean SVG icon for task tools - represents spawning/branching work
+ */
+const TaskIcon: React.FC<{ className?: string; toolName: string }> = ({ className, toolName }) => (
+  <Tooltip>
+    <TooltipTrigger asChild>
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={cn("h-3.5 w-3.5 text-task-mode", className)}
+      >
+        {/* Main vertical line */}
+        <path d="M4 2v5" />
+        {/* Branch to right */}
+        <path d="M4 7c0 2 2 3 4 3h4" />
+        {/* Arrow head */}
+        <path d="M10 8l2 2-2 2" />
+        {/* Dot at origin */}
+        <circle cx="4" cy="2" r="1.5" fill="currentColor" stroke="none" />
+      </svg>
+    </TooltipTrigger>
+    <TooltipContent>{toolName}</TooltipContent>
+  </Tooltip>
+);
 
 // Status badge component for task statuses
 const TaskStatusBadge: React.FC<{
@@ -130,7 +159,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status
     <ToolContainer expanded={expanded}>
       <ToolHeader onClick={toggleExpanded}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
-        <ToolIcon emoji="🔀" toolName="task" />
+        <TaskIcon toolName="task" />
         <ToolName>task</ToolName>
         <AgentTypeBadge type={agentType} />
         {isBackground && (
@@ -216,7 +245,7 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
     <ToolContainer expanded={expanded}>
       <ToolHeader onClick={toggleExpanded}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
-        <ToolIcon emoji="⏳" toolName="task_await" />
+        <TaskIcon toolName="task_await" />
         <ToolName>task_await</ToolName>
         {totalCount > 0 && (
           <span className="text-muted text-[10px]">
@@ -313,7 +342,7 @@ export const TaskListToolCall: React.FC<TaskListToolCallProps> = ({
     <ToolContainer expanded={expanded}>
       <ToolHeader onClick={toggleExpanded}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
-        <ToolIcon emoji="📋" toolName="task_list" />
+        <TaskIcon toolName="task_list" />
         <ToolName>task_list</ToolName>
         <span className="text-muted text-[10px]">{tasks.length} task(s)</span>
         <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
@@ -390,7 +419,7 @@ export const TaskTerminateToolCall: React.FC<TaskTerminateToolCallProps> = ({
     <ToolContainer expanded={expanded}>
       <ToolHeader onClick={toggleExpanded}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
-        <ToolIcon emoji="⛔" toolName="task_terminate" />
+        <TaskIcon toolName="task_terminate" />
         <ToolName>task_terminate</ToolName>
         <span className="text-interrupted text-[10px]">
           {terminatedCount > 0 ? `${terminatedCount} terminated` : `${taskIds.length} to terminate`}

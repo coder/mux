@@ -1,8 +1,6 @@
 /**
  * Storybook stories for task tool components (task, task_await, task_list, task_terminate).
- *
- * These stories showcase the various states and configurations of sub-agent task tools
- * in the full app context.
+ * Consolidated to capture all visual states in minimal stories.
  */
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
@@ -22,12 +20,109 @@ export default {
   title: "App/Task Tools",
 };
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// TASK TOOL (spawn sub-agent)
-// ═══════════════════════════════════════════════════════════════════════════════
+/**
+ * Full task workflow: spawn parallel tasks, list them, await results.
+ * Shows task, task_list, and task_await in a realistic sequence.
+ */
+export const TaskWorkflow: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          messages: [
+            // User kicks off parallel analysis
+            createUserMessage("u1", "Analyze the frontend and backend code", {
+              historySequence: 1,
+            }),
+            createAssistantMessage("a1", "I'll spawn parallel tasks for analysis.", {
+              historySequence: 2,
+              toolCalls: [
+                createTaskTool("tc1", {
+                  subagent_type: "explore",
+                  prompt: "Analyze the frontend React components in src/browser/",
+                  description: "Frontend analysis",
+                  run_in_background: true,
+                  taskId: "task-fe-001",
+                  status: "running",
+                }),
+                createTaskTool("tc2", {
+                  subagent_type: "exec",
+                  prompt: "Run linting on the backend code in src/node/",
+                  description: "Backend linting",
+                  run_in_background: true,
+                  taskId: "task-be-002",
+                  status: "queued",
+                }),
+              ],
+            }),
+            // User checks task status
+            createUserMessage("u2", "What tasks are running?", { historySequence: 3 }),
+            createAssistantMessage("a2", "Here are the active tasks:", {
+              historySequence: 4,
+              toolCalls: [
+                createTaskListTool("tc3", {
+                  statuses: ["running", "queued"],
+                  tasks: [
+                    {
+                      taskId: "task-fe-001",
+                      status: "running",
+                      parentWorkspaceId: "ws-main",
+                      agentType: "explore",
+                      title: "Frontend analysis",
+                      depth: 0,
+                    },
+                    {
+                      taskId: "task-be-002",
+                      status: "queued",
+                      parentWorkspaceId: "ws-main",
+                      agentType: "exec",
+                      title: "Backend linting",
+                      depth: 0,
+                    },
+                  ],
+                }),
+              ],
+            }),
+            // User waits for results
+            createUserMessage("u3", "Wait for all tasks to complete", { historySequence: 5 }),
+            createAssistantMessage("a3", "Both tasks have completed.", {
+              historySequence: 6,
+              toolCalls: [
+                createTaskAwaitTool("tc4", {
+                  task_ids: ["task-fe-001", "task-be-002"],
+                  results: [
+                    {
+                      taskId: "task-fe-001",
+                      status: "completed",
+                      title: "Frontend Analysis",
+                      reportMarkdown: `Found **23 React components** using hooks and TypeScript.
 
-/** Task completed synchronously with a report */
-export const TaskCompleted: AppStory = {
+Key patterns:
+- Context providers for state management
+- Custom hooks for reusable logic`,
+                    },
+                    {
+                      taskId: "task-be-002",
+                      status: "completed",
+                      title: "Backend Linting",
+                      reportMarkdown: `Linting passed with **0 errors** and 3 warnings.`,
+                    },
+                  ],
+                }),
+              ],
+            }),
+          ],
+        })
+      }
+    />
+  ),
+};
+
+/**
+ * Completed task with full markdown report.
+ * Shows the expanded report view with rich content.
+ */
+export const TaskWithReport: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() =>
@@ -72,159 +167,18 @@ Found **47 test files** across the project:
   ),
 };
 
-/** Task running in background */
-export const TaskBackground: AppStory = {
+/**
+ * Task termination and error states.
+ * Shows task_terminate with mixed success/error results and task_await errors.
+ */
+export const TaskErrorStates: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() =>
         setupSimpleChatStory({
           messages: [
-            createUserMessage("u1", "Run the full test suite in the background", {
-              historySequence: 1,
-            }),
-            createAssistantMessage("a1", "I'll spawn a background task to run the tests.", {
-              historySequence: 2,
-              toolCalls: [
-                createTaskTool("tc1", {
-                  subagent_type: "exec",
-                  prompt: "Run the full test suite with `make test` and report the results",
-                  description: "Running test suite",
-                  run_in_background: true,
-                  taskId: "task-xyz789",
-                  status: "running",
-                }),
-              ],
-            }),
-          ],
-        })
-      }
-    />
-  ),
-};
-
-/** Task in queued state */
-export const TaskQueued: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          messages: [
-            createUserMessage("u1", "Analyze the codebase structure", { historySequence: 1 }),
-            createAssistantMessage("a1", "Spawning an explore task to analyze the structure.", {
-              historySequence: 2,
-              toolCalls: [
-                createTaskTool("tc1", {
-                  subagent_type: "explore",
-                  prompt: "Analyze the directory structure and report on the architecture",
-                  taskId: "task-queued-001",
-                  status: "queued",
-                }),
-              ],
-            }),
-          ],
-        })
-      }
-    />
-  ),
-};
-
-/** Multiple tasks spawned */
-export const TaskMultiple: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          messages: [
-            createUserMessage("u1", "Analyze both frontend and backend code", {
-              historySequence: 1,
-            }),
-            createAssistantMessage("a1", "I'll spawn two parallel tasks for analysis.", {
-              historySequence: 2,
-              toolCalls: [
-                createTaskTool("tc1", {
-                  subagent_type: "explore",
-                  prompt: "Analyze the frontend React components in src/browser/",
-                  description: "Frontend analysis",
-                  run_in_background: true,
-                  taskId: "task-fe-001",
-                  status: "running",
-                }),
-                createTaskTool("tc2", {
-                  subagent_type: "explore",
-                  prompt: "Analyze the backend Node.js code in src/node/",
-                  description: "Backend analysis",
-                  run_in_background: true,
-                  taskId: "task-be-002",
-                  status: "running",
-                }),
-              ],
-            }),
-          ],
-        })
-      }
-    />
-  ),
-};
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// TASK_AWAIT TOOL
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/** Awaiting multiple tasks - all completed */
-export const TaskAwaitAllCompleted: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          messages: [
-            createUserMessage("u1", "Wait for all the analysis tasks", { historySequence: 1 }),
-            createAssistantMessage("a1", "Both tasks have completed.", {
-              historySequence: 2,
-              toolCalls: [
-                createTaskAwaitTool("tc1", {
-                  task_ids: ["task-fe-001", "task-be-002"],
-                  results: [
-                    {
-                      taskId: "task-fe-001",
-                      status: "completed",
-                      title: "Frontend Analysis",
-                      reportMarkdown: `Found **23 React components** using hooks and TypeScript.
-
-Key patterns:
-- Context providers for state management
-- Custom hooks for reusable logic
-- Tailwind for styling`,
-                    },
-                    {
-                      taskId: "task-be-002",
-                      status: "completed",
-                      title: "Backend Analysis",
-                      reportMarkdown: `The backend uses **Express + tRPC** architecture.
-
-Services:
-- IPC handlers for Electron communication
-- File system operations
-- Git integration`,
-                    },
-                  ],
-                }),
-              ],
-            }),
-          ],
-        })
-      }
-    />
-  ),
-};
-
-/** Awaiting tasks with mixed statuses */
-export const TaskAwaitMixedStatus: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          messages: [
-            createUserMessage("u1", "Check on all my tasks", { historySequence: 1 }),
+            // Check tasks with various error states
+            createUserMessage("u1", "Check on my background tasks", { historySequence: 1 }),
             createAssistantMessage("a1", "Here's the status of your tasks:", {
               historySequence: 2,
               toolCalls: [
@@ -242,10 +196,6 @@ export const TaskAwaitMixedStatus: AppStory = {
                       status: "running",
                     },
                     {
-                      taskId: "task-003",
-                      status: "queued",
-                    },
-                    {
                       taskId: "task-404",
                       status: "not_found",
                     },
@@ -258,162 +208,26 @@ export const TaskAwaitMixedStatus: AppStory = {
                 }),
               ],
             }),
-          ],
-        })
-      }
-    />
-  ),
-};
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// TASK_LIST TOOL
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/** Listing active tasks */
-export const TaskListActive: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          messages: [
-            createUserMessage("u1", "Show me all running tasks", { historySequence: 1 }),
-            createAssistantMessage("a1", "Here are the active tasks:", {
-              historySequence: 2,
+            // Terminate tasks with mixed results
+            createUserMessage("u2", "Stop all tasks", { historySequence: 3 }),
+            createAssistantMessage("a2", "Some tasks could not be terminated:", {
+              historySequence: 4,
               toolCalls: [
-                createTaskListTool("tc1", {
-                  statuses: ["running", "queued"],
-                  tasks: [
-                    {
-                      taskId: "task-runner-001",
-                      status: "running",
-                      parentWorkspaceId: "ws-main",
-                      agentType: "exec",
-                      title: "Test Suite Runner",
-                      depth: 0,
-                    },
-                    {
-                      taskId: "task-analyze-002",
-                      status: "running",
-                      parentWorkspaceId: "ws-main",
-                      agentType: "explore",
-                      title: "Code Analysis",
-                      depth: 0,
-                    },
-                    {
-                      taskId: "task-sub-003",
-                      status: "queued",
-                      parentWorkspaceId: "task-runner-001",
-                      agentType: "exec",
-                      title: "Unit Test Batch",
-                      depth: 1,
-                    },
-                    {
-                      taskId: "task-deep-004",
-                      status: "running",
-                      parentWorkspaceId: "task-sub-003",
-                      agentType: "explore",
-                      depth: 2,
-                    },
-                  ],
-                }),
-              ],
-            }),
-          ],
-        })
-      }
-    />
-  ),
-};
-
-/** Empty task list */
-export const TaskListEmpty: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          messages: [
-            createUserMessage("u1", "List any background tasks", { historySequence: 1 }),
-            createAssistantMessage("a1", "No active tasks found.", {
-              historySequence: 2,
-              toolCalls: [
-                createTaskListTool("tc1", {
-                  tasks: [],
-                }),
-              ],
-            }),
-          ],
-        })
-      }
-    />
-  ),
-};
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// TASK_TERMINATE TOOL
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/** Terminating tasks successfully */
-export const TaskTerminateSuccess: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          messages: [
-            createUserMessage("u1", "Stop all running tasks", { historySequence: 1 }),
-            createAssistantMessage("a1", "I've terminated the tasks and their descendants.", {
-              historySequence: 2,
-              toolCalls: [
-                createTaskTerminateTool("tc1", {
-                  task_ids: ["task-001", "task-002"],
+                createTaskTerminateTool("tc2", {
+                  task_ids: ["task-001", "task-002", "task-invalid"],
                   results: [
                     {
                       taskId: "task-001",
                       status: "terminated",
-                      terminatedTaskIds: ["task-001", "task-001-sub-a", "task-001-sub-b"],
+                      terminatedTaskIds: ["task-001", "task-001-sub-a"],
                     },
                     {
                       taskId: "task-002",
                       status: "terminated",
                       terminatedTaskIds: ["task-002"],
                     },
-                  ],
-                }),
-              ],
-            }),
-          ],
-        })
-      }
-    />
-  ),
-};
-
-/** Terminating with errors */
-export const TaskTerminateErrors: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          messages: [
-            createUserMessage("u1", "Terminate these tasks: task-a, task-b, task-c", {
-              historySequence: 1,
-            }),
-            createAssistantMessage("a1", "Some tasks could not be terminated:", {
-              historySequence: 2,
-              toolCalls: [
-                createTaskTerminateTool("tc1", {
-                  task_ids: ["task-a", "task-b", "task-c"],
-                  results: [
                     {
-                      taskId: "task-a",
-                      status: "terminated",
-                      terminatedTaskIds: ["task-a"],
-                    },
-                    {
-                      taskId: "task-b",
-                      status: "not_found",
-                    },
-                    {
-                      taskId: "task-c",
+                      taskId: "task-invalid",
                       status: "invalid_scope",
                     },
                   ],
