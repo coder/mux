@@ -582,6 +582,24 @@ function coalesceConsecutiveParts(messages: ModelMessage[]): ModelMessage[] {
       // Merge consecutive reasoning parts (extended thinking)
       if (part.type === "reasoning" && lastPart?.type === "reasoning") {
         lastPart.text += part.text;
+        // Preserve signature from later parts - during streaming, the signature
+        // arrives at the end and is attached to the last reasoning part.
+        // Cast needed because AI SDK's ReasoningPart doesn't have signature,
+        // but our MuxReasoningPart (which flows through convertToModelMessages) does.
+        const partWithSig = part as typeof part & {
+          signature?: string;
+          providerOptions?: { anthropic?: { signature?: string } };
+        };
+        const lastWithSig = lastPart as typeof lastPart & {
+          signature?: string;
+          providerOptions?: { anthropic?: { signature?: string } };
+        };
+        if (partWithSig.signature) {
+          lastWithSig.signature = partWithSig.signature;
+        }
+        if (partWithSig.providerOptions) {
+          lastWithSig.providerOptions = partWithSig.providerOptions;
+        }
         continue;
       }
 

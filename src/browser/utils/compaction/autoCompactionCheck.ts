@@ -24,15 +24,15 @@ import {
   FORCE_COMPACTION_BUFFER_PERCENT,
 } from "@/common/constants/ui";
 
-/** Sum all token components from a ChatUsageDisplay */
-function getTotalTokens(usage: ChatUsageDisplay): number {
-  return (
-    usage.input.tokens +
-    usage.cached.tokens +
-    usage.cacheCreate.tokens +
-    usage.output.tokens +
-    usage.reasoning.tokens
-  );
+/**
+ * Get context window tokens (input only).
+ * Output and reasoning tokens are excluded because they represent the model's
+ * response, not the context window size. This prevents compaction loops with
+ * Extended Thinking models where high reasoning token counts (50k+) would
+ * incorrectly inflate context usage calculations.
+ */
+function getContextTokens(usage: ChatUsageDisplay): number {
+  return usage.input.tokens + usage.cached.tokens + usage.cacheCreate.tokens;
 }
 
 export interface AutoCompactionCheckResult {
@@ -100,7 +100,7 @@ export function checkAutoCompaction(
   const currentUsage = usage.liveUsage ?? lastUsage;
 
   // Usage percentage from current context (live when streaming, otherwise last completed)
-  const usagePercentage = currentUsage ? (getTotalTokens(currentUsage) / maxTokens) * 100 : 0;
+  const usagePercentage = currentUsage ? (getContextTokens(currentUsage) / maxTokens) * 100 : 0;
 
   // Force-compact when usage exceeds threshold + buffer
   const forceCompactThreshold = thresholdPercentage + FORCE_COMPACTION_BUFFER_PERCENT;
@@ -108,7 +108,7 @@ export function checkAutoCompaction(
 
   // Warning uses max of last completed and current (live when streaming)
   // This ensures warning shows when live usage spikes above threshold mid-stream
-  const lastUsagePercentage = lastUsage ? (getTotalTokens(lastUsage) / maxTokens) * 100 : 0;
+  const lastUsagePercentage = lastUsage ? (getContextTokens(lastUsage) / maxTokens) * 100 : 0;
   const shouldShowWarning =
     Math.max(lastUsagePercentage, usagePercentage) >= thresholdPercentage - warningAdvancePercent;
 

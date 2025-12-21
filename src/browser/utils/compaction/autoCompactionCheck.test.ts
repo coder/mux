@@ -5,20 +5,21 @@ import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 
 // Helper to create a mock usage entry
+// The tokens parameter represents CONTEXT tokens (input + cached + cacheCreate).
+// Output and reasoning are set separately since they don't count toward context.
 const createUsageEntry = (
-  tokens: number,
+  contextTokens: number,
   model: string = KNOWN_MODELS.SONNET.id
 ): ChatUsageDisplay => {
-  // Distribute tokens across different types (realistic pattern)
-  const inputTokens = Math.floor(tokens * 0.6); // 60% input
-  const outputTokens = Math.floor(tokens * 0.3); // 30% output
-  const cachedTokens = Math.floor(tokens * 0.1); // 10% cached
+  // Distribute context tokens (only these count toward compaction threshold)
+  const inputTokens = Math.floor(contextTokens * 0.9); // 90% input
+  const cachedTokens = Math.floor(contextTokens * 0.1); // 10% cached
 
   return {
     input: { tokens: inputTokens },
     cached: { tokens: cachedTokens },
     cacheCreate: { tokens: 0 },
-    output: { tokens: outputTokens },
+    output: { tokens: 1_000 }, // Some output (doesn't affect context calculation)
     reasoning: { tokens: 0 },
     model,
   };
@@ -144,8 +145,34 @@ describe("checkAutoCompaction", () => {
 
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
 
-      // Total: 10k + 5k + 2k + 3k + 1k = 21k tokens = 10.5%
-      expect(result.usagePercentage).toBe(10.5);
+      // Context = input + cached + cacheCreate = 10k + 5k + 2k = 17k tokens = 8.5%
+      // Output and reasoning are excluded (they're response tokens, not context)
+      expect(result.usagePercentage).toBe(8.5);
+    });
+
+    test("excludes output and reasoning tokens from context calculation (prevents compaction loops)", () => {
+      // Extended Thinking can generate 50k+ reasoning tokens. These should NOT
+      // count toward context window limits or trigger compaction loops.
+      const usageEntry = {
+        input: { tokens: 20_000 }, // Low actual context
+        cached: { tokens: 0 },
+        cacheCreate: { tokens: 0 },
+        output: { tokens: 5_000 },
+        reasoning: { tokens: 50_000 }, // High reasoning from Extended Thinking
+        model: KNOWN_MODELS.SONNET.id,
+      };
+      const usage: WorkspaceUsageState = {
+        lastContextUsage: usageEntry,
+        totalTokens: 0,
+      };
+
+      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+
+      // Only input tokens count: 20k = 10% of 200k context
+      // NOT 75k (37.5%) which would incorrectly trigger compaction
+      expect(result.usagePercentage).toBe(10);
+      expect(result.shouldShowWarning).toBe(false);
+      expect(result.shouldForceCompact).toBe(false);
     });
   });
 
