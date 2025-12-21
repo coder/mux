@@ -12,6 +12,8 @@ interface ArchivedWorkspacesProps {
   projectPath: string;
   projectName: string;
   workspaces: FrontendWorkspaceMetadata[];
+  /** Called after a workspace is unarchived or deleted to refresh the list */
+  onWorkspacesChanged?: () => void;
 }
 
 /**
@@ -22,6 +24,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
   projectPath: _projectPath,
   projectName: _projectName,
   workspaces,
+  onWorkspacesChanged,
 }) => {
   const { unarchiveWorkspace, removeWorkspace, setSelectedWorkspace } = useWorkspaceContext();
   const [expanded, setExpanded] = usePersistedState("archivedWorkspacesExpanded", true);
@@ -49,6 +52,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
             namedWorkspacePath: workspace.namedWorkspacePath,
           });
         }
+        onWorkspacesChanged?.();
       }
     } finally {
       setProcessingIds((prev) => {
@@ -64,6 +68,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
     setDeleteConfirmId(null);
     try {
       await removeWorkspace(workspaceId, { force: true });
+      onWorkspacesChanged?.();
     } finally {
       setProcessingIds((prev) => {
         const next = new Set(prev);

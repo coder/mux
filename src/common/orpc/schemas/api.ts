@@ -219,6 +219,8 @@ export const workspace = {
     input: z
       .object({
         includePostCompaction: z.boolean().optional(),
+        /** When true, only return archived workspaces. Default returns only non-archived. */
+        archivedOnly: z.boolean().optional(),
       })
       .optional(),
     output: z.array(FrontendWorkspaceMetadataSchema),

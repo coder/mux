@@ -640,12 +640,10 @@ function AppInner() {
                 const projectPath = creationProjectPath;
                 const projectName =
                   projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "Project";
-                const projectWorkspaces = sortedWorkspacesByProject.get(projectPath) ?? [];
                 return (
                   <ProjectPage
                     projectPath={projectPath}
                     projectName={projectName}
-                    workspaces={projectWorkspaces}
                     onProviderConfig={handleProviderConfig}
                     onWorkspaceCreated={(metadata) => {
                       // IMPORTANT: Add workspace to store FIRST (synchronous) to ensure

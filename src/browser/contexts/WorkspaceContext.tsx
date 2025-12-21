@@ -185,6 +185,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       );
       const metadataMap = new Map<string, FrontendWorkspaceMetadata>();
       for (const metadata of metadataList) {
+        // Skip archived workspaces - they should not be tracked by the app
+        if (metadata.archived) continue;
         ensureCreatedAt(metadata);
         // Use stable workspace ID as key (not path, which can change)
         seedWorkspaceLocalStorageFromBackend(metadata);

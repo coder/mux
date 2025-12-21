@@ -567,10 +567,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             className="pt-1"
                           >
                             {(() => {
-                              // Filter out archived workspaces from the sidebar
-                              const allWorkspaces = (
-                                sortedWorkspacesByProject.get(projectPath) ?? []
-                              ).filter((w) => !w.archived);
+                              // Archived workspaces are excluded from workspaceMetadata so won't appear here
+                              const allWorkspaces =
+                                sortedWorkspacesByProject.get(projectPath) ?? [];
                               const depthByWorkspaceId = computeWorkspaceDepthMap(allWorkspaces);
                               const { recent, buckets } = partitionWorkspacesByAge(
                                 allWorkspaces,

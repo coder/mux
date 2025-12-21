@@ -1,4 +1,4 @@
-import React, { useRef, useCallback } from "react";
+import React, { useRef, useCallback, useState, useEffect } from "react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { ModeProvider } from "@/browser/contexts/ModeContext";
 import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsContext";
@@ -7,11 +7,11 @@ import { ConnectionStatusIndicator } from "./ConnectionStatusIndicator";
 import { ChatInput } from "./ChatInput/index";
 import type { ChatInputAPI } from "./ChatInput/types";
 import { ArchivedWorkspaces } from "./ArchivedWorkspaces";
+import { useAPI } from "@/browser/contexts/API";
 
 interface ProjectPageProps {
   projectPath: string;
   projectName: string;
-  workspaces: FrontendWorkspaceMetadata[];
   onProviderConfig: (provider: string, keyPath: string[], value: string) => Promise<void>;
   onWorkspaceCreated: (metadata: FrontendWorkspaceMetadata) => void;
 }
@@ -23,18 +23,40 @@ interface ProjectPageProps {
 export const ProjectPage: React.FC<ProjectPageProps> = ({
   projectPath,
   projectName,
-  workspaces,
   onProviderConfig,
   onWorkspaceCreated,
 }) => {
+  const { api } = useAPI();
   const chatInputRef = useRef<ChatInputAPI | null>(null);
+  const [archivedWorkspaces, setArchivedWorkspaces] = useState<FrontendWorkspaceMetadata[]>([]);
+
+  // Fetch archived workspaces for this project
+  useEffect(() => {
+    if (!api) return;
+    let cancelled = false;
+
+    const loadArchived = async () => {
+      try {
+        const allArchived = await api.workspace.list({ archivedOnly: true });
+        if (cancelled) return;
+        // Filter to just this project's archived workspaces
+        const projectArchived = allArchived.filter((w) => w.projectPath === projectPath);
+        setArchivedWorkspaces(projectArchived);
+      } catch (error) {
+        console.error("Failed to load archived workspaces:", error);
+      }
+    };
+
+    void loadArchived();
+    return () => {
+      cancelled = true;
+    };
+  }, [api, projectPath]);
 
   const handleChatReady = useCallback((api: ChatInputAPI) => {
     chatInputRef.current = api;
     api.focus();
   }, []);
-
-  const archivedWorkspaces = workspaces.filter((w) => w.archived);
 
   return (
     <ModeProvider projectPath={projectPath}>
@@ -49,7 +71,14 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                   <ArchivedWorkspaces
                     projectPath={projectPath}
                     projectName={projectName}
-                    workspaces={workspaces}
+                    workspaces={archivedWorkspaces}
+                    onWorkspacesChanged={() => {
+                      // Refresh archived list after unarchive/delete
+                      if (!api) return;
+                      void api.workspace.list({ archivedOnly: true }).then((all) => {
+                        setArchivedWorkspaces(all.filter((w) => w.projectPath === projectPath));
+                      });
+                    }}
                   />
                 )}
               </div>
