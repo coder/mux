@@ -5,6 +5,7 @@
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { setupSimpleChatStory } from "./storyHelpers";
+import { waitForScrollStabilization } from "./storyPlayHelpers";
 import {
   createUserMessage,
   createAssistantMessage,
@@ -116,6 +117,9 @@ Key patterns:
       }
     />
   ),
+  play: async ({ canvasElement }) => {
+    await waitForScrollStabilization(canvasElement);
+  },
 };
 
 /**
@@ -165,6 +169,9 @@ Found **47 test files** across the project:
       }
     />
   ),
+  play: async ({ canvasElement }) => {
+    await waitForScrollStabilization(canvasElement);
+  },
 };
 
 /**
@@ -239,4 +246,7 @@ export const TaskErrorStates: AppStory = {
       }
     />
   ),
+  play: async ({ canvasElement }) => {
+    await waitForScrollStabilization(canvasElement);
+  },
 };

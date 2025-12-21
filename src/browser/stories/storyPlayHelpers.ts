@@ -38,3 +38,17 @@ export async function waitForChatInputAutofocusDone(canvasElement: HTMLElement):
 export function blurActiveElement(): void {
   (document.activeElement as HTMLElement | null)?.blur?.();
 }
+
+/**
+ * Wait for chat messages to load and async rendering (markdown, etc.) to settle.
+ *
+ * Use this for stories with MarkdownRenderer content that changes element heights
+ * after rendering, triggering ResizeObserver scroll. Waits for messages to load
+ * plus double-RAF for coalesced scroll to fire and layout to settle.
+ */
+export async function waitForScrollStabilization(canvasElement: HTMLElement): Promise<void> {
+  await waitForChatMessagesLoaded(canvasElement);
+
+  // Wait 2 RAFs: one for coalesced scroll to fire, one for layout to settle
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+}
