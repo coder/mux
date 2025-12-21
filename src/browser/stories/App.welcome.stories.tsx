@@ -70,56 +70,92 @@ export const CreateWorkspaceMultipleProjects: AppStory = {
   ),
 };
 
-/** Helper to generate archived workspaces for bulk operation stories */
-function generateArchivedWorkspaces(count: number, projectPath: string, projectName: string) {
+/** Helper to generate archived workspaces with varied dates for timeline grouping */
+function generateArchivedWorkspaces(projectPath: string, projectName: string) {
   const DAY = 86400000;
-  const names = [
-    "feature/new-ui",
-    "bugfix/login-issue",
-    "feature/dark-mode",
-    "refactor/cleanup",
-    "feature/api-v2",
-    "bugfix/memory-leak",
-    "feature/notifications",
-    "refactor/database",
-    "feature/search",
-    "bugfix/auth-flow",
-  ];
-  return Array.from({ length: count }, (_, i) =>
+  const HOUR = 3600000;
+  // Generate enough workspaces to show: search bar (>3), bulk selection, timeline grouping
+  return [
+    // Today
     createArchivedWorkspace({
-      id: `archived-${i + 1}`,
-      name: names[i % names.length],
+      id: "archived-1",
+      name: "feature/new-ui",
       projectName,
       projectPath,
-      archivedAt: new Date(NOW - (i + 1) * DAY).toISOString(),
-    })
-  );
+      archivedAt: new Date(NOW - 2 * HOUR).toISOString(),
+    }),
+    createArchivedWorkspace({
+      id: "archived-2",
+      name: "bugfix/login-issue",
+      projectName,
+      projectPath,
+      archivedAt: new Date(NOW - 5 * HOUR).toISOString(),
+    }),
+    // Yesterday
+    createArchivedWorkspace({
+      id: "archived-3",
+      name: "feature/dark-mode",
+      projectName,
+      projectPath,
+      archivedAt: new Date(NOW - DAY - 3 * HOUR).toISOString(),
+    }),
+    // This week
+    createArchivedWorkspace({
+      id: "archived-4",
+      name: "refactor/cleanup",
+      projectName,
+      projectPath,
+      archivedAt: new Date(NOW - 3 * DAY).toISOString(),
+    }),
+    createArchivedWorkspace({
+      id: "archived-5",
+      name: "feature/api-v2",
+      projectName,
+      projectPath,
+      archivedAt: new Date(NOW - 5 * DAY).toISOString(),
+    }),
+    // This month
+    createArchivedWorkspace({
+      id: "archived-6",
+      name: "bugfix/memory-leak",
+      projectName,
+      projectPath,
+      archivedAt: new Date(NOW - 12 * DAY).toISOString(),
+    }),
+    // Older
+    createArchivedWorkspace({
+      id: "archived-7",
+      name: "feature/notifications",
+      projectName,
+      projectPath,
+      archivedAt: new Date(NOW - 45 * DAY).toISOString(),
+    }),
+    createArchivedWorkspace({
+      id: "archived-8",
+      name: "refactor/database",
+      projectName,
+      projectPath,
+      archivedAt: new Date(NOW - 60 * DAY).toISOString(),
+    }),
+  ];
 }
 
-/** Creation view with archived workspaces - shows timeline grouped archived section */
-export const CreateWorkspaceWithArchived: AppStory = {
+/**
+ * Project page with archived workspaces - demonstrates:
+ * - Timeline grouping (Today, Yesterday, This Week, etc.)
+ * - Search bar (visible with >3 workspaces)
+ * - Bulk selection with checkboxes
+ * - Select all checkbox
+ * - Restore and delete actions
+ */
+export const ProjectPageWithArchivedWorkspaces: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
         expandProjects(["/Users/dev/my-project"]);
         return createMockORPCClient({
           projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
-          workspaces: generateArchivedWorkspaces(5, "/Users/dev/my-project", "my-project"),
-        });
-      }}
-    />
-  ),
-};
-
-/** Archived workspaces with bulk selection - click checkboxes to select multiple */
-export const ArchivedWorkspacesBulkSelection: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() => {
-        expandProjects(["/Users/dev/my-project"]);
-        return createMockORPCClient({
-          projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
-          workspaces: generateArchivedWorkspaces(8, "/Users/dev/my-project", "my-project"),
+          workspaces: generateArchivedWorkspaces("/Users/dev/my-project", "my-project"),
         });
       }}
     />
