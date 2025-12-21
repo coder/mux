@@ -63,47 +63,32 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
       <ProviderOptionsProvider>
         <ThinkingProvider projectPath={projectPath}>
           <ConnectionStatusIndicator />
-          <div className="flex h-full flex-col">
-            {/* Scrollable content area with centered chat input */}
-            <div className="flex flex-1 flex-col overflow-y-auto">
-              {/* Spacer to push content toward center when no archived workspaces */}
-              <div className="flex-1" />
-
-              {/* Main content container - horizontally centered */}
-              <div className="mx-auto w-full max-w-3xl px-5 py-8">
-                {/* Chat input for creating new workspace */}
-                <ChatInput
-                  variant="creation"
-                  projectPath={projectPath}
-                  projectName={projectName}
-                  onProviderConfig={onProviderConfig}
-                  onReady={handleChatReady}
-                  onWorkspaceCreated={onWorkspaceCreated}
-                />
-
-                {/* Archived workspaces section */}
-                {archivedWorkspaces.length > 0 && (
-                  <div className="mt-8">
-                    <ArchivedWorkspaces
-                      projectPath={projectPath}
-                      projectName={projectName}
-                      workspaces={archivedWorkspaces}
-                      onWorkspacesChanged={() => {
-                        // Refresh archived list after unarchive/delete
-                        if (!api) return;
-                        void api.workspace.list({ archivedOnly: true }).then((all) => {
-                          setArchivedWorkspaces(all.filter((w) => w.projectPath === projectPath));
-                        });
-                      }}
-                    />
-                  </div>
-                )}
-              </div>
-
-              {/* Spacer to push content toward center */}
-              <div className="flex-1" />
+          {/* ChatInput with variant="creation" provides its own centered layout */}
+          <ChatInput
+            variant="creation"
+            projectPath={projectPath}
+            projectName={projectName}
+            onProviderConfig={onProviderConfig}
+            onReady={handleChatReady}
+            onWorkspaceCreated={onWorkspaceCreated}
+          />
+          {/* Archived workspaces fixed at bottom */}
+          {archivedWorkspaces.length > 0 && (
+            <div className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-3xl px-5 pb-4">
+              <ArchivedWorkspaces
+                projectPath={projectPath}
+                projectName={projectName}
+                workspaces={archivedWorkspaces}
+                onWorkspacesChanged={() => {
+                  // Refresh archived list after unarchive/delete
+                  if (!api) return;
+                  void api.workspace.list({ archivedOnly: true }).then((all) => {
+                    setArchivedWorkspaces(all.filter((w) => w.projectPath === projectPath));
+                  });
+                }}
+              />
             </div>
-          </div>
+          )}
         </ThinkingProvider>
       </ProviderOptionsProvider>
     </ModeProvider>
