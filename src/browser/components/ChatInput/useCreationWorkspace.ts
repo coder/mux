@@ -8,7 +8,7 @@ import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSett
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import {
-  clearCreationDraftStorage,
+  getCreationDraftKeys,
   getModelKey,
   getModeKey,
   getThinkingLevelKey,
@@ -217,8 +217,11 @@ export function useCreationWorkspace({
           });
         // Sync preferences immediately (before switching)
         syncCreationPreferences(projectPath, metadata.id);
-        // Clear draft state now that workspace is created
-        clearCreationDraftStorage(projectPath);
+        // Clear draft state now that workspace is created (use updatePersistedState
+        // so subscribers using usePersistedState({ listener: true }) update immediately)
+        for (const key of getCreationDraftKeys(projectPath)) {
+          updatePersistedState(key, undefined);
+        }
 
         // Switch to the workspace IMMEDIATELY after creation to exit splash faster.
         // The user sees the workspace UI while sendMessage kicks off the stream.

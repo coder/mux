@@ -494,13 +494,25 @@ describe("useCreationWorkspace", () => {
     const modeKey = getModeKey(TEST_WORKSPACE_ID);
     expect(updatePersistedStateCalls).toContainEqual([modeKey, "plan"]);
 
-    // Draft state is cleared via clearCreationDraftStorage() which uses localStorage directly
+    // Draft state is cleared via updatePersistedState so subscribers update immediately
     const pendingScopeId = getPendingScopeId(TEST_PROJECT_PATH);
-    expect(localStorage.getItem(getInputKey(pendingScopeId))).toBeNull();
-    expect(localStorage.getItem(getInputImagesKey(pendingScopeId))).toBeNull();
-    expect(localStorage.getItem(getDraftRuntimeKey(TEST_PROJECT_PATH))).toBeNull();
-    expect(localStorage.getItem(getDraftNameKey(TEST_PROJECT_PATH))).toBeNull();
-    expect(localStorage.getItem(getDraftAutoGenerateKey(TEST_PROJECT_PATH))).toBeNull();
+    expect(updatePersistedStateCalls).toContainEqual([getInputKey(pendingScopeId), undefined]);
+    expect(updatePersistedStateCalls).toContainEqual([
+      getInputImagesKey(pendingScopeId),
+      undefined,
+    ]);
+    expect(updatePersistedStateCalls).toContainEqual([
+      getDraftRuntimeKey(TEST_PROJECT_PATH),
+      undefined,
+    ]);
+    expect(updatePersistedStateCalls).toContainEqual([
+      getDraftNameKey(TEST_PROJECT_PATH),
+      undefined,
+    ]);
+    expect(updatePersistedStateCalls).toContainEqual([
+      getDraftAutoGenerateKey(TEST_PROJECT_PATH),
+      undefined,
+    ]);
   });
 
   test("handleSend surfaces backend errors and resets state", async () => {

@@ -417,27 +417,18 @@ export function migrateWorkspaceStorage(oldWorkspaceId: string, newWorkspaceId: 
 }
 
 /**
- * Key functions for draft state during workspace creation.
- * These are cleared when a workspace is successfully created.
+ * Get all storage keys that should be cleared when workspace creation completes.
+ * Returns both project-scoped draft keys and pending-scoped input keys.
  */
-const DRAFT_KEY_FUNCTIONS: Array<(projectPath: string) => string> = [
-  getDraftRuntimeKey,
-  getDraftNameKey,
-  getDraftAutoGenerateKey,
-];
-
-/**
- * Clear all draft state for workspace creation.
- * Called after a workspace is successfully created.
- */
-export function clearCreationDraftStorage(projectPath: string): void {
-  // Clear project-scoped draft keys
-  for (const getKey of DRAFT_KEY_FUNCTIONS) {
-    localStorage.removeItem(getKey(projectPath));
-  }
-
-  // Clear pending-scoped input keys
+export function getCreationDraftKeys(projectPath: string): string[] {
   const pendingScopeId = getPendingScopeId(projectPath);
-  localStorage.removeItem(getInputKey(pendingScopeId));
-  localStorage.removeItem(getInputImagesKey(pendingScopeId));
+  return [
+    // Project-scoped draft keys
+    getDraftRuntimeKey(projectPath),
+    getDraftNameKey(projectPath),
+    getDraftAutoGenerateKey(projectPath),
+    // Pending-scoped input keys
+    getInputKey(pendingScopeId),
+    getInputImagesKey(pendingScopeId),
+  ];
 }
