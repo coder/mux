@@ -40,7 +40,7 @@ export const TaskWorkflow: AppStory = {
                 createTaskTool("tc1", {
                   subagent_type: "explore",
                   prompt: "Analyze the frontend React components in src/browser/",
-                  description: "Frontend analysis",
+                  title: "Frontend analysis",
                   run_in_background: true,
                   taskId: "task-fe-001",
                   status: "running",
@@ -48,7 +48,7 @@ export const TaskWorkflow: AppStory = {
                 createTaskTool("tc2", {
                   subagent_type: "exec",
                   prompt: "Run linting on the backend code in src/node/",
-                  description: "Backend linting",
+                  title: "Backend linting",
                   run_in_background: true,
                   taskId: "task-be-002",
                   status: "queued",
@@ -138,7 +138,7 @@ export const TaskWithReport: AppStory = {
                   subagent_type: "explore",
                   prompt:
                     "Find all test files in this project. Look for patterns like *.test.ts, *.spec.ts, and test directories.",
-                  description: "Exploring test file structure",
+                  title: "Exploring test file structure",
                   taskId: "task-abc123",
                   reportMarkdown: `# Test File Analysis
 
@@ -156,7 +156,7 @@ Found **47 test files** across the project:
 - Test files are co-located with implementation
 - Uses \`bun test\` for unit tests
 - Uses \`bun x jest\` for integration tests`,
-                  title: "Test File Analysis",
+                  reportTitle: "Test File Analysis",
                 }),
               ],
             }),

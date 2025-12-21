@@ -1122,7 +1122,7 @@ export const router = (authToken?: string) => {
             kind: input.kind,
             agentType: input.agentType,
             prompt: input.prompt,
-            description: input.description,
+            title: input.title,
             modelString: input.modelString,
             thinkingLevel,
           });

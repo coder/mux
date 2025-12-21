@@ -39,7 +39,8 @@ export interface TaskCreateArgs {
   kind: TaskKind;
   agentType: string;
   prompt: string;
-  description?: string;
+  /** Human-readable title for the task (displayed in sidebar) */
+  title: string;
   modelString?: string;
   thinkingLevel?: ThinkingLevel;
 }
@@ -439,7 +440,7 @@ export class TaskService {
           path: workspacePath,
           id: taskId,
           name: workspaceName,
-          title: args.description,
+          title: args.title,
           createdAt,
           runtimeConfig: taskRuntimeConfig,
           aiSettings: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
@@ -524,7 +525,7 @@ export class TaskService {
         path: workspacePath,
         id: taskId,
         name: workspaceName,
-        title: args.description,
+        title: args.title,
         createdAt,
         runtimeConfig: taskRuntimeConfig,
         aiSettings: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },

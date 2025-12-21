@@ -488,7 +488,7 @@ export const tasks = {
       kind: z.literal("agent"),
       agentType: z.string(),
       prompt: z.string(),
-      description: z.string().optional(),
+      title: z.string().min(1),
       modelString: z.string().optional(),
       thinkingLevel: z.string().optional(),
     }),

@@ -143,7 +143,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status
   const isBackground = args.run_in_background ?? false;
   const agentType = args.subagent_type;
   const prompt = args.prompt;
-  const description = args.description;
+  const title = args.title;
 
   // Derive task state from result
   const taskId = result?.taskId;
@@ -174,7 +174,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status
           <div className="task-surface mt-1 rounded-md p-3">
             <div className="task-divider mb-2 flex items-center gap-2 border-b pb-2">
               <span className="text-task-mode text-[12px] font-semibold">
-                {reportTitle ?? description ?? "Sub-agent Task"}
+                {reportTitle ?? title}
               </span>
               {taskId && <TaskId id={taskId} />}
               {taskStatus && <TaskStatusBadge status={taskStatus} />}

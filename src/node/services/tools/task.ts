@@ -34,7 +34,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         kind: "agent",
         agentType: args.subagent_type,
         prompt: args.prompt,
-        description: args.description,
+        title: args.title,
         modelString,
         thinkingLevel,
       });

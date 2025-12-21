@@ -253,6 +253,7 @@ describe("TaskService", () => {
       kind: "agent",
       agentType: "explore",
       prompt: "explore this repo",
+      title: "Test task",
     });
     expect(first.success).toBe(true);
     if (!first.success) return;
@@ -262,6 +263,7 @@ describe("TaskService", () => {
       kind: "agent",
       agentType: "explore",
       prompt: "nested explore",
+      title: "Test task",
     });
     expect(second.success).toBe(false);
     if (!second.success) {
@@ -334,6 +336,7 @@ describe("TaskService", () => {
       kind: "agent",
       agentType: "explore",
       prompt: "task 1",
+      title: "Test task",
     });
     expect(running.success).toBe(true);
     if (!running.success) return;
@@ -343,6 +346,7 @@ describe("TaskService", () => {
       kind: "agent",
       agentType: "explore",
       prompt: "task 2",
+      title: "Test task",
     });
     expect(queued.success).toBe(true);
     if (!queued.success) return;
@@ -428,6 +432,7 @@ describe("TaskService", () => {
       kind: "agent",
       agentType: "explore",
       prompt: "parent task",
+      title: "Test task",
     });
     expect(parentTask.success).toBe(true);
     if (!parentTask.success) return;
@@ -439,6 +444,7 @@ describe("TaskService", () => {
       kind: "agent",
       agentType: "explore",
       prompt: "child task",
+      title: "Test task",
     });
     expect(childTask.success).toBe(true);
     if (!childTask.success) return;
@@ -528,6 +534,7 @@ describe("TaskService", () => {
       kind: "agent",
       agentType: "explore",
       prompt: "task 1",
+      title: "Test task",
     });
     expect(running.success).toBe(true);
     if (!running.success) return;
@@ -540,6 +547,7 @@ describe("TaskService", () => {
       kind: "agent",
       agentType: "explore",
       prompt: "task 2",
+      title: "Test task",
     });
     expect(queued.success).toBe(true);
     if (!queued.success) return;
@@ -706,6 +714,7 @@ describe("TaskService", () => {
       kind: "agent",
       agentType: "explore",
       prompt: "task 1",
+      title: "Test task",
     });
     expect(first.success).toBe(true);
     if (!first.success) return;
@@ -716,6 +725,7 @@ describe("TaskService", () => {
       kind: "agent",
       agentType: "explore",
       prompt: "task 2",
+      title: "Test task",
     });
     expect(second.success).toBe(true);
     if (!second.success) return;
@@ -726,6 +736,7 @@ describe("TaskService", () => {
       kind: "agent",
       agentType: "explore",
       prompt: "task 3",
+      title: "Test task",
     });
     expect(third.success).toBe(true);
     if (!third.success) return;
@@ -766,6 +777,7 @@ describe("TaskService", () => {
       kind: "agent",
       agentType: "explore",
       prompt: "run task from local workspace",
+      title: "Test task",
     });
     expect(created.success).toBe(true);
     if (!created.success) return;
@@ -820,6 +832,7 @@ describe("TaskService", () => {
       kind: "agent",
       agentType: "explore",
       prompt: "run task with overrides",
+      title: "Test task",
     });
     expect(created.success).toBe(true);
     if (!created.success) return;
@@ -1368,6 +1381,7 @@ describe("TaskService", () => {
       kind: "agent",
       agentType: "explore",
       prompt: "do the thing",
+      title: "Test task",
     });
 
     expect(created.success).toBe(false);
@@ -1435,7 +1449,7 @@ describe("TaskService", () => {
           type: "dynamic-tool",
           toolCallId: "task-call-1",
           toolName: "task",
-          input: { subagent_type: "explore", prompt: "do the thing" },
+          input: { subagent_type: "explore", prompt: "do the thing", title: "Test task" },
           state: "input-available",
         },
       ]
@@ -1709,7 +1723,7 @@ describe("TaskService", () => {
           type: "dynamic-tool",
           toolCallId: "task-call-1",
           toolName: "task",
-          input: { subagent_type: "explore", prompt: "do the thing" },
+          input: { subagent_type: "explore", prompt: "do the thing", title: "Test task" },
           state: "input-available",
         },
       ]

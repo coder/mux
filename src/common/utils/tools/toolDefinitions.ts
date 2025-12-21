@@ -97,7 +97,7 @@ export const TaskToolArgsSchema = z
   .object({
     subagent_type: SubagentTypeSchema,
     prompt: z.string().min(1),
-    description: z.string().optional(),
+    title: z.string().min(1),
     run_in_background: z.boolean().default(false),
   })
   .strict();

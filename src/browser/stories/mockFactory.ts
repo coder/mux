@@ -704,7 +704,7 @@ export function createTaskTool(
   opts: {
     subagent_type: "explore" | "exec";
     prompt: string;
-    description?: string;
+    title: string;
     run_in_background?: boolean;
     taskId: string;
     status: "queued" | "running";
@@ -718,7 +718,7 @@ export function createTaskTool(
     input: {
       subagent_type: opts.subagent_type,
       prompt: opts.prompt,
-      description: opts.description,
+      title: opts.title,
       run_in_background: opts.run_in_background ?? false,
     },
     output: {
@@ -734,10 +734,10 @@ export function createCompletedTaskTool(
   opts: {
     subagent_type: "explore" | "exec";
     prompt: string;
-    description?: string;
+    title: string;
     taskId?: string;
     reportMarkdown: string;
-    title?: string;
+    reportTitle?: string;
   }
 ): MuxPart {
   return {
@@ -748,14 +748,14 @@ export function createCompletedTaskTool(
     input: {
       subagent_type: opts.subagent_type,
       prompt: opts.prompt,
-      description: opts.description,
+      title: opts.title,
       run_in_background: false,
     },
     output: {
       status: "completed",
       taskId: opts.taskId,
       reportMarkdown: opts.reportMarkdown,
-      title: opts.title,
+      title: opts.reportTitle,
     },
   };
 }
@@ -766,7 +766,7 @@ export function createPendingTaskTool(
   opts: {
     subagent_type: "explore" | "exec";
     prompt: string;
-    description?: string;
+    title: string;
     run_in_background?: boolean;
   }
 ): MuxPart {
@@ -778,7 +778,7 @@ export function createPendingTaskTool(
     input: {
       subagent_type: opts.subagent_type,
       prompt: opts.prompt,
-      description: opts.description,
+      title: opts.title,
       run_in_background: opts.run_in_background ?? false,
     },
   };
