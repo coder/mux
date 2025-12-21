@@ -252,10 +252,16 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     },
     workspace: {
       list: async (input?: { archived?: boolean }) => {
+        // Archived = archivedAt exists and is more recent than unarchivedAt
+        const isArchived = (w: (typeof workspaces)[0]) => {
+          if (!w.archivedAt) return false;
+          if (!w.unarchivedAt) return true;
+          return new Date(w.archivedAt).getTime() > new Date(w.unarchivedAt).getTime();
+        };
         if (input?.archived) {
-          return workspaces.filter((w) => w.archived);
+          return workspaces.filter(isArchived);
         }
-        return workspaces.filter((w) => !w.archived);
+        return workspaces.filter((w) => !isArchived(w));
       },
       archive: async () => ({ success: true }),
       unarchive: async () => ({ success: true }),

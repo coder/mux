@@ -1338,7 +1338,11 @@ export class WorkspaceStore {
       `Workspace ${workspaceId} missing createdAt - backend contract violated`
     );
 
-    const aggregator = this.getOrCreateAggregator(workspaceId, metadata.createdAt);
+    const aggregator = this.getOrCreateAggregator(
+      workspaceId,
+      metadata.createdAt,
+      metadata.unarchivedAt
+    );
 
     // Initialize recency cache and bump derived store immediately
     // This ensures UI sees correct workspace order before messages load
@@ -1536,12 +1540,19 @@ export class WorkspaceStore {
    */
   private getOrCreateAggregator(
     workspaceId: string,
-    createdAt: string
+    createdAt: string,
+    unarchivedAt?: string
   ): StreamingMessageAggregator {
     if (!this.aggregators.has(workspaceId)) {
       // Create new aggregator with required createdAt and workspaceId for localStorage persistence
-      this.aggregators.set(workspaceId, new StreamingMessageAggregator(createdAt, workspaceId));
+      this.aggregators.set(
+        workspaceId,
+        new StreamingMessageAggregator(createdAt, workspaceId, unarchivedAt)
+      );
       this.workspaceCreatedAt.set(workspaceId, createdAt);
+    } else if (unarchivedAt) {
+      // Update unarchivedAt on existing aggregator (e.g., after restore from archive)
+      this.aggregators.get(workspaceId)!.setUnarchivedAt(unarchivedAt);
     }
 
     return this.aggregators.get(workspaceId)!;

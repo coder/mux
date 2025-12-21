@@ -364,8 +364,8 @@ export class Config {
               taskThinkingLevel: workspace.taskThinkingLevel,
               taskPrompt: workspace.taskPrompt,
               taskTrunkBranch: workspace.taskTrunkBranch,
-              archived: workspace.archived,
               archivedAt: workspace.archivedAt,
+              unarchivedAt: workspace.unarchivedAt,
             };
 
             // Migrate missing createdAt to config for next load
@@ -417,9 +417,9 @@ export class Config {
             metadata.taskThinkingLevel ??= workspace.taskThinkingLevel;
             metadata.taskPrompt ??= workspace.taskPrompt;
             metadata.taskTrunkBranch ??= workspace.taskTrunkBranch;
-            // Preserve archived status from config
-            metadata.archived ??= workspace.archived;
+            // Preserve archived timestamps from config
             metadata.archivedAt ??= workspace.archivedAt;
+            metadata.unarchivedAt ??= workspace.unarchivedAt;
             // Migrate to config for next load
             workspace.id = metadata.id;
             workspace.name = metadata.name;
@@ -452,8 +452,8 @@ export class Config {
               taskThinkingLevel: workspace.taskThinkingLevel,
               taskPrompt: workspace.taskPrompt,
               taskTrunkBranch: workspace.taskTrunkBranch,
-              archived: workspace.archived,
               archivedAt: workspace.archivedAt,
+              unarchivedAt: workspace.unarchivedAt,
             };
 
             // Save to config for next load

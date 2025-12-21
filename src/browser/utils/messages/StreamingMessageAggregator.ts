@@ -243,10 +243,13 @@ export class StreamingMessageAggregator {
   // Workspace creation timestamp (used for recency calculation)
   // REQUIRED: Backend guarantees every workspace has createdAt via config.ts
   private readonly createdAt: string;
+  // Workspace unarchived timestamp (used for recency calculation to bump restored workspaces)
+  private unarchivedAt?: string;
 
-  constructor(createdAt: string, workspaceId?: string) {
+  constructor(createdAt: string, workspaceId?: string, unarchivedAt?: string) {
     this.createdAt = createdAt;
     this.workspaceId = workspaceId;
+    this.unarchivedAt = unarchivedAt;
     // Load persisted state from localStorage
     if (workspaceId) {
       const persistedStatus = this.loadPersistedAgentStatus();
@@ -255,6 +258,12 @@ export class StreamingMessageAggregator {
         this.lastStatusUrl = persistedStatus.url;
       }
     }
+    this.updateRecency();
+  }
+
+  /** Update unarchivedAt timestamp (called when workspace is restored from archive) */
+  setUnarchivedAt(unarchivedAt: string | undefined): void {
+    this.unarchivedAt = unarchivedAt;
     this.updateRecency();
   }
 
@@ -337,7 +346,7 @@ export class StreamingMessageAggregator {
    */
   private updateRecency(): void {
     const messages = this.getAllMessages();
-    this.recencyTimestamp = computeRecencyTimestamp(messages, this.createdAt);
+    this.recencyTimestamp = computeRecencyTimestamp(messages, this.createdAt, this.unarchivedAt);
   }
 
   /**

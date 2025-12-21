@@ -12,15 +12,18 @@ function isIdleCompactionRequest(msg: MuxMessage): boolean {
 
 /**
  * Compute recency timestamp from messages.
- * Returns max of: createdAt, last user message timestamp, last compacted message timestamp.
+ * Returns max of: createdAt, unarchivedAt, last user message timestamp, last compacted message timestamp.
  * This is the single source of truth for workspace recency.
  *
  * Excludes idle compaction requests since they shouldn't hoist the workspace
  * in the sidebar (they're background operations, not user activity).
+ *
+ * @param unarchivedAt - When workspace was last unarchived (bumps to top of recency)
  */
 export function computeRecencyFromMessages(
   messages: MuxMessage[],
-  createdAt?: number
+  createdAt?: number,
+  unarchivedAt?: number
 ): number | null {
   const reversed = [...messages].reverse();
   const lastUserMsg = reversed.find(
@@ -30,6 +33,7 @@ export function computeRecencyFromMessages(
   const lastCompactedMsg = reversed.find((m) => m.metadata?.compacted && m.metadata?.timestamp);
   const candidates = [
     createdAt ?? null,
+    unarchivedAt ?? null,
     lastUserMsg?.metadata?.timestamp ?? null,
     lastCompactedMsg?.metadata?.timestamp ?? null,
   ].filter((t): t is number => t !== null);

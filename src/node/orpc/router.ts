@@ -586,12 +586,17 @@ export const router = (authToken?: string) => {
           const allWorkspaces = await context.workspaceService.list({
             includePostCompaction: input?.includePostCompaction,
           });
-          // Filter by archived status
+          // Filter by archived status (derived from timestamps)
+          const isArchived = (w: (typeof allWorkspaces)[0]) => {
+            if (!w.archivedAt) return false;
+            if (!w.unarchivedAt) return true;
+            return new Date(w.archivedAt).getTime() > new Date(w.unarchivedAt).getTime();
+          };
           if (input?.archived) {
-            return allWorkspaces.filter((w) => w.archived);
+            return allWorkspaces.filter(isArchived);
           }
           // Default: return non-archived workspaces
-          return allWorkspaces.filter((w) => !w.archived);
+          return allWorkspaces.filter((w) => !isArchived(w));
         }),
       create: t
         .input(schemas.workspace.create.input)

@@ -933,7 +933,7 @@ export class WorkspaceService extends EventEmitter {
             projectConfig.workspaces.find((w) => w.id === workspaceId) ??
             projectConfig.workspaces.find((w) => w.path === workspacePath);
           if (workspaceEntry) {
-            workspaceEntry.archived = true;
+            // Just set archivedAt - archived state is derived from archivedAt > unarchivedAt
             workspaceEntry.archivedAt = new Date().toISOString();
           }
         }
@@ -977,8 +977,9 @@ export class WorkspaceService extends EventEmitter {
             projectConfig.workspaces.find((w) => w.id === workspaceId) ??
             projectConfig.workspaces.find((w) => w.path === workspacePath);
           if (workspaceEntry) {
-            workspaceEntry.archived = undefined;
-            workspaceEntry.archivedAt = undefined;
+            // Just set unarchivedAt - archived state is derived from archivedAt > unarchivedAt
+            // This also bumps workspace to top of recency
+            workspaceEntry.unarchivedAt = new Date().toISOString();
           }
         }
         return config;
